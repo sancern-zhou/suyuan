@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv5/
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+
+# Data & Cache
+backend_data_registry/
+data/
+*.log
+*.cache
+
+# Temporary files
+*.png
+*.jpg
+*.jpeg
+*.html
+*.tmp
+nul
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Test outputs
+test_outputs/

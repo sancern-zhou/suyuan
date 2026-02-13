@@ -1,0 +1,45 @@
+================================================================================
+Final Verification: PM2.5 Data Flow
+================================================================================
+
+Step 1: Simulate API Response
+--------------------------------------------------------------------------------
+Record count: 1
+Sample fields: ['Code', 'StationName', 'TimePoint', 'SO4²⁻', 'NO₃⁻']
+
+Step 2: Save Data via Context (auto-standardization)
+--------------------------------------------------------------------------------
+SUCCESS: Data saved with ID: particulate_unified:v1:a208fdb076b54d50a4a4e9f154180bfd
+
+Step 3: Load Data and Verify
+--------------------------------------------------------------------------------
+Loaded record count: 1
+
+First record type: UnifiedParticulateData
+
+Record fields:
+  station_code: 1067b
+  station_name: 深南中路
+  timestamp: 2026-02-01 00:00:00
+  unit: ug/m3
+  components: (dict, 7 items)
+    NO3: 12.3
+    NH4: 6.7
+    Cl: 1.2
+    Ca: 2.3
+    Mg: 0.8
+    K: 1.5
+    Na: 1.1
+  PM2_5: 35.5
+  qc_flag: None
+  metadata: None
+
+================================================================================
+Final Verification
+--------------------------------------------------------------------------------
+SUCCESS: Components field contains 7 items
+Component names: ['NO3', 'NH4', 'Cl', 'Ca', 'Mg', 'K', 'Na']
+
+All PM2.5 component data preserved correctly!
+
+================================================================================

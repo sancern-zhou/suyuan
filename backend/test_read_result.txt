@@ -1,0 +1,21 @@
+=== read_file Tool Test ===
+
+Test File: D:\溯源\backend\app\main.py
+Status: success
+Success: True
+Summary: ✅ 读取文件成功: main.py (14268 bytes)
+
+File Type: text
+Format: py
+Size: 14268 bytes
+Content Length: 13270 chars
+
+RESULT: PASSED - Content is complete (not truncated)
+
+Original Size: 14268 bytes
+Read Size: 14268 bytes
+Match: True
+
+
+=== FINAL RESULT: PASSED ===
+Full content read without truncation

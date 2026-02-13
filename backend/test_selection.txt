@@ -1,0 +1,44 @@
+Traceback (most recent call last):
+  File "D:\溯源\backend\test_word_selection.py", line 76, in test_replace_method
+    count = doc.Content.Replace("41微克/立方米", "", 2)
+            ^^^^^^^^^^^^^^^^^^^
+  File "D:\conda\Lib\site-packages\win32com\client\dynamic.py", line 631, in __getattr__
+    raise AttributeError(f"{self._username_}.{attr}")
+AttributeError: <unknown>.Replace
+Word Replacement Method Tests
+================================================================================
+
+================================================================================
+Test: Using Selection.Find
+================================================================================
+Original: 'Test 41微克/立方米 ABC 41微克/立方米 XYZ\r'
+Count: 2
+
+Executing Selection.Find.Execute(Replace=2, ReplaceWith='')...
+Result: True (type: bool)
+After Execute: 'Test 41微克/立方米 ABC 41微克/立方米 XYZ\r'
+Count after: 2
+FAILED
+
+================================================================================
+Test: Using Range.Replace method
+================================================================================
+Original: 'Test 41微克/立方米 ABC 41微克/立方米 XYZ\r'
+Count: 2
+
+Executing Content.Replace('41微克/立方米', '')...
+ERROR: <unknown>.Replace
+
+================================================================================
+Test: Simplest Replacement (delete text)
+================================================================================
+Original: 'Test ABC Test\r'
+Found 'ABC' at position 5-8
+After Delete: 'Test Test\r'
+SUCCESS
+
+================================================================================
+Summary:
+  selection_find: FAIL
+  replace_method: FAIL
+  simple_replace: PASS

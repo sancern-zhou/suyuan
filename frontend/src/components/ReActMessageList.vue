@@ -1,0 +1,2328 @@
+<template>
+  <div class="react-message-list" ref="messagesContainer">
+    <!-- 欢迎消息 -->
+    <div v-if="messages.length === 0" class="welcome-message">
+      <h2>{{ welcomeContent.title }}</h2>
+      <p>{{ welcomeContent.description }}</p>
+      <ul>
+        <li v-for="(feature, index) in welcomeContent.features" :key="index">{{ feature }}</li>
+      </ul>
+      <p class="hint">{{ welcomeContent.example }}</p>
+    </div>
+
+    <!-- 消息列表 -->
+    <div v-for="(message, index) in filteredMessages" :key="message.id" class="message-wrapper"
+      :class="{ 'has-sources': message.type === 'final' && message.data?.sources?.length > 0, 'clickable': props.assistantMode === 'knowledge-qa' && message.type === 'final' && message.data?.sources?.length > 0 }"
+      @click="handleMessageClick(message, index)"
+    >
+      <!-- 用户消息 -->
+      <div v-if="message.type === 'user'" class="message user-message">
+        <div class="message-content" v-if="useMarkdown">
+          <MarkdownRenderer :content="message.content" />
+        </div>
+        <div class="message-content" v-else>{{ message.content }}</div>
+
+        <!-- Reflexion状态提示 -->
+        <div v-if="debugMode && showReflexion && reflexionCount > 0" class="reflexion-badge">
+          <span class="badge-icon">🧠</span>
+          <span class="badge-text">智能恢复中 ({{ reflexionCount }})</span>
+        </div>
+      </div>
+
+      <!-- Agent消息（最终答案） -->
+      <div v-else-if="message.type === 'final'" class="message agent-message final"
+           v-once @vue:mounted="collapsePreviousProcessMessages(message, messages)">
+        <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
+        <details v-if="getUnifiedProcessMessages(message, messages).length > 0" class="process-collapse">
+          <summary>查看分析过程 ({{ getUnifiedProcessMessages(message, messages).length }} 个步骤)</summary>
+          <div class="process-content">
+            <div v-for="(procMsg, idx) in getUnifiedProcessMessages(message, messages)" :key="idx" class="process-item">
+              <!-- 思考事件 -->
+              <div v-if="procMsg.type === 'thought'" class="process-thought">
+                <span class="process-icon">💭</span>
+                <span class="process-label">思考</span>
+                <div class="process-text">{{ procMsg.content }}</div>
+              </div>
+
+              <!-- 行动事件（工具调用） -->
+              <div v-else-if="procMsg.type === 'action'" class="process-action">
+                <span class="process-icon">⚙️</span>
+                <span class="process-label">工具调用</span>
+                <div class="process-text">{{ procMsg.content }}</div>
+              </div>
+
+              <!-- 观察事件（只显示摘要） -->
+              <div v-else-if="procMsg.type === 'observation'" class="process-observation">
+                <span class="process-icon">👁️</span>
+                <span class="process-label">工具结果</span>
+                <div class="process-text">{{ procMsg.data?.summary || '已完成' }}</div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="message-content" v-if="useMarkdown">
+          <MarkdownRenderer :content="message.content" />
+        </div>
+        <div class="message-content" v-else>{{ message.content }}</div>
+
+        <!-- 【调试】显示完整message.data以便排查问题 -->
+        <div v-if="debugMode" style="margin-top: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 11px; color: #666;">
+          <strong>调试信息:</strong>
+          <div>message.data: {{ message.data }}</div>
+        </div>
+
+        <!-- 多专家系统信息显示（修复：去掉source检查，改为直接检查expert_results） -->
+        <div v-if="message.data?.expert_results" class="expert-system-info">
+          <div class="expert-badge">
+            <span class="badge-icon">🎯</span>
+            <span class="badge-text">多专家系统分析</span>
+            <span v-if="message.data?.source" class="badge-source" style="font-size: 10px; color: #999; margin-left: 6px;">
+              [{{ message.data.source }}]
+            </span>
+          </div>
+          <div class="expert-list" v-if="message.data?.selected_experts?.length">
+            <span class="expert-label">参与专家:</span>
+            <span v-for="expert in message.data.selected_experts" :key="expert" class="expert-tag">
+              {{ reactStore.getExpertLabel(expert) }}
+            </span>
+          </div>
+          <div class="conclusions" v-if="message.data?.conclusions?.length">
+            <h4>主要结论:</h4>
+            <ul>
+              <li v-for="(conclusion, index) in message.data.conclusions" :key="index">{{ conclusion }}</li>
+            </ul>
+          </div>
+          <div class="recommendations" v-if="message.data?.recommendations?.length">
+            <h4>建议措施:</h4>
+            <ul>
+              <li v-for="(rec, index) in message.data.recommendations" :key="index">{{ rec }}</li>
+            </ul>
+          </div>
+
+          <!-- 各专家分析总结 -->
+          <div class="expert-summaries">
+            <h4>专家分析总结:</h4>
+            <div v-for="(expertData, expertType) in message.data.expert_results" :key="expertType" class="expert-summary-item">
+              <div class="expert-summary-header">
+                <span class="expert-summary-icon">{{ getExpertIcon(expertType) }}</span>
+                <span class="expert-summary-name">{{ getExpertLabel(expertType) }}</span>
+              </div>
+              <div class="expert-summary-content">
+                <!-- 报告专家：显示完整报告 -->
+                <div v-if="debugMode && expertType === 'report'" class="report-debug" style="display: none;">
+                  <p style="color: #999; font-size: 11px;">Debug: tool_results={{ expertData?.tool_results?.length || 0 }}</p>
+                  <p v-if="debugMode" style="color: #999; font-size: 11px;">Debug: expertData={{ expertData }}</p>
+                </div>
+                <div v-if="expertType === 'report'" class="report-full-content">
+                  <!-- 【修复】使用计算属性缓存报告内容，避免async函数在模板中的问题 -->
+                  <template v-if="reportContentCacheMap.get(expertData)">
+                    <div v-if="reportContentCacheMap.get(expertData).markdown_content" class="markdown-report">
+                      <!-- 【新增】Markdown格式报告渲染 -->
+                      <MarkdownRenderer :content="reportContentCacheMap.get(expertData).markdown_content" />
+                    </div>
+                    <div v-else class="report-section" v-for="(section, sectionKey) in reportContentCacheMap.get(expertData)" :key="sectionKey">
+                      <h5 class="section-title">{{ formatSectionTitle(sectionKey) }}</h5>
+                      <div class="section-content">
+                        <template v-if="typeof section === 'string'">
+                          {{ section }}
+                        </template>
+                        <template v-else-if="Array.isArray(section)">
+                          <ul>
+                            <li v-for="(item, idx) in section" :key="idx">{{ typeof item === 'object' ? JSON.stringify(item) : item }}</li>
+                          </ul>
+                        </template>
+                        <template v-else-if="typeof section === 'object'">
+                          <div v-for="(val, key) in section" :key="key" class="subsection">
+                            <span class="subsection-key">{{ key }}:</span>
+                            <span class="subsection-value">{{ typeof val === 'object' ? JSON.stringify(val) : val }}</span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                <!-- 其他专家：显示摘要 -->
+                <template v-else>
+                  <!-- 【新增】检查是否为Markdown格式的摘要 -->
+                  <div v-if="expertData.analysis?.summary?.includes('#')" class="markdown-summary">
+                    <MarkdownRenderer :content="expertData.analysis.summary" />
+                  </div>
+                  <p v-else class="expert-summary-text">{{ expertData.analysis?.summary || '暂无总结' }}</p>
+                  <div class="expert-key-findings" v-if="expertData.analysis?.key_findings?.length">
+                    <span class="findings-label">关键发现:</span>
+                    <ul class="findings-list">
+                      <li v-for="(finding, index) in expertData.analysis.key_findings" :key="index">{{ finding }}</li>
+                    </ul>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 错误事件 -->
+      <div v-else-if="message.type === 'error'" class="event-content error">
+        <div class="event-icon">⚠️</div>
+        <div class="event-text">{{ message.content }}</div>
+      </div>
+
+      <!-- 思考事件（未被折叠时实时显示） -->
+      <div v-else-if="message.type === 'thought' && !isMessageHidden(message)" class="react-event event-thought">
+        <div class="event-content">
+          <div class="event-icon">💭</div>
+          <div class="event-text">{{ message.content }}</div>
+        </div>
+      </div>
+
+      <!-- 行动事件（未被折叠时实时显示） -->
+      <div v-else-if="message.type === 'action' && !isMessageHidden(message)" class="react-event event-action">
+        <div class="event-content">
+          <div class="event-icon">⚙️</div>
+          <div class="event-text">
+            <div class="action-main">{{ message.content }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 观察事件（未被折叠时实时显示） -->
+      <div v-else-if="message.type === 'observation' && !isMessageHidden(message)" class="react-event event-observation">
+        <div class="event-content">
+          <div class="event-icon">👁️</div>
+          <div class="event-text">
+            <div class="observation-main">{{ message.data?.summary || '已完成' }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useReactStore } from '@/stores/reactStore'
+import MarkdownRenderer from './MarkdownRenderer.vue'
+import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
+
+const reactStore = useReactStore()
+
+const props = defineProps({
+  messages: {
+    type: Array,
+    default: () => []
+  },
+  debugMode: {
+    type: Boolean,
+    default: false
+  },
+  showReflexion: {
+    type: Boolean,
+    default: false
+  },
+  reflexionCount: {
+    type: Number,
+    default: 0
+  },
+  useMarkdown: {
+    type: Boolean,
+    default: true  // 默认启用Markdown渲染
+  },
+  assistantMode: {
+    type: String,
+    default: 'general-agent'
+  },
+  // 【新增】接收VisualizationPanel的引用，用于获取图表截图
+  visualizationPanelRef: {
+    type: Object,
+    default: null
+  },
+  // 【新增】消息点击回调（用于知识问答模式选择消息查看来源）
+  onMessageClick: {
+    type: Function,
+    default: null
+  }
+})
+
+const messagesContainer = ref(null)
+
+// 【新增】处理消息点击（知识问答模式）
+const handleMessageClick = (message, index) => {
+  if (props.assistantMode === 'knowledge-qa' && message.type === 'final' && message.data?.sources?.length > 0) {
+    // 计算在原始 messages 数组中的索引
+    const originalIndex = props.messages.findIndex(m => m.id === message.id)
+    if (props.onMessageClick) {
+      props.onMessageClick(originalIndex >= 0 ? originalIndex : index, message)
+    }
+  }
+}
+
+// 【新增】缓存报告内容，避免重复处理
+const reportContentCache = ref(new Map())
+// 【关键修复】添加响应式触发器，确保缓存更新后能触发视图更新
+const cacheUpdateTrigger = ref(0)
+
+// 【新增】事件完成状态管理（防抖机制：等待所有事件结束后再截图）
+const pendingEventsCount = ref(0) // 待处理事件计数
+const isProcessingComplete = ref(true) // 是否处理完成
+let debounceTimer = null // 防抖定时器
+const DEBOUNCE_DELAY = 2000 // 等待2秒确认没有新事件后开始处理
+
+// 更新待处理事件计数
+const updatePendingEvents = (messages) => {
+  const actionCount = messages.filter(m => m.type === 'action').length
+  const observationCount = messages.filter(m => m.type === 'observation').length
+  const thoughtCount = messages.filter(m => m.type === 'thought').length
+  const totalPending = actionCount + observationCount + thoughtCount
+
+  if (totalPending !== pendingEventsCount.value) {
+    console.log(`[ReActMessageList] 待处理事件变化: ${pendingEventsCount.value} -> ${totalPending}`, {
+      actions: actionCount,
+      observations: observationCount,
+      thoughts: thoughtCount
+    })
+    pendingEventsCount.value = totalPending
+
+    // 如果没有待处理事件，设置防抖定时器
+    if (totalPending === 0 && isProcessingComplete.value === false) {
+      console.log(`[ReActMessageList] 所有事件已完成，等待 ${DEBOUNCE_DELAY}ms 后开始截图...`)
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(async () => {
+        console.log('[ReActMessageList] 防抖时间到，开始截图和处理报告')
+        isProcessingComplete.value = true
+        await fillReportCache(messages)
+      }, DEBOUNCE_DELAY)
+    } else if (totalPending > 0) {
+      // 有待处理事件，取消之前的防抖定时器
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+      isProcessingComplete.value = false
+      console.log(`[ReActMessageList] 有 ${totalPending} 个待处理事件，暂停截图`)
+    }
+  }
+}
+
+// 【新增】备用触发函数：直接处理report expert数据，使用截图管理器
+// 【关键修改】先等待截图完成，再处理报告
+const triggerReportCacheImmediately = async (messages) => {
+  console.log('[ReActMessageList] triggerReportCacheImmediately 被调用')
+
+  // 查找包含 report expert 的消息
+  for (const msg of messages) {
+    if (msg.data?.expert_results?.report) {
+      const reportExpertData = msg.data.expert_results.report
+      const cacheKey = JSON.stringify(reportExpertData?.tool_results || [])
+
+      console.log('[ReActMessageList] 找到report expert:', {
+        hasToolResults: !!reportExpertData?.tool_results,
+        toolResultsLength: reportExpertData?.tool_results?.length || 0,
+        cacheKey: cacheKey.substring(0, 50)
+      })
+
+      if (!reportContentCache.value.has(cacheKey)) {
+        console.log('[ReActMessageList] 开始等待图表截图...')
+
+        // 【关键修改】使用截图管理器获取截图（会自动等待图表渲染）
+        const screenshotResult = await chartScreenshotManager.captureAll({
+          excludeMaps: true,
+          timeout: 15000
+        })
+
+        console.log('[ReActMessageList] 截图管理器结果:', screenshotResult)
+        const cachedScreenshots = screenshotResult.screenshots
+
+        console.log('[ReActMessageList] 立即处理报告内容...')
+        const res = await getReportContent(reportExpertData, cachedScreenshots)
+        reportContentCache.value.set(cacheKey, res)
+        cacheUpdateTrigger.value++
+        console.log('[ReActMessageList] 立即处理完成:', {
+          hasContent: !!res?.markdown_content,
+          contentLength: res?.markdown_content?.length || 0
+        })
+      }
+    }
+  }
+}
+
+// 【修复】异步预先处理报告内容（包含ECharts截图替换），再通过计算属性读取
+// 【关键修改】使用截图管理器获取截图
+const fillReportCache = async (messages) => {
+  // 【新增】详细调试日志
+  console.log('[ReActMessageList] fillReportCache 被调用', {
+    messagesCount: messages?.length || 0,
+    isProcessingComplete: isProcessingComplete.value
+  })
+
+  // 如果正在处理中，跳过
+  if (!isProcessingComplete.value) {
+    console.log('[ReActMessageList] 正在处理中，跳过截图')
+    return
+  }
+
+  // 【关键修改】使用截图管理器获取截图
+  let cachedScreenshots = null
+  try {
+    console.log('[ReActMessageList] 使用截图管理器获取截图...')
+    const screenshotResult = await chartScreenshotManager.captureAll({
+      excludeMaps: true,
+      timeout: 15000
+    })
+    cachedScreenshots = screenshotResult.screenshots
+    console.log('[ReActMessageList] fillReportCache 获取到截图:', Object.keys(cachedScreenshots || {}).length, '张')
+  } catch (error) {
+    console.warn('[ReActMessageList] fillReportCache 获取截图失败:', error)
+  }
+
+  // 【新增】调试：检查每条消息的 expert_results
+  messages.forEach((msg, idx) => {
+    console.log(`[ReActMessageList] 消息 #${idx} 检查:`, {
+      type: msg.type,
+      hasData: !!msg.data,
+      hasExpertResults: !!msg.data?.expert_results,
+      expertTypes: msg.data?.expert_results ? Object.keys(msg.data.expert_results) : [],
+      hasReport: !!msg.data?.expert_results?.report,
+      reportHasToolResults: !!msg.data?.expert_results?.report?.tool_results,
+      toolResultsLength: msg.data?.expert_results?.report?.tool_results?.length || 0
+    })
+  })
+
+  const tasks = []
+  messages.forEach(msg => {
+    if (msg.data?.expert_results?.report) {
+      const reportExpertData = msg.data.expert_results.report
+      const cacheKey = JSON.stringify(reportExpertData?.tool_results || [])
+      if (!reportContentCache.value.has(cacheKey)) {
+        tasks.push(
+          getReportContent(reportExpertData, cachedScreenshots).then(res => {
+            // 【关键修复】更新缓存并触发响应式更新
+            reportContentCache.value.set(cacheKey, res)
+            cacheUpdateTrigger.value++ // 触发响应式更新
+            console.log('[ReActMessageList] 缓存已更新，触发视图刷新', {
+              cacheKey: cacheKey.substring(0, 50),
+              hasContent: !!res?.markdown_content,
+              contentLength: res?.markdown_content?.length || 0,
+              hasPlaceholder: res?.markdown_content?.includes?.('[ECHARTS_PLACEHOLDER:')
+            })
+          })
+        )
+      }
+    }
+  })
+  if (tasks.length) {
+    console.log('[ReActMessageList] 开始处理', tasks.length, '个报告任务')
+    await Promise.allSettled(tasks)
+    console.log('[ReActMessageList] 所有报告任务完成')
+  } else {
+    console.log('[ReActMessageList] 没有需要处理的报告任务')
+  }
+}
+
+// 监听消息变化，填充缓存（在展示前获取截图并替换占位符）
+// 【关键修复】使用防抖机制，等待所有事件完成后再截图
+watch(
+  () => props.messages,
+  async (newMessages, oldMessages) => {
+    // 【新增】检查是否有report expert数据，如果有立即处理（不等待防抖）
+    const hasReportData = newMessages.some(msg => msg.data?.expert_results?.report)
+    if (hasReportData) {
+      console.log('[ReActMessageList] 检测到report数据，触发备用处理')
+      triggerReportCacheImmediately(newMessages)
+    }
+
+    // 检查消息数量变化
+    const newLength = newMessages?.length || 0
+    const oldLength = oldMessages?.length || 0
+
+    if (newLength === 0) return
+
+    // 如果是首次加载，直接处理
+    if (oldLength === 0) {
+      console.log('[ReActMessageList] 首次加载消息')
+      isProcessingComplete.value = false
+      updatePendingEvents(newMessages)
+      return
+    }
+
+    // 检查是否有新消息添加
+    const hasNewMessages = newLength > oldLength
+
+    if (hasNewMessages) {
+      // 有新消息，标记为处理中并更新待处理事件计数
+      console.log('[ReActMessageList] 检测到新消息，延迟处理')
+      isProcessingComplete.value = false
+      clearTimeout(debounceTimer)
+      updatePendingEvents(newMessages)
+    }
+  },
+  { deep: true, immediate: true }
+)
+
+// 只读取已缓存的结果，避免在计算属性里做异步
+// 【关键修复】依赖 cacheUpdateTrigger 确保缓存更新后重新计算
+const reportContentCacheMap = computed(() => {
+  // 依赖 cacheUpdateTrigger 触发重新计算
+  const _ = cacheUpdateTrigger.value
+  
+  const cacheMap = new Map()
+  props.messages.forEach(msg => {
+    if (msg.data?.expert_results?.report) {
+      const reportExpertData = msg.data.expert_results.report
+      const cacheKey = JSON.stringify(reportExpertData?.tool_results || [])
+      if (reportContentCache.value.has(cacheKey)) {
+        const cached = reportContentCache.value.get(cacheKey)
+        cacheMap.set(reportExpertData, cached)
+        console.log('[ReActMessageList] reportContentCacheMap 读取缓存', {
+          cacheKey: cacheKey.substring(0, 50),
+          hasContent: !!cached?.markdown_content,
+          contentLength: cached?.markdown_content?.length || 0,
+          hasPlaceholder: cached?.markdown_content?.includes?.('[ECHARTS_PLACEHOLDER:')
+        })
+      }
+    }
+  })
+  return cacheMap
+})
+
+// 根据助手模式返回欢迎消息内容
+const welcomeContent = computed(() => {
+  const contentMap = {
+    'meteorology-expert': {
+      title: '气象分析场景',
+      description: '专注气象数据分析，自动生成专业图表和传输路径分析：',
+      features: [
+        '分析ERA5历史气象数据',
+        '查询气象轨迹传输路径',
+        '获取气象条件关联分析',
+        '生成专业气象图表和可视化'
+      ],
+      example: '请输入您的问题，例如："分析北京今天的气象条件"'
+    },
+    'quick-tracing-expert': {
+      title: '快速溯源场景',
+      description: '整合气象、组分、可视化多维度数据，快速识别污染来源和传输路径：',
+      features: [
+        '多专家协同分析污染来源',
+        '快速响应污染事件溯源',
+        '识别主要污染传输路径',
+        '综合评估污染影响范围'
+      ],
+      example: '请输入您的问题，例如："分析广州天河区昨天O3超标的污染来源"'
+    },
+    'data-visualization-expert': {
+      title: '数据可视化场景',
+      description: '根据数据特征智能推荐图表类型，支持灵活调整图表样式和布局：',
+      features: [
+        '智能推荐最佳图表类型',
+        '支持多种专业图表绑制',
+        '自定义图表样式和配色',
+        '一键导出高清图表'
+      ],
+      example: '请输入您的问题，例如："绑制广州11月PM2.5浓度变化趋势图"'
+    },
+    'report-generation-expert': {
+      title: '报告生成场景',
+      description: '整合文字、图表与结论，生成周报、专项报告模板：',
+      features: [
+        '模版化段落输出',
+        '自动整合分析图表',
+        '生成专业分析结论',
+        '支持多格式报告导出'
+      ],
+      example: '功能正在开发中，敬请期待...'
+    },
+    'general-agent': {
+      title: '风清气智Agent',
+      description: '专业的污染溯源分析助手，可以通过以下方式为您服务：',
+      features: [
+        '分析特定时间段的空气质量',
+        '查询污染源和扩散路径',
+        '获取气象数据关联分析',
+        '生成可视化图表和报告'
+      ],
+      example: '请输入您的问题，例如："分析广州天河站2025-11-01的O3污染情况"'
+    },
+    'knowledge-qa': {
+      title: '知识问答场景',
+      description: '基于知识库的智能问答系统，解答您的专业问题：',
+      features: [
+        '基于上传文档的智能问答',
+        '多知识库检索与引用',
+        '返回答案来源和引用',
+        '支持多轮对话和上下文'
+      ],
+      example: '请输入您的问题，例如："系统支持哪些文件格式？"'
+    }
+  }
+  return contentMap[props.assistantMode] || contentMap['general-agent']
+})
+
+// 调试：监听消息变化
+watch(() => props.messages, (newMessages) => {
+  console.log('[ReActMessageList] 消息数量变化:', newMessages.length)
+  newMessages.forEach((msg, idx) => {
+    if (msg.type === 'observation') {
+      console.log(`[ReActMessageList] 观察事件 #${idx}:`, {
+        id: msg.id,
+        hasData: !!msg.data,
+        dataKeys: msg.data ? Object.keys(msg.data) : [],
+        data: msg.data
+      })
+    }
+  })
+}, { deep: true, immediate: true })
+
+// 过滤掉系统消息，保留所有其他消息（实时显示过程消息）
+const filteredMessages = computed(() => {
+  return props.messages.filter(msg => {
+    // 过滤掉系统消息
+    if (msg.type === 'start' || msg.type === 'agent') return false
+    return true
+  })
+})
+
+// 【新增】折叠的过程消息ID集合
+const collapsedProcessIds = ref(new Set())
+
+// 【新增】检测并折叠当前final消息之前的所有过程消息
+const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
+  const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
+  if (finalIndex === -1) return
+
+  // 获取final消息之前的所有消息
+  const beforeMessages = allMessages.slice(0, finalIndex)
+
+  // 标记所有 thought/action/observation 为折叠
+  const newCollapsedIds = new Set(collapsedProcessIds.value)
+  let processCount = 0
+  for (const msg of beforeMessages) {
+    if (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation') {
+      newCollapsedIds.add(msg.id)
+      processCount++
+    }
+  }
+  collapsedProcessIds.value = newCollapsedIds
+
+  if (processCount > 0) {
+    console.log(`[ReActMessageList] 折叠了 ${processCount} 个过程消息`)
+  }
+}
+
+// 【新增】判断消息是否应该被隐藏（已被final折叠）
+const isMessageHidden = (message) => {
+  return collapsedProcessIds.value.has(message.id)
+}
+
+// 【新增】获取当前final消息之前的过程消息（用于统一折叠区域）
+// 【修复】只返回该轮对话的过程消息，不包括之前轮次的
+const getUnifiedProcessMessages = (finalMessage, allMessages) => {
+  const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
+  if (finalIndex === -1) return []
+
+  // 获取该final之前的消息
+  const beforeMessages = allMessages.slice(0, finalIndex)
+
+  // 找到上一个final的位置，只获取两轮final之间的过程消息
+  let lastFinalIndex = -1
+  for (let i = finalIndex - 1; i >= 0; i--) {
+    if (allMessages[i].type === 'final') {
+      lastFinalIndex = i
+      break
+    }
+  }
+
+  // 只获取上一轮final之后、当前final之前的过程消息
+  const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
+
+  return currentRoundMessages.filter(msg =>
+    (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation')
+  )
+}
+
+// 【修复】智能滚动控制
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  })
+}
+
+// 判断用户是否在底部（接近底部100px内）
+const isAtBottom = () => {
+  if (!messagesContainer.value) return true
+  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
+  return scrollHeight - scrollTop - clientHeight < 100
+}
+
+// 【新增】用户滚动状态追踪
+const userHasScrolled = ref(false)
+const scrollTimeout = ref(null)
+
+// 检测用户是否手动滚动
+const handleUserScroll = () => {
+  userHasScrolled.value = true
+  // 清除之前的超时
+  if (scrollTimeout.value) {
+    clearTimeout(scrollTimeout.value)
+    scrollTimeout.value = null
+  }
+  // 2秒后重置，让用户在停止滚动后可以恢复自动滚动
+  scrollTimeout.value = setTimeout(() => {
+    // 不自动重置为false，保留用户的滚动意图
+  }, 2000)
+}
+
+// 只在"首次加载"或"用户发送消息"时强制滚动到底部
+// 展开details查看详情时不强制滚动，避免界面跳动
+watch(
+  () => props.messages.length,
+  (newLength, oldLength) => {
+    // 如果是首次加载（oldLength为0），滚动到底部
+    if (oldLength === 0 && newLength > 0) {
+      scrollToBottom()
+      return
+    }
+
+    // 如果有新的消息，滚动到底部
+    if (newLength > oldLength) {
+      const lastMessage = props.messages[newLength - 1]
+      // 用户发送消息 或 用户在底部时，自动滚动到底部
+      // 这样如果用户没有主动查看历史消息，AI回复时也会自动显示
+      if (lastMessage.type === 'user' || isAtBottom()) {
+        scrollToBottom()
+      }
+    }
+  }
+)
+
+// 监听滚动事件，判断用户是否在查看历史消息
+// mounted时绑定滚动事件
+onMounted(() => {
+  if (messagesContainer.value) {
+    messagesContainer.value.addEventListener('scroll', handleUserScroll)
+  }
+})
+
+// 清理滚动事件监听
+onBeforeUnmount(() => {
+  if (messagesContainer.value) {
+    messagesContainer.value.removeEventListener('scroll', handleUserScroll)
+  }
+  if (scrollTimeout.value) {
+    clearTimeout(scrollTimeout.value)
+  }
+})
+
+// 获取数据大小（用于显示在折叠标签中）
+const getDataSize = (data) => {
+  if (!data) return '0B'
+  const jsonStr = JSON.stringify(data)
+  const bytes = new Blob([jsonStr]).size
+
+  if (bytes < 1024) {
+    return bytes + 'B'
+  } else if (bytes < 1024 * 1024) {
+    return (bytes / 1024).toFixed(1) + 'KB'
+  } else {
+    return (bytes / (1024 * 1024)).toFixed(1) + 'MB'
+  }
+}
+
+const getActionPayload = (data) => {
+  if (!data) return null
+  if (data.input !== undefined) return data.input
+  if (data.params !== undefined) return data.params
+  if (data.arguments !== undefined) return data.arguments
+  if (data.payload !== undefined) return data.payload
+  const { toolInfo, ...rest } = data
+  if (Object.keys(rest).length === 0) {
+    return toolInfo || null
+  }
+  return rest
+}
+
+const toAbsoluteUrl = (url) => {
+  if (!url) return '#'
+  // 已经是完整URL
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url
+  }
+  // 相对路径：补上当前站点 origin，确保前端可点击跳转
+  try {
+    return window.location.origin + url
+  } catch {
+    return url
+  }
+}
+
+const formatActionParams = (data) => {
+  const payload = getActionPayload(data)
+  if (payload === null || payload === undefined || payload === '') {
+    return '无输入参数'
+  }
+  if (typeof payload === 'string') {
+    return payload
+  }
+  try {
+    return JSON.stringify(payload, null, 2)
+  } catch (error) {
+    return String(payload)
+  }
+}
+
+// 获取专家标签
+const getExpertLabel = (expertType) => {
+  const labelMap = {
+    'weather': '气象分析专家',
+    'component': '组分分析专家',
+    'viz': '可视化专家',
+    'report': '报告生成专家'
+  }
+  return labelMap[expertType] || expertType
+}
+
+// 获取专家图标
+const getExpertIcon = (expertType) => {
+  const iconMap = {
+    'weather': '🌤️',
+    'component': '🧪',
+    'viz': '📊',
+    'report': '📋'
+  }
+  return iconMap[expertType] || '🔬'
+}
+
+// 已移除脱敏限制
+
+// 【新增】带缓存的获取报告内容函数（用于模板中避免重复调用）
+const getCachedReportContent = async (expertData) => {
+  const cacheKey = JSON.stringify(expertData?.tool_results || [])
+  if (reportContentCache.value.has(cacheKey)) {
+    return reportContentCache.value.get(cacheKey)
+  }
+  // 如果缓存中没有，调用原始函数
+  return await getReportContent(expertData)
+}
+
+// 【新增】从API获取图片（支持 [IMAGE:xxx] 格式）
+const fetchImageFromApi = async (imageId) => {
+  try {
+    const apiUrl = `/api/image/${imageId}`
+    console.log(`[ReActMessageList] 从API获取图片: ${apiUrl}`)
+    const response = await fetch(apiUrl)
+    if (response.ok) {
+      const data = await response.json()
+      if (data.data) {
+        // 返回完整格式的 data URL
+        return data.data.startsWith('data:') ? data.data : `data:image/png;base64,${data.data}`
+      }
+    }
+    console.warn(`[ReActMessageList] API图片获取失败: ${imageId}`)
+    return null
+  } catch (error) {
+    console.error(`[ReActMessageList] API图片获取异常: ${imageId}`, error)
+    return null
+  }
+}
+
+// 【新增】从可视化面板获取图表信息（ID和标题的映射）
+const getChartInfoMap = () => {
+  console.log('[ReActMessageList] getChartInfoMap 被调用')
+  console.log('[ReActMessageList] visualizationPanelRef 存在:', !!props.visualizationPanelRef)
+
+  if (!props.visualizationPanelRef) {
+    console.log('[ReActMessageList] visualizationPanelRef 为空，返回空对象')
+    return {}
+  }
+
+  // 获取图表引用
+  const chartRefs = props.visualizationPanelRef.getChartRefs?.() || {}
+  console.log('[ReActMessageList] chartRefs 数量:', Object.keys(chartRefs).length)
+
+  // 获取可视化数据（包含标题等信息）
+  const visualizations = props.visualizationPanelRef.visualizations || []
+  console.log('[ReActMessageList] visualizations 数量:', visualizations.length)
+
+  // 【修复】当visualizations为空时，从chartRefs的props中获取图表信息
+  if (visualizations.length === 0 && Object.keys(chartRefs).length > 0) {
+    console.log('[ReActMessageList] visualizations为空，从chartRefs构建图表信息...')
+    // 从每个chartRef的props中获取图表信息
+    Object.keys(chartRefs).forEach(chartId => {
+      const chartRef = chartRefs[chartId]
+      if (chartRef && chartRef.props) {
+        const { data } = chartRef.props
+        if (data) {
+          visualizations.push({
+            id: chartId,
+            type: data.type || '',
+            title: data.title || '',
+            meta: data.meta || {}
+          })
+        }
+      }
+    })
+    console.log('[ReActMessageList] 从chartRefs构建后visualizations数量:', visualizations.length)
+  }
+
+  // 构建 chartId -> { id, title, type, meta } 的映射
+  const chartInfoMap = {}
+
+  // 从visualizations获取标题信息
+  visualizations.forEach((viz, idx) => {
+    const vizId = viz.id || `viz_${idx}`
+    chartInfoMap[vizId] = {
+      id: vizId,
+      title: viz.title || '',
+      type: viz.type || '',
+      meta: viz.meta || {}
+    }
+  })
+
+  // 【调试】打印每个图表的chartType信息
+  console.log('[ReActMessageList] getChartInfoMap - 可用图表类型信息:')
+  Object.keys(chartInfoMap).forEach(id => {
+    console.log(`  [${id}]: type=${chartInfoMap[id].type}, meta.chartType=${chartInfoMap[id].meta?.chartType || 'undefined'}, title="${chartInfoMap[id].title}"`)
+  })
+
+  // 从chartRefs中获取更多信息并补充到chartInfoMap
+  Object.keys(chartRefs).forEach(chartId => {
+    const chartRef = chartRefs[chartId]
+    if (!chartRef) return
+
+    // 尝试从ID中解析图表类型（如 ec_oc_scatter_xxx -> ec_oc_scatter）
+    let parsedType = ''
+    if (chartId.includes('_')) {
+      const parts = chartId.split('_')
+      const possibleType = parts.slice(0, -1).join('_') // 去掉最后的时间戳部分
+      // 检查是否是已知的图表类型
+      const knownTypes = ['ternary_SNA', 'sor_nor_scatter', 'charge_balance', 'ec_oc_scatter', 'crustal_boxplot', 'ion_timeseries', 'noaa_trajectory', 'air_quality', 'particulate_stacked', 'weather_ts', 'pressure_pbl']
+      // 精确匹配已知类型
+      const exactMatch = knownTypes.find(t => t.toLowerCase() === possibleType.toLowerCase())
+      if (exactMatch) {
+        parsedType = exactMatch
+      } else if (knownTypes.some(t => possibleType.toLowerCase().includes(t.toLowerCase()))) {
+        parsedType = possibleType
+      } else if (parts.length >= 2) {
+        // 使用最后两个部分作为类型（如 ec_oc_scatter）
+        parsedType = parts.slice(-2).join('_')
+      }
+    }
+
+    console.log(`[ReActMessageList] 解析图表ID: ${chartId} -> type=${parsedType || '(空)'}`)
+
+    // 如果chartInfoMap中已有此ID，更新type和meta
+    if (chartInfoMap[chartId]) {
+      // 从ChartPanel中获取chartType
+      const chartType = chartRef.chartType || chartRef.props?.chartType || ''
+      const title = chartRef.title || chartRef.props?.title || chartInfoMap[chartId].title
+
+      // 优先使用已解析的类型，其次使用chartType
+      const finalType = parsedType || chartType || chartInfoMap[chartId].type
+      chartInfoMap[chartId].type = finalType
+      if (title) {
+        chartInfoMap[chartId].title = title
+      }
+      console.log(`[ReActMessageList] 更新 chartRefs 图表信息: ${chartId}, type=${finalType}, title="${title}"`)
+    } else {
+      // 新图表，从chartRef获取信息
+      const chartType = chartRef.chartType || chartRef.props?.chartType || ''
+      const title = chartRef.title || chartRef.props?.title || ''
+
+      chartInfoMap[chartId] = {
+        id: chartId,
+        title: title,
+        type: parsedType || chartType || '',
+        meta: {}
+      }
+      console.log(`[ReActMessageList] 新增 chartRefs 图表信息: ${chartId}, type=${parsedType || chartType}, title="${title}"`)
+    }
+  })
+
+  // 最终调试输出
+  console.log('[ReActMessageList] 最终 chartInfoMap:')
+  Object.keys(chartInfoMap).forEach(id => {
+    console.log(`  [${id}]: type=${chartInfoMap[id].type}, title="${chartInfoMap[id].title}"`)
+  })
+
+  return chartInfoMap
+}
+
+// 【新增】标题匹配函数
+const matchChartByTitle = (placeholderTitle, chartInfoMap) => {
+  if (!placeholderTitle) return null
+
+  // 清理标题（去除序号如"图1："前缀）
+  const cleanTitle = placeholderTitle.replace(/^图\d+：/, '').trim()
+
+  // 如果清理后为空，返回null
+  if (!cleanTitle) return null
+
+  const charts = Object.values(chartInfoMap)
+
+  // 优先级1：ID直接匹配（placeholderId就是chartId）
+  // 优先级2：标题完全匹配
+  const exactMatch = charts.find(chart => chart.title === cleanTitle)
+  if (exactMatch) {
+    console.log(`[ReActMessageList] 标题完全匹配: "${cleanTitle}" -> ${exactMatch.id}`)
+    return exactMatch
+  }
+
+  // 优先级3：标题模糊匹配（包含关系）
+  // 去除常见词汇后比较
+  const cleanTitleNoCommon = cleanTitle
+    .replace(/时序图$/, '')
+    .replace(/分布图$/, '')
+    .replace(/分析图$/, '')
+    .replace(/趋势图$/, '')
+    .replace(/对比图$/, '')
+    .replace(/图$/, '')
+    .trim()
+
+  const fuzzyMatch = charts.find(chart => {
+    if (!chart.title) return false
+    const chartClean = chart.title
+      .replace(/时序图$/, '')
+      .replace(/分布图$/, '')
+      .replace(/分析图$/, '')
+      .replace(/趋势图$/, '')
+      .replace(/对比图$/, '')
+      .replace(/图$/, '')
+      .trim()
+
+    // 包含关系检查
+    return chartClean.includes(cleanTitleNoCommon) ||
+           cleanTitleNoCommon.includes(chartClean)
+  })
+
+  if (fuzzyMatch) {
+    console.log(`[ReActMessageList] 标题模糊匹配: "${cleanTitle}" -> ${fuzzyMatch.id}`)
+    return fuzzyMatch
+  }
+
+  console.log(`[ReActMessageList] 标题匹配失败: "${cleanTitle}"`)
+  return null
+}
+
+// 【新增】按图表类型匹配函数（支持大小写不敏感 + ID前缀匹配）
+const matchChartByType = (chartType, chartInfoMap, idToScreenshot) => {
+  if (!chartType) return null
+
+  const charts = Object.values(chartInfoMap)
+  const lowerChartType = chartType.toLowerCase()
+
+  console.log(`[ReActMessageList] matchChartByType: "${chartType}", 可用图表数量: ${charts.length}`)
+  console.log(`[ReActMessageList] 可用图表详情:`, charts.map(c => ({ id: c.id, type: c.type, title: c.title })))
+  console.log(`[ReActMessageList] idToScreenshot IDs:`, Object.keys(idToScreenshot))
+
+  // 策略1：按图表类型匹配（大小写不敏感）
+  // 【关键修复】优先检查 meta.chartType（当type被替换为image时保留原始类型）
+  const match = charts.find(chart => {
+    // 检查viz.type
+    if (chart.type && chart.type.toLowerCase() === lowerChartType) {
+      return true
+    }
+    // 【新增】检查meta.chartType（当type为image时，原始类型保存在meta.chartType）
+    if (chart.meta?.chartType && chart.meta.chartType.toLowerCase() === lowerChartType) {
+      return true
+    }
+    return false
+  })
+  if (match) {
+    console.log(`[ReActMessageList] 图表类型匹配: "${chartType}" -> ${match.id} (原始type: ${match.type}, chartType: ${match.meta?.chartType})`)
+    return match
+  }
+
+  // 策略2：ID前缀匹配（占位符作为前缀/主体匹配图表ID）
+  // 例如: ternary_SNA -> ternary_sna_20251231001003
+  // 例如: sor_nor_scatter -> sor_nor_20251231002542 (占位符是sor_nor_scatter，ID主体是sor_nor)
+  const matchedId = Object.keys(idToScreenshot).find(id => {
+    const lowerId = id.toLowerCase()
+
+    // 策略2a: 占位符作为完整前缀
+    if (lowerId.startsWith(lowerChartType + '_')) return true
+
+    // 策略2b: 占位符在ID中间
+    if (lowerId.includes('_' + lowerChartType + '_')) return true
+
+    // 策略2c: 完全相等
+    if (lowerId === lowerChartType) return true
+
+    // 策略2d: ID以占位符开头（忽略常见后缀）
+    // 例如: sor_nor_scatter -> sor_nor_xxx (去除 _scatter 后匹配)
+    const suffixes = ['_scatter', '_timeseries', '_boxplot', '_bar', '_line', '_pie', '_map', '_image']
+    for (const suffix of suffixes) {
+      if (lowerChartType.endsWith(suffix)) {
+        const baseType = lowerChartType.slice(0, -suffix.length)
+        if (baseType && lowerId.startsWith(baseType + '_')) return true
+        if (baseType && lowerId.includes('_' + baseType + '_')) return true
+      }
+    }
+
+    return false
+  })
+
+  if (matchedId) {
+    console.log(`[ReActMessageList] ID前缀匹配: "${chartType}" -> ${matchedId}`)
+    return { id: matchedId, title: '', type: chartType }
+  }
+
+  // 策略3：关键词匹配（用于LLM生成名称与实际ID差异较大的情况）
+  // 例如: ion_timeseries -> 包含 ion 关键词的ID
+  // 例如: no_charts -> 这不是一个有效的图表类型，应该忽略
+  const lowerChartTypeLower = lowerChartType.toLowerCase()
+  // 如果占位符太短或包含 "no_" "empty" "none" 等，视为无效，跳过匹配
+  if (lowerChartTypeLower.startsWith('no_') ||
+      lowerChartTypeLower === 'n_charts' ||
+      lowerChartTypeLower === 'none' ||
+      lowerChartTypeLower === 'empty') {
+    console.log(`[ReActMessageList] 跳过无效图表类型: "${chartType}"`)
+    return null
+  }
+
+  // 提取占位符中的核心关键词进行匹配
+  const chartTypeParts = lowerChartType.split(/[_\s]+/)
+  const keyKeywords = chartTypeParts.filter(part =>
+    part.length > 2 &&
+    !['chart', 'plot', 'type', 'figure', 'img'].includes(part)
+  )
+
+  if (keyKeywords.length > 0) {
+    // 查找包含任一关键词的ID
+    const keywordMatch = Object.keys(idToScreenshot).find(id => {
+      const lowerId = id.toLowerCase()
+      return keyKeywords.some(keyword => {
+        // 关键词作为独立词匹配
+        const regex = new RegExp(`(^|_)${keyword}(_|$)`, 'i')
+        return regex.test(lowerId)
+      })
+    })
+
+    if (keywordMatch) {
+      console.log(`[ReActMessageList] 关键词匹配: "${chartType}" -> ${keywordMatch} (关键词: ${keyKeywords.join(', ')})`)
+      return { id: keywordMatch, title: '', type: chartType }
+    }
+  }
+
+  console.log(`[ReActMessageList] 图表类型匹配失败: "${chartType}"`)
+  return null
+}
+
+// 【新增】全局截图缓存（避免重复获取）
+const chartScreenshotsCache = ref({})
+const chartScreenshotsCacheTime = ref(0)
+const CHART_CACHE_DURATION = 60000 // 缓存60秒
+
+// 【新增】截图获取锁（防止并发获取同一截图）
+let screenshotFetchPromise = null
+
+// 【新增】统一的截图获取函数（使用单例模式 + 锁）
+const getOrFetchScreenshots = async () => {
+  const now = Date.now()
+
+  // 1. 检查全局缓存是否有效
+  if (chartScreenshotsCache.value && Object.keys(chartScreenshotsCache.value).length > 0) {
+    const cacheAge = now - chartScreenshotsCacheTime.value
+    if (cacheAge < CHART_CACHE_DURATION) {
+      console.log(`[ReActMessageList] 使用全局截图缓存（${cacheAge}ms前获取，${Object.keys(chartScreenshotsCache.value).length}张）`)
+      return chartScreenshotsCache.value
+    }
+    console.log(`[ReActMessageList] 全局缓存已过期（${cacheAge}ms），需要重新获取`)
+  }
+
+  // 2. 如果已有获取请求在执行，等待它完成
+  if (screenshotFetchPromise) {
+    console.log('[ReActMessageList] 等待已有截图获取请求完成...')
+    return await screenshotFetchPromise
+  }
+
+  // 3. 开始新的获取请求
+  screenshotFetchPromise = (async () => {
+    if (!props.visualizationPanelRef) {
+      screenshotFetchPromise = null
+      return {}
+    }
+
+    console.log('[ReActMessageList] 开始获取截图...')
+    const MAX_ATTEMPTS = 8
+    const DELAY_MS = 500
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      console.log(`[ReActMessageList] 第${attempt}次尝试获取截图...`)
+
+      try {
+        const allChartImages = await props.visualizationPanelRef.getAllChartImages({ excludeMaps: true })
+        console.log(`[ReActMessageList] 第${attempt}次获取到图表数量:`, Object.keys(allChartImages || {}).length)
+
+        // 过滤有效截图
+        const validScreenshots = {}
+        for (const [id, img] of Object.entries(allChartImages || {})) {
+          if (img && typeof img === 'string') {
+            const isDataUrl = img.startsWith('data:image/')
+            const isBase64 = !isDataUrl && /^[A-Za-z0-9+/=]+$/.test(img.substring(0, 100))
+            const minLength = isDataUrl ? 100 : 1000
+            if (img.length > minLength && (isDataUrl || isBase64)) {
+              validScreenshots[id] = img
+            }
+          }
+        }
+        console.log(`[ReActMessageList] 第${attempt}次有效截图数量:`, Object.keys(validScreenshots).length)
+
+        if (Object.keys(validScreenshots).length > 0) {
+          // 保存到全局缓存
+          chartScreenshotsCache.value = { ...validScreenshots }
+          chartScreenshotsCacheTime.value = now
+          console.log(`[ReActMessageList] 截图获取成功，共${Object.keys(validScreenshots).length}张`)
+          return validScreenshots
+        }
+
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_MS))
+        }
+      } catch (error) {
+        console.warn(`[ReActMessageList] 第${attempt}次获取截图失败:`, error)
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_MS))
+        }
+      }
+    }
+
+    console.warn('[ReActMessageList] 截图获取失败，返回空缓存')
+    return {}
+  })()
+
+  try {
+    const result = await screenshotFetchPromise
+    screenshotFetchPromise = null
+    return result
+  } catch (error) {
+    screenshotFetchPromise = null
+    console.error('[ReActMessageList] 截图获取异常:', error)
+    return {}
+  }
+}
+
+// 【新增】解析并替换 [INSERT_CHART:xxx] 占位符
+// 支持多种图片来源：
+// 1. [IMAGE:xxx] 格式 - 从后端API获取
+// 2. ECharts图表ID - 从前端可视化面板截图（通过fillReportCache预先获取）
+// 3. 通过标题匹配图表（支持 "图N：标题" 格式）
+// 4. 排除地图类型（地图不需要插入报告）
+const insertChartsIntoPlaceholders = async (markdown, cachedScreenshots = null) => {
+  if (!markdown || typeof markdown !== 'string') {
+    return markdown
+  }
+
+  // 检查是否有占位符
+  if (!markdown.includes('[INSERT_CHART:')) {
+    return markdown
+  }
+
+  console.log('[ReActMessageList] 开始解析 [INSERT_CHART:xxx] 占位符')
+
+  // 1. 获取所有可用图表信息
+  const chartInfoMap = getChartInfoMap()
+  console.log('[ReActMessageList] 可用图表数量:', Object.keys(chartInfoMap).length)
+  console.log('[ReActMessageList] 可用图表信息:', Object.keys(chartInfoMap).map(id => ({
+    id,
+    title: chartInfoMap[id]?.title || '',
+    type: chartInfoMap[id]?.type || ''
+  })))
+
+  // 2. 使用传入的截图缓存或全局缓存（不再尝试获取新截图）
+  let chartScreenshots = {}
+
+  if (cachedScreenshots && Object.keys(cachedScreenshots).length > 0) {
+    console.log('[ReActMessageList] 使用传入的截图缓存，共', Object.keys(cachedScreenshots).length, '张')
+    chartScreenshots = cachedScreenshots
+  } else if (chartScreenshotsCache.value && Object.keys(chartScreenshotsCache.value).length > 0) {
+    console.log('[ReActMessageList] 使用全局截图缓存，共', Object.keys(chartScreenshotsCache.value).length, '张')
+    chartScreenshots = chartScreenshotsCache.value
+  } else {
+    console.warn('[ReActMessageList] 无可用截图缓存，无法替换占位符')
+  }
+
+  console.log('[ReActMessageList] 可用截图ID:', Object.keys(chartScreenshots))
+
+  // 3. 解析占位符并进行匹配
+  // 匹配模式：[INSERT_CHART:xxx] 后面跟着 "图N：标题"
+  const placeholderPattern = /\[INSERT_CHART:([^\]]+)\](?:\s*\n*)*图(\d+)：([^\n]+)/g
+
+  let replacedCount = 0
+  let missingCount = 0
+
+  // 构建ID到截图的映射
+  const idToScreenshot = { ...chartScreenshots }
+
+  // 添加从API获取的[IMAGE:xxx]格式图片
+  const apiImagePromises = []
+  const apiImageResults = {}
+
+  for (const chartId of Object.keys(chartInfoMap)) {
+    if (chartId.startsWith('img_') && !idToScreenshot[chartId]) {
+      apiImagePromises.push(
+        fetchImageFromApi(chartId).then(imgData => {
+          if (imgData) {
+            apiImageResults[chartId] = imgData
+          }
+        })
+      )
+    }
+  }
+
+  if (apiImagePromises.length) {
+    await Promise.allSettled(apiImagePromises)
+    Object.assign(idToScreenshot, apiImageResults)
+  }
+
+  // 4. 替换占位符
+  let content = markdown.replace(placeholderPattern, (match, placeholderId, figureNum, title) => {
+    console.log(`[ReActMessageList] 解析占位符: placeholderId=${placeholderId}, figureNum=${figureNum}, title="${title}"`)
+
+    let matchedChartId = null
+    let matchedScreenshot = null
+
+    // 优先级1：ID直接匹配（placeholderId就是chartId）
+    const directMatch = idToScreenshot[placeholderId]
+    if (directMatch) {
+      // 检查是否是ScreenshotCache对象
+      const imgData = (directMatch.dataURL || directMatch)
+      if (typeof imgData === 'string' && imgData.length > 1000) {
+        matchedChartId = placeholderId
+        matchedScreenshot = directMatch
+        console.log(`[ReActMessageList] ID直接匹配成功: ${placeholderId}`)
+      }
+    }
+    // 优先级2：图表类型匹配（placeholderId是图表类型，如crustal_boxplot）
+    if (!matchedChartId) {
+      const matchedChart = matchChartByType(placeholderId, chartInfoMap, idToScreenshot)
+      if (matchedChart) {
+        const screenshot = idToScreenshot[matchedChart.id]
+        const imgData = (screenshot?.dataURL || screenshot)
+        if (screenshot && typeof imgData === 'string' && imgData.length > 1000) {
+          matchedChartId = matchedChart.id
+          matchedScreenshot = screenshot
+          console.log(`[ReActMessageList] 图表类型匹配成功: "${placeholderId}" -> ${matchedChart.id}`)
+        }
+      }
+      // 优先级3：标题匹配（备用）
+      if (!matchedChartId) {
+        const matchedChartByTitleResult = matchChartByTitle(title, chartInfoMap)
+        if (matchedChartByTitleResult) {
+          const screenshot = idToScreenshot[matchedChartByTitleResult.id]
+          const imgData = (screenshot?.dataURL || screenshot)
+          if (screenshot && typeof imgData === 'string' && imgData.length > 1000) {
+            matchedChartId = matchedChartByTitleResult.id
+            matchedScreenshot = screenshot
+            console.log(`[ReActMessageList] 标题匹配成功: "${title}" -> ${matchedChartByTitleResult.id}`)
+          }
+        }
+      }
+    }
+
+    if (matchedScreenshot) {
+      replacedCount++
+      const imgData = (matchedScreenshot.dataURL || matchedScreenshot)
+      const formattedData = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`
+      // 使用 Markdown 图片语法，避免 HTML 转义问题
+      // 添加 %EMBED% 标记，让 MarkdownRenderer 识别并进行特殊渲染
+      return `%EMBED%![${title}](${formattedData})%EMBED%`
+    } else {
+      missingCount++
+      console.warn(`[ReActMessageList] ⚠️ 占位符 ${placeholderId}（标题："${title}"）未找到对应截图`)
+      // 返回占位符文本，保留原始格式
+      return `[INSERT_CHART:${placeholderId}]\n图${figureNum}：${title}`
+    }
+  })
+
+  // 处理剩余的 [INSERT_CHART:xxx]（没有标题的）
+  content = content.replace(/\[INSERT_CHART:([^\]]+)\]/g, (match, chartId) => {
+    // 优先级1：ID直接匹配
+    const directScreenshot = idToScreenshot[chartId]
+    if (directScreenshot) {
+      // 检查是否是ScreenshotCache对象
+      const imgData = (directScreenshot.dataURL || directScreenshot)
+      if (typeof imgData === 'string' && imgData.length > 1000) {
+        replacedCount++
+        const formattedData = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`
+        console.log(`[ReActMessageList] ID直接匹配替换: "${chartId}"`)
+        return `%EMBED%![${chartId}](${formattedData})%EMBED%`
+      }
+    }
+    // 优先级2：图表类型匹配
+    else {
+      const matchedChart = matchChartByType(chartId, chartInfoMap, idToScreenshot)
+      if (matchedChart) {
+        const matchedScreenshot = idToScreenshot[matchedChart.id]
+        // 检查是否找到截图且是有效的字符串
+        const imgData = (matchedScreenshot?.dataURL || matchedScreenshot)
+        if (matchedScreenshot && typeof imgData === 'string' && imgData.length > 1000) {
+          replacedCount++
+          const formattedData = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`
+          console.log(`[ReActMessageList] 图表类型匹配替换: "${chartId}" -> ${matchedChart.id}`)
+          return `%EMBED%![${matchedChart.title || chartId}](${formattedData})%EMBED%`
+        }
+      }
+    }
+
+    if (chartId.startsWith('img_')) {
+      // 尝试从API获取
+      return match // 保留占位符，下次处理
+    } else {
+      missingCount++
+      console.warn(`[ReActMessageList] ⚠️ [INSERT_CHART:${chartId}] 未找到对应截图`)
+      return match
+    }
+  })
+
+  console.log(`[ReActMessageList] 替换完成: 成功 ${replacedCount}, 缺失 ${missingCount}`)
+  return content
+}
+
+// 【修复】使用缓存的截图替换占位符（不再调用getAllChartImages，确保只截图一次）
+// 尝试多次收集图表截图并替换占位符（用于主对话区报告显示）
+const replaceEchartsPlaceholders = async (markdown, cacheKey, cachedScreenshots = null) => {
+  if (!markdown || !markdown.includes('[ECHARTS_PLACEHOLDER:')) {
+    console.log('[ReActMessageList] 跳过占位符替换：无占位符', {
+      hasPlaceholder: markdown?.includes?.('[ECHARTS_PLACEHOLDER:')
+    })
+    return markdown
+  }
+
+  // 使用传入的缓存截图或全局缓存
+  let validImages = {}
+
+  if (cachedScreenshots && Object.keys(cachedScreenshots).length > 0) {
+    console.log('[ReActMessageList] 使用传入的截图缓存替换ECHARTS占位符，共', Object.keys(cachedScreenshots).length, '张')
+    validImages = { ...cachedScreenshots }
+  } else if (chartScreenshotsCache.value && Object.keys(chartScreenshotsCache.value).length > 0) {
+    console.log('[ReActMessageList] 使用全局截图缓存替换ECHARTS占位符，共', Object.keys(chartScreenshotsCache.value).length, '张')
+    validImages = { ...chartScreenshotsCache.value }
+  } else {
+    console.warn('[ReActMessageList] 无可用截图缓存，无法替换ECHARTS占位符')
+    return markdown
+  }
+
+  console.log('[ReActMessageList] 有效截图数量:', Object.keys(validImages).length)
+  console.log('[ReActMessageList] 有效截图ID:', Object.keys(validImages))
+
+  let replacedCount = 0
+  const missingIds = new Set()
+
+  let content = markdown.replace(/\[ECHARTS_PLACEHOLDER:([^\]]+)\]/g, (match, chartId) => {
+    if (validImages && validImages[chartId]) {
+      replacedCount++
+      let imageData = validImages[chartId]
+
+      // 检查是否是ScreenshotCache对象
+      const imgData = (imageData.dataURL || imageData)
+
+      // 检查返回的数据格式
+      if (typeof imgData === 'string') {
+        if (imgData.startsWith('data:image/')) {
+          console.log(`[ReActMessageList] ✓ 替换占位符 ${chartId} 为截图（完整格式，长度: ${imgData.length}）`)
+          return `![图表 ${chartId}](${imgData})`
+        } else {
+          console.log(`[ReActMessageList] ✓ 替换占位符 ${chartId} 为截图（纯base64，长度: ${imgData.length}）`)
+          return `![图表 ${chartId}](data:image/png;base64,${imgData})`
+        }
+      } else {
+        console.warn(`[ReActMessageList] ⚠️ 图表 ${chartId} 的截图格式异常:`, typeof imgData)
+        missingIds.add(chartId)
+        return match
+      }
+    } else {
+      missingIds.add(chartId)
+      console.warn(`[ReActMessageList] ⚠️ 占位符 ${chartId} 没有找到有效截图`)
+      return match
+    }
+  })
+
+  console.log('[ReActMessageList] ECHARTS占位符替换完成，成功数量:', replacedCount, '缺失ID:', Array.from(missingIds))
+  console.log('[ReActMessageList] 替换后剩余占位符:', (content.match(/\[ECHARTS_PLACEHOLDER:/g) || []).length)
+
+  return content
+}
+
+// 获取报告完整内容
+const getReportContent = async (expertData, cachedScreenshots = null) => {
+  console.log('getReportContent expertData:', expertData)
+
+  // 【新增】使用缓存，避免重复处理
+  const cacheKey = JSON.stringify(expertData?.tool_results || [])
+  if (reportContentCache.value.has(cacheKey)) {
+    console.log('[ReActMessageList] 使用缓存的报告内容')
+    const cached = reportContentCache.value.get(cacheKey)
+    console.log('[ReActMessageList] 缓存内容是否仍含占位符:', cached?.markdown_content?.includes?.('[ECHARTS_PLACEHOLDER:'))
+    console.log('[ReActMessageList] 缓存内容长度:', cached?.markdown_content?.length || 0)
+    return reportContentCache.value.get(cacheKey)
+  }
+
+  if (!expertData?.tool_results?.length) {
+    console.log('No tool_results')
+    return null
+  }
+  const reportResult = expertData.tool_results.find(t => t.tool === 'report_generation')
+  console.log('reportResult:', reportResult)
+  if (!reportResult?.result) {
+    console.log('No result in reportResult')
+    return null
+  }
+
+  const result = reportResult.result
+
+  // 【修复】处理Markdown格式的报告内容 - 合并所有sections
+  if (result.sections && result.sections.length > 0) {
+    // 检查是否为Markdown格式（通过检查第一个section）
+    const firstSection = result.sections[0]
+    if (firstSection.markdown_content) {
+      // 【关键修复】合并所有sections的markdown_content，而不是只取第一个
+      let allMarkdownContent = result.sections
+        .filter(section => section.markdown_content)
+        .map(section => section.markdown_content)
+        .join('\n\n')
+
+      console.log('Markdown格式报告（合并所有sections）:', allMarkdownContent.substring(0, 500) + '...')
+      console.log('总sections数量:', result.sections.length)
+      console.log('合并后内容长度:', allMarkdownContent.length)
+
+      // 【修复】后端已经返回了base64图片，不需要再收集截图
+      // 如果存在ECharts占位符（仅当后端未返回图片时），才尝试收集截图
+      console.log('[ReActMessageList] 检查占位符...')
+      console.log('[ReActMessageList] 包含ECHARTS占位符:', allMarkdownContent.includes('[ECHARTS_PLACEHOLDER:'))
+      console.log('[ReActMessageList] 包含INSERT_CHART占位符:', allMarkdownContent.includes('[INSERT_CHART:'))
+      console.log('[ReActMessageList] 包含base64:', allMarkdownContent.includes('data:image/png;base64,'))
+      console.log('[ReActMessageList] 有visualizationPanelRef:', !!props.visualizationPanelRef)
+
+      // 【新增】处理 [INSERT_CHART:xxx] 占位符（支持延迟插入）
+      if (allMarkdownContent.includes('[INSERT_CHART:')) {
+        console.log('[ReActMessageList] 检测到 [INSERT_CHART:xxx] 占位符，触发图表插入...')
+        console.log('[ReActMessageList] 原始报告内容长度:', allMarkdownContent.length)
+        console.log('[ReActMessageList] visualizationPanelRef 存在:', !!props.visualizationPanelRef)
+        console.log('[ReActMessageList] 可视化面板图表数量:', props.visualizationPanelRef?.visualizations?.length || 0)
+
+        // 【调试】打印所有占位符
+        const placeholderMatches = allMarkdownContent.match(/\[INSERT_CHART:[^\]]+\]/g)
+        console.log('[ReActMessageList] 占位符列表:', placeholderMatches)
+
+        allMarkdownContent = await insertChartsIntoPlaceholders(allMarkdownContent, cachedScreenshots)
+        console.log('[ReActMessageList] 图表插入后报告内容长度:', allMarkdownContent.length)
+        console.log('[ReActMessageList] 插入后是否包含[INSERT_CHART:', allMarkdownContent.includes('[INSERT_CHART:'))
+        console.log('[ReActMessageList] 插入后是否包含%EMBED%:', allMarkdownContent.includes('%EMBED%'))
+      }
+
+      // 如果存在ECharts占位符（仅当后端未返回图片时），才尝试收集截图
+      if (allMarkdownContent.includes('[ECHARTS_PLACEHOLDER:')) {
+        console.log('[ReActMessageList] 检测到 [ECHARTS_PLACEHOLDER:] 占位符，使用缓存截图替换')
+        allMarkdownContent = await replaceEchartsPlaceholders(allMarkdownContent, cacheKey, cachedScreenshots)
+      } else if (allMarkdownContent.includes('data:image/png;base64,')) {
+        console.log('[ReActMessageList] 检测到base64图片，后端已返回图片数据，无需额外处理')
+      } else {
+        console.log('[ReActMessageList] 无占位符也无base64图片')
+      }
+
+      const result1 = { markdown_content: allMarkdownContent }
+      reportContentCache.value.set(cacheKey, result1)
+      // 【关键修复】触发响应式更新，确保视图刷新
+      cacheUpdateTrigger.value++
+      console.log('[ReActMessageList] getReportContent 更新缓存并触发刷新', {
+        cacheKey: cacheKey.substring(0, 50),
+        contentLength: allMarkdownContent.length,
+        hasPlaceholder: allMarkdownContent.includes('[ECHARTS_PLACEHOLDER:')
+      })
+      return result1
+    } else if (typeof firstSection === 'object' && !firstSection.markdown_content) {
+      // JSON格式的sections（兼容旧格式）- 也需要合并所有sections
+      console.log('JSON格式sections数量:', result.sections.length)
+      // 返回所有sections的合并对象
+      const mergedSections = {}
+      result.sections.forEach((section, index) => {
+        Object.keys(section).forEach(key => {
+          mergedSections[`${index}_${key}`] = section[key]
+        })
+      })
+      reportContentCache.value.set(cacheKey, mergedSections)
+      cacheUpdateTrigger.value++ // 触发响应式更新
+      return mergedSections
+    }
+  } else if (result.summary || result.title) {
+    // 如果只有summary或title，构建简单的markdown内容
+    const markdownContent = `# ${result.title || '污染溯源分析报告'}\n\n${result.summary || ''}`
+    console.log('构建的Markdown内容:', markdownContent)
+    const result2 = { markdown_content: markdownContent }
+    reportContentCache.value.set(cacheKey, result2)
+    cacheUpdateTrigger.value++ // 触发响应式更新
+    return result2
+  }
+
+  console.log('无法解析报告内容，result:', result)
+  const result3 = null
+  reportContentCache.value.set(cacheKey, result3)
+  cacheUpdateTrigger.value++ // 触发响应式更新
+  return result3
+}
+
+// 格式化section标题
+const formatSectionTitle = (key) => {
+  const titleMap = {
+    '1_overall_assessment': '总体评估',
+    '2_meteorological_analysis': '气象分析',
+    '3_chemical_diagnostics': '化学诊断',
+    '4_upwind_enterprises': '上风向企业',
+    '5_control_recommendations': '控制建议',
+    '6_risk_assessment': '风险评估',
+    'executive_summary': '执行摘要',
+    'report_metadata': '报告元数据'
+  }
+  return titleMap[key] || key
+}
+</script>
+
+<style lang="scss" scoped>
+.react-message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #d0d0d0;
+    border-radius: 3px;
+  }
+}
+
+.welcome-message {
+  text-align: center;
+  padding: 40px 20px;
+  color: #666;
+
+  h2 {
+    color: #1976D2;
+    margin-bottom: 20px;
+  }
+
+  ul {
+    text-align: left;
+    max-width: 500px;
+    margin: 20px auto;
+    line-height: 1.8;
+  }
+
+  .hint {
+    margin-top: 30px;
+    font-style: italic;
+    color: #999;
+  }
+}
+
+.message {
+  animation: fadeIn 0.3s;
+}
+
+.message-wrapper {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+
+  // 知识问答模式：有来源的消息可点击
+  &.clickable {
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.2s;
+
+    &:hover {
+      background: #f8fbff;
+    }
+
+    // 来源提示样式
+    .qa-sources {
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    &:hover .qa-sources {
+      opacity: 1;
+    }
+  }
+
+  &.has-sources {
+    .qa-sources {
+      cursor: pointer;
+    }
+  }
+}
+
+.message-wrapper + .message-wrapper {
+  margin-top: 0;
+}
+
+.user-message {
+  padding: 10px 16px;
+  background: #f5f5f5;
+  border-radius: 18px;
+  border: 1px solid #e0e0e0;
+  margin-left: auto;
+  margin-right: 0;
+  align-self: flex-end;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.6;
+  display: inline-flex;
+  justify-content: flex-start;
+  width: auto;
+  max-width: 70%;
+  box-sizing: border-box;
+
+  .message-content {
+    text-align: left;
+  }
+
+  .reflexion-badge {
+    margin-top: 8px;
+    padding: 4px 8px;
+    background: rgba(255, 152, 0, 0.1);
+    border: 1px solid #FF9800;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #F57C00;
+
+    .badge-icon {
+      font-size: 14px;
+    }
+
+    .badge-text {
+      font-weight: 500;
+    }
+  }
+}
+
+.agent-message.final {
+  padding: 10px 16px;
+  background: transparent;
+  border-radius: 8px;
+  margin-left: 0;
+  margin-right: 0;
+  border-left: none;
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.6;
+
+  .expert-system-info {
+    margin-top: 12px;
+    padding: 12px;
+    background: rgba(66, 165, 245, 0.08);
+    border: 1px solid rgba(66, 165, 245, 0.3);
+    border-radius: 8px;
+
+    .expert-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: rgba(66, 165, 245, 0.15);
+      border-radius: 4px;
+      margin-bottom: 8px;
+
+      .badge-icon {
+        font-size: 16px;
+      }
+
+      .badge-text {
+        font-size: 12px;
+        font-weight: 500;
+        color: #1976D2;
+      }
+    }
+
+    .expert-list {
+      margin: 8px 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+
+      .expert-label {
+        font-size: 12px;
+        color: #666;
+        font-weight: 500;
+      }
+
+      .expert-tag {
+        padding: 2px 8px;
+        background: rgba(76, 175, 80, 0.1);
+        border: 1px solid rgba(76, 175, 80, 0.3);
+        border-radius: 12px;
+        font-size: 12px;
+        color: #2E7D32;
+        white-space: nowrap;
+      }
+    }
+
+    .conclusions, .recommendations {
+      margin-top: 8px;
+
+      h4 {
+        font-size: 13px;
+        margin: 0 0 6px 0;
+        color: #333;
+        font-weight: 600;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 20px;
+
+        li {
+          font-size: 12px;
+          line-height: 1.6;
+          color: #555;
+          margin-bottom: 4px;
+        }
+      }
+    }
+
+    .expert-summaries {
+      margin-top: 12px;
+
+      h4 {
+        font-size: 13px;
+        margin: 0 0 8px 0;
+        color: #333;
+        font-weight: 600;
+      }
+
+      .expert-summary-item {
+        margin-bottom: 10px;
+        padding: 8px;
+        background: rgba(255, 255, 255, 0.5);
+        border: 1px solid rgba(66, 165, 245, 0.2);
+        border-radius: 6px;
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+
+        .expert-summary-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+          padding-bottom: 6px;
+          border-bottom: 1px solid rgba(66, 165, 245, 0.2);
+
+          .expert-summary-icon {
+            font-size: 16px;
+          }
+
+          .expert-summary-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #1976D2;
+            flex: 1;
+          }
+
+          .expert-confidence {
+            font-size: 11px;
+            color: #2E7D32;
+            font-weight: 500;
+          }
+        }
+
+        .expert-summary-content {
+          .markdown-summary {
+            margin-bottom: 8px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 4px;
+            border-left: 2px solid #1976D2;
+
+            // 继承MarkdownRenderer的样式，但调整字体大小
+            :deep(h1) {
+              font-size: 14px;
+              font-weight: 600;
+              color: #1976D2;
+              margin: 0 0 8px 0;
+            }
+
+            :deep(h2) {
+              font-size: 13px;
+              font-weight: 600;
+              color: #1976D2;
+              margin: 10px 0 6px 0;
+            }
+
+            :deep(h3) {
+              font-size: 12px;
+              font-weight: 600;
+              color: #333;
+              margin: 8px 0 4px 0;
+            }
+
+            :deep(p) {
+              font-size: 11px;
+              line-height: 1.5;
+              color: #444;
+              margin: 4px 0;
+            }
+
+            :deep(ul), :deep(ol) {
+              margin: 4px 0;
+              padding-left: 16px;
+
+              li {
+                font-size: 11px;
+                line-height: 1.5;
+                color: #444;
+                margin-bottom: 2px;
+              }
+            }
+
+            :deep(table) {
+              font-size: 10px;
+
+              th, td {
+                padding: 4px 6px;
+              }
+            }
+
+            :deep(strong) {
+              font-weight: 600;
+              color: #333;
+            }
+          }
+
+          .expert-summary-text {
+            font-size: 12px;
+            line-height: 1.6;
+            color: #555;
+            margin: 0 0 6px 0;
+          }
+
+          .expert-key-findings {
+            background: rgba(66, 165, 245, 0.05);
+            border-radius: 4px;
+            padding: 6px 8px;
+            border-left: 2px solid #1976D2;
+
+            .findings-label {
+              display: inline-block;
+              font-size: 11px;
+              font-weight: 600;
+              color: #1976D2;
+              margin-bottom: 4px;
+            }
+
+            .findings-list {
+              margin: 0;
+              padding-left: 16px;
+
+              li {
+                font-size: 11px;
+                line-height: 1.5;
+                color: #666;
+                margin-bottom: 2px;
+
+                &:last-child {
+                  margin-bottom: 0;
+                }
+              }
+            }
+          }
+
+          .report-full-content {
+            .markdown-report {
+              margin-bottom: 12px;
+              padding: 10px;
+              background: rgba(255, 255, 255, 0.8);
+              border-radius: 6px;
+              border-left: 3px solid #1976D2;
+
+              // Markdown内容样式
+              :deep(h1) {
+                font-size: 16px;
+                font-weight: 600;
+                color: #1976D2;
+                margin: 0 0 12px 0;
+                padding-bottom: 6px;
+                border-bottom: 2px solid #1976D2;
+              }
+
+              :deep(h2) {
+                font-size: 14px;
+                font-weight: 600;
+                color: #1976D2;
+                margin: 16px 0 8px 0;
+              }
+
+              :deep(h3) {
+                font-size: 13px;
+                font-weight: 600;
+                color: #333;
+                margin: 12px 0 6px 0;
+              }
+
+              :deep(p) {
+                font-size: 12px;
+                line-height: 1.6;
+                color: #444;
+                margin: 6px 0;
+              }
+
+              :deep(ul), :deep(ol) {
+                margin: 8px 0;
+                padding-left: 20px;
+
+                li {
+                  font-size: 12px;
+                  line-height: 1.6;
+                  color: #444;
+                  margin-bottom: 4px;
+                }
+              }
+
+              :deep(table) {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 8px 0;
+
+                th, td {
+                  font-size: 11px;
+                  padding: 6px 8px;
+                  border: 1px solid #ddd;
+                  text-align: left;
+                }
+
+                th {
+                  background-color: #f5f5f5;
+                  font-weight: 600;
+                  color: #1976D2;
+                }
+              }
+
+              :deep(strong) {
+                font-weight: 600;
+                color: #333;
+              }
+
+              :deep(em) {
+                font-style: italic;
+                color: #666;
+              }
+            }
+
+            .report-section {
+              margin-bottom: 12px;
+              padding: 10px;
+              background: rgba(255, 255, 255, 0.8);
+              border-radius: 6px;
+              border-left: 3px solid #1976D2;
+
+              .section-title {
+                font-size: 13px;
+                font-weight: 600;
+                color: #1976D2;
+                margin: 0 0 8px 0;
+              }
+
+              .section-content {
+                font-size: 12px;
+                line-height: 1.6;
+                color: #444;
+
+                ul {
+                  margin: 4px 0;
+                  padding-left: 20px;
+                  li {
+                    margin-bottom: 4px;
+                  }
+                }
+
+                .subsection {
+                  margin-bottom: 6px;
+                  .subsection-key {
+                    font-weight: 500;
+                    color: #666;
+                    margin-right: 6px;
+                  }
+                  .subsection-value {
+                    color: #333;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+.react-event {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  background: transparent;
+  border-radius: 6px;
+  border-left: 3px solid #ddd;
+  margin-left: 0;
+  margin-right: 0;
+  max-width: 100%;
+  font-size: 14px;
+
+  &.event-start {
+    border-left-color: #1976D2;
+    background: transparent;
+  }
+
+  &.event-thought {
+    border-left-color: #9C27B0;
+    background: transparent;
+  }
+
+  &.event-action {
+    border-left-color: #FF9800;
+    background: transparent;
+  }
+
+  &.event-observation {
+    border-left-color: #4CAF50;
+    background: transparent;
+  }
+
+  &.event-error {
+    border-left-color: #F44336;
+    background: transparent;
+  }
+}
+
+.event-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+
+  .event-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .event-text {
+    flex: 1;
+    line-height: 1.6;
+    color: #333;
+
+    .action-main {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .observation-main {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .thought-context,
+    .action-params,
+    .observation-details {
+      margin-top: 8px;
+
+      details {
+        summary {
+          cursor: pointer;
+          color: #666;
+          font-size: 12px;
+          user-select: none;
+          padding: 4px 8px;
+          background: transparent;
+          border-radius: 4px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+
+          &:before {
+            content: '▶';
+            font-size: 10px;
+            transition: transform 0.2s;
+          }
+
+          &:hover {
+            color: #1976D2;
+          }
+        }
+
+        details[open] summary:before {
+          transform: rotate(90deg);
+        }
+
+        .observation-content-wrapper,
+        .thought-context-content-wrapper,
+        .params-content-wrapper {
+          // 固定高度 + 滚动条，宽度自适应容器，避免爆屏
+          width: 100%;
+          max-height: 260px;
+          overflow-y: auto;
+          overflow-x: auto;
+          margin-top: 4px;
+          padding: 8px 10px;
+          background: #fafafa;
+          border: 1px solid #e0e0e0;
+          border-radius: 4px;
+          box-sizing: border-box;
+
+          // 自定义滚动条样式
+          &::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+          }
+
+          &::-webkit-scrollbar-track {
+            background: #f5f5f5;
+            border-radius: 4px;
+          }
+
+          &::-webkit-scrollbar-thumb {
+            background: #c0c0c0;
+            border-radius: 4px;
+
+            &:hover {
+              background: #a0a0a0;
+            }
+          }
+
+          pre {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            font-size: 11px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+          }
+        }
+      }
+    }
+  }
+
+  &.error {
+    .event-text {
+      color: #C62828;
+    }
+  }
+}
+
+// 【新增】内联图表样式 - 使用float实现文字环绕
+.inline-chart-wrapper {
+  float: right;
+  margin: 4px 0 8px 12px;
+  clear: right;
+
+  .inline-chart-img {
+    max-width: 280px;
+    max-height: 200px;
+    width: auto;
+    height: auto;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    border: 1px solid #e0e0e0;
+    display: block;
+  }
+}
+
+// 清除markdown段落中的浮动
+.markdown-report {
+  overflow: hidden;
+}
+
+// 针对图片后面的段落恢复正常的文档流
+.markdown-report p {
+  overflow: hidden;
+  clear: both;
+}
+
+// 处理过程折叠区域样式
+.process-collapse {
+  margin-top: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  overflow: hidden;
+
+  summary {
+    padding: 8px 12px;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 14px;
+    text-align: center;
+    display: block;
+    user-select: none;
+
+    &:hover {
+      background: #eeeeee;
+    }
+  }
+
+  .process-content {
+    padding: 8px 12px;
+    background: #fafafa;
+    max-height: 400px;
+    overflow-y: auto;
+
+    .process-item {
+      padding: 6px 0;
+      border-bottom: 1px solid #f0f0f0;
+
+      &:last-child {
+        border-bottom: none;
+      }
+    }
+
+    .process-thought,
+    .process-action,
+    .process-observation {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+
+      .process-icon {
+        font-size: 14px;
+        flex-shrink: 0;
+      }
+
+      .process-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: #666;
+        white-space: nowrap;
+        min-width: 60px;
+      }
+
+      .process-text {
+        font-size: 12px;
+        color: #333;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+    }
+
+    .process-thought .process-label {
+      color: #9C27B0;
+    }
+
+    .process-action .process-label {
+      color: #1976D2;
+    }
+
+    .process-observation .process-label {
+      color: #388E3C;
+    }
+  }
+}
+</style>
