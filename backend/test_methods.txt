@@ -1,0 +1,45 @@
+Testing Word COM API Replacement Methods
+================================================================================
+
+================================================================================
+Method 1: find.Execute(Replace=2)
+================================================================================
+Original: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count: 2
+Execute result: True (type: bool)
+After Execute: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count after: 2
+
+================================================================================
+Method 2: find.Execute(ReplaceWith='', Replace=2)
+================================================================================
+Original: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count: 2
+Execute result: True (type: bool)
+After Execute: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count after: 2
+
+================================================================================
+Method 3: find.Replacement.Text = ''
+================================================================================
+Original: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count: 2
+Execute result: True (type: bool)
+After Execute: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count after: 2
+
+================================================================================
+Method 4: Using explicit wdReplaceAll constant
+================================================================================
+Original: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count: 2
+Execute result: True (type: bool)
+After Execute: Test 41微克/立方米 ABC 41微克/立方米 XYZ
+Count after: 2
+
+================================================================================
+Summary:
+  method1: True
+  method2: True
+  method3: True
+  method4: True

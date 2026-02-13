@@ -1,0 +1,80 @@
+## 可用工具概览
+
+**查询工具** (Query Tools):
+  • get_air_quality: 空气质量数据（全国城市，只作为备用，广东省和济宁市的空气质量查询优先调用下述工具）（自然语言查询）
+    └─ 参数: question="查询山东省2025-01-15至2025-01-16的小时空气质量数据"
+  • get_current_weather: 获取指定位置的当前实时天气状况，包含温度、湿度、风速、降水、气压等实时气象要素
+  • get_weather_situation_map: 获取中央气象台天气形势图并进行AI解读
+  • get_weather_data: 查询历史气象数据（ERA5再分析数据或地面观测站数据）
+    └─ ⚠️ 必须先查看详细参数说明
+  • get_universal_meteorology: 获取任意环境空气监测站点的完整气象数据
+  • search_knowledge_base: 检索项目知识库文档
+    └─ 参数: query="臭氧污染来源分析"
+  • get_weather_forecast: 获取指定位置的天气预报（未来7-16天），包含温度、降水、风速、边界层高度等气象要素
+  • get_guangdong_regular_stations: 广东省区域空气质量数据（自然语言查询）
+    └─ 参数: question="查询广东省各城市2025年1月的日度PM2.5浓度数据"
+  • get_jining_regular_stations: 济宁市区域空气质量数据（自然语言查询）
+    └─ 参数: question="查询济宁市各区县2025年1月的日度PM2.5浓度数据"
+  • get_satellite_data: 获取卫星遥感数据 (Sentinel-5P TROPOMI, MODIS)
+  • get_fire_hotspots: 查询指定区域和时间范围内的火点数据，用于识别生物质燃烧污染源
+  • get_dust_data: 查询指定区域和时间范围内的沙尘气溶胶预报数据，用于判断空气污染是否受沙尘传输影响
+  • get_vocs_data: VOCs组分数据（广东省的VOCs组分站点级数据）（自然语言查询）
+    └─ 参数: question="查询广州2025-01-15至2025-01-16的日度VOCs组分数据"
+  • get_pm25_ionic: 【结构化查询工具-优先使用】查询PM2.5水溶性离子组分数据，包括：F⁻、Cl⁻、NO₂⁻、NO₃⁻、SO₄²⁻、PO₄³⁻、Li⁺、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、Al³⁺等
+    └─ ⚠️ 必须先查看详细参数说明
+  • get_pm25_carbon: 【结构化查询工具-优先使用】查询PM2.5碳组分数据 - 有机碳(OC)和元素碳(EC)
+    └─ ⚠️ 必须先查看详细参数说明
+  • get_pm25_crustal: 【结构化查询工具-优先使用】查询PM2.5地壳元素数据 - 铝、硅、钙、铁、钛、钾等
+    └─ ⚠️ 必须先查看详细参数说明
+  • get_nearby_stations: 查询指定监测站附近的站点信息（广东省）
+  • word_processor: 读取和编辑 Word 文档（仅 Windows）
+    └─ ⚠️ 必须先查看详细参数说明
+  • excel_processor: 读取和编辑 Excel 工作簿（仅 Windows）
+    └─ ⚠️ 必须先查看详细参数说明
+  • ppt_processor: 读取和编辑 PowerPoint 演示文稿（仅 Windows）
+    └─ ⚠️ 必须先查看详细参数说明
+
+**分析工具** (Analysis Tools):
+  • download_gfs_data: 下载NOAA GFS全球预报数据
+  • process_gfs_data: 预处理GFS气象数据
+  • analyze_upwind_enterprises: 分析指定站点上风向可能的污染源企业（仅适用于广东省）
+    └─ ⚠️ 必须先查看详细参数说明 | 前置: 需先调用 get_weather_data 获取气象数据（包含风向风速信息），传入weather_data_id参数
+  • calculate_pm_pmf: 执行 PM2.5/PM10 颗粒物源解析（NIMFA无监督PMF方法）
+    └─ ⚠️ 必须先查看详细参数说明 | 前置: 需先调用结构化查询工具：get_pm25_ionic（水溶性离子小时粒度数据）和 get_pm25_carbon（碳组分OC/EC小时粒度数据），分别作为data_id和gas_data_id参数
+  • calculate_vocs_pmf: 执行 VOCs 挥发性有机物源解析（NIMFA无监督PMF方法），用于臭氧溯源分析
+    └─ ⚠️ 必须先查看详细参数说明 | 前置: 需先调用 get_vocs_data 获取小时粒度的 VOCs 数据（必须包含关键臭氧前体物：乙烯、丙烯、苯、甲苯等）
+  • calculate_obm_full_chemistry: 
+    └─ ⚠️ 必须先查看详细参数说明 | 前置: 需先分别调用 get_vocs_data（VOCs小时粒度数据）、get_air_quality（获取NOx和O3小时粒度数据），分别传入vocs_data_id、nox_data_id、o3_data_id参数
+  • meteorological_trajectory_analysis: NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
+    └─ 前置: 独立工具，直接输入经纬度和时间参数即可，无需预先获取数据（内部调用NOAA HYSPLIT API）
+  • analyze_trajectory_sources: 轨迹+源清单分析工具 - 基于HYSPLIT轨迹的科学溯源
+    └─ 前置: 独立工具，直接输入经纬度和分析参数即可（内部自动调用HYSPLIT轨迹计算和企业源清单API）
+  • calculate_iaqi: IAQI分指数计算
+    └─ 前置: 需先调用 get_air_quality 获取污染物浓度数据（包含PM2.5、PM10、SO2、NO2、CO、O3等），传入pollutant_data参数
+  • calculate_reconstruction: 执行PM2.5七大组分重构分析，计算有机物、硝酸盐、硫酸盐、铵盐、元素碳、地壳物质和微量元素
+    └─ 前置: 需先调用结构化查询工具获取完整颗粒物组分数据：get_pm25_ionic（离子）、get_pm25_carbon（碳组分）、get_pm25_crustal（地壳元素）
+  • calculate_carbon: 执行碳组分分析，计算POC（一次有机碳）、SOC（二次有机碳）、EC/OC比值
+    └─ 前置: 需先调用 get_pm25_carbon 获取碳组分数据（OC和EC字段），作为carbon_data_id参数
+  • calculate_soluble: 执行水溶性离子分析，计算阴阳离子平衡、SOR/NOR氧化速率、三元图数据
+    └─ 前置: 需先调用 get_pm25_ionic 获取水溶性离子数据（SO4、NO3、NH4等字段），作为data_id参数
+  • calculate_crustal: 执行地壳元素分析，计算氧化物转换和地壳物质总量
+    └─ 前置: 需先调用 get_pm25_crustal 获取地壳元素数据（Ca、Fe、Al等元素），作为data_id参数
+
+**可视化工具** (Visualization Tools):
+  • generate_chart: 根据原始数据生成v3.1标准格式的图表配置（支持15种类型）
+  • generate_map: 生成高德地图配置，用于可视化站点和企业位置
+    └─ 前置: 需要先调用 get_nearby_stations 或 query_station_info 获取站点经纬度信息
+  • smart_chart_generator: 智能图表生成器 - 统一数据驱动的图表生成
+    └─ 前置: 需要 data_id（来自分析工具或数据查询工具的返回结果，如PMF的data_id或VOCs的data_id）
+
+**特殊工具** (Special Tools):
+  • FINISH_SUMMARY: 生成数据分析报告（数据查询完成后使用，参数：data_id="数据ID" 或 data_id=["id1", "id2"]）
+  • FINISH: 简单完成（问候、确认类回复，参数：answer="回复内容"）
+  • get_observed_weather: 获取实时天气观测数据
+  • load_data_from_memory: 从存储加载完整数据（参数：data_id）
+
+**使用说明**:
+- 自然语言查询工具（含示例）：直接调用，参数格式为 question="城市+时间范围+时间粒度+数据类型"
+- 标记 ⚠️ 的工具：必须先查看详细参数说明（输出 args: null）
+- 其他工具：有参数示例的可直接调用
+- **bash 工具**：已在系统提示词的 TOOL_DESCRIPTIONS 中详细说明（参数：command、timeout可选、working_dir可选），直接调用即可

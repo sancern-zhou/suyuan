@@ -1,0 +1,18 @@
+Simple Standardization Test
+================================================================================
+
+Standardizer created
+Standardization completed
+Result count: 1
+
+First record fields:
+  station_code: 1067b
+  station_name: 深南中路
+  timestamp: 2026-02-01 00:00:00
+  SO4: 8.5
+  PM2_5: 35.5
+  components: (dict, 2 items)
+    NO3: 12.3
+    NH4: 6.7
+
+SUCCESS: Components has 2 items
