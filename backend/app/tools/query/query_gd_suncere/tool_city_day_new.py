@@ -214,7 +214,8 @@ def execute_query_city_day_new_standard(
     cities: List[str],
     start_date: str,
     end_date: str,
-    context: ExecutionContext
+    context: ExecutionContext,
+    data_type: int = 1
 ) -> Dict[str, Any]:
     """
     查询城市日数据（新标准 HJ 633-2024）
@@ -226,6 +227,7 @@ def execute_query_city_day_new_standard(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         context: 执行上下文
+        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
 
     Returns:
         UDF v2.0 格式的查询结果
@@ -248,19 +250,79 @@ def execute_query_city_day_new_standard(
         if not city_codes:
             raise Exception(f"未找到任何有效的城市代码: {cities}")
 
-        # 调用 API 查询城市日报数据
-        response = api_client.query_city_day_data(
-            city_codes=city_codes,
-            start_date=start_date,
-            end_date=end_date
+        # 智能分段查询：根据查询日期范围自动判断是否需要分段
+        from app.tools.query.query_gd_suncere.tool import calculate_date_segments
+
+        # 计算分段
+        segments = calculate_date_segments(start_date, end_date)
+        logger.info(
+            "query_city_day_new_standard_segments",
+            segment_count=len(segments),
+            segments=segments
         )
 
-        if not response.get("success"):
-            error_msg = response.get("msg", "Unknown error")
-            raise Exception(f"API 查询失败: {error_msg}")
+        # 如果有多个分段，使用并发查询
+        if len(segments) > 1:
+            import asyncio
 
-        # 提取结果
-        raw_records = response.get("result", [])
+            async def fetch_all_segments():
+                from app.tools.query.query_gd_suncere.tool import query_day_data_by_segment
+                tasks = []
+                for seg_start, seg_end, seg_data_type in segments:
+                    task = query_day_data_by_segment(
+                        api_client=api_client,
+                        city_codes=city_codes,
+                        start_date=seg_start,
+                        end_date=seg_end,
+                        data_type=seg_data_type
+                    )
+                    tasks.append(task)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                return results
+
+            # 执行并发查询
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            all_results = loop.run_until_complete(fetch_all_segments())
+            loop.close()
+
+            # 合并结果
+            raw_records = []
+            for i, result in enumerate(all_results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        "query_city_day_new_standard_segment_error",
+                        segment_index=i,
+                        error=str(result)
+                    )
+                elif isinstance(result, list):
+                    raw_records.extend(result)
+                    logger.info(
+                        "query_city_day_new_standard_segment_success",
+                        segment_index=i,
+                        record_count=len(result)
+                    )
+
+            logger.info(
+                "query_city_day_new_standard_segments_merged",
+                total_segments=len(segments),
+                total_records=len(raw_records)
+            )
+        else:
+            # 单分段，直接查询
+            seg_start, seg_end, seg_data_type = segments[0]
+            response = api_client.query_city_day_data(
+                city_codes=city_codes,
+                start_date=seg_start,
+                end_date=seg_end,
+                data_type=seg_data_type
+            )
+
+            if not response.get("success"):
+                error_msg = response.get("msg", "Unknown error")
+                raise Exception(f"API 查询失败: {error_msg}")
+
+            raw_records = response.get("result", [])
 
         if not raw_records:
             logger.warning(
