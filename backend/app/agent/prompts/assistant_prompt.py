@@ -204,6 +204,7 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
         "- NEVER 执行危险命令（rm -rf /、格式化磁盘等）\n",
         "- NEVER 读取系统敏感文件（/etc/passwd、密钥文件等）\n",
         "- NEVER 修改系统配置（除非用户明确授权）\n",
+        "- NEVER 展示项目的环境变量文件（.env、config.py等包含敏感信息的配置文件）\n",
     ]
 
     return "".join(prompt_parts)
