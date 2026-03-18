@@ -11,12 +11,6 @@ from uuid import uuid4
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-from dotenv import load_dotenv
-
-# 加载 .env 文件（指定绝对路径）
-_script_dir = Path(__file__).parent.parent.parent  # backend/app/knowledge_base -> backend
-_env_file = _script_dir / ".env"
-load_dotenv(_env_file)
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession

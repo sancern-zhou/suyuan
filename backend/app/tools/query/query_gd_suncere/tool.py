@@ -321,7 +321,8 @@ class QueryGDSuncereDataTool:
         cities: List[str],
         start_date: str,
         end_date: str,
-        context: ExecutionContext
+        context: ExecutionContext,
+        data_type: int = 1
     ) -> Dict[str, Any]:
         """
         查询城市日报数据
@@ -331,6 +332,7 @@ class QueryGDSuncereDataTool:
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             context: 执行上下文
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
 
         Returns:
             查询结果
@@ -355,7 +357,8 @@ class QueryGDSuncereDataTool:
             response = api_client.query_city_day_data(
                 city_codes=city_codes,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                data_type=data_type
             )
 
             if not response.get("success"):
@@ -736,7 +739,8 @@ def execute_query_gd_suncere_city_day(
     cities: List[str],
     start_date: str,
     end_date: str,
-    context: ExecutionContext
+    context: ExecutionContext,
+    data_type: int = 1
 ) -> Dict[str, Any]:
     """
     执行城市日报数据查询
@@ -746,6 +750,7 @@ def execute_query_gd_suncere_city_day(
         start_date: 开始日期，格式 "YYYY-MM-DD"
         end_date: 结束日期，格式 "YYYY-MM-DD"
         context: 执行上下文
+        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
 
     Returns:
         查询结果字典
@@ -754,7 +759,8 @@ def execute_query_gd_suncere_city_day(
         cities=cities,
         start_date=start_date,
         end_date=end_date,
-        context=context
+        context=context,
+        data_type=data_type
     )
 
 
@@ -1640,6 +1646,169 @@ def calculate_new_composite_index(concentrations: dict) -> float:
     return round(composite_index, 2)
 
 
+# -----------------------------------------------------------------------------
+# 智能分段查询辅助函数（用于标准对比工具）
+# -----------------------------------------------------------------------------
+
+def calculate_date_segments(start_date: str, end_date: str) -> List[Tuple[str, str, int]]:
+    """
+    计算查询日期的智能分段
+
+    规则：
+    - 距离当天3天内（含3天）的数据使用原始数据（data_type=0）
+    - 距离当天3天外的数据使用审核数据（data_type=1）
+    - 如果查询周期跨越3天边界，分成两个时间段
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+
+    Returns:
+        分段列表，每个元素为 (start_date, end_date, data_type)
+    """
+    from datetime import datetime, timedelta
+
+    segments = []
+    today = datetime.now().date()
+    three_days_ago = today - timedelta(days=3)
+
+    # 解析日期
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+    # 计算查询结束日期距离今天的天数
+    days_from_today = (today - end).days
+
+    logger.info(
+        "calculate_date_segments",
+        start_date=start_date,
+        end_date=end_date,
+        today=today.isoformat(),
+        three_days_ago=three_days_ago.isoformat(),
+        days_from_today=days_from_today
+    )
+
+    # 判断是否跨越3天边界
+    # 计算查询开始和结束日期距离今天的天数
+    start_days_from_today = (today - start).days
+    end_days_from_today = (today - end).days
+
+    # 情况1: 查询范围全部在原始实况范围（今天及3天内）
+    # 条件：查询开始日期距离今天 ≤ 3天
+    if start_days_from_today <= 3:
+        # 全部使用原始实况
+        segments.append((start_date, end_date, 0))
+        logger.info(
+            "date_segments_all_recent",
+            data_type=0,
+            type="原始实况",
+            reason=f"查询范围全部在原始实况范围内（{start_date}至{end_date}），全部使用原始实况"
+        )
+
+    # 情况2: 查询范围全部在审核实况范围（4天前及更早）
+    # 条件：查询结束日期距离今天 ≥ 4天
+    elif end_days_from_today >= 4:
+        # 全部使用审核实况
+        segments.append((start_date, end_date, 1))
+        logger.info(
+            "date_segments_all_historical",
+            data_type=1,
+            type="审核实况",
+            reason=f"查询范围全部在审核实况范围内（{start_date}至{end_date}），全部使用审核实况"
+        )
+
+    # 情况3: 查询范围跨越3天边界，需要分段
+    else:
+        # 分界点：
+        # - 3天外部分（审核实况）：到 three_days_ago - 1（≥4天前）
+        # - 3天内部分（原始实况）：从 three_days_ago 到 three_days_ago + 2（1-3天前）
+        # 注意：今天（0天前）归入审核实况
+        # 示例：今天是2026-03-18，three_days_ago=2026-03-15（3天前）
+        #   - 第一段：2026-03-11 至 2026-03-14（审核实况，≥4天前）
+        #   - 第二段：2026-03-15 至 2026-03-18（原始实况1-3天前 + 今天）
+
+        # 第一段：审核实况（start 到 three_days_ago - 1）
+        segment1_end = three_days_ago - timedelta(days=1)
+        segments.append((start_date, segment1_end.isoformat(), 1))
+
+        # 第二段：原始实况（three_days_ago 到 end）
+        segment2_start = three_days_ago
+        segments.append((segment2_start.isoformat(), end_date, 0))
+
+        logger.info(
+            "date_segments_split",
+            segment1=(start_date, segment1_end.isoformat(), 1),
+            segment2=(segment2_start.isoformat(), end_date, 0),
+            split_point=three_days_ago.isoformat(),
+            reason=f"查询范围跨越3天边界({three_days_ago.isoformat()})，分段查询"
+        )
+
+    return segments
+
+
+async def query_day_data_by_segment(
+    api_client,
+    city_codes: List[str],
+    start_date: str,
+    end_date: str,
+    data_type: int
+) -> List[Dict]:
+    """
+    按时间段查询日报数据
+
+    Args:
+        api_client: API客户端
+        city_codes: 城市编码列表
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        data_type: 数据类型（0原始实况，1审核实况）
+
+    Returns:
+        日报数据列表
+    """
+    try:
+        logger.info(
+            "query_day_data_by_segment",
+            city_codes=city_codes,
+            start_date=start_date,
+            end_date=end_date,
+            data_type=data_type,
+            data_type_name="原始实况" if data_type == 0 else "审核实况"
+        )
+
+        response = api_client.query_city_day_data(
+            city_codes=city_codes,
+            start_date=start_date,
+            end_date=end_date,
+            data_type=data_type
+        )
+
+        if response.get("success"):
+            raw_data = response.get("result", [])
+            logger.info(
+                "query_day_data_by_segment_success",
+                record_count=len(raw_data),
+                data_type=data_type
+            )
+            return raw_data
+        else:
+            error_msg = response.get('msg', 'Unknown error')
+            logger.error(
+                "query_day_data_by_segment_failed",
+                error=error_msg,
+                data_type=data_type
+            )
+            return []
+
+    except Exception as e:
+        logger.error(
+            "query_day_data_by_segment_error",
+            error=str(e),
+            data_type=data_type
+        )
+        return []
+
+
 def execute_query_standard_comparison(
     cities: List[str],
     start_date: str,
@@ -1737,48 +1906,108 @@ def execute_query_standard_comparison(
         errors = []
 
         def query_day_data():
-            """查询日报数据"""
+            """查询日报数据（智能分段：3天内用原始实况，3天外用审核实况）"""
             nonlocal day_data
             try:
-                logger.info("querying_day_data", cities=cities, start_date=start_date, end_date=end_date)
-                response = api_client.query_city_day_data(
-                    city_codes=city_codes,
-                    start_date=start_date,
-                    end_date=end_date
-                )
-                if response.get("success"):
-                    raw_data = response.get("result", [])
-                    day_data = raw_data
-                    # 记录原始数据结构，便于调试
-                    if raw_data:
-                        first_record = raw_data[0]
-                        logger.info(
-                            "day_data_raw_structure",
-                            record_count=len(raw_data),
-                            sample_fields=list(first_record.keys())[:30],
-                            has_cityName="cityName" in first_record if raw_data else False,
-                            has_city="city" in first_record if raw_data else False,
-                            has_city_name="city_name" in first_record if raw_data else False
+                logger.info("querying_day_data_with_segments", cities=cities, start_date=start_date, end_date=end_date)
+
+                # 计算分段
+                segments = calculate_date_segments(start_date, end_date)
+                logger.info("day_data_segments_calculated", segment_count=len(segments), segments=segments)
+
+                # 使用异步IO并发查询各分段
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                async def fetch_all_segments():
+                    tasks = []
+                    for seg_start, seg_end, data_type in segments:
+                        task = query_day_data_by_segment(
+                            api_client=api_client,
+                            city_codes=city_codes,
+                            start_date=seg_start,
+                            end_date=seg_end,
+                            data_type=data_type
                         )
-                    logger.info("day_data_query_success", record_count=len(day_data))
-                else:
-                    errors.append(f"日报数据查询失败: {response.get('msg', 'Unknown error')}")
+                        tasks.append(task)
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    return results
+
+                # 执行并发查询
+                all_results = loop.run_until_complete(fetch_all_segments())
+                loop.close()
+
+                # 合并结果
+                merged_data = []
+                for i, result in enumerate(all_results):
+                    if isinstance(result, Exception):
+                        logger.error("segment_query_error", segment_index=i, error=str(result))
+                        errors.append(f"分段{i+1}查询异常: {str(result)}")
+                    elif isinstance(result, list):
+                        merged_data.extend(result)
+                        logger.info("segment_query_success", segment_index=i, record_count=len(result))
+
+                day_data = merged_data
+
+                # 记录原始数据结构，便于调试
+                if merged_data:
+                    first_record = merged_data[0]
+                    logger.info(
+                        "day_data_raw_structure",
+                        record_count=len(merged_data),
+                        sample_fields=list(first_record.keys())[:30],
+                        has_cityName="cityName" in first_record if merged_data else False,
+                        has_city="city" in first_record if merged_data else False,
+                        has_city_name="city_name" in first_record if merged_data else False
+                    )
+                logger.info("day_data_query_success", record_count=len(day_data), segments_count=len(segments))
+
             except Exception as e:
                 errors.append(f"日报数据查询异常: {str(e)}")
                 logger.error("day_data_query_error", error=str(e))
 
         def query_report_data():
-            """查询统计数据"""
+            """查询统计数据（不分段，根据结束日期智能选择数据源）"""
             nonlocal report_data
             try:
+                from datetime import datetime
+
                 logger.info("querying_report_data", cities=cities, start_time=start_time, end_time=end_time)
+
+                # 统计数据不分段，根据查询结束日期智能选择数据源类型
+                # 规则：三天内不包含当天，即昨天(1天前)、前天(2天前)、大前天(3天前)用原始实况
+                #       今天(0天前)和4天前及更早用审核实况
+                today = datetime.now().date()
+                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
+                days_from_today = (today - end_date_obj).days
+
+                # 智能选择数据源类型
+                # 原始实况：今天（0天前）及3天内（1-3天前）
+                # 审核实况：4天前及更早
+                if days_from_today <= 3:
+                    report_data_type = 0  # 原始实况
+                    data_type_name = "原始实况"
+                else:
+                    report_data_type = 1  # 审核实况
+                    data_type_name = "审核实况"
+
+                logger.info(
+                    "report_data_type_selected",
+                    end_date=end_date,
+                    days_from_today=days_from_today,
+                    data_type=report_data_type,
+                    data_type_name=data_type_name
+                )
+
                 endpoint = "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync"
+
                 payload = {
                     "AreaType": 2,  # 城市级别
                     "TimeType": 8,  # 任意时间
                     "TimePoint": [start_time, end_time],
                     "StationCode": city_codes,
-                    "DataSource": data_source
+                    "DataSource": report_data_type
                 }
 
                 token = api_client.get_token()
@@ -1802,11 +2031,19 @@ def execute_query_standard_comparison(
                             report_data = result
                         elif isinstance(result, dict):
                             report_data = result.get("items", [])
-                        logger.info("report_data_query_success", record_count=len(report_data) if report_data else 0)
+                        else:
+                            report_data = []
+                        logger.info(
+                            "report_data_query_success",
+                            data_type=report_data_type,
+                            data_type_name=data_type_name,
+                            record_count=len(report_data) if report_data else 0
+                        )
                     else:
                         errors.append(f"统计数据查询失败: {response_data.get('msg', 'Unknown error')}")
                 else:
                     errors.append(f"统计数据查询HTTP错误: {response.status_code}")
+
             except Exception as e:
                 errors.append(f"统计数据查询异常: {str(e)}")
                 logger.error("report_data_query_error", error=str(e))
@@ -1856,29 +2093,30 @@ def execute_query_standard_comparison(
             )
 
             # 更新为新标准字段（避免Agent误认为旧标准数据）
+            # 定义安全转换函数（处理API返回的字符串类型浓度值）
+            def safe_float(value, default=0.0):
+                """安全转换为浮点数，处理None、空字符串等异常情况"""
+                if value is None or value == '' or value == '-':
+                    return default
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
             for record in standardized_records:
                 measurements = record.get("measurements", {})
 
-                # 提取浓度值（确保转换为float，避免字符串导致比较错误）
-                def safe_float(val):
-                    """安全转换为float，处理None、空字符串等异常情况"""
-                    if val is None or val == '' or val == '-':
-                        return 0.0
-                    try:
-                        return float(val)
-                    except (TypeError, ValueError):
-                        return 0.0
-
+                # 提取浓度值（使用safe_float确保类型正确）
                 pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
-                                     record.get("pm2_5") or record.get("PM2_5"))
+                                    record.get("pm2_5") or record.get("PM2_5"))
                 pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
-                                     record.get("pm10") or record.get("PM10"))
+                                    record.get("pm10") or record.get("PM10"))
                 so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
-                                    record.get("so2") or record.get("SO2"))
+                                   record.get("so2") or record.get("SO2"))
                 no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
-                                    record.get("no2") or record.get("NO2"))
+                                   record.get("no2") or record.get("NO2"))
                 co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
-                                   record.get("co") or record.get("CO"))
+                                  record.get("co") or record.get("CO"))
                 o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
                                     record.get("o3_8h") or record.get("O3_8h"))
 
@@ -2069,16 +2307,14 @@ def execute_query_standard_comparison(
                     # 数据被标准化为 UnifiedDataRecord 格式后，污染物数据在 measurements 字段中
                     # 需要同时检查顶层字段和 measurements 嵌套字段
                     measurements = record.get("measurements", {})
-
-                    # 安全转换为float，处理字符串值
-                    def safe_float(val):
-                        """安全转换为float，处理None、空字符串等异常情况"""
-                        if val is None or val == '' or val == '-':
-                            return 0.0
+                    # 安全转换函数（处理API返回的字符串类型浓度值）
+                    def safe_float(value, default=0.0):
+                        if value is None or value == '' or value == '-':
+                            return default
                         try:
-                            return float(val)
+                            return float(value)
                         except (TypeError, ValueError):
-                            return 0.0
+                            return default
 
                     # 优先从 measurements 中提取，其次从顶层字段提取
                     pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
@@ -2096,7 +2332,7 @@ def execute_query_standard_comparison(
                     no_raw = safe_float(measurements.get("NO") or measurements.get("no") or
                           record.get("no") or record.get("NO"))
                     nox_raw = safe_float(measurements.get("NOx") or measurements.get("nox") or
-                           record.get("nox") or record.get("NOx"))
+                          record.get("nox") or record.get("NOx"))
 
                     # 按原始监测数据规则修约日数据（GB/T 8170-2008）
                     # 日数据修约：PM2.5/PM10/SO2/NO2/O3/NO/NOx保留0位，CO保留1位
@@ -2512,6 +2748,10 @@ def execute_query_standard_comparison(
                         "PM10_P95": format_pollutant_value(pm10_percentile_95, 'PM10', 'statistical_data'),
                         "PM2_5": format_pollutant_value(avg_pm25, 'PM2_5', 'statistical_data'),
                         "PM2_5_P95": format_pollutant_value(pm25_percentile_95, 'PM2_5', 'statistical_data'),
+                        "CO": format_pollutant_value(avg_co, 'CO', 'statistical_data'),
+                        "CO_P95": format_pollutant_value(co_percentile_95, 'CO', 'statistical_data'),
+                        "O3_8h": format_pollutant_value(avg_o3_8h, 'O3_8h', 'statistical_data'),
+                        "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data'),
                         # 加权单项质量指数（带权重）
                         "single_indexes": {
                             "SO2": so2_weighted_index,
@@ -2627,6 +2867,8 @@ def execute_query_standard_comparison(
                         "NO2": format_pollutant_value(apply_rounding(safe_float(record.get("nO2_Decimal") or record.get("nO2")), 'NO2', 'statistical_data'), 'NO2', 'statistical_data'),
                         "PM2_5": format_pollutant_value(apply_rounding(safe_float(record.get("pM2_5_Decimal") or record.get("pM2_5")), 'PM2_5', 'statistical_data'), 'PM2_5', 'statistical_data'),
                         "PM10": format_pollutant_value(apply_rounding(safe_float(record.get("pM10_Decimal") or record.get("pM10")), 'PM10', 'statistical_data'), 'PM10', 'statistical_data'),
+                        "CO": format_pollutant_value(apply_rounding(safe_float(record.get("cO_Decimal") or record.get("cO")), 'CO', 'statistical_data'), 'CO', 'statistical_data'),
+                        "O3_8h": format_pollutant_value(apply_rounding(safe_float(record.get("o3_8h_Decimal") or record.get("o3_8h")), 'O3_8h', 'statistical_data'), 'O3_8h', 'statistical_data'),
                         # 单项质量指数（从 API 获取）
                         "single_indexes": {
                             "SO2": safe_float(record.get("sO2_SingleIndex") or 0),
