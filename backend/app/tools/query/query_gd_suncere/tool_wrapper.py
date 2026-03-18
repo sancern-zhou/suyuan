@@ -284,6 +284,11 @@ class QueryGDSuncereCityDayTool(LLMTool):
 - cities: 城市名称列表（如 ["广州", "深圳", "佛山"]）
 - start_date: 开始日期，格式 "YYYY-MM-DD"
 - end_date: 结束日期，格式 "YYYY-MM-DD"
+- data_type: 数据类型（可选，默认1）
+  - 0: 原始实况
+  - 1: 审核实况（默认）
+  - 2: 原始标况
+  - 3: 审核标况
 
 【重要】
 - 工具会自动将城市名称转换为编码
@@ -294,6 +299,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
 cities=["广州", "深圳", "佛山"]
 start_date="2026-02-01"
 end_date="2026-02-28"
+data_type=1  # 查询审核实况数据（默认）
 
 【返回数据】
 - data_id: 数据引用ID（UDF v2.0格式）
@@ -315,6 +321,11 @@ end_date="2026-02-28"
                     "end_date": {
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
+                    },
+                    "data_type": {
+                        "type": "integer",
+                        "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
+                        "enum": [0, 1, 2, 3]
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -336,6 +347,7 @@ end_date="2026-02-28"
         cities: List[str],
         start_date: str,
         end_date: str,
+        data_type: int = 1,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -346,6 +358,7 @@ end_date="2026-02-28"
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认0
 
         Returns:
             UDF v2.0格式的查询结果
@@ -357,6 +370,7 @@ end_date="2026-02-28"
             cities=cities,
             start_date=start_date,
             end_date=end_date,
+            data_type=data_type,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -365,7 +379,8 @@ end_date="2026-02-28"
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            context=context
+            context=context,
+            data_type=data_type
         )
 
         return result
@@ -819,6 +834,11 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
 - cities: 城市名称列表（如 ["广州", "深圳", "佛山"]）
 - start_date: 开始日期，格式 "YYYY-MM-DD"
 - end_date: 结束日期，格式 "YYYY-MM-DD"
+- data_type: 数据类型（可选，默认1）
+  - 0: 原始实况
+  - 1: 审核实况（默认）
+  - 2: 原始标况
+  - 3: 审核标况
 
 【重要】
 - 工具会自动将城市名称转换为编码
@@ -830,6 +850,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
 cities=["广州", "深圳", "佛山"]
 start_date="2026-02-01"
 end_date="2026-02-28"
+data_type=1  # 查询审核实况数据（默认）
 
 【返回数据】
 - data_id: 数据引用ID（UDF v2.0格式）
@@ -852,6 +873,11 @@ end_date="2026-02-28"
                     "end_date": {
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
+                    },
+                    "data_type": {
+                        "type": "integer",
+                        "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
+                        "enum": [0, 1, 2, 3]
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -873,6 +899,7 @@ end_date="2026-02-28"
         cities: List[str],
         start_date: str,
         end_date: str,
+        data_type: int = 1,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -883,6 +910,7 @@ end_date="2026-02-28"
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认0
 
         Returns:
             UDF v2.0 格式的查询结果
@@ -894,6 +922,7 @@ end_date="2026-02-28"
             cities=cities,
             start_date=start_date,
             end_date=end_date,
+            data_type=data_type,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -902,7 +931,8 @@ end_date="2026-02-28"
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            context=context
+            context=context,
+            data_type=data_type
         )
 
         return result
