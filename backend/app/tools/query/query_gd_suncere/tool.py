@@ -1565,6 +1565,14 @@ def calculate_iaqi(concentration: float, pollutant: str, standard: str = 'new') 
     Returns:
         IAQI值（整数）
     """
+    # 确保concentration是数值类型（处理API返回的字符串类型）
+    if concentration is None or concentration == '' or concentration == '-':
+        return 0
+    try:
+        concentration = float(concentration)
+    except (TypeError, ValueError):
+        return 0
+
     if concentration <= 0:
         return 0
 
