@@ -146,7 +146,7 @@ class ParticulateVisualizer:
         # 构建source_data_ids列表
         source_data_ids = [source_data_id] if source_data_id else []
 
-        return {
+        result = {
             "id": saved_image_id,
             "type": "image",
             "schema": "chart_config",
@@ -168,6 +168,16 @@ class ParticulateVisualizer:
                 "markdown_image": f"![{title}]({image_url})"  # 完整URL
             }
         }
+
+        # 【调试】确认返回的type是 "image"
+        logger.info(
+            "[ParticulateVisualizer._create_visual] 返回图表",
+            chart_type=chart_type,
+            result_type=result["type"],
+            result_id=result["id"]
+        )
+
+        return result
 
     # ==================== 碳组分分析图表 ====================
 

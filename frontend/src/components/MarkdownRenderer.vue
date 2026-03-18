@@ -100,6 +100,10 @@ const props = defineProps({
   content: {
     type: String,
     required: true
+  },
+  streaming: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -118,11 +122,33 @@ watch(() => props.content, (newContent) => {
 // 已移除脱敏限制
 
 const renderedHtml = computed(() => {
+  // 依赖 streaming prop，当 streaming 从 true 变为 false 时重新渲染
+  const _ = props.streaming
+
   let content = processedContent.value || props.content || ''
 
   // 【修复】处理字面量转义字符 \n -> 真正的换行符
   // 后端LLM可能返回包含 \n 字面量的字符串，需要转换为真正的换行符
   content = content.replace(/\\n/g, '\n')
+
+  // 【增强】自动识别并包裹数学公式
+  // 检测包含 LaTeX 语法的文本（如 \cdot, ^, _, \frac 等）并自动用 $ 包裹
+  // 匹配模式：在行内，包含数学符号，但还没有被 $ 或 $$ 包裹的文本
+  content = content.replace(/(?<!\$)(?<!\\)\b([a-zA-Z]\([^)]*\)\s*=\s*[^$\n]*?(?:\\[a-zA-Z]+|_[a-zA-Z0-9]+|\^[a-zA-Z0-9\{\}]+|\\frac|\\sum|\\int|\\prod|\\cdot|\\times|\\div|\\pm|\\mp|\\le|\\ge|\\ne|\\approx|\\equiv|\\partial|\\nabla|\\Delta|\\lambda|\\alpha|\\beta|\\gamma|\\delta|\\theta|\\pi|\\infty|\\sqrt)[^$]*)/g, (match) => {
+    // 如果已经包含 $，则不处理
+    if (match.includes('$')) return match
+    // 用 $ 包裹公式
+    return `$${match}$`
+  })
+
+  // 【增强】识别方括号中的数学表达式 [公式内容]
+  content = content.replace(/\[([^\]]*?(?:\\[a-zA-Z]+|_[a-zA-Z0-9]+|\^[a-zA-Z0-9\{\}]+|\\frac|\\sum|\\int|\\prod|\\cdot|\\times|\\div|\\pm|\\mp|\\le|\\ge|\\ne|\\approx|\\equiv|\\partial|\\nabla|\\Delta|\\lambda|\\alpha|\\beta|\\gamma|\\delta|\\theta|\\pi|\\infty|\\sqrt|\{[^\]]*\})[^\]]*?)\]/g, (match, formula) => {
+    // 如果方括号内容看起来像数学公式，用 $ 包裹
+    if (formula.includes('\\') || formula.includes('^') || formula.includes('_') || formula.includes('frac') || formula.includes('sum') || formula.includes('int')) {
+      return `$$${formula}$$`  // 使用 $$ 作为行间公式
+    }
+    return match  // 不是公式，保持原样
+  })
 
   // 【调试】检查是否包含占位符
   if (content.includes('[ECHARTS_PLACEHOLDER:')) {
@@ -267,31 +293,21 @@ const renderedHtml = computed(() => {
     background: linear-gradient(180deg, #ffffff 0%, #f8f9ff 100%);
   }
 
-  // 图片样式
+  // 图片样式 - 简化为无装饰样式
   :deep(.md-image-wrapper) {
     margin: 16px 0;
     text-align: center;
-    border: 2px solid #e0e0e0;
-    padding: 10px;
-    border-radius: 8px;
-    background: #f9f9f9;
   }
 
   :deep(.md-base64-image) {
-    max-width: 100%;
+    max-width: 60%;
     height: auto;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    min-height: 200px;
     display: block;
   }
 
   :deep(.md-external-image) {
-    max-width: 100%;
+    max-width: 60%;
     height: auto;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    min-height: 200px;
     display: block;
   }
 
@@ -313,9 +329,6 @@ const renderedHtml = computed(() => {
       max-height: 200px;
       width: auto;
       height: auto;
-      border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-      border: 1px solid #e0e0e0;
       display: block;
     }
   }
@@ -326,12 +339,10 @@ const renderedHtml = computed(() => {
     clear: both;
   }
 
-  // 普通img标签样式
+  // 普通img标签样式 - 简化为无装饰
   :deep(img) {
-    max-width: 100%;
+    max-width: 60%;
     height: auto;
-    border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     display: block;
     margin: 12px auto;
   }
@@ -371,6 +382,77 @@ const renderedHtml = computed(() => {
   :deep(th:last-child),
   :deep(td:last-child) {
     border-right: none;
+  }
+
+  // ==================== KaTeX 公式样式 ====================
+  // 行内公式
+  :deep(.katex) {
+    font-size: 1.05em;
+  }
+
+  // 行间公式（显示公式）
+  :deep(.katex-display) {
+    margin: 16px 0;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    overflow-x: auto;
+    text-align: center;
+  }
+
+  // 公式字体大小调整
+  :deep(.katex .fontsize-ensurer) {
+    font-size: 1em;
+  }
+
+  // 公式颜色
+  :deep(.katex .mord) {
+    color: #2f2f2f;
+  }
+
+  :deep(.katex .mop) {
+    color: #1976d2;
+  }
+
+  :deep(.katex .mrel) {
+    color: #e91e63;
+  }
+
+  :deep(.katex .mbin) {
+    color: #ff9800;
+  }
+
+  :deep(.katex .mpunct) {
+    color: #666;
+  }
+
+  // 分数样式
+  :deep(.katex .mfrac) {
+    margin: 0 0.1em;
+  }
+
+  // 上标下标
+  :deep(.katex .msupsub) {
+    vertical-align: -0.2em;
+  }
+
+  // 括号样式
+  :deep(.katex .delim-size1) {
+    font-size: 1.2em;
+  }
+
+  // 矩阵和数组
+  :deep(.katex .arraycolsep) {
+    margin: 0 0.2em;
+  }
+
+  // 确保公式在移动端也能正常显示
+  @media (max-width: 768px) {
+    :deep(.katex-display) {
+      padding: 8px;
+      margin: 12px 0;
+      font-size: 0.9em;
+    }
   }
 }
 </style>

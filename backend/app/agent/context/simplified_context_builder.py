@@ -45,6 +45,9 @@ class SimplifiedContextBuilder:
         self.safety_buffer = token_budget_manager.safety_buffer
         self.compression_threshold = 0.8  # 80%阈值
 
+        # ✅ 新增：当前模式（默认expert）
+        self.current_mode = "expert"
+
         logger.info(
             "simplified_context_builder_initialized",
             max_context=self.max_context_tokens,
@@ -57,7 +60,8 @@ class SimplifiedContextBuilder:
         query: str,
         iteration: int,
         latest_observation: str = "",
-        conversation_history: Optional[List[Dict[str, Any]]] = None
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        mode: str = "expert"  # ✅ 新增：Agent模式
     ) -> Dict[str, Any]:
         """
         为 Thought + Action 构建完整上下文
@@ -67,6 +71,7 @@ class SimplifiedContextBuilder:
             iteration: 当前迭代次数
             latest_observation: 最新观察结果（可选）
             conversation_history: 对话历史（可选，LLM消息格式）
+            mode: Agent模式（"assistant" | "expert"）
 
         Returns:
             {
@@ -80,6 +85,9 @@ class SimplifiedContextBuilder:
                 }
             }
         """
+        # 设置当前模式
+        self.current_mode = mode
+
         # 1. 构建系统提示词（固定部分）
         system_prompt = self._build_system_prompt()
         system_tokens = token_budget_manager.count_tokens(system_prompt)
@@ -99,6 +107,7 @@ class SimplifiedContextBuilder:
 
         logger.info(
             "context_built",
+            mode=mode,  # ✅ 记录模式
             system_tokens=system_tokens,
             user_tokens=user_tokens,
             total_tokens=total_tokens,
@@ -117,15 +126,25 @@ class SimplifiedContextBuilder:
                 overflow_ratio=f"{(total_tokens/max_allowed - 1)*100:.1f}%"
             )
 
-            # 压缩用户对话内容
-            user_conversation = await self._compress_user_conversation(user_conversation)
+            # ✅ 修复：直接压缩 conversation_history 并持久化到 session
+            compressed_history = await self._compress_and_persist_history(conversation_history)
+
+            # 用压缩后的历史重新构建 user_conversation
+            user_conversation = self._build_user_conversation(
+                query=query,
+                iteration=iteration,
+                latest_observation=latest_observation,
+                conversation_history=compressed_history
+            )
             user_tokens_after = token_budget_manager.count_tokens(user_conversation)
 
             logger.info(
                 "user_conversation_compressed",
                 before_tokens=user_tokens,
                 after_tokens=user_tokens_after,
-                compression_ratio=f"{(1 - user_tokens_after/user_tokens)*100:.1f}%"
+                compression_ratio=f"{(1 - user_tokens_after/user_tokens)*100:.1f}%",
+                history_length_before=len(conversation_history) if conversation_history else 0,
+                history_length_after=len(compressed_history) if compressed_history else 0
             )
 
             compressed = True
@@ -147,22 +166,12 @@ class SimplifiedContextBuilder:
         构建系统提示词（固定部分）
 
         包括：
-        1. REACT_SYSTEM_PROMPT
-        2. 工具摘要
+        1. 根据模式选择的系统提示词（assistant or expert）
+        2. 回退到简单工具列表（旧版本兼容）
         """
-        from ..prompts.react_prompts import REACT_SYSTEM_PROMPT
-
-        # 获取工具摘要
-        try:
-            from ...agent.tool_adapter import get_tool_summaries
-            tool_summaries = get_tool_summaries()
-        except Exception as e:
-            logger.warning("failed_to_get_tool_summaries", error=str(e))
-            # 回退：使用简单工具列表
-            tool_summaries = self._get_simple_tool_list()
-
-        # 拼接系统提示词
-        return f"{REACT_SYSTEM_PROMPT}\n\n{tool_summaries}"
+        # ✅ 使用新的提示词构建器
+        from ..prompts.prompt_builder import build_react_system_prompt
+        return build_react_system_prompt(mode=self.current_mode)
 
     def _get_simple_tool_list(self) -> str:
         """获取简单工具列表（回退方案）"""
@@ -203,14 +212,11 @@ class SimplifiedContextBuilder:
             # 使用LLM消息格式的历史
             sections.append(self._format_llm_conversation_history(conversation_history))
         else:
-            # 回退：从WorkingMemory获取
-            working_history = self.memory.working.get_context_for_llm(include_raw_data=True)
-            if working_history:
-                sections.append(working_history)
+            logger.warning("context_builder_no_conversation_history", iteration=iteration)
 
         # 2. 当前进行的任务
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sections.append(f"## 当前进行的任务（请根据对话记录确认是否已经完成）\n{query}\n\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
+        sections.append(f"## 当前进行的任务（请根据对话记录确认是否已经完成，不要重复执行）\n{query}\n\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）
         # conversation_history已包含所有历史对话，包括完整的observation数据
@@ -248,54 +254,53 @@ class SimplifiedContextBuilder:
 
         return "\n".join(lines)
 
-    async def _compress_user_conversation(self, conversation: str) -> str:
+    async def _compress_and_persist_history(self, conversation_history: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         """
-        压缩用户对话内容
+        压缩对话历史并持久化到 session
 
-        使用ContextCompressor进行LLM智能压缩
+        ✅ 修复：压缩后直接写回 session.conversation_history，避免下次迭代重新处理完整历史
 
         Args:
-            conversation: 用户对话内容
+            conversation_history: 原始对话历史（LLM消息格式）
 
         Returns:
-            压缩后的对话内容
+            压缩后的对话历史
         """
+        if not conversation_history:
+            return None
+
         try:
-            # 转换为消息格式
-            messages = self._convert_conversation_to_messages(conversation)
+            # 使用 LLM 压缩对话历史
+            compressed_messages = await self.compressor.compress(conversation_history)
 
-            # 使用LLM压缩
-            compressed_messages = await self.compressor.compress(messages)
+            # ✅ 关键修复：将压缩后的消息写回 session
+            self.memory.session.update_messages(compressed_messages)
 
-            # 转回文本格式
-            compressed = self._convert_messages_to_text(compressed_messages)
+            logger.info(
+                "conversation_history_persisted",
+                original_count=len(conversation_history),
+                compressed_count=len(compressed_messages),
+                session_id=self.memory.session_id
+            )
 
-            return compressed
+            return compressed_messages
 
         except Exception as e:
             logger.error("llm_compression_failed", error=str(e))
-            # 降级：使用简单截断
-            return self._simple_truncate(conversation)
+            # 降级策略：简单截断，保留最近的消息
+            fallback_count = max(10, len(conversation_history) // 2)
+            truncated = conversation_history[-fallback_count:]
 
-    def _convert_conversation_to_messages(self, conversation: str) -> List[Dict[str, Any]]:
-        """
-        将对话文本转换为消息格式
+            # 即使降级也要写回 session
+            self.memory.session.update_messages(truncated)
 
-        简单实现：整个对话作为一条user消息
-        """
-        return [{"role": "user", "content": conversation}]
+            logger.warning(
+                "conversation_history_truncated_fallback",
+                original_count=len(conversation_history),
+                truncated_count=len(truncated)
+            )
 
-    def _convert_messages_to_text(self, messages: List[Dict[str, Any]]) -> str:
-        """
-        将消息格式转换回文本
-
-        Args:
-            messages: LLM消息格式
-
-        Returns:
-            文本格式
-        """
-        return "\n\n".join(msg.get("content", "") for msg in messages)
+            return truncated
 
     def _simple_truncate(self, text: str) -> str:
         """

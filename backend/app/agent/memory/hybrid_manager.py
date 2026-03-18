@@ -10,12 +10,12 @@ Note: Long-term memory (vector storage) has been removed due to ineffective retr
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+from datetime import datetime
 import json
 
 import structlog
 
-from .working_memory import WorkingMemory
 from .session_memory import SessionMemory
 
 logger = structlog.get_logger()
@@ -37,12 +37,12 @@ class HybridMemoryManager:
         self.session_id = session_id
         self.large_data_threshold = large_data_threshold
 
-        self.working = WorkingMemory(
-            max_iterations=max_working_iterations,
-            batch_compress_threshold=batch_compress_threshold,
-            compress_batch_size=compress_batch_size,
-            max_context_chars=working_context_limit,
-        )
+        # 内联 recent_iterations
+        self.recent_iterations: List[Dict[str, Any]] = []
+        self.max_recent_iterations = max_working_iterations
+        self.batch_compress_threshold = batch_compress_threshold
+        self.compress_batch_size = compress_batch_size
+
         self.session = SessionMemory(session_id=session_id)
 
         logger.debug(
@@ -75,11 +75,23 @@ class HybridMemoryManager:
         # 【方案A简化】直接处理observation，不进行重复外部化
         processed_observation = self._process_observation(observation, action)
 
-        compressed_batches = self.working.add_iteration(thought, action, processed_observation)
-        if compressed_batches:
-            # 批量压缩所有迭代记录
-            for iteration in compressed_batches:
+        # 内联 add_iteration 逻辑
+        now_str = datetime.utcnow().isoformat()
+        self.recent_iterations.append({
+            "thought": thought,
+            "action": action,
+            "observation": processed_observation,
+            "timestamp": now_str
+        })
+
+        # 批量压缩检查
+        if len(self.recent_iterations) > self.batch_compress_threshold:
+            # 压缩前 compress_batch_size 条记录
+            to_compress = self.recent_iterations[:self.compress_batch_size]
+            for iteration in to_compress:
                 self.session.compress_iteration(iteration)
+            # 保留后面的记录
+            self.recent_iterations = self.recent_iterations[self.compress_batch_size:]
 
     def _process_observation(
         self,
@@ -137,9 +149,6 @@ class HybridMemoryManager:
                     "data_registry_id": registry_id,
                     "sampled_data": sampled_data,
                     "total_records": len(data) if isinstance(data, list) else None,
-                    "instructions": (
-                        f"如需完整数据，请调用 load_data_from_memory(data_ref='{data_id}') 获取数组。"
-                    ),
                 }
             else:
                 # 数据未保存（不应该发生，因为所有工具都保存了），但仍需处理
@@ -158,6 +167,43 @@ class HybridMemoryManager:
                 observation_keys=list(observation.keys())
             )
             return observation
+
+    def get_iterations(self) -> List[Dict[str, Any]]:
+        """Return a copy of recent iterations."""
+        return self.recent_iterations.copy()
+
+    def add_chart_observation(self, chart_info: Dict[str, Any]) -> None:
+        """Add a chart observation record to recent_iterations."""
+        now_str = datetime.utcnow().isoformat()
+        chart_observation = {
+            "thought": f"图表已生成：{chart_info.get('chart_title', '无标题')}",
+            "action": {
+                "type": "CHART_GENERATED",
+                "tool": chart_info.get("source_tool", "smart_chart_generator"),
+                "chart_id": chart_info.get("chart_id", "未知图表"),
+                "chart_type": chart_info.get("chart_type", "unknown")
+            },
+            "observation": {
+                "success": True,
+                "summary": chart_info.get("summary", "图表已生成"),
+                "chart_id": chart_info.get("chart_id", "未知图表"),
+                "chart_type": chart_info.get("chart_type", "unknown"),
+                "chart_title": chart_info.get("chart_title", "无标题"),
+                "data_id": chart_info.get("data_id"),
+                "source_tool": chart_info.get("source_tool", "未知工具"),
+                "has_chart": True
+            },
+            "timestamp": now_str
+        }
+
+        self.recent_iterations.append(chart_observation)
+
+        logger.info(
+            "hybrid_memory_chart_added",
+            chart_id=chart_info.get("chart_id"),
+            chart_type=chart_info.get("chart_type"),
+            total_iterations=len(self.recent_iterations)
+        )
 
     # ------------------------------------------------------------------ #
     # Helper utilities
@@ -207,80 +253,14 @@ class HybridMemoryManager:
     # ------------------------------------------------------------------ #
     # Context accessors
     # ------------------------------------------------------------------ #
-    def get_context_for_llm(self, include_raw_data: bool = False) -> str:
-        """
-        Build a consolidated context string for the LLM.
 
-        Args:
-            include_raw_data: 是否包含原始数据（而非仅data_ref）
-        """
-        sections = []
-
-        # 🔥 新增：突出显示连续对话提醒
-        sections.append("=" * 80 + "\n")
-        sections.append("[WARNING] 连续对话模式：这是连续对话的一部分！\n")
-        sections.append("请务必结合以下历史上下文理解用户连续意图。\n")
-        sections.append("=" * 80 + "\n\n")
-
-        conversation_history = self.session.get_conversation_history()
-        if conversation_history:
-            sections.append("=== 对话历史（重要） ===\n")
-            sections.append(conversation_history)
-            sections.append("\n\n")
-
-        # 新增：关键信息高亮
-        recent_iterations = self.working.get_iterations()
-        if recent_iterations:
-            sections.append("=== 近期分析步骤（关键信息） ===\n")
-            for i, iteration in enumerate(recent_iterations[-5:], 1):  # 只显示最近5次
-                sections.append(f"\n步骤 {i}:\n")
-                sections.append(f"  思考: {iteration.get('thought', '')[:100]}...\n")
-                action = iteration.get('action', {})
-                if action.get('type') == 'TOOL_CALL':
-                    sections.append(f"  行动: 调用 {action.get('tool', '未知工具')}\n")
-                observation = iteration.get('observation', {})
-                if observation.get('summary'):
-                    sections.append(f"  结果: {observation['summary']}\n")
-            sections.append("\n\n")
-
-        sections.append("=== 压缩历史（摘要） ===\n")
-        sections.append(self.session.get_compressed_summary())
-        sections.append("\n\n")
-
-        if include_raw_data:
-            sections.append("=== 详细步骤 ===\n")
-            sections.append(self.working.get_context_for_llm(include_raw_data=False))
-
-        return "".join(sections)
-
-    async def get_enhanced_context_for_llm(
-        self,
-        query: str,
-        iteration: int,
-        include_raw_data: bool = True
-    ) -> str:
-        """
-        为LLM获取上下文（简化版）
-
-        简化策略：直接返回工作记忆，不做任何复杂裁剪。
-
-        Args:
-            query: 用户查询（保留接口兼容性，暂未使用）
-            iteration: 当前迭代次数（保留接口兼容性，暂未使用）
-            include_raw_data: 是否包含原始数据
-
-        Returns:
-            上下文字符串
-        """
-        # 直接返回工作记忆的上下文（已包含对话历史）
-        return self.working.get_context_for_llm(include_raw_data=include_raw_data)
-
-    # Note: enhance_with_longterm() 和 save_session_to_longterm() 已删除
-    # 原因：长期记忆检索无效，经常误导Agent
+    # Note: get_context_for_llm() and get_enhanced_context_for_llm() removed.
+    # All context is managed via session.get_messages_for_llm() and
+    # session.get_compressed_summary().
 
     def cleanup(self) -> None:
         """Remove any session-specific artefacts."""
 
-        self.working.clear()
+        self.recent_iterations.clear()
         self.session.cleanup()
         logger.info("hybrid_memory_cleaned", session_id=self.session_id)

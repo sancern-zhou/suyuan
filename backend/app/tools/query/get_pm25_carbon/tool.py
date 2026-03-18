@@ -19,6 +19,29 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+def _filter_mark_fields(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """过滤掉所有 _Mark 字段
+
+    Args:
+        records: 原始记录列表
+
+    Returns:
+        过滤后的记录列表（不包含 _Mark 字段）
+    """
+    filtered_records = []
+    for record in records:
+        if isinstance(record, dict):
+            # 创建新记录，排除所有 _Mark 字段
+            filtered_record = {
+                k: v for k, v in record.items()
+                if not k.endswith('_Mark')
+            }
+            filtered_records.append(filtered_record)
+        else:
+            filtered_records.append(record)
+    return filtered_records
+
+
 class GetPM25CarbonTool(LLMTool):
     """PM2.5碳组分（OC/EC）查询工具"""
 
@@ -70,7 +93,9 @@ class GetPM25CarbonTool(LLMTool):
                     "time_granularity": {
                         "type": "integer",
                         "enum": [1, 2, 3, 5],
-                        "description": "Time granularity: 1=hour, 2=day, 3=month, 5=year (default: 1)"
+                        "description": "Time granularity (integer only): 1=hour, 2=day, 3=month, 5=year. IMPORTANT: Carbon component NUMERIC data is only available in hourly granularity (time_granularity=1 or 'hourly'). Daily/monthly/yearly data returns string placeholders. Default: 1",
+                        "default": 1,
+                        "examples": [1]  # 明确示例使用数字1
                     }
                 },
                 "required": ["start_time", "end_time"],
@@ -94,10 +119,33 @@ class GetPM25CarbonTool(LLMTool):
         station: Union[str, None] = None,
         code: Union[str, None] = None,
         data_type: int = 0,
-        time_granularity: int = 1,
+        time_granularity: Union[int, str] = 1,  # 支持字符串和数字
         **_: Any
     ) -> Dict[str, Any]:
         """执行碳组分查询"""
+
+        # 时间粒度映射：字符串 -> 数字
+        # 注意：碳组分数据只在 time_granularity=1 (小时) 时返回数值，其他粒度返回占位符
+        time_granularity_map = {
+            "hour": 1,
+            "hourly": 1,
+            "day": 1,    # 强制使用1（返回数值），而不是2（返回占位符）
+            "daily": 1,
+            "month": 1,
+            "monthly": 1,
+            "year": 1,
+            "yearly": 1
+        }
+
+        # 如果是字符串，转换为数字
+        if isinstance(time_granularity, str):
+            original_value = time_granularity
+            time_granularity = time_granularity_map.get(time_granularity.lower(), 1)
+            logger.info(
+                "time_granularity_converted",
+                input=original_value,
+                output=time_granularity
+            )
 
         # 参数处理：支持 locations 自动映射
         if locations:
@@ -220,10 +268,15 @@ class GetPM25CarbonTool(LLMTool):
                     "api_structure": list(api_response.get("result", {}).keys()) if isinstance(api_response, dict) else []
                 }
 
+            # 过滤掉所有 _Mark 字段
+            records = _filter_mark_fields(records)
+            logger.info("carbon_filtered", original_count=len(records), filtered_count=len(records))
+
             # 保存数据
-            data_id = None
+            data_ref = None
+            file_path = None
             try:
-                data_id = context.save_data(
+                data_ref = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -237,6 +290,8 @@ class GetPM25CarbonTool(LLMTool):
                         "time_granularity": time_granularity
                     }
                 )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
             except Exception as save_error:
                 logger.warning("pm25_carbon_save_failed", error=str(save_error))
 
@@ -258,13 +313,14 @@ class GetPM25CarbonTool(LLMTool):
                 "success": True,
                 "data": records,
                 "data_id": data_id,
+                "file_path": file_path,
                 "count": len(records),
                 "station": station,
                 "code": code,
                 "data_type": data_type,
                 "time_granularity": time_granularity,
                 "quality_report": quality_report,
-                "summary": f"[OK] 成功获取{len(records)}条PM2.5碳组分数据（OC/EC），已保存为 {data_id}。",
+                "summary": f"[OK] 成功获取{len(records)}条PM2.5碳组分数据（OC/EC），已保存为 {data_id}（路径: {file_path}）。",
                 "metadata": {
                     "sample_record": sample_record
                 }

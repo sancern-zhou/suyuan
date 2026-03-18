@@ -91,7 +91,7 @@ class GetWeatherForecastTool(LLMTool):
             description="Get weather forecast (real-time API call, UDF v2.0 compliant)",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="2.2.0",
+            version="2.3.0",  # 更新版本号：修复 Context-Aware V2 方法签名
             requires_context=True  # Context-Aware V2: 需要 ExecutionContext 保存数据
         )
 
@@ -99,6 +99,7 @@ class GetWeatherForecastTool(LLMTool):
 
     async def execute(
         self,
+        context,  # Context-Aware V2: ExecutionContext 对象（第1个参数）
         lat: float,
         lon: float,
         location_name: Optional[str] = None,
@@ -106,13 +107,13 @@ class GetWeatherForecastTool(LLMTool):
         past_days: int = 0,
         hourly: bool = True,
         daily: bool = True,
-        context=None,  # ExecutionContext - Context-Aware V2架构
         **kwargs
     ) -> Dict[str, Any]:
         """
         执行天气预报查询 (UDF v2.0 + Context-Aware V2)
 
         Args:
+            context: ExecutionContext - 用于保存数据到session_memory
             lat: 纬度
             lon: 经度
             location_name: 位置名称（用于显示）
@@ -120,7 +121,6 @@ class GetWeatherForecastTool(LLMTool):
             past_days: 获取过去天数（0-5），设置为1可获取今天和昨天的完整数据
             hourly: 是否返回逐小时预报
             daily: 是否返回每日预报
-            context: ExecutionContext - 用于保存数据到session_memory
 
         Returns:
             Dict: UDF v2.0 格式的预报数据，包含 data_id
@@ -256,7 +256,8 @@ class GetWeatherForecastTool(LLMTool):
                 summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。{daily_summary}。包含边界层高度预报数据，可用于污染扩散条件分析。"
 
             # 【Context-Aware V2】保存数据到 session_memory
-            saved_data_id = None
+            saved_data_ref = None
+            saved_file_path = None
 
             logger.info(
                 "weather_forecast_save_data_attempt",
@@ -278,7 +279,7 @@ class GetWeatherForecastTool(LLMTool):
                     )
 
                     # ✅ 修复：save_data() 是同步方法，不需要 await
-                    saved_data_id = context.save_data(
+                    saved_data_ref = context.save_data(
                         data=records_dicts,
                         schema="weather",
                         metadata={
@@ -290,11 +291,13 @@ class GetWeatherForecastTool(LLMTool):
                             "source": "Open-Meteo Forecast API"
                         }
                     )
-
+                    saved_data_id = saved_data_ref["data_id"]
+                    saved_file_path = saved_data_ref["file_path"]
                     logger.info(
                         "weather_forecast_data_saved",
                         original_id=data_id,
                         saved_id=saved_data_id,
+                        saved_file_path=saved_file_path,
                         records_count=len(records_dicts)
                     )
                     # 更新摘要，包含保存的data_id

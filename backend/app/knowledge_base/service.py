@@ -602,7 +602,7 @@ class KnowledgeBaseService:
         user_id: Optional[str] = None,
         knowledge_base_ids: Optional[List[str]] = None,
         top_k: int = 5,
-        score_threshold: float = 0.5,
+        score_threshold: float = 0.25,
         filters: Optional[Dict[str, Any]] = None,
         use_reranker: bool = True,
         use_hybrid: bool = True,

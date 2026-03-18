@@ -38,15 +38,20 @@ class ImageCache:
         os.makedirs(self.cache_dir, exist_ok=True)
         logger.info("image_cache_initialized", cache_dir=self.cache_dir)
 
-    def save(self, base64_data: str, chart_id: Optional[str] = None) -> str:
-        """保存base64图片，返回image_id
+    def save(self, base64_data: str, chart_id: Optional[str] = None) -> dict:
+        """保存base64图片，返回图片信息
 
         Args:
             base64_data: base64编码的图片数据（不带data:image/png;base64,前缀）
             chart_id: 可选的图表ID，如果不提供则自动生成
 
         Returns:
-            保存后的image_id
+            {
+                "image_id": str,        # 图片ID
+                "local_path": str,      # 本地文件路径（绝对路径）
+                "url": str,            # HTTP访问URL
+                "size_kb": float       # 文件大小（KB）
+            }
         """
         # 去除可能的前缀
         if base64_data.startswith("data:image"):
@@ -60,10 +65,6 @@ class ImageCache:
         if not chart_id:
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             chart_id = f"img_{timestamp}_{uuid.uuid4().hex[:8]}"
-        else:
-            # 如果chart_id已提供，根据实际格式添加扩展名
-            # 保持向后兼容：不添加扩展名，由get()方法自动处理
-            pass
 
         # 保存为文件（总是使用.png扩展名，内部会处理GIF格式）
         filepath = os.path.join(self.cache_dir, f"{chart_id}.png")
@@ -78,7 +79,14 @@ class ImageCache:
                 size_kb=len(full_image_bytes) / 1024,
                 format="GIF" if is_gif else "PNG"
             )
-            return chart_id
+
+            # 返回完整信息（本地路径 + URL）
+            return {
+                "image_id": chart_id,
+                "local_path": os.path.abspath(filepath),
+                "url": self.get_url(chart_id),
+                "size_kb": len(full_image_bytes) / 1024
+            }
         except Exception as e:
             logger.error("image_save_failed", image_id=chart_id, error=str(e))
             raise

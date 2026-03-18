@@ -19,6 +19,29 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+def _filter_mark_fields(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """过滤掉所有 _Mark 字段
+
+    Args:
+        records: 原始记录列表
+
+    Returns:
+        过滤后的记录列表（不包含 _Mark 字段）
+    """
+    filtered_records = []
+    for record in records:
+        if isinstance(record, dict):
+            # 创建新记录，排除所有 _Mark 字段
+            filtered_record = {
+                k: v for k, v in record.items()
+                if not k.endswith('_Mark')
+            }
+            filtered_records.append(filtered_record)
+        else:
+            filtered_records.append(record)
+    return filtered_records
+
+
 class GetPM25IonicTool(LLMTool):
     """PM2.5水溶性离子组分查询工具"""
 
@@ -70,7 +93,8 @@ class GetPM25IonicTool(LLMTool):
                     "time_type": {
                         "type": "integer",
                         "enum": [1, 2, 3, 5],
-                        "description": "Time granularity: 1=hour, 2=day, 3=month, 5=year (default: 1). Maps to second dataType parameter for time aggregation control."
+                        "description": "Time granularity (integer only): 1=hour, 2=day, 3=month, 5=year. Must use integer values 1, 2, 3, or 5. Do NOT use strings like 'daily' or 'hourly'.",
+                        "examples": [2]  # 明确示例使用数字
                     }
                 },
                 "required": ["start_time", "end_time"],
@@ -203,10 +227,15 @@ class GetPM25IonicTool(LLMTool):
                     "code": code
                 }
 
+            # 过滤掉所有 _Mark 字段
+            records = _filter_mark_fields(records)
+            logger.info("pm25_ionic_filtered", original_count=len(records), filtered_count=len(records))
+
             # 保存数据到上下文
-            data_id = None
+            data_ref = None
+            file_path = None
             try:
-                data_id = context.save_data(
+                data_ref = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -220,6 +249,8 @@ class GetPM25IonicTool(LLMTool):
                         "time_type": time_type
                     }
                 )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
             except Exception as save_error:
                 logger.warning("pm25_ionic_save_failed", error=str(save_error))
 
@@ -241,13 +272,14 @@ class GetPM25IonicTool(LLMTool):
                 "success": True,
                 "data": records,
                 "data_id": data_id,
+                "file_path": file_path,
                 "count": len(records),
                 "station": station,
                 "code": code,
                 "data_type": data_type,
                 "time_type": time_type,
                 "quality_report": quality_report,
-                "summary": f"[OK] 成功获取{len(records)}条PM2.5水溶性离子数据，已保存为 {data_id}。",
+                "summary": f"[OK] 成功获取{len(records)}条PM2.5水溶性离子数据，已保存为 {data_id}（路径: {file_path}）。",
                 "metadata": {
                     "sample_record": sample_record
                 }

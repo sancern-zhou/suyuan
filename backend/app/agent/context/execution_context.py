@@ -52,6 +52,8 @@ class ExecutionContext:
         session_id: str,
         iteration: int,
         data_manager: DataContextManager,
+        task_list: Optional[Any] = None,
+        todo_list: Optional[Any] = None,
     ) -> None:
         """
         Initialize execution context.
@@ -60,10 +62,13 @@ class ExecutionContext:
             session_id: Current session identifier
             iteration: Current iteration number in ReAct loop
             data_manager: Data context manager instance
+            task_list: Task list instance for task management tools (legacy)
+            todo_list: Todo list instance for new TodoWrite tool
         """
         self.session_id = session_id
         self.iteration = iteration
         self.data_manager = data_manager
+        self.task_list = task_list or todo_list  # Support both old and new
         # 跟踪最近一次保存的data_id
         self.current_data_id: Optional[str] = None
         # 跟踪所有可用的data_id列表
@@ -72,7 +77,9 @@ class ExecutionContext:
         logger.debug(
             "execution_context_created",
             session_id=session_id,
-            iteration=iteration
+            iteration=iteration,
+            has_task_list=task_list is not None,
+            has_todo_list=todo_list is not None
         )
 
     def get_data(
@@ -211,6 +218,34 @@ class ExecutionContext:
                 return {"success": False, "error": "Insufficient samples"}
         """
         return self.data_manager.get_handle(data_id)
+
+    def get_task_list(self) -> Optional[Any]:
+        """
+        Get task list instance for task management.
+
+        Returns:
+            TaskList instance if available, None otherwise
+
+        Example:
+            task_list = context.get_task_list()
+            if task_list:
+                tasks = task_list.get_tasks(context.session_id)
+        """
+        return self.task_list  # ✅ 返回None而不是抛异常，支持"无任务"场景
+
+    def get_todo_list(self) -> Optional[Any]:
+        """
+        Get todo list instance for TodoWrite tool.
+
+        Returns:
+            TodoList instance if available, None otherwise
+
+        Example:
+            todo_list = context.get_todo_list()
+            if todo_list:
+                items = todo_list.get_items()
+        """
+        return self.task_list  # TodoList uses the same slot as TaskList
 
     def list_data(self, schema: Optional[str] = None) -> List[str]:
         """

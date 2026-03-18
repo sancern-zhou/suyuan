@@ -153,10 +153,10 @@ class TokenBudgetManager:
 
 
 # Global token budget manager instance
-# Default: 30K context window (优化token使用)
-# 实际分配：system(2.5K) + tools(1.7K) + conversation(~2K) + context(~18K) + safety(5K) = 30K
+# Default: 100K context window (支持更长上下文)
+# 实际分配：system(~2K) + tools(~2K) + conversation(~10K) + context(~81K) + safety(5K) = 100K
 token_budget_manager = TokenBudgetManager(
     model="gpt-4",
-    max_context_tokens=30000,
+    max_context_tokens=100000,
     safety_buffer=5000
 )

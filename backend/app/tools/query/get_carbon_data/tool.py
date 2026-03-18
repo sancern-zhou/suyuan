@@ -104,9 +104,10 @@ class GetCarbonDataTool(LLMTool):
             )
 
         # Context-Aware V2: 保存数据到执行上下文
-        data_id = None
+        data_ref = None
+        file_path = None
         try:
-            data_id = context.save_data(
+            data_ref = context.save_data(
                 data=data,
                 schema="particulate_unified",
                 metadata={
@@ -116,7 +117,9 @@ class GetCarbonDataTool(LLMTool):
                     "components": ["OC", "EC"],
                 }
             )
-            logger.info("carbon_data_saved", data_id=data_id, record_count=count)
+            data_id = data_ref["data_id"]
+            file_path = data_ref["file_path"]
+            logger.info("carbon_data_saved", data_id=data_id, file_path=file_path, record_count=count)
         except Exception as save_error:
             logger.warning("carbon_data_save_failed", error=str(save_error))
 
@@ -145,6 +148,7 @@ class GetCarbonDataTool(LLMTool):
             "success": True,
             "data": data,
             "data_id": data_id,
+            "file_path": file_path,
             "count": count,
             "question": question,
             "data_type": "carbon_components",

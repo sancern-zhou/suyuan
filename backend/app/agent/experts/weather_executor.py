@@ -227,57 +227,17 @@ class WeatherExecutor(ExpertExecutor):
                 chart_list.append(chart_info)
                 chart_index += 1
 
-        # 构建图表列表文本
-        charts_text = ""
-        if chart_list:
-            charts_lines = ["可用图表列表（请直接使用Markdown图片链接插入图片）："]
-            for chart in chart_list:
-                visual_id = chart.get("original_id", chart.get("id", ""))
-                image_id = chart.get("image_id", "")
-                data_id = chart.get("data_id", "")
-                title = chart.get("title", "图表")
-                chart_type = chart.get("type", "chart")
-                public_url = chart.get("public_url", "")
-
-                # 【修复】map类型使用高德地图URL，其他类型使用ImageCache URL
-                if chart_type == "map" and public_url:
-                    url = public_url
-                    markdown_link = f"![{title}]({url})"
-                else:
-                    url_id = image_id or visual_id or data_id or f"chart_{chart['index']}"
-                    url = f"{backend_host}/api/image/{url_id}"
-                    markdown_link = f"![{title}]({url})"
-
-                charts_lines.append(f"图{chart['index']}：{title}")
-                charts_lines.append(f"   Markdown: {markdown_link}")
-            charts_text = "\n".join(charts_lines)
-
-            logger.info("weather_charts_generated",
-                chart_count=len(chart_list),
-                charts_preview=[{
-                    "index": c["index"],
-                    "title": c["title"],
-                    "image_id": c.get("image_id"),
-                    "original_id": c.get("original_id"),
-                    "type": c.get("type"),
-                    "has_public_url": bool(c.get("public_url"))
-                } for c in chart_list]
-            )
-        else:
-            charts_text = "暂无图表"
-
         # 构建图表URL列表
         chart_urls = []
         for chart in chart_list:
             chart_type = chart.get("type", "chart")
-            public_url = chart.get("public_url", "")
 
-            # 【修复】map类型使用高德地图URL，其他类型使用ImageCache URL
-            if chart_type == "map" and public_url:
-                url = public_url
-            else:
-                url_id = chart.get("image_id") or chart.get("original_id") or chart.get("data_id") or f"chart_{chart['index']}"
-                url = f"{backend_host}/api/image/{url_id}"
+            # 【关键修复】地图类图表不加入模板，因为地图已在右侧面板展示
+            if chart_type == "map":
+                continue
+
+            url_id = chart.get("image_id") or chart.get("original_id") or chart.get("data_id") or f"chart_{chart['index']}"
+            url = f"{backend_host}/api/image/{url_id}"
 
             chart_urls.append((chart['index'], chart['title'], url))
 
@@ -439,9 +399,6 @@ class WeatherExecutor(ExpertExecutor):
 
 {images_section}
 
-## 图表信息
-{charts_text}
-
 ## 输出要求
 
 请生成完整的"气象分析"章节内容，必须包含以下所有内容：
@@ -453,33 +410,22 @@ class WeatherExecutor(ExpertExecutor):
 [2-3段总体分析，150-200字，通俗易懂，突出核心观点和关键发现]
 
 ### 图表解析
-**地图类图表（轨迹图、上风向分析图等）已在右侧面板展示，无需引用！**
 
 {chart_analysis_template}
 
-**非地图类图表：使用 `![图表标题](URL)` 格式插入，URL必须与上方图表信息一致。**
-
 ### 详细分析
 [详细分析内容，包含具体数据、时间点、数值等定量信息，以及机制解释]
-
-**重要：如果上方提供了【可用图片】，必须在"详细分析"章节的开头直接粘贴图片代码！**
-- 不要创建"图表URL"或"图片链接"这样的章节标题
-- 不要把URL放在列表项或文字描述中
-- ✅ 正确：直接在开头粘贴 `![轨迹图](http://localhost:8000/api/image/xxx)`
-- ❌ 错误：写成"### 轨迹图表URL\n- **轨迹图**: http://..."或"图片链接：http://..."
-- 直接复制粘贴上方的图片代码，保持完全一致
 
 [WEATHER_SECTION_END]
 
 ## 重要要求
 
 1. **必须包含所有预设标识**：[WEATHER_SECTION_START]、[WEATHER_SECTION_END]
-2. **图片插入格式**：必须使用Markdown图片格式 `![标题](URL)`，不要用文字描述或列表
-3. **图片位置**：图片代码放在"详细分析"章节开头，不要单独创建章节
-4. **只引用非地图类图表**：时序图、玫瑰图、统计图表等；地图类图表已在右侧面板展示
-5. **外部图片必须插入**：轨迹分析图、天气形势图等必须在报告中展示
-6. **总体分析**：2-3段，150-200字，通俗易懂
-7. **只输出章节内容**，不要包含其他说明文字
+2. **图表解析**：所有非地图类图表必须在"图表解析"部分展示，使用 `![标题](URL)` 格式
+3. **忽略地图类图表**：地图已在右侧面板展示，报告中不要引用地图URL
+4. **只引用非地图类图表**：时序图、玫瑰图、统计图表、轨迹图等
+5. **总体分析**：2-3段，150-200字，通俗易懂
+6. **只输出章节内容**，不要包含其他说明文字
 """
 
         try:

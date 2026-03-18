@@ -37,24 +37,51 @@ class BashTool(LLMTool):
     - learn-claude-code: v0_bash_agent 的安全措施
     """
 
-    # 危险命令黑名单
+    # 危险命令黑名单（多层安全防护）
     DANGEROUS_COMMANDS = [
+        # ========== 系统破坏 ==========
         "rm -rf /",
         "rm -rf /*",
         "rm -Rf /",
+        "rmdir /s /q C:\\",  # Windows格式化
+        "rmdir /s /q D:\\",
+        "del /q C:\\Windows\\*",
+        "format ",           # 格式化磁盘
+        "mkfs",
+        "dd if=/dev/zero",
+        "> /dev/sda",
+        "> /dev/sdb",
+        "shred",            # 安全删除文件
+        "wipe",
+
+        # ========== 权限提升 ==========
         "sudo",
         "su ",
+        "runas",            # Windows权限提升
+        "chmod 000",
+        "chown root",
+        "userdel",
+        "usermod -L",       # 锁定用户
+        "passwd --lock",
+
+        # ========== 系统控制 ==========
         "shutdown",
         "reboot",
         "halt",
         "poweroff",
-        "mkfs",
-        "dd if=/dev/zero",
-        "> /dev/sda",
-        "chmod 000",
-        "chown root",
-        "iptables -F",
-        ":(){:|:&};:",  # fork bomb
+        "init 0",
+        "systemctl poweroff",
+        "systemctl halt",
+
+        # ========== 网络攻击 ==========
+        "iptables -F",     # 防火墙规则清除
+        "iptables -X",
+        ":(){:|:&};:",     # fork bomb
+
+        # ========== 配置破坏 ==========
+        "rm /etc/passwd",
+        "rm /etc/shadow",
+        "> /etc/sudoers",
     ]
 
     # 允许的命令类别（白名单）- 包含 Unix 和 Windows 命令
@@ -67,24 +94,36 @@ class BashTool(LLMTool):
         "dir", "type", "del", "copy", "move", "findstr", "cls",
 
         # 数据处理
-        "python", "python3",
+        "python", "python3", "node", "npm",
         "gdal", "ncdump", "ncview", "cdo", "nco",
 
         # 气象/环境模型
         "hyts_std",  # HYSPLIT
         "wrf",
 
-        # 系统监控
+        # 系统监控 - Unix 命令
         "df", "du", "free", "top", "ps", "uptime",
 
+        # 系统监控 - Windows 命令
+        "systeminfo",  # Windows 系统信息
+        "tasklist",    # Windows 进程列表
+        "taskkill",    # Windows 终止进程
+        "wmic",        # Windows 管理接口
+        "ver",         # Windows 版本
+        "hostname",    # 主机名
+        "ipconfig",    # IP 配置
+        "netstat",     # 网络连接
+        "whoami",      # 当前用户
+        "chkdsk",      # 磁盘检查
+
         # 网络
-        "curl", "wget", "rsync",
+        "curl", "wget", "rsync", "ping",
 
         # 压缩/解压
         "tar", "gzip", "gunzip", "zip", "unzip",
 
         # 其他安全工具
-        "echo", "date", "which", "whereis", "type", "test"
+        "echo", "date", "which", "whereis", "type", "test", "timeout"
     }
 
     def __init__(self):
@@ -98,7 +137,7 @@ class BashTool(LLMTool):
         )
 
         # 工作目录：默认为项目根目录
-        self.working_dir = Path(__file__).parent.parent.parent.parent.parent  # D:\溯源\
+        self.working_dir = Path.cwd().parent  # D:\溯源\ 或 /opt/app/ 等
         self.default_timeout = 60
         self.max_output_size = 1024 * 1024  # 1MB（大幅提升，有上下文压缩策略）
 
@@ -317,49 +356,70 @@ class BashTool(LLMTool):
 
     def _validate_command(self, command: str) -> Dict[str, Any]:
         """
-        安全检查命令
+        三层安全验证（混合策略）：
+
+        第一层：危险命令黑名单（绝对禁止）
+        第二层：智能命令验证（PATH + 白名单）
+        第三层：路径遍历检查
 
         Returns:
             {"valid": bool, "error": str (if invalid)}
         """
         command_lower = command.lower().strip()
 
-        # 1. 检查黑名单
+        # ========== 第一层：危险命令黑名单 ==========
         for dangerous in self.DANGEROUS_COMMANDS:
             if dangerous in command_lower:
                 return {
                     "valid": False,
-                    "error": f"Dangerous command detected: {dangerous}"
+                    "error": f"危险命令检测到: {dangerous}"
                 }
 
-        # 2. 检查命令白名单（提取第一个命令）
+        # ========== 第二层：智能命令验证 ==========
         parts = command.split()
         if parts:
             first_command = parts[0]
 
-            # 检查是否是完整路径
-            if first_command.startswith("/"):
+            # 策略1：PATH中的命令自动允许（优先级最高）
+            if shutil.which(first_command):
+                logger.debug(
+                    "command_allowed_via_path",
+                    command=first_command,
+                    path=shutil.which(first_command)
+                )
+                return {"valid": True}
+
+            # 策略2：白名单中的命令允许
+            if first_command in self.ALLOWED_CATEGORIES:
+                return {"valid": True}
+
+            # 策略3：Windows可执行文件允许
+            if any(first_command.endswith(ext) for ext in ['.exe', '.bat', '.cmd', '.ps1']):
+                return {"valid": True}
+
+            # 策略4：完整路径的命令
+            if first_command.startswith("/") or (len(first_command) > 1 and first_command[1] == ':'):
                 binary_name = Path(first_command).name
-                if binary_name not in self.ALLOWED_CATEGORIES:
+                # 检查二进制文件名是否在PATH或白名单中
+                if binary_name in self.ALLOWED_CATEGORIES or shutil.which(binary_name):
+                    return {"valid": True}
+                else:
                     return {
                         "valid": False,
-                        "error": f"Command not in whitelist: {first_command}"
+                        "error": f"命令不在白名单中: {first_command}"
                     }
-            elif first_command not in self.ALLOWED_CATEGORIES:
-                # Windows 平台允许 .exe, .bat, .cmd 等扩展名
-                if not any(first_command.endswith(ext) for ext in ['.exe', '.bat', '.cmd', '.ps1']):
-                    # 检查命令是否存在于 PATH 中
-                    if not shutil.which(first_command):
-                        return {
-                            "valid": False,
-                            "error": f"Command not found in whitelist or PATH: {first_command}"
-                        }
 
-        # 3. 检查路径遍历攻击
+            # 策略5：其他命令拒绝
+            return {
+                "valid": False,
+                "error": f"命令不存在或不在白名单中: {first_command}"
+            }
+
+        # ========== 第三层：路径遍历检查 ==========
         if "../" in command and "rm " in command:
             return {
                 "valid": False,
-                "error": "Path traversal with rm command detected"
+                "error": "检测到路径遍历攻击尝试"
             }
 
         return {"valid": True}

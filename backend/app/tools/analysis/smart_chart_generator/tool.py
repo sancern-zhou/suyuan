@@ -81,7 +81,7 @@ class SmartChartGenerator(LLMTool):
 
 2. 基于OBM结果生成图表
    smart_chart_generator(
-       data_id="obm_full_chemistry_result:v1:[实际ID]",  # 来自calculate_obm_full_chemistry的返回值
+       data_id="obm_ofp_result:v1:[实际ID]",  # 来自calculate_obm_ofp的返回值
        chart_type="auto"
    )
 
@@ -113,8 +113,8 @@ data_id 来自以下工具的返回结果中的 `data_id` 或 `metadata.data_id`
 2. **PMF分析结果**: 来自 `calculate_pmf` 返回
    - 示例: `"pmf_result:v1:i9j0k1l2"`
 
-3. **OBM完整化学机理分析结果**: 来自 `calculate_obm_full_chemistry` 返回
-   - 示例: `"obm_full_chemistry_result:v1:m3n4o5p6"`
+3. **OBM/OFP分析结果**: 来自 `calculate_obm_ofp` 返回
+   - 示例: `"obm_ofp_result:v1:m3n4o5p6"`
 
 4. **VOCs组分数据**: 来自 `get_component_data` 返回
    - 示例: `"vocs_unified:v1:q7r8s9t0"`
@@ -906,7 +906,7 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                         )
                         
                         try:
-                            chart_data_id = context.save_data(
+                            chart_data_ref = context.save_data(
                                 data=[chart_config_model],
                                 schema="chart_config",
                                 metadata={
@@ -917,10 +917,13 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                                     "chart_index": i
                                 }
                             )
+                            chart_data_id = chart_data_ref["data_id"]
+                            chart_file_path = chart_data_ref["file_path"]
                             saved_chart_ids.append(chart_data_id)
                             logger.info(
                                 "smart_chart_multi_saved",
                                 chart_data_id=chart_data_id,
+                                chart_file_path=chart_file_path,
                                 chart_type=chart_cfg.get("type"),
                                 chart_index=i,
                                 source_data_id=data_id
@@ -963,6 +966,7 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                         "metadata": {
                             "tool_name": "smart_chart_generator",
                             "data_id": data_id,
+            "file_path": file_path,
                             "source_data_id": data_id,
                             "chart_type": "multi_chart",
                             "schema_type": schema_type,
@@ -1035,7 +1039,7 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
             )
 
             try:
-                chart_data_id = context.save_data(
+                chart_data_ref = context.save_data(
                     data=[chart_config_model],
                     schema="chart_config",
                     metadata={
@@ -1045,10 +1049,12 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                         "generated_by": "smart_chart_generator"
                     }
                 )
-
+                chart_data_id = chart_data_ref["data_id"]
+                chart_file_path = chart_data_ref["file_path"]
                 logger.info(
                     "smart_chart_saved",
                     chart_data_id=chart_data_id,
+                    chart_file_path=chart_file_path,
                     source_data_id=data_id
                 )
             except Exception as exc:
@@ -2937,6 +2943,7 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                 "metadata": {
                     "tool_name": "smart_chart_generator",
                     "data_id": data_id,
+            "file_path": file_path,
                     "source_data_id": data_id,
                     "schema_type": schema_type,
                     "schema_version": "v2.0",
@@ -2964,6 +2971,7 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
             "metadata": {
                 "tool_name": "smart_chart_generator",
                 "data_id": data_id,
+            "file_path": file_path,
                 "source_data_id": data_id,
                 "schema_type": schema_type,
                 "schema_version": "v2.0",

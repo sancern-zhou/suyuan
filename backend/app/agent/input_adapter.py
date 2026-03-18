@@ -281,24 +281,6 @@ TOOL_RULES = {
         }
     },
     # ========================================
-    # 内存数据加载工具
-    # ========================================
-    "load_data_from_memory": {
-        "required_fields": ["data_id"],
-        "optional_fields": [],
-        "field_mapping": {
-            "data_ref": "data_id",  # LLM常用data_ref，映射到data_id
-            "数据引用": "data_id",
-            "数据ID": "data_id"
-        },
-        "normalizers": {},
-        "inferencers": {},
-        "examples": {
-            "typical": {
-                "data_id": "trajectory_endpoints:v1:25c714a033af444dbe799673b4ba68fb"
-            }
-        }
-    },
     # ========================================
     # 气象轨迹分析工具 (NOAA HYSPLIT)
     # ========================================

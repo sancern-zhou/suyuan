@@ -252,3 +252,30 @@ class ConversationTurn(Base):
 
     def __repr__(self):
         return f"<ConversationTurn(id={self.id}, session_id={self.session_id}, turn_index={self.turn_index}, role={self.role})>"
+
+
+# ========================================
+# 文件上传模型 (对话文件和图片上传)
+# ========================================
+
+class UploadedFile(Base):
+    """上传文件模型"""
+    __tablename__ = "uploaded_files"
+
+    id = Column(String(36), primary_key=True)
+
+    # 文件信息
+    filename = Column(String(256), nullable=False)
+    file_path = Column(String(512), nullable=False)  # 存储路径
+    file_type = Column(String(20), nullable=False, index=True)  # image/document
+    mime_type = Column(String(100), nullable=False)  # MIME类型
+    file_size = Column(BigInteger, default=0)  # 文件大小（字节）
+
+    # 会话关联（可选）
+    session_id = Column(String(36), nullable=True, index=True)  # 关联的会话ID
+
+    # 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self):
+        return f"<UploadedFile(id={self.id}, filename={self.filename}, file_type={self.file_type})>"

@@ -33,15 +33,13 @@ GENERAL_AGENT_PROMPT = """你是一位大气环境数据分析专家，能够理
 
 【工具选择优先级规则】⭐⭐⭐
 1. **优先使用 `get_jining_regular_stations`**：济宁市各区县/站点空气质量数据
-2. **次优先使用 `get_guangdong_regular_stations`**：广东省各城市/站点空气质量数据（城市排名、区域对比）
-3. **最后使用 `get_air_quality`**：仅当以下情况才调用：
-   - 查询的城市不属于济宁市或广东省（如北京、上海、武汉等）
-   - `get_jining_regular_stations` 或 `get_guangdong_regular_stations` 查询失败或无返回数据
+2. **次优先使用 `get_air_quality`**：仅当以下情况才调用：
+   - 查询的城市不属于济宁市（如北京、上海、武汉等）
+   - `get_jining_regular_stations` 查询失败或无返回数据
 
 ### 数据查询工具
 - get_jining_regular_stations: 济宁市区域对比数据查询
-- get_guangdong_regular_stations: 广东省区域对比数据查询
-- get_air_quality: 全国城市空气质量数据查询（非济宁/广东地区专用）
+- get_air_quality: 全国城市空气质量数据查询（非济宁地区专用）
 - get_weather_data: 气象数据查询
 - get_component_data: 组分数据查询
 - get_nearby_stations: 附近站点查询
@@ -51,7 +49,6 @@ GENERAL_AGENT_PROMPT = """你是一位大气环境数据分析专家，能够理
 
 ### 分析工具
 - calculate_pmf: PMF源解析
-- calculate_obm_full_chemistry: RACM2完整化学机理OBM分析（EKMA/PO3/RIR，单次获取NOx/O3数据，自动生成图表）
 - meteorological_trajectory_analysis: 气象轨迹分析
 - analyze_upwind_enterprises: 上风向企业分析
 - calculate_iaqi: IAQI计算

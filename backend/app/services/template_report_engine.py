@@ -3,7 +3,7 @@
 支持方案B（临时报告）和方案C（固定报告）
 """
 from typing import Dict, Any, List, Optional, AsyncGenerator
-import logging
+import structlog
 import asyncio
 import re
 
@@ -28,7 +28,7 @@ from app.agent.context.data_context_manager import DataContextManager
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.services.data_registry import data_registry
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class TemplateReportEngine:
     """模板化报告引擎"""

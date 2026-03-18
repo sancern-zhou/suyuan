@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -50,18 +51,45 @@ class ConversationTurn:
     role: str
     content: str
     timestamp: str
+    thought: Optional[str] = None  # LLM thought for this assistant turn
+    reasoning: Optional[str] = None  # LLM reasoning process (detailed reasoning)
 
 
 class SessionMemory:
+    """
+    会话记忆管理器
+
+    核心职责：
+    - 管理对话历史
+    - 管理 data files
+    - 提供 LLM 格式的历史消息
+
+    缓存友好策略（参考 learn-claude-code）：
+    - 只追加策略：历史消息永不删除、永不修改
+    - 完整保留：所有对话历史传递给 LLM
+    - 缓存优化：通过只追加保持前缀不变，实现 KV Cache 命中
+    - 成本节省：避免破坏缓存可节省 80-90% 成本
+
+    设计理念：
+    - 传统"滑动窗口"会破坏缓存，导致成本反而上升
+    - 依赖模型自身的上下文压缩能力和缓存折扣
+    - 使用子 Agent 隔离复杂任务，保持主上下文干净
+    """
+
+    # 不再限制历史消息数量，采用只追加策略
+    # MAX_HISTORY_TURNS 已移除，参考 https://github.com/anthropics/learn-claude-code
     """Layer-2 memory that persists intermediate artefacts to disk."""
 
     def __init__(
         self,
         session_id: str,
-        base_dir: str = "/tmp",
+        base_dir: str = None,
         use_llm_compression: bool = True,
     ) -> None:
         self.session_id = session_id
+        # 使用跨平台的临时目录（Windows: C:\Users\xxx\AppData\Local\Temp, Linux: /tmp）
+        if base_dir is None:
+            base_dir = tempfile.gettempdir()
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -273,73 +301,100 @@ class SessionMemory:
         quality_report: Optional[DataQualityReport] = None,
         field_stats: Optional[Iterable[FieldStats]] = None,
     ) -> str:
-        """Persist data on disk and optionally register the dataset."""
+        """Persist data to DataRegistry (backend_data_registry/).
 
-        # Sanitize filename for Windows - replace colons with underscores
-        safe_filename = data_id.replace(":", "_")
-        path = self.session_dir / f"{safe_filename}.{file_format}"
+        所有数据统一存储到 backend_data_registry/ 目录，不再使用会话临时目录。
+        """
 
-        if file_format == "json":
-            with path.open("w", encoding="utf-8") as stream:
-                # Use default handler for datetime serialization
-                json.dump(
-                    data,
-                    stream,
-                    ensure_ascii=False,
-                    indent=2,
-                    default=str  # Convert datetime and other non-serializable objects to strings
-                )
-        elif file_format == "md":
+        if file_format != "json":
+            # 非 JSON 格式保存到会话目录（用于 Markdown 报告等）
+            safe_filename = data_id.replace(":", "_")
+            path = self.session_dir / f"{safe_filename}.{file_format}"
             with path.open("w", encoding="utf-8") as stream:
                 stream.write(str(data))
-        else:
-            raise ValueError(f"Unsupported format: {file_format}")
+            self.data_files[data_id] = str(path)
+            logger.info("session_memory_non_json_saved", data_id=data_id, path=str(path))
+            return str(path)
 
-        self.data_files[data_id] = str(path)
-
+        # JSON 数据统一保存到 DataRegistry
         quality_report_obj = self._coerce_quality_report(quality_report)
         field_stats_list = self._coerce_field_stats(field_stats)
 
-        should_register = (
-            file_format == "json"
-            and registry_schema
-            and isinstance(data, list)
-            and all(isinstance(item, dict) for item in data)
-        )
+        # 构建 metadata
+        metadata = {"session_id": self.session_id}
+        if registry_metadata:
+            metadata.update(registry_metadata)
 
-        registry_id = None
-        if should_register:
-            metadata = {"session_id": self.session_id}
-            if registry_metadata:
-                metadata.update(registry_metadata)
+        # 使用 data_id 中指定的 schema，如果没有则使用传入的 registry_schema
+        if registry_schema is None:
+            # 从 data_id 中提取 schema (格式: "schema:v1:hash")
+            parts = data_id.split(":")
+            if len(parts) >= 1:
+                registry_schema = parts[0]
+            else:
+                registry_schema = "unknown"
 
-            try:
-                entry = data_registry.register_dataset(
-                    schema=registry_schema,
-                    version=registry_version,
-                    records=data,  # type: ignore[arg-type]
-                    quality_report=quality_report_obj,
-                    field_stats=field_stats_list,
-                    metadata=metadata,
-                )
-                registry_id = entry.data_id
-                self.data_registry_refs[data_id] = registry_id
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(
-                    "session_memory_registry_register_failed",
-                    data_id=data_id,
-                    error=str(exc),
-                )
+        # 检查数据格式
+        if not isinstance(data, list):
+            # 非列表数据（如单个对象）保存到会话目录
+            safe_filename = data_id.replace(":", "_")
+            path = self.session_dir / f"{safe_filename}.{file_format}"
+            with path.open("w", encoding="utf-8") as stream:
+                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
+            self.data_files[data_id] = str(path)
+            logger.info("session_memory_non_list_saved", data_id=data_id, path=str(path))
+            return str(path)
 
-        logger.info(
-            "session_memory_data_saved",
-            data_id=data_id,
-            path=str(path),
-            registry_id=registry_id,
-            data_files_count=len(self.data_files),
-            data_files_keys=list(self.data_files.keys())[-3:]  # 显示最近3个键
-        )
-        return str(path)
+        # 检查是否所有项都是字典
+        if not all(isinstance(item, dict) for item in data):
+            # 混合类型数据保存到会话目录
+            safe_filename = data_id.replace(":", "_")
+            path = self.session_dir / f"{safe_filename}.{file_format}"
+            with path.open("w", encoding="utf-8") as stream:
+                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
+            self.data_files[data_id] = str(path)
+            logger.info("session_memory_mixed_type_saved", data_id=data_id, path=str(path))
+            return str(path)
+
+        # 标准列表字典数据 - 保存到 DataRegistry
+        try:
+            # ✅ 修复：传入 data_id 参数，避免 register_dataset 重新生成 ID 导致不匹配
+            entry = data_registry.register_dataset(
+                schema=registry_schema,
+                version=registry_version,
+                records=data,  # type: ignore[arg-type]
+                quality_report=quality_report_obj,
+                field_stats=field_stats_list,
+                metadata=metadata,
+                data_id=data_id,  # ✅ 传入完整的 data_id (schema:v1:hash 格式)
+            )
+            registry_id = entry.data_id
+            self.data_registry_refs[data_id] = registry_id
+            self.data_files[data_id] = str(entry.dataset_path)
+
+            logger.info(
+                "session_memory_data_saved_to_registry",
+                data_id=data_id,
+                registry_id=registry_id,
+                dataset_path=str(entry.dataset_path),
+                record_count=len(data),
+            )
+            return str(entry.dataset_path)
+
+        except Exception as exc:
+            logger.error(
+                "session_memory_registry_register_failed",
+                data_id=data_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            # 降级：保存到会话目录
+            safe_filename = data_id.replace(":", "_")
+            path = self.session_dir / f"{safe_filename}.{file_format}"
+            with path.open("w", encoding="utf-8") as stream:
+                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
+            self.data_files[data_id] = str(path)
+            return str(path)
 
     def get_registry_id(self, data_id: str) -> Optional[str]:
         """Return the registry identifier for a persisted dataset."""
@@ -495,26 +550,108 @@ class SessionMemory:
             history_length=len(self.conversation_history)
         )
 
-    def add_assistant_message(self, content: str) -> None:
+    def add_assistant_message(self, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None) -> None:
         """Record an assistant response."""
-        self._append_conversation_turn("assistant", content)
+        self._append_conversation_turn("assistant", content, thought=thought, reasoning=reasoning)
         logger.debug(
             "add_assistant_message_called",
             session_id=self.session_id,
             content_preview=content[:100],
-            history_length=len(self.conversation_history)
+            history_length=len(self.conversation_history),
+            has_thought=thought is not None,
+            has_reasoning=reasoning is not None
         )
 
     # 向后兼容旧接口
     def add_assistant_response(self, content: str) -> None:
         self.add_assistant_message(content)
 
-    def _append_conversation_turn(self, role: str, content: str) -> None:
+    def load_history_messages(self, messages: List[Dict[str, Any]]) -> None:
+        """
+        批量导入历史对话消息（用于会话恢复）
+
+        Args:
+            messages: 历史消息列表，格式为 [{"type": "thought/action/observation/...", "data": {...}}]
+                     或标准格式 [{"role": "user/assistant", "content": "..."}]
+        """
+        if not messages:
+            return
+
+        for msg in messages:
+            # 支持 ReAct 事件格式
+            if "type" in msg:
+                msg_type = msg.get("type")
+                data = msg.get("data", {})
+
+                # 提取消息内容
+                if msg_type == "thought":
+                    content = data.get("thought", "")
+                    if content:
+                        self.conversation_history.append(
+                            ConversationTurn(
+                                role="assistant",
+                                content=f"[思考] {content}",
+                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            )
+                        )
+                elif msg_type == "action":
+                    tool_calls = data.get("tool_calls", [])
+                    if tool_calls:
+                        content = f"[行动] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
+                        self.conversation_history.append(
+                            ConversationTurn(
+                                role="assistant",
+                                content=content,
+                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            )
+                        )
+                elif msg_type == "observation":
+                    result = data.get("result", "")
+                    if result:
+                        # 截断过长的结果
+                        summary = result[:500] + "..." if len(str(result)) > 500 else result
+                        self.conversation_history.append(
+                            ConversationTurn(
+                                role="assistant",
+                                content=f"[观察] {summary}",
+                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            )
+                        )
+                elif msg_type == "complete":
+                    answer = data.get("answer", "")
+                    if answer:
+                        self.conversation_history.append(
+                            ConversationTurn(
+                                role="assistant",
+                                content=answer,
+                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            )
+                        )
+            # 支持标准消息格式
+            elif "role" in msg and "content" in msg:
+                self.conversation_history.append(
+                    ConversationTurn(
+                        role=msg["role"],
+                        content=msg["content"],
+                        timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                    )
+                )
+
+        logger.info(
+            "history_messages_loaded",
+            session_id=self.session_id,
+            message_count=len(messages),
+            history_length=len(self.conversation_history)
+        )
+
+    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None) -> None:
         self.conversation_history.append(
             ConversationTurn(
                 role=role,
                 content=content,
                 timestamp=datetime.utcnow().isoformat(),
+                thought=thought,
+                reasoning=reasoning
             )
         )
 
@@ -534,6 +671,14 @@ class SessionMemory:
         Converts internal ConversationTurn objects to OpenAI-compatible message format:
         [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
 
+        ✅ 同时传递 reasoning（详细推理）和 thought（简洁思考），提供层次化信息
+
+        缓存友好策略（参考 learn-claude-code）：
+        - 只追加：所有历史消息完整传递，不删除、不修改
+        - 缓存优化：保持前缀不变，实现 KV Cache 命命
+        - 成本节省：避免破坏缓存可节省 80-90% 成本
+        - 参考：https://github.com/anthropics/learn-claude-code
+
         Returns:
             List of message dictionaries in LLM API format
         """
@@ -546,18 +691,40 @@ class SessionMemory:
             )
             return []
 
+        # ✅ 返回所有历史消息，采用只追加策略（缓存友好）
+        all_turns = self.conversation_history
+
         messages = []
-        for turn in self.conversation_history:
+        for turn in all_turns:
+            if turn.role == "assistant":
+                # ✅ 区分两种格式：
+                # 1. 工具调用（有 thought/reasoning）→ JSON 格式
+                # 2. 纯文本回复（无 thought/reasoning）→ 保持纯文本
+                if turn.thought or turn.reasoning:
+                    # 有思考过程：使用 JSON 格式
+                    json_obj = {
+                        "thought": turn.thought or "",
+                        "reasoning": turn.reasoning or turn.thought or "",
+                        "observation": turn.content
+                    }
+                    content = json.dumps(json_obj, ensure_ascii=False, indent=2)
+                else:
+                    # 纯文本回复：保持原样，不包装
+                    content = turn.content
+            else:
+                content = turn.content
+
             messages.append({
                 "role": turn.role,
-                "content": turn.content,
+                "content": content,
             })
 
-        logger.debug(
+        logger.info(
             "get_messages_for_llm_success",
             session_id=self.session_id,
-            history_length=len(self.conversation_history),
-            messages_count=len(messages)
+            total_history_length=len(self.conversation_history),
+            messages_count=len(messages),
+            strategy="append_only_cache_friendly"
         )
 
         return messages
@@ -565,30 +732,64 @@ class SessionMemory:
     def update_messages(self, compressed_messages: List[Dict[str, Any]]) -> None:
         """
         Update conversation history with compressed messages from token manager.
-        
+
         Replaces the existing conversation history with compressed/summarized messages.
         This is called after token compression to reduce context window usage.
-        
+
         Args:
             compressed_messages: List of messages in LLM API format after compression
         """
         # Clear existing history
         self.conversation_history.clear()
-        
+
         # Convert compressed messages back to ConversationTurn format
         for msg in compressed_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-            
+
             # Skip empty messages
             if not content:
                 continue
-            
+
+            # Parse JSON format for assistant messages
+            thought = None
+            reasoning = None
+            if role == "assistant":
+                # 尝试解析 JSON 格式
+                try:
+                    # 去除可能的代码块标记
+                    parse_content = content.strip()
+                    if parse_content.startswith("```json"):
+                        parse_content = parse_content[7:]  # 去掉 ```json
+                    if parse_content.startswith("```"):
+                        parse_content = parse_content[3:]  # 去掉 ```
+                    if parse_content.endswith("```"):
+                        parse_content = parse_content[:-3]  # 去掉结尾的 ```
+                    parse_content = parse_content.strip()
+
+                    parsed = json.loads(parse_content)
+                    if isinstance(parsed, dict) and "thought" in parsed:
+                        # 工具调用格式：提取 thought/reasoning/observation
+                        thought = parsed.get("thought")
+                        reasoning = parsed.get("reasoning")
+                        content = parsed.get("observation", parsed.get("content", content))
+                except (json.JSONDecodeError, ValueError, AttributeError):
+                    # 解析失败，保持原格式（向后兼容旧格式）
+                    # 尝试解析旧的 Markdown 格式
+                    if content.startswith("## 思考\n"):
+                        obs_marker = "\n\n## 观察\n"
+                        obs_idx = content.find(obs_marker)
+                        if obs_idx != -1:
+                            reasoning = content[len("## 思考\n"):obs_idx]
+                            content = content[obs_idx + len(obs_marker):]
+
             self.conversation_history.append(
                 ConversationTurn(
                     role=role,
                     content=content,
                     timestamp=datetime.utcnow().isoformat(),
+                    thought=thought,
+                    reasoning=reasoning,
                 )
             )
         

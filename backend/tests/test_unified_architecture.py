@@ -149,14 +149,11 @@ class TestMemoryToolsHandlerUnified:
 
     def test_no_wrapper_calls_for_v2_tools(self):
         """验证旧包装器不再包装 V2 工具"""
-        # 注册 load_data_from_memory 工具
+        # 调用 register_memory_tools（不再注册任何工具）
         self.handler.register_memory_tools()
 
-        # 验证 register_tool 被调用
-        assert self.mock_executor.register_tool.called
-
-        # 检查 tool_registry 中有 load_data_from_memory
-        assert "load_data_from_memory" in self.mock_executor.tool_registry
+        # 验证 tool_registry 中没有旧的工具
+        assert "load_data_from_memory" not in self.mock_executor.tool_registry
 
         # PMF 和 OBM 不应该被包装
         # (它们由 global_tool_registry 单独注册)

@@ -1,437 +1,210 @@
 ﻿<template>
-  <div class="viz-panel" :class="{ 'has-content': visualizations.length }">
-    <!-- 调试信息 - 在开发环境下显示 -->
-    <div v-if="false" class="debug-info" style="position: absolute; top: 0; right: 0; background: #f0f0f0; padding: 10px; font-size: 12px; z-index: 1000;">
-      <div>assistantMode: {{ assistantMode }}</div>
-      <div>isQuickTracingMode: {{ isQuickTracingMode }}</div>
-      <div>expertResults存在: {{ !!expertResults }}</div>
-      <div v-if="expertResults">expertResults结构: {{ JSON.stringify(expertResults, null, 2) }}</div>
-      <div>visualizations数量: {{ visualizations.length }}</div>
-      <div>groupedVisualizations: {{ Object.keys(groupedVisualizations).join(', ') }}</div>
-    </div>
-
-    <div class="panel-header">
-      <div class="panel-title-group">
-        <h3>{{ panelTitle }}</h3>
-        <span v-if="visualizations.length" class="viz-count">共 {{ visualizations.length }} 个结果</span>
-      </div>
-      <div class="header-actions">
-        <!-- 导出模式按钮 -->
-        <button 
-          v-if="visualizations.length" 
-          @click="toggleExportMode" 
-          class="export-mode-btn"
-          :class="{ active: exportMode }"
-          :title="exportMode ? '取消选择' : '选择导出图表'"
+  <div class="viz-panel" :class="{ 'has-content': visualizations.length || hasKnowledgeSources }">
+    <!-- 知识溯源面板（优先显示） -->
+    <div v-if="hasKnowledgeSources" class="knowledge-source-section">
+      <div class="panel-header">
+        <div class="header-title">
+          <span class="panel-icon">📚</span>
+          <span class="panel-text">知识溯源</span>
+          <span class="source-count">{{ knowledgeSources.length }} 篇参考文档</span>
+        </div>
+        <button
+          @click="toggleExpand"
+          class="toggle-btn"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          {{ exportMode ? '取消' : '导出' }}
-        </button>
-        
-        <!-- 导出模式下的操作按钮 -->
-        <template v-if="exportMode">
-          <button @click="toggleSelectAll" class="select-all-btn">
-            {{ selectedChartIds.length === visualizations.length ? '取消全选' : '全选' }}
-          </button>
-          <button 
-            v-if="selectedChartIds.length > 0"
-            @click="openExportPreview" 
-            class="export-btn primary"
-          >
-            导出报告 ({{ selectedChartIds.length }})
-          </button>
-        </template>
-        
-        <button v-if="visualizations.length && !exportMode" @click="$emit('fullscreen')" class="fullscreen-btn" title="展开大屏">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-          </svg>
-        </button>
-        <button v-if="visualizations.length && !exportMode" @click="toggleExpand" class="expand-btn">
           {{ expanded ? '收起' : '展开' }}
         </button>
       </div>
-    </div>
 
-    <!-- 多专家分组显示（快速溯源模式）- 仅大屏使用，右侧区域不显示 -->
-    <div v-if="false" v-show="expanded" class="expert-groups">
-      <!-- 多专家分组调试信息 -->
-      <div v-if="false" class="debug-section" style="background: #e3f2fd; padding: 10px; margin: 10px; border: 1px solid #2196f3;">
-        <h4>多专家分组调试信息</h4>
-        <div>多专家模式: {{ isQuickTracingMode }}</div>
-        <div>分组数量: {{ Object.keys(groupedVisualizations).length }}</div>
-        <div>分组详情:</div>
-        <ul>
-          <li v-for="(group, expertType) in groupedVisualizations" :key="expertType">
-            {{ expertType }}: {{ group.length }}个图表
-          </li>
-        </ul>
-      </div>
-      <div
-        v-for="(group, expertType) in groupedVisualizations"
-        :key="expertType"
-        class="expert-group"
-      >
-        <div class="expert-group-header">
-          <div class="expert-title">
-            <span class="expert-icon">{{ getExpertIcon(expertType) }}</span>
-            <span class="expert-name">{{ getExpertLabel(expertType) }}</span>
-            <span class="expert-count">({{ group.length }}个)</span>
-          </div>
-          <div class="expert-group-actions">
-            <button @click="toggleExpertGroup(expertType)" class="expand-btn" :class="{ expanded: expandedGroups.includes(expertType) }">
-              {{ expandedGroups.includes(expertType) ? '收起' : '展开' }}
-            </button>
-            <button @click="fullscreenExpertGroup(expertType)" class="fullscreen-btn" title="大屏展示">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- 专家LLM总结输出 -->
-        <div v-if="props.expertResults?.expert_results?.[expertType]?.analysis" class="expert-summary">
-          <div class="summary-header">
-            <span class="summary-icon">🧠</span>
-            <span class="summary-title">{{ getExpertLabel(expertType) }}分析总结</span>
-          </div>
-          <div class="summary-content">
-            <p class="summary-text">{{ props.expertResults.expert_results[expertType].analysis.summary || '暂无总结' }}</p>
-            <div v-if="props.expertResults.expert_results[expertType].analysis.key_findings?.length" class="key-findings">
-              <h4>关键发现：</h4>
-              <ul>
-                <li v-for="(finding, index) in props.expertResults.expert_results[expertType].analysis.key_findings" :key="index">
-                  {{ finding }}
-                </li>
-              </ul>
+      <div v-if="expanded" class="source-list">
+        <div
+          v-for="(source, index) in knowledgeSources"
+          :key="index"
+          class="source-item"
+        >
+          <div class="source-header">
+            <div class="source-title">
+              <span class="source-index">{{ index + 1 }}</span>
+              <span class="source-name">{{ source.title || source.document_name || source.knowledge_base_name || '未知标题' }}</span>
             </div>
-          </div>
-        </div>
-
-        <div v-show="expandedGroups.includes(expertType)" class="expert-group-body">
-          <div
-            v-for="(viz, index) in group"
-            :key="viz.id || `${viz.type || 'viz'}_${expertType}_${index}`"
-            class="viz-item"
-            :class="getLayoutClass(viz.meta?.layout_hint)"
-          >
-            <div class="viz-item-header">
-              <div class="viz-title">
-                <span class="viz-type-tag">{{ getTypeLabel(viz.type) }}</span>
-                <span class="viz-title-text">{{ viz.title || `第${index + 1}个${getTypeLabel(viz.type)}` }}</span>
-                <span class="expert-source-tag">{{ getExpertLabel(expertType) }}</span>
-              </div>
-              <span v-if="formatTimestamp(viz.timestamp)" class="viz-time">
-                {{ formatTimestamp(viz.timestamp) }}
+            <div class="source-meta">
+              <span class="relevance-badge">
+                相关度: {{ ((source.relevance || source.score || 0) * 100).toFixed(0) }}%
               </span>
             </div>
+          </div>
 
-            <div class="viz-meta">
-              <div class="meta-row" v-if="viz.meta">
-                <!-- 基础元数据 -->
-                <div class="meta-item" v-if="viz.meta.data_source">
-                  <label>数据源:</label>
-                  <span>{{ viz.meta.data_source }}</span>
-                </div>
-                <div class="meta-item" v-if="viz.meta.pollutant">
-                  <label>污染物:</label>
-                  <span>{{ viz.meta.pollutant }}</span>
-                </div>
-                <div class="meta-item" v-if="viz.meta.unit">
-                  <label>单位:</label>
-                  <span>{{ viz.meta.unit }}</span>
-                </div>
-                <div class="meta-item" v-if="viz.meta.station_name">
-                  <label>站点:</label>
-                  <span>{{ viz.meta.station_name }}</span>
-                </div>
-                <div class="meta-item" v-if="viz.meta.record_count">
-                  <label>记录数:</label>
-                  <span>{{ viz.meta.record_count }}</span>
-                </div>
-
-                <!-- 扩展元数据 -->
-                <div class="meta-item" v-if="viz.meta.source_data_ids && viz.meta.source_data_ids.length">
-                  <label>源数据ID:</label>
-                  <div class="source-data-ids">
-                    <span v-for="dataId in viz.meta.source_data_ids" :key="dataId" class="data-id-tag">
-                      {{ dataId }}
-                      <button @click="copyToClipboard(dataId)" class="copy-btn" title="复制data_id">📋</button>
-                      <button v-if="isValidDataId(dataId)" @click="viewSourceData(dataId)" class="view-btn" title="查看源数据">👁️</button>
-                    </span>
-                  </div>
-                </div>
-                <div class="meta-item" v-if="viz.meta.generator">
-                  <label>生成器:</label>
-                  <span class="generator-tag">{{ viz.meta.generator }}</span>
-                </div>
-                <div class="meta-item" v-if="viz.meta.scenario">
-                  <label>场景:</label>
-                  <span class="scenario-tag">{{ viz.meta.scenario }}</span>
-                </div>
-                <div class="meta-item" v-if="viz.meta.schema_version">
-                  <label>Schema版本:</label>
-                  <span class="version-tag">{{ viz.meta.schema_version }}</span>
-                </div>
-              </div>
+          <div class="source-info">
+            <div class="info-row">
+              <label>来源:</label>
+              <span>{{ source.source || source.knowledge_base_name || '未知来源' }}</span>
             </div>
-
-            <div class="viz-actions">
-              <button @click="reuseChart(viz)" class="action-btn reuse-btn" title="复用此图表">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="1 4 1 10 7 10"></polyline>
-                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-                </svg>
-                复用
-              </button>
-              <button @click="regenerateChart(viz)" class="action-btn regenerate-btn" title="重新生成图表">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="23 4 23 10 17 10"></polyline>
-                  <polyline points="1 20 1 14 7 14"></polyline>
-                  <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-                </svg>
-                重新生成
-              </button>
+            <div v-if="source.chunk_index !== undefined" class="info-row">
+              <label>段落:</label>
+              <span>第 {{ source.chunk_index + 1 }} 段</span>
             </div>
-
-            <div class="viz-debug">
-              <details>
-                <summary>调试信息</summary>
-                <pre>{{ JSON.stringify(viz, null, 2) }}</pre>
-              </details>
+            <div v-if="source.document_name" class="info-row">
+              <label>文档:</label>
+              <span>{{ source.document_name }}</span>
             </div>
+          </div>
 
-            <!-- 轨迹地图（包含trajectory_layer） -->
-            <TrajectoryMapPanel
-              v-if="viz.type === 'map' && isTrajectoryMap(viz)"
-              :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-              :config="viz.data"
-              @ready="onPanelReady"
-            />
-
-            <!-- 普通地图（上风向企业等） -->
-            <MapPanel
-              v-else-if="viz.type === 'map'"
-              :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-              :config="viz.data"
-              @ready="onPanelReady"
-            />
-
-            <ChartPanel
-              v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap', 'weather_timeseries', 'pressure_pbl_timeseries', 'ternary_SNA', 'sor_nor_scatter', 'charge_balance', 'ec_oc_scatter', 'ion_timeseries', 'crustal_boxplot', 'facet_timeseries'].includes(viz.type)"
-              :key="viz.id || viz.title || `chart_${expertType}_${index}`"
-              :data="viz"
-              @ready="onPanelReady"
-            />
-
-            <DataTable
-              v-else-if="viz.type === 'table'"
-              :rows="getTableRows(viz)"
-              @ready="onPanelReady"
-            />
-
-            <!-- matplotlib生成的特殊图表类型（三元图、SOR/NOR、电荷平衡、地壳箱线图等） -->
-            <ImagePanel
-              v-else-if="viz.type === 'image' && ['ternary_SNA', 'sor_nor_scatter', 'charge_balance', 'ec_oc_scatter', 'crustal_boxplot', 'carbon_bar', 'ion_timeseries'].includes(viz.payload?.type)"
-              :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-              :src="viz.image_url || viz.markdown_image?.match(/]\((.+?)\)/)?.[1] || viz.data"
-              @ready="onPanelReady"
-            />
-
-            <ImagePanel
-              v-else-if="viz.type === 'image'"
-              :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-              :src="viz.image_url || viz.markdown_image?.match(/]\((.+?)\)/)?.[1] || viz.data"
-              @ready="onPanelReady"
-            />
-
-            <div v-else-if="viz.type === 'text' || viz.text" class="text-panel">
-              <MarkdownRenderer :content="viz.text || viz.content || viz.data" />
-            </div>
-
-            <div v-else class="unknown-panel">
-              暂未识别的可视化类型：{{ viz.type || '未知' }}
-              <button @click="debugUnknownViz(viz)" style="margin-left: 8px; font-size: 11px; padding: 2px 6px;">调试</button>
-            </div>
+          <div v-if="source.content" class="source-content">
+            <div class="content-preview">{{ source.content }}</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 普通显示模式（所有图表） -->
-    <div v-if="visualizations.length" v-show="expanded" class="panel-body">
-      <div
-        v-for="(viz, index) in visualizations"
-        :key="viz.id || `${viz.type || 'viz'}_${index}`"
-        class="viz-item"
-        :class="[
-          getLayoutClass(viz.meta?.layout_hint),
-          { 'export-selected': exportMode && isChartSelected(viz.id || `viz_${index}`) }
-        ]"
-      >
-        <!-- 导出模式勾选框 -->
-        <div v-if="exportMode" class="export-checkbox-wrapper">
-          <label class="export-checkbox">
-            <input 
-              type="checkbox" 
-              :checked="isChartSelected(viz.id || `viz_${index}`)"
-              @change="toggleChartSelection(viz.id || `viz_${index}`)"
-            />
-            <span class="checkmark"></span>
-          </label>
+    <!-- 原有可视化内容 -->
+    <div v-if="visualizations.length > 0" class="viz-content-section">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h3>{{ visualizationPanelTitle }}</h3>
+          <span v-if="visualizations.length" class="viz-count">共 {{ visualizations.length }} 个结果</span>
         </div>
-        
-        <div class="viz-item-header">
-          <div class="viz-title">
-            <span class="viz-type-tag">{{ getTypeLabel(viz.type) }}</span>
-            <span class="viz-title-text">{{ viz.title || `第${index + 1}个${getTypeLabel(viz.type)}` }}</span>
+        <div class="header-actions">
+          <!-- 导出模式按钮 -->
+          <button
+            v-if="visualizations.length"
+            @click="toggleExportMode"
+            class="export-mode-btn"
+            :class="{ active: exportMode }"
+            :title="exportMode ? '取消选择' : '选择导出图表'"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            {{ exportMode ? '取消' : '导出' }}
+          </button>
+          <button
+            v-if="visualizations.length && !exportMode"
+            @click="$emit('fullscreen')"
+            class="fullscreen-btn"
+            title="展开大屏"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+            </svg>
+          </button>
+          <button
+            v-if="visualizations.length && !exportMode"
+            @click="toggleExpand"
+            class="expand-btn"
+          >
+            {{ expanded ? '收起' : '展开' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 可视化内容列表 -->
+      <div v-if="expanded" class="panel-body">
+        <div
+          v-for="(viz, index) in visualizations"
+          :key="viz.id || `${viz.type || 'viz'}_${index}`"
+          class="viz-item"
+          :class="[
+            getLayoutClass(viz.meta?.layout_hint),
+            { 'export-selected': exportMode && isChartSelected(viz.id || `viz_${index}`) }
+          ]"
+        >
+          <!-- 导出模式勾选框 -->
+          <div v-if="exportMode" class="export-checkbox-wrapper">
+            <label class="export-checkbox">
+              <input
+                type="checkbox"
+                :checked="isChartSelected(viz.id || `viz_${index}`)"
+                @change="toggleChartSelection(viz.id || `viz_${index}`)"
+              />
+              <span class="checkmark"></span>
+            </label>
           </div>
-          <span v-if="formatTimestamp(viz.timestamp)" class="viz-time">
-            {{ formatTimestamp(viz.timestamp) }}
-          </span>
-        </div>
 
-        <div class="viz-meta">
-          <div class="meta-row" v-if="viz.meta">
-            <!-- 基础元数据 -->
-            <div class="meta-item" v-if="viz.meta.data_source">
-              <label>数据源:</label>
-              <span>{{ viz.meta.data_source }}</span>
+          <div class="viz-item-header">
+            <div class="viz-title">
+              <span class="viz-type-tag">{{ getTypeLabel(viz.type) }}</span>
+              <span class="viz-title-text">{{ viz.title || `第${index + 1}个${getTypeLabel(viz.type)}` }}</span>
             </div>
-            <div class="meta-item" v-if="viz.meta.pollutant">
-              <label>污染物:</label>
-              <span>{{ viz.meta.pollutant }}</span>
-            </div>
-            <div class="meta-item" v-if="viz.meta.unit">
-              <label>单位:</label>
-              <span>{{ viz.meta.unit }}</span>
-            </div>
-            <div class="meta-item" v-if="viz.meta.station_name">
-              <label>站点:</label>
-              <span>{{ viz.meta.station_name }}</span>
-            </div>
-            <div class="meta-item" v-if="viz.meta.record_count">
-              <label>记录数:</label>
-              <span>{{ viz.meta.record_count }}</span>
-            </div>
+            <span v-if="formatTimestamp(viz.timestamp)" class="viz-time">
+              {{ formatTimestamp(viz.timestamp) }}
+            </span>
+          </div>
 
-            <!-- 扩展元数据 -->
-            <div class="meta-item" v-if="viz.meta.source_data_ids && viz.meta.source_data_ids.length">
-              <label>源数据ID:</label>
-              <div class="source-data-ids">
-                <span v-for="dataId in viz.meta.source_data_ids" :key="dataId" class="data-id-tag">
-                  {{ dataId }}
-                  <button @click="copyToClipboard(dataId)" class="copy-btn" title="复制data_id">📋</button>
-                  <button v-if="isValidDataId(dataId)" @click="viewSourceData(dataId)" class="view-btn" title="查看源数据">👁️</button>
-                </span>
+          <div class="viz-meta">
+            <div class="meta-row" v-if="viz.meta">
+              <div class="meta-item" v-if="viz.meta.generator">
+                <label>生成器:</label>
+                <span class="generator-tag">{{ viz.meta.generator }}</span>
               </div>
             </div>
-            <div class="meta-item" v-if="viz.meta.generator">
-              <label>生成器:</label>
-              <span class="generator-tag">{{ viz.meta.generator }}</span>
-            </div>
-            <div class="meta-item" v-if="viz.meta.scenario">
-              <label>场景:</label>
-              <span class="scenario-tag">{{ viz.meta.scenario }}</span>
-            </div>
-            <div class="meta-item" v-if="viz.meta.schema_version">
-              <label>Schema版本:</label>
-              <span class="version-tag">{{ viz.meta.schema_version }}</span>
-            </div>
           </div>
-        </div>
 
-        <div class="viz-actions">
-          <button @click="reuseChart(viz)" class="action-btn reuse-btn" title="复用此图表">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="1 4 1 10 7 10"></polyline>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-            </svg>
-            复用
-          </button>
-          <button @click="regenerateChart(viz)" class="action-btn regenerate-btn" title="重新生成图表">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"></polyline>
-              <polyline points="1 20 1 14 7 14"></polyline>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-            </svg>
-            重新生成
-          </button>
-        </div>
+          <!-- 轨迹地图 -->
+          <TrajectoryMapPanel
+            v-if="viz.type === 'map' && isTrajectoryMap(viz)"
+            :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
+            :config="viz.data"
+            @ready="onPanelReady"
+          />
 
-        <div class="viz-debug">
-          <details>
-            <summary>调试信息</summary>
-            <pre>{{ JSON.stringify(viz, null, 2) }}</pre>
-          </details>
-        </div>
+          <!-- 普通地图 -->
+          <MapPanel
+            v-else-if="viz.type === 'map'"
+            :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
+            :config="viz.data"
+            @ready="onPanelReady"
+          />
 
-        <!-- 轨迹地图（包含trajectory_layer） -->
-        <TrajectoryMapPanel
-          v-if="viz.type === 'map' && isTrajectoryMap(viz)"
-          :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-          :config="viz.data"
-          @ready="onPanelReady"
-        />
+          <!-- 图表 -->
+          <ChartPanel
+            v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(viz.type)"
+            :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
+            :key="viz.id || viz.title || `chart_${index}`"
+            :data="viz"
+            @ready="onPanelReady"
+          />
 
-        <!-- 普通地图（上风向企业等） -->
-        <MapPanel
-          v-else-if="viz.type === 'map'"
-          :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-          :config="viz.data"
-          @ready="onPanelReady"
-        />
+          <!-- 表格 -->
+          <DataTable
+            v-else-if="viz.type === 'table'"
+            :rows="getTableRows(viz)"
+            @ready="onPanelReady"
+          />
 
-        <ChartPanel
-          v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap', 'weather_timeseries', 'pressure_pbl_timeseries', 'ternary_SNA', 'sor_nor_scatter', 'charge_balance', 'ec_oc_scatter', 'ion_timeseries', 'crustal_boxplot', 'facet_timeseries'].includes(viz.type)"
-          :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-          :key="viz.id || viz.title || `chart_${index}`"
-          :data="viz"
-          @ready="onPanelReady"
-        />
+          <!-- 图片 -->
+          <ImagePanel
+            v-else-if="viz.type === 'image'"
+            :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
+            :src="viz.image_url || viz.markdown_image?.match(/]\((.+?)\)/)?.[1] || viz.data"
+            @ready="onPanelReady"
+          />
 
-        <DataTable
-          v-else-if="viz.type === 'table'"
-          :rows="getTableRows(viz)"
-          @ready="onPanelReady"
-        />
+          <!-- 文本 -->
+          <div v-else-if="viz.type === 'text' || viz.text" class="text-panel">
+            <MarkdownRenderer :content="viz.text || viz.content || viz.data" />
+          </div>
 
-        <ImagePanel
-          v-else-if="viz.type === 'image'"
-          :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-          :src="viz.image_url || viz.markdown_image?.match(/]\((.+?)\)/)?.[1] || viz.data"
-          @ready="onPanelReady"
-        />
-
-        <div v-else-if="viz.type === 'text' || viz.text" class="text-panel">
-          <MarkdownRenderer :content="viz.text || viz.content || viz.data" />
-        </div>
-
-        <div v-else class="unknown-panel">
-          暂未识别的可视化类型：{{ viz.type || '未知' }}
-          <button @click="debugUnknownViz(viz)" style="margin-left: 8px; font-size: 11px; padding: 2px 6px;">调试</button>
+          <!-- 未知类型 -->
+          <div v-else class="unknown-panel">
+            暂未识别的可视化类型：{{ viz.type || '未知' }}
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-else class="empty-state">
+    <!-- 空状态 -->
+    <div v-if="!hasKnowledgeSources && visualizations.length === 0" class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M3 9h18" />
         <path d="M9 3v18" />
       </svg>
-      <p class="empty-title">暂无可视化内容</p>
-      <p class="empty-tip">
-        当分析过程中生成图表、地图或数据时，<br />
-        将自动在此处显示
-      </p>
+      <p class="empty-title">暂无内容</p>
+      <p class="empty-tip">当生成可视化图表或检索到知识文档时，将在此处显示</p>
     </div>
-    
+
     <!-- 导出预览弹窗 -->
     <ExportPreviewModal
       v-if="showExportPreview"
@@ -465,6 +238,10 @@ const props = defineProps({
   history: {
     type: Array,
     default: () => []
+  },
+  selectedMessageId: {
+    type: String,
+    default: null
   },
   assistantMode: {
     type: String,
@@ -770,16 +547,13 @@ const isChartType = (type) => {
 
 // 判断是否为多专家模式
 const isQuickTracingMode = computed(() => {
-  return props.assistantMode === 'quick-tracing-expert' ||
-         (props.expertResults?.expert_results && Object.keys(props.expertResults.expert_results).length > 0)
+  return props.expertResults?.expert_results && Object.keys(props.expertResults.expert_results).length > 0
 })
 
 // 直接使用 store 中已分组的数据（优化：避免重复处理）
 const groupedVisualizations = computed(() => {
   if (!isQuickTracingMode.value) return {}
-  const groups = store.groupedVisualizations
-  console.log(`[VisualizationPanel] 使用store分组: weather=${groups.weather?.length || 0}, component=${groups.component?.length || 0}`)
-  return groups
+  return store.groupedVisualizations
 })
 
 // 检查是否有分组数据
@@ -855,127 +629,81 @@ const fullscreenExpertGroup = (expertType) => {
   emit('fullscreen-expert', expertType)
 }
 
-// 检查viz是否为URL直接渲染的图片（需要过滤）
+// 检查viz是否为静态图片（需要过滤）
 const isDirectUrlImage = (viz) => {
   if (!viz) return false
 
-  // 检查是否有image_url或markdown_image字段（这些图片已在对话区渲染）
-  const hasImageUrl = !!(viz.image_url || viz.markdown_image)
+  // 规则1: type === 'image' 的是静态图片
+  if (viz.type === 'image') {
+    console.log('[isDirectUrlImage] 过滤静态图片 (type=image):', {
+      id: viz.id?.substring(0, 20),
+      type: viz.type,
+      title: viz.title?.substring(0, 30)
+    })
+    return true
+  }
 
-  // 检查payload中是否有image_url或markdown_image
-  const payloadHasImageUrl = viz.payload && !!(viz.payload.image_url || viz.payload.markdown_image)
+  // 规则2: 检查 meta.chart_type 是否为 matplotlib 生成的图表类型
+  // 这些图表在左侧Markdown已通过 image_url 显示，右侧不需要重复渲染
+  const matplotlibChartTypes = new Set([
+    'ternary_SNA',
+    'sor_nor_scatter',
+    'charge_balance',
+    'ec_oc_scatter',
+    'crustal_boxplot',
+    'ion_timeseries',
+    'carbon_bar'
+  ])
 
-  // 检查meta中是否有image_url或markdown_image
-  const metaHasImageUrl = viz.meta && !!(viz.meta.image_url || viz.meta.markdown_image)
+  const chartType = viz.meta?.chart_type || viz.type
+  if (matplotlibChartTypes.has(chartType)) {
+    console.log('[isDirectUrlImage] 过滤matplotlib图表 (chart_type):', {
+      id: viz.id?.substring(0, 20),
+      type: viz.type,
+      chart_type: chartType,
+      title: viz.title?.substring(0, 30)
+    })
+    return true
+  }
 
-  const result = hasImageUrl || payloadHasImageUrl || metaHasImageUrl
-
-  // 【调试】详细输出所有检查过程
-  console.log('[VisualizationPanel DEBUG] isDirectUrlImage检查:', {
-    id: viz.id,
-    title: viz.title,
-    type: viz.type,
-    hasImageUrl,
-    payloadHasImageUrl,
-    metaHasImageUrl,
-    result,
-    viz_image_url: viz.image_url,
-    viz_markdown_image: viz.markdown_image,
-    payload_image_url: viz.payload?.image_url,
-    payload_markdown_image: viz.payload?.markdown_image,
-    meta_image_url: viz.meta?.image_url,
-    meta_markdown_image: viz.meta?.markdown_image
-  })
-
-  return result
+  return false
 }
 
 const visualizations = computed(() => {
   let allVisualizations = []
 
-  console.log('[VisualizationPanel DEBUG] ====== 开始处理可视化 ======')
-  console.log('[VisualizationPanel DEBUG] props.content:', props.content ? '存在' : 'null')
-  console.log('[VisualizationPanel DEBUG] props.history:', props.history?.length || 0, '条')
-  console.log('[VisualizationPanel DEBUG] isQuickTracingMode:', isQuickTracingMode.value)
-  console.log('[VisualizationPanel DEBUG] store.groupedVisualizations:', store.groupedVisualizations)
-
   // 多专家模式：从 store.groupedVisualizations 获取所有图表
   if (isQuickTracingMode.value) {
     const groups = store.groupedVisualizations
-    console.log('[VisualizationPanel DEBUG] 多专家模式 - groups keys:', Object.keys(groups))
-    console.log('[VisualizationPanel DEBUG] weather:', groups.weather?.length || 0, '个')
-    console.log('[VisualizationPanel DEBUG] component:', groups.component?.length || 0, '个')
-
     allVisualizations = [...(groups.weather || []), ...(groups.component || [])]
-    console.log('[VisualizationPanel DEBUG] 多专家模式: 合并后共', allVisualizations.length, '个图表')
-
-    // 详细打印每个图表的结构
-    allVisualizations.forEach((viz, idx) => {
-      console.log(`[VisualizationPanel DEBUG] [${idx}] id=${viz.id}, type=${viz.type}, title=${viz.title}`)
-      console.log(`[VisualizationPanel DEBUG] [${idx}] meta.chart_type=${viz.meta?.chart_type}, meta.scenario=${viz.meta?.scenario}`)
-      console.log(`[VisualizationPanel DEBUG] [${idx}] data结构:`, {
-        hasData: !!viz.data,
-        dataType: typeof viz.data,
-        dataKeys: viz.data ? (typeof viz.data === 'object' ? Object.keys(viz.data).slice(0, 5) : viz.data) : null
-      })
-    })
   }
-  // 普通模式：从 props.history 和 props.content 获取
+  // 普通模式：从 props.content 获取可视化对象
   else {
-    console.log('[VisualizationPanel DEBUG] 普通模式 - 从history和content获取')
-    if (props.history?.length > 0) {
-      console.log('[VisualizationPanel DEBUG] history有', props.history.length, '条记录')
-      allVisualizations = allVisualizations.concat(props.history)
-    }
-    if (props.content) {
-      console.log('[VisualizationPanel DEBUG] content存在')
-      console.log('[VisualizationPanel DEBUG] content.visuals:', props.content?.visuals ? `数组(${props.content.visuals.length}个)` : 'null')
+    // props.history 只用于 hasKnowledgeSources 和 knowledgeSources 检查 sources 字段
 
+    if (props.content) {
       if (props.content?.visuals && Array.isArray(props.content.visuals)) {
         // 兼容两种格式：
         // 1. VisualBlock格式: {payload: {...}, meta: {...}}
         // 2. 直接格式: {id, type, data, meta, ...} (如EKMA专业图表)
-        const currentVisuals = props.content.visuals.map((v, idx) => {
-          console.log(`[VisualizationPanel DEBUG] [content][${idx}] 原始结构:`, {
-            hasPayload: !!v.payload,
-            type: v.type,
-            hasMeta: !!v.meta
-          })
-
+        const currentVisuals = props.content.visuals.map((v) => {
           if (v.payload) {
             // VisualBlock格式
-            const result = { ...v.payload, meta: v.meta }
-            console.log(`[VisualizationPanel DEBUG] [content][${idx}] 解析为VisualBlock:`, {
-              id: result.id,
-              type: result.type,
-              title: result.title
-            })
-            return result
+            return { ...v.payload, meta: v.meta }
           } else {
             // 直接格式（EKMA专业图表等）
-            console.log(`[VisualizationPanel DEBUG] [content][${idx}] 直接格式:`, {
-              id: v.id,
-              type: v.type,
-              title: v.title
-            })
             return v
           }
         })
         allVisualizations = allVisualizations.concat(currentVisuals)
       } else {
-        console.log('[VisualizationPanel DEBUG] content无visuals，直接使用content')
         allVisualizations = allVisualizations.concat([props.content])
       }
     }
   }
 
-  console.log('[VisualizationPanel DEBUG] 去重前共', allVisualizations.length, '个图表')
-
   // 【关键修复】过滤掉已经通过URL直接渲染的图片（在对话区已显示）
-  const beforeFilterCount = allVisualizations.length
   allVisualizations = allVisualizations.filter(viz => !isDirectUrlImage(viz))
-  const afterFilterCount = allVisualizations.length
-  console.log('[VisualizationPanel DEBUG] URL图片过滤: 过滤前', beforeFilterCount, '个, 过滤后', afterFilterCount, '个, 移除', beforeFilterCount - afterFilterCount, '个URL渲染图片')
 
   // 【关键修复】优先保留 type=image 的去重逻辑
   const seen = new Map()  // key -> viz (存储保留的可视化)
@@ -994,7 +722,6 @@ const visualizations = computed(() => {
     if (!existing) {
       // 首次出现，保留
       seen.set(key, viz)
-      console.log(`[VisualizationPanel DEBUG] 保留首次出现: ${key}, type=${viz.type}`)
     } else {
       // 已存在，检查是否需要替换
       const existingIsImage = existing.type === 'image'
@@ -1006,7 +733,6 @@ const visualizations = computed(() => {
       // 【关键修复】保留原始图表类型（用于报告匹配），但用image类型渲染
       if (currentIsImage && !existingIsImage) {
         // 当前是image，现有不是，替换
-        // 【修复】保存的是 existing.type（原有的原始图表类型），不是 viz.type（当前image）
         const vizToStore = {
           ...viz,
           meta: {
@@ -1015,7 +741,6 @@ const visualizations = computed(() => {
           }
         }
         seen.set(key, vizToStore)
-        console.log(`[VisualizationPanel DEBUG] 替换为image类型: ${key}, 原有type=${existing.type}, 保存chartType=${existing.type}`)
       } else if (currentIsImage && existingIsImage) {
         // 两者都是image，保留较新的（覆盖），但保留meta中的chartType
         const existingChartType = existing.meta?.chartType
@@ -1027,26 +752,106 @@ const visualizations = computed(() => {
           }
         }
         seen.set(key, vizToStore)
-        console.log(`[VisualizationPanel DEBUG] 替换同类型image: ${key}, chartType=${existingChartType || viz.type}`)
-      } else if (existingIsImage && currentIsCustom) {
-        // 现有是image，当前是custom，不替换
-        console.log(`[VisualizationPanel DEBUG] 跳过custom类型，保留image: ${key}, current_type=${viz.type}`)
-      } else {
-        // 其他情况，保留原有的
-        console.log(`[VisualizationPanel DEBUG] 跳过重复: ${key}, type=${viz.type}`)
       }
+      // existingIsImage && currentIsCustom: 不替换
+      // 其他情况：保留原有的
     }
   })
 
   const deduplicated = Array.from(seen.values())
-
-  console.log('[VisualizationPanel DEBUG] 去重后共', deduplicated.length, '个图表')
-  console.log('[VisualizationPanel DEBUG] 最终图表列表:')
-  deduplicated.forEach((viz, idx) => {
-    console.log(`  [${idx}] id=${viz.id}, type=${viz.type}, title=${viz.title}`)
-  })
-
   return deduplicated
+})
+
+// ✅ 知识溯源相关computed属性
+const hasKnowledgeSources = computed(() => {
+  // 1. 优先检查选中消息的sources字段
+  if (props.selectedMessageId && props.history && props.history.length > 0) {
+    const selectedMsg = props.history.find(msg => msg.id === props.selectedMessageId)
+    if (selectedMsg) {
+      // 检查data.sources字段
+      if (selectedMsg?.data?.sources && Array.isArray(selectedMsg.data.sources) && selectedMsg.data.sources.length > 0) {
+        return true
+      }
+      // 兼容旧格式：直接在msg上的sources字段
+      if (selectedMsg?.sources && Array.isArray(selectedMsg.sources) && selectedMsg.sources.length > 0) {
+        return true
+      }
+    }
+  }
+
+  // 2. 检查最后一条消息的sources字段
+  if (props.history && props.history.length > 0) {
+    const lastMsg = props.history[props.history.length - 1]
+    // 检查data.sources字段
+    if (lastMsg?.data?.sources && Array.isArray(lastMsg.data.sources) && lastMsg.data.sources.length > 0) {
+      return true
+    }
+    // 兼容旧格式：直接在msg上的sources字段
+    if (lastMsg?.sources && Array.isArray(lastMsg.sources) && lastMsg.sources.length > 0) {
+      return true
+    }
+  }
+
+  // 3. 检查content.visuals中的knowledge_source类型
+  if (props.content?.visuals && Array.isArray(props.content.visuals)) {
+    const hasKnowledgeSourceVisuals = props.content.visuals.some(v => v.type === 'knowledge_source')
+    if (hasKnowledgeSourceVisuals) {
+      return true
+    }
+  }
+
+  return false
+})
+
+const knowledgeSources = computed(() => {
+  let sources = []
+
+  // 1. 优先从选中消息的data.sources获取
+  if (props.selectedMessageId && props.history && props.history.length > 0) {
+    const selectedMsg = props.history.find(msg => msg.id === props.selectedMessageId)
+    if (selectedMsg) {
+      if (selectedMsg?.data?.sources && Array.isArray(selectedMsg.data.sources)) {
+        sources = selectedMsg.data.sources
+      }
+      // 兼容旧格式：直接在msg上的sources字段
+      else if (selectedMsg?.sources && Array.isArray(selectedMsg.sources)) {
+        sources = selectedMsg.sources
+      }
+    }
+  }
+
+  // 2. 如果没有选中的消息，从最后一条消息的data.sources获取
+  if (sources.length === 0 && props.history && props.history.length > 0) {
+    const lastMsg = props.history[props.history.length - 1]
+    if (lastMsg?.data?.sources && Array.isArray(lastMsg.data.sources)) {
+      sources = lastMsg.data.sources
+    }
+    // 兼容旧格式：直接在msg上的sources字段
+    else if (lastMsg?.sources && Array.isArray(lastMsg.sources)) {
+      sources = lastMsg.sources
+    }
+  }
+
+  // 3. 如果还没有sources，尝试从content.visuals中提取knowledge_source类型
+  if (sources.length === 0 && props.content?.visuals && Array.isArray(props.content.visuals)) {
+    const knowledgeVisuals = props.content.visuals
+      .filter(v => v.type === 'knowledge_source')
+      .map((v, index) => ({
+        title: v.title || '未知标题',
+        document_name: v.title || '未知标题',
+        source: v.data?.source || '未知来源',
+        knowledge_base_name: v.data?.source || '未知来源',
+        relevance: v.data?.relevance || 0,
+        score: v.data?.relevance || 0,
+        chunk_index: v.data?.chunk_index,
+        document_id: v.data?.document_id,
+        knowledge_base_id: v.data?.knowledge_base_id,
+        content: v.data?.content || ''
+      }))
+    sources = knowledgeVisuals
+  }
+
+  return sources
 })
 
 const latestVisualization = computed(() => {
@@ -1055,7 +860,18 @@ const latestVisualization = computed(() => {
   return list[list.length - 1]
 })
 
-const panelTitle = computed(() => latestVisualization.value?.title || '可视化内容')
+const panelTitle = computed(() => {
+  // 主面板标题：优先显示知识溯源
+  if (hasKnowledgeSources.value) {
+    return '知识溯源'
+  }
+  return latestVisualization.value?.title || '可视化内容'
+})
+
+const visualizationPanelTitle = computed(() => {
+  // 可视化部分标题（仅当有可视化时显示）
+  return latestVisualization.value?.title || '可视化内容'
+})
 
 const typeLabelMap = {
   map: '地图',
@@ -1891,5 +1707,181 @@ const debugUnknownViz = (viz) => {
   font-size: 11px;
   font-weight: 500;
   border: 1px solid #ffe0b2;
+}
+
+// 知识溯源面板样式
+.knowledge-source-section {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  overflow: hidden;
+  margin-bottom: 0;
+  min-height: 0;
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-icon {
+  font-size: 18px;
+}
+
+.panel-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.source-count {
+  font-size: 12px;
+  color: #666;
+  background: #fff;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.source-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.source-item {
+  padding: 12px 0;
+  background: transparent;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #f8f8f8;
+  }
+}
+
+.source-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.source-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.source-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #1976d2;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.source-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  word-break: break-word;
+}
+
+.source-meta {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.relevance-badge {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #666;
+  white-space: nowrap;
+}
+
+.source-info {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.info-row label {
+  color: #666;
+  font-weight: 500;
+}
+
+.info-row span {
+  color: #333;
+}
+
+.source-content {
+  margin-top: 8px;
+  padding: 8px 0;
+}
+
+.content-preview {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #555;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 600px;  // 增加到600px，或者移除此限制
+  overflow-y: auto;
+}
+
+.viz-content-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.empty-state svg {
+  margin-bottom: 16px;
+  color: #e0e0e0;
+}
+
+.empty-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #666;
+  margin: 0 0 8px 0;
+}
+
+.empty-tip {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
 }
 </style>

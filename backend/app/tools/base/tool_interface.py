@@ -25,6 +25,7 @@ class ToolCategory(Enum):
     QUERY = "query"                 # 查询工具（从数据库读取）
     ANALYSIS = "analysis"           # 分析工具（执行计算）
     VISUALIZATION = "visualization" # 可视化工具（生成配置）
+    TASK_MANAGEMENT = "task_management"  # 任务管理工具（创建、更新、查询任务）
 
 
 class ToolStatus(Enum):

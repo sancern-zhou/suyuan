@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from typing import Optional, Dict, Any
 import json
-import logging
+import structlog
 import uuid
 from fastapi import HTTPException
 from fastapi import HTTPException
@@ -29,7 +29,7 @@ from app.db.database import get_db
 from app.db.models.report_template import ReportTemplate, ReportGenerationHistory
 from sqlalchemy import select
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/report", tags=["report-generation"])
 
@@ -53,8 +53,6 @@ def get_react_agent():
         from app.routers.agent import multi_expert_agent_instance
 
         _react_agent = multi_expert_agent_instance
-        # 注意：这里的 logger 是标准 logging.Logger，不支持 structlog 式的关键字参数。
-        # 为避免 TypeError，仅记录一条简单的信息。
         logger.info("React Agent initialized for report generation (reuse multi_expert_agent_instance)")
     return _react_agent
 

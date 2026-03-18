@@ -254,7 +254,8 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": None,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "validation_failed",
-                            "data_id": data_id, "record_count": handle.record_count},
+                            "data_id": data_id,
+            "file_path": file_path, "record_count": handle.record_count},
                 "summary": f"[FAIL] VOCs PMF 数据验证失败: {error_msg}"
             }
 
@@ -284,7 +285,8 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": None,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "insufficient_data",
-                            "data_id": data_id, "record_count": len(component_data)},
+                            "data_id": data_id,
+            "file_path": file_path, "record_count": len(component_data)},
                 "summary": f"[FAIL] 有效样本数不足（需>=10个，当前{len(component_data)}个）"
             }
 
@@ -297,6 +299,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                     "tool_name": "calculate_vocs_pmf",
                     "error_type": "insufficient_species_coverage",
                     "data_id": data_id,
+            "file_path": file_path,
                     "available_species": species_coverage["available_species"],
                     "required_species": species_coverage["required_species"],
                     "coverage_details": species_coverage["details"]
@@ -367,7 +370,8 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": result,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "calculation_failed",
-                            "data_id": data_id, "error": result.get("error", "未知计算错误"),
+                            "data_id": data_id,
+            "file_path": file_path, "error": result.get("error", "未知计算错误"),
                             "algorithm": result.get("algorithm", "nimfa")},
                 "summary": f"[FAIL] VOCs PMF计算失败: {result.get('error', '未知错误')}"
             }
@@ -381,7 +385,8 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": result,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "incomplete_result",
-                            "data_id": data_id, "missing_fields": missing_fields,
+                            "data_id": data_id,
+            "file_path": file_path, "missing_fields": missing_fields,
                             "result_keys": list(result.keys())},
                 "summary": f"[FAIL] VOCs PMF结果不完整，缺少字段: {', '.join(missing_fields)}"
             }
@@ -419,7 +424,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
 
         # Step 10: Save result
         try:
-            pmf_data_id = context.save_data(
+            pmf_data_ref = context.save_data(
                 data=[result],
                 schema="pmf_result",
                 metadata={
@@ -439,9 +444,11 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                     }
                 }
             )
+            pmf_data_id = data_ref["data_id"]
+            pmf_file_path = data_ref["file_path"]
             result["registry_schema"] = "pmf_result"
             result["data_id"] = pmf_data_id
-            logger.info("calculate_vocs_pmf_saved", pmf_data_id=pmf_data_id)
+            logger.info("calculate_vocs_pmf_saved", pmf_data_id=pmf_data_id, pmf_file_path=pmf_file_path)
         except Exception as exc:
             logger.error("calculate_vocs_pmf_save_failed", error=str(exc))
             return {
@@ -556,6 +563,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                 "station_name": station_name,
                 "pollutant_type": "VOCs",
                 "data_id": data_id,
+            "file_path": file_path,
                 "pmf_result_id": pmf_data_id,
                 "sources_count": len(sources),
                 "sample_count": len(component_data),

@@ -8,28 +8,53 @@
 - 城市/站点名称自动映射到编码
 - 多城市并发查询
 - 区域对比分析
+- 综合统计报表查询
+- 对比分析报表查询
+- 新标准数据查询（HJ 633-2024）
 - DataSource 参数自动修正
 """
 from app.tools.query.query_gd_suncere.tool import (
     execute_query_gd_suncere_city_day,
     execute_query_gd_suncere_station_hour,
     execute_query_gd_suncere_regional_comparison,
+    execute_query_gd_suncere_report,
+    execute_query_gd_suncere_report_compare,
+    execute_query_standard_comparison,
     QueryGDSuncereDataTool,
     GeoMappingResolver
+)
+
+# 新标准城市日数据查询
+from app.tools.query.query_gd_suncere.tool_city_day_new import (
+    execute_query_city_day_new_standard
 )
 
 # Agent 工具包装器
 from app.tools.query.query_gd_suncere.tool_wrapper import (
     QueryGDSuncereCityHourTool,
-    QueryGDSuncereRegionalComparisonTool
+    QueryGDSuncereRegionalComparisonTool,
+    QueryGDSuncereCityDayTool,
+    QueryGDSuncereReportTool,
+    QueryGDSuncereReportCompareTool,
+    QueryStandardComparisonTool,
+    QueryGDSuncereCityDayNewStandardTool
 )
 
 __all__ = [
     "execute_query_gd_suncere_city_day",
     "execute_query_gd_suncere_station_hour",
     "execute_query_gd_suncere_regional_comparison",
+    "execute_query_gd_suncere_report",
+    "execute_query_gd_suncere_report_compare",
+    "execute_query_standard_comparison",
+    "execute_query_city_day_new_standard",
     "QueryGDSuncereDataTool",
     "GeoMappingResolver",
     "QueryGDSuncereCityHourTool",
-    "QueryGDSuncereRegionalComparisonTool"
+    "QueryGDSuncereRegionalComparisonTool",
+    "QueryGDSuncereCityDayTool",
+    "QueryGDSuncereReportTool",
+    "QueryGDSuncereReportCompareTool",
+    "QueryStandardComparisonTool",
+    "QueryGDSuncereCityDayNewStandardTool"
 ]

@@ -3,12 +3,12 @@
 场景2-B：临时报告（结构化拆解）
 """
 from typing import Dict, Any, List
-import logging
+import structlog
 
 from app.schemas.report_generation import ReportStructure
 from app.services.llm_service import llm_service
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ReportParser:

@@ -509,7 +509,8 @@ class GenerateChartTool(LLMTool):
                 )
 
                 # 保存到context
-                data_id = context.save_data(
+                # save_data() 返回 {"data_id": str, "file_path": str}
+                data_ref = context.save_data(
                     data=[chart_config_model],
                     schema="chart_config",
                     metadata={
@@ -521,8 +522,10 @@ class GenerateChartTool(LLMTool):
                         "simplified": True
                     }
                 )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
 
-                logger.info("chart_config_saved", data_id=data_id)
+                logger.info("chart_config_saved", data_id=data_id, file_path=file_path)
 
             except Exception as exc:
                 logger.error(
@@ -620,6 +623,8 @@ class GenerateChartTool(LLMTool):
                         "timestamp": __import__('datetime').datetime.now().isoformat()
                     }
                 },
+                "data_id": data_id,
+                "file_path": file_path,
                 "summary": f"✅ 图表生成完成，类型: {chart_dict.get('type')}，方式: {method}，数据有效性: {'有效' if data_analysis['is_valid'] else '异常'} (UDF v2.0)"
             }
 
@@ -2175,7 +2180,8 @@ class GenerateChartTool(LLMTool):
                 )
 
                 # 保存到context
-                revised_chart_data_id = context.save_data(
+                # save_data() 返回 {"data_id": str, "file_path": str}
+                revised_chart_data_ref = context.save_data(
                     data=[chart_config_model],
                     schema="chart_config",
                     metadata={
@@ -2185,10 +2191,13 @@ class GenerateChartTool(LLMTool):
                         "format_version": "3.1"
                     }
                 )
+                revised_chart_data_id = revised_chart_data_ref["data_id"]
+                revised_chart_file_path = revised_chart_data_ref["file_path"]
 
                 logger.info(
                     "revised_chart_saved",
                     data_id=revised_chart_data_id,
+                    file_path=revised_chart_file_path,
                     chart_id=revised_chart.get("id")
                 )
 
@@ -2245,6 +2254,8 @@ class GenerateChartTool(LLMTool):
                     "generator": "revise_chart",
                     "registry_schema": "chart_config"
                 },
+                "data_id": revised_chart_data_id,
+                "file_path": revised_chart_file_path,
                 "summary": f"✅ 图表修订完成（版本{revised_chart['meta'].get('revision_count', 1)}），类型: {revised_chart.get('type')} (UDF v2.0)"
             }
 

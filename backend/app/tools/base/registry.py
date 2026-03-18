@@ -756,3 +756,176 @@ class ToolRegistry:
 
         results["valid"] = len(results["errors"]) == 0
         return results
+
+    # ========================================
+    # 工具/技能管理功能（新增）
+    # ========================================
+
+    def get_tools_info(self) -> List[Dict[str, Any]]:
+        """
+        获取所有工具的详细信息（用于前端展示）
+
+        Returns:
+            工具信息列表
+        """
+        tools_info = []
+        for tool_name, tool_data in self._tools.items():
+            tool = tool_data["tool"]
+            stats = self._stats.get(tool_name, {})
+            metadata = tool_data.get("metadata", {})
+
+            # 获取工具状态（安全访问，非 LLMTool 可能没有 enabled 属性）
+            is_enabled = getattr(tool, 'enabled', True)
+            tool_desc = getattr(tool, 'description', '')
+
+            tool_status = {
+                "name": tool_name,
+                "description": tool_desc,
+                "category": tool_data.get("category", "unknown"),
+                "status": "enabled" if is_enabled else "disabled",
+                "version": tool_data.get("version", "1.0.0"),
+                "requires_context": tool_data.get("requires_context", False),
+                "priority": tool_data.get("priority", 100),
+                "registered_at": tool_data.get("registered_at"),
+                "statistics": {
+                    "total": stats.get("total", 0),
+                    "success": stats.get("success", 0),
+                    "failed": stats.get("failed", 0),
+                    "avg_execution_time": stats.get("avg_execution_time", 0.0)
+                },
+                "metadata": {
+                    "data_type": metadata.get("data_type", "unknown"),
+                    "supports_batch": metadata.get("supports_batch", False),
+                    "requires_handle": metadata.get("requires_handle", False)
+                }
+            }
+            tools_info.append(tool_status)
+
+        return tools_info
+
+    def get_tool_info(self, tool_name: str) -> Optional[Dict[str, Any]]:
+        """
+        获取单个工具的详细信息
+
+        Args:
+            tool_name: 工具名称
+
+        Returns:
+            工具信息字典，不存在则返回None
+        """
+        tool_data = self._tools.get(tool_name)
+        if not tool_data:
+            return None
+
+        tool = tool_data["tool"]
+        stats = self._stats.get(tool_name, {})
+        metadata = tool_data.get("metadata", {})
+
+        # 安全获取工具属性
+        is_enabled = getattr(tool, 'enabled', True)
+        tool_desc = getattr(tool, 'description', '')
+
+        # 获取Function Schema（参数定义）
+        function_schema = None
+        if hasattr(tool, 'get_function_schema'):
+            function_schema = tool.get_function_schema()
+
+        return {
+            "name": tool_name,
+            "description": tool_desc,
+            "category": tool_data.get("category", "unknown"),
+            "status": "enabled" if is_enabled else "disabled",
+            "version": tool_data.get("version", "1.0.0"),
+            "requires_context": tool_data.get("requires_context", False),
+            "priority": tool_data.get("priority", 100),
+            "registered_at": tool_data.get("registered_at"),
+            "statistics": {
+                "total": stats.get("total", 0),
+                "success": stats.get("success", 0),
+                "failed": stats.get("failed", 0),
+                "avg_execution_time": stats.get("avg_execution_time", 0.0)
+            },
+            "metadata": {
+                "data_type": metadata.get("data_type", "unknown"),
+                "supports_batch": metadata.get("supports_batch", False),
+                "requires_handle": metadata.get("requires_handle", False)
+            },
+            "function_schema": function_schema,
+            "has_input_adapter": bool(tool_data.get("input_adapter_rules")),
+            "has_return_schema": bool(tool_data.get("return_schema"))
+        }
+
+    def set_tool_enabled(self, tool_name: str, enabled: bool) -> bool:
+        """
+        设置工具启用/禁用状态
+
+        Args:
+            tool_name: 工具名称
+            enabled: True=启用, False=禁用
+
+        Returns:
+            bool: 操作是否成功
+        """
+        tool_data = self._tools.get(tool_name)
+        if not tool_data:
+            return False
+
+        tool = tool_data["tool"]
+
+        # 检查是否有 enable/disable 方法
+        if hasattr(tool, 'enable') and hasattr(tool, 'disable'):
+            if enabled:
+                tool.enable()
+            else:
+                tool.disable(reason="Admin disabled")
+        elif hasattr(tool, 'enabled'):
+            # 对于有 enabled 属性但没有 enable/disable 方法的工具，直接设置属性
+            tool.enabled = enabled
+
+        return True
+
+    def get_tool_status(self, tool_name: str) -> Optional[str]:
+        """
+        获取工具状态
+
+        Args:
+            tool_name: 工具名称
+
+        Returns:
+            str: "enabled" 或 "disabled"，不存在则返回None
+        """
+        tool_data = self._tools.get(tool_name)
+        if not tool_data:
+            return None
+
+        tool = tool_data["tool"]
+        # 安全访问 enabled 属性
+        is_enabled = getattr(tool, 'enabled', True)
+        return "enabled" if is_enabled else "disabled"
+
+    def get_tools_by_category(self, category: str) -> List[Dict[str, Any]]:
+        """
+        按类别获取工具列表
+
+        Args:
+            category: 工具类别 (query/analysis/visualization/task_management)
+
+        Returns:
+            该类别的工具信息列表
+        """
+        all_tools = self.get_tools_info()
+        return [t for t in all_tools if t["category"] == category]
+
+    def get_categories(self) -> List[str]:
+        """
+        获取所有工具类别
+
+        Returns:
+            类别列表
+        """
+        categories = set()
+        for tool_data in self._tools.values():
+            cat = tool_data.get("category")
+            if cat:
+                categories.add(cat)
+        return sorted(list(categories))

@@ -1,0 +1,88 @@
+{
+  "test_date": "2025-11-19T15:22:11.684244",
+  "phase": "2.3",
+  "test_results": {
+    "basic_forward_trajectory": {
+      "success": true,
+      "points_count": 72
+    },
+    "different_prediction_hours": [
+      {
+        "hours": 24,
+        "success": true,
+        "points_count": 24,
+        "distance_km": 2239.44,
+        "direction": "南",
+        "execution_time": 0.8678150177001953
+      },
+      {
+        "hours": 48,
+        "success": true,
+        "points_count": 48,
+        "distance_km": 4216.35,
+        "direction": "南",
+        "execution_time": 7.189306735992432
+      },
+      {
+        "hours": 72,
+        "success": true,
+        "points_count": 72,
+        "distance_km": 5936.95,
+        "direction": "南",
+        "execution_time": 0.8488922119140625
+      }
+    ],
+    "different_heights": [
+      {
+        "height": 100,
+        "success": true,
+        "height_range": "100-1024.8m",
+        "distance_km": 5936.95
+      },
+      {
+        "height": 500,
+        "success": true,
+        "height_range": "500-1061.0m",
+        "distance_km": 5989.11
+      },
+      {
+        "height": 1000,
+        "success": true,
+        "height_range": "1000-1104.3m",
+        "distance_km": 6137.79
+      }
+    ],
+    "different_locations": [
+      {
+        "location": "Guangzhou",
+        "success": true,
+        "distance_km": 5936.95,
+        "direction": "南"
+      },
+      {
+        "location": "Beijing",
+        "success": true,
+        "distance_km": 2524.62,
+        "direction": "东北"
+      }
+    ],
+    "visualization_validation": {
+      "visuals_count": 2,
+      "map_validation": {
+        "exists": true,
+        "color_correct": true,
+        "arrows_enabled": true,
+        "markers_count": 2
+      },
+      "profile_validation": {
+        "exists": true,
+        "positive_labels": true,
+        "elements_count": 3,
+        "correct_x_label": true
+      }
+    }
+  },
+  "total_tests": 5,
+  "passed_tests": 5,
+  "success_rate": 100.0
+}

@@ -38,11 +38,7 @@ class InputAdapterContext:
     def get_query_params(self) -> Dict[str, Any]:
         """返回最近一次工具调用参数（若存在）。"""
         try:
-            working = getattr(self.memory_manager, "working", None)
-            if not working:
-                return {}
-
-            iterations = working.get_iterations()
+            iterations = self.memory_manager.get_iterations()
             for iteration in reversed(iterations):
                 action = iteration.get("action", {})
                 if action.get("type") == "TOOL_CALL":

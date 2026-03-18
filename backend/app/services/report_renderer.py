@@ -3,11 +3,11 @@
 场景2核心组件
 """
 from typing import Dict, Any, List, Optional
-import logging
+import structlog
 
 from app.services.llm_service import llm_service
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class ReportRenderer:
     """报告渲染器 - 基于模板和数据生成最终报告"""

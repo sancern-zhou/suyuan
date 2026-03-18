@@ -318,3 +318,114 @@ async def list_jining_stations():
     except Exception as e:
         logger.error("list_jining_stations_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to list Jining stations: {str(e)}")
+
+
+# =============== 工具/技能管理 API ===============
+
+@router.get("/tools")
+async def get_tools_list():
+    """
+    获取所有工具列表
+
+    返回所有已注册工具的基本信息
+    """
+    try:
+        from app.services.lifecycle_manager import get_tool_registry
+
+        registry = get_tool_registry()
+        tools_info = registry.get_tools_info()
+
+        return {
+            "success": True,
+            "count": len(tools_info),
+            "tools": tools_info
+        }
+
+    except Exception as e:
+        logger.error("get_tools_list_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get tools list: {str(e)}")
+
+
+@router.get("/tools/{tool_name}")
+async def get_tool_detail(tool_name: str):
+    """
+    获取单个工具的详细信息
+
+    包含工具的完整元数据和Function Schema
+    """
+    try:
+        from app.services.lifecycle_manager import get_tool_registry
+
+        registry = get_tool_registry()
+        tool_info = registry.get_tool_info(tool_name)
+
+        if not tool_info:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+        return {
+            "success": True,
+            "tool": tool_info
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("get_tool_detail_failed", tool=tool_name, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get tool detail: {str(e)}")
+
+
+class ToolStatusUpdate(BaseModel):
+    """工具状态更新请求"""
+    enabled: bool
+
+
+@router.patch("/tools/{tool_name}")
+async def update_tool_status(tool_name: str, request: ToolStatusUpdate):
+    """
+    更新工具启用/禁用状态
+
+    enabled=true: 启用工具
+    enabled=false: 禁用工具
+    """
+    try:
+        from app.services.lifecycle_manager import get_tool_registry
+
+        registry = get_tool_registry()
+        success = registry.set_tool_enabled(tool_name, request.enabled)
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+        return {
+            "success": True,
+            "message": f"Tool '{tool_name}' {'enabled' if request.enabled else 'disabled'}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("update_tool_status_failed", tool=tool_name, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update tool status: {str(e)}")
+
+
+@router.get("/tools/categories")
+async def get_tools_categories():
+    """
+    获取所有工具类别
+
+    返回系统中所有工具的类别列表
+    """
+    try:
+        from app.services.lifecycle_manager import get_tool_registry
+
+        registry = get_tool_registry()
+        categories = registry.get_categories()
+
+        return {
+            "success": True,
+            "categories": categories
+        }
+
+    except Exception as e:
+        logger.error("get_tools_categories_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get tool categories: {str(e)}")

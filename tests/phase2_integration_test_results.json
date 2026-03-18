@@ -1,0 +1,73 @@
+{
+  "test_date": "2025-11-19T14:56:15.993596",
+  "phase": "2.0",
+  "scenarios_count": 6,
+  "success_rate": 100.0,
+  "performance": {
+    "avg_time": 1.5090960264205933,
+    "min_time": 0.8459596633911133,
+    "max_time": 1.984224796295166
+  },
+  "scenarios": [
+    {
+      "name": "Low altitude (100m)",
+      "success": true,
+      "elapsed": 1.984224796295166,
+      "points": 72,
+      "visuals": 2,
+      "height_delta": 849.2,
+      "distance_km": 3520.1,
+      "all_checks_passed": true
+    },
+    {
+      "name": "Medium altitude (500m)",
+      "success": true,
+      "elapsed": 0.8459596633911133,
+      "points": 72,
+      "visuals": 2,
+      "height_delta": 546.9000000000001,
+      "distance_km": 3557.8,
+      "all_checks_passed": true
+    },
+    {
+      "name": "High altitude (1000m)",
+      "success": true,
+      "elapsed": 1.8720169067382812,
+      "points": 72,
+      "visuals": 2,
+      "height_delta": 133.70000000000005,
+      "distance_km": 3595.39,
+      "all_checks_passed": true
+    },
+    {
+      "name": "Short duration (24h)",
+      "success": true,
+      "elapsed": 1.6035857200622559,
+      "points": 24,
+      "visuals": 2,
+      "height_delta": 633.4,
+      "distance_km": 1907.5,
+      "all_checks_passed": true
+    },
+    {
+      "name": "Medium duration (48h)",
+      "success": true,
+      "elapsed": 0.8967909812927246,
+      "points": 48,
+      "visuals": 2,
+      "height_delta": 823.1,
+      "distance_km": 2928.71,
+      "all_checks_passed": true
+    },
+    {
+      "name": "Beijing",
+      "success": true,
+      "elapsed": 1.8519980907440186,
+      "points": 72,
+      "visuals": 2,
+      "height_delta": 962.9000000000001,
+      "distance_km": 4640.55,
+      "all_checks_passed": true
+    }
+  ]
+}

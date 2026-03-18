@@ -13,13 +13,11 @@ LLM Tools
    - get_dust_data - 扬尘数据查询
    - get_component_data - 组分数据查询（VOCs/颗粒物，广东省超级站，已废弃）
    - get_vocs_data - VOCs组分数据查询（端口9092）
-   - get_particulate_data - 颗粒物组分数据查询（端口9093）
 
 2. Analysis Tools - 分析工具（执行计算和分析）
    - analyze_upwind_enterprises - 上风向企业分析（广东省）
    - calculate_pm_pmf - PM2.5/PM10颗粒物PMF源解析（广东省超级站）
    - calculate_vocs_pmf - VOCs挥发性有机物PMF源解析（仅用于臭氧溯源）
-   - calculate_obm_full_chemistry - OBM/EKMA完整化学机理分析（RACM2, 102物种, 504反应）
 
 3. Visualization Tools - 可视化工具（生成图表和地图配置）
    **图表工具职责分工：**
@@ -30,6 +28,12 @@ LLM Tools
      * 适用：直接传入数据、自定义场景、预定义场景模板
      * 特征：直接传入数据（data）、模板库+LLM生成
    - generate_map - 生成高德地图配置
+
+4. Task Management Tools - 任务管理工具（动态任务清单管理）
+   - create_task - 创建新任务到任务清单
+   - update_task - 更新任务状态（pending/in_progress/completed/failed）
+   - list_tasks - 查看当前会话的所有任务
+   - get_task - 获取特定任务的详细信息
 
 **工具选择决策：**
 - 有data_id → smart_chart_generator
@@ -56,6 +60,13 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
     # Query Tools（查询工具）
     # ========================================
+
+    try:
+        from app.tools.system.read_data_registry.tool import ReadDataRegistryTool
+        registry.register(ReadDataRegistryTool(), priority=5)
+        logger.info("tool_loaded", tool="read_data_registry")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="read_data_registry", error=str(e))
 
     try:
         from app.tools.query.get_air_quality.tool import GetAirQualityTool
@@ -118,13 +129,6 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_vocs_data", error=str(e))
 
-    try:
-        from app.tools.query.get_particulate_data.tool import GetParticulateDataTool
-        registry.register(GetParticulateDataTool(), priority=62)
-        logger.info("tool_loaded", tool="get_particulate_data")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_particulate_data", error=str(e))
-
     # ========================================
     # PM2.5 Component Query Tools (Structured)
     # ========================================
@@ -172,13 +176,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="search_knowledge_base", error=str(e))
 
     try:
-        from app.tools.query.get_guangdong_regular_stations.tool import GetGuangdongRegularStationsTool
-        registry.register(GetGuangdongRegularStationsTool(), priority=30)
-        logger.info("tool_loaded", tool="get_guangdong_regular_stations")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_guangdong_regular_stations", error=str(e))
-
-    try:
         from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
         registry.register(GetJiningRegularStationsTool(), priority=31)
         logger.info("tool_loaded", tool="get_jining_regular_stations")
@@ -201,8 +198,43 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_gd_suncere_regional_comparison", error=str(e))
 
     try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayTool
+        registry.register(QueryGDSuncereCityDayTool(), priority=34)
+        logger.info("tool_loaded", tool="query_gd_suncere_city_day")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_city_day", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportTool
+        registry.register(QueryGDSuncereReportTool(), priority=35)
+        logger.info("tool_loaded", tool="query_gd_suncere_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_report", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportCompareTool
+        registry.register(QueryGDSuncereReportCompareTool(), priority=36)
+        logger.info("tool_loaded", tool="query_gd_suncere_report_compare")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_report_compare", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryStandardComparisonTool
+        registry.register(QueryStandardComparisonTool(), priority=37)
+        logger.info("tool_loaded", tool="query_standard_comparison")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_standard_comparison", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayNewStandardTool
+        registry.register(QueryGDSuncereCityDayNewStandardTool(), priority=38)
+        logger.info("tool_loaded", tool="query_gd_suncere_city_day_new")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_new", error=str(e))
+
+    try:
         from app.tools.query.get_satellite_data.tool import GetSatelliteDataTool
-        registry.register(GetSatelliteDataTool(), priority=35)
+        registry.register(GetSatelliteDataTool(), priority=38)
         logger.info("tool_loaded", tool="get_satellite_data")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
@@ -255,13 +287,6 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
     # OBM/EKMA Tools (基于RACM2完整化学机理)
     # ========================================
-
-    try:
-        from app.tools.analysis.pybox_integration.tool import CalculateOBMFullChemistryTool
-        registry.register(CalculateOBMFullChemistryTool(), priority=126)
-        logger.info("tool_loaded", tool="calculate_obm_full_chemistry", version="racm2")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="calculate_obm_full_chemistry", error=str(e))
 
     try:
         from app.tools.analysis.meteorological_trajectory_analysis.tool import MeteorologicalTrajectoryAnalysisTool
@@ -392,30 +417,183 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="analyze_image", error=str(e))
 
+    try:
+        from app.tools.utility.edit_file_tool import EditFileTool
+        registry.register(EditFileTool(), priority=503)
+        logger.info("tool_loaded", tool="edit_file")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="edit_file", error=str(e))
+
+    try:
+        from app.tools.utility.grep_tool import GrepTool
+        registry.register(GrepTool(), priority=504)
+        logger.info("tool_loaded", tool="grep")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="grep", error=str(e))
+
+    try:
+        from app.tools.utility.write_file_tool import WriteFileTool
+        registry.register(WriteFileTool(), priority=505)
+        logger.info("tool_loaded", tool="write_file")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="write_file", error=str(e))
+
+    try:
+        from app.tools.utility.glob_tool import GlobTool
+        registry.register(GlobTool(), priority=506)
+        logger.info("tool_loaded", tool="search_files")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="search_files", error=str(e))
+
+    try:
+        from app.tools.utility.list_directory_tool import ListDirectoryTool
+        registry.register(ListDirectoryTool(), priority=507)
+        logger.info("tool_loaded", tool="list_directory")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="list_directory", error=str(e))
+
     # ========================================
-    # Office Automation Tools（Windows Only - Win32 COM）
+    # Office Automation Tools（Cross-Platform - Phase 1-4）
+    # ========================================
+
+    # Phase 1: XML 解包/打包工具（跨平台）
+    try:
+        from app.tools.office.unpack_tool import UnpackOfficeTool
+        registry.register(UnpackOfficeTool(), priority=598)
+        logger.info("tool_loaded", tool="unpack_office")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="unpack_office", error=str(e))
+
+    try:
+        from app.tools.office.pack_tool import PackOfficeTool
+        registry.register(PackOfficeTool(), priority=599)
+        logger.info("tool_loaded", tool="pack_office")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="pack_office", error=str(e))
+
+    # Phase 2: Word 高级编辑（跨平台）
+    try:
+        from app.tools.office.word_edit_tool import WordEditTool
+        registry.register(WordEditTool(), priority=593)
+        logger.info("tool_loaded", tool="word_edit")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="word_edit", error=str(e))
+
+    try:
+        from app.tools.office.accept_changes_tool import AcceptChangesTool
+        registry.register(AcceptChangesTool(), priority=596)
+        logger.info("tool_loaded", tool="accept_word_changes")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="accept_word_changes", error=str(e))
+
+    try:
+        from app.tools.office.find_replace_tool import FindReplaceTool
+        registry.register(FindReplaceTool(), priority=597)
+        logger.info("tool_loaded", tool="find_replace_word")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="find_replace_word", error=str(e))
+
+    # Phase 3: Excel 公式重算（跨平台）
+    try:
+        from app.tools.office.excel_recalc_tool import ExcelRecalcTool
+        registry.register(ExcelRecalcTool(), priority=595)
+        logger.info("tool_loaded", tool="recalc_excel")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="recalc_excel", error=str(e))
+
+    # Phase 4: PPT 幻灯片操作（跨平台）
+    try:
+        from app.tools.office.add_slide_tool import AddSlideTool
+        registry.register(AddSlideTool(), priority=594)
+        logger.info("tool_loaded", tool="add_ppt_slide")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="add_ppt_slide", error=str(e))
+
+
+    # ========================================
+    # Scheduled Tasks Tools（定时任务工具）
     # ========================================
 
     try:
-        from app.tools.office.word_tool import WordWin32LLMTool
-        registry.register(WordWin32LLMTool(), priority=600)
-        logger.info("tool_loaded", tool="word_processor")
+        from app.tools.scheduled_tasks import create_scheduled_task_tool
+        registry.register(create_scheduled_task_tool, priority=700)
+        logger.info("tool_loaded", tool="create_scheduled_task")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="word_processor", error=str(e))
+        logger.warning("tool_import_failed", tool="create_scheduled_task", error=str(e))
+
+    # ========================================
+    # Task Management Tools（任务管理工具）
+    # ========================================
 
     try:
-        from app.tools.office.excel_tool import ExcelWin32LLMTool
-        registry.register(ExcelWin32LLMTool(), priority=601)
-        logger.info("tool_loaded", tool="excel_processor")
+        from app.tools.task_management.todo_write import todo_write_tool
+        registry.register(todo_write_tool, priority=800)
+        logger.info("tool_loaded", tool="TodoWrite")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="excel_processor", error=str(e))
+        logger.warning("tool_import_failed", tool="TodoWrite", error=str(e))
+
+    # ========================================
+    # Browser Tools（浏览器工具 - Office Assistant Pattern）
+    # ========================================
 
     try:
-        from app.tools.office.ppt_tool import PPTWin32LLMTool
-        registry.register(PPTWin32LLMTool(), priority=602)
-        logger.info("tool_loaded", tool="ppt_processor")
+        from app.tools.browser.tool import BrowserTool
+        registry.register(BrowserTool(), priority=550)
+        logger.info("tool_loaded", tool="browser")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="ppt_processor", error=str(e))
+        logger.warning("tool_import_failed", tool="browser", error=str(e))
+
+    # ========================================
+    # Agent Tools（Agent间调用工具）
+    # ========================================
+
+    try:
+        from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+        # 注意：CallSubAgentTool需要延迟初始化（在ReActLoop中注入依赖）
+        # 这里创建一个占位符工具，真实的工具实例在executor中创建
+        call_sub_agent_tool = CallSubAgentTool()
+        registry.register(call_sub_agent_tool, priority=900)
+        logger.info("tool_loaded", tool="call_sub_agent")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="call_sub_agent", error=str(e))
+
+    # ========================================
+    # Code Tools（编程模式工具）
+    # ========================================
+
+    try:
+        from app.tools.code.validate_tool import ValidateToolTool
+        registry.register(ValidateToolTool(), priority=850)
+        logger.info("tool_loaded", tool="validate_tool")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="validate_tool", error=str(e))
+
+    # ========================================
+    # Workflow Tools（工作流工具 - 统一架构）
+    # ========================================
+
+    try:
+        from app.tools.workflow.quick_trace_workflow import QuickTraceWorkflow
+        registry.register(QuickTraceWorkflow(), priority=45)
+        logger.info("tool_loaded", tool="quick_trace_workflow")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="quick_trace_workflow", error=str(e))
+
+    # standard_analysis_workflow 在 ReActAgent 中延迟注册（需要依赖注入）
+
+    try:
+        from app.tools.workflow.deep_trace_workflow import DeepTraceWorkflow
+        registry.register(DeepTraceWorkflow(), priority=47)
+        logger.info("tool_loaded", tool="deep_trace_workflow")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="deep_trace_workflow", error=str(e))
+
+    try:
+        from app.tools.workflow.knowledge_qa_workflow import KnowledgeQAWorkflow
+        registry.register(KnowledgeQAWorkflow(), priority=48)
+        logger.info("tool_loaded", tool="knowledge_qa_workflow")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="knowledge_qa_workflow", error=str(e))
 
     logger.info(
         "global_tool_registry_created",

@@ -11,6 +11,7 @@ export const useReactStore = defineStore('react', {
     isAnalyzing: false,
     error: null,
     isInterruption: false,  // 标记是否为用户中断后的对话
+    agentMode: localStorage.getItem('agent-mode') || 'assistant',  // ✅ 双模式架构：从localStorage读取，默认assistant
 
     // 对话
     messages: [],
@@ -19,8 +20,7 @@ export const useReactStore = defineStore('react', {
     // 分析状态
     isComplete: false,
     iterations: 0,
-    maxIterations: 10,
-    debugMode: false,
+    maxIterations: 30,
 
     // 增强功能
     showReflexion: false,  // 显示Reflexion状态
@@ -31,6 +31,9 @@ export const useReactStore = defineStore('react', {
     expertResults: {},  // 存储各专家结果
     lastExpertResults: null,  // 存储最新的专家结果
     selectedExperts: [],  // 选中的专家列表
+
+    // Office文档预览状态
+    lastOfficeDocument: null,  // 最新的Office文档PDF预览数据
 
     // 结果
     finalAnswer: '',
@@ -62,7 +65,8 @@ export const useReactStore = defineStore('react', {
     interventionQueue: [],
 
     // 最终答案流式渲染状态
-    streamingAnswerMessageId: null
+    streamingAnswerMessageId: null,
+    _forceRenderCount: 0  // 强制渲染计数器，用于流式完成后触发重新渲染
   }),
 
   getters: {
@@ -167,6 +171,7 @@ export const useReactStore = defineStore('react', {
       this.lastExpertResults = null
       this.selectedExperts = []
       this._lastProcessedExpertResultsHash = null  // 【新增】重置防重复检查
+      this.lastOfficeDocument = null  // 重置Office文档状态
       this.results = {
         map: null,
         charts: [],
@@ -177,13 +182,15 @@ export const useReactStore = defineStore('react', {
     },
 
     // 添加消息
-    addMessage(type, content, data = null) {
+    addMessage(type, content, data = null, attachments = null, extraFields = {}) {
       const message = {
         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type, // 'user', 'agent', 'thought', 'action', 'observation', 'start', 'error', 'final'
         content,
         data,
-        timestamp: new Date().toISOString()
+        attachments, // 附件信息
+        timestamp: new Date().toISOString(),
+        ...extraFields  // 支持额外字段（如 streaming, streamingAnswerId 等）
       }
       this.messages.push(message)
       return message.id
@@ -208,11 +215,7 @@ export const useReactStore = defineStore('react', {
         case 'thought':
           // LLM思考
           const thoughtContent = data?.thought || '思考中...'
-          // 传递LLM上下文（仅调试模式）
-          const thoughtData = this.debugMode && data?.context
-            ? { context: data.context }
-            : null
-          this.addMessage('thought', thoughtContent, thoughtData)
+          this.addMessage('thought', thoughtContent, null)
 
           // 检测Reflexion
           if (data?.thought && data.thought.includes('[Reflexion 反思]')) {
@@ -225,27 +228,28 @@ export const useReactStore = defineStore('react', {
           // 行动（工具调用）
           const actionData = data?.action || data
 
-          // 【修复】如果本次“行动”其实是 FINISH（最终回答），不要在这里再渲染一遍，
-          // 否则会在“执行行动”步骤和最终答案里各出现一次完整回答。
+          // 【修复】如果本次"行动"其实是 FINISH（最终回答），不要在这里再渲染一遍，
+          // 否则会在"执行行动"步骤和最终答案里各出现一次完整回答。
           if (actionData?.type === 'FINISH') {
             // 仍然保留后台的日志，但前端对话不追加多余的 action 消息
             break
           }
 
+          // 【新增】支持并发工具调用显示
+          let actionContent = '执行行动'
           const toolName = actionData?.tool
-          const actionContent = toolName ? `调用工具: ${toolName}` : '执行行动'
+          const tools = actionData?.tools
 
-          // 构造调试数据
-          let debugData = actionData
-          if (this.debugMode) {
-            // 添加工具信息
-            debugData = {
-              ...actionData,
-              toolInfo: `工具名称: ${toolName || '未知'}\n迭代: ${this.iterations}\n时间: ${new Date().toLocaleTimeString()}`
-            }
+          if (tools && Array.isArray(tools) && tools.length > 0) {
+            // 并发调用多个工具
+            const toolNames = tools.map(t => t?.tool || 'unknown').join(', ')
+            actionContent = `并发调用工具 (${tools.length}个): ${toolNames}`
+          } else if (toolName) {
+            // 单个工具调用
+            actionContent = `调用工具: ${toolName}`
           }
 
-          this.addMessage('action', actionContent, debugData)
+          this.addMessage('action', actionContent, actionData)
           break
 
         case 'observation':
@@ -254,25 +258,93 @@ export const useReactStore = defineStore('react', {
           this.addMessage('observation', obsContent, data)
           break
 
+        case 'office_document':
+          // Office文档PDF预览事件（用于驱动文档预览面板）
+          this.lastOfficeDocument = {
+            pdf_preview: data?.pdf_preview,
+            file_path: data?.file_path,
+            generator: data?.generator,
+            summary: data?.summary,
+            timestamp: data?.timestamp
+          }
+          console.log('[reactStore] office_document事件:', {
+            generator: data?.generator,
+            pdf_id: data?.pdf_preview?.pdf_id,
+            file_path: data?.file_path
+          })
+          break
+
+        case 'streaming_text':
+          // ✅ 真正的流式文本输出
+          const chunk = data?.chunk || ''
+          const isComplete = data?.is_complete || false
+
+          // 调试日志已关闭（避免刷屏）
+          // if (!this._streamDebug) {
+          //   this._streamDebug = { startTime: Date.now(), chunkCount: 0 }
+          // }
+          // this._streamDebug.chunkCount++
+          // const elapsed = Date.now() - this._streamDebug.startTime
+          // console.log(`[streaming_text] Chunk #${this._streamDebug.chunkCount}, ${elapsed}ms, length: ${chunk.length}`)
+
+          if (chunk) {
+            // 如果是第一个块，创建新消息
+            if (!this.streamingAnswerMessageId) {
+              this.streamingAnswerMessageId = this.addMessage('final', '', {
+                timestamp: data?.timestamp
+              }, null, { streaming: true })
+            }
+
+            // 找到消息并直接追加内容（Pinia 会自动追踪变化）
+            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+            if (msg) {
+              msg.content += chunk
+              // 同步更新 finalAnswer
+              this.finalAnswer += chunk
+            }
+          }
+
+          // 如果是最后一块，清除标志并移除 streaming 标记
+          if (isComplete) {
+            // 调试日志已关闭（避免刷屏）
+            // const totalTime = Date.now() - this._streamDebug.startTime
+            // console.log(`[streaming_text] 完成！共 ${this._streamDebug.chunkCount} 个 chunks，总耗时 ${totalTime}ms`)
+            // this._streamDebug = null
+
+            if (this.streamingAnswerMessageId) {
+              const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+              if (msg) {
+                msg.streaming = false
+                // 强制触发响应式更新，确保流式完成后重新渲染
+                this._forceRenderCount++
+              }
+            }
+            this.streamingAnswerMessageId = null
+          }
+          break
+
         case 'complete':
           // 分析完成
           console.log('[event:complete] ========== 收到complete事件 ==========')
           console.log('[event:complete] 数据:', JSON.stringify(data, null, 2))
           console.log('[event:complete] has answer:', !!data?.answer)
           console.log('[event:complete] answer value:', data?.answer)
+          console.log('[event:complete] has response:', !!data?.response)
+          console.log('[event:complete] response value:', data?.response)
           console.log('[event:complete] has expert_results:', !!data?.expert_results)
           console.log('[event:complete] has visuals:', !!(data?.visuals && Array.isArray(data.visuals) && data.visuals.length > 0))
 
           this.isAnalyzing = false
           this.isComplete = true
           this.iterations = data?.iterations || this.iterations
-          this.finalAnswer = data?.answer || ''
+          // ✅ 优先使用response字段，兼容answer字段
+          this.finalAnswer = data?.response || data?.answer || ''
           this.hasResults = true
 
           // 记录最终答案（原有工作流逻辑）
           this.finalAnswers.push({
             run: this.sessionRound,
-            content: data?.answer || '分析完成',
+            content: data?.response || data?.answer || '分析完成',
             timestamp: new Date().toISOString()
           })
 
@@ -282,28 +354,37 @@ export const useReactStore = defineStore('react', {
           if (this.streamingAnswerMessageId) {
             const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
             if (msg) {
-              msg.data = {
-                ...(msg.data || {}),
-                iterations: data?.iterations,
-                session_id: data?.session_id,
-                timestamp: data?.timestamp,
-                expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-                sources: data?.sources || null  // ✅ 知识问答参考来源
-              }
-              console.log('[event:complete] 更新已有消息的数据')
+              // 【修复】确保流式结束状态，并触发响应式更新
+              msg.streaming = false
+              // 使用 Object.assign 确保响应式更新
+              Object.assign(msg, {
+                data: {
+                  ...(msg.data || {}),
+                  iterations: data?.iterations,
+                  session_id: data?.session_id,
+                  timestamp: data?.timestamp,
+                  expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
+                  sources: data?.sources || null  // ✅ 知识问答参考来源
+                }
+              })
+              // 触发数组响应式更新
+              this.messages = [...this.messages]
+              console.log('[event:complete] 更新已有消息的数据，streaming设置为false')
             }
-          } else if (data?.answer) {
-            console.log('[event:complete] 添加final消息，answer:', data.answer.substring(0, 50) + '...')
-            this.addMessage('final', data.answer, {
+          } else if (data?.answer || data?.response) {
+            // 【修复】优先使用response字段，兼容answer字段
+            const finalContent = data?.response || data?.answer || ''
+            console.log('[event:complete] 添加final消息，content:', finalContent.substring(0, 50) + '...')
+            this.addMessage('final', finalContent, {
               iterations: data?.iterations,
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
               sources: data?.sources || null  // ✅ 知识问答参考来源
-            })
+            }, null, { streaming: false })  // 【修复】明确设置 streaming: false
             console.log('[event:complete] messages数量:', this.messages.length)
           } else {
-            console.log('[event:complete] 警告：没有answer字段，不添加final消息')
+            console.log('[event:complete] 警告：没有answer或response字段，不添加final消息')
           }
 
           // 处理可视化数据
@@ -359,7 +440,14 @@ export const useReactStore = defineStore('react', {
             console.log('[event:complete] 无visuals字段或为空')
           }
 
-          console.log('[event:complete] ========== complete事件处理完成 ==========')
+          // ✅ 处理sources字段（知识问答工作流返回的检索文档）
+          if (data?.sources && Array.isArray(data.sources) && data.sources.length > 0) {
+            // 保存到当前消息的sources字段，供VisualizationPanel使用
+            if (this.messages.length > 0) {
+              const lastMsg = this.messages[this.messages.length - 1]
+              lastMsg.sources = data.sources
+            }
+          }
 
           // 流式最终答案结束，重置状态
           this.streamingAnswerMessageId = null
@@ -370,12 +458,13 @@ export const useReactStore = defineStore('react', {
           this.isAnalyzing = false
           this.isComplete = true
           this.iterations = data?.iterations || this.iterations
-          this.finalAnswer = data?.answer || '分析未完成'
+          // ✅ 优先使用response字段，兼容answer字段
+          this.finalAnswer = data?.response || data?.answer || '分析未完成'
 
           // 记录最终答案（原有工作流逻辑）
           this.finalAnswers.push({
             run: this.sessionRound,
-            content: data?.answer || '分析未完成',
+            content: data?.response || data?.answer || '分析未完成',
             timestamp: new Date().toISOString()
           })
 
@@ -549,9 +638,8 @@ export const useReactStore = defineStore('react', {
           if (!this.streamingAnswerMessageId) {
             const msgId = this.addMessage('final', data.delta, {
               session_id: data?.session_id,
-              timestamp: data?.timestamp,
-              streaming: true
-            })
+              timestamp: data?.timestamp
+            }, null, { streaming: true })
             this.streamingAnswerMessageId = msgId
           } else {
             // 已存在流式消息，直接在原有内容后追加
@@ -562,15 +650,77 @@ export const useReactStore = defineStore('react', {
               // 找不到消息时，退化为创建新消息，避免用户看不到内容
               const msgId = this.addMessage('final', data.delta, {
                 session_id: data?.session_id,
-                timestamp: data?.timestamp,
-                streaming: true
-              })
+                timestamp: data?.timestamp
+              }, null, { streaming: true })
               this.streamingAnswerMessageId = msgId
             }
           }
 
           // 同步更新 finalAnswer，方便其他地方直接读取
           this.finalAnswer = (this.finalAnswer || '') + data.delta
+          break
+
+        case 'final_answer':
+          // ✅ 直接来自工作流的最终答案（无需Agent再次总结）
+          console.log('[event:final_answer] 收到直接final_answer事件:', data)
+
+          // 提取最终答案内容
+          const finalContent = data?.content || ''
+          const sources = data?.sources || []
+
+          // 添加final消息并设置streamingAnswerMessageId，避免complete事件重复添加
+          const msgId = this.addMessage('final', finalContent, {
+            session_id: data?.session_id,
+            timestamp: data?.timestamp,
+            direct_from_workflow: data?.direct_from_workflow,
+            sources: sources  // 保存sources供知识溯源面板使用
+          }, null, { streaming: false })  // 【修复】明确设置 streaming: false
+          this.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
+
+          // 更新finalAnswer
+          this.finalAnswer = finalContent
+          break
+
+        case 'stream_start':
+          // 流式输出开始
+          console.log('[event:stream_start] 流式输出开始')
+          if (!this.streamingAnswerMessageId) {
+            this.streamingAnswerMessageId = this.addMessage('final', '', {
+              timestamp: data?.timestamp
+            }, null, { streaming: true })
+          }
+          break
+
+        case 'stream_content':
+          // 流式内容块
+          const content = data?.content || ''
+          if (content && this.streamingAnswerMessageId) {
+            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+            if (msg) {
+              msg.content += content
+              // 触发响应式更新
+              this.messages = [...this.messages]
+              // 同步更新 finalAnswer
+              this.finalAnswer = msg.content
+            }
+          }
+          break
+
+        case 'stream_end':
+          // 流式输出结束
+          console.log('[event:stream_end] 流式输出结束')
+          const endContent = data?.content || ''
+          if (endContent && this.streamingAnswerMessageId) {
+            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+            if (msg) {
+              // 确保内容完整
+              msg.content = endContent
+              msg.streaming = false  // 标记为完成
+              this._forceRenderCount++  // 强制触发响应式更新
+              this.finalAnswer = endContent
+            }
+          }
+          this.streamingAnswerMessageId = null
           break
 
         default:
@@ -721,10 +871,13 @@ export const useReactStore = defineStore('react', {
         assistantMode = null,
         useFullChemistry = false,  // RACM2完整化学机理分析选项
         gridResolution = 21,  // 网格分辨率选项
-        enableMultiExpert = false  // ✅ 是否启用多专家系统（通用Agent默认关闭）
+        enableMultiExpert = false,  // ✅ 是否启用多专家系统（通用Agent默认关闭）
+        agentMode = this.agentMode,  // ✅ 双模式架构：assistant | expert
+        knowledgeBaseIds = null,  // ✅ 知识库ID列表
+        attachments = null  // ✅ 附件列表
       } = options
 
-      if (!query.trim()) {
+      if (!query.trim() && (!attachments || attachments.length === 0)) {
         return
       }
 
@@ -738,7 +891,7 @@ export const useReactStore = defineStore('react', {
       }
 
       // 重置状态
-      this.addMessage('user', query)
+      this.addMessage('user', query, null, attachments)
       this.currentMessage = ''
       this.isAnalyzing = true
       this.isComplete = false
@@ -770,12 +923,14 @@ export const useReactStore = defineStore('react', {
           sessionId: this.sessionId,
           enhanceWithHistory: true,
           maxIterations: this.maxIterations,
-          debugMode: this.debugMode,
           assistantMode: assistantMode,  // 传递助手模式
           useFullChemistry: useFullChemistry,  // RACM2完整化学机理分析选项
           gridResolution: gridResolution,  // 网格分辨率选项
           enableMultiExpert: enableMultiExpert,  // ✅ 传递多专家开关
           isInterruption: isInterruption,  // ✅ 传递中断标志
+          agentMode: agentMode,  // ✅ 双模式架构
+          knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
+          attachments: attachments,  // ✅ 传递附件列表
           onEvent: (event) => {
             this.handleEvent(event)
           }
@@ -825,11 +980,6 @@ export const useReactStore = defineStore('react', {
       this.error = null
       this.isInterruption = true  // 标记为中断状态
       // 不添加系统消息
-    },
-
-    // 切换调试模式
-    toggleDebug() {
-      this.debugMode = !this.debugMode
     },
 
     // 重新分析

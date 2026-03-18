@@ -19,8 +19,6 @@ logger = structlog.get_logger()
 # 自带专业图表的工具列表（这些工具生成的数据不需要 viz 专家再处理）
 # 这些工具会直接返回 visuals 字段，包含 base64 编码的专业图表
 TOOLS_WITH_BUILTIN_VISUALS = {
-    # OBM分析工具 - 生成EKMA曲面图、减排路径图、敏感性分析图、控制建议图
-    "calculate_obm_full_chemistry",
     # 轨迹分析工具 - 生成轨迹地图
     "meteorological_trajectory_analysis",
     # 上风向企业分析 - 生成企业分布地图
@@ -29,7 +27,6 @@ TOOLS_WITH_BUILTIN_VISUALS = {
 
 # 自带图表的数据schema（用于识别来自上述工具的数据）
 SCHEMAS_WITH_BUILTIN_VISUALS = {
-    "obm_full_chemistry_result",
     "trajectory_result",
     "upwind_enterprise_result",
     # "pmf_result",  # 已移除，PMF不再自带图表，由viz expert通过smart_chart_generator生成
@@ -73,17 +70,10 @@ class ExpertPlanGenerator:
             "description": "查询济宁市区域对比空气质量数据（区县/站点对比），**优先使用**",
             "example": "查询济宁市各区县2025-01-01至2025-12-31的PM2.5浓度月度数据，按浓度排序"
         },
-        "get_guangdong_regular_stations": {
-            "param_type": "natural_language",
-            "required_param": "question",
-            "priority": 2,  # 次优先级
-            "description": "查询广东省区域对比空气质量数据（城市/站点对比），**次优先使用**",
-            "example": "查询广东省各城市2025-01-01至2025-12-31的O3_8h浓度月度数据，按浓度排序"
-        },
         "get_air_quality": {
             "param_type": "natural_language",
             "required_param": "question",
-            "priority": 3,  # 最低优先级（仅当非济宁/广东地区使用）
+            "priority": 2,  # 最低优先级（仅当非济宁/广东地区使用）
             "description": "全国城市空气质量数据查询，**仅当查询非济宁/广东地区，或前两者查询失败时使用**",
             "example": "查询北京市2025-01-01至2025-01-31的PM2.5日均数据"
         },
@@ -92,12 +82,6 @@ class ExpertPlanGenerator:
             "required_param": "question",
             "description": "通过自然语言查询VOCs组分数据（端口9092）",
             "example": "查询{location}的VOCs组分数据，包括苯系物、烷烃、烯烃等物种浓度"
-        },
-        "get_particulate_data": {
-            "param_type": "natural_language",
-            "required_param": "question",
-            "description": "通过自然语言查询颗粒物组分数据（端口9093）",
-            "example": "查询{location}的PM2.5组分数据，包括SO4、NO3、NH4、OC、EC等"
         },
 
         # 结构化参数型工具
@@ -158,13 +142,6 @@ class ExpertPlanGenerator:
             "description": "VOCs挥发性有机物PMF源解析（仅用于臭氧溯源分析）",
             "example": {"data_id": "vocs_unified:v1:abc123"}
         },
-        "calculate_obm_full_chemistry": {
-            "param_type": "structured",
-            "required_params": ["vocs_data_id"],
-            "optional_params": ["nox_data_id", "o3_data_id", "mode", "o3_target"],
-            "description": "OBM分析（EKMA/PO3/RIR） - 使用RACM2完整化学机理(102物种,504反应)，~2-3分钟",
-            "example": {"vocs_data_id": "vocs:v1:abc123", "mode": "all"}
-        },
         "smart_chart_generator": {
             "param_type": "structured",
             "required_params": ["data_id", "chart_purpose"],
@@ -212,7 +189,7 @@ class ExpertPlanGenerator:
         },
 
         # ========================================
-        # 颗粒物组分查询工具（结构化参数 - 替代 get_particulate_data）
+        # 颗粒物组分查询工具（结构化参数 - 替代 get_pm25_ionic）
         # ========================================
         "get_pm25_ionic": {
             "param_type": "structured",
@@ -300,20 +277,21 @@ class ExpertPlanGenerator:
         },
         "component": {
             "description": "组分分析专家",
-            "required_tools": ["get_guangdong_regular_stations"],
+            "required_tools": ["get_air_quality"],
             "optional_tools": [
                 "get_vocs_data",         # VOCs数据查询（端口9092）
-                "get_particulate_data",  # 颗粒物数据查询（端口9093）
-                "get_guangdong_regular_stations",       # 区域对比数据查询（替代get_air_quality）
+                "get_pm25_ionic",        # PM2.5水溶性离子数据查询（端口9093）
+                "get_pm25_carbon",       # PM2.5碳组分数据查询（端口9093）
+                "get_pm25_crustal",      # PM2.5地壳元素数据查询（端口9093）
+                "get_air_quality",       # 区域对比数据查询（替代get_air_quality）
                 "calculate_pm_pmf",      # PMF源解析（颗粒物专用，依赖水溶性离子+碳组分数据）
                 "calculate_vocs_pmf",    # PMF源解析（VOCs专用，用于臭氧溯源）
-                "calculate_obm_full_chemistry",  # RACM2完整化学机理OBM分析（依赖VOCs数据）
                 "iaqi_calculator",
                 "ml_predictor"
             ],
             "default_plan": [
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",  # 使用LLM自动生成参数
                     "purpose": "获取常规污染物数据"
                 }
@@ -321,20 +299,20 @@ class ExpertPlanGenerator:
             "tracing_plan": [
                 # 【基础数据】获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
                 # 【区域对比分析】城市级（station_code为空，获取周边城市数据）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 【区域对比分析】站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is not None"
@@ -350,7 +328,7 @@ class ExpertPlanGenerator:
                 },
                 # 颗粒物组分数据（端口9093）- 用于PM2.5/PM10的PMF源解析
                 {
-                    "tool": "get_particulate_data",
+                    "tool": "get_pm25_ionic",
                     "param_template": "auto",
                     "purpose": "获取PM2.5/PM10颗粒物组分数据（端口9093）",
                     "depends_on": [0],
@@ -360,16 +338,8 @@ class ExpertPlanGenerator:
                     "tool": "calculate_pm_pmf",
                     "param_template": "auto",
                     "purpose": "PMF源解析分析（颗粒物专用，依赖水溶性离子和碳组分数据）",
-                    "depends_on": [2, 3],  # 依赖get_vocs_data和get_particulate_data
+                    "depends_on": [2, 3],  # 依赖get_vocs_data和get_pm25_ionic
                     "condition": "PM2.5 in pollutants or PM10 in pollutants"  # PMF仅对颗粒物污染触发
-                },
-                # 4. OBM分析（使用RACM2完整化学机理 - pybox_integration）
-                {
-                    "tool": "calculate_obm_full_chemistry",
-                    "param_template": "auto",
-                    "purpose": "OBM分析（EKMA/PO3/RIR） - 使用RACM2完整化学机理",
-                    "depends_on": [2, 0],  # 依赖get_vocs_data和get_guangdong_regular_stations
-                    "condition": "O3 in pollutants or VOCs in pollutants"
                 }
             ],
             # ========================================
@@ -381,14 +351,14 @@ class ExpertPlanGenerator:
             "pm_tracing_plan": [
                 # 0. 区域传输分析 - 城市级（station_code为空，或location是城市级别）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的PM2.5/PM10小时数据（判断区域传输）",
                     "condition": "is_city_level_query or station_code is None"
                 },
                 # 0. 区域传输分析 - 站点级（station_code不为空且location是站点级别）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",
                     "purpose": "获取目标站点周边城市的PM2.5/PM10、AQI小时数据（判断区域传输）",
                     "condition": "station_code is not None and not is_city_level_query"
@@ -434,7 +404,7 @@ class ExpertPlanGenerator:
                 },
                 # 5. 获取常规污染物数据（用于水溶性离子分析的SOR/NOR计算）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（SO2、NO2用于SOR/NOR计算）"
                 },
@@ -461,7 +431,7 @@ class ExpertPlanGenerator:
                     "depends_on": [1, 5],  # 依赖水溶性离子数据（索引1）和气体数据（索引5）
                     "input_bindings": {
                         "data_id": "get_pm25_ionic[role=water-soluble].data_id",
-                        "gas_data_id": "get_guangdong_regular_stations[FIRST].data_id",
+                        "gas_data_id": "get_air_quality[FIRST].data_id",
                         "analysis_type": "full"
                     }
                 },
@@ -523,21 +493,21 @@ class ExpertPlanGenerator:
             "ozone_tracing_plan": [
                 # 0. 区域传输分析 - 城市级（station_code为空，根据城市获取周边城市数据）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的O3/PM2.5小时数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 0. 区域传输分析 - 站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的O3/PM2.5小时数据（判断区域传输）",
                     "condition": "station_code is not None"
                 },
                 # 1. 获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
@@ -554,33 +524,26 @@ class ExpertPlanGenerator:
                     "param_template": "auto",
                     "purpose": "PMF源解析（VOCs挥发性有机物源解析 - 用于臭氧溯源）",
                     "depends_on": [2]  # 依赖VOCs数据（索引2是get_vocs_data）
-                },
-                # 4. OBM分析（使用RACM2完整化学机理 - pybox_integration）
-                {
-                    "tool": "calculate_obm_full_chemistry",
-                    "param_template": "auto",
-                    "purpose": "OBM分析（EKMA/PO3/RIR） - 使用RACM2完整化学机理",
-                    "depends_on": [2, 1]  # 依赖get_vocs_data和get_guangdong_regular_stations
                 }
-            ],
+            ],  # ozone_tracing_plan
             # RACM2完整化学机理分析计划 (use_full_chemistry=true时使用)
             "tracing_plan_full_chemistry": [
                 # 【基础数据】获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
                 # 【区域对比分析】城市级（station_code为空）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 【区域对比分析】站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is not None"
@@ -596,7 +559,7 @@ class ExpertPlanGenerator:
                 },
                 # 颗粒物组分数据（端口9093）- 用于PM2.5/PM10的PMF源解析
                 {
-                    "tool": "get_particulate_data",
+                    "tool": "get_pm25_ionic",
                     "param_template": "auto",
                     "purpose": "获取PM2.5/PM10颗粒物组分数据（端口9093）",
                     "depends_on": [0],
@@ -606,36 +569,28 @@ class ExpertPlanGenerator:
                     "tool": "calculate_pm_pmf",
                     "param_template": "auto",
                     "purpose": "PMF源解析分析（颗粒物专用，依赖水溶性离子和碳组分数据）",
-                    "depends_on": [2, 3],  # 依赖get_vocs_data和get_particulate_data
+                    "depends_on": [2, 3],  # 依赖get_vocs_data和get_pm25_ionic
                     "condition": "PM2.5 in pollutants or PM10 in pollutants"  # PMF仅对颗粒物污染触发
-                },
-                # 4. OBM分析（使用RACM2完整化学机理 - pybox_integration）
-                {
-                    "tool": "calculate_obm_full_chemistry",
-                    "param_template": "auto",
-                    "purpose": "OBM分析（EKMA/PO3/RIR） - 使用RACM2完整化学机理",
-                    "depends_on": [2, 0],  # 依赖get_vocs_data和get_guangdong_regular_stations
-                    "condition": "O3 in pollutants or VOCs in pollutants"
                 }
             ],
             # 【深度溯源】使用RACM2完整化学机理分析
             "deep_tracing_plan": [
                 # 【基础数据】获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
                 # 【区域对比分析】城市级（station_code为空）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 【区域对比分析】站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_guangdong_regular_stations",
+                    "tool": "get_air_quality",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is not None"
@@ -651,7 +606,7 @@ class ExpertPlanGenerator:
                 },
                 # 颗粒物组分数据（端口9093）- 用于PM2.5/PM10的PMF源解析
                 {
-                    "tool": "get_particulate_data",
+                    "tool": "get_pm25_ionic",
                     "param_template": "auto",
                     "purpose": "获取PM2.5/PM10颗粒物组分数据（端口9093）",
                     "depends_on": [0],
@@ -661,37 +616,11 @@ class ExpertPlanGenerator:
                     "tool": "calculate_pm_pmf",
                     "param_template": "auto",
                     "purpose": "PMF源解析分析（颗粒物专用，依赖水溶性离子和碳组分数据）",
-                    "depends_on": [2, 3],  # 依赖get_vocs_data和get_particulate_data
+                    "depends_on": [2, 3],  # 依赖get_vocs_data和get_pm25_ionic
                     "condition": "PM2.5 in pollutants or PM10 in pollutants"  # PMF仅对颗粒物污染触发
-                },
-                # 4. OBM分析（使用RACM2完整化学机理 - pybox_integration）
-                {
-                    "tool": "calculate_obm_full_chemistry",
-                    "param_template": "auto",
-                    "purpose": "OBM分析（EKMA/PO3/RIR） - 使用RACM2完整化学机理",
-                    "depends_on": [2, 0],  # 依赖get_vocs_data和get_guangdong_regular_stations
-                    "condition": "O3 in pollutants or VOCs in pollutants"
                 }
-            ]
-        },
-        "viz": {
-            "description": "可视化专家",
-            "required_tools": ["smart_chart_generator"],
-            "optional_tools": ["generate_chart", "generate_map"],
-            "default_plan": [
-                {
-                    "tool": "smart_chart_generator",
-                    "param_template": "auto",
-                    "purpose": "智能图表生成（基于所有上游数据）",
-                    "multi_data_id": True  # 标记：需要为每个上游data_id都生成图表
-                }
-            ]
-        },
-        "report": {
-            "description": "报告专家",
-            "required_tools": [],
-            "optional_tools": [],
-            "default_plan": []  # 报告专家不调用工具，纯LLM综合
+            ],  # deep_tracing_plan
+            "report_expert_plan": []  # 报告专家不调用工具，纯LLM综合
         }
     }
     
@@ -856,12 +785,10 @@ class ExpertPlanGenerator:
         根据precision参数过滤OBM相关工具。
         - fast模式：不过滤
         - standard/full模式：不过滤
-        注：所有OBM工具统一使用calculate_obm_full_chemistry
         """
         if expert_type != "component":
             return plan_template
 
-        # 不过滤任何工具，统一使用calculate_obm_full_chemistry
         return plan_template
 
     def _build_context(
@@ -911,8 +838,8 @@ class ExpertPlanGenerator:
         Returns:
             True表示需要跳过可视化，False表示需要生成图表
         """
-        # 只对 get_guangdong_regular_stations 工具进行判断
-        if tool_name != "get_guangdong_regular_stations":
+        # 只对 get_air_quality 工具进行判断
+        if tool_name != "get_air_quality":
             return False
 
         # 如果使用 regional_* 模板（区域对比），需要生成图表
@@ -1255,7 +1182,7 @@ class ExpertPlanGenerator:
         granularity_desc = "小时粒度的"
 
         # 根据工具类型生成不同查询 - 确保调用不同的API
-        if tool_name == "get_guangdong_regular_stations":
+        if tool_name == "get_air_quality":
             # 常规污染物监测数据
             question = f"查询{location}"
             if time_range:
@@ -1302,7 +1229,7 @@ class ExpertPlanGenerator:
             question += "VOCs挥发性有机化合物组分数据"
             question += "，包括乙烷、丙烷、苯、甲苯、二甲苯、甲醛等具体物种浓度"
 
-        elif tool_name == "get_particulate_data":
+        elif tool_name == "get_pm25_ionic":
             # 颗粒物组分数据（端口9093）- 优化：溯源场景需要完整组分
             pollutants = context.get("pollutants", [])
             is_pm_tracing = any(p in pollutants for p in ["PM2.5", "PM10", "颗粒物"])
@@ -1343,7 +1270,7 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
                 question += "PM2.5/PM10颗粒物组分数据"
                 question += "，包括SO4、NO3、NH4、OC、EC等水溶性离子和碳组分浓度"
 
-        elif tool_name == "get_guangdong_regular_stations":
+        elif tool_name == "get_air_quality":
             # 广东监测站点数据
             question = f"获取{location}及周边地区的空气监测站列表和数据"
             if time_range:
@@ -2033,7 +1960,7 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         granularity_desc = "小时粒度的"
 
         # 根据工具类型生成不同查询 - 确保调用不同的API
-        if tool_name == "get_guangdong_regular_stations":
+        if tool_name == "get_air_quality":
             # 常规污染物监测数据
             question = f"查询{location}"
             if time_range:
@@ -2080,7 +2007,7 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
             question += "VOCs挥发性有机化合物组分数据"
             question += "，包括乙烷、丙烷、苯、甲苯、二甲苯、甲醛等具体物种浓度"
 
-        elif tool_name == "get_particulate_data":
+        elif tool_name == "get_pm25_ionic":
             # 颗粒物组分数据（端口9093）- 优化：溯源场景需要完整组分
             pollutants = context.get("pollutants", [])
             is_pm_tracing = any(p in pollutants for p in ["PM2.5", "PM10", "颗粒物"])
@@ -2121,7 +2048,7 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
                 question += "PM2.5/PM10颗粒物组分数据"
                 question += "，包括SO4、NO3、NH4、OC、EC等水溶性离子和碳组分浓度"
 
-        elif tool_name == "get_guangdong_regular_stations":
+        elif tool_name == "get_air_quality":
             # 广东监测站点数据
             question = f"获取{location}及周边地区的空气监测站列表和数据"
             if time_range:

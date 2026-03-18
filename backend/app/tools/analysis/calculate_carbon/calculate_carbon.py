@@ -641,7 +641,7 @@ calculate_carbon(
                         for v in visuals
                     ]
                 }
-                result_data_id = context.save_data(
+                result_data_ref = context.save_data(
                     data=[summary],
                     schema="particulate_analysis",
                     metadata={
@@ -652,7 +652,10 @@ calculate_carbon(
                         "secondary_level": statistics.get("secondary_organic", {}).get("level"),
                     }
                 )
+                result_data_id = result_data_ref["data_id"]
+                result_file_path = result_data_ref["file_path"]
                 result["data_id"] = result_data_id
+                result["file_path"] = result_file_path
             except Exception as save_err:
                 logger.warning(f"[calculate_carbon] 保存失败: {save_err}")
 
