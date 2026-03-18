@@ -11,7 +11,7 @@
 import os
 import time
 import yaml
-import logging
+import structlog
 import requests
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # 加载 .env 文件（确保环境变量可用）
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ParticulateTokenManager:

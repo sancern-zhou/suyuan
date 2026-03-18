@@ -133,6 +133,18 @@ async function initMap() {
       preserveDrawingBuffer: true
     })
 
+    // 添加标准底图瓦片图层（确保底图显示）
+    try {
+      const tileLayer = new AMap.TileLayer({
+        zIndex: 0,
+        zooms: [1, 20]
+      })
+      tileLayer.setMap(mapInstance.value)
+      console.log('[MapPanel] 底图瓦片图层添加成功')
+    } catch (e) {
+      console.warn('[MapPanel] 添加瓦片图层失败:', e)
+    }
+
     // 注入信息窗口样式
     injectInfoWindowStyles()
 

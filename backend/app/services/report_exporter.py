@@ -17,6 +17,10 @@ logger = structlog.get_logger()
 class EchartsPlaceholderHandler:
     """
     ECharts占位符处理器 - 将占位符转换为实际内容
+
+    【废弃】此类仅为处理遗留内容保留，新代码应使用URL直接输出方案：
+    - 旧方案：LLM生成 [ECHARTS_PLACEHOLDER:xxx] 占位符 → 后端替换为图片
+    - 新方案：LLM直接生成 ![标题](/api/image/xxx) Markdown URL → 前端直接渲染
     """
 
     def __init__(self):

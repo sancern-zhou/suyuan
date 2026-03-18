@@ -1,14 +1,5 @@
 <template>
   <div class="analysis-view">
-    <!-- 顶部导航 -->
-    <TopBar
-      :status="store.status"
-      :debug-enabled="store.debugEnabled"
-      :has-report="store.hasReport"
-      @toggle-debug="store.toggleDebug"
-      @open-report="store.openReport"
-    />
-
     <!-- 主布局 -->
     <div class="main-layout">
       <!-- 对话区域 -->
@@ -47,7 +38,6 @@
 
 <script setup>
 import { useAnalysisStore } from '@/stores/analysis'
-import TopBar from '@/components/TopBar.vue'
 import MessageList from '@/components/MessageList.vue'
 import InputBox from '@/components/InputBox.vue'
 import VisualizationPanel from '@/components/VisualizationPanel.vue'
@@ -55,10 +45,17 @@ import DebugPanel from '@/components/DebugPanel.vue'
 
 const store = useAnalysisStore()
 
-const handleSend = async (query) => {
-  if (!query.trim()) return
+const handleSend = async (payload) => {
+  // 处理新的输入格式：可能是字符串（向后兼容）或对象
+  const query = typeof payload === 'string' ? payload : payload.query
+  if (!query || !query.trim()) return
 
-  await store.startAnalysis(query)
+  // 如果是对象格式，提取其他参数
+  const options = typeof payload === 'object' ? {
+    attachments: payload.attachments || null
+  } : {}
+
+  await store.startAnalysis(query, options)
 }
 
 const handlePause = async () => {

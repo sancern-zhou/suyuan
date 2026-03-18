@@ -77,11 +77,20 @@ class DataRegistryService:
         field_stats: Optional[Iterable[FieldStats]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         sample_size: int = 20,
+        data_id: Optional[str] = None,
     ) -> DataRegistryEntry:
         """Register a dataset and persist both full data and sampling preview."""
 
         sample_records = list(records[:sample_size])
-        data_id = f"{schema}:{version}:{uuid4().hex}"
+        # ✅ 修复：接受外部传入的 data_id，避免重复生成导致 ID 不匹配
+        if data_id is None:
+            data_id = f"{schema}:{version}:{uuid4().hex}"
+        else:
+            # ✅ 从 data_id 中提取 schema 和 version（优先使用 data_id 中的）
+            parts = data_id.split(":")
+            if len(parts) >= 3:
+                schema = parts[0]
+                version = parts[1]
         safe_id = self._sanitize_identifier(data_id)
         dataset_path = self.datasets_dir / f"{safe_id}.json"
         sample_path = self.samples_dir / f"{safe_id}.json"

@@ -132,13 +132,13 @@ def build_template_analysis_prompt(template_content: str, time_range: Dict[str, 
 【可用工具及适用场景】
 
 【工具选择优先级规则】⭐⭐⭐
-1. **优先使用 `get_guangdong_regular_stations`**：查询广东省各城市/站点的空气质量数据（城市排名、区域对比等）
+1. **优先使用 `get_jining_regular_stations`**：查询济宁市各区县/站点的空气质量数据（城市排名、区域对比等）
 2. **最后使用 `get_air_quality`**：仅当以下情况才调用：
-   - 查询的城市不属于广东省（如北京、上海、武汉等）
-   - `get_guangdong_regular_stations` 查询失败或无返回数据
+   - 查询的城市不属于济宁市（如北京、上海、武汉等）
+   - `get_jining_regular_stations` 查询失败或无返回数据
 
 【工具适用场景】
-- `get_guangdong_regular_stations`：广东省区域对比（城市排名、区域对比、时序对比）
+- `get_jining_regular_stations`：济宁市区域对比（城市排名、区域对比、时序对比）
 - `get_component_data`：涉及"组分 / 成分 / 源解析"等内容时，用于查询 PM2.5/VOCs 等组分数据
 - `get_weather_data`：**暂时不使用**。即使模板中提到气象条件（温度、湿度、风速、日照、降水等），也**不要生成气象数据查询需求**，跳过相关章节的数据查询
 
@@ -149,7 +149,7 @@ def build_template_analysis_prompt(template_content: str, time_range: Dict[str, 
   "data_requirements": [
     {{
       "section": "章节标题（例如：总体状况、城市状况、附表1-目标期等）",
-      "tool": "get_jining_regular_stations | get_guangdong_regular_stations | get_component_data",
+      "tool": "get_jining_regular_stations | get_air_quality | get_component_data",
       "question": "完整自然语言问题，包含城市/区域、目标时间范围、指标名称、时间粒度（日/月等），以及是否需要同比/环比/对比",
       "query_type": "province_overview | city_ranking | city_detail_table | general"
     }}
@@ -214,10 +214,9 @@ W
      ❌ 错误："查询东莞市2025年的日度空气质量数据"（没说明需要5条记录，API可能返回1条聚合数据）
 
 【强制规则】
-- 空气质量查询优先顺序：get_jining_regular_stations → get_guangdong_regular_stations → get_air_quality
+- 空气质量查询优先顺序：get_jining_regular_stations → get_air_quality
 - 济宁地区用 get_jining_regular_stations
-- 广东其他地区用 get_guangdong_regular_stations
-- 其他城市或前两者失败时用 get_air_qualityW
+- 其他城市或前者失败时用 get_air_quality
 - 违反时间维度或同比要求将导致查询失败
 - 排名和综合指数排名单独生成查询请求，不要与其他指标合并查询。且排名结果需要直接获取，不能基于数据自己进行排名。
 """

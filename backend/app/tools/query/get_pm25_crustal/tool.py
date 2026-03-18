@@ -19,6 +19,29 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+def _filter_mark_fields(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """过滤掉所有 _Mark 字段
+
+    Args:
+        records: 原始记录列表
+
+    Returns:
+        过滤后的记录列表（不包含 _Mark 字段）
+    """
+    filtered_records = []
+    for record in records:
+        if isinstance(record, dict):
+            # 创建新记录，排除所有 _Mark 字段
+            filtered_record = {
+                k: v for k, v in record.items()
+                if not k.endswith('_Mark')
+            }
+            filtered_records.append(filtered_record)
+        else:
+            filtered_records.append(record)
+    return filtered_records
+
+
 class GetPM25CrustalTool(LLMTool):
     """PM2.5地壳元素查询工具"""
 
@@ -65,12 +88,14 @@ class GetPM25CrustalTool(LLMTool):
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1],
-                        "description": "Data type: 0=original, 1=audited (default: 0)"
+                        "description": "Data quality: 0=original, 1=audited. IMPORTANT: Crustal element NUMERIC data is only available in audited data (data_type=1). Default: 1",
+                        "default": 1
                     },
                     "time_granularity": {
                         "type": "integer",
-                        "enum": [1, 2, 3, 5],
-                        "description": "Time granularity: 1=hour, 2=day, 3=month, 5=year (default: 1)"
+                        "enum": [0],
+                        "description": "Time granularity for crustal elements. NOTE: Only 0 (hour granularity) returns numeric values - all string inputs like 'daily'/'hourly' are converted to 0. The API returns placeholders for other granularities. Default: 0",
+                        "default": 0
                     },
                     "elements": {
                         "type": "array",
@@ -99,8 +124,8 @@ class GetPM25CrustalTool(LLMTool):
         locations: Union[List[str], None] = None,
         station: Union[str, None] = None,
         code: Union[str, None] = None,
-        data_type: int = 0,
-        time_granularity: int = 1,
+        data_type: int = 1,  # 默认使用审核数据（地壳元素数值仅在审核数据中）
+        time_granularity: Union[int, str] = 0,  # 默认使用0（小时，返回数值）
         elements: List[str] = None,
         **_: Any
     ) -> Dict[str, Any]:
@@ -108,6 +133,29 @@ class GetPM25CrustalTool(LLMTool):
 
         if elements is None:
             elements = ["Al", "Si", "Fe", "Ca", "Ti", "Mn"]
+
+        # 时间粒度映射：字符串 -> 数字
+        # 注意：地壳元素数据只在 dataType=0 时返回数值，其他粒度返回占位符
+        time_granularity_map = {
+            "hour": 0,
+            "hourly": 0,
+            "day": 0,    # 强制使用0（返回数值），而不是2（返回占位符）
+            "daily": 0,
+            "month": 0,
+            "monthly": 0,
+            "year": 0,
+            "yearly": 0
+        }
+
+        # 如果是字符串，转换为数字
+        if isinstance(time_granularity, str):
+            original_value = time_granularity
+            time_granularity = time_granularity_map.get(time_granularity.lower(), 1)
+            logger.info(
+                "time_granularity_converted",
+                input=original_value,
+                output=time_granularity
+            )
 
         # 参数处理：支持 locations 自动映射
         if locations:
@@ -180,9 +228,9 @@ class GetPM25CrustalTool(LLMTool):
         # 将请求的元素转换为因子编码
         detection_codes = []
         for elem in elements:
-            code = element_code_map.get(elem)
-            if code:
-                detection_codes.append(code)
+            element_code = element_code_map.get(elem)
+            if element_code:
+                detection_codes.append(element_code)
 
         # 如果没有匹配的编码，使用默认列表
         if not detection_codes:
@@ -195,8 +243,8 @@ class GetPM25CrustalTool(LLMTool):
                 code=code,
                 start_time=start_time,
                 end_time=end_time,
-                date_type=data_type,       # 数据质量：0=原始，1=审核
-                data_type=time_granularity, # 时间粒度：1=小时，2=日，3=月，5=年
+                date_type=data_type,       # 数据质量：0=原始，1=审核（地壳元素数值需要1）
+                data_type=time_granularity, # 时间粒度：0=小时(数值), 2=日(字符串占位符)
                 detection_item_codes=detection_codes
             )
 
@@ -234,10 +282,15 @@ class GetPM25CrustalTool(LLMTool):
                     "api_structure": list(api_response.get("result", {}).keys()) if isinstance(api_response, dict) else []
                 }
 
+            # 过滤掉所有 _Mark 字段
+            records = _filter_mark_fields(records)
+            logger.info("crustal_filtered", original_count=len(records), filtered_count=len(records))
+
             # 保存数据
-            data_id = None
+            data_ref = None
+            file_path = None
             try:
-                data_id = context.save_data(
+                data_ref = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -250,6 +303,8 @@ class GetPM25CrustalTool(LLMTool):
                         "elements": elements
                     }
                 )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
             except Exception as save_error:
                 logger.warning("pm25_crustal_save_failed", error=str(save_error))
 
@@ -271,12 +326,13 @@ class GetPM25CrustalTool(LLMTool):
                 "success": True,
                 "data": records,
                 "data_id": data_id,
+                "file_path": file_path,
                 "count": len(records),
                 "station": station,
                 "code": code,
                 "elements": elements,
                 "quality_report": quality_report,
-                "summary": f"[OK] 成功获取{len(records)}条PM2.5地壳元素数据，已保存为 {data_id}。",
+                "summary": f"[OK] 成功获取{len(records)}条PM2.5地壳元素数据，已保存为 {data_id}（路径: {file_path}）。",
                 "metadata": {
                     "sample_record": sample_record
                 }

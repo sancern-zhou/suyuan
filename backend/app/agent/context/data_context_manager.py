@@ -19,6 +19,7 @@ Architecture:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Union
 from uuid import uuid4
 
@@ -545,9 +546,27 @@ class DataContextManager:
             field_mapping_applied=field_mapping_applied  # 记录是否应用了标准化
         )
 
-        # ✅ 返回字符串ID而非handle对象 - 工具层直接使用
-        # Handle已缓存在self._handles中，需要时可通过get_handle(full_id)获取
-        return full_id
+        # ✅ 返回字典包含 data_id 和 file_path
+        # 计算绝对路径（供 Agent 使用）
+        try:
+            if path.is_absolute():
+                # 已经是绝对路径
+                file_path = str(path)
+            else:
+                # 相对路径，转换为绝对路径
+                file_path = str(Path.cwd().parent / path)
+
+            # 统一路径分隔符为 /（适用于 Windows 和 Linux）
+            file_path = file_path.replace("\\", "/")
+        except Exception as e:
+            logger.warning("failed_to_calculate_file_path", path=str(path), error=str(e))
+            # 回退到原始路径
+            file_path = str(path)
+
+        return {
+            "data_id": full_id,
+            "file_path": file_path
+        }
 
     def get_data(
         self,

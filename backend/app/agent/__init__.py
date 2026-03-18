@@ -6,7 +6,6 @@ ReAct Agent 系统模块导出
 
 from .react_agent import ReActAgent, create_react_agent
 from .memory import (
-    WorkingMemory,
     SessionMemory,
     HybridMemoryManager
 )
@@ -21,8 +20,7 @@ __all__ = [
     "ReActAgent",
     "create_react_agent",
 
-    # Memory System (Note: LongTermMemory 已移除)
-    "WorkingMemory",
+    # Memory System (Note: WorkingMemory 已合并进 HybridMemoryManager)
     "SessionMemory",
     "HybridMemoryManager",
 

@@ -116,8 +116,8 @@ def calculate_trace(
         - 数据字段应在DataStandardizer中标准化为英文字段名
         - 前端图表显示中文由可视化层处理
     """
-    import logging
-    logger = logging.getLogger(__name__)
+    import structlog
+    logger = structlog.get_logger()
 
     # 保存原始数据ID
     original_data_id = data_id
@@ -402,7 +402,7 @@ class CalculateTraceTool(LLMTool):
                 )
                 result["data_id"] = result_data_id
             except Exception as save_err:
-                import logging
+                import structlog
                 logging.warning(f"[calculate_trace] 保存结果失败: {save_err}")
 
         return result

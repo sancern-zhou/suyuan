@@ -54,9 +54,19 @@ class VizExecutor(ExpertExecutor):
 
                 # 重新生成工具计划（使用过滤后的upstream_data_ids）
                 if execution_context is None:
-                    context_dict = task.context.copy() if task.context else {}
-                    context_dict["session_id"] = context_dict.get("session_id", f"expert_viz_{task.task_id}")
-                    execution_context = self._create_execution_context(context_dict)
+                    # task.context可能是ExecutionContext对象或字典
+                    from app.agent.context import ExecutionContext
+                    if isinstance(task.context, ExecutionContext):
+                        # 已经是ExecutionContext对象，直接使用
+                        execution_context = task.context
+                    elif isinstance(task.context, dict):
+                        # 是字典，创建ExecutionContext
+                        context_dict = task.context.copy()
+                        context_dict["session_id"] = context_dict.get("session_id", f"expert_viz_{task.task_id}")
+                        execution_context = self._create_execution_context(context_dict)
+                    else:
+                        # 其他情况，创建新的ExecutionContext
+                        execution_context = self._create_execution_context({"session_id": f"expert_viz_{task.task_id}"})
 
                 # 获取上游结果字典
                 from app.agent.context import ExecutionContext

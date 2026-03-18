@@ -10,11 +10,11 @@ import json
 import urllib.request
 import urllib.parse
 from urllib.error import URLError
-import logging
+import structlog
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # 实际的千问3 API 地址
 API_BASE_URL = 'https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1/chat/completions'

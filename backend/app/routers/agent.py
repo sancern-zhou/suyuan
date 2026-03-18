@@ -8,10 +8,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from datetime import datetime
 import json
 import structlog
 
 from app.agent import create_react_agent
+from app.agent.session import SessionManager, Session, SessionState
 
 logger = structlog.get_logger()
 
@@ -27,12 +29,15 @@ class AgentAnalyzeRequest(BaseModel):
     query: str = Field(..., description="用户自然语言查询")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
-    max_iterations: int = Field(10, ge=1, le=20, description="最大迭代次数")
-    debug_mode: bool = Field(False, description="是否启用调试模式（会额外返回发送给 LLM 的上下文）")
+    max_iterations: int = Field(30, ge=1, le=30, description="最大迭代次数")
     plan_mode: bool = Field(False, description="是否使用 ReWOO 规划模式（一次性生成完整计划）")
+    mode: Optional[str] = Field(
+        "expert",
+        description="✅ Agent模式（三模式架构）：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'code' - 编程模式（工具开发）"
+    )
     assistant_mode: Optional[str] = Field(
         None,
-        description="""助手模式：
+        description="""助手模式（旧版，已弃用，建议使用mode参数）：
         'meteorology-expert' - 气象专家单专家模式
         'quick-tracing-expert' - 快速溯源专家多专家模式
         'data-visualization-expert' - 数据可视化专家单专家模式
@@ -48,17 +53,17 @@ class AgentAnalyzeRequest(BaseModel):
         None,
         description="选中的知识库ID列表，用于检索增强生成"
     )
-    enable_multi_expert: bool = Field(
-        False,
-        description="✅ 是否启用多专家系统（默认False，通用Agent使用单专家ReAct模式）"
-    )
     enable_reasoning: bool = Field(
         False,
-        description="✅ 是否启用思考模式（默认False，启用后会显示LLM的推理过程，适用于MiniMax等支持思考模式的模型）"
+        description="是否启用思考模式（默认False，启用后会显示LLM的推理过程，适用于MiniMax等支持思考模式的模型）"
     )
     is_interruption: bool = Field(
         False,
-        description="✅ 是否为用户中断后的对话（默认False，用户暂停后继续对话时为True）"
+        description="是否为用户中断后的对话（默认False，用户暂停后继续对话时为True）"
+    )
+    attachments: Optional[List[dict]] = Field(
+        None,
+        description="附件列表，包含用户上传的文件信息 [{file_id, name, type, url}]"
     )
 
     class Config:
@@ -68,12 +73,10 @@ class AgentAnalyzeRequest(BaseModel):
                 "session_id": None,
                 "enhance_with_history": True,
                 "max_iterations": 10,
-                "debug_mode": False,
                 "plan_mode": False,
                 "assistant_mode": "quick-tracing-expert",
                 "precision": "standard",
-                "knowledge_base_ids": ["kb_123", "kb_456"],
-                "enable_multi_expert": False
+                "knowledge_base_ids": ["kb_123", "kb_456"]
             }
         }
 
@@ -81,7 +84,7 @@ class AgentAnalyzeRequest(BaseModel):
 class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
     query: str = Field(..., description="用户查询")
-    max_iterations: int = Field(10, ge=1, le=20, description="最大迭代次数")
+    max_iterations: int = Field(30, ge=1, le=30, description="最大迭代次数")
     assistant_mode: Optional[str] = Field(
         None,
         description="""助手模式：
@@ -128,44 +131,38 @@ class ToolListResponse(BaseModel):
 # Global Agent Instances
 # ========================================
 
-# 多专家模式全局实例
+# 通用Agent实例
 multi_expert_agent_instance = create_react_agent(
-    with_test_tools=False,  # 使用真实工具
-    max_iterations=10,
-    enable_multi_expert=True  # 启用多专家系统
+    with_test_tools=False,
+    max_iterations=10
 )
 
-# 气象专家模式全局实例（单专家，专注气象）
+# 气象专家模式全局实例
 meteorology_expert_agent_instance = create_react_agent(
-    with_test_tools=False,  # 使用真实工具
+    with_test_tools=False,
     max_iterations=10,
-    enable_multi_expert=False,  # 单专家模式
-    max_working_memory=25  # 增加工作记忆容量
+    max_working_memory=25
 )
 
-# 快速溯源专家模式全局实例（多专家协作，专注溯源）
+# 快速溯源专家模式全局实例
 quick_tracing_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=8,  # 快速响应
-    enable_multi_expert=True,  # 启用多专家系统
+    max_iterations=8,
     max_working_memory=20
 )
 
-# 数据可视化专家模式全局实例（单专家，专注图表生成）
+# 数据可视化专家模式全局实例
 data_viz_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=8,  # 专注图表，快速响应
-    enable_multi_expert=False,  # 单专家模式
-    max_working_memory=15  # 适中记忆容量
+    max_iterations=8,
+    max_working_memory=15
 )
 
-# 深度溯源专家模式全局实例（多专家协作，深度分析）
-# 特点：使用analyze_trajectory_sources + calculate_obm_full_chemistry
+# 深度溯源专家模式全局实例
 deep_tracing_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=15,  # 深度分析需要更多迭代
-    enable_multi_expert=True,  # 启用多专家系统
-    max_working_memory=30  # 增加记忆容量（深度分析数据量大）
+    max_iterations=15,
+    max_working_memory=30
 )
 
 logger.info(
@@ -241,47 +238,40 @@ async def analyze_stream(request: AgentAnalyzeRequest):
         query=request.query[:100],
         session_id=request.session_id,
         max_iterations=request.max_iterations,
-        debug_mode=request.debug_mode,
         plan_mode=request.plan_mode,
         assistant_mode=request.assistant_mode,
         precision=request.precision,
         knowledge_base_ids=request.knowledge_base_ids,
-        is_interruption=request.is_interruption  # ✅ 记录中断标志
+        is_interruption=request.is_interruption,
+        mode=request.mode
     )
 
     try:
-        # 根据助手模式和 enable_multi_expert 参数选择 Agent
+        # 根据助手模式选择 Agent
         if request.assistant_mode == 'meteorology-expert':
-            # 气象专家模式：单专家，专注气象
             agent = meteorology_expert_agent_instance
             logger.info(
-                "使用气象专家单专家模式",
+                "使用气象专家模式",
                 session_id=request.session_id,
-                enable_multi_expert=False,
                 agent_id=id(agent)
             )
         elif request.assistant_mode == 'quick-tracing-expert':
-            # 快速溯源专家模式：多专家协作，专注溯源
             agent = quick_tracing_agent_instance
             logger.info(
                 "使用快速溯源专家模式",
                 session_id=request.session_id,
-                enable_multi_expert=True,
                 agent_id=id(agent),
                 max_iterations=8
             )
         elif request.assistant_mode == 'data-visualization-expert':
-            # 数据可视化专家模式：单专家，专注图表
             agent = data_viz_agent_instance
             logger.info(
                 "使用数据可视化专家模式",
                 session_id=request.session_id,
-                enable_multi_expert=False,
                 agent_id=id(agent),
                 max_iterations=8
             )
         elif request.assistant_mode == 'deep-tracing-expert':
-            # 深度溯源专家模式：多专家协作，HYSPLIT轨迹+源清单+RACM2化学机理
             agent = deep_tracing_agent_instance
             # 深度溯源模式默认使用 full 精度
             if request.precision == 'standard':
@@ -289,59 +279,35 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             logger.info(
                 "使用深度溯源专家模式",
                 session_id=request.session_id,
-                enable_multi_expert=True,
                 agent_id=id(agent),
                 max_iterations=15,
                 precision=request.precision,
-                features=["analyze_trajectory_sources", "calculate_obm_full_chemistry"]
+                features=["analyze_trajectory_sources"]
             )
         elif request.assistant_mode == 'report-generation-expert':
-            # 报告生成专家模式：
-            # - 复用多专家Agent实例 multi_expert_agent_instance，确保与模板报告/溯源流水线共享会话记忆；
-            # - 但在本模式下通过 enable_multi_expert=False 走单专家 ReAct 循环（在下方 analyze_kwargs 中控制）。
             agent = multi_expert_agent_instance
             logger.info(
-                "使用报告生成专家模式（单专家ReAct，复用multi_expert_agent_instance）",
+                "使用报告生成专家模式",
                 session_id=request.session_id,
                 agent_id=id(agent)
             )
         elif request.assistant_mode == 'template-report-expert':
-            # 模板报告生成专家：推荐使用 /api/report/generate-from-template-agent 以携带模板内容
             raise HTTPException(
                 status_code=400,
                 detail="模板报告生成请调用 /api/report/generate-from-template-agent（需提供模板内容和时间范围）"
             )
-        elif request.enable_multi_expert:
-            # ✅ 通用Agent多专家模式（显式启用）
+        else:
+            # 默认使用通用Agent
             agent = multi_expert_agent_instance
             logger.info(
-                "使用通用Agent多专家协作模式",
+                "使用通用Agent模式",
                 session_id=request.session_id,
-                enable_multi_expert=True,
                 agent_id=id(agent)
-            )
-        else:
-            # ✅ 通用Agent单专家模式（默认）：支持真正的ReAct循环
-            agent = meteorology_expert_agent_instance  # 复用气象专家的单专家实例
-            logger.info(
-                "使用通用Agent单专家ReAct模式",
-                session_id=request.session_id,
-                enable_multi_expert=False,
-                agent_id=id(agent),
-                mode="真正的ReAct循环：思考→行动→观察"
             )
 
         # 验证precision有效性
         if request.precision not in ['fast', 'standard', 'full']:
             request.precision = 'standard'
-
-        # ✅ 决定是否传递 enable_multi_expert 参数
-        # 快速溯源、深度溯源和部分单专家模式使用实例的默认设置，不被前端参数覆盖
-        should_pass_multi_expert_param = (
-            request.assistant_mode in ['meteorology-expert', 'data-visualization-expert', 'report-generation-expert'] or
-            request.assistant_mode is None or
-            request.assistant_mode == 'general-agent'
-        )
 
         # 构建分析参数
         analyze_kwargs = {
@@ -349,27 +315,180 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             "session_id": request.session_id,
             "enhance_with_history": request.enhance_with_history,
             "max_iterations": request.max_iterations,
-            "debug_mode": request.debug_mode,
             "plan_mode": request.plan_mode,
-            "precision": request.precision,  # EKMA分析精度模式 (fast/standard/full)
-            "knowledge_base_ids": request.knowledge_base_ids,  # 知识库ID列表
-            "enable_reasoning": request.enable_reasoning,  # ✅ 思考模式开关（是否显示LLM推理过程）
-            "is_interruption": request.is_interruption  # ✅ 中断标志（用户暂停后继续对话）
+            "knowledge_base_ids": request.knowledge_base_ids,
+            "enable_reasoning": request.enable_reasoning,
+            "is_interruption": request.is_interruption,
+            "manual_mode": request.mode,
+            "attachments": request.attachments  # ✅ 传递附件信息
         }
 
-        # ✅ 只有在需要时才传递 enable_multi_expert 参数
-        if should_pass_multi_expert_param:
-            analyze_kwargs["enable_multi_expert"] = request.enable_multi_expert
+        # 初始化会话管理器
+        session_manager = SessionManager()
+        actual_session_id = request.session_id
+        conversation_history = []
+        collected_data_ids = []
+        collected_visuals = []
 
         async def event_generator():
             """SSE 事件生成器"""
+            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals
+
+            # ✅ 用于统计（不输出日志）
+            event_count = 0
+            streaming_chunk_count = 0
+
+            # 创建或加载会话
+            if actual_session_id:
+                session = session_manager.load_session(actual_session_id)
+                if session:
+                    logger.info("session_restored", session_id=actual_session_id)
+                    conversation_history = session.conversation_history
+                    # ✅ 如果有历史对话，传递给 agent.analyze()
+                    if conversation_history:
+                        analyze_kwargs["initial_messages"] = conversation_history
+                        logger.info(
+                            "passing_conversation_history_to_agent",
+                            session_id=actual_session_id,
+                            message_count=len(conversation_history)
+                        )
+                else:
+                    logger.warning("session_not_found_creating_new", session_id=actual_session_id)
+                    session = Session(session_id=actual_session_id, query=request.query)
+            else:
+                import uuid
+                actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
+                session = Session(session_id=actual_session_id, query=request.query)
+                logger.info("session_created", session_id=actual_session_id)
+                # 更新 analyze_kwargs 中的 session_id
+                analyze_kwargs["session_id"] = actual_session_id
+
+            # 保存初始会话状态
+            session.state = SessionState.ACTIVE
+            session_manager.save_session(session)
+
+            # ✅ 添加用户消息到对话历史
+            user_message = {
+                "type": "user",
+                "content": request.query,
+                "timestamp": datetime.now().isoformat()
+            }
+            conversation_history.append(user_message)
+            logger.debug("user_message_added", query_preview=request.query[:100])
+
             try:
                 async for event in agent.analyze(**analyze_kwargs):
+                    event_count += 1
+                    event_type = event.get("type")
+
+                    # ✅ 关闭流式文本事件的所有日志
+                    if event_type != "streaming_text":
+                        # ✅ 非流式事件：正常记录
+                        logger.debug("received_event", event_type=event_type, has_data="data" in event)
+                    else:
+                        # ✅ 流式事件：静默处理，只统计不输出
+                        streaming_chunk_count += 1
+
+                    # 收集对话历史（转换为前端格式，添加 content 字段）
+                    if event["type"] in ["thought", "action", "observation"]:
+                        # 创建前端格式的消息
+                        frontend_message = {
+                            "type": event["type"],
+                            "data": event.get("data", {}),
+                            "timestamp": event.get("data", {}).get("timestamp") if "data" in event else None
+                        }
+
+                        # 提取 content 字段（前端显示用）
+                        if event["type"] == "thought":
+                            frontend_message["content"] = event.get("data", {}).get("thought", "思考中...")
+                        elif event["type"] == "action":
+                            action_data = event.get("data", {}).get("action", {})
+                            tool_name = action_data.get("tool", "")
+                            frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
+                        elif event["type"] == "observation":
+                            obs_data = event.get("data", {}).get("observation", {})
+                            frontend_message["content"] = obs_data.get("summary", "获得结果") if isinstance(obs_data, dict) else str(obs_data)
+
+                        conversation_history.append(frontend_message)
+                        logger.debug("conversation_history_appended",
+                                    event_type=event["type"],
+                                    history_length=len(conversation_history),
+                                    content_preview=frontend_message.get("content", "")[:50])
+
+                    # ✅ streaming_text 事件：流式输出但不保存到历史（由 complete 事件统一保存）
+                    elif event["type"] == "streaming_text":
+                        # 流式文本直接转发，不保存到对话历史
+                        # 等待 complete 事件时再保存完整的最终答案
+                        pass
+
+                    # 收集数据ID
+                    if event["type"] == "observation" and "data" in event:
+                        data = event.get("data", {})
+                        if "data_id" in data:
+                            collected_data_ids.append(data["data_id"])
+                        if "data_ids" in data:
+                            collected_data_ids.extend(data["data_ids"])
+
+                    # 收集可视化
+                    if "visuals" in event.get("data", {}):
+                        visuals = event["data"]["visuals"]
+                        if isinstance(visuals, list):
+                            collected_visuals.extend(visuals)
+
+                    # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
+                    if event["type"] == "complete":
+                        # ✅ 添加最终答案消息
+                        if event.get("data", {}).get("answer"):
+                            final_message = {
+                                "type": "final",
+                                "content": event["data"]["answer"],
+                                "data": event.get("data", {}),
+                                "timestamp": event.get("data", {}).get("timestamp", datetime.now().isoformat())
+                            }
+                            conversation_history.append(final_message)
+                            logger.debug("final_answer_added", answer_preview=event["data"]["answer"][:100])
+
+                        # ✅ 关闭流式统计日志
+                        # if streaming_chunk_count > 0:
+                        #     logger.info(
+                        #         "streaming_statistics",
+                        #         session_id=actual_session_id,
+                        #         total_events=event_count,
+                        #         streaming_chunks=streaming_chunk_count
+                        #     )
+
+                        logger.info("saving_session_on_complete",
+                                   session_id=actual_session_id,
+                                   conversation_history_length=len(conversation_history),
+                                   collected_data_ids_count=len(collected_data_ids),
+                                   collected_visuals_count=len(collected_visuals))
+
+                        session.state = SessionState.COMPLETED
+                        session.completed_at = datetime.now()
+                        session.conversation_history = conversation_history
+                        session.data_ids = list(set(collected_data_ids))  # 去重
+                        session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+                        session_manager.save_session(session)
+                        logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids))
+                    elif event["type"] in ["incomplete", "fatal_error"]:
+                        session.state = SessionState.FAILED if event["type"] == "fatal_error" else SessionState.COMPLETED
+                        session.conversation_history = conversation_history
+                        session.data_ids = list(set(collected_data_ids))
+                        session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+                        if "data" in event and "error" in event["data"]:
+                            session.error = {
+                                "type": event["type"],
+                                "message": event["data"].get("error", "Unknown error"),
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        session_manager.save_session(session)
+                        logger.info("session_saved_on_error", session_id=actual_session_id, error_type=event["type"])
+
                     # 将事件序列化为 SSE 格式
                     event_data = json.dumps(event, ensure_ascii=False, default=str)
                     yield f"data: {event_data}\n\n"
 
-                    # 如果是完成或致命错误，发送结束信号
+                    # 如果是完成或致命错误，结束循环
                     if event["type"] in ["complete", "incomplete", "fatal_error"]:
                         break
 
@@ -379,6 +498,18 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     error=str(e),
                     exc_info=True
                 )
+                # 保存失败会话
+                session.state = SessionState.FAILED
+                session.conversation_history = conversation_history
+                session.data_ids = list(set(collected_data_ids))
+                session.error = {
+                    "type": "stream_error",
+                    "message": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }
+                session_manager.save_session(session)
+                logger.info("session_saved_on_exception", session_id=actual_session_id)
+
                 error_event = {
                     "type": "fatal_error",
                     "data": {
@@ -434,8 +565,7 @@ async def simple_query(request: AgentQueryRequest):
                 agent = meteorology_expert_agent_instance
                 assistant_mode = 'meteorology-expert'
                 logger.info(
-                    "使用气象专家单专家模式",
-                    enable_multi_expert=False,
+                    "使用气象专家模式",
                     agent_id=id(agent)
                 )
             elif request.assistant_mode == 'quick-tracing-expert':
@@ -443,7 +573,6 @@ async def simple_query(request: AgentQueryRequest):
                 assistant_mode = 'quick-tracing-expert'
                 logger.info(
                     "使用快速溯源专家模式",
-                    enable_multi_expert=True,
                     agent_id=id(agent),
                     max_iterations=8
                 )
@@ -452,7 +581,6 @@ async def simple_query(request: AgentQueryRequest):
                 assistant_mode = 'data-visualization-expert'
                 logger.info(
                     "使用数据可视化专家模式",
-                    enable_multi_expert=False,
                     agent_id=id(agent),
                     max_iterations=8
                 )
@@ -465,8 +593,7 @@ async def simple_query(request: AgentQueryRequest):
         logger.info(
             "agent_query_with_assistant_mode",
             assistant_mode=assistant_mode,
-            agent_id=id(agent),
-            enable_multi_expert=agent.enable_multi_expert
+            agent_id=id(agent)
         )
 
         # 收集结果
@@ -604,37 +731,31 @@ async def agent_health():
             "multi_expert": {
                 "tools_count": len(multi_expert_agent_instance.get_available_tools()),
                 "max_iterations": multi_expert_agent_instance.max_iterations,
-                "enable_multi_expert": multi_expert_agent_instance.enable_multi_expert,
-                "description": "通用多专家协作模式"
+                "description": "通用Agent模式"
             },
             "meteorology_expert": {
                 "tools_count": len(meteorology_expert_agent_instance.get_available_tools()),
                 "max_iterations": meteorology_expert_agent_instance.max_iterations,
-                "enable_multi_expert": meteorology_expert_agent_instance.enable_multi_expert,
-                "description": "气象专家单专家模式"
+                "description": "气象专家模式"
             },
             "quick_tracing_expert": {
                 "tools_count": len(quick_tracing_agent_instance.get_available_tools()),
                 "max_iterations": quick_tracing_agent_instance.max_iterations,
-                "enable_multi_expert": quick_tracing_agent_instance.enable_multi_expert,
-                "description": "快速溯源专家多专家模式"
+                "description": "快速溯源专家模式"
             },
             "data_visualization_expert": {
                 "tools_count": len(data_viz_agent_instance.get_available_tools()),
                 "max_iterations": data_viz_agent_instance.max_iterations,
-                "enable_multi_expert": data_viz_agent_instance.enable_multi_expert,
-                "description": "数据可视化专家单专家模式"
+                "description": "数据可视化专家模式"
             },
             "deep_tracing_expert": {
                 "tools_count": len(deep_tracing_agent_instance.get_available_tools()),
                 "max_iterations": deep_tracing_agent_instance.max_iterations,
-                "enable_multi_expert": deep_tracing_agent_instance.enable_multi_expert,
-                "description": "深度溯源专家多专家模式（HYSPLIT轨迹+源清单+RACM2化学机理）"
+                "description": "深度溯源专家模式（HYSPLIT轨迹+源清单+RACM2化学机理）"
             },
             "report_generation_expert": {
                 "tools_count": 0,
                 "max_iterations": 0,
-                "enable_multi_expert": False,
                 "description": "报告生成专家（预留，暂未实现）"
             }
         }

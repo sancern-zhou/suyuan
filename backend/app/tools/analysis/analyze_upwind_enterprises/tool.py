@@ -9,6 +9,7 @@
 from typing import Dict, Any, Optional
 import asyncio
 import structlog
+import math
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.services.external_apis import upwind_api
@@ -113,7 +114,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
             description="Analyze upwind enterprises based on wind data (Guangdong Province only)",
             category=ToolCategory.ANALYSIS,
             function_schema=function_schema,
-            version="1.0.0"
+            version="2.0.0"  # 更新版本号：修复 UDF v2.0 规范兼容性
         )
 
         # Context-Aware V2: 设置需要 context 参数
@@ -180,21 +181,39 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 try:
                     weather_data = context.get_raw_data(weather_data_id)
                     if weather_data and len(weather_data) > 0:
-                        # 转换为 winds 格式
+                        # 转换为 winds 格式（符合 UDF v2.0 规范）
                         winds = []
                         for record in weather_data:
                             if isinstance(record, dict):
                                 # 提取风向风速字段
+                                # 1. 先尝试从顶层获取（兼容扁平结构）
                                 wd = record.get("wind_direction_10m") or record.get("wind_direction")
                                 ws = record.get("wind_speed_10m") or record.get("wind_speed")
                                 time_str = record.get("timestamp") or record.get("time")
+
+                                # 2. 如果顶层没有，按照 UDF v2.0 规范从 measurements 获取
+                                if wd is None or ws is None:
+                                    measurements = record.get("measurements", {})
+                                    if isinstance(measurements, dict):
+                                        if wd is None:
+                                            wd = measurements.get("wind_direction_10m") or measurements.get("wind_direction")
+                                        if ws is None:
+                                            ws = measurements.get("wind_speed_10m") or measurements.get("wind_speed")
+
+                                # 3. 验证并过滤数据（检查 NaN 和异常值）
                                 if wd is not None and ws is not None:
                                     try:
-                                        winds.append({
-                                            "wd": float(wd),
-                                            "ws": float(ws),
-                                            "time": str(time_str) if time_str else None
-                                        })
+                                        wd_val = float(wd)
+                                        ws_val = float(ws)
+                                        # 过滤 NaN 值
+                                        if not (math.isnan(wd_val) or math.isnan(ws_val)):
+                                            # 验证数值范围
+                                            if 0 <= wd_val <= 360 and ws_val >= 0:
+                                                winds.append({
+                                                    "wd": wd_val,
+                                                    "ws": ws_val,
+                                                    "time": str(time_str) if time_str else None
+                                                })
                                     except (ValueError, TypeError):
                                         pass
                         logger.info(
@@ -247,7 +266,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                     wd = None
                     ws = None
                     time_str = wind.get("time") or wind.get("timestamp")
-                    
+
                     # 尝试从 measurements 字段中提取（UDF v2.0 格式）
                     measurements = wind.get("measurements", {})
                     if measurements:
@@ -255,24 +274,27 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                         ws = measurements.get("wind_speed_10m") or measurements.get("wind_speed")
                         if not time_str:
                             time_str = wind.get("timestamp")
-                    
+
                     # 如果 measurements 中没有，尝试直接从 wind 字典中获取
                     if wd is None:
                         wd = wind.get("wd") or wind.get("wd_deg") or wind.get("wind_direction_10m") or wind.get("wind_direction")
                     if ws is None:
                         ws = wind.get("ws") or wind.get("ws_ms") or wind.get("wind_speed_10m") or wind.get("wind_speed")
-                    
+
                     if wd is not None and ws is not None:
                         try:
                             wd_val = float(wd)
                             ws_val = float(ws)
-                            if 0 <= wd_val <= 360 and ws_val >= 0:
-                                # API期望的格式：wd_deg, ws_ms
-                                valid_winds.append({
-                                    "wd_deg": wd_val,
-                                    "ws_ms": ws_val,
-                                    "time": str(time_str) if time_str else "2025-12-02T06:00:00Z"
-                                })
+                            # 过滤 NaN 值
+                            if not (math.isnan(wd_val) or math.isnan(ws_val)):
+                                # 验证数值范围
+                                if 0 <= wd_val <= 360 and ws_val >= 0:
+                                    # API期望的格式：wd_deg, ws_ms
+                                    valid_winds.append({
+                                        "wd_deg": wd_val,
+                                        "ws_ms": ws_val,
+                                        "time": str(time_str) if time_str else "2025-12-02T06:00:00Z"
+                                    })
                         except (ValueError, TypeError):
                             pass
 

@@ -116,6 +116,10 @@ app.include_router(monitoring_router.router)
 from app.api.image_routes import router as image_router
 app.include_router(image_router, prefix="/api")
 
+# Include Session Management routes (会话持久化)
+from app.api.session_routes import router as session_router
+app.include_router(session_router)
+
 # Include Knowledge QA routes (RAG-based Q&A)
 from app.routers.knowledge_qa import router as knowledge_qa_router
 app.include_router(knowledge_qa_router)
@@ -123,6 +127,22 @@ app.include_router(knowledge_qa_router)
 # Include Quick Trace Alert routes (污染高值告警快速溯源)
 from app.api.quick_trace_routes import router as quick_trace_router
 app.include_router(quick_trace_router)
+
+# Include Scheduled Tasks routes (定时任务系统)
+from app.api.scheduled_task_routes import router as scheduled_task_router
+app.include_router(scheduled_task_router)
+
+# Include Scheduled Tasks WebSocket
+from app.api.scheduled_task_ws import router as scheduled_task_ws_router
+app.include_router(scheduled_task_ws_router)
+
+# Include File Upload routes (对话文件上传)
+from app.api.upload_routes import router as upload_router
+app.include_router(upload_router, prefix="/api/upload")
+
+# Include Office routes (Office文档预览)
+from app.api.office_routes import router as office_router
+app.include_router(office_router)
 
 
 # 全局异常处理器：捕获请求验证错误
@@ -168,9 +188,54 @@ async def startup_event():
     try:
         initialize_llm_tools()
         logger.info("llm_tools_initialized")
+
+        # 🔧 刷新全局 Agent 实例的工具注册表
+        try:
+            from app.routers.agent import (
+                multi_expert_agent_instance,
+                meteorology_expert_agent_instance,
+                quick_tracing_agent_instance,
+                data_viz_agent_instance,
+                deep_tracing_agent_instance
+            )
+
+            logger.info("refreshing_global_agent_tools")
+
+            multi_expert_agent_instance.refresh_tools()
+            meteorology_expert_agent_instance.refresh_tools()
+            quick_tracing_agent_instance.refresh_tools()
+            data_viz_agent_instance.refresh_tools()
+            deep_tracing_agent_instance.refresh_tools()
+
+            logger.info(
+                "global_agents_refreshed",
+                multi_expert_tools=len(multi_expert_agent_instance.get_available_tools()),
+                meteorology_tools=len(meteorology_expert_agent_instance.get_available_tools()),
+                quick_tracing_tools=len(quick_tracing_agent_instance.get_available_tools()),
+                data_viz_tools=len(data_viz_agent_instance.get_available_tools()),
+                deep_tracing_tools=len(deep_tracing_agent_instance.get_available_tools())
+            )
+        except Exception as e:
+            logger.warning("agent_refresh_failed", error=str(e))
+
     except Exception as e:
         logger.error("llm_tools_initialization_failed", error=str(e), exc_info=True)
         logger.warning("continuing_without_llm_tools")
+
+    # 1.5 初始化定时任务系统
+    try:
+        from app.scheduled_tasks import init_service, start_service
+        from app.agent.react_agent import create_react_agent
+
+        # 初始化服务（传入Agent工厂 - 使用单专家ReAct Agent）
+        init_service(agent_factory=lambda: create_react_agent(enable_multi_expert=False))
+
+        # 启动调度器
+        start_service()
+        logger.info("scheduled_task_service_started")
+    except Exception as e:
+        logger.error("scheduled_task_service_failed", error=str(e), exc_info=True)
+        logger.warning("continuing_without_scheduled_tasks")
 
     # 2. 初始化数据库（如果配置了DATABASE_URL）
     if os.getenv("DATABASE_URL"):
@@ -242,6 +307,16 @@ async def warmup_knowledge_base_models():
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """Shutdown event handler."""
+    logger.info("application_shutting_down")
+
+    # 停止定时任务系统
+    try:
+        from app.scheduled_tasks import stop_service
+        stop_service()
+        logger.info("scheduled_task_service_stopped")
+    except Exception as e:
+        logger.warning("scheduled_task_service_stop_failed", error=str(e))
     """Shutdown event handler."""
     logger.info("application_shutting_down")
 

@@ -213,9 +213,10 @@ class GetParticulateComponentsTool(LLMTool):
                 }
 
             # 保存数据
-            data_id = None
+            data_ref = None
+            file_path = None
             try:
-                data_id = context.save_data(
+                data_ref = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -230,7 +231,9 @@ class GetParticulateComponentsTool(LLMTool):
                         "detection_item_codes": self.DETECTION_ITEM_CODES
                     }
                 )
-                logger.info("pm25_components_saved", data_id=data_id, count=len(records))
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
+                logger.info("pm25_components_saved", data_id=data_id, file_path=file_path, count=len(records))
             except Exception as save_error:
                 logger.warning("pm25_components_save_failed", error=str(save_error))
 
@@ -242,6 +245,7 @@ class GetParticulateComponentsTool(LLMTool):
                 "data": records,
                 "count": len(records),
                 "data_id": data_id,
+                "file_path": file_path,
                 "station": station,
                 "code": code,
                 "data_type": data_type,
@@ -251,7 +255,7 @@ class GetParticulateComponentsTool(LLMTool):
                 "quality_report": quality_report,
                 "summary": (
                     f"Retrieved {len(records)} PM2.5 component records for {station} ({code}), "
-                    f"including {component_list}"
+                    f"including {component_list}. Saved as {data_id} (path: {file_path})"
                 )
             }
 

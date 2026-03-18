@@ -1,0 +1,162 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "xcAi智能体数据服务",
+    "description": "",
+    "version": "1.0.0"
+  },
+  "tags": [],
+  "paths": {
+    "/api/AiDataService/ReportApplication/UserReportDataQuery/Query": {
+      "get": {
+        "summary": "气象数据",
+        "deprecated": false,
+        "description": "",
+        "tags": [],
+        "parameters": [
+          {
+            "name": "beginTime",
+            "in": "query",
+            "description": "开始时间",
+            "required": true,
+            "example": "2025-1-1",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endTime",
+            "in": "query",
+            "description": "结束时间",
+            "required": true,
+            "example": "2025-1-2",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cityName",
+            "in": "query",
+            "description": "城市名称",
+            "required": false,
+            "example": "广州",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "directName",
+            "in": "query",
+            "description": "区域名称",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "cityName": {
+                        "type": "string",
+                        "description": "城市名称"
+                      },
+                      "directName": {
+                        "type": "string",
+                        "description": "区域名称"
+                      },
+                      "timePoint": {
+                        "type": "string",
+                        "description": "时间"
+                      },
+                      "stationCode": {
+                        "type": "string",
+                        "description": "气象站编号"
+                      },
+                      "latitude": {
+                        "type": "number",
+                        "description": "纬度 单位度"
+                      },
+                      "longitude": {
+                        "type": "number",
+                        "description": "经度 单位度"
+                      },
+                      "pressure": {
+                        "type": "number",
+                        "description": "气压 单位：hPa 百帕"
+                      },
+                      "temperature": {
+                        "type": "integer",
+                        "description": "气温 单位：℃"
+                      },
+                      "relativeHumidity": {
+                        "type": "integer",
+                        "description": "相对湿度（V13003，单位：%）"
+                      },
+                      "precipitation1h": {
+                        "type": "integer",
+                        "description": "1 小时降水量（V13019，单位：mm 毫米）"
+                      },
+                      "windDirection": {
+                        "type": "integer",
+                        "description": " 风向（V11201，单位：度）"
+                      },
+                      "windSpeed": {
+                        "type": "number",
+                        "description": "风速（V11202，单位：m/s 米每秒）"
+                      },
+                      "visibility": {
+                        "type": "integer",
+                        "description": "能见度（V20059，单位：m 米）"
+                      },
+                      "totalCloudAmount": {
+                        "type": "null",
+                        "description": "总云量（V20010，单位：%）"
+                      }
+                    },
+                    "required": [
+                      "cityName",
+                      "directName",
+                      "timePoint",
+                      "stationCode",
+                      "latitude",
+                      "longitude",
+                      "pressure",
+                      "temperature",
+                      "relativeHumidity",
+                      "precipitation1h",
+                      "windDirection",
+                      "windSpeed",
+                      "visibility",
+                      "totalCloudAmount"
+                    ]
+                  }
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {},
+    "securitySchemes": {}
+  },
+  "servers": [
+    {
+      "url": "http://180.184.30.94",
+      "description": "正式环境"
+    }
+  ],
+  "security": []
+}

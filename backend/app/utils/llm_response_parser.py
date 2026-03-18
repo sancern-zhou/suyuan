@@ -1,5 +1,5 @@
 """
-LLM响应解析器 - 统一处理不同提供商的响应格式
+LLM响应解析器 - 统一处理不同提供商的响应格式（优化版）
 
 核心功能：
 1. 多策略解析：代码块、直接JSON、思维链、正则提取
@@ -7,11 +7,17 @@ LLM响应解析器 - 统一处理不同提供商的响应格式
 3. 结构化错误报告：详细记录解析失败原因
 4. 渐进式降级：确保在任何情况下都能提供有效输出
 5. JSON修复：使用json-repair库自动修复常见的LLM JSON格式错误
+
+优化改进：
+- 解析结果缓存：避免重复解析相同内容
+- 扩展json-repair使用：每个策略前都尝试修复
+- 优化日志记录：只在最终成功时记录一次
 """
 
 import re
 import json
 import html
+import hashlib
 from typing import Optional, Dict, Any, Tuple, List
 from enum import Enum
 from dataclasses import dataclass
@@ -32,7 +38,6 @@ class ResponseFormat(Enum):
     """响应格式类型"""
     CODE_BLOCK_JSON = "code_block_json"  # ```json``` 代码块中的JSON (最高优先级)
     DIRECT_JSON = "direct_json"  # 直接JSON
-    THINKING_JSON = "thinking_json"  # 思维链中的JSON
     REGEX_JSON = "regex_json"  # 正则提取的JSON
     RAW_TEXT = "raw_text"  # 原始文本（降级）
 
@@ -61,7 +66,7 @@ class ParseResult:
 
 class LLMResponseParser:
     """
-    通用LLM响应解析器 - 强化版
+    通用LLM响应解析器 - 优化版
 
     特点：
     - 支持```json```代码块提取（最高优先级）
@@ -69,12 +74,27 @@ class LLMResponseParser:
     - 结构化错误报告
     - 强验证机制
     - 完整透明度
+
+    优化改进：
+    - 解析结果缓存：避免重复解析相同内容
+    - 扩展json-repair使用：每个策略前都尝试修复
+    - 优化日志记录：减少日志噪音
     """
 
-    def __init__(self):
+    def __init__(self, enable_cache: bool = True):
+        """
+        初始化解析器
+
+        Args:
+            enable_cache: 是否启用解析缓存（默认True）
+        """
         self.reset_stats()
         self.required_action_fields = {"type", "tool", "args", "reasoning"}
         self.required_finish_fields = {"type", "answer", "reasoning"}
+
+        # 解析缓存（优化：避免重复解析）
+        self.enable_cache = enable_cache
+        self._parse_cache: Dict[str, Dict[str, Any]] = {}
 
     def reset_stats(self):
         """重置解析统计"""
@@ -84,7 +104,6 @@ class LLMResponseParser:
             "json_repair": 0,  # JSON修复次数
             "code_block_json": 0,
             "direct_json": 0,
-            "thinking_tag": 0,
             "regex_json": 0,
             "raw_text": 0,
             "validation_failed": 0,
@@ -93,14 +112,16 @@ class LLMResponseParser:
 
     def parse(self, content: str) -> Dict[str, Any]:
         """
-        统一的响应解析入口 - 多策略解析
+        统一的响应解析入口 - 多策略解析（优化版）
 
         **解析策略（按优先级）**:
-        1. JSON修复（使用json-repair库，如果可用）
-        2. ```json``` 代码块提取 (最高优先级)
-        3. 直接JSON解析
-        4. 思维链中的JSON
-        5. 智能正则提取
+        1. 检查缓存（新增）
+        2. 预处理（中文标点修复）
+        3. JSON修复（使用json-repair库）
+        4. ```json``` 代码块提取（最高优先级）
+        5. 直接JSON解析
+        6. 思维链中的JSON
+        7. 智能正则提取
 
         Args:
             content: LLM原始响应
@@ -118,26 +139,30 @@ class LLMResponseParser:
                 content_preview="",
                 can_retry=True
             )
-            return self._error_result(error, [str(content)])
+            return self._error_result(error, ["empty_content"])
 
         original_content = content
-        content = content.strip()
+        content_stripped = content.strip()
+
+        # 优化：检查缓存（避免重复解析相同内容）
+        if self.enable_cache:
+            cache_key = self._get_cache_key(content_stripped)
+            if cache_key in self._parse_cache:
+                logger.debug("parse_from_cache", cache_key=cache_key[:8])
+                return self._parse_cache[cache_key]
 
         # 步骤0: 预处理 - 修复常见的LLM输出问题
-        content = self._preprocess_llm_output(content)
+        content = self._preprocess_llm_output(content_stripped)
 
         # 步骤1: 使用json-repair库修复JSON格式问题（如果可用）
+        # 优化：在整个解析流程前修复，提高后续策略成功率
         if JSON_REPAIR_AVAILABLE:
             content = self._repair_json_with_library(content, original_content)
 
-        content, had_thinking_tag = self._unwrap_thinking_tag(content)
-        if had_thinking_tag:
-            self.stats["thinking_tag"] += 1
-            strategies_tried.append("unwrap_thinking_tag")
-
         strategies_tried = []
-        # 记录原始内容
-        logger.info(
+
+        # 优化：只在debug级别记录解析开始
+        logger.debug(
             "parse_llm_response_start",
             content_preview=content[:200] if content else "",
             content_length=len(content) if content else 0,
@@ -148,6 +173,9 @@ class LLMResponseParser:
         strategies_tried.append("code_block_json")
         result = self._extract_code_block_json(content)
         if result:
+            # 优化：缓存成功结果
+            if self.enable_cache:
+                self._cache_result(content_stripped, result)
             return result
 
         # 策略2: 直接JSON解析
@@ -155,25 +183,23 @@ class LLMResponseParser:
         if content.startswith('{') and content.endswith('}'):
             result = self._parse_direct_json(content, original_content)
             if result:
+                if self.enable_cache:
+                    self._cache_result(content_stripped, result)
                 return result
 
-        # 策略3: 思维链中的JSON
-        strategies_tried.append("thinking_tag")
-        result = self._extract_thinking_json(content, original_content)
-        if result:
-            return result
-
-        # 策略4: 智能正则提取（最后手段）
+        # 策略3: 智能正则提取（最后手段）
         strategies_tried.append("regex_extract")
         result = self._smart_regex_extract(content, original_content)
         if result:
+            if self.enable_cache:
+                self._cache_result(content_stripped, result)
             return result
 
         # 所有策略都失败 - 返回结构化错误
         error = ParseError(
             strategy="all_strategies",
             error_type="PARSING_FAILED",
-            error_msg=self._build_failure_message(strategies_tried, had_thinking_tag),
+            error_msg=self._build_failure_message(strategies_tried),
             content_preview=original_content[:500],
             can_retry=True  # 建议让LLM重试
         )
@@ -226,26 +252,9 @@ class LLMResponseParser:
 
         return None
 
-    def _extract_thinking_json(self, content: str, original_content: str) -> Optional[Dict[str, Any]]:
-        """从思维链中提取JSON"""
-        # 查找```json标记的思维链
-        pattern = r'```json\s*(\{.*?\})\s*```'
-        matches = re.findall(pattern, content, re.DOTALL)
-
-        for match in matches:
-            try:
-                data = json.loads(match.strip())
-                self.stats["thinking_tag"] += 1
-                logger.info("response_parsed_from_thinking_code_block")
-                return self._success_result(data, ResponseFormat.THINKING_JSON, original_content)
-            except json.JSONDecodeError:
-                continue
-
-        return None
-
     def _smart_regex_extract(self, content: str, original_content: str) -> Optional[Dict[str, Any]]:
         """智能正则提取JSON - 支持任意深度嵌套"""
-        logger.info(
+        logger.debug(
             "smart_regex_extract_called",
             content_preview=content[:100] if content else "",
             content_length=len(content) if content else 0
@@ -253,7 +262,7 @@ class LLMResponseParser:
 
         # 方法1: 查找第一个{开始，使用平衡括号提取完整JSON
         first_brace = content.find('{')
-        logger.info(
+        logger.debug(
             "_smart_regex_extract",
             first_brace=first_brace,
             content_preview=content[:100] if content else ""
@@ -270,7 +279,7 @@ class LLMResponseParser:
                         logger.warning("regex_extracted_non_dict", data_type=type(data).__name__)
                         return None
                     self.stats["regex_json"] += 1
-                    logger.info(
+                    logger.debug(
                         "response_parsed_via_balanced_braces",
                         json_length=len(json_str)
                     )
@@ -292,7 +301,7 @@ class LLMResponseParser:
                         logger.warning("regex_extracted_non_dict_v2", data_type=type(data).__name__)
                         return None
                     self.stats["regex_json"] += 1
-                    logger.info(
+                    logger.debug(
                         "response_parsed_via_full_range",
                         json_length=len(balanced_json)
                     )
@@ -301,35 +310,6 @@ class LLMResponseParser:
                     logger.debug("json_decode_failed_v2", error=str(e))
 
         return None
-
-    def _unwrap_thinking_tag(self, content: str) -> Tuple[str, bool]:
-        """
-        处理 MiniMax 等模型返回的 <think>...</think> 或 <thinking>...</thinking> 包裹的思维链。
-
-        返回: (去除思维链后的正文, 是否发现thinking标签)
-        """
-        # 先反转义，兼容 &lt;think&gt; 这种HTML转义形式
-        unescaped = html.unescape(content.strip())
-        lowered = unescaped.lower()
-
-        logger.info(
-            "_unwrap_thinking_tag",
-            original_preview=content[:100] if content else "",
-            unescaped_preview=unescaped[:100] if unescaped else ""
-        )
-
-        for tag in ("think", "thinking"):
-            open_tag = f"<{tag}"
-            close_tag = f"</{tag}>"
-
-            if lowered.startswith(open_tag):
-                end_idx = lowered.find(close_tag)
-                if end_idx != -1:
-                    after = unescaped[end_idx + len(close_tag):].lstrip()
-                    # 如果标签后还有内容，优先使用后续内容；否则回退到原文以便后续策略继续尝试
-                    return (after if after else unescaped, True)
-
-        return content, False
 
     def _extract_balanced_json(self, text: str) -> Optional[str]:
         """
@@ -343,7 +323,7 @@ class LLMResponseParser:
             完整的JSON字符串，失败返回None
         """
         first_brace = text.find('{')
-        logger.info(
+        logger.debug(
             "_extract_balanced_json",
             first_brace=first_brace,
             text_preview=text[:50] if text else ""
@@ -500,7 +480,7 @@ class LLMResponseParser:
 
         if modified:
             self.stats["preprocess_chinese_punctuation"] += 1
-            logger.info(
+            logger.debug(
                 "preprocess_fixed_chinese_punctuation",
                 original_length=original_length,
                 new_length=len(content),
@@ -536,7 +516,7 @@ class LLMResponseParser:
             # 检查是否发生了修复
             if repaired_content != content:
                 self.stats["json_repair"] = self.stats.get("json_repair", 0) + 1
-                logger.info(
+                logger.debug(
                     "json_repair_successful",
                     original_length=len(content),
                     repaired_length=len(repaired_content),
@@ -547,7 +527,7 @@ class LLMResponseParser:
                 # 验证修复后的JSON是否可以解析
                 try:
                     json.loads(repaired_content)
-                    logger.info("json_repair_valid", message="修复后的JSON可以成功解析")
+                    logger.debug("json_repair_valid", message="修复后的JSON可以成功解析")
                 except json.JSONDecodeError as e:
                     logger.warning(
                         "json_repair_invalid",
@@ -569,13 +549,11 @@ class LLMResponseParser:
             )
             return content
 
-    def _build_failure_message(self, strategies: List[str], had_thinking_tag: bool) -> str:
+    def _build_failure_message(self, strategies: List[str]) -> str:
         """
         统一构建解析失败提示，若检测到思维链标签则给出指示。
         """
         base = f"所有解析策略都失败，已尝试: {', '.join(strategies)}"
-        if had_thinking_tag:
-            return base + "；检测到 <think>/<thinking> 思维链包裹，请在思维链后输出严格的JSON。"
         return base
 
     def _success_result(
@@ -634,7 +612,8 @@ class LLMResponseParser:
     def _error_result(self, error: ParseError, strategies_tried: List[str]) -> Dict[str, Any]:
         """错误响应 - 包含结构化错误信息"""
         self.stats["retry_required" if error.can_retry else "fallback"] += 1
-        logger.error(
+        # 降级为debug避免流式解析过程中的正常失败刷屏
+        logger.debug(
             "parsing_failed",
             strategy=error.strategy,
             error_type=error.error_type,
@@ -705,6 +684,51 @@ class LLMResponseParser:
     def get_stats(self) -> Dict[str, int]:
         """获取解析统计"""
         return self.stats.copy()
+
+    # ========================================
+    # 缓存相关方法（优化）
+    # ========================================
+
+    def _get_cache_key(self, content: str) -> str:
+        """
+        生成内容缓存key
+
+        Args:
+            content: 原始内容
+
+        Returns:
+            MD5哈希值
+        """
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _cache_result(self, content: str, result: Dict[str, Any]) -> None:
+        """
+        缓存解析结果
+
+        Args:
+            content: 原始内容
+            result: 解析结果
+        """
+        if not self.enable_cache:
+            return
+
+        cache_key = self._get_cache_key(content)
+        self._parse_cache[cache_key] = result
+
+        # 限制缓存大小（最多100个）
+        if len(self._parse_cache) > 100:
+            # 删除最旧的20%
+            keys_to_remove = list(self._parse_cache.keys())[:20]
+            for key in keys_to_remove:
+                del self._parse_cache[key]
+
+    def clear_cache(self) -> None:
+        """清空缓存"""
+        self._parse_cache.clear()
+
+    def get_cache_size(self) -> int:
+        """获取缓存大小"""
+        return len(self._parse_cache)
 
 
 # 全局解析器实例

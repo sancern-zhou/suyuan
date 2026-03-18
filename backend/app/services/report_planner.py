@@ -2,13 +2,13 @@
 报告规划器 - 使用ReAct架构规划报告生成流程
 """
 from typing import Dict, Any, List, Optional
-import logging
+import structlog
 
 from app.schemas.report_generation import (
     ReportPlan, ReportSection, ReportType, ReportGenerationRequest
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class ReportPlanner:
     """报告规划器 - 智能规划报告生成流程"""

@@ -21,14 +21,14 @@ API格式（POST请求）:
 ✅ 使用正确的API端点: http://113.108.142.147:20065
 """
 
-import logging
+import structlog
 import requests
 import json
 from typing import Dict, Any, Optional, List
 
 from app.utils.particulate_token_manager import get_particulate_token_manager
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ParticulateAPIClient:
@@ -138,10 +138,9 @@ class ParticulateAPIClient:
 
         payload = {
             "StationCodes": [code],
-            "pageCode": "element-carbon-analysis",
             "timePoint": [start_time, end_time],
             "dataType": 0,        # 数据质量：0=原始，1=审核
-            "hasMark": False,
+            "IsMark": False,      # 修复：使用 IsMark（大写I）参考 vanna 项目
             "tableType": table_type,  # 时间粒度：1=小时，2=日，3=月，5=年
             "DetectionitemCodes": detection_item_codes,  # OC/EC因子编码（必填）
             "StartTime": start_time,
@@ -158,8 +157,8 @@ class ParticulateAPIClient:
         code: str,
         start_time: str,
         end_time: str,
-        date_type: int = 0,      # 数据质量：0=原始，1=审核
-        data_type: int = 2,       # 时间粒度：1=小时，2=日，3=月，5=年
+        date_type: int = 1,      # 数据质量：0=原始，1=审核（地壳元素仅在审核数据中有数值）
+        data_type: int = 0,       # 时间粒度：0=小时(数值), 1=小时, 2=日(字符串占位符), 3=月, 5=年
         detection_item_codes: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
@@ -170,12 +169,14 @@ class ParticulateAPIClient:
             code: 站点编码
             start_time: 开始时间
             end_time: 结束时间
-            date_type: 数据质量 (0=原始, 1=审核, 4,5,7,15)
-            data_type: 时间粒度 (1=小时, 2=日, 3=月, 5=年)
+            date_type: 数据质量 (0=原始, 1=审核) - 地壳元素数值仅在审核数据中可用
+            data_type: 时间粒度 (0=小时返回数值, 2=日返回字符串占位符) - 必须使用0获取数值
             detection_item_codes: 元素因子编码列表
 
         Returns:
             API响应
+
+        注意：地壳元素数据需要 date_type=1(审核) + data_type=0(小时) 才能返回数值数据
         """
         # 地壳元素/重金属因子编码 (根据API文档)
         # a20002=铝, a20119=硅, a20029=钙, a20111=铁, a20095=钛, a20068=钾
@@ -186,7 +187,7 @@ class ParticulateAPIClient:
             "StationCodes": [code],
             "timePoint": [start_time, end_time],
             "dateType": date_type,        # 数据质量：0=原始，1=审核
-            "hasMark": False,
+            "IsMark": False,             # 修复：使用 IsMark（大写I）参考 vanna 项目
             "dataType": data_type,         # 时间粒度：1=小时，2=日，3=月，5=年
             "DetectionItem": "",
             "DetectionitemCodes": detection_item_codes,  # 元素因子编码（必填）

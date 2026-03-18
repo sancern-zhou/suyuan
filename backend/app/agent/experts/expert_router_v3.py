@@ -15,10 +15,14 @@
 from typing import Dict, Any, List, Optional
 import structlog
 import asyncio
+import uuid
+from datetime import datetime
 
 from app.agent.core.structured_query_parser import StructuredQuery, StructuredQueryParser
 from app.agent.core.expert_plan_generator import ExpertPlanGenerator, ExpertTask
 from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
+from app.agent.task import TaskList, TaskStatus
+from app.agent.session import SessionManager, Session, SessionState
 from .expert_executor import ExpertResult
 from .weather_executor import WeatherExecutor
 from .component_executor import ComponentExecutor
@@ -76,6 +80,14 @@ class ExpertRouterV3:
         self.event_callback = event_callback  # 事件回调函数
         self.memory_manager = memory_manager  # 记忆管理器（用于创建DataContextManager）
 
+        # 初始化任务列表
+        self.task_list = TaskList()
+        # 设置任务更新回调（用于WebSocket推送）
+        self.task_list.on_task_update = self._on_task_update
+
+        # 初始化会话管理器
+        self.session_manager = SessionManager()
+
         # 初始化专家执行器
         self.executors: Dict[str, Any] = {
             "weather": WeatherExecutor(),
@@ -92,7 +104,9 @@ class ExpertRouterV3:
             "expert_router_v3_initialized",
             executors=list(self.executors.keys()),
             has_callback=event_callback is not None,
-            has_memory_manager=memory_manager is not None
+            has_memory_manager=memory_manager is not None,
+            has_task_list=True,
+            has_session_manager=True
         )
     
     def _setup_executor_context(self):
@@ -144,10 +158,35 @@ class ExpertRouterV3:
                 error=str(e)
             )
 
+    def _on_task_update(self, task):
+        """
+        任务更新回调（用于WebSocket推送）
+
+        Args:
+            task: 更新的任务对象
+        """
+        if self.event_callback:
+            self.event_callback({
+                "type": "task_update",
+                "data": {
+                    "task_id": task.id,
+                    "session_id": task.session_id,
+                    "subject": task.subject,
+                    "status": task.status.value,
+                    "progress": task.progress,
+                    "expert_type": task.expert_type,
+                    "result_data_id": task.result_data_id,
+                    "error_message": task.error_message,
+                    "duration": task.get_duration(),
+                    "updated_at": task.updated_at.isoformat()
+                }
+            })
+
     async def execute_pipeline(
         self,
         user_query: str,
-        precision: str = 'standard'
+        precision: str = 'standard',
+        session_id: Optional[str] = None
     ) -> PipelineResult:
         """
         执行完整的专家流水线
@@ -158,6 +197,7 @@ class ExpertRouterV3:
                 - fast: 快速筛查模式 (~18秒)
                 - standard: 标准分析模式 (~3分钟)
                 - full: 完整分析模式 (~7-10分钟)
+            session_id: 会话ID（如果提供，则恢复会话；否则创建新会话）
 
         Returns:
             PipelineResult: 完整的流水线结果
@@ -165,7 +205,26 @@ class ExpertRouterV3:
         result = PipelineResult()
         result.query = user_query
 
-        logger.info("pipeline_started", query=user_query[:100], precision=precision)
+        # 创建或恢复会话
+        if session_id:
+            session = self.session_manager.load_session(session_id)
+            if not session:
+                logger.warning(f"Session {session_id} not found, creating new session")
+                session_id = f"session_{uuid.uuid4().hex[:8]}"
+                session = Session(session_id=session_id, query=user_query)
+        else:
+            session_id = f"session_{uuid.uuid4().hex[:8]}"
+            session = Session(session_id=session_id, query=user_query)
+
+        # 保存初始会话状态
+        self.session_manager.save_session(session)
+
+        logger.info(
+            "pipeline_started",
+            query=user_query[:100],
+            precision=precision,
+            session_id=session_id
+        )
 
         # 发送pipeline开始事件
         if self.event_callback:
@@ -173,7 +232,8 @@ class ExpertRouterV3:
                 "type": "pipeline_started",
                 "data": {
                     "query": user_query[:100],
-                    "precision": precision
+                    "precision": precision,
+                    "session_id": session_id
                 }
             })
 
@@ -220,7 +280,33 @@ class ExpertRouterV3:
                     }
                 })
 
-            # 3. 获取并行执行分组
+            # 3. 创建任务列表
+            self._create_task_list(session_id, result.selected_experts, parsed_query)
+
+            # 更新会话状态：任务列表已创建
+            session.task_list_file = f"{session_id}_tasks.json"
+            session.metadata["selected_experts"] = result.selected_experts
+            session.metadata["parsed_query"] = parsed_query.dict()
+            self.session_manager.save_session(session)
+
+            logger.info(
+                "task_list_created",
+                session_id=session_id,
+                task_count=len(result.selected_experts)
+            )
+
+            # 发送任务列表创建事件
+            if self.event_callback:
+                task_summaries = self.task_list.get_task_summaries(session_id)
+                self.event_callback({
+                    "type": "task_list_created",
+                    "data": {
+                        "session_id": session_id,
+                        "tasks": [t.model_dump() for t in task_summaries]
+                    }
+                })
+
+            # 4. 获取并行执行分组
             parallel_groups = self._build_parallel_groups(result.selected_experts)
 
             # 5. 按组执行（每组执行完发送阶段性事件）
@@ -267,6 +353,7 @@ class ExpertRouterV3:
 
                 # 并行执行组内专家
                 group_results = await self._execute_group(
+                    session_id,  # 传递session_id
                     group,
                     expert_tasks,
                     upstream_results
@@ -348,11 +435,21 @@ class ExpertRouterV3:
             # 6. 生成最终答案
             result = self._finalize_result(result)
 
+            # 更新会话状态：完成
+            session.state = SessionState.COMPLETED
+            session.completed_at = datetime.now()
+            session.data_ids = result.data_ids
+            session.visual_ids = [v.get("id") for v in result.visuals if v.get("id")]
+            session.metadata["final_status"] = result.status
+            session.metadata["confidence"] = result.confidence
+            self.session_manager.save_session(session)
+
             logger.info(
                 "pipeline_completed",
                 status=result.status,
                 experts_succeeded=sum(1 for r in result.expert_results.values() if r.status == "success"),
-                confidence=result.confidence
+                confidence=result.confidence,
+                session_id=session_id
             )
 
         except Exception as e:
@@ -363,6 +460,15 @@ class ExpertRouterV3:
             )
             result.status = "failed"
             result.errors.append({"type": "pipeline_error", "message": str(e)})
+
+            # 更新会话状态：失败
+            session.state = SessionState.FAILED
+            session.error = {
+                "type": "pipeline_error",
+                "message": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+            self.session_manager.save_session(session)
 
             # 发送失败事件
             if self.event_callback:
@@ -380,6 +486,7 @@ class ExpertRouterV3:
     
     async def _execute_group(
         self,
+        session_id: str,  # 新增：会话ID
         group: List[str],
         expert_tasks: Dict[str, ExpertTask],
         upstream_results: Dict[str, ExpertResult]
@@ -397,7 +504,17 @@ class ExpertRouterV3:
             })
 
         async def execute_single(expert_type: str) -> tuple:
+            task_id = f"{session_id}_{expert_type}"
+
             if expert_type not in expert_tasks:
+                # 标记任务失败
+                if self.task_list.get_task(task_id):
+                    self.task_list.update_task(
+                        task_id,
+                        status=TaskStatus.FAILED,
+                        error_message="No task generated"
+                    )
+
                 return expert_type, ExpertResult(
                     status="failed",
                     expert_type=expert_type,
@@ -408,11 +525,23 @@ class ExpertRouterV3:
             executor = self.executors.get(expert_type)
 
             if not executor:
+                # 标记任务失败
+                if self.task_list.get_task(task_id):
+                    self.task_list.update_task(
+                        task_id,
+                        status=TaskStatus.FAILED,
+                        error_message=f"Executor not found: {expert_type}"
+                    )
+
                 return expert_type, ExpertResult(
                     status="failed",
                     expert_type=expert_type,
                     errors=[{"message": f"Executor not found: {expert_type}"}]
                 )
+
+            # 标记任务开始
+            if self.task_list.get_task(task_id):
+                self.task_list.update_task(task_id, status=TaskStatus.IN_PROGRESS, progress=0)
 
             # 发送单个专家开始事件
             if self.event_callback:
@@ -435,6 +564,16 @@ class ExpertRouterV3:
                 else:
                     result = await executor.execute(task, execution_context)
 
+                # 标记任务完成
+                if self.task_list.get_task(task_id):
+                    result_data_id = result.data_ids[0] if result.data_ids else None
+                    self.task_list.update_task(
+                        task_id,
+                        status=TaskStatus.COMPLETED,
+                        progress=100,
+                        result_data_id=result_data_id
+                    )
+
                 # 发送专家完成事件
                 if self.event_callback:
                     self.event_callback({
@@ -456,6 +595,15 @@ class ExpertRouterV3:
                     expert=expert_type,
                     error=str(e)
                 )
+
+                # 标记任务失败
+                if self.task_list.get_task(task_id):
+                    self.task_list.update_task(
+                        task_id,
+                        status=TaskStatus.FAILED,
+                        error_message=str(e)
+                    )
+
                 # 发送专家错误事件
                 if self.event_callback:
                     self.event_callback({
@@ -652,6 +800,75 @@ class ExpertRouterV3:
         if "report" in experts:
             groups.append(["report"])
         return groups or [experts]
+
+    def _create_task_list(self, session_id: str, experts: List[str], parsed_query: StructuredQuery):
+        """
+        为当前会话创建任务列表
+
+        Args:
+            session_id: 会话ID
+            experts: 专家列表
+            parsed_query: 解析后的查询
+        """
+        # 获取并行分组，用于设置依赖关系
+        parallel_groups = self._build_parallel_groups(experts)
+
+        # 创建任务映射
+        task_id_map = {}
+
+        # 专家名称映射
+        expert_names = {
+            "weather": "气象数据分析",
+            "component": "污染物组分分析",
+            "viz": "数据可视化生成",
+            "report": "综合报告生成",
+            "template_report": "模板报告生成"
+        }
+
+        # 专家描述映射
+        expert_descriptions = {
+            "weather": f"分析{parsed_query.location}的气象数据、风向、轨迹等",
+            "component": f"分析{parsed_query.location}的污染物组分（VOCs/PM2.5等）",
+            "viz": "生成可视化图表",
+            "report": "生成综合分析报告",
+            "template_report": "生成格式化模板报告"
+        }
+
+        # 按组创建任务
+        for group_idx, group in enumerate(parallel_groups):
+            # 确定依赖关系
+            depends_on = []
+            if group_idx > 0:
+                # 当前组依赖前一组的所有任务
+                for prev_group in parallel_groups[:group_idx]:
+                    for expert_type in prev_group:
+                        if expert_type in task_id_map:
+                            depends_on.append(task_id_map[expert_type])
+
+            # 为组内每个专家创建任务
+            for expert_type in group:
+                task_id = f"{session_id}_{expert_type}"
+                task_id_map[expert_type] = task_id
+
+                self.task_list.create_task(
+                    session_id=session_id,
+                    task_id=task_id,
+                    subject=expert_names.get(expert_type, expert_type),
+                    description=expert_descriptions.get(expert_type, f"执行{expert_type}专家分析"),
+                    depends_on=depends_on,
+                    expert_type=expert_type,
+                    metadata={
+                        "location": parsed_query.location,
+                        "group_index": group_idx
+                    }
+                )
+
+        logger.info(
+            "task_list_created",
+            session_id=session_id,
+            total_tasks=len(task_id_map),
+            groups=len(parallel_groups)
+        )
 
     def _create_execution_context_for_expert(self, expert_type: str):
         """

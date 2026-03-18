@@ -180,7 +180,7 @@ class GetAirQualityTool(LLMTool):
             # 修复：即使success=False，只要数据存在就保存（处理Dify截断JSON的情况）
             if unified_data.data and len(unified_data.data) > 0:
                 try:
-                    data_id = context.save_data(
+                    data_ref = context.save_data(
                         data=standardized_records,
                         schema="air_quality_unified",
                         metadata={
@@ -192,9 +192,12 @@ class GetAirQualityTool(LLMTool):
                             "field_mapping_info": data_standardizer.get_field_mapping_info() if data_standardizer else {}
                         }
                     )
+                    data_id = data_ref["data_id"]
+                    file_path = data_ref["file_path"]
                     logger.info(
                         "air_quality_data_saved",
                         data_id=data_id,
+                        file_path=file_path,
                         record_count=len(unified_data.data),
                         success_flag=unified_data.success
                     )
@@ -220,9 +223,12 @@ class GetAirQualityTool(LLMTool):
                             "sample_record": sample_record
                         }
 
-                    # 修改 summary 包含 data_id
+                    # 修改 summary 包含 data_id 和 file_path
                     if result.get("summary"):
-                        result["summary"] = f"{result['summary']}，已保存为 {data_id}。"
+                        result["summary"] = f"{result['summary']}，已保存为 {data_id}，文件路径: {file_path}。"
+
+                    # 添加 file_path 到返回结果（供后续工具使用）
+                    result["file_path"] = file_path
 
                     return result
                 except Exception as save_error:

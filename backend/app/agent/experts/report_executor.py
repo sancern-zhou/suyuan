@@ -450,12 +450,12 @@ class ReportExecutor(ExpertExecutor):
                     raise ValueError("报告生成失败：缺少专家章节内容，无法生成报告")
                 
                 # 按顺序添加：气象分析、组分分析
-                # 【修复】直接使用专家生成的章节内容（包含LLM插入的[INSERT_CHART:xxx]占位符）
-                # 不再额外插入图表，让前端统一处理占位符替换
+                # 【修复】直接使用专家生成的章节内容（包含LLM生成的图片URL引用）
+                # 图片URL格式：![标题](/api/image/xxx)
                 for section_type in ["weather", "component"]:
                     if section_type in expert_sections:
                         section_content = expert_sections[section_type]
-                        # 直接使用章节内容（包含LLM生成的[INSERT_CHART:xxx]占位符）
+                        # 直接使用章节内容（包含LLM生成的图片URL引用）
                         sections.append({
                             "type": section_type,
                             "name": "气象分析" if section_type == "weather" else "组分分析",
@@ -465,7 +465,7 @@ class ReportExecutor(ExpertExecutor):
                             "section_added",
                             section_type=section_type,
                             content_length=len(section_content),
-                            has_insert_chart="[INSERT_CHART:" in section_content
+                            has_image_url="/api/image/" in section_content
                         )
                     else:
                         logger.warning(
@@ -645,7 +645,7 @@ class ReportExecutor(ExpertExecutor):
         expert_results: Dict[str, ExpertResult] = None
     ) -> str:
         """
-        为特定章节格式化图表（生成markdown图片标记）
+        为特定章节格式化图表（生成markdown图片URL引用）
 
         Args:
             charts: 图表列表
@@ -654,13 +654,17 @@ class ReportExecutor(ExpertExecutor):
             expert_results: 专家结果（用于获取实际图片数据）
 
         Returns:
-            格式化的图表markdown文本（包含实际图片）
+            格式化的图表markdown文本（包含图片URL）
         """
         if not charts:
             return ""
 
         section_name = "气象分析" if section_type == "weather" else "组分分析"
         lines = [f"### {section_name}相关图表\n"]
+
+        # 构建backend_host（用于生成完整URL）
+        from config.settings import settings
+        backend_host = getattr(settings, "BACKEND_HOST", "http://localhost:8000")
 
         for i, chart in enumerate(charts, start=start_index):
             title = chart.get("title", "分析图表")
@@ -677,22 +681,24 @@ class ReportExecutor(ExpertExecutor):
                     chart_title=title
                 )
 
-            # 【核心修复】尝试从expert_results中获取实际图片数据
-            image_data = None
-            if expert_results:
-                image_data = self._get_chart_image_data(chart, expert_results)
+            # 尝试从chart中获取预生成的URL
+            image_url = chart.get("image_url", "")
+            markdown_image = chart.get("markdown_image", "")
 
-            if image_data:
-                # 【修复】统一使用占位符，让前端进行图表插入
-                # 不再直接嵌入base64图片，而是使用占位符格式
-                lines.append(f"**图{i}：{title}**")
-                lines.append(f"[INSERT_CHART:{chart_id}]")
-                lines.append(f"*数据来源：{self._get_chart_data_source(chart)}*")
+            # 如果没有预生成的URL，构建标准URL
+            if not image_url:
+                image_id = chart.get("image_id") or chart_id
+                image_url = f"{backend_host}/api/image/{image_id}"
+
+            # 使用markdown_image（如果有的话），否则构建标准Markdown
+            if markdown_image:
+                markdown_link = markdown_image
             else:
-                # 交互式图表，使用ECHARTS占位符
-                lines.append(f"**图{i}：{title}**")
-                lines.append(f"[ECHARTS_PLACEHOLDER:{chart_id}]")
-                lines.append(f"*数据来源：{self._get_chart_data_source(chart)}*")
+                markdown_link = f"![{title}]({image_url})"
+
+            lines.append(f"**图{i}：{title}**")
+            lines.append(markdown_link)
+            lines.append(f"*数据来源：{self._get_chart_data_source(chart)}*")
             lines.append("")
 
         return "\n".join(lines)
@@ -709,13 +715,11 @@ class ReportExecutor(ExpertExecutor):
 
         if generator:
             # 根据工具名称直接判断数据来源
-            if generator == "calculate_obm_full_chemistry":
-                return "OBM EKMA分析结果"
-            elif generator == "analyze_trajectory_sources":
+            if generator == "analyze_trajectory_sources":
                 return "HYSPLIT后向轨迹分析"
             elif generator in ["calculate_pm_pmf", "calculate_vocs_pmf"]:
                 return "PMF源解析分析"
-            elif generator in ["get_guangdong_regular_stations", "get_jining_regular_stations"]:
+            elif generator == "get_jining_regular_stations":
                 return "时间序列监测数据"
             elif generator in ["get_vocs_data", "get_pm25_component", "get_pm25_ionic", "get_pm25_carbon"]:
                 return "组分数据分析"
@@ -958,63 +962,43 @@ class ReportExecutor(ExpertExecutor):
         section_name: str,
         start_index: int
     ) -> str:
-        """格式化图表列表供LLM使用（按主题分组，明确指定插入位置）"""
+        """格式化图表列表供LLM使用（使用URL直接引用格式）"""
         if not charts:
             return ""
 
-        # 【新增】按图表类型分组，明确指定插入位置
-        # 定义颗粒物组分分析的图表-标题映射规则
-        chart_title_mapping = {
-            # 水溶性离子相关图表
-            "ternary_SNA": ["水溶性离子特征与二次生成", "水溶性离子与二次生成"],
-            "sor_nor_scatter": ["水溶性离子特征与二次生成", "水溶性离子与二次生成"],
-            "charge_balance": ["水溶性离子特征与二次生成", "水溶性离子与二次生成"],
-            # 碳组分相关图表
-            "ec_oc_scatter": ["碳组分特征"],
-            # 地壳元素相关图表
-            "crustal_boxplot": ["地壳与微量元素"],
-            # 时空变化相关图表
-            "ion_timeseries": ["时空变化特征"],
-        }
+        lines = [f"{section_name}章节图表列表：\n"]
 
-        lines = [f"{section_name}章节图表列表（请在对应标题后插入占位符）：\n"]
+        # 构建backend_host（用于生成完整URL）
+        from config.settings import settings
+        backend_host = getattr(settings, "BACKEND_HOST", "http://localhost:8000")
 
-        # 按主题分组显示
-        theme_groups = {
-            "水溶性离子与二次生成": [],
-            "碳组分特征": [],
-            "地壳与微量元素": [],
-            "时空变化特征": [],
-            "其他图表": []
-        }
-
+        # 直接输出所有图表，使用Markdown URL格式
         for i, chart in enumerate(charts, start=start_index):
-            title = chart.get("title", "分析图表")
+            title = chart.get("title", f"图表{i}")
             chart_type = chart.get("type", "")
             chart_id = chart.get("id", "")
 
-            # 确定图表应该插入哪个标题下
-            target_titles = chart_title_mapping.get(chart_type, [])
-            if target_titles:
-                for target_title in target_titles:
-                    theme_groups[target_title].append((i, title, chart_type))
+            # 尝试从chart中获取image_url或markdown_image
+            image_url = chart.get("image_url", "")
+            markdown_image = chart.get("markdown_image", "")
+
+            # 如果没有预生成的URL，构建标准URL
+            if not image_url:
+                url_id = chart.get("image_id") or chart_id or f"chart_{i}"
+                image_url = f"{backend_host}/api/image/{url_id}"
+
+            # 使用markdown_image（如果有的话），否则构建标准Markdown
+            if markdown_image:
+                markdown_link = markdown_image
             else:
-                theme_groups["其他图表"].append((i, title, chart_type))
+                markdown_link = f"![{title}]({image_url})"
 
-        # 按主题输出
-        for theme, theme_charts in theme_groups.items():
-            if theme_charts:
-                lines.append(f"\n**{theme}** 标题后插入：")
-                for fig_num, chart_title, chart_type in theme_charts:
-                    lines.append(f"- 图{fig_num}：{chart_title} → `[INSERT_CHART:{chart_type}]`")
-
-        # 添加总体说明
-        lines.append("""
-【插入规则】
-- 在对应主题标题后插入占位符
-- 占位符格式：`[INSERT_CHART:图表类型]`
-- 例如：`[INSERT_CHART:crustal_boxplot]`
-- 图表类型如：ternary_SNA、sor_nor_scatter、charge_balance、ec_oc_scatter、crustal_boxplot、ion_timeseries""")
+            # 输出图表信息（包含ID、标题和Markdown代码）
+            lines.append(f"**图{i}**：{title}")
+            lines.append(f"   - ID: `{chart_id}`")
+            lines.append(f"   - 类型: `{chart_type}`")
+            lines.append(f"   - Markdown代码: `{markdown_link}`")
+            lines.append("")
 
         return "\n".join(lines)
     
@@ -1076,13 +1060,10 @@ class ReportExecutor(ExpertExecutor):
 ## 图表引用要求（重要）
 
 在生成报告时，请：
-1. **在相应章节中引用上述图表**，使用"图X：图表标题"的格式
-2. **为每个图表提供1-2句说明**，说明图表要表达的核心观点
-3. **图表占位符格式**：必须使用 `[INSERT_CHART:图表ID]` 格式
-   - 图表ID从上面的 [ID:xxx] 中获取，例如 `[ID:sor_nor_20251230211245]` 对应占位符 `[INSERT_CHART:sor_nor_20251230211245]`
-   - **必须使用完整的图表ID**，不要修改或简化ID
-4. **确保图表编号连续**，按章节顺序编号（气象分析从图1开始，组分分析继续编号）
-5. **图表说明要自然流畅**，与章节内容上下文呼应，不要显得机械化
+1. **直接使用Markdown图片格式**：`![图表标题](/api/image/图表ID)`
+2. **为每个图表提供1-2句说明**：说明图表要表达的核心观点
+3. **图表编号连续**：按章节顺序编号（气象分析从图1开始，组分分析继续编号）
+4. **图表说明要自然流畅**：与章节内容上下文呼应，不要显得机械化
 
 例如：
 ```markdown
@@ -1090,13 +1071,11 @@ class ReportExecutor(ExpertExecutor):
 
 [概述段落...]
 
-图1：NOAA HYSPLIT Backward轨迹分析
+![NOAA HYSPLIT Backward轨迹分析](/api/image/trajectory_xxx)
 轨迹分析显示污染物的主要传输路径来自西北方向，有助于识别潜在污染源区域。
-[INSERT_CHART:trajectory_xxx]
 
-图2：新兴上风向企业分布图
+![新兴上风向企业分布图](/api/image/upwind_xxx)
 企业分布图反映了上风向潜在污染源的空间分布特征，结合距离和风向信息，有助于定位重点监管目标。
-[INSERT_CHART:upwind_xxx]
 
 [详细分析...]
 ```

@@ -3,7 +3,7 @@
 场景2核心组件
 """
 from typing import Dict, Any, List
-import logging
+import structlog
 import asyncio
 from collections import defaultdict
 
@@ -11,7 +11,7 @@ from app.schemas.report_generation import ToolCall
 from app.services.tool_executor import ToolExecutor
 from app.agent.context.execution_context import ExecutionContext
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class TemplateDataFetcher:

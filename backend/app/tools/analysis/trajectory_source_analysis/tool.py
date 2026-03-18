@@ -317,9 +317,10 @@ class TrajectorySourceAnalysisTool(LLMTool):
                     f"({top_contributors[0]['contribution_percent'] if top_contributors else '0%'})"
                 )
 
-            data_id = None
+            data_ref = None
+            file_path = None
             try:
-                data_id = context.save_data(
+                data_ref = context.save_data(
                     data=[result_payload],
                     schema="trajectory_analysis_result",
                     metadata={
@@ -331,11 +332,15 @@ class TrajectorySourceAnalysisTool(LLMTool):
                         "days": days
                     }
                 )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
                 result_payload["data_id"] = data_id
+                result_payload["file_path"] = file_path
                 result_payload["registry_schema"] = "trajectory_analysis_result"
                 logger.info(
                     "trajectory_source_result_saved",
                     data_id=data_id,
+                    file_path=file_path,
                     schema="trajectory_analysis_result"
                 )
             except Exception as save_error:

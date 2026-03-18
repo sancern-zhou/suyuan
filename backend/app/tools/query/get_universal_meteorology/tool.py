@@ -546,7 +546,8 @@ class UniversalMeteorologyTool(LLMTool):
                 )
 
                 # 保存到context（传递标准化后的字典列表）
-                data_id = context.data_manager.save_data(
+                # save_data() 返回 {"data_id": str, "file_path": str}
+                data_ref = context.data_manager.save_data(
                     data=standardized_records,  # List[Dict]，已标准化的数据
                     schema="meteorology_unified",
                     quality_report=None,
@@ -567,6 +568,10 @@ class UniversalMeteorologyTool(LLMTool):
                         "unified_data": unified_data.dict()  # 保存完整UnifiedData作为metadata
                     }
                 )
+
+                # 提取 data_id 和 file_path
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
 
                 # 获取handle用于访问元数据
                 handle = context.data_manager.get_handle(data_id)
@@ -608,12 +613,15 @@ class UniversalMeteorologyTool(LLMTool):
                     "weather_code": True
                 }
 
-                # 增强summary信息
+                # 增强summary信息（包含 file_path）
                 result["summary"] = (
-                    f"✅ 成功获取气象数据，已保存为 {data_id}。"
+                    f"✅ 成功获取气象数据，已保存为 {data_id}，文件路径: {file_path}。"
                     f"记录数: {handle.record_count}。"
                     f"{'风廓线数据使用ERA5压力层（高精度）。' if wind_profile_data.get('era5_data') else '风廓线数据使用经验估算。'}"
                 )
+
+                # 添加 file_path 到返回结果（供后续工具使用）
+                result["file_path"] = file_path
 
                 return result
 

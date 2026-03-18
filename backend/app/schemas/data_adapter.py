@@ -57,7 +57,7 @@ class DataAdapter:
 
         # 检测OBM/OFP结果
         if "ofp_by_species" in data and "ofp_by_category" in data:
-            return "obm_ofp_result", {"schema": "obm_result", "source": "calculate_obm_full_chemistry"}
+            return "obm_ofp_result", {"schema": "obm_result", "source": "calculate_obm_ofp"}
 
         # 检测气象数据
         if "records" in data and "data_type" in data:

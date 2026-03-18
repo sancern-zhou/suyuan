@@ -5,13 +5,13 @@ docx -> markdown/text 转换工具
 import importlib.util
 import importlib
 import io
-import logging
+import structlog
 import re
 from typing import Dict, Any
 from fastapi import HTTPException
 
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def convert_docx_to_markdown(raw_bytes: bytes) -> str:

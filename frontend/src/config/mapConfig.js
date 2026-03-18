@@ -8,7 +8,8 @@ export const MAP_CONFIG = {
   zoom: 12,                          // 默认缩放级别
   pitch: 0,                          // 俯仰角度（0为正视）
   viewMode: '2D',                    // 视图模式（2D/3D）
-  mapStyle: 'fresh',  // 清新蓝风格（v2.0新格式）
+  // 使用标准样式确保底图显示
+  mapStyle: 'amap://styles/normal',
   features: ['bg', 'road', 'building'], // 地图要素
   showIndoorMap: false,              // 不显示室内地图
   resizeEnable: true,                // 允许地图自适应容器大小

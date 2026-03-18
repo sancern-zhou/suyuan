@@ -1,0 +1,1638 @@
+{
+  "status": "success",
+  "success": true,
+  "data": [
+    {
+      "timestamp": "2024-10-01T12:00:00",
+      "age_hours": 0,
+      "lat": 23.13,
+      "lon": 113.26,
+      "height": 100,
+      "wind_speed": 27.2,
+      "wind_direction": 8.0,
+      "pressure": 1001.25,
+      "temperature": 14.35
+    },
+    {
+      "timestamp": "2024-10-01T11:00:00",
+      "age_hours": 1,
+      "lat": 24.0036,
+      "lon": 113.3939,
+      "height": 150.0,
+      "wind_speed": 27.0,
+      "wind_direction": 7.0,
+      "pressure": 995.25,
+      "temperature": 14.025
+    },
+    {
+      "timestamp": "2024-10-01T10:00:00",
+      "age_hours": 2,
+      "lat": 24.8727,
+      "lon": 113.5102,
+      "height": 200.0,
+      "wind_speed": 27.2,
+      "wind_direction": 6.0,
+      "pressure": 989.25,
+      "temperature": 13.7
+    },
+    {
+      "timestamp": "2024-10-01T09:00:00",
+      "age_hours": 3,
+      "lat": 25.7501,
+      "lon": 113.6108,
+      "height": 250.0,
+      "wind_speed": 28.0,
+      "wind_direction": 4.0,
+      "pressure": 983.25,
+      "temperature": 13.375
+    },
+    {
+      "timestamp": "2024-10-01T08:00:00",
+      "age_hours": 4,
+      "lat": 26.656,
+      "lon": 113.6799,
+      "height": 300.0,
+      "wind_speed": 30.1,
+      "wind_direction": 2.0,
+      "pressure": 977.25,
+      "temperature": 13.05
+    },
+    {
+      "timestamp": "2024-10-01T07:00:00",
+      "age_hours": 5,
+      "lat": 27.6316,
+      "lon": 113.717,
+      "height": 350.0,
+      "wind_speed": 31.5,
+      "wind_direction": 2.0,
+      "pressure": 971.25,
+      "temperature": 12.725
+    },
+    {
+      "timestamp": "2024-10-01T06:00:00",
+      "age_hours": 6,
+      "lat": 28.6526,
+      "lon": 113.7559,
+      "height": 400.0,
+      "wind_speed": 32.4,
+      "wind_direction": 0.0,
+      "pressure": 965.25,
+      "temperature": 12.4
+    },
+    {
+      "timestamp": "2024-10-01T05:00:00",
+      "age_hours": 7,
+      "lat": 29.7034,
+      "lon": 113.7559,
+      "height": 450.0,
+      "wind_speed": 32.9,
+      "wind_direction": 359.0,
+      "pressure": 959.25,
+      "temperature": 12.075
+    },
+    {
+      "timestamp": "2024-10-01T04:00:00",
+      "age_hours": 8,
+      "lat": 30.7702,
+      "lon": 113.7356,
+      "height": 500.0,
+      "wind_speed": 32.6,
+      "wind_direction": 359.0,
+      "pressure": 953.25,
+      "temperature": 11.75
+    },
+    {
+      "timestamp": "2024-10-01T03:00:00",
+      "age_hours": 9,
+      "lat": 31.8274,
+      "lon": 113.7155,
+      "height": 550.0,
+      "wind_speed": 29.7,
+      "wind_direction": 1.0,
+      "pressure": 947.25,
+      "temperature": 11.425
+    },
+    {
+      "timestamp": "2024-10-01T02:00:00",
+      "age_hours": 10,
+      "lat": 32.7905,
+      "lon": 113.7338,
+      "height": 600.0,
+      "wind_speed": 26.8,
+      "wind_direction": 2.0,
+      "pressure": 941.25,
+      "temperature": 11.1
+    },
+    {
+      "timestamp": "2024-10-01T01:00:00",
+      "age_hours": 11,
+      "lat": 33.6591,
+      "lon": 113.7669,
+      "height": 650.0,
+      "wind_speed": 22.9,
+      "wind_direction": 360.0,
+      "pressure": 935.25,
+      "temperature": 10.775
+    },
+    {
+      "timestamp": "2024-10-01T00:00:00",
+      "age_hours": 12,
+      "lat": 34.4018,
+      "lon": 113.7669,
+      "height": 700.0,
+      "wind_speed": 24.5,
+      "wind_direction": 0.0,
+      "pressure": 929.25,
+      "temperature": 10.45
+    },
+    {
+      "timestamp": "2024-09-30T23:00:00",
+      "age_hours": 13,
+      "lat": 35.1964,
+      "lon": 113.7669,
+      "height": 721.5,
+      "wind_speed": 22.0,
+      "wind_direction": 356.0,
+      "pressure": 926.67,
+      "temperature": 10.31025
+    },
+    {
+      "timestamp": "2024-09-30T22:00:00",
+      "age_hours": 14,
+      "lat": 35.9082,
+      "lon": 113.7126,
+      "height": 733.4,
+      "wind_speed": 23.52,
+      "wind_direction": 357.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T21:00:00",
+      "age_hours": 15,
+      "lat": 36.67,
+      "lon": 113.6691,
+      "height": 733.4,
+      "wind_speed": 19.8,
+      "wind_direction": 354.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T20:00:00",
+      "age_hours": 16,
+      "lat": 37.3086,
+      "lon": 113.5959,
+      "height": 733.4,
+      "wind_speed": 16.8,
+      "wind_direction": 353.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T19:00:00",
+      "age_hours": 17,
+      "lat": 37.8494,
+      "lon": 113.5235,
+      "height": 733.4,
+      "wind_speed": 16.68,
+      "wind_direction": 360.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T18:00:00",
+      "age_hours": 18,
+      "lat": 38.3904,
+      "lon": 113.5235,
+      "height": 733.4,
+      "wind_speed": 13.92,
+      "wind_direction": 353.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T17:00:00",
+      "age_hours": 19,
+      "lat": 38.8385,
+      "lon": 113.4635,
+      "height": 733.4,
+      "wind_speed": 12.96,
+      "wind_direction": 350.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T16:00:00",
+      "age_hours": 20,
+      "lat": 39.2524,
+      "lon": 113.3839,
+      "height": 733.4,
+      "wind_speed": 11.639999999999999,
+      "wind_direction": 349.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T15:00:00",
+      "age_hours": 21,
+      "lat": 39.623,
+      "lon": 113.3053,
+      "height": 733.4,
+      "wind_speed": 9.48,
+      "wind_direction": 1.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T14:00:00",
+      "age_hours": 22,
+      "lat": 39.9304,
+      "lon": 113.3112,
+      "height": 733.4,
+      "wind_speed": 9.96,
+      "wind_direction": 358.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T13:00:00",
+      "age_hours": 23,
+      "lat": 40.2533,
+      "lon": 113.2989,
+      "height": 733.4,
+      "wind_speed": 8.4,
+      "wind_direction": 3.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T12:00:00",
+      "age_hours": 24,
+      "lat": 40.5253,
+      "lon": 113.3144,
+      "height": 733.4,
+      "wind_speed": 10.44,
+      "wind_direction": 355.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T11:00:00",
+      "age_hours": 25,
+      "lat": 40.8626,
+      "lon": 113.2823,
+      "height": 733.4,
+      "wind_speed": 11.04,
+      "wind_direction": 353.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T10:00:00",
+      "age_hours": 26,
+      "lat": 41.218,
+      "lon": 113.2347,
+      "height": 733.4,
+      "wind_speed": 11.04,
+      "wind_direction": 349.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T09:00:00",
+      "age_hours": 27,
+      "lat": 41.5695,
+      "lon": 113.1602,
+      "height": 733.4,
+      "wind_speed": 12.1,
+      "wind_direction": 359.0,
+      "pressure": 925.248,
+      "temperature": 10.233225000000001
+    },
+    {
+      "timestamp": "2024-09-30T08:00:00",
+      "age_hours": 28,
+      "lat": 41.9619,
+      "lon": 113.1527,
+      "height": 770.0,
+      "wind_speed": 15.9,
+      "wind_direction": 356.0,
+      "pressure": 920.8482,
+      "temperature": 9.9949025
+    },
+    {
+      "timestamp": "2024-09-30T07:00:00",
+      "age_hours": 29,
+      "lat": 42.4763,
+      "lon": 113.1135,
+      "height": 812.0,
+      "wind_speed": 17.3,
+      "wind_direction": 356.0,
+      "pressure": 915.8083799999999,
+      "temperature": 9.721912249999999
+    },
+    {
+      "timestamp": "2024-09-30T06:00:00",
+      "age_hours": 30,
+      "lat": 43.036,
+      "lon": 113.0708,
+      "height": 841.8,
+      "wind_speed": 17.3,
+      "wind_direction": 360.0,
+      "pressure": 912.232542,
+      "temperature": 9.528221025
+    },
+    {
+      "timestamp": "2024-09-30T05:00:00",
+      "age_hours": 31,
+      "lat": 43.5971,
+      "lon": 113.0708,
+      "height": 876.1,
+      "wind_speed": 16.8,
+      "wind_direction": 4.0,
+      "pressure": 908.1142878,
+      "temperature": 9.305148922499999
+    },
+    {
+      "timestamp": "2024-09-30T04:00:00",
+      "age_hours": 32,
+      "lat": 44.1406,
+      "lon": 113.1123,
+      "height": 909.0,
+      "wind_speed": 15.8,
+      "wind_direction": 358.0,
+      "pressure": 904.16785902,
+      "temperature": 9.091384030250001
+    },
+    {
+      "timestamp": "2024-09-30T03:00:00",
+      "age_hours": 33,
+      "lat": 44.6527,
+      "lon": 113.0928,
+      "height": 923.1,
+      "wind_speed": 16.68,
+      "wind_direction": 356.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-30T02:00:00",
+      "age_hours": 34,
+      "lat": 45.1924,
+      "lon": 113.0516,
+      "height": 923.1,
+      "wind_speed": 14.16,
+      "wind_direction": 352.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-30T01:00:00",
+      "age_hours": 35,
+      "lat": 45.6472,
+      "lon": 112.9819,
+      "height": 923.1,
+      "wind_speed": 11.04,
+      "wind_direction": 344.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-30T00:00:00",
+      "age_hours": 36,
+      "lat": 45.9913,
+      "lon": 112.8743,
+      "height": 923.1,
+      "wind_speed": 12.0,
+      "wind_direction": 346.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T23:00:00",
+      "age_hours": 37,
+      "lat": 46.369,
+      "lon": 112.7716,
+      "height": 923.1,
+      "wind_speed": 12.48,
+      "wind_direction": 342.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T22:00:00",
+      "age_hours": 38,
+      "lat": 46.7539,
+      "lon": 112.6352,
+      "height": 923.1,
+      "wind_speed": 10.92,
+      "wind_direction": 346.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T21:00:00",
+      "age_hours": 39,
+      "lat": 47.0976,
+      "lon": 112.5418,
+      "height": 923.1,
+      "wind_speed": 11.16,
+      "wind_direction": 342.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T20:00:00",
+      "age_hours": 40,
+      "lat": 47.4418,
+      "lon": 112.4198,
+      "height": 923.1,
+      "wind_speed": 11.28,
+      "wind_direction": 336.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T19:00:00",
+      "age_hours": 41,
+      "lat": 47.776,
+      "lon": 112.2576,
+      "height": 923.1,
+      "wind_speed": 11.88,
+      "wind_direction": 312.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T18:00:00",
+      "age_hours": 42,
+      "lat": 48.0338,
+      "lon": 111.9454,
+      "height": 923.1,
+      "wind_speed": 9.36,
+      "wind_direction": 310.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T17:00:00",
+      "age_hours": 43,
+      "lat": 48.2289,
+      "lon": 111.6918,
+      "height": 923.1,
+      "wind_speed": 10.44,
+      "wind_direction": 308.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T16:00:00",
+      "age_hours": 44,
+      "lat": 48.4374,
+      "lon": 111.4008,
+      "height": 923.1,
+      "wind_speed": 4.32,
+      "wind_direction": 307.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T15:00:00",
+      "age_hours": 45,
+      "lat": 48.5217,
+      "lon": 111.2788,
+      "height": 923.1,
+      "wind_speed": 5.159999999999999,
+      "wind_direction": 246.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T14:00:00",
+      "age_hours": 46,
+      "lat": 48.4536,
+      "lon": 111.1121,
+      "height": 923.1,
+      "wind_speed": 3.36,
+      "wind_direction": 117.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T13:00:00",
+      "age_hours": 47,
+      "lat": 48.4042,
+      "lon": 111.218,
+      "height": 923.1,
+      "wind_speed": 5.64,
+      "wind_direction": 171.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T12:00:00",
+      "age_hours": 48,
+      "lat": 48.2235,
+      "lon": 111.2492,
+      "height": 923.1,
+      "wind_speed": 9.12,
+      "wind_direction": 173.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T11:00:00",
+      "age_hours": 49,
+      "lat": 47.9299,
+      "lon": 111.2885,
+      "height": 923.1,
+      "wind_speed": 4.56,
+      "wind_direction": 41.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T10:00:00",
+      "age_hours": 50,
+      "lat": 48.0415,
+      "lon": 111.3943,
+      "height": 923.1,
+      "wind_speed": 14.399999999999999,
+      "wind_direction": 109.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T09:00:00",
+      "age_hours": 51,
+      "lat": 47.8895,
+      "lon": 111.8758,
+      "height": 923.1,
+      "wind_speed": 1.7999999999999998,
+      "wind_direction": 60.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T08:00:00",
+      "age_hours": 52,
+      "lat": 47.9187,
+      "lon": 111.9309,
+      "height": 923.1,
+      "wind_speed": 1.56,
+      "wind_direction": 254.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T07:00:00",
+      "age_hours": 53,
+      "lat": 47.9047,
+      "lon": 111.8779,
+      "height": 923.1,
+      "wind_speed": 1.8,
+      "wind_direction": 270.0,
+      "pressure": 902.476073118,
+      "temperature": 8.999745627225
+    },
+    {
+      "timestamp": "2024-09-29T06:00:00",
+      "age_hours": 54,
+      "lat": 47.9047,
+      "lon": 111.8143,
+      "height": 927.8,
+      "wind_speed": 7.319999999999999,
+      "wind_direction": 270.0,
+      "pressure": 901.9134658062,
+      "temperature": 8.9692710645025
+    },
+    {
+      "timestamp": "2024-09-29T05:00:00",
+      "age_hours": 55,
+      "lat": 47.9047,
+      "lon": 111.5554,
+      "height": 927.8,
+      "wind_speed": 6.4,
+      "wind_direction": 260.0,
+      "pressure": 901.9134658062,
+      "temperature": 8.9692710645025
+    },
+    {
+      "timestamp": "2024-09-29T04:00:00",
+      "age_hours": 56,
+      "lat": 47.8687,
+      "lon": 111.3325,
+      "height": 940.5,
+      "wind_speed": 3.2,
+      "wind_direction": 214.0,
+      "pressure": 900.38711922558,
+      "temperature": 8.886593958052249
+    },
+    {
+      "timestamp": "2024-09-29T03:00:00",
+      "age_hours": 57,
+      "lat": 47.7827,
+      "lon": 111.2692,
+      "height": 947.5,
+      "wind_speed": 0.6,
+      "wind_direction": 18.0,
+      "pressure": 899.553407303022,
+      "temperature": 8.841434562247024
+    },
+    {
+      "timestamp": "2024-09-29T02:00:00",
+      "age_hours": 58,
+      "lat": 47.8012,
+      "lon": 111.2758,
+      "height": 949.2,
+      "wind_speed": 0.96,
+      "wind_direction": 297.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-29T01:00:00",
+      "age_hours": 59,
+      "lat": 47.8153,
+      "lon": 111.2455,
+      "height": 949.2,
+      "wind_speed": 5.3999999999999995,
+      "wind_direction": 344.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-29T00:00:00",
+      "age_hours": 60,
+      "lat": 47.9836,
+      "lon": 111.1929,
+      "height": 949.2,
+      "wind_speed": 6.359999999999999,
+      "wind_direction": 33.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T23:00:00",
+      "age_hours": 61,
+      "lat": 48.1566,
+      "lon": 111.3154,
+      "height": 949.2,
+      "wind_speed": 7.4399999999999995,
+      "wind_direction": 41.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T22:00:00",
+      "age_hours": 62,
+      "lat": 48.3388,
+      "lon": 111.488,
+      "height": 949.2,
+      "wind_speed": 6.119999999999999,
+      "wind_direction": 32.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T21:00:00",
+      "age_hours": 63,
+      "lat": 48.5071,
+      "lon": 111.6027,
+      "height": 949.2,
+      "wind_speed": 7.56,
+      "wind_direction": 31.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T20:00:00",
+      "age_hours": 64,
+      "lat": 48.7172,
+      "lon": 111.7404,
+      "height": 949.2,
+      "wind_speed": 3.84,
+      "wind_direction": 43.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T19:00:00",
+      "age_hours": 65,
+      "lat": 48.8083,
+      "lon": 111.833,
+      "height": 949.2,
+      "wind_speed": 3.84,
+      "wind_direction": 90.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T18:00:00",
+      "age_hours": 66,
+      "lat": 48.8083,
+      "lon": 111.9688,
+      "height": 949.2,
+      "wind_speed": 6.6,
+      "wind_direction": 134.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T17:00:00",
+      "age_hours": 67,
+      "lat": 48.6596,
+      "lon": 112.1367,
+      "height": 949.2,
+      "wind_speed": 9.12,
+      "wind_direction": 133.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T16:00:00",
+      "age_hours": 68,
+      "lat": 48.4579,
+      "lon": 112.3726,
+      "height": 949.2,
+      "wind_speed": 12.48,
+      "wind_direction": 135.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T15:00:00",
+      "age_hours": 69,
+      "lat": 48.1717,
+      "lon": 112.6847,
+      "height": 949.2,
+      "wind_speed": 16.8,
+      "wind_direction": 137.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T14:00:00",
+      "age_hours": 70,
+      "lat": 47.7732,
+      "lon": 113.0899,
+      "height": 949.2,
+      "wind_speed": 13.92,
+      "wind_direction": 127.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    },
+    {
+      "timestamp": "2024-09-28T13:00:00",
+      "age_hours": 71,
+      "lat": 47.5015,
+      "lon": 113.4831,
+      "height": 949.2,
+      "wind_speed": 14.639999999999999,
+      "wind_direction": 137.0,
+      "pressure": 899.3430665727197,
+      "temperature": 8.830041106022321
+    }
+  ],
+  "visuals": [
+    {
+      "id": "trajectory_map_mvp",
+      "type": "map",
+      "schema": "chart_config",
+      "payload": {
+        "id": "trajectory_map_mvp",
+        "type": "map",
+        "title": "反向轨迹分析（72小时）",
+        "data": {
+          "map_center": {
+            "lat": 42.143434722222224,
+            "lon": 112.64943472222222
+          },
+          "zoom": 6,
+          "layers": [
+            {
+              "type": "trajectory_layer",
+              "trajectories": [
+                {
+                  "id": "traj_001",
+                  "path": [
+                    {
+                      "lat": 23.13,
+                      "lon": 113.26
+                    },
+                    {
+                      "lat": 24.0036,
+                      "lon": 113.3939
+                    },
+                    {
+                      "lat": 24.8727,
+                      "lon": 113.5102
+                    },
+                    {
+                      "lat": 25.7501,
+                      "lon": 113.6108
+                    },
+                    {
+                      "lat": 26.656,
+                      "lon": 113.6799
+                    },
+                    {
+                      "lat": 27.6316,
+                      "lon": 113.717
+                    },
+                    {
+                      "lat": 28.6526,
+                      "lon": 113.7559
+                    },
+                    {
+                      "lat": 29.7034,
+                      "lon": 113.7559
+                    },
+                    {
+                      "lat": 30.7702,
+                      "lon": 113.7356
+                    },
+                    {
+                      "lat": 31.8274,
+                      "lon": 113.7155
+                    },
+                    {
+                      "lat": 32.7905,
+                      "lon": 113.7338
+                    },
+                    {
+                      "lat": 33.6591,
+                      "lon": 113.7669
+                    },
+                    {
+                      "lat": 34.4018,
+                      "lon": 113.7669
+                    },
+                    {
+                      "lat": 35.1964,
+                      "lon": 113.7669
+                    },
+                    {
+                      "lat": 35.9082,
+                      "lon": 113.7126
+                    },
+                    {
+                      "lat": 36.67,
+                      "lon": 113.6691
+                    },
+                    {
+                      "lat": 37.3086,
+                      "lon": 113.5959
+                    },
+                    {
+                      "lat": 37.8494,
+                      "lon": 113.5235
+                    },
+                    {
+                      "lat": 38.3904,
+                      "lon": 113.5235
+                    },
+                    {
+                      "lat": 38.8385,
+                      "lon": 113.4635
+                    },
+                    {
+                      "lat": 39.2524,
+                      "lon": 113.3839
+                    },
+                    {
+                      "lat": 39.623,
+                      "lon": 113.3053
+                    },
+                    {
+                      "lat": 39.9304,
+                      "lon": 113.3112
+                    },
+                    {
+                      "lat": 40.2533,
+                      "lon": 113.2989
+                    },
+                    {
+                      "lat": 40.5253,
+                      "lon": 113.3144
+                    },
+                    {
+                      "lat": 40.8626,
+                      "lon": 113.2823
+                    },
+                    {
+                      "lat": 41.218,
+                      "lon": 113.2347
+                    },
+                    {
+                      "lat": 41.5695,
+                      "lon": 113.1602
+                    },
+                    {
+                      "lat": 41.9619,
+                      "lon": 113.1527
+                    },
+                    {
+                      "lat": 42.4763,
+                      "lon": 113.1135
+                    },
+                    {
+                      "lat": 43.036,
+                      "lon": 113.0708
+                    },
+                    {
+                      "lat": 43.5971,
+                      "lon": 113.0708
+                    },
+                    {
+                      "lat": 44.1406,
+                      "lon": 113.1123
+                    },
+                    {
+                      "lat": 44.6527,
+                      "lon": 113.0928
+                    },
+                    {
+                      "lat": 45.1924,
+                      "lon": 113.0516
+                    },
+                    {
+                      "lat": 45.6472,
+                      "lon": 112.9819
+                    },
+                    {
+                      "lat": 45.9913,
+                      "lon": 112.8743
+                    },
+                    {
+                      "lat": 46.369,
+                      "lon": 112.7716
+                    },
+                    {
+                      "lat": 46.7539,
+                      "lon": 112.6352
+                    },
+                    {
+                      "lat": 47.0976,
+                      "lon": 112.5418
+                    },
+                    {
+                      "lat": 47.4418,
+                      "lon": 112.4198
+                    },
+                    {
+                      "lat": 47.776,
+                      "lon": 112.2576
+                    },
+                    {
+                      "lat": 48.0338,
+                      "lon": 111.9454
+                    },
+                    {
+                      "lat": 48.2289,
+                      "lon": 111.6918
+                    },
+                    {
+                      "lat": 48.4374,
+                      "lon": 111.4008
+                    },
+                    {
+                      "lat": 48.5217,
+                      "lon": 111.2788
+                    },
+                    {
+                      "lat": 48.4536,
+                      "lon": 111.1121
+                    },
+                    {
+                      "lat": 48.4042,
+                      "lon": 111.218
+                    },
+                    {
+                      "lat": 48.2235,
+                      "lon": 111.2492
+                    },
+                    {
+                      "lat": 47.9299,
+                      "lon": 111.2885
+                    },
+                    {
+                      "lat": 48.0415,
+                      "lon": 111.3943
+                    },
+                    {
+                      "lat": 47.8895,
+                      "lon": 111.8758
+                    },
+                    {
+                      "lat": 47.9187,
+                      "lon": 111.9309
+                    },
+                    {
+                      "lat": 47.9047,
+                      "lon": 111.8779
+                    },
+                    {
+                      "lat": 47.9047,
+                      "lon": 111.8143
+                    },
+                    {
+                      "lat": 47.9047,
+                      "lon": 111.5554
+                    },
+                    {
+                      "lat": 47.8687,
+                      "lon": 111.3325
+                    },
+                    {
+                      "lat": 47.7827,
+                      "lon": 111.2692
+                    },
+                    {
+                      "lat": 47.8012,
+                      "lon": 111.2758
+                    },
+                    {
+                      "lat": 47.8153,
+                      "lon": 111.2455
+                    },
+                    {
+                      "lat": 47.9836,
+                      "lon": 111.1929
+                    },
+                    {
+                      "lat": 48.1566,
+                      "lon": 111.3154
+                    },
+                    {
+                      "lat": 48.3388,
+                      "lon": 111.488
+                    },
+                    {
+                      "lat": 48.5071,
+                      "lon": 111.6027
+                    },
+                    {
+                      "lat": 48.7172,
+                      "lon": 111.7404
+                    },
+                    {
+                      "lat": 48.8083,
+                      "lon": 111.833
+                    },
+                    {
+                      "lat": 48.8083,
+                      "lon": 111.9688
+                    },
+                    {
+                      "lat": 48.6596,
+                      "lon": 112.1367
+                    },
+                    {
+                      "lat": 48.4579,
+                      "lon": 112.3726
+                    },
+                    {
+                      "lat": 48.1717,
+                      "lon": 112.6847
+                    },
+                    {
+                      "lat": 47.7732,
+                      "lon": 113.0899
+                    },
+                    {
+                      "lat": 47.5015,
+                      "lon": 113.4831
+                    }
+                  ],
+                  "color": "#FF6B6B",
+                  "width": 3,
+                  "opacity": 0.8,
+                  "direction_arrows": true,
+                  "metadata": {
+                    "start_time": "2024-10-01T12:00:00",
+                    "data_source": "era5",
+                    "points_count": 72
+                  }
+                }
+              ]
+            },
+            {
+              "type": "marker_layer",
+              "markers": [
+                {
+                  "lat": 23.13,
+                  "lon": 113.26,
+                  "label": "起点（受体点）",
+                  "icon": "start",
+                  "color": "#FF6B6B"
+                },
+                {
+                  "lat": 47.5015,
+                  "lon": 113.4831,
+                  "label": "终点（72小时前）",
+                  "icon": "end",
+                  "color": "#4ECDC4"
+                }
+              ]
+            }
+          ]
+        },
+        "meta": {
+          "schema_version": "3.1",
+          "generator": "trajectory_analysis_phase2",
+          "layout_hint": "map-full",
+          "interaction_group": "trajectory_map",
+          "data_flow": [
+            "era5_fetch",
+            "trajectory_calc",
+            "visualization"
+          ]
+        }
+      },
+      "meta": {
+        "schema_version": "3.1",
+        "generator": "trajectory_analysis_phase2",
+        "original_data_ids": [],
+        "scenario": "backward_trajectory_map",
+        "layout_hint": "map-full"
+      }
+    },
+    {
+      "id": "trajectory_height_profile",
+      "type": "profile",
+      "schema": "chart_config",
+      "payload": {
+        "id": "trajectory_height_profile",
+        "type": "profile",
+        "title": "轨迹高度剖面（72小时）",
+        "data": {
+          "altitudes": [
+            100,
+            150.0,
+            200.0,
+            250.0,
+            300.0,
+            350.0,
+            400.0,
+            450.0,
+            500.0,
+            550.0,
+            600.0,
+            650.0,
+            700.0,
+            721.5,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            733.4,
+            770.0,
+            812.0,
+            841.8,
+            876.1,
+            909.0,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            923.1,
+            927.8,
+            927.8,
+            940.5,
+            947.5,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2,
+            949.2
+          ],
+          "time_labels": [
+            "-0h",
+            "-1h",
+            "-2h",
+            "-3h",
+            "-4h",
+            "-5h",
+            "-6h",
+            "-7h",
+            "-8h",
+            "-9h",
+            "-10h",
+            "-11h",
+            "-12h",
+            "-13h",
+            "-14h",
+            "-15h",
+            "-16h",
+            "-17h",
+            "-18h",
+            "-19h",
+            "-20h",
+            "-21h",
+            "-22h",
+            "-23h",
+            "-24h",
+            "-25h",
+            "-26h",
+            "-27h",
+            "-28h",
+            "-29h",
+            "-30h",
+            "-31h",
+            "-32h",
+            "-33h",
+            "-34h",
+            "-35h",
+            "-36h",
+            "-37h",
+            "-38h",
+            "-39h",
+            "-40h",
+            "-41h",
+            "-42h",
+            "-43h",
+            "-44h",
+            "-45h",
+            "-46h",
+            "-47h",
+            "-48h",
+            "-49h",
+            "-50h",
+            "-51h",
+            "-52h",
+            "-53h",
+            "-54h",
+            "-55h",
+            "-56h",
+            "-57h",
+            "-58h",
+            "-59h",
+            "-60h",
+            "-61h",
+            "-62h",
+            "-63h",
+            "-64h",
+            "-65h",
+            "-66h",
+            "-67h",
+            "-68h",
+            "-69h",
+            "-70h",
+            "-71h"
+          ],
+          "elements": [
+            {
+              "name": "轨迹高度",
+              "data": [
+                100,
+                150.0,
+                200.0,
+                250.0,
+                300.0,
+                350.0,
+                400.0,
+                450.0,
+                500.0,
+                550.0,
+                600.0,
+                650.0,
+                700.0,
+                721.5,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                733.4,
+                770.0,
+                812.0,
+                841.8,
+                876.1,
+                909.0,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                923.1,
+                927.8,
+                927.8,
+                940.5,
+                947.5,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2,
+                949.2
+              ],
+              "unit": "m",
+              "color": "#FF6B6B",
+              "type": "line"
+            },
+            {
+              "name": "温度",
+              "data": [
+                14.35,
+                14.025,
+                13.7,
+                13.375,
+                13.05,
+                12.725,
+                12.4,
+                12.075,
+                11.75,
+                11.425,
+                11.1,
+                10.775,
+                10.45,
+                10.31025,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                10.233225000000001,
+                9.9949025,
+                9.721912249999999,
+                9.528221025,
+                9.305148922499999,
+                9.091384030250001,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.999745627225,
+                8.9692710645025,
+                8.9692710645025,
+                8.886593958052249,
+                8.841434562247024,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321,
+                8.830041106022321
+              ],
+              "unit": "°C",
+              "color": "#4ECDC4",
+              "type": "line",
+              "yAxisIndex": 1
+            },
+            {
+              "name": "气压",
+              "data": [
+                1001.25,
+                995.25,
+                989.25,
+                983.25,
+                977.25,
+                971.25,
+                965.25,
+                959.25,
+                953.25,
+                947.25,
+                941.25,
+                935.25,
+                929.25,
+                926.67,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                925.248,
+                920.8482,
+                915.8083799999999,
+                912.232542,
+                908.1142878,
+                904.16785902,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                902.476073118,
+                901.9134658062,
+                901.9134658062,
+                900.38711922558,
+                899.553407303022,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197,
+                899.3430665727197
+              ],
+              "unit": "hPa",
+              "color": "#95E1D3",
+              "type": "line",
+              "yAxisIndex": 2
+            }
+          ],
+          "annotations": [
+            {
+              "type": "boundary_layer",
+              "description": "边界层高度（约1000-1500m）",
+              "height_range": [
+                1000,
+                1500
+              ],
+              "color": "rgba(255, 107, 107, 0.1)"
+            }
+          ]
+        },
+        "options": {
+          "show_grid": true,
+          "legend_position": "top",
+          "x_axis_label": "回溯时间",
+          "y_axis_label": "高度 (m)",
+          "smooth_curve": true
+        },
+        "meta": {
+          "schema_version": "3.1",
+          "generator": "trajectory_analysis_phase2",
+          "layout_hint": "wide",
+          "interaction_group": "trajectory_profile",
+          "data_flow": [
+            "trajectory_calc",
+            "profile_generation"
+          ]
+        }
+      },
+      "meta": {
+        "schema_version": "3.1",
+        "generator": "trajectory_analysis_phase2",
+        "original_data_ids": [],
+        "scenario": "trajectory_height_profile",
+        "layout_hint": "wide"
+      }
+    }
+  ],
+  "metadata": {
+    "schema_version": "v2.0",
+    "generator": "trajectory_analysis_phase2",
+    "scenario": "backward_trajectory_72h",
+    "record_count": 72,
+    "field_mapping_applied": true,
+    "field_mapping_info": {
+      "total_points": 72,
+      "time_step_hours": 1
+    },
+    "analysis_params": {
+      "lat": 23.13,
+      "lon": 113.26,
+      "start_time": "2024-10-01T12:00:00",
+      "hours_backward": 72,
+      "trajectory_height": 100,
+      "data_source": "open-meteo-era5",
+      "algorithm": "simplified_lagrangian_phase2",
+      "phase": "2.0",
+      "features": [
+        "multi_level_wind_interpolation",
+        "vertical_motion_calculation",
+        "boundary_layer_mixing"
+      ]
+    },
+    "trajectory_stats": {
+      "total_distance_km": 3520.1,
+      "avg_speed_ms": 13.77,
+      "min_height_m": 100,
+      "max_height_m": 949.2,
+      "dominant_direction": "北",
+      "trajectory_points": 72,
+      "time_span_hours": 71
+    }
+  },
+  "summary": "[OK] 完成反向轨迹分析。轨迹时长72小时，共72个点。主导方向：北，总距离：3520.1公里，高度变化：100m - 949m。"
+}

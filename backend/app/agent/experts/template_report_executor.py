@@ -48,16 +48,15 @@ class TemplateReportExecutor(ExpertExecutor):
         说明：
         - 实际可调用的工具由 ReAct Agent 全局注册表提供（见 tool_adapter）
         - 这里返回的字典仅用于声明"本专家会用到哪些工具名"，不强依赖具体类
-        - 工具优先级：get_jining_regular_stations > get_guangdong_regular_stations > get_air_quality
+        - 工具优先级：get_jining_regular_stations > get_air_quality
         - 其中：
-          - get_jining_regular_stations / get_guangdong_regular_stations / get_component_data 走自然语言 UQP 查询
+          - get_jining_regular_stations / get_component_data 走自然语言 UQP 查询
           - get_weather_data 为结构化参数工具（data_type/start_time/end_time/lat/lon）
         """
         # 仅声明工具名，具体实现由 tool_registry 提供
         return {
             "get_jining_regular_stations": object(),  # 济宁市专用工具，优先使用
-            "get_guangdong_regular_stations": object(),  # 广东省专用工具，次优先使用
-            "get_air_quality": object(),  # 全国城市查询，最后使用（非济宁/广东地区）
+            "get_air_quality": object(),  # 全国城市查询，最后使用（非济宁地区）
             "get_component_data": object(),
             "get_weather_data": object(),
         }
@@ -180,7 +179,7 @@ class TemplateReportExecutor(ExpertExecutor):
         async def execute_single_requirement(req: Dict[str, Any]) -> Dict[str, Any]:
             """执行单个查询需求（带并发限制，完全由LLM选择的工具执行）"""
             async with semaphore:  # 限制并发数
-                tool_name = req.get("tool") or "get_guangdong_regular_stations"
+                tool_name = req.get("tool") or "get_air_quality"
                 question = req.get("question", "")
                 params = req.get("params") or {}
 
@@ -334,17 +333,16 @@ class TemplateReportExecutor(ExpertExecutor):
         """调用 LLM 生成最终报告。
 
         注意：
-        - 这里使用流式接口 chat_stream，以避免长时间生成导致的 ReadTimeout；
-        - 当前仅在服务端聚合完整文本返回，后续如需前端逐字流式展示，
-          可以在此处增加回调，将增量片段通过 SSE 向前端转发。
+        - 这里使用 chat 方法（内部使用流式API），以避免长时间生成导致的 ReadTimeout；
+        - chat() 方法内部使用流式 API 并聚合完整文本返回，具有与原 chat_stream() 相同的功能
         """
         prompt = build_report_generation_prompt(
             template_content=template_content,
             collected_data=collected_data,
             time_range=target_time_range
         )
-        # 使用流式接口，在 Qwen 侧以 stream 模式返回，避免长时间无响应
-        report = await llm_service.chat_stream(
+        # 使用 chat 方法（内部已使用流式 API，避免超时）
+        report = await llm_service.chat(
             [{"role": "user", "content": prompt}],
             timeout=600.0,
         )

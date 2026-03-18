@@ -118,14 +118,6 @@ class ComponentExecutor(ExpertExecutor):
         except ImportError as e:
             logger.warning("济宁市区域对比工具加载失败", tool="get_jining_regular_stations", error=str(e))
 
-        # 广东省空气质量数据工具（次高优先级）
-        try:
-            from app.tools.query.get_guangdong_regular_stations.tool import GetGuangdongRegularStationsTool
-            tools["get_guangdong_regular_stations"] = GetGuangdongRegularStationsTool()
-            logger.info("广东省区域对比工具加载成功: get_guangdong_regular_stations（端口9091）")
-        except ImportError as e:
-            logger.warning("广东省区域对比工具加载失败", tool="get_guangdong_regular_stations", error=str(e))
-
         # VOCs组分数据工具（端口9092）
         try:
             from app.tools.query.get_vocs_data.tool import GetVOCsDataTool
@@ -212,13 +204,6 @@ class ComponentExecutor(ExpertExecutor):
             pass
 
         # RACM2完整化学机理OBM分析工具 (102物种, 504反应)
-        try:
-            from app.tools.analysis.pybox_integration.tool import CalculateOBMFullChemistryTool
-            tools["calculate_obm_full_chemistry"] = CalculateOBMFullChemistryTool()
-            logger.info("RACM2完整化学机理工具加载成功: calculate_obm_full_chemistry")
-        except ImportError as e:
-            logger.warning("RACM2完整化学机理工具加载失败", tool="calculate_obm_full_chemistry", error=str(e))
-        
         try:
             from app.tools.analysis.iaqi_calculator.tool import IAQICalculatorTool
             tools["iaqi_calculator"] = IAQICalculatorTool()
@@ -329,7 +314,7 @@ class ComponentExecutor(ExpertExecutor):
 
                 # 【核心修复】提取完整的图表标识信息
                 # 【关键修复】统一ID格式：使用 viz_${index} 确保与前端 chartRefs key 一致
-                # 后端: chart.id → [INSERT_CHART:xxx]
+                # 后端: chart.id → /api/image/xxx (URL直接引用)
                 # 前端: viz.id || `viz_${index}` → chartRefs[vizId]
                 # 必须保持一致，否则图片无法匹配
                 visual_id = visual.get("id") or ""
@@ -478,10 +463,8 @@ class ComponentExecutor(ExpertExecutor):
         if chart_urls:
             chart_parts = []
             for idx, title, url in chart_urls:
-                # 【关键修复】强调URL格式，禁止LLM修改
                 chart_parts.append(f"""图{idx}：{title}
-![{title}]({url})
-【URL格式警告】上方Markdown链接中的URL是完整且正确的，必须精确复制到你的输出中，禁止添加 https: 前缀，禁止修改域名，禁止添加任何字符！正确格式: /api/image/xxx 错误格式: https://api/image/xxx""")
+![{title}]({url})""")
             chart_analysis_template = "\n\n".join(chart_parts)
 
         # 提取地理上下文（新增）
@@ -509,7 +492,7 @@ class ComponentExecutor(ExpertExecutor):
 [2-3段总体分析，150-200字，通俗易懂，突出核心观点和关键发现]
 
 ### 图表解析
-**【强制要求】必须严格按照以下格式，为每一张图表生成Markdown图片链接和解析说明，缺一不可！**
+[为每一张图表生成Markdown图片链接和解析说明]
 
 {chart_analysis_template}
 
@@ -1061,7 +1044,7 @@ class ComponentExecutor(ExpertExecutor):
             # 【核心修复】扁平化结构：直接使用顶层result，不再嵌套result层
             data = result
 
-            if tool_name == "get_guangdong_regular_stations" or tool_name == "get_jining_regular_stations":
+            if tool_name == "get_jining_regular_stations":
                 stats["has_air_quality"] = True
 
                 if isinstance(data, dict) and "data" in data:
@@ -1108,20 +1091,6 @@ class ComponentExecutor(ExpertExecutor):
                     first_record = records[0] if records else {}
                     stats["vocs_species_count"] = len(first_record) if isinstance(first_record, dict) else 0
 
-            elif tool_name == "get_particulate_data":
-                stats["has_component"] = True
-                stats["component_type"] = "PM_composition"
-
-                # 安全地提取记录
-                records = []
-                if isinstance(data, dict) and "data" in data:
-                    records = data.get("data", [])
-                    if records is None:
-                        records = []
-
-                stats["component_record_count"] = len(records)
-                stats["pm_record_count"] = len(records)
-            
             elif tool_name in ["calculate_pm_pmf", "calculate_vocs_pmf"]:
                 stats["has_pmf"] = True
                 stats["pmf_tool_type"] = "vocs" if tool_name == "calculate_vocs_pmf" else "pm"

@@ -65,12 +65,13 @@ class UnifiedParticulateData(BaseModel):
 
         如果原始数据中组件作为顶层字段（如 '铝': 1.949），
         自动将其聚合到 components 字典中。
+
+        注意：输入数据应该已经通过 data_standardizer.standardize() 标准化
         """
-        # 已知的非组件字段
+        # 已知的非组件字段（标准化后的字段名）
         known_fields = {
             'station_code', 'station_name', 'timestamp', 'unit',
-            'qc_flag', 'metadata', 'stationCode', 'stationName',
-            'time', 'quality', 'data_time', 'mtime', 'record_id',
+            'qc_flag', 'metadata', 'data_type', 'time_type',
             'PM2_5', 'PM2.5', 'PM₂.₅', 'pm25'  # PM2.5 字段变体
         }
 

@@ -11,7 +11,7 @@ ReAct Agent - 主类
 5. 上下文管理：自动压缩、外部化、RAG增强
 """
 
-from typing import Dict, Any, AsyncGenerator, Optional, Tuple
+from typing import Dict, Any, AsyncGenerator, Optional, Tuple, List
 from datetime import datetime, timedelta
 import uuid
 import structlog
@@ -43,12 +43,11 @@ class ReActAgent:
     def __init__(
         self,
         max_iterations: int = 10,
-        max_working_memory: int = 20,  # 恒定保留20条详细记录
-        working_context_limit: int = 50000,  # 大幅增加字符限制，触发上下文压缩
+        max_working_memory: int = 20,
+        working_context_limit: int = 50000,
         large_data_threshold: int = 1000,
         tool_registry: Optional[Dict] = None,
-        session_ttl_hours: int = 12,
-        enable_multi_expert: bool = True  # 是否启用多专家系统
+        session_ttl_hours: int = 12
     ):
         """
         初始化 ReAct Agent
@@ -60,17 +59,18 @@ class ReActAgent:
             large_data_threshold: 大数据阈值（字符数）
             tool_registry: 工具注册表（可选）
             session_ttl_hours: 会话空闲时间，超时将自动清理（小时）
-            enable_multi_expert: 是否启用多专家系统
         """
         self.max_iterations = max_iterations
         self.max_working_memory = max_working_memory
         self.working_context_limit = working_context_limit
         self.large_data_threshold = large_data_threshold
-        self.enable_multi_expert = enable_multi_expert
         self._session_ttl = timedelta(hours=session_ttl_hours) if session_ttl_hours > 0 else None
         self._session_store: Dict[str, Dict[str, Any]] = {}
         self._session_lock = asyncio.Lock()
-        self.expert_router = None  # 专家路由器（延迟初始化）
+
+        # 初始化任务列表（用于任务管理工具）
+        from .task.task_list import TaskList
+        self.task_list = TaskList()
 
         # 初始化工具执行器
         self.executor = ToolExecutor(tool_registry=tool_registry)
@@ -78,71 +78,57 @@ class ReActAgent:
         # 初始化 LLM 规划器
         self.planner = ReActPlanner(tool_registry=tool_registry)
 
+        # 将planner注入到executor中（用于call_sub_agent）
+        self.executor.llm_planner = self.planner
+
+        # 注册工作流工具（延迟注册需要依赖注入的工具）
+        self._register_workflow_tools()
+
         logger.info(
             "react_agent_initialized",
             max_iterations=max_iterations,
             max_working_memory=max_working_memory,
             working_context_limit=working_context_limit,
-            tool_count=len(self.executor.tool_registry),
-            multi_expert_enabled=enable_multi_expert
+            tool_count=len(self.executor.tool_registry)
         )
 
-    def _get_expert_router(self, memory_manager, event_callback=None):
+    def _register_workflow_tools(self):
         """
-        获取或创建专家路由器（延迟初始化）- 使用V3版本
+        注册工作流工具到工具注册表
 
-        Args:
-            memory_manager: 记忆管理器
-            event_callback: 事件回调函数，用于实时发送专家执行事件
-
-        Returns:
-            专家路由器实例
+        标准分析工作流需要依赖注入（memory_manager和event_callback），
+        因此在ReActAgent初始化时延迟注册。
         """
-        if self.expert_router is None and self.enable_multi_expert:
-            from .experts.expert_router_v3 import ExpertRouterV3
+        try:
+            from app.tools.workflow.standard_analysis_workflow import StandardAnalysisWorkflow
 
-            # 创建专家路由器V3（传入memory_manager和事件回调）
-            self.expert_router = ExpertRouterV3(
-                memory_manager=memory_manager,
-                event_callback=event_callback
-            )
+            # 创建一个异步函数来延迟创建StandardAnalysisWorkflow实例
+            # 这样每次调用时会获取当前的memory_manager和event_callback
+            async def standard_analysis_workflow_wrapper(**kwargs):
+                """延迟创建实例并执行"""
+                # 从当前会话获取memory_manager和event_callback
+                session_id = kwargs.get('session_id')
+                memory_manager = None
+                event_callback = None
 
-            logger.info(
-                "expert_router_v3_initialized",
-                has_callback=event_callback is not None,
-                has_memory_manager=memory_manager is not None
-            )
+                # 尝试从session_store获取memory_manager
+                if session_id and session_id in self._session_store:
+                    memory_manager = self._session_store[session_id].get('memory')
 
-        return self.expert_router
+                # 创建StandardAnalysisWorkflow实例
+                workflow = StandardAnalysisWorkflow(
+                    memory_manager=memory_manager,
+                    event_callback=event_callback
+                )
+                return await workflow.execute(**kwargs)
 
-    async def get_expert_system_status(self) -> Dict[str, Any]:
-        """
-        获取多专家系统状态
+            # 注册工作流工具
+            self.executor.register_tool("standard_analysis_workflow", standard_analysis_workflow_wrapper)
 
-        Returns:
-            专家系统状态信息
-        """
-        if not self.enable_multi_expert:
-            return {
-                "enabled": False,
-                "status": "disabled"
-            }
+            logger.info("workflow_tool_registered", tool="standard_analysis_workflow")
 
-        if self.expert_router is None:
-            return {
-                "enabled": True,
-                "status": "not_initialized"
-            }
-
-        status = await self.expert_router.get_expert_status()
-        health = await self.expert_router.health_check()
-
-        return {
-            "enabled": True,
-            "status": health.get("overall_status", "unknown"),
-            "experts": status,
-            "health": health
-        }
+        except ImportError as e:
+            logger.warning("workflow_tool_import_failed", tool="standard_analysis_workflow", error=str(e))
 
     async def analyze(
         self,
@@ -151,13 +137,13 @@ class ReActAgent:
         enhance_with_history: bool = True,
         max_iterations: Optional[int] = None,
         reset_session: bool = False,
-        debug_mode: bool = False,
         plan_mode: bool = False,
-        precision: str = 'standard',
-        enable_multi_expert: Optional[bool] = None,  # ✅ 动态切换单/多专家模式
         knowledge_base_ids: Optional[list] = None,
         enable_reasoning: bool = False,
-        is_interruption: bool = False  # ✅ 是否为用户中断后的对话
+        is_interruption: bool = False,
+        initial_messages: Optional[List[Dict[str, Any]]] = None,
+        manual_mode: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -168,33 +154,46 @@ class ReActAgent:
             enhance_with_history: 是否使用长期记忆增强
             max_iterations: 本次执行的最大迭代数
             reset_session: 是否强制重置会话
-            debug_mode: 调试模式开关，开启后会返回 LLM 的上下文信息
             plan_mode: 是否使用 ReWOO 规划模式（一次性生成完整计划）
-            precision: EKMA分析精度模式 (fast/standard/full)
-            enable_multi_expert: ✅ 动态切换单/多专家模式（None则使用实例默认设置）
             knowledge_base_ids: 知识库ID列表（暂未启用，预留参数）
-            enable_reasoning: ✅ 是否启用思考模式（默认False，启用后会显示LLM的推理过程，适用于MiniMax等支持思考模式的模型）
-            is_interruption: ✅ 是否为用户中断后的对话（用户暂停后继续对话时为True）
+            enable_reasoning: 是否启用思考模式（默认False，启用后会显示LLM的推理过程，适用于MiniMax等支持思考模式的模型）
+            is_interruption: 是否为用户中断后的对话（用户暂停后继续对话时为True）
+            initial_messages: 历史消息列表（用于会话恢复，继续之前的对话）
+            manual_mode: 双模式架构（assistant | expert，None则使用默认expert模式）
+            attachments: 附件列表 [{file_id, name, type, url}]
 
         Yields:
             流式事件：
             - type: "start" | "thought" | "action" | "observation" | "complete" | "error"
             - data: 事件数据
         """
-        # 注意：knowledge_base_ids 参数暂未启用，预留用于后续知识库增强功能
-        _ = knowledge_base_ids
-
-        # ✅ 动态决定是否启用多专家系统
-        # 如果传入enable_multi_expert参数，则优先使用；否则使用实例的默认设置
-        should_use_multi_expert = enable_multi_expert if enable_multi_expert is not None else self.enable_multi_expert
+        # ✅ 如果有附件，添加到查询中告知LLM
+        if attachments and len(attachments) > 0:
+            attachment_info = "\n\n**用户上传的附件**：\n"
+            for i, att in enumerate(attachments, 1):
+                att_type = att.get("type", "file")
+                att_name = att.get("name", "unknown")
+                att_url = att.get("url", "")
+                if att_type == "image":
+                    attachment_info += f"{i}. 图片: {att_name}\n"
+                    attachment_info += f"   路径: {att_url}\n"
+                else:
+                    attachment_info += f"{i}. 文件: {att_name}\n"
+                    attachment_info += f"   路径: {att_url}\n"
+            user_query = user_query + attachment_info
+            logger.info(
+                "attachments_added_to_query",
+                count=len(attachments),
+                attachment_types=[a.get("type") for a in attachments]
+            )
 
         actual_session_id, memory_manager, created_new = await self._get_or_create_session(
             session_id,
             reset_session
         )
 
-        # Update executor's memory_manager to enable DataContextManager
-        self.executor.set_memory_manager(memory_manager)
+        # Update executor's memory_manager and task_list to enable DataContextManager
+        self.executor.set_memory_manager(memory_manager, task_list=self.task_list)
 
         iteration_limit = max_iterations or self.max_iterations
 
@@ -204,123 +203,67 @@ class ReActAgent:
             query=user_query[:100],
             iteration_limit=iteration_limit,
             reused_session=not created_new,
-            debug_mode=debug_mode,
             plan_mode=plan_mode,
-            enable_multi_expert=should_use_multi_expert,  # ✅ 记录实际使用的模式
-            mode="multi_expert" if should_use_multi_expert else "single_expert_react"
+            mode="react",
+            manual_mode=manual_mode or "expert",
+            knowledge_base_ids=knowledge_base_ids  # 记录知识库ID
         )
 
         try:
-            # ✅ 如果启用多专家系统，直接路由（由专家路由器的NLP决定调用哪些专家）
-            if should_use_multi_expert:
-                # 创建事件队列用于实时事件转发
-                event_queue = asyncio.Queue()
-
-                # 事件回调函数：接收专家路由器的事件并放入队列
-                def event_callback(event):
-                    # 立即放入队列，不阻塞
-                    try:
-                        event_queue.put_nowait(event)
-                    except asyncio.QueueFull:
-                        logger.warning("event_queue_full", event_type=event.get("type"))
-
-                # 获取专家路由器（传入事件回调）
-                expert_router = self._get_expert_router(memory_manager, event_callback=event_callback)
-
-                if expert_router:
-                    logger.info(
-                        "routing_to_multi_expert_system_v3",
-                        query=user_query[:100],
-                        mode="llm_autonomous_decision"
-                    )
-
-                    # 启动一个后台任务来获取pipeline结果
-                    pipeline_task = asyncio.create_task(
-                        expert_router.execute_pipeline(
-                            user_query,
-                            precision=precision  # EKMA分析精度模式 (fast/standard/full)
-                        )
-                    )
-
-                    # 实时转发事件给前端，同时等待pipeline完成
-                    try:
-                        while not pipeline_task.done() or not event_queue.empty():
-                            try:
-                                # 等待新事件，最多等1秒
-                                event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
-                                yield event
-                            except asyncio.TimeoutError:
-                                # 继续等待
-                                continue
-
-                        # 等待pipeline最终结果
-                        if not pipeline_task.done():
-                            pipeline_result = await pipeline_task
-                        else:
-                            pipeline_result = pipeline_task.result()
-
-                    except Exception as e:
-                        logger.error("multi_expert_execution_error", error=str(e))
-                        if not pipeline_task.done():
-                            pipeline_task.cancel()
-                        raise e
-
-                    # 转换为字典格式
-                    expert_result = pipeline_result.to_dict()
-
-                    # 返回最终expert_result事件（确保前端收到完整结果）
-                    yield {
-                        "type": "expert_result",
-                        "data": expert_result
-                    }
-
-                    # 返回最终完成事件（包含完整结果）
-                    if pipeline_result.status in ["success", "partial"]:
-                        yield {
-                            "type": "complete",
-                            "data": {
-                                "answer": pipeline_result.final_answer,
-                                "source": "multi_expert_system_v3",
-                                "confidence": pipeline_result.confidence,
-                                "pipeline_status": pipeline_result.status,
-                                "expert_results": expert_result.get("expert_results"),
-                                "conclusions": pipeline_result.conclusions,
-                                "recommendations": pipeline_result.recommendations,
-                                "data_ids": pipeline_result.data_ids,
-                                "selected_experts": pipeline_result.selected_experts,
-                                "visuals": pipeline_result.visuals  # 添加visuals字段
-                            }
-                        }
-                    else:
-                        yield {
-                            "type": "incomplete",
-                            "data": {
-                                "answer": "多专家分析未获得有效结果，回退到标准ReAct模式",
-                                "source": "multi_expert_system_fallback",
-                                "expert_results": expert_result.get("expert_results"),
-                                "errors": pipeline_result.errors
-                            }
-                        }
-                    return
-
-            # ✅ 如果不启用多专家系统，使用标准ReAct循环（LLM自主决策调用工具）
-            # 每次调用都创建新的 ReAct 循环，但共享会话记忆
+            # 使用标准 ReAct 循环（LLM 自主决策调用工具）
+            # 工具池包括：
+            # - 原子工具（基础能力）
+            # - 工作流工具（高级能力）
+            # - 多专家系统（通过 call_llm_tool 调用 ExpertRouterV3）
             react_loop = ReActLoop(
                 memory_manager=memory_manager,
                 llm_planner=self.planner,
                 tool_executor=self.executor,
                 max_iterations=iteration_limit,
                 stream_enabled=True,
-                is_interruption=is_interruption,  # ✅ 传递中断标志
-                plan_mode=plan_mode,  # 传递 plan_mode 参数
-                enable_reasoning=enable_reasoning  # ✅ 传递思考模式参数
+                is_interruption=is_interruption,
+                plan_mode=plan_mode,
+                enable_reasoning=enable_reasoning,
+                knowledge_base_ids=knowledge_base_ids  # ✅ 传递知识库ID列表
             )
 
             async for event in react_loop.run(
                 user_query=user_query,
                 enhance_with_history=enhance_with_history,
-                debug_mode=debug_mode
+                initial_messages=initial_messages,
+                manual_mode=manual_mode
             ):
+                # 捕获office_document事件并保存到会话存储（用于历史对话PDF预览恢复）
+                if event.get("type") == "office_document" and event.get("data"):
+                    office_doc_data = event["data"]
+                    # 确保session_store中有office_documents列表
+                    if actual_session_id not in self._session_store:
+                        self._session_store[actual_session_id] = {}
+                    if "office_documents" not in self._session_store[actual_session_id]:
+                        self._session_store[actual_session_id]["office_documents"] = []
+
+                    # 提取关键字段并保存
+                    doc_entry = {
+                        "pdf_preview": office_doc_data.get("pdf_preview"),
+                        "file_path": office_doc_data.get("file_path"),
+                        "generator": office_doc_data.get("generator"),
+                        "summary": office_doc_data.get("summary"),
+                        "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat())
+                    }
+
+                    # 检查是否已存在（避免重复）
+                    file_path = doc_entry["file_path"]
+                    existing = self._session_store[actual_session_id]["office_documents"]
+                    if not any(d.get("file_path") == file_path for d in existing):
+                        existing.append(doc_entry)
+                        logger.info(
+                            "office_document_saved_to_session",
+                            session_id=actual_session_id,
+                            file_path=file_path,
+                            generator=doc_entry["generator"],
+                            total_documents=len(existing)
+                        )
+
                 yield event
 
         except Exception as e:
@@ -366,6 +309,21 @@ class ReActAgent:
             工具名称列表
         """
         return self.executor.list_available_tools()
+
+    def refresh_tools(self):
+        """
+        刷新工具注册表（重新加载所有工具）
+
+        使用场景：
+        - 动态添加/删除工具后需要刷新 Agent 实例
+        - 工具注册表更新后需要重新加载
+        """
+        self.executor.refresh_tools()
+        logger.info(
+            "agent_tools_refreshed",
+            agent_id=id(self),
+            tool_count=len(self.executor.tool_registry)
+        )
 
     def get_tool_info(self, tool_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -543,9 +501,16 @@ def create_react_agent(
             tool_count=len(agent.get_available_tools())
         )
     else:
-        agent = ReActAgent(**kwargs)
+        # ✅ 加载全局工具注册表
+        from app.agent.tool_adapter import get_react_agent_tool_registry
+        tool_registry = get_react_agent_tool_registry()
 
-        logger.info("react_agent_created")
+        agent = ReActAgent(tool_registry=tool_registry, **kwargs)
+
+        logger.info(
+            "react_agent_created",
+            tool_count=len(tool_registry)
+        )
 
     return agent
 

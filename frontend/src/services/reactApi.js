@@ -22,11 +22,14 @@ class ReactAgentAPI {
     const {
       sessionId = null,
       enhanceWithHistory = true,
-      maxIterations = 10,
+      maxIterations = 30,
       debugMode = false,
       assistantMode = null,  // 助手模式
       precision = 'standard',  // 精度模式选项 (fast/standard/full)
       enableMultiExpert = false,  // ✅ 是否启用多专家系统
+      agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
+      knowledgeBaseIds = null,  // ✅ 知识库ID列表
+      attachments = null,  // ✅ 附件列表
       onEvent
     } = options
 
@@ -45,7 +48,10 @@ class ReactAgentAPI {
       debug_mode: debugMode,
       assistant_mode: assistantMode,  // 传递助手模式
       precision: precision,  // 精度模式选项 (fast/standard/full)
-      enable_multi_expert: enableMultiExpert  // ✅ 传递多专家开关
+      enable_multi_expert: enableMultiExpert,  // ✅ 传递多专家开关
+      mode: agentMode,  // ✅ 双模式架构
+      knowledge_base_ids: knowledgeBaseIds,  // ✅ 传递知识库ID列表
+      attachments: attachments  // ✅ 传递附件列表
     }
 
     try {

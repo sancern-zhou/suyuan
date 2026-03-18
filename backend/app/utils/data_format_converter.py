@@ -12,7 +12,7 @@
 版本: 2.0.0 (简化版)
 """
 
-import logging
+import structlog
 from typing import Dict, List, Any, Tuple, Union, Optional
 from datetime import datetime
 
@@ -20,7 +20,7 @@ from app.schemas.vocs import UnifiedVOCsData
 from app.schemas.unified_pmf import UnifiedPMFData
 from app.schemas.unified_obm import UnifiedOBMOFPData
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 # 元数据字段 (不是物种数据)
@@ -430,7 +430,7 @@ def convert_obm_ofp_result_to_unified(
     将OBM/OFP分析结果转换为UnifiedOBMOFPData标准格式
 
     支持多种输入格式：
-    1. OBMOFPResult对象 (来自calculate_obm_full_chemistry工具)
+    1. OBMOFPResult对象 (来自calculate_obm_ofp工具)
     2. 字典格式
     3. 列表格式 ([OBMOFPResult] - 来自save_data的返回格式)
 

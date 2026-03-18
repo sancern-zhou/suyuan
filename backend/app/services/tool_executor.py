@@ -3,12 +3,12 @@
 遵循Context-Aware V2架构
 """
 from typing import Dict, Any, Optional
-import logging
+import structlog
 
 from app.schemas.report_generation import ToolCall, ToolResult
 from app.agent.context.execution_context import ExecutionContext
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class ToolExecutor:
     """工具执行器 - 通过ReAct Agent工具注册表调用"""

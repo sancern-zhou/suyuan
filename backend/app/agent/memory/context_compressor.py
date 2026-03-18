@@ -6,9 +6,9 @@
 
 from typing import List, Dict, Any
 import json
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ContextCompressor:
@@ -20,16 +20,6 @@ class ContextCompressor:
 **压缩原则**：
 
 **必须完整保留（不压缩）**：
-⚠️ **办公助理工具的完整结果**：
-- bash 工具：完整的 stdout/stderr 输出（data.stdout/data.stderr 字段全部内容）
-- read_file 工具：
-  - 文本文件：完整的文件内容（data.content 字段全部内容）
-  - 图片文件：完整的分析结果（data.analysis 字段全部内容）
-  - 目录列表：完整的文件列表（data.content 字段全部内容）
-- analyze_image 工具：完整的图片分析结果（data.analysis 字段的全部内容）
-- word_processor/excel_processor/ppt_processor：完整的文档读取/编辑/图片提取结果（data 字段全部内容，包括 images 列表）
-
-**其他必须保留**：
 1. 用户的核心需求和问题
 2. 重要的 data_id 引用（如 weather_001, pmf_result_002 等）
 3. 关键的分析结论和发现
@@ -44,36 +34,53 @@ class ContextCompressor:
 5. 大段的数据展示（用摘要替代）
 
 **压缩策略**：
-- 办公助理工具（bash/read_file/analyze_image/Office工具）：完整保留工具返回的关键数据字段（不压缩）
 - 数据查询工具（get_*/calculate_*/download_*等）：压缩为 "调用 get_weather_data → data_id: weather_001 (30条记录, 温度25°C)"
 - 思考过程：提炼为关键决策点 "决定先分析气象条件"
 - 分析结果：保留核心结论 "发现15天高温天气导致O3浓度升高"
+- 办公助理工具（bash/read_file/analyze_image/Office工具/grep/glob/list_directory）：完整保留工具返回的 data 字段内容
 
 **重要**：
 - 保持对话的逻辑连贯性
 - 保留所有 data_id 引用（后续分析可能需要）
 - 保留用户的每个问题
 - 保留助手的最终回答
-- ⚠️ 办公助理工具的关键数据字段必须完整保留，不得截断或省略
 
 **原始对话**：
 {conversation_json}
 
-**输出要求**：
-1. 返回压缩后的消息列表（JSON 数组格式）
-2. 每条消息保持原有的 role 字段
-3. **必须直接返回 JSON 数组，不要使用 markdown 代码块**
-4. 不要在 JSON 前后添加任何字符、解释、``` 或其他标记
+**输出要求（CRITICAL - 必须严格遵守）**：
 
-**正确输出示例**（直接 JSON 数组，无代码块）：
+⚠️ **你的输出将直接传递给 json.loads() 解析，任何非 JSON 字符都会导致系统崩溃！**
+
+**强制规则**：
+1. 第一个字符必须是 `[`（左方括号）
+2. 最后一个字符必须是 `]`（右方括号）
+3. 禁止使用 ```json 或 ``` 包裹 JSON
+4. 禁止在 JSON 前后添加任何解释文字、空行或其他字符
+5. 每条消息必须包含 "role" 和 "content" 字段
+6. 返回标准 JSON 数组格式
+
+**错误示例（会导致系统崩溃）**：
+```json
 [
-  {{"role": "user", "content": "分析广州O3污染"},
-  {{"role": "assistant", "content": "调用 get_weather_data → data_id: weather_001 (30条记录)"},
-  {{"role": "user", "content": "读取这个图片文件 D:/chart.png 并分析"},
-  {{"role": "assistant", "content": "已读取图片并完成分析。分析结果：\\n\\n图片内容：这是一张折线图，显示了...\\n数据趋势：...\\n关键发现：...（完整的 analyze_image 返回内容）"}
+  {{"role": "user", "content": "分析广州O3污染"}}
+]
+```
+
+或者：
+
+这是压缩后的结果：
+[{{"role": "user", "content": "..."}}]
+
+**正确示例（直接输出 JSON 数组）**：
+[
+  {{"role": "user", "content": "分析广州O3污染"}},
+  {{"role": "assistant", "content": "调用 get_weather_data → data_id: weather_001 (30条记录)"}},
+  {{"role": "user", "content": "读取这个图片文件 D:/chart.png 并分析"}},
+  {{"role": "assistant", "content": "已读取图片并完成分析。分析结果：\\n\\n图片内容：这是一张折线图，显示了...\\n数据趋势：...\\n关键发现：...（完整的 analyze_image 返回内容）"}}
 ]
 
-注意：只返回上面的 JSON 数组格式，不要使用 ```json ... ``` 包裹。
+⚠️ 再次强调：你的输出必须以 [ 开头，以 ] 结尾，中间不能有任何非 JSON 内容。
 """
 
     def __init__(self, llm_client):

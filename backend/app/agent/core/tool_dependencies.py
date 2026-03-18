@@ -184,19 +184,13 @@ TOOL_DEPENDENCY_GRAPHS = {
                 },
                 "output_fields": ["data_id", "chart_config", "visuals"],
                 "description": "站点企业分布地图（基于analyze_upwind_enterprises结果生成）"
-            }
+            },
         }
     },
 
     "component": {
         "description": "组分分析专家工具依赖",
         "tools": {
-            "get_guangdong_regular_stations": {
-                "depends_on": [],
-                "produces": "air_quality_data",
-                "output_fields": ["data_id", "data", "metadata", "summary"],
-                "timeout": 180  # 增加超时到180秒（查询多城市数据需要更长时间）
-            },
             # ========================================
             # VOCs数据查询（独立工具，端口9092）
             # ========================================
@@ -307,13 +301,11 @@ TOOL_DEPENDENCY_GRAPHS = {
                 "requires_context": True  # 需要ExecutionContext加载数据
             },
             "calculate_soluble": {
-                "depends_on": ["get_pm25_ionic", "get_guangdong_regular_stations"],
+                "depends_on": ["get_pm25_ionic"],
                 "produces": "soluble_result",
                 "input_bindings": {
                     # 水溶性离子数据（role=water-soluble，包含SO4、NO3、NH4等）
                     "data_id": "get_pm25_ionic[role=water-soluble].data_id",
-                    # 气体数据用于SOR/NOR计算
-                    "gas_data_id": "get_guangdong_regular_stations[FIRST].data_id",
                     "analysis_type": "full"
                 },
                 "output_fields": ["data_id", "data", "visuals", "metadata"],
@@ -348,32 +340,7 @@ TOOL_DEPENDENCY_GRAPHS = {
             # VOCs分析工具（依赖VOCs数据）
             # ========================================
             # 完整化学机理OBM（依赖VOCs数据）
-            "calculate_obm_full_chemistry": {
-                "depends_on": ["get_vocs_data", "get_guangdong_regular_stations"],
-                "produces": "obm_full_chemistry_result",
-                "input_bindings": {
-                    "vocs_data_id": "get_vocs_data[FIRST].data_id",
-                    "o3_data_id": "get_guangdong_regular_stations[FIRST].data_id",
-                    "nox_data_id": "get_guangdong_regular_stations[FIRST].data_id",
-                    "mode": "all",
-                    "precision": "standard",
-                    "grid_resolution": "{grid_resolution}"
-                },
-                "requires_context": True,  # 需要ExecutionContext加载数据
-                "output_fields": ["data_id", "data", "visuals", "metadata", "summary"]
-            },
-            # ========================================
-            # 其他工具
-            # ========================================
-            "iaqi_calculator": {
-                "depends_on": ["get_guangdong_regular_stations"],
-                "produces": "iaqi_result",
-                "input_bindings": {
-                    "data_id": "get_guangdong_regular_stations[FIRST].data_id"
-                },
-                "output_fields": ["data_id", "iaqi_values", "pollutant_iaqi"]
-            }
-        }
+        },
     },
 
     "viz": {
@@ -487,13 +454,13 @@ COMMON_BINDING_EXAMPLES = {
     "data_id_extraction": [
         "get_vocs_data[0].data_id",
         "get_pm25_ionic[0].data_id",
-        "get_guangdong_regular_stations[0].data_id",
+        "get_air_quality[0].data_id",
         "weather_analysis[0].data_id"
     ],
     "metadata_extraction": [
         "get_vocs_data[0].metadata.station_name",
         "get_pm25_ionic[0].metadata.station_name",
-        "get_guangdong_regular_stations[0].metadata.location",
+        "get_air_quality[0].metadata.location",
         "pmf_result[0].factors[0].name"
     ],
     "context_extraction": [
@@ -512,32 +479,12 @@ COMMON_BINDING_EXAMPLES = {
 
 # 工具输出字段映射
 TOOL_OUTPUT_SCHEMAS = {
-    "get_guangdong_regular_stations": {
-        "required_fields": ["data_id", "data"],
-        "optional_fields": ["metadata", "summary"],
-        "data_structure": {
-            "data_id": "str - 数据存储ID",
-            "data": "List[Dict] - 广东省区域对比空气质量记录列表",
-            "metadata": "Dict - 元数据信息",
-            "summary": "str - 摘要信息"
-        }
-    },
     "get_vocs_data": {
         "required_fields": ["data_id", "data"],
         "optional_fields": ["metadata", "summary"],
         "data_structure": {
             "data_id": "str - VOCs数据存储ID（端口9092）",
             "data": "List[Dict] - VOCs组分数据记录列表",
-            "metadata": "Dict - 元数据信息，包含station_name等",
-            "summary": "str - 摘要信息"
-        }
-    },
-    "get_particulate_data": {
-        "required_fields": ["data_id", "data"],
-        "optional_fields": ["metadata", "summary"],
-        "data_structure": {
-            "data_id": "str - 颗粒物数据存储ID（端口9093）",
-            "data": "List[Dict] - 颗粒物组分数据记录列表",
             "metadata": "Dict - 元数据信息，包含station_name等",
             "summary": "str - 摘要信息"
         }
@@ -630,17 +577,6 @@ TOOL_OUTPUT_SCHEMAS = {
             "factors": "List[Dict] - 源因子信息",
             "source_contributions": "List[Dict] - 源贡献率",
             "model_stats": "Dict - 模型统计信息"
-        }
-    },
-    "calculate_obm_full_chemistry": {
-        "required_fields": ["data_id", "data", "visuals"],
-        "optional_fields": ["metadata", "summary"],
-        "data_structure": {
-            "data_id": "str - RACM2完整化学机理分析结果ID",
-            "data": "Dict - 分析结果(ekma/po3/rir，包含102物种和504反应)",
-            "visuals": "List[Dict] - 可视化图表列表(EKMA等值线图等)",
-            "metadata": "Dict - 元数据信息(机理版本、物种数量等)",
-            "summary": "str - 分析摘要"
         }
     },
     "iaqi_calculator": {
@@ -788,3 +724,4 @@ def parse_binding_expression(expression: str) -> Dict[str, Any]:
 def get_common_binding_examples() -> Dict[str, List[str]]:
     """获取常见绑定表达式示例"""
     return COMMON_BINDING_EXAMPLES.copy()
+

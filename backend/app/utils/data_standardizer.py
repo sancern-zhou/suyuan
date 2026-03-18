@@ -86,11 +86,18 @@ class DataStandardizer:
             "station_name": "station_name",
             "stationName": "station_name",
             "StationName": "station_name",
-            "name": "station_name",
             "站点名称": "station_name",
             "监测点": "station_name",
+
+            # 城市名称 - 新增 cityName 和 name 驼峰命名支持
             "城市名称": "city",
             "city_name": "city",
+            "cityName": "city",
+            "CityName": "city",
+            "name": "city",  # ← 关键修复：日报数据接口使用 name 字段存储城市名称
+            "Name": "city",
+            "城市": "city",
+            "所属城市": "city",
             "市区名称": "district",
             "地区": "city",
 
@@ -159,6 +166,7 @@ class DataStandardizer:
             # O3_8H - 8小时臭氧平均值（单独指标）
             "O3_8h": "O3_8h",
             "O3_8H": "O3_8h",
+            "o3_8H": "O3_8h",  # 新增：API返回的小写o版本
             "O38H": "O3_8h",
             "O38h": "O3_8h",
             "臭氧8小时": "O3_8h",  # 新增：中文
@@ -1300,6 +1308,12 @@ class DataStandardizer:
                             "pollutant_standardized_success",
                             original_field=_safe_for_logging(field_name),
                             standard_field=standard_field_name,
+                            value=normalized_value
+                        )
+                        logger.debug(
+                            "pollutant_standardized_success",
+                            original_field=_safe_for_logging(field_name),
+                            standard_field=standard_field_name,
                             original_value=field_value,
                             normalized_value=normalized_value
                         )
@@ -1449,22 +1463,22 @@ class DataStandardizer:
 
         # 【UDF v2.0格式转换】将扁平的污染物字段转换为measurements嵌套结构
         # 符合UnifiedDataRecord规范，确保污染物数据不丢失
-        logger.info(
-            "udf_v2_conversion_start",
-            input_fields=list(standardized_record.keys())[:20],
-            has_PM2_5="PM2_5" in standardized_record,
-            has_PM10="PM10" in standardized_record,
-            has_measurements="measurements" in standardized_record
-        )
+        # logger.info(
+        #     "udf_v2_conversion_start",
+        #     input_fields=list(standardized_record.keys())[:20],
+        #     has_PM2_5="PM2_5" in standardized_record,
+        #     has_PM10="PM10" in standardized_record,
+        #     has_measurements="measurements" in standardized_record
+        # )
         standardized_record = self._convert_to_udf_v2_format(standardized_record)
 
-        logger.info(
-            "udf_v2_conversion_complete",
-            output_fields=list(standardized_record.keys())[:20],
-            has_measurements="measurements" in standardized_record,
-            measurements_count=len(standardized_record.get("measurements", {})),
-            measurement_fields=list(standardized_record.get("measurements", {}).keys())[:15]
-        )
+        # logger.info(
+        #     "udf_v2_conversion_complete",
+        #     output_fields=list(standardized_record.keys())[:20],
+        #     has_measurements="measurements" in standardized_record,
+        #     measurements_count=len(standardized_record.get("measurements", {})),
+        #     measurement_fields=list(standardized_record.get("measurements", {}).keys())[:15]
+        # )
 
         return standardized_record
 
@@ -1498,10 +1512,10 @@ class DataStandardizer:
         # 包括常规污染物、AQI、IAQI等
         POLLUTANT_FIELDS = {
             # 常规污染物（标准字段名）
-            'PM2_5', 'PM10', 'O3', 'NO2', 'SO2', 'CO', 'NO', 'NOx',
+            'PM2_5', 'PM10', 'O3', 'NO2', 'SO2', 'CO', 'NO', 'NOx', 'O3_8h',
             # AQI和IAQI
             'AQI', 'IAQI', 'PM2_5_IAQI', 'PM10_IAQI', 'O3_IAQI',
-            'SO2_IAQI', 'NO2_IAQI', 'CO_IAQI',
+            'SO2_IAQI', 'NO2_IAQI', 'CO_IAQI', 'O3_8h_IAQI',
             # 气象要素（也放入measurements）
             'temperature', 'temperature_2m', 'humidity', 'relative_humidity_2m',
             'wind_speed', 'wind_speed_10m', 'wind_direction', 'wind_direction_10m',
@@ -1511,13 +1525,6 @@ class DataStandardizer:
         measurements = {}
         top_level_data = {}
         original_fields = {}
-
-        logger.debug(
-            "udf_v2_classifying_fields",
-            total_fields=len(record),
-            top_level_count=len(TOP_LEVEL_FIELDS),
-            pollutant_count=len(POLLUTANT_FIELDS)
-        )
 
         for field, value in record.items():
             # 备份原始字段（用于调试和向后兼容）
@@ -1531,11 +1538,6 @@ class DataStandardizer:
             elif field in POLLUTANT_FIELDS:
                 # 污染物字段：放入measurements
                 measurements[field] = value
-                logger.debug(
-                    "udf_v2_field_to_measurements",
-                    field=field,
-                    value=value
-                )
             elif field.startswith('PM') or field in self.pollutant_field_mapping.values():
                 # 动态检测其他污染物字段（如PM2_5_24h, O3_8h等）
                 measurements[field] = value
@@ -1551,15 +1553,25 @@ class DataStandardizer:
         # 构建v2.0格式记录
         v2_record = {**top_level_data}
 
+        # 添加调试日志：检查城市字段
+        logger.debug(
+            "udf_v2_city_field_check",
+            has_city_in_top_level="city" in top_level_data,
+            has_city_name_in_top_level="city_name" in top_level_data,
+            has_cityName_in_top_level="cityName" in top_level_data,
+            city_value=top_level_data.get("city", "MISSING"),
+            top_level_keys=list(top_level_data.keys())[:10]
+        )
+
         # 添加measurements字段（如果有污染物数据）
         if measurements:
             v2_record['measurements'] = measurements
 
-            logger.info(
-                "udf_v2_measurements_created",
-                measurements_count=len(measurements),
-                measurement_fields=list(measurements.keys())[:15]  # 只记录前15个
-            )
+            # logger.info(
+            #     "udf_v2_measurements_created",
+            #     measurements_count=len(measurements),
+            #     measurement_fields=list(measurements.keys())[:15]  # 只记录前15个
+            # )
 
         # 添加原始字段备份（可选，用于调试）
         # 为了节省空间，只在有extra字段时才备份

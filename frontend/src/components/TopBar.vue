@@ -1,7 +1,7 @@
 <template>
   <div class="topbar">
     <div class="left">
-      <h1>风清气智Agent</h1>
+      <!-- 标题已移除 -->
     </div>
 
     <div class="right">

@@ -8,15 +8,183 @@ import asyncio
 import json
 import html
 import os
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, AsyncGenerator
 import structlog
 from config.settings import settings
+import httpx
+from app.utils.llm_context_logger import get_llm_context_logger
 
 logger = structlog.get_logger()
 
 
 class LLMService:
     """LLM服务类 - 支持多provider配置"""
+
+    async def _parse_sse_stream(
+        self,
+        response: httpx.Response
+    ) -> AsyncGenerator[str, None]:
+        """解析 SSE 流，逐块 yield 内容片段
+
+        Args:
+            response: httpx 流式响应对象
+
+        Yields:
+            str: 每次返回一个文本块（chunk）
+        """
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+
+            # OpenAI / Qwen 兼容接口使用 "data: {...}" 和 "data: [DONE]" 形式
+            if line.startswith("data: "):
+                data_str = line[len("data: "):].strip()
+                if data_str == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(data_str)
+                except Exception:
+                    # 非法 JSON 片段直接跳过
+                    continue
+
+                # 兼容不同provider的流式返回格式
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices:
+                    continue
+
+                first_choice = choices[0]
+                if not isinstance(first_choice, dict):
+                    continue
+
+                # 提取内容片段
+                delta = first_choice.get("delta") or first_choice.get("message") or {}
+                piece = delta.get("content") or ""
+
+                if piece:
+                    yield piece
+
+    async def _parse_sse_stream_with_status(
+        self,
+        response: httpx.Response
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """解析 SSE 流，逐块 yield 内容片段和状态
+
+        Args:
+            response: httpx 流式响应对象
+
+        Yields:
+            dict: {"chunk": str, "is_complete": bool}
+                  - chunk: 文本块内容
+                  - is_complete: 流是否结束
+        """
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+
+            # OpenAI / Qwen 兼容接口使用 "data: {...}" 和 "data: [DONE]" 形式
+            if line.startswith("data: "):
+                data_str = line[len("data: "):].strip()
+                if data_str == "[DONE]":
+                    # 流结束，yield结束标记
+                    yield {"chunk": "", "is_complete": True}
+                    return
+
+                try:
+                    chunk = json.loads(data_str)
+                except Exception:
+                    # 非法 JSON 片段直接跳过
+                    continue
+
+                # 兼容不同provider的流式返回格式
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices:
+                    continue
+
+                first_choice = choices[0]
+                if not isinstance(first_choice, dict):
+                    continue
+
+                # 提取内容片段
+                delta = first_choice.get("delta") or first_choice.get("message") or {}
+                piece = delta.get("content") or ""
+
+                if piece:
+                    yield {"chunk": piece, "is_complete": False}
+
+    async def _call_llm_with_retry(
+        self,
+        request_func: callable,
+        *args,
+        **kwargs
+    ) -> Any:
+        """带 429 速率限制重试的 LLM 调用
+
+        Args:
+            request_func: 异步请求函数
+            *args: 传递给 request_func 的位置参数
+            **kwargs: 传递给 request_func 的关键字参数
+
+        Returns:
+            request_func 的返回值
+
+        Raises:
+            Exception: 重试失败后抛出最后一次异常
+        """
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                return await request_func(*args, **kwargs)
+
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status_code = e.response.status_code
+
+                # 检查是否是429速率限制错误
+                is_rate_limit = status_code == 429 or (
+                    status_code == 400 and
+                    "rate limit" in e.response.text.lower()
+                )
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    # 指数退避：2秒、4秒、8秒
+                    wait_time = min(2 ** attempt, 60)
+                    logger.warning(
+                        "llm_rate_limit_detected",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        wait_seconds=wait_time,
+                        response_text=e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    # 非429错误或已达最大重试次数，直接抛出
+                    logger.error(
+                        "llm_http_error",
+                        status_code=status_code,
+                        response_text=e.response.text[:500] if hasattr(e.response, 'text') else "N/A",
+                        attempt=attempt + 1,
+                        max_retries=max_retries
+                    )
+                    raise
+
+            except Exception as e:
+                # 其他异常直接抛出
+                logger.error(
+                    "llm_request_error",
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    attempt=attempt + 1,
+                    max_retries=max_retries
+                )
+                raise
+
+        # 理论上不会到达这里
+        raise last_error
 
     # Provider配置映射（与 settings 中的 provider 一致）
     PROVIDER_CONFIG = {
@@ -260,12 +428,12 @@ class LLMService:
         max_tokens: int = None
     ) -> str:
         """
-        简单的聊天接口
+        简单的聊天接口（内部使用流式API避免超时）
 
         Args:
             messages: 消息列表，[{"role": "user", "content": "..."}]
             temperature: 温度参数
-            timeout: 超时时间（秒），默认120秒
+            timeout: 超时时间（秒），默认120秒（流式模式下使用600秒）
             max_tokens: 最大输出token数，默认None（使用API默认）
 
         Returns:
@@ -279,31 +447,65 @@ class LLMService:
             provider=self.provider,
             model=self.model,
             base_url=self.base_url,
-            messages_count=len(messages)
+            messages_count=len(messages),
+            using_stream=True  # 标记使用流式模式
         )
 
         url, headers = self._get_request_config()
 
-        # 调试日志：打印发送给 LLM 的消息长度与部分预览，避免整段内容过长刷屏
+        # ✅ 使用LLMContextLogger记录完整的请求上下文到文件
         try:
+            import uuid
+            session_id = f"chat_{uuid.uuid4().hex[:8]}"
+
+            llm_context_logger = get_llm_context_logger()
+            log_file_path = llm_context_logger.log_request_context(
+                session_id=session_id,
+                iteration=0,  # chat方法没有iteration概念，使用0
+                mode="chat",
+                messages=messages,
+                metadata={
+                    "provider": self.provider,
+                    "model": self.model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+            )
+
+            # 在控制台只显示预览和文件路径
             total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+
+            # 构建预览消息
+            messages_preview = []
+            for msg in messages:
+                msg_copy = msg.copy()
+                content = msg_copy.get("content", "")
+                if len(content) > 300:
+                    msg_copy["content"] = content[:300] + "...(truncated)"
+                messages_preview.append(msg_copy)
+
             logger.info(
-                "llm_chat_request_debug",
+                "llm_chat_request",
                 provider=self.provider,
                 model=self.model,
                 url=url,
                 total_messages=len(messages),
                 total_chars=total_chars,
-                messages=messages,  # 不再截断，完整输出上下文
+                messages_preview=messages_preview,
+                log_file=log_file_path,
             )
         except Exception as e:
             # 调试日志失败不影响正常请求
-            logger.warning("llm_chat_request_debug_failed", error=str(e))
+            logger.warning("llm_chat_request_logging_failed", error=str(e))
+
+        # 🔥 使用流式API避免超时（超时时间增加到600秒）
+        stream_timeout = 600.0  # 流式模式使用更长的超时时间
 
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature
+            "temperature": temperature,
+            "stream": True,  # 🔥 启用流式模式
         }
 
         # 千问3特殊处理：禁用思考模式
@@ -319,84 +521,101 @@ class LLMService:
             model=payload.get("model"),
             has_messages=bool(messages),
             temperature=payload.get("temperature"),
-            max_tokens=payload.get("max_tokens")
+            max_tokens=payload.get("max_tokens"),
+            stream=True  # 标记为流式
         )
 
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+        # 429速率限制重试机制
+        max_retries = 3
+        last_error = None
 
-                # 提取响应内容
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        for attempt in range(max_retries):
+            try:
+                full_content = ""
 
-            # MiniMax可能返回thinking标签，需要处理
-            if self.provider == "minimax":
-                content = self._extract_json_from_thinking_response(content)
+                # 🔥 使用流式API（600秒超时）
+                async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                    async with client.stream("POST", url, headers=headers, json=payload) as response:
+                        response.raise_for_status()
 
-            return content
+                        # 使用辅助方法解析 SSE 流
+                        async for chunk in self._parse_sse_stream(response):
+                            full_content += chunk
 
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "llm_http_error",
-                status_code=e.response.status_code,
-                response_text=e.response.text[:500] if hasattr(e.response, 'text') else "N/A",
-                url=url,
-                provider=self.provider,
-                model=self.model
-            )
-            raise
-        except httpx.ConnectError as e:
-            logger.error(
-                "llm_connect_error",
-                url=url,
-                provider=self.provider,
-                error=str(e)
-            )
-            raise
-        except Exception as e:
-            logger.error(
-                "llm_chat_error",
-                url=url,
-                provider=self.provider,
-                model=self.model,
-                error_type=type(e).__name__,
-                error=str(e)
-            )
-            raise
+                # MiniMax可能返回thinking标签，需要处理
+                if self.provider == "minimax":
+                    full_content = self._extract_json_from_thinking_response(full_content)
 
-    async def chat_stream(
+                logger.info(
+                    "llm_chat_stream_completed",
+                    provider=self.provider,
+                    model=self.model,
+                    response_length=len(full_content),
+                    attempt=attempt + 1
+                )
+
+                return full_content
+
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status_code = e.response.status_code
+
+                # 检查是否是429速率限制错误
+                is_rate_limit = status_code == 429 or (
+                    status_code == 400 and
+                    "rate limit" in e.response.text.lower()
+                )
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    # 指数退避：2秒、4秒、8秒
+                    wait_time = min(2 ** attempt, 60)
+                    logger.warning(
+                        "llm_rate_limit_detected",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        wait_seconds=wait_time,
+                        response_text=e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    # 非429错误或已达最大重试次数，直接抛出
+                    logger.error(
+                        "llm_http_error",
+                        status_code=status_code,
+                        response_text=e.response.text[:500] if hasattr(e.response, 'text') else "N/A",
+                        url=url,
+                        provider=self.provider,
+                        model=self.model,
+                        attempt=attempt + 1,
+                        max_retries=max_retries
+                    )
+                    raise
+
+        # 理论上不会到达这里，但为了类型检查完整性
+        raise last_error
+
+    async def chat_streaming(
         self,
         messages: list,
         temperature: float = 0.7,
         timeout: float = 600.0,
         max_tokens: int = None,
-    ) -> str:
+    ):
         """
-        使用 OpenAI 兼容的 stream 模式进行流式对话。
-        当前主要用于长文本报告生成，避免长时间无响应导致 ReadTimeout，
-        同时为后续前端流式展示预留接口。
+        真正的流式 LLM 调用，逐块 yield 文本内容
 
-        返回值：
-            聚合后的完整文本内容（内部已把所有增量片段拼接起来）
+        Args:
+            messages: 消息列表
+            temperature: 温度参数
+            timeout: 超时时间
+            max_tokens: 最大token数
+
+        Yields:
+            str: 每次返回一个文本块（chunk）
         """
-        import httpx
-
         url, headers = self._get_request_config()
-
-        # 调试日志：不再打印完整 messages 内容，但会记录长度等信息
-        try:
-            total_chars = sum(len(str(m.get("content", ""))) for m in messages)
-            logger.info(
-                "llm_chat_stream_request_debug",
-                provider=self.provider,
-                model=self.model,
-                total_messages=len(messages),
-                total_chars=total_chars,
-            )
-        except Exception as e:
-            logger.warning("llm_chat_stream_request_debug_failed", error=str(e))
 
         payload = {
             "model": self.model,
@@ -412,52 +631,196 @@ class LLMService:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        full_content = ""
+        logger.info(
+            "llm_chat_streaming_start",
+            provider=self.provider,
+            model=self.model,
+            messages_count=len(messages)
+        )
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # 使用 HTTP 流式响应
-            async with client.stream("POST", url, headers=headers, json=payload) as response:
-                response.raise_for_status()
+        # 429速率限制重试机制
+        max_retries = 3
+        last_error = None
 
-                async for line in response.aiter_lines():
-                    if not line:
-                        continue
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", url, headers=headers, json=payload) as response:
+                        response.raise_for_status()
 
-                    # OpenAI / Qwen 兼容接口使用 "data: {...}" 和 "data: [DONE]" 形式
-                    if line.startswith("data: "):
-                        data_str = line[len("data: ") :].strip()
-                        if data_str == "[DONE]":
-                            break
+                        # 使用辅助方法解析 SSE 流
+                        async for chunk in self._parse_sse_stream(response):
+                            yield chunk
 
-                        try:
-                            chunk = json.loads(data_str)
-                        except Exception:
-                            # 非法 JSON 片段直接跳过，避免中断整体生成
-                            continue
+                logger.info("llm_chat_streaming_complete")
+                return  # 成功完成
 
-                        # 兼容不同provider的流式返回格式，防御性解析 choices
-                        choices = chunk.get("choices")
-                        if not isinstance(choices, list) or not choices:
-                            # 有些provider可能在部分片段不返回内容，仅返回控制信息，直接跳过即可
-                            continue
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status_code = e.response.status_code
 
-                        first_choice = choices[0]
-                        if not isinstance(first_choice, dict):
-                            continue
+                # 检查是否是429速率限制错误
+                is_rate_limit = status_code == 429 or (
+                    status_code == 400 and
+                    "rate limit" in e.response.text.lower()
+                )
 
-                        # OpenAI / Qwen / Mimo 流式增量通常在 delta 中；
-                        # 部分实现可能直接在 message 中返回完整内容，这里一并兼容。
-                        delta = first_choice.get("delta") or first_choice.get("message") or {}
+                if is_rate_limit and attempt < max_retries - 1:
+                    # 指数退避
+                    wait_time = min(2 ** attempt, 60)
+                    logger.warning(
+                        "llm_streaming_rate_limit_detected",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        wait_seconds=wait_time,
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(
+                        "llm_streaming_http_error",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries
+                    )
+                    raise
 
-                        piece = delta.get("content") or ""
-                        if piece:
-                            full_content += piece
+        # 理论上不会到达这里
+        raise last_error
 
-        # MiniMax 特殊格式兼容（理论上流式模式下不会用到）
-        if self.provider == "minimax":
-            full_content = self._extract_json_from_thinking_response(full_content)
+    async def chat_streaming_with_status(
+        self,
+        messages: list,
+        temperature: float = 0.7,
+        timeout: float = 600.0,
+        max_tokens: int = None,
+    ):
+        """
+        流式 LLM 调用，返回文本块和状态信息
 
-        return full_content
+        与 chat_streaming 的区别：
+        - 返回字典格式：{"chunk": str, "is_complete": bool}
+        - is_complete 为 True 时表示流已结束（SSE [DONE] 信号）
+
+        Args:
+            messages: 消息列表
+            temperature: 温度参数
+            timeout: 超时时间
+            max_tokens: 最大token数
+
+        Yields:
+            dict: {"chunk": str, "is_complete": bool}
+        """
+        url, headers = self._get_request_config()
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        # 千问3特殊处理：禁用思考模式
+        if self.provider == "qwen":
+            payload["enable_thinking"] = False
+
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        # ✅ 使用LLMContextLogger记录完整的请求上下文到文件
+        try:
+            import uuid
+            session_id = f"llm_service_{uuid.uuid4().hex[:8]}"
+
+            llm_context_logger = get_llm_context_logger()
+            log_file_path = llm_context_logger.log_request_context(
+                session_id=session_id,
+                iteration=0,  # llm_service没有iteration概念，使用0
+                mode="llm_service",
+                messages=messages,
+                metadata={
+                    "provider": self.provider,
+                    "model": self.model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+            )
+
+            # 在控制台只显示预览和文件路径
+            messages_preview = []
+            for msg in messages:
+                msg_copy = msg.copy()
+                content = msg_copy.get("content", "")
+                if len(content) > 300:
+                    msg_copy["content"] = content[:300] + "...(truncated)"
+                messages_preview.append(msg_copy)
+
+            logger.info(
+                "llm_streaming_request",
+                provider=self.provider,
+                model=self.model,
+                url=url,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages_count=len(messages),
+                messages_preview=messages_preview,
+                log_file=log_file_path,
+            )
+        except Exception as e:
+            logger.error("llm_context_logging_failed", error=str(e))
+
+        # 429速率限制重试机制
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream("POST", url, headers=headers, json=payload) as response:
+                        response.raise_for_status()
+
+                        # 使用辅助方法解析 SSE 流，并传递流结束信号
+                        async for result in self._parse_sse_stream_with_status(response):
+                            yield result
+
+                logger.info("llm_chat_streaming_with_status_complete")
+
+                return  # 成功完成
+
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                status_code = e.response.status_code
+
+                # 检查是否是429速率限制错误
+                is_rate_limit = status_code == 429 or (
+                    status_code == 400 and
+                    "rate limit" in e.response.text.lower()
+                )
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    # 指数退避
+                    wait_time = min(2 ** attempt, 60)
+                    logger.warning(
+                        "llm_streaming_with_status_rate_limit_detected",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        wait_seconds=wait_time,
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(
+                        "llm_streaming_with_status_http_error",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries
+                    )
+                    raise
+
+        # 理论上不会到达这里
+        raise last_error
 
     async def call_llm_with_json_response(
         self,
@@ -567,6 +930,38 @@ class LLMService:
                         # 抽取失败则继续走重试/抛错逻辑
                         raise
 
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+
+                # 检查是否是429速率限制错误
+                is_rate_limit = status_code == 429 or (
+                    status_code == 400 and
+                    "rate limit" in e.response.text.lower()
+                )
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    # 指数退避：2秒、4秒、8秒
+                    wait_time = min(2 ** attempt, 60)
+                    logger.warning(
+                        "llm_json_rate_limit_detected",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        wait_seconds=wait_time,
+                        response_text=e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    # 非429错误或已达最大重试次数
+                    logger.error(
+                        "llm_json_http_error",
+                        status_code=status_code,
+                        attempt=attempt + 1,
+                        error=str(e)
+                    )
+                    if attempt == max_retries - 1:
+                        raise
             except Exception as e:
                 logger.error(
                     "llm_request_failed",
@@ -780,18 +1175,38 @@ class LLMService:
                         }
 
             except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+
+                # 检查是否是429速率限制错误
+                is_rate_limit = status_code == 429 or (
+                    status_code == 400 and
+                    "rate limit" in e.response.text.lower()
+                )
+
                 logger.error(
                     "llm_messages_http_error",
                     provider=self.provider,
-                    status_code=e.response.status_code,
-                    error=str(e)
+                    status_code=status_code,
+                    error=str(e),
+                    is_rate_limit=is_rate_limit
                 )
+
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(1 * (attempt + 1))
+                    # 指数退避：2秒、4秒、8秒（针对429），其他错误1秒、2秒、3秒
+                    wait_time = min(2 ** attempt, 60) if is_rate_limit else (attempt + 1)
+                    logger.warning(
+                        "llm_messages_retry",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        wait_seconds=wait_time,
+                        is_rate_limit=is_rate_limit
+                    )
+                    await asyncio.sleep(wait_time)
                     continue
+
                 return {
                     "success": False,
-                    "error": f"HTTP error: {e.response.status_code}",
+                    "error": f"HTTP error: {status_code}",
                     "raw_content": ""
                 }
             except Exception as e:

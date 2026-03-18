@@ -12,26 +12,52 @@
 
     <!-- 消息列表 -->
     <div v-for="(message, index) in filteredMessages" :key="message.id" class="message-wrapper"
-      :class="{ 'has-sources': message.type === 'final' && message.data?.sources?.length > 0, 'clickable': props.assistantMode === 'knowledge-qa' && message.type === 'final' && message.data?.sources?.length > 0 }"
+      :class="{
+        'has-sources': message.type === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
+        'clickable': message.type === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
+        'selected': selectedMessageId === message.id
+      }"
       @click="handleMessageClick(message, index)"
     >
       <!-- 用户消息 -->
       <div v-if="message.type === 'user'" class="message user-message">
-        <div class="message-content" v-if="useMarkdown">
-          <MarkdownRenderer :content="message.content" />
+        <!-- 附件显示 -->
+        <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
+          <div v-for="(attachment, idx) in message.attachments" :key="idx" class="message-attachment">
+            <!-- 图片附件 -->
+            <img
+              v-if="attachment.type === 'image'"
+              :src="attachment.url"
+              :alt="attachment.name"
+              class="attachment-image"
+              @click="previewAttachment(attachment)"
+            />
+            <!-- 文档附件 -->
+            <div v-else class="attachment-file">
+              <svg viewBox="0 0 24 24" class="attachment-file-icon">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke="currentColor" stroke-width="2"/>
+                <polyline points="14 2 14 8 20 8" fill="none" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="attachment-file-name">{{ attachment.name }}</span>
+            </div>
+          </div>
         </div>
-        <div class="message-content" v-else>{{ message.content }}</div>
+
+        <div class="message-content" v-if="useMarkdown && message.content">
+          <MarkdownRenderer :content="message.content" :streaming="message.streaming === true" />
+        </div>
+        <div class="message-content" v-else-if="message.content">{{ message.content }}</div>
 
         <!-- Reflexion状态提示 -->
-        <div v-if="debugMode && showReflexion && reflexionCount > 0" class="reflexion-badge">
+        <div v-if="showReflexion && reflexionCount > 0" class="reflexion-badge">
           <span class="badge-icon">🧠</span>
           <span class="badge-text">智能恢复中 ({{ reflexionCount }})</span>
         </div>
       </div>
 
       <!-- Agent消息（最终答案） -->
-      <div v-else-if="message.type === 'final'" class="message agent-message final"
-           v-once @vue:mounted="collapsePreviousProcessMessages(message, messages)">
+      <!-- 移除 v-once 以支持流式更新 -->
+      <div v-else-if="message.type === 'final'" class="message agent-message final">
         <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
         <details v-if="getUnifiedProcessMessages(message, messages).length > 0" class="process-collapse">
           <summary>查看分析过程 ({{ getUnifiedProcessMessages(message, messages).length }} 个步骤)</summary>
@@ -52,7 +78,7 @@
               </div>
 
               <!-- 观察事件（只显示摘要） -->
-              <div v-else-if="procMsg.type === 'observation'" class="process-observation">
+              <div v-else-if="procMsg.type === 'observation' && !isOfficeToolWithPdf(procMsg)" class="process-observation">
                 <span class="process-icon">👁️</span>
                 <span class="process-label">工具结果</span>
                 <div class="process-text">{{ procMsg.data?.summary || '已完成' }}</div>
@@ -62,101 +88,32 @@
         </details>
 
         <div class="message-content" v-if="useMarkdown">
-          <MarkdownRenderer :content="message.content" />
+          <MarkdownRenderer :content="message.content" :streaming="message.streaming === true" />
         </div>
         <div class="message-content" v-else>{{ message.content }}</div>
 
-        <!-- 【调试】显示完整message.data以便排查问题 -->
-        <div v-if="debugMode" style="margin-top: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 11px; color: #666;">
-          <strong>调试信息:</strong>
-          <div>message.data: {{ message.data }}</div>
-        </div>
-
-        <!-- 多专家系统信息显示（修复：去掉source检查，改为直接检查expert_results） -->
-        <div v-if="message.data?.expert_results" class="expert-system-info">
-          <div class="expert-badge">
-            <span class="badge-icon">🎯</span>
-            <span class="badge-text">多专家系统分析</span>
-            <span v-if="message.data?.source" class="badge-source" style="font-size: 10px; color: #999; margin-left: 6px;">
-              [{{ message.data.source }}]
-            </span>
+        <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
+        <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
+          <div v-if="reportContentCacheMap.get(message.data.expert_results.report).markdown_content">
+            <MarkdownRenderer :content="reportContentCacheMap.get(message.data.expert_results.report).markdown_content" />
           </div>
-          <div class="expert-list" v-if="message.data?.selected_experts?.length">
-            <span class="expert-label">参与专家:</span>
-            <span v-for="expert in message.data.selected_experts" :key="expert" class="expert-tag">
-              {{ reactStore.getExpertLabel(expert) }}
-            </span>
-          </div>
-          <div class="conclusions" v-if="message.data?.conclusions?.length">
-            <h4>主要结论:</h4>
-            <ul>
-              <li v-for="(conclusion, index) in message.data.conclusions" :key="index">{{ conclusion }}</li>
-            </ul>
-          </div>
-          <div class="recommendations" v-if="message.data?.recommendations?.length">
-            <h4>建议措施:</h4>
-            <ul>
-              <li v-for="(rec, index) in message.data.recommendations" :key="index">{{ rec }}</li>
-            </ul>
-          </div>
-
-          <!-- 各专家分析总结 -->
-          <div class="expert-summaries">
-            <h4>专家分析总结:</h4>
-            <div v-for="(expertData, expertType) in message.data.expert_results" :key="expertType" class="expert-summary-item">
-              <div class="expert-summary-header">
-                <span class="expert-summary-icon">{{ getExpertIcon(expertType) }}</span>
-                <span class="expert-summary-name">{{ getExpertLabel(expertType) }}</span>
-              </div>
-              <div class="expert-summary-content">
-                <!-- 报告专家：显示完整报告 -->
-                <div v-if="debugMode && expertType === 'report'" class="report-debug" style="display: none;">
-                  <p style="color: #999; font-size: 11px;">Debug: tool_results={{ expertData?.tool_results?.length || 0 }}</p>
-                  <p v-if="debugMode" style="color: #999; font-size: 11px;">Debug: expertData={{ expertData }}</p>
+          <div v-else class="report-section" v-for="(section, sectionKey) in reportContentCacheMap.get(message.data.expert_results.report)" :key="sectionKey">
+            <h5 class="section-title">{{ formatSectionTitle(sectionKey) }}</h5>
+            <div class="section-content">
+              <template v-if="typeof section === 'string'">
+                {{ section }}
+              </template>
+              <template v-else-if="Array.isArray(section)">
+                <ul>
+                  <li v-for="(item, idx) in section" :key="idx">{{ typeof item === 'object' ? JSON.stringify(item) : item }}</li>
+                </ul>
+              </template>
+              <template v-else-if="typeof section === 'object'">
+                <div v-for="(val, key) in section" :key="key" class="subsection">
+                  <span class="subsection-key">{{ key }}:</span>
+                  <span class="subsection-value">{{ typeof val === 'object' ? JSON.stringify(val) : val }}</span>
                 </div>
-                <div v-if="expertType === 'report'" class="report-full-content">
-                  <!-- 【修复】使用计算属性缓存报告内容，避免async函数在模板中的问题 -->
-                  <template v-if="reportContentCacheMap.get(expertData)">
-                    <div v-if="reportContentCacheMap.get(expertData).markdown_content" class="markdown-report">
-                      <!-- 【新增】Markdown格式报告渲染 -->
-                      <MarkdownRenderer :content="reportContentCacheMap.get(expertData).markdown_content" />
-                    </div>
-                    <div v-else class="report-section" v-for="(section, sectionKey) in reportContentCacheMap.get(expertData)" :key="sectionKey">
-                      <h5 class="section-title">{{ formatSectionTitle(sectionKey) }}</h5>
-                      <div class="section-content">
-                        <template v-if="typeof section === 'string'">
-                          {{ section }}
-                        </template>
-                        <template v-else-if="Array.isArray(section)">
-                          <ul>
-                            <li v-for="(item, idx) in section" :key="idx">{{ typeof item === 'object' ? JSON.stringify(item) : item }}</li>
-                          </ul>
-                        </template>
-                        <template v-else-if="typeof section === 'object'">
-                          <div v-for="(val, key) in section" :key="key" class="subsection">
-                            <span class="subsection-key">{{ key }}:</span>
-                            <span class="subsection-value">{{ typeof val === 'object' ? JSON.stringify(val) : val }}</span>
-                          </div>
-                        </template>
-                      </div>
-                    </div>
-                  </template>
-                </div>
-                <!-- 其他专家：显示摘要 -->
-                <template v-else>
-                  <!-- 【新增】检查是否为Markdown格式的摘要 -->
-                  <div v-if="expertData.analysis?.summary?.includes('#')" class="markdown-summary">
-                    <MarkdownRenderer :content="expertData.analysis.summary" />
-                  </div>
-                  <p v-else class="expert-summary-text">{{ expertData.analysis?.summary || '暂无总结' }}</p>
-                  <div class="expert-key-findings" v-if="expertData.analysis?.key_findings?.length">
-                    <span class="findings-label">关键发现:</span>
-                    <ul class="findings-list">
-                      <li v-for="(finding, index) in expertData.analysis.key_findings" :key="index">{{ finding }}</li>
-                    </ul>
-                  </div>
-                </template>
-              </div>
+              </template>
             </div>
           </div>
         </div>
@@ -187,13 +144,32 @@
       </div>
 
       <!-- 观察事件（未被折叠时实时显示） -->
-      <div v-else-if="message.type === 'observation' && !isMessageHidden(message)" class="react-event event-observation">
+      <div v-else-if="message.type === 'observation' && !isMessageHidden(message) && !isOfficeToolWithPdf(message)" class="react-event event-observation">
         <div class="event-content">
           <div class="event-icon">👁️</div>
           <div class="event-text">
             <div class="observation-main">{{ message.data?.summary || '已完成' }}</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 图片预览模态框 -->
+    <div v-if="previewedImage" class="image-preview-modal" @click="closeImagePreview">
+      <div class="image-preview-content" @click.stop>
+        <img :src="previewedImage.url" :alt="previewedImage.name" class="preview-image" />
+        <div class="preview-info">
+          <span class="preview-filename">{{ previewedImage.name }}</span>
+          <a :href="previewedImage.url" :download="previewedImage.name" class="preview-download" @click.stop>
+            下载
+          </a>
+        </div>
+        <button class="preview-close" @click="closeImagePreview" title="关闭 (ESC)">
+          <svg viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
+            <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
@@ -212,10 +188,6 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  debugMode: {
-    type: Boolean,
-    default: false
-  },
   showReflexion: {
     type: Boolean,
     default: false
@@ -232,6 +204,11 @@ const props = defineProps({
     type: String,
     default: 'general-agent'
   },
+  // 【新增】当前选中的消息ID（用于高亮显示）
+  selectedMessageId: {
+    type: String,
+    default: null
+  },
   // 【新增】接收VisualizationPanel的引用，用于获取图表截图
   visualizationPanelRef: {
     type: Object,
@@ -246,14 +223,17 @@ const props = defineProps({
 
 const messagesContainer = ref(null)
 
-// 【新增】处理消息点击（知识问答模式）
+// 【新增】处理消息点击（支持所有模式的final消息）
 const handleMessageClick = (message, index) => {
-  if (props.assistantMode === 'knowledge-qa' && message.type === 'final' && message.data?.sources?.length > 0) {
+  // 检查是否是final消息且有sources字段（兼容新旧两种位置）
+  const hasSources = message.type === 'final' &&
+    ((message.data?.sources && Array.isArray(message.data.sources) && message.data.sources.length > 0) ||
+     (message.sources && Array.isArray(message.sources) && message.sources.length > 0))
+
+  if (hasSources && props.onMessageClick) {
     // 计算在原始 messages 数组中的索引
     const originalIndex = props.messages.findIndex(m => m.id === message.id)
-    if (props.onMessageClick) {
-      props.onMessageClick(originalIndex >= 0 ? originalIndex : index, message)
-    }
+    props.onMessageClick(originalIndex >= 0 ? originalIndex : index, message)
   }
 }
 
@@ -302,8 +282,8 @@ const updatePendingEvents = (messages) => {
   }
 }
 
-// 【新增】备用触发函数：直接处理report expert数据，使用截图管理器
-// 【关键修改】先等待截图完成，再处理报告
+// 【新增】备用触发函数：直接处理report expert数据
+// 【新方案】后端直接生成图片URL，无需截图和占位符处理
 const triggerReportCacheImmediately = async (messages) => {
   console.log('[ReActMessageList] triggerReportCacheImmediately 被调用')
 
@@ -320,19 +300,8 @@ const triggerReportCacheImmediately = async (messages) => {
       })
 
       if (!reportContentCache.value.has(cacheKey)) {
-        console.log('[ReActMessageList] 开始等待图表截图...')
-
-        // 【关键修改】使用截图管理器获取截图（会自动等待图表渲染）
-        const screenshotResult = await chartScreenshotManager.captureAll({
-          excludeMaps: true,
-          timeout: 15000
-        })
-
-        console.log('[ReActMessageList] 截图管理器结果:', screenshotResult)
-        const cachedScreenshots = screenshotResult.screenshots
-
         console.log('[ReActMessageList] 立即处理报告内容...')
-        const res = await getReportContent(reportExpertData, cachedScreenshots)
+        const res = await getReportContent(reportExpertData)
         reportContentCache.value.set(cacheKey, res)
         cacheUpdateTrigger.value++
         console.log('[ReActMessageList] 立即处理完成:', {
@@ -344,8 +313,7 @@ const triggerReportCacheImmediately = async (messages) => {
   }
 }
 
-// 【修复】异步预先处理报告内容（包含ECharts截图替换），再通过计算属性读取
-// 【关键修改】使用截图管理器获取截图
+// 【修复】异步预先处理报告内容（URL直接输出方案，无需截图）
 const fillReportCache = async (messages) => {
   // 【新增】详细调试日志
   console.log('[ReActMessageList] fillReportCache 被调用', {
@@ -355,37 +323,11 @@ const fillReportCache = async (messages) => {
 
   // 如果正在处理中，跳过
   if (!isProcessingComplete.value) {
-    console.log('[ReActMessageList] 正在处理中，跳过截图')
+    console.log('[ReActMessageList] 正在处理中，跳过')
     return
   }
 
-  // 【关键修改】使用截图管理器获取截图
-  let cachedScreenshots = null
-  try {
-    console.log('[ReActMessageList] 使用截图管理器获取截图...')
-    const screenshotResult = await chartScreenshotManager.captureAll({
-      excludeMaps: true,
-      timeout: 15000
-    })
-    cachedScreenshots = screenshotResult.screenshots
-    console.log('[ReActMessageList] fillReportCache 获取到截图:', Object.keys(cachedScreenshots || {}).length, '张')
-  } catch (error) {
-    console.warn('[ReActMessageList] fillReportCache 获取截图失败:', error)
-  }
-
-  // 【新增】调试：检查每条消息的 expert_results
-  messages.forEach((msg, idx) => {
-    console.log(`[ReActMessageList] 消息 #${idx} 检查:`, {
-      type: msg.type,
-      hasData: !!msg.data,
-      hasExpertResults: !!msg.data?.expert_results,
-      expertTypes: msg.data?.expert_results ? Object.keys(msg.data.expert_results) : [],
-      hasReport: !!msg.data?.expert_results?.report,
-      reportHasToolResults: !!msg.data?.expert_results?.report?.tool_results,
-      toolResultsLength: msg.data?.expert_results?.report?.tool_results?.length || 0
-    })
-  })
-
+  // 【新方案】后端直接生成图片URL，无需前端截图和占位符替换
   const tasks = []
   messages.forEach(msg => {
     if (msg.data?.expert_results?.report) {
@@ -393,15 +335,14 @@ const fillReportCache = async (messages) => {
       const cacheKey = JSON.stringify(reportExpertData?.tool_results || [])
       if (!reportContentCache.value.has(cacheKey)) {
         tasks.push(
-          getReportContent(reportExpertData, cachedScreenshots).then(res => {
+          getReportContent(reportExpertData).then(res => {
             // 【关键修复】更新缓存并触发响应式更新
             reportContentCache.value.set(cacheKey, res)
             cacheUpdateTrigger.value++ // 触发响应式更新
             console.log('[ReActMessageList] 缓存已更新，触发视图刷新', {
               cacheKey: cacheKey.substring(0, 50),
               hasContent: !!res?.markdown_content,
-              contentLength: res?.markdown_content?.length || 0,
-              hasPlaceholder: res?.markdown_content?.includes?.('[ECHARTS_PLACEHOLDER:')
+              contentLength: res?.markdown_content?.length || 0
             })
           })
         )
@@ -422,6 +363,18 @@ const fillReportCache = async (messages) => {
 watch(
   () => props.messages,
   async (newMessages, oldMessages) => {
+    console.log('[ReActMessageList] watch触发 - 消息变化:', {
+      新消息数量: newMessages?.length || 0,
+      旧消息数量: oldMessages?.length || 0,
+      消息类型分布: {
+        user: newMessages?.filter(m => m.type === 'user').length || 0,
+        thought: newMessages?.filter(m => m.type === 'thought').length || 0,
+        action: newMessages?.filter(m => m.type === 'action').length || 0,
+        observation: newMessages?.filter(m => m.type === 'observation').length || 0,
+        final: newMessages?.filter(m => m.type === 'final').length || 0
+      }
+    })
+
     // 【新增】检查是否有report expert数据，如果有立即处理（不等待防抖）
     const hasReportData = newMessages.some(msg => msg.data?.expert_results?.report)
     if (hasReportData) {
@@ -433,11 +386,14 @@ watch(
     const newLength = newMessages?.length || 0
     const oldLength = oldMessages?.length || 0
 
-    if (newLength === 0) return
+    if (newLength === 0) {
+      console.log('[ReActMessageList] 消息数量为0，跳过处理')
+      return
+    }
 
     // 如果是首次加载，直接处理
     if (oldLength === 0) {
-      console.log('[ReActMessageList] 首次加载消息')
+      console.log('[ReActMessageList] 首次加载消息，消息数量:', newLength)
       isProcessingComplete.value = false
       updatePendingEvents(newMessages)
       return
@@ -452,6 +408,8 @@ watch(
       isProcessingComplete.value = false
       clearTimeout(debounceTimer)
       updatePendingEvents(newMessages)
+    } else {
+      console.log('[ReActMessageList] 消息数量未变化，可能是内容更新')
     }
   },
   { deep: true, immediate: true }
@@ -540,17 +498,6 @@ const welcomeContent = computed(() => {
         '生成可视化图表和报告'
       ],
       example: '请输入您的问题，例如："分析广州天河站2025-11-01的O3污染情况"'
-    },
-    'knowledge-qa': {
-      title: '知识问答场景',
-      description: '基于知识库的智能问答系统，解答您的专业问题：',
-      features: [
-        '基于上传文档的智能问答',
-        '多知识库检索与引用',
-        '返回答案来源和引用',
-        '支持多轮对话和上下文'
-      ],
-      example: '请输入您的问题，例如："系统支持哪些文件格式？"'
     }
   }
   return contentMap[props.assistantMode] || contentMap['general-agent']
@@ -573,11 +520,25 @@ watch(() => props.messages, (newMessages) => {
 
 // 过滤掉系统消息，保留所有其他消息（实时显示过程消息）
 const filteredMessages = computed(() => {
-  return props.messages.filter(msg => {
+  const filtered = props.messages.filter(msg => {
     // 过滤掉系统消息
     if (msg.type === 'start' || msg.type === 'agent') return false
     return true
   })
+
+  console.log('[ReActMessageList] filteredMessages计算:', {
+    原始消息数: props.messages.length,
+    过滤后消息数: filtered.length,
+    过滤后类型分布: {
+      user: filtered.filter(m => m.type === 'user').length,
+      thought: filtered.filter(m => m.type === 'thought').length,
+      action: filtered.filter(m => m.type === 'action').length,
+      observation: filtered.filter(m => m.type === 'observation').length,
+      final: filtered.filter(m => m.type === 'final').length
+    }
+  })
+
+  return filtered
 })
 
 // 【新增】折叠的过程消息ID集合
@@ -610,6 +571,25 @@ const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
 // 【新增】判断消息是否应该被隐藏（已被final折叠）
 const isMessageHidden = (message) => {
   return collapsedProcessIds.value.has(message.id)
+}
+
+// 【新增】判断是否是带PDF预览的Office工具消息（这些消息在OfficeDocumentPanel中显示，不需要在聊天列表重复显示）
+const isOfficeToolWithPdf = (message) => {
+  if (message.type !== 'observation') return false
+
+  const obs = message.data?.observation || message.observation
+  if (!obs) return false
+
+  const metadata = obs.metadata || {}
+  const generator = metadata.generator
+
+  // 检查是否是Office工具
+  const officeTools = ['unpack_office', 'pack_office', 'word_edit', 'find_replace_word', 'accept_word_changes', 'recalc_excel', 'add_ppt_slide']
+  if (!officeTools.includes(generator)) return false
+
+  // 检查是否有PDF预览
+  const data = obs.data || obs
+  return !!(data?.pdf_preview)
 }
 
 // 【新增】获取当前final消息之前的过程消息（用于统一折叠区域）
@@ -701,7 +681,26 @@ onMounted(() => {
   if (messagesContainer.value) {
     messagesContainer.value.addEventListener('scroll', handleUserScroll)
   }
+  // 监听ESC键关闭图片预览
+  document.addEventListener('keydown', handleEscKey)
 })
+
+// 【修复】监听新final消息的添加，自动折叠之前的过程消息
+watch(
+  () => props.messages,
+  (newMessages) => {
+    if (!newMessages || newMessages.length === 0) return
+
+    const lastMessage = newMessages[newMessages.length - 1]
+    // 如果最后一条消息是final消息，自动折叠之前的过程消息
+    if (lastMessage?.type === 'final') {
+      nextTick(() => {
+        collapsePreviousProcessMessages(lastMessage, newMessages)
+      })
+    }
+  },
+  { deep: true }
+)
 
 // 清理滚动事件监听
 onBeforeUnmount(() => {
@@ -711,7 +710,15 @@ onBeforeUnmount(() => {
   if (scrollTimeout.value) {
     clearTimeout(scrollTimeout.value)
   }
+  document.removeEventListener('keydown', handleEscKey)
 })
+
+// 处理ESC键关闭图片预览
+const handleEscKey = (e) => {
+  if (e.key === 'Escape' && previewedImage.value) {
+    closeImagePreview()
+  }
+}
 
 // 获取数据大小（用于显示在折叠标签中）
 const getDataSize = (data) => {
@@ -1201,182 +1208,8 @@ const getOrFetchScreenshots = async () => {
   }
 }
 
-// 【新增】解析并替换 [INSERT_CHART:xxx] 占位符
-// 支持多种图片来源：
-// 1. [IMAGE:xxx] 格式 - 从后端API获取
-// 2. ECharts图表ID - 从前端可视化面板截图（通过fillReportCache预先获取）
-// 3. 通过标题匹配图表（支持 "图N：标题" 格式）
-// 4. 排除地图类型（地图不需要插入报告）
-const insertChartsIntoPlaceholders = async (markdown, cachedScreenshots = null) => {
-  if (!markdown || typeof markdown !== 'string') {
-    return markdown
-  }
-
-  // 检查是否有占位符
-  if (!markdown.includes('[INSERT_CHART:')) {
-    return markdown
-  }
-
-  console.log('[ReActMessageList] 开始解析 [INSERT_CHART:xxx] 占位符')
-
-  // 1. 获取所有可用图表信息
-  const chartInfoMap = getChartInfoMap()
-  console.log('[ReActMessageList] 可用图表数量:', Object.keys(chartInfoMap).length)
-  console.log('[ReActMessageList] 可用图表信息:', Object.keys(chartInfoMap).map(id => ({
-    id,
-    title: chartInfoMap[id]?.title || '',
-    type: chartInfoMap[id]?.type || ''
-  })))
-
-  // 2. 使用传入的截图缓存或全局缓存（不再尝试获取新截图）
-  let chartScreenshots = {}
-
-  if (cachedScreenshots && Object.keys(cachedScreenshots).length > 0) {
-    console.log('[ReActMessageList] 使用传入的截图缓存，共', Object.keys(cachedScreenshots).length, '张')
-    chartScreenshots = cachedScreenshots
-  } else if (chartScreenshotsCache.value && Object.keys(chartScreenshotsCache.value).length > 0) {
-    console.log('[ReActMessageList] 使用全局截图缓存，共', Object.keys(chartScreenshotsCache.value).length, '张')
-    chartScreenshots = chartScreenshotsCache.value
-  } else {
-    console.warn('[ReActMessageList] 无可用截图缓存，无法替换占位符')
-  }
-
-  console.log('[ReActMessageList] 可用截图ID:', Object.keys(chartScreenshots))
-
-  // 3. 解析占位符并进行匹配
-  // 匹配模式：[INSERT_CHART:xxx] 后面跟着 "图N：标题"
-  const placeholderPattern = /\[INSERT_CHART:([^\]]+)\](?:\s*\n*)*图(\d+)：([^\n]+)/g
-
-  let replacedCount = 0
-  let missingCount = 0
-
-  // 构建ID到截图的映射
-  const idToScreenshot = { ...chartScreenshots }
-
-  // 添加从API获取的[IMAGE:xxx]格式图片
-  const apiImagePromises = []
-  const apiImageResults = {}
-
-  for (const chartId of Object.keys(chartInfoMap)) {
-    if (chartId.startsWith('img_') && !idToScreenshot[chartId]) {
-      apiImagePromises.push(
-        fetchImageFromApi(chartId).then(imgData => {
-          if (imgData) {
-            apiImageResults[chartId] = imgData
-          }
-        })
-      )
-    }
-  }
-
-  if (apiImagePromises.length) {
-    await Promise.allSettled(apiImagePromises)
-    Object.assign(idToScreenshot, apiImageResults)
-  }
-
-  // 4. 替换占位符
-  let content = markdown.replace(placeholderPattern, (match, placeholderId, figureNum, title) => {
-    console.log(`[ReActMessageList] 解析占位符: placeholderId=${placeholderId}, figureNum=${figureNum}, title="${title}"`)
-
-    let matchedChartId = null
-    let matchedScreenshot = null
-
-    // 优先级1：ID直接匹配（placeholderId就是chartId）
-    const directMatch = idToScreenshot[placeholderId]
-    if (directMatch) {
-      // 检查是否是ScreenshotCache对象
-      const imgData = (directMatch.dataURL || directMatch)
-      if (typeof imgData === 'string' && imgData.length > 1000) {
-        matchedChartId = placeholderId
-        matchedScreenshot = directMatch
-        console.log(`[ReActMessageList] ID直接匹配成功: ${placeholderId}`)
-      }
-    }
-    // 优先级2：图表类型匹配（placeholderId是图表类型，如crustal_boxplot）
-    if (!matchedChartId) {
-      const matchedChart = matchChartByType(placeholderId, chartInfoMap, idToScreenshot)
-      if (matchedChart) {
-        const screenshot = idToScreenshot[matchedChart.id]
-        const imgData = (screenshot?.dataURL || screenshot)
-        if (screenshot && typeof imgData === 'string' && imgData.length > 1000) {
-          matchedChartId = matchedChart.id
-          matchedScreenshot = screenshot
-          console.log(`[ReActMessageList] 图表类型匹配成功: "${placeholderId}" -> ${matchedChart.id}`)
-        }
-      }
-      // 优先级3：标题匹配（备用）
-      if (!matchedChartId) {
-        const matchedChartByTitleResult = matchChartByTitle(title, chartInfoMap)
-        if (matchedChartByTitleResult) {
-          const screenshot = idToScreenshot[matchedChartByTitleResult.id]
-          const imgData = (screenshot?.dataURL || screenshot)
-          if (screenshot && typeof imgData === 'string' && imgData.length > 1000) {
-            matchedChartId = matchedChartByTitleResult.id
-            matchedScreenshot = screenshot
-            console.log(`[ReActMessageList] 标题匹配成功: "${title}" -> ${matchedChartByTitleResult.id}`)
-          }
-        }
-      }
-    }
-
-    if (matchedScreenshot) {
-      replacedCount++
-      const imgData = (matchedScreenshot.dataURL || matchedScreenshot)
-      const formattedData = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`
-      // 使用 Markdown 图片语法，避免 HTML 转义问题
-      // 添加 %EMBED% 标记，让 MarkdownRenderer 识别并进行特殊渲染
-      return `%EMBED%![${title}](${formattedData})%EMBED%`
-    } else {
-      missingCount++
-      console.warn(`[ReActMessageList] ⚠️ 占位符 ${placeholderId}（标题："${title}"）未找到对应截图`)
-      // 返回占位符文本，保留原始格式
-      return `[INSERT_CHART:${placeholderId}]\n图${figureNum}：${title}`
-    }
-  })
-
-  // 处理剩余的 [INSERT_CHART:xxx]（没有标题的）
-  content = content.replace(/\[INSERT_CHART:([^\]]+)\]/g, (match, chartId) => {
-    // 优先级1：ID直接匹配
-    const directScreenshot = idToScreenshot[chartId]
-    if (directScreenshot) {
-      // 检查是否是ScreenshotCache对象
-      const imgData = (directScreenshot.dataURL || directScreenshot)
-      if (typeof imgData === 'string' && imgData.length > 1000) {
-        replacedCount++
-        const formattedData = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`
-        console.log(`[ReActMessageList] ID直接匹配替换: "${chartId}"`)
-        return `%EMBED%![${chartId}](${formattedData})%EMBED%`
-      }
-    }
-    // 优先级2：图表类型匹配
-    else {
-      const matchedChart = matchChartByType(chartId, chartInfoMap, idToScreenshot)
-      if (matchedChart) {
-        const matchedScreenshot = idToScreenshot[matchedChart.id]
-        // 检查是否找到截图且是有效的字符串
-        const imgData = (matchedScreenshot?.dataURL || matchedScreenshot)
-        if (matchedScreenshot && typeof imgData === 'string' && imgData.length > 1000) {
-          replacedCount++
-          const formattedData = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`
-          console.log(`[ReActMessageList] 图表类型匹配替换: "${chartId}" -> ${matchedChart.id}`)
-          return `%EMBED%![${matchedChart.title || chartId}](${formattedData})%EMBED%`
-        }
-      }
-    }
-
-    if (chartId.startsWith('img_')) {
-      // 尝试从API获取
-      return match // 保留占位符，下次处理
-    } else {
-      missingCount++
-      console.warn(`[ReActMessageList] ⚠️ [INSERT_CHART:${chartId}] 未找到对应截图`)
-      return match
-    }
-  })
-
-  console.log(`[ReActMessageList] 替换完成: 成功 ${replacedCount}, 缺失 ${missingCount}`)
-  return content
-}
+// 【已废弃】insertChartsIntoPlaceholders 函数已删除
+// 新方案：后端直接生成图片URL格式 ![](/api/image/xxx)，前端无需处理占位符
 
 // 【修复】使用缓存的截图替换占位符（不再调用getAllChartImages，确保只截图一次）
 // 尝试多次收集图表截图并替换占位符（用于主对话区报告显示）
@@ -1443,8 +1276,8 @@ const replaceEchartsPlaceholders = async (markdown, cacheKey, cachedScreenshots 
   return content
 }
 
-// 获取报告完整内容
-const getReportContent = async (expertData, cachedScreenshots = null) => {
+// 获取报告完整内容（新方案：后端直接生成图片URL）
+const getReportContent = async (expertData) => {
   console.log('getReportContent expertData:', expertData)
 
   // 【新增】使用缓存，避免重复处理
@@ -1485,40 +1318,21 @@ const getReportContent = async (expertData, cachedScreenshots = null) => {
       console.log('总sections数量:', result.sections.length)
       console.log('合并后内容长度:', allMarkdownContent.length)
 
-      // 【修复】后端已经返回了base64图片，不需要再收集截图
-      // 如果存在ECharts占位符（仅当后端未返回图片时），才尝试收集截图
-      console.log('[ReActMessageList] 检查占位符...')
-      console.log('[ReActMessageList] 包含ECHARTS占位符:', allMarkdownContent.includes('[ECHARTS_PLACEHOLDER:'))
-      console.log('[ReActMessageList] 包含INSERT_CHART占位符:', allMarkdownContent.includes('[INSERT_CHART:'))
+      // 【新方案】后端直接生成图片URL格式，前端无需处理占位符
+      console.log('[ReActMessageList] 检查图片格式...')
+      console.log('[ReActMessageList] 包含/api/image/:', allMarkdownContent.includes('/api/image/'))
       console.log('[ReActMessageList] 包含base64:', allMarkdownContent.includes('data:image/png;base64,'))
-      console.log('[ReActMessageList] 有visualizationPanelRef:', !!props.visualizationPanelRef)
 
-      // 【新增】处理 [INSERT_CHART:xxx] 占位符（支持延迟插入）
-      if (allMarkdownContent.includes('[INSERT_CHART:')) {
-        console.log('[ReActMessageList] 检测到 [INSERT_CHART:xxx] 占位符，触发图表插入...')
-        console.log('[ReActMessageList] 原始报告内容长度:', allMarkdownContent.length)
-        console.log('[ReActMessageList] visualizationPanelRef 存在:', !!props.visualizationPanelRef)
-        console.log('[ReActMessageList] 可视化面板图表数量:', props.visualizationPanelRef?.visualizations?.length || 0)
-
-        // 【调试】打印所有占位符
-        const placeholderMatches = allMarkdownContent.match(/\[INSERT_CHART:[^\]]+\]/g)
-        console.log('[ReActMessageList] 占位符列表:', placeholderMatches)
-
-        allMarkdownContent = await insertChartsIntoPlaceholders(allMarkdownContent, cachedScreenshots)
-        console.log('[ReActMessageList] 图表插入后报告内容长度:', allMarkdownContent.length)
-        console.log('[ReActMessageList] 插入后是否包含[INSERT_CHART:', allMarkdownContent.includes('[INSERT_CHART:'))
-        console.log('[ReActMessageList] 插入后是否包含%EMBED%:', allMarkdownContent.includes('%EMBED%'))
-      }
-
-      // 如果存在ECharts占位符（仅当后端未返回图片时），才尝试收集截图
-      if (allMarkdownContent.includes('[ECHARTS_PLACEHOLDER:')) {
-        console.log('[ReActMessageList] 检测到 [ECHARTS_PLACEHOLDER:] 占位符，使用缓存截图替换')
-        allMarkdownContent = await replaceEchartsPlaceholders(allMarkdownContent, cacheKey, cachedScreenshots)
-      } else if (allMarkdownContent.includes('data:image/png;base64,')) {
-        console.log('[ReActMessageList] 检测到base64图片，后端已返回图片数据，无需额外处理')
-      } else {
-        console.log('[ReActMessageList] 无占位符也无base64图片')
-      }
+      // 【新增】清理后端章节标识标记（这些标识用于提取章节，但不应显示给用户）
+      allMarkdownContent = allMarkdownContent
+        .replace(/\[WEATHER_SECTION_START\]/g, '')
+        .replace(/\[WEATHER_SECTION_END\]/g, '')
+        .replace(/\[COMPONENT_SECTION_START\]/g, '')
+        .replace(/\[COMPONENT_SECTION_END\]/g, '')
+        .replace(/\[CONCLUSION_SECTION_START\]/g, '')
+        .replace(/\[CONCLUSION_SECTION_END\]/g, '')
+        .replace(/\[CHART_\d+_START\]/g, '')
+        .replace(/\[CHART_\d+_END\]/g, '')
 
       const result1 = { markdown_content: allMarkdownContent }
       reportContentCache.value.set(cacheKey, result1)
@@ -1575,6 +1389,19 @@ const formatSectionTitle = (key) => {
   }
   return titleMap[key] || key
 }
+
+// 附件预览
+const previewedImage = ref(null)
+
+const previewAttachment = (attachment) => {
+  if (attachment.type === 'image') {
+    previewedImage.value = attachment
+  }
+}
+
+const closeImagePreview = () => {
+  previewedImage.value = null
+}
 </script>
 
 <style lang="scss" scoped>
@@ -1629,14 +1456,25 @@ const formatSectionTitle = (key) => {
   display: flex;
   flex-direction: column;
 
-  // 知识问答模式：有来源的消息可点击
+  // 有来源的消息可点击（所有模式）
   &.clickable {
     cursor: pointer;
     border-radius: 8px;
     transition: background 0.2s;
+    position: relative;
 
     &:hover {
       background: #f8fbff;
+    }
+
+    // 选中状态
+    &.selected {
+      background: #e3f2fd;
+      border-left: 3px solid #1976d2;
+
+      &:hover {
+        background: #e3f2fd;
+      }
     }
 
     // 来源提示样式
@@ -2323,6 +2161,151 @@ const formatSectionTitle = (key) => {
     .process-observation .process-label {
       color: #388E3C;
     }
+  }
+}
+
+// 附件样式
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.message-attachment {
+  position: relative;
+}
+
+.attachment-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  cursor: pointer;
+  object-fit: cover;
+  transition: opacity 0.2s;
+
+  &:hover {
+    opacity: 0.85;
+  }
+}
+
+.attachment-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.attachment-file-icon {
+  width: 20px;
+  height: 20px;
+  color: #7c8db5;
+  flex-shrink: 0;
+}
+
+.attachment-file-name {
+  font-size: 13px;
+  color: #6b7a99;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 图片预览模态框
+.image-preview-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  cursor: pointer;
+}
+
+.image-preview-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: default;
+}
+
+.preview-image {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.preview-info {
+  position: absolute;
+  bottom: -40px;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 8px;
+  color: white;
+}
+
+.preview-filename {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: calc(100% - 80px);
+}
+
+.preview-download {
+  color: white;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  transition: background 0.2s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.preview-close {
+  position: absolute;
+  top: -50px;
+  right: 0;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  svg {
+    width: 20px;
+    height: 20px;
+    color: white;
   }
 }
 </style>

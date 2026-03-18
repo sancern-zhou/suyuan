@@ -46,7 +46,9 @@ class ToolExecutor:
     def __init__(
         self,
         tool_registry: Optional[Dict[str, Callable]] = None,
-        memory_manager: Optional["HybridMemoryManager"] = None
+        memory_manager: Optional["HybridMemoryManager"] = None,
+        task_list: Optional[Any] = None,
+        llm_planner: Optional[Any] = None  # ✅ 新增：用于call_sub_agent
     ):
         """
         初始化工具执行器
@@ -55,10 +57,14 @@ class ToolExecutor:
             tool_registry: 工具注册表
                 格式: {"tool_name": callable_function}
             memory_manager: 混合内存管理器（用于创建 DataContextManager）
+            task_list: 任务列表实例（用于任务管理工具）
+            llm_planner: LLM规划器（用于call_sub_agent创建子Agent）
         """
         self.tool_registry = tool_registry or {}
         self.memory_manager = memory_manager
         self.data_context_manager: Optional["DataContextManager"] = None
+        self.task_list = task_list
+        self.llm_planner = llm_planner  # ✅ 存储llm_planner
 
         # Initialize DataContextManager if memory_manager provided
         if memory_manager:
@@ -77,6 +83,28 @@ class ToolExecutor:
             has_context_manager=self.data_context_manager is not None
         )
 
+    def refresh_tools(self):
+        """
+        刷新工具注册表（从 global_tool_registry 重新加载所有工具）
+
+        使用场景：
+        - 动态添加/删除工具后需要刷新 Agent 实例
+        - 工具注册表更新后需要重新加载
+        """
+        logger.info("refreshing_tool_registry")
+
+        # 清空当前注册表
+        self.tool_registry.clear()
+
+        # 重新注册所有工具
+        self._register_builtin_tools()
+
+        logger.info(
+            "tool_registry_refreshed",
+            tool_count=len(self.tool_registry),
+            tools=list(self.tool_registry.keys())
+        )
+
     def _register_builtin_tools(self):
         """注册内置工具"""
         try:
@@ -90,10 +118,13 @@ class ToolExecutor:
             for tool_name, tool_func in real_tools.items():
                 self.tool_registry[tool_name] = tool_func
 
+            # 🔍 调试日志：输出已注册的工具
+            registered_tools = list(real_tools.keys())
             logger.info(
                 "builtin_tools_registered",
-                tools=list(real_tools.keys()),
-                count=len(real_tools)
+                tools=registered_tools,
+                count=len(real_tools),
+                has_unpack_office="unpack_office" in registered_tools
             )
 
             # 注册特殊工具：FINISH_SUMMARY 和 FINISH
@@ -113,7 +144,7 @@ class ToolExecutor:
             )
 
     def _register_special_tools(self):
-        """注册特殊工具（FINISH_SUMMARY 和 FINISH）"""
+        """注册特殊工具（仅 FINISH_SUMMARY）"""
 
         async def finish_summary_tool(context=None, data_id: Optional[Union[str, List[str]]] = None) -> Dict[str, Any]:
             """
@@ -137,30 +168,12 @@ class ToolExecutor:
                 "summary": "FINISH_SUMMARY: 系统将基于指定数据生成详细分析报告"
             }
 
-        async def finish_tool(**kwargs) -> Dict[str, Any]:
-            """
-            FINISH 特殊工具
-
-            功能：简单完成（占位工具，实际由 loop.py 处理）
-
-            Args:
-                **kwargs: 可接受任意参数，从中提取 answer 字段
-            """
-            # 从 kwargs 中提取 answer 参数（如果有）
-            answer = kwargs.get("answer", "任务已完成")
-            return {
-                "success": True,
-                "action_type": "FINISH",
-                "answer": answer
-            }
-
         # 注册特殊工具
         self.tool_registry["FINISH_SUMMARY"] = finish_summary_tool
-        self.tool_registry["FINISH"] = finish_tool
 
         logger.info(
             "special_tools_registered",
-            tools=["FINISH_SUMMARY", "FINISH"]
+            tools=["FINISH_SUMMARY"]
         )
 
     def register_tool(self, name: str, func: Callable):
@@ -185,7 +198,7 @@ class ToolExecutor:
             total_tools=len(self.tool_registry)
         )
 
-    def set_memory_manager(self, memory_manager: "HybridMemoryManager"):
+    def set_memory_manager(self, memory_manager: "HybridMemoryManager", task_list: Optional[Any] = None):
         """
         动态设置 memory_manager 并初始化 DataContextManager
 
@@ -193,8 +206,26 @@ class ToolExecutor:
 
         Args:
             memory_manager: 混合内存管理器
+            task_list: 任务列表实例（可选）
         """
         self.memory_manager = memory_manager
+
+        # 初始化 DataContextManager
+        if memory_manager and not self.data_context_manager:
+            from app.agent.context.data_context_manager import DataContextManager
+            self.data_context_manager = DataContextManager(memory_manager)
+            logger.info(
+                "data_context_manager_initialized_in_set_memory_manager",
+                session_id=memory_manager.session_id
+            )
+
+        # 更新 task_list（如果提供）
+        if task_list is not None:
+            self.task_list = task_list
+            logger.debug(
+                "task_list_updated_in_executor",
+                has_task_list=True
+            )
 
         # Initialize DataContextManager
         from app.agent.context.data_context_manager import DataContextManager
@@ -248,17 +279,21 @@ class ToolExecutor:
 
         # Step 1: 验证工具存在
         if tool_name not in self.tool_registry:
+            # 🔍 调试日志：工具不存在时详细输出注册表状态
+            available_tools = list(self.tool_registry.keys())
             logger.error(
                 "tool_not_found",
                 tool_name=tool_name,
-                available_tools=list(self.tool_registry.keys())
+                available_tools=available_tools,
+                has_unpack_office="unpack_office" in available_tools,
+                registry_size=len(self.tool_registry)
             )
 
             return {
                 "success": False,
                 "error": f"工具不存在: {tool_name}",
                 "summary": f"❌ 工具 {tool_name} 未注册",
-                "available_tools": list(self.tool_registry.keys())
+                "available_tools": available_tools
             }
 
         # ✅ Step 2: Input Adapter 规范化（Phase 2.2 新增）
@@ -389,10 +424,6 @@ class ToolExecutor:
                 "provided_args": list(tool_args.keys())
             }
 
-            # ✅ 增强：为TypeError也添加二阶段加载提示（bash工具除外）
-            if tool_name != "bash":
-                error_result["error"] += "\n\n💡 **提示**: 请先使用 args: null 或 args: {} 查看该工具的详细参数说明"
-
             return error_result
 
         except Exception as e:
@@ -417,20 +448,24 @@ class ToolExecutor:
         result: Any
     ) -> Dict[str, Any]:
         """
-        标准化工具返回结果
+        标准化工具返回结果（含智能采样）
 
         Args:
             tool_name: 工具名称
             result: 工具返回的原始结果
 
         Returns:
-            标准化的观察结果
+            标准化的观察结果（data字段已采样）
         """
         # 如果工具已经返回标准格式
         if isinstance(result, dict) and "success" in result:
-            # ✅ 增强：为失败的参数错误添加二阶段加载提示
+            # ✅ 增强：为失败的参数错误添加详细提示
             if not result.get("success", True):
-                result = self._enhance_error_with_stage2_hint(tool_name, result)
+                result = self._enhance_error_with_hint(tool_name, result)
+
+            # ✅ 数据查询工具记录数限制：智能采样（Head-Tail-Middle策略）
+            # 对数据查询工具的data字段进行采样，避免传递给LLM的token过多
+            result = self._apply_smart_sampling_for_query_tools(tool_name, result)
 
             # 添加摘要（如果没有）
             if "summary" not in result:
@@ -493,6 +528,84 @@ class ToolExecutor:
 
         return observation
 
+    def _apply_smart_sampling_for_query_tools(
+        self,
+        tool_name: str,
+        result: Dict[str, Any],
+        max_records: int = 24
+    ) -> Dict[str, Any]:
+        """
+        对数据查询工具的返回结果进行智能采样
+
+        策略：Head-Tail-Middle采样（30% 头部 + 40% 中间均匀采样 + 30% 尾部）
+        - 只对数据查询工具生效
+        - 完整数据已存储在data_id中
+        - 采样后的数据传递给LLM，减少token消耗
+
+        Args:
+            tool_name: 工具名称
+            result: 工具返回结果
+            max_records: 最大保留记录数（默认24）
+
+        Returns:
+            采样后的结果
+        """
+        # 识别数据查询工具
+        query_tools = {
+            "get_jining_regular_stations",
+            "get_air_quality",
+            "get_vocs_data",
+            "get_pm25_ionic",
+            "get_pm25_carbon",
+            "get_pm25_crustal",
+            "get_weather_data",
+        }
+
+        # 只对数据查询工具进行采样
+        generator = result.get("metadata", {}).get("generator", "")
+        is_query_tool = tool_name in query_tools or generator in query_tools
+
+        if not is_query_tool:
+            return result
+
+        # 检查data字段是否为列表且需要采样
+        data = result.get("data")
+        if not isinstance(data, list):
+            return result
+
+        original_count = len(data)
+        if original_count <= max_records:
+            # 数据量不超过阈值，无需采样
+            return result
+
+        # 调用tool_adapter中的智能采样函数
+        from app.agent.tool_adapter import _smart_sample_data_for_load
+
+        sampled_data, sampling_info = _smart_sample_data_for_load(data, max_records)
+
+        # 更新result
+        result["data"] = sampled_data
+
+        # 在metadata中记录采样信息
+        if "metadata" not in result:
+            result["metadata"] = {}
+
+        result["metadata"]["sampling_applied"] = True
+        result["metadata"]["original_record_count"] = original_count
+        result["metadata"]["sampled_record_count"] = len(sampled_data)
+        result["metadata"]["sampling_info"] = sampling_info
+
+        logger.info(
+            "smart_sampling_applied_for_query_tool",
+            tool=tool_name,
+            original_count=original_count,
+            sampled_count=len(sampled_data),
+            strategy=sampling_info.get("strategy"),
+            retention_ratio=sampling_info.get("retention_ratio")
+        )
+
+        return result
+
     def _generate_summary(
         self,
         tool_name: str,
@@ -528,17 +641,17 @@ class ToolExecutor:
         if isinstance(data, str):
             return f"✅ {tool_name} 成功，返回 {len(data)} 字符"
 
-    def _enhance_error_with_stage2_hint(
+    def _enhance_error_with_hint(
         self,
         tool_name: str,
         result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        为工具执行失败的结果增强错误消息，添加二阶段加载提示
+        为工具执行失败的结果增强错误消息，添加参数提示
 
         策略：
         - 检测参数错误
-        - 添加二阶段加载提示（bash工具除外）
+        - 添加参数提示（bash工具除外）
         - 保持错误消息简洁但信息完整
 
         Args:
@@ -548,7 +661,7 @@ class ToolExecutor:
         Returns:
             增强后的结果字典
         """
-        # bash工具不需要二阶段加载提示
+        # bash工具不需要参数提示
         if tool_name == "bash":
             return result
 
@@ -580,9 +693,6 @@ class ToolExecutor:
             if valid_values:
                 enhanced_error += f"\n\n支持的值: {', '.join(valid_values)}"
 
-            # 添加二阶段加载提示
-            enhanced_error += "\n\n💡 **提示**: 请先使用 args: null 或 args: {} 查看该工具的详细参数说明"
-
             result["error"] = enhanced_error
 
         return result
@@ -603,27 +713,11 @@ class ToolExecutor:
         """
         # 定义常见工具的参数提示信息
         tool_hints = {
-            "word_processor": {
+            "word_edit": {
                 "insert": {
                     "position": {
                         "hint": "⚠️ position 参数说明:\n  - end: 文档末尾\n  - start: 文档开头\n  - after: 在目标文本之后（需提供target参数）\n  - before: 在目标文本之前（需提供target参数）",
                         "valid_values": ["end", "start", "after", "before"]
-                    }
-                }
-            },
-            "excel_processor": {
-                "write_range": {
-                    "position": {
-                        "hint": "⚠️ position 参数说明:\n  - cell: 单个单元格\n  - range: 单元格范围（如 'A1:D10'）\n  - column: 整列（如 'A:A'）",
-                        "valid_values": ["cell", "range", "column"]
-                    }
-                }
-            },
-            "ppt_processor": {
-                "insert": {
-                    "position": {
-                        "hint": "⚠️ position 参数说明:\n  - end: 文档末尾\n  - start: 文档开头\n  - after: 在目标文本之后（需提供target参数）",
-                        "valid_values": ["end", "start", "after"]
                     }
                 }
             }
@@ -684,12 +778,20 @@ class ToolExecutor:
             context = ExecutionContext(
                 session_id=self.memory_manager.session_id,
                 iteration=iteration,
-                data_manager=self.data_context_manager
+                data_manager=self.data_context_manager,
+                task_list=self.task_list
             )
+
+            # ✅ 为 call_sub_agent 工具添加额外的依赖
+            context.memory_manager = self.memory_manager
+            context.llm_planner = self.llm_planner
+            context.tool_executor = self
+
             logger.debug(
                 "execution_context_created",
                 session_id=context.session_id,
-                iteration=iteration
+                iteration=iteration,
+                has_task_list=self.task_list is not None
             )
             return context
         except Exception as exc:

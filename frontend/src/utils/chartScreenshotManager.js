@@ -4,12 +4,13 @@
  * 功能：
  * 1. 统一管理所有图表的截图
  * 2. 支持宽幅截图，自动移除滑动轴
- * 3. 多种匹配方式获取截图
- * 4. LRU缓存策略，自动清理
+ * 3. LRU缓存策略，自动清理
+ *
+ * 【注意】图表匹配功能（findMatching/findAllMatching）已废弃
+ * 新方案：后端直接生成图片URL，前端无需匹配占位符
  */
 
 import { screenshotConfig } from './chartConfig'
-import { chartMatcher } from './chartMatcher'
 
 /**
  * 图表记录类
@@ -446,25 +447,11 @@ class ChartScreenshotManager {
     return results
   }
 
-  /**
-   * 智能匹配截图（支持多种模式）
-   * @param {string|Object} target - 目标模式（ID、类型、标题等）
-   * @returns {ScreenshotCache|null}
-   */
-  findMatching(target) {
-    return chartMatcher.findMatching(this, target)
-  }
-
-  /**
-   * 批量匹配截图
-   * @param {Array} patterns - 匹配模式列表
-   * @returns {Object} 匹配结果 { pattern: ScreenshotCache, ... }
-   */
-  findAllMatching(patterns) {
-    return chartMatcher.findAllMatching(this, patterns)
-  }
-
   // ========== 缓存管理 ==========
+
+  // 【已废弃】findMatching 和 findAllMatching 方法已删除
+  // 新方案：后端直接生成图片URL，无需前端匹配占位符
+
 
   /**
    * 清理过期缓存

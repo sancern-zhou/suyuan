@@ -116,10 +116,11 @@ class GetVOCsDataTool(LLMTool):
         # Context-Aware V2: 保存数据到执行上下文
         # 【修复】使用 vocs_unified schema，数据会通过Schema层的model_validator自动转换
         # 【关键修复】同时传入 field_stats，供 PMF 验证时检查物种数量
-        data_id = None
+        data_ref = None
+        file_path = None
         field_stats = validation_result["field_stats"] if validation_result else None
         try:
-            data_id = context.save_data(
+            data_ref = context.save_data(
                 data=data_to_save,  # 【修复】使用验证后的数据，包含完整的 species 字段
                 schema="vocs_unified",
                 field_stats=field_stats,  # 传入验证器生成的字段统计
@@ -129,7 +130,9 @@ class GetVOCsDataTool(LLMTool):
                     "data_type": "vocs",
                 }
             )
-            logger.info("vocs_data_saved", data_id=data_id, record_count=count, field_stats_count=len(field_stats) if field_stats else 0)
+            data_id = data_ref["data_id"]
+            file_path = data_ref["file_path"]
+            logger.info("vocs_data_saved", data_id=data_id, file_path=file_path, record_count=count, field_stats_count=len(field_stats) if field_stats else 0)
         except Exception as save_error:
             logger.warning("vocs_data_save_failed", error=str(save_error))
 
@@ -150,11 +153,13 @@ class GetVOCsDataTool(LLMTool):
             "success": True,
             "status": "success",
             "data": data,
-            "data_id": data_id,  # 顶层 data_id
+            "data_id": data_id,
+            "file_path": file_path,  # 顶层 data_id
+            "file_path": file_path,  # 新增：文件路径（混合方案）
             "count": count,
             "question": question,
             "data_type": data_type,
-            "summary": f"[OK] 成功获取{count}条VOCs数据，已保存为 {data_id}。",  # summary包含data_id
+            "summary": f"[OK] 成功获取{count}条VOCs数据，已保存为 {data_id}（路径: {file_path}）。",
             "metadata": {
                 "schema_version": "v2.0",
                 "generator": "get_vocs_data",

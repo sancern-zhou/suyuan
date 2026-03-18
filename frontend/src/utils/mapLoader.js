@@ -34,7 +34,9 @@ export async function loadAMap() {
       'AMap.PolygonEditor',   // 多边形编辑
       'AMap.Geocoder',        // 地理编码
       'AMap.InfoWindow'       // 信息窗口
-    ]
+    ],
+    // 添加安全密钥配置（如果有的话）
+    securityJsCode: import.meta.env.VITE_AMAP_SECURITY_CODE || ''
   }).then(AMap => {
     AMapInstance = AMap
     console.log('高德地图 API 加载成功')

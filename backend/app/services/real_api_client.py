@@ -5,9 +5,9 @@ import aiohttp
 import asyncio
 import os
 from typing import Dict, Any, List, Optional
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class RealAPIClient:

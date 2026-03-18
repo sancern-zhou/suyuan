@@ -326,10 +326,12 @@ class GetSatelliteDataTool(LLMTool):
         """
         try:
             if context.requires_context:
-                data_id = context.save_data(
+                data_ref = context.save_data(
                     data=data["data"],
                     schema=schema
                 )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
                 return data_id
             else:
                 logger.info("context_not_available", skip_save=True)

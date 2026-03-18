@@ -8,9 +8,15 @@ AnalyzeImage 工具 - 使用通义千问 VL 模型分析图片
 - 场景理解
 
 配置说明：使用项目中已配置的通义千问 VL API
+
+支持输入：
+1. 本地文件路径：D:/work_dir/image.png 或 ./image.png
+2. HTTP URL：http://localhost:8000/api/image/xxx（自动下载）
 """
 import httpx
 import base64
+import tempfile
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -42,6 +48,10 @@ class AnalyzeImageTool(LLMTool):
             name="analyze_image",
             description="""分析图片内容（使用通义千问 VL 模型）
 
+支持输入格式：
+- 本地文件路径：D:/work_dir/image.png 或 ./image.png
+- HTTP URL：http://localhost:8000/api/image/xxx（自动下载到临时文件）
+
 使用场景：
 - OCR 文字识别：提取图片中的文字
 - 图片描述：生成图片的详细描述
@@ -55,9 +65,9 @@ class AnalyzeImageTool(LLMTool):
 - analyze: 综合分析（默认，包含以上所有内容）
 
 示例：
-- analyze_image(path="D:/work_dir/chart.png", operation="ocr")  # OCR识别
-- analyze_image(path="D:/work_dir/photo.jpg", operation="describe")  # 图片描述
-- analyze_image(path="D:/work_dir/plot.png", operation="chart", prompt="提取图表中的数据和趋势")  # 图表分析
+- analyze_image(path="D:/work_dir/chart.png", operation="ocr")  # 本地文件OCR
+- analyze_image(path="http://localhost:8000/api/image/xxx", operation="describe")  # URL图片描述
+- analyze_image(path="./photo.jpg", operation="chart", prompt="提取图表数据")  # 相对路径
 
 配置：
 - 使用通义千问 VL 模型（qwen-vl-max-latest）
@@ -103,19 +113,25 @@ class AnalyzeImageTool(LLMTool):
             }
         """
         try:
-            # 1. 读取图片文件
-            file_path = self._resolve_path(path)
-            if not file_path or not file_path.exists():
+            # 1. 解析输入（URL 或本地路径）
+            file_path, is_temp = await self._resolve_input(path)
+            if not file_path:
                 return {
                     "status": "failed",
                     "success": False,
-                    "error": f"图片文件不存在: {path}",
+                    "error": f"图片文件不存在或无法下载: {path}",
                     "summary": f"❌ 文件不存在: {path}"
                 }
 
             # 2. 检查文件大小
             file_size = file_path.stat().st_size
             if file_size > self.max_image_size:
+                # 清理临时文件
+                if is_temp:
+                    try:
+                        os.unlink(file_path)
+                    except Exception:
+                        pass
                 return {
                     "status": "failed",
                     "success": False,
@@ -134,14 +150,14 @@ class AnalyzeImageTool(LLMTool):
             if not prompt:
                 prompt = self._get_default_prompt(operation)
 
-            # 5. 调用 Vision API（使用已有的 MCP 工具）
+            # 5. 调用 Vision API
             analysis_result = await self._call_vision_api(
                 base64_data=base64_data,
                 file_format=file_ext,
                 prompt=prompt
             )
 
-            return {
+            result = {
                 "status": "success",
                 "success": True,
                 "data": {
@@ -150,7 +166,8 @@ class AnalyzeImageTool(LLMTool):
                     "image_info": {
                         "path": str(file_path),
                         "format": file_ext,
-                        "size": file_size
+                        "size": file_size,
+                        "source": "url" if path.startswith("http") else "local"
                     }
                 },
                 "metadata": {
@@ -160,6 +177,16 @@ class AnalyzeImageTool(LLMTool):
                 },
                 "summary": f"✅ 图片分析完成: {file_path.name} ({operation})"
             }
+
+            # 清理临时文件
+            if is_temp:
+                try:
+                    os.unlink(file_path)
+                    logger.info("temp_file_cleaned", path=str(file_path))
+                except Exception as e:
+                    logger.warning("temp_file_cleanup_failed", error=str(e))
+
+            return result
 
         except Exception as e:
             logger.error("analyze_image_failed", path=path, error=str(e))
@@ -257,8 +284,76 @@ class AnalyzeImageTool(LLMTool):
             logger.error("qwen_vl_analysis_failed", error=str(e))
             return f"图片分析失败: {str(e)[:100]}"
 
+    async def _resolve_input(self, path: str) -> tuple[Optional[Path], bool]:
+        """解析输入（URL 或本地路径）
+
+        Args:
+            path: 输入路径（URL 或本地路径）
+
+        Returns:
+            (file_path, is_temp) - 文件路径，是否为临时文件
+        """
+        # 1. 检测是否为 HTTP URL
+        if path.startswith("http://") or path.startswith("https://"):
+            logger.info("downloading_image_from_url", url=path)
+            return await self._download_from_url(path)
+
+        # 2. 处理本地路径
+        file_path = self._resolve_path(path)
+        if file_path and file_path.exists():
+            return file_path, False
+
+        return None, False
+
+    async def _download_from_url(self, url: str) -> tuple[Optional[Path], bool]:
+        """从 URL 下载图片到临时文件
+
+        Args:
+            url: 图片 URL
+
+        Returns:
+            (temp_path, True) - 临时文件路径，is_temp=True
+        """
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+
+                # 检测文件扩展名
+                content_type = response.headers.get("content-type", "image/png")
+                if "jpeg" in content_type or "jpg" in content_type:
+                    ext = ".jpg"
+                elif "png" in content_type:
+                    ext = ".png"
+                elif "gif" in content_type:
+                    ext = ".gif"
+                elif "webp" in content_type:
+                    ext = ".webp"
+                elif "bmp" in content_type:
+                    ext = ".bmp"
+                else:
+                    ext = ".png"  # 默认
+
+                # 保存到临时文件
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as f:
+                    f.write(response.content)
+                    temp_path = Path(f.name)
+
+                logger.info(
+                    "image_downloaded",
+                    url=url,
+                    temp_path=str(temp_path),
+                    size=len(response.content)
+                )
+
+                return temp_path, True
+
+        except Exception as e:
+            logger.error("image_download_failed", url=url, error=str(e))
+            return None, False
+
     def _resolve_path(self, path: str) -> Optional[Path]:
-        """解析文件路径（与 ReadFile 工具相同）"""
+        """解析本地文件路径"""
         try:
             file_path = Path(path)
             if not file_path.is_absolute():
@@ -282,7 +377,7 @@ class AnalyzeImageTool(LLMTool):
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "图片文件路径（绝对路径或相对路径）"
+                        "description": "图片文件路径（支持本地路径或HTTP URL）。例如：D:/image.png 或 http://localhost:8000/api/image/xxx"
                     },
                     "operation": {
                         "type": "string",

@@ -3,9 +3,9 @@
 场景2核心组件
 """
 from typing import Dict, Any, List, Optional
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class DataOrganizer:
     """数据整理器 - 格式化数据点、组装表格数据结构"""

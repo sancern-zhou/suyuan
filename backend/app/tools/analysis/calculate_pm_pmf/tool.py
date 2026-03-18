@@ -675,7 +675,7 @@ class CalculatePMFTool(LLMTool):
 
         # Step 12: 保存结果
         try:
-            pmf_data_id = context.save_data(
+            pmf_data_ref = context.save_data(
                 data=[result],
                 schema="pmf_result",
                 metadata={
@@ -696,12 +696,15 @@ class CalculatePMFTool(LLMTool):
                     }
                 }
             )
+            pmf_data_id = pmf_data_ref["data_id"]
+            pmf_file_path = pmf_data_ref["file_path"]
             result["data_id"] = pmf_data_id
             result["registry_schema"] = "pmf_result"
 
             logger.info(
                 "pmf_result_saved",
                 pmf_data_id=pmf_data_id,
+                pmf_file_path=pmf_file_path,
                 sources_count=len(result.get("sources", [])),
                 sample_count=len(component_data)
             )
@@ -812,7 +815,7 @@ class CalculatePMFTool(LLMTool):
             f"- 因子1-2：通常对应一次排放源（高EC/OC或金属元素）\n"
             f"- 因子3-4：通常对应二次生成（高SO4/NO3/NH4）\n"
             f"- 请根据因子载荷判断每个因子的物理含义和污染源类型\n\n"
-            f"**数据存储**: PMF结果已存储，ID: `{pmf_data_id}`"
+            f"**数据存储**: PMF结果已存储，ID: `{pmf_data_id}`（路径: `{pmf_file_path}`）"
         )
 
         # Apply token truncation
@@ -836,6 +839,7 @@ class CalculatePMFTool(LLMTool):
             "success": True,
             "data": result,
             "data_id": pmf_data_id,
+            "file_path": pmf_file_path,
             "visuals": [],
             "metadata": {
                 "schema_version": "v2.0",
@@ -861,7 +865,7 @@ class CalculatePMFTool(LLMTool):
                 "source_data_ids": [data_id, pmf_data_id] + ([gas_data_id] if gas_data_id else [])
             },
             "summary": (
-                f"[OK] PMF源解析完成（最优因子数{optimal_rank}，识别{len(sources)}个源），已保存为 {pmf_data_id}。"
+                f"[OK] PMF源解析完成（最优因子数{optimal_rank}，识别{len(sources)}个源），已保存为 {pmf_data_id}（路径: {pmf_file_path}）。"
                 f"置信度{factor_analysis_result.confidence:.1%}，"
                 f"主要因子{main_source} ({main_contribution:.1f}%)，"
                 f"模型R²={r2_str}。请根据因子载荷矩阵解读各因子对应的污染源类型。"

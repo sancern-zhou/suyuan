@@ -33,9 +33,9 @@ class LLMMode(str, Enum):
     ONLINE = "online"  # 线上API（DeepSeek/MiniMax/Mimo等）
 
 
-# LLM分块的最大字符数限制（根据模型动态调整）
-LLM_CHUNK_MAX_CHARS_LOCAL = int(os.getenv("LLM_CHUNK_MAX_CHARS_LOCAL", "25000"))   # 本地千问3: 25000字符
-LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE", "60000"))  # 线上API: 60000字符
+# LLM分块的最大字符数限制（从.env配置读取）
+LLM_CHUNK_MAX_CHARS_LOCAL = int(os.getenv("LLM_CHUNK_MAX_CHARS_LOCAL"))
+LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE"))
 
 # 线上LLM配置
 ONLINE_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")  # deepseek, minimax, openai, mimo
@@ -1274,7 +1274,7 @@ class DocumentProcessor:
             try:
                 async with httpx.AsyncClient(timeout=300.0) as client:
                     response = await client.post(
-                        base_url,
+                        f"{base_url}/chat/completions",
                         headers={"Content-Type": "application/json"},
                         json={
                             "model": model,
