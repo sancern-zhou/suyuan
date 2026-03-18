@@ -1,0 +1,47 @@
+{
+  "file": "racm2_ekma.fac",
+  "species_count": 102,
+  "reaction_count": 505,
+  "species_valid": true,
+  "reactions_valid": false,
+  "critical_species": {
+    "O3": true,
+    "NO": true,
+    "NO2": true,
+    "HNO3": true,
+    "H2O2": true,
+    "CO": true,
+    "SO2": true,
+    "HO": true,
+    "HO2": true,
+    "CH4": true,
+    "ETH": true,
+    "HC3": true,
+    "HC5": true,
+    "HC8": true,
+    "ETE": true,
+    "OLT": true,
+    "OLI": true,
+    "ISO": true,
+    "API": true,
+    "TOL": true,
+    "XYL": true,
+    "HCHO": true,
+    "ALD": true,
+    "KET": true,
+    "PAN": true
+  },
+  "rate_constants": {
+    "k_O3_NO": {
+      "value": 1e-15,
+      "reference": 1.8e-14,
+      "in_range": true
+    }
+  },
+  "issues": [
+    "Reaction count mismatch: 505 vs 504"
+  ],
+  "warnings": [],
+  "info": [],
+  "passed": false
+}
