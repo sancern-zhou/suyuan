@@ -1,0 +1,25 @@
+================================================================================
+Unicode Field Mapping Test
+================================================================================
+
+Checking Unicode superscript field mappings:
+--------------------------------------------------------------------------------
+  SO4²⁻                -> SO4        (in_pm_mapping=False)
+  NO₃⁻                 -> NO3        (in_pm_mapping=True)
+  NH₄⁺                 -> NH4        (in_pm_mapping=True)
+  Ca²⁺                 -> Ca         (in_pm_mapping=True)
+  Mg²⁺                 -> Mg         (in_pm_mapping=True)
+  K⁺                   -> K          (in_pm_mapping=True)
+  Na⁺                  -> Na         (in_pm_mapping=True)
+  Cl⁻                  -> Cl         (in_pm_mapping=True)
+  Al³⁺                 -> Al         (in_pm_mapping=False)
+  Fe³⁺                 -> Fe         (in_pm_mapping=False)
+
+================================================================================
+Summary:
+  Total fields tested: 10
+  Mapped: 10
+  Unmapped: 0
+
+All Unicode fields are properly mapped.
+================================================================================

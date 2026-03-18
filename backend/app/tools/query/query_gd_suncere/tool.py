@@ -1859,19 +1859,28 @@ def execute_query_standard_comparison(
             for record in standardized_records:
                 measurements = record.get("measurements", {})
 
-                # 提取浓度值
-                pm25_raw = (measurements.get("PM2_5") or measurements.get("pm2_5") or
-                           record.get("pm2_5") or record.get("PM2_5") or 0)
-                pm10_raw = (measurements.get("PM10") or measurements.get("pm10") or
-                           record.get("pm10") or record.get("PM10") or 0)
-                so2_raw = (measurements.get("SO2") or measurements.get("so2") or
-                          record.get("so2") or record.get("SO2") or 0)
-                no2_raw = (measurements.get("NO2") or measurements.get("no2") or
-                          record.get("no2") or record.get("NO2") or 0)
-                co_raw = (measurements.get("CO") or measurements.get("co") or
-                         record.get("co") or record.get("CO") or 0)
-                o3_8h_raw = (measurements.get("O3_8h") or measurements.get("o3_8h") or
-                            record.get("o3_8h") or record.get("O3_8h") or 0)
+                # 提取浓度值（确保转换为float，避免字符串导致比较错误）
+                def safe_float(val):
+                    """安全转换为float，处理None、空字符串等异常情况"""
+                    if val is None or val == '' or val == '-':
+                        return 0.0
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return 0.0
+
+                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                     record.get("pm2_5") or record.get("PM2_5"))
+                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                     record.get("pm10") or record.get("PM10"))
+                so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                                    record.get("so2") or record.get("SO2"))
+                no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                                    record.get("no2") or record.get("NO2"))
+                co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                                   record.get("co") or record.get("CO"))
+                o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                                    record.get("o3_8h") or record.get("O3_8h"))
 
                 # 计算新标准IAQI（HJ 633-2024）
                 pm25_iaqi = calculate_iaqi(pm25_raw, 'PM2_5', 'new')
@@ -2061,23 +2070,33 @@ def execute_query_standard_comparison(
                     # 需要同时检查顶层字段和 measurements 嵌套字段
                     measurements = record.get("measurements", {})
 
+                    # 安全转换为float，处理字符串值
+                    def safe_float(val):
+                        """安全转换为float，处理None、空字符串等异常情况"""
+                        if val is None or val == '' or val == '-':
+                            return 0.0
+                        try:
+                            return float(val)
+                        except (TypeError, ValueError):
+                            return 0.0
+
                     # 优先从 measurements 中提取，其次从顶层字段提取
-                    pm25_raw = (measurements.get("PM2_5") or measurements.get("pm2_5") or
-                            record.get("pm2_5") or record.get("PM2_5") or 0)
-                    pm10_raw = (measurements.get("PM10") or measurements.get("pm10") or
-                            record.get("pm10") or record.get("PM10") or 0)
-                    so2_raw = (measurements.get("SO2") or measurements.get("so2") or
-                           record.get("so2") or record.get("SO2") or 0)
-                    no2_raw = (measurements.get("NO2") or measurements.get("no2") or
-                           record.get("no2") or record.get("NO2") or 0)
-                    co_raw = (measurements.get("CO") or measurements.get("co") or
-                          record.get("co") or record.get("CO") or 0)
-                    o3_8h_raw = (measurements.get("O3_8h") or measurements.get("o3_8h") or
-                            record.get("o3_8h") or record.get("O3_8h") or 0)
-                    no_raw = (measurements.get("NO") or measurements.get("no") or
-                          record.get("no") or record.get("NO") or 0)
-                    nox_raw = (measurements.get("NOx") or measurements.get("nox") or
-                           record.get("nox") or record.get("NOx") or 0)
+                    pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                            record.get("pm2_5") or record.get("PM2_5"))
+                    pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                            record.get("pm10") or record.get("PM10"))
+                    so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                           record.get("so2") or record.get("SO2"))
+                    no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                           record.get("no2") or record.get("NO2"))
+                    co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                          record.get("co") or record.get("CO"))
+                    o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                            record.get("o3_8h") or record.get("O3_8h"))
+                    no_raw = safe_float(measurements.get("NO") or measurements.get("no") or
+                          record.get("no") or record.get("NO"))
+                    nox_raw = safe_float(measurements.get("NOx") or measurements.get("nox") or
+                           record.get("nox") or record.get("NOx"))
 
                     # 按原始监测数据规则修约日数据（GB/T 8170-2008）
                     # 日数据修约：PM2.5/PM10/SO2/NO2/O3/NO/NOx保留0位，CO保留1位

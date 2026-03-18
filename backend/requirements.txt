@@ -1,0 +1,79 @@
+# Core Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+
+# HTTP Client
+httpx==0.28.0
+aiohttp==3.10.10
+
+# Data Processing
+pandas==2.2.3
+numpy>=1.20.0  # Required for nimfa (using np.asmatrix for compatibility)
+scipy>=1.10.0  # Sparse matrix optimization for OBM calculations
+nimfa>=1.0.0   # Non-negative matrix factorization for PMF dual-mode
+defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)
+
+# Visualization
+matplotlib==3.9.2
+cartopy==0.23.0  # For trajectory analysis and visualization
+
+# LLM Integration
+openai==1.54.4
+anthropic==0.39.0
+tiktoken>=0.8.0  # Token counting for LLM monitoring
+json-repair>=0.57.0  # Automatically repair malformed JSON from LLMs
+
+# Async & Concurrency
+celery==5.4.0
+redis==5.2.0
+
+# Environment & Config
+python-dotenv==1.0.1
+
+# Logging & Monitoring
+structlog==24.4.0
+
+# Date & Time
+python-dateutil==2.9.0
+
+# CORS
+fastapi-cors==0.0.6
+
+# Optional: Rate Limiting
+slowapi==0.1.9
+
+# Testing (dev)
+pytest==8.3.3
+pytest-asyncio==0.23.7
+# httpx-mock==0.10.0  # Removed: requires Python 3.11+, only needed for advanced testing
+
+# SQL Server Database Driver
+pyodbc==5.2.0
+aioodbc==0.5.1
+
+# PostgreSQL & TimescaleDB (for meteorological data storage)
+asyncpg==0.30.0
+sqlalchemy[asyncio]==2.0.35
+alembic==1.13.3
+
+# Scheduling
+apscheduler==3.10.4
+
+# Vector Database (for Agent long-term memory)
+qdrant-client==1.12.0
+
+# Embeddings (for vector search)
+sentence-transformers==3.1.1
+
+# Report Export (PDF/Word generation)
+weasyprint==63.1
+python-docx==1.1.2
+openpyxl>=3.1.0  # Excel file manipulation for Office tools
+pypdf>=5.0.0  # PDF processing for Office document preview
+markdown==3.7
+jinja2==3.1.4
+
+# Browser Automation (for browser tool)
+playwright==1.48.0  # Cross-platform browser automation

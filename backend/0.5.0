@@ -1,0 +1,8 @@
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Requirement already satisfied: tiktoken in d:\conda\envs\suyuan\lib\site-packages (0.12.0)
+Requirement already satisfied: regex>=2022.1.18 in d:\conda\envs\suyuan\lib\site-packages (from tiktoken) (2025.11.3)
+Requirement already satisfied: requests>=2.26.0 in d:\conda\envs\suyuan\lib\site-packages (from tiktoken) (2.32.5)
+Requirement already satisfied: charset_normalizer<4,>=2 in d:\conda\envs\suyuan\lib\site-packages (from requests>=2.26.0->tiktoken) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in d:\conda\envs\suyuan\lib\site-packages (from requests>=2.26.0->tiktoken) (3.11)
+Requirement already satisfied: urllib3<3,>=1.21.1 in d:\conda\envs\suyuan\lib\site-packages (from requests>=2.26.0->tiktoken) (1.26.20)
+Requirement already satisfied: certifi>=2017.4.17 in d:\conda\envs\suyuan\lib\site-packages (from requests>=2.26.0->tiktoken) (2025.11.12)

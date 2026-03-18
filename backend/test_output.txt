@@ -1,0 +1,200 @@
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=10 registry=global requires_context=True tool=get_air_quality
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_air_quality
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=20 registry=global requires_context=True tool=get_weather_data
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_weather_data
+D:\conda\Lib\site-packages\pydantic\_internal\_config.py:383: UserWarning: Valid config keys have changed in V2:
+* 'schema_extra' has been renamed to 'json_schema_extra'
+  warnings.warn(message, UserWarning)
+D:\ËÝÔ´\backend\app\schemas\unified.py:67: UserWarning: Field name "schema" in "VisualBlock" shadows an attribute in parent "BaseModel"
+  class VisualBlock(BaseModel):
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=30 registry=global requires_context=True tool=get_weather_forecast
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_weather_forecast
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=15 registry=global requires_context=False tool=get_current_weather
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_current_weather
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=16 registry=global requires_context=False tool=get_weather_situation_map
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_weather_situation_map
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=40 registry=global requires_context=False tool=get_fire_hotspots
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_fire_hotspots
+2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=50 registry=global requires_context=False tool=get_dust_data
+2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_dust_data
+2026-02-09 19:50:15 [warning  ] sqlserver_password_override    message='SECURITY WARNING: Hardcoded password in use!' reason='Empty password in .env, using hardcoded fallback'
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=61 registry=global requires_context=True tool=get_vocs_data
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_vocs_data
+2026-02-09 19:50:16 [info     ] tool_disabled                  reason=ÒÑ½ûÓÃ£ºÇëÊ¹ÓÃ½á¹¹»¯²éÑ¯¹¤¾ß£¨get_pm25_ionic/get_pm25_carbon/get_pm25_crustal£© tool=get_particulate_data
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=62 registry=global requires_context=True tool=get_particulate_data
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_particulate_data
+2026-02-09 19:50:16 [error    ] station_load_failed            error="[Errno 2] No such file or directory: 'D:\\\\ËÝÔ´\\\\station_info.json'"
+[31m©°©¤[0m[31m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[31m [0m[1;31mTraceback [0m[1;2;31m(most recent call last)[0m[31m [0m[31m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[31m©¤©´[0m
+[31m©¦[0m D:\ËÝÔ´\backend\app\utils\geo_matcher.py:96 in _load_stations               [31m©¦[0m
+[31m©¦[0m                                                                             [31m©¦[0m
+[31m©¦[0m   [2m 93 [0m[2m©¦   ©¦   [0mstation_file = Path([91m__file__[0m).parent.parent.parent.parent / [33m"[0m [31m©¦[0m
+[31m©¦[0m   [2m 94 [0m[2m©¦   ©¦   [0m                                                              [31m©¦[0m
+[31m©¦[0m   [2m 95 [0m[2m©¦   ©¦   [0m[94mtry[0m:                                                          [31m©¦[0m
+[31m©¦[0m [31m> [0m 96 [2m©¦   ©¦   ©¦   [0m[94mwith[0m [96mopen[0m(station_file, [33m'[0m[33mr[0m[33m'[0m, encoding=[33m'[0m[33mutf-8[0m[33m'[0m) [94mas[0m f:      [31m©¦[0m
+[31m©¦[0m   [2m 97 [0m[2m©¦   ©¦   ©¦   ©¦   [0mdata = json.load(f)                                   [31m©¦[0m
+[31m©¦[0m   [2m 98 [0m[2m©¦   ©¦   ©¦   [0m                                                          [31m©¦[0m
+[31m©¦[0m   [2m 99 [0m[2m©¦   ©¦   ©¦   [0mresults = data.get([33m"[0m[33mresults[0m[33m"[0m, [])                         [31m©¦[0m
+[31m©¦[0m                                                                             [31m©¦[0m
+[31m©¦[0m [34m©°©¤[0m[34m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[34m locals [0m[34m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[34m©¤©´[0m [31m©¦[0m
+[31m©¦[0m [34m©¦[0m            [3;33me[0m[31m =[0m [1;35mFileNotFoundError[0m[1m([0m[1;36m2[0m, [32m'No such file or directory'[0m[1m)[0m        [34m©¦[0m [31m©¦[0m
+[31m©¦[0m [34m©¦[0m         [3;33mself[0m[31m =[0m [1m<[0m[1;95mapp.utils.geo_matcher.GeoMatcher[0m[39m object at [0m             [34m©¦[0m [31m©¦[0m
+[31m©¦[0m [34m©¦[0m                [1;36m0x000001D2634CCAD0[0m[1m>[0m                                      [34m©¦[0m [31m©¦[0m
+[31m©¦[0m [34m©¦[0m [3;33mstation_file[0m[31m =[0m [1;35mWindowsPath[0m[1m([0m[32m'D:/ËÝÔ´/station_info.json'[0m[1m)[0m                 [34m©¦[0m [31m©¦[0m
+[31m©¦[0m [34m©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼[0m [31m©¦[0m
+[31m©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼[0m
+[1;91mFileNotFoundError: [0m[1m[[0mErrno [1;36m2[0m[1m][0m No such file or directory: 
+[32m'D:\\ËÝÔ´\\station_info.json'[0m
+
+2026-02-09 19:50:16 [info     ] venues_loaded                  count=91
+2026-02-09 19:50:16 [info     ] geo_mappings_loaded            cities=52 districts=142 stations=64
+2026-02-09 19:50:16 [info     ] geo_matcher_initialized        aliases=10 cities=0 city_codes=52 district_codes=142 station_codes=64 stations=0 venues=91
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=63 registry=global requires_context=True tool=get_pm25_ionic
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_pm25_ionic
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=64 registry=global requires_context=True tool=get_pm25_carbon
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_pm25_carbon
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=65 registry=global requires_context=True tool=get_pm25_crustal
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_pm25_crustal
+2026-02-09 19:50:16 [info     ] config_loaded                  sections=7 source=file
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=70 registry=global requires_context=False tool=get_nearby_stations
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_nearby_stations
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=25 registry=global requires_context=True tool=get_universal_meteorology
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_universal_meteorology
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=27 registry=global requires_context=False tool=search_knowledge_base
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=search_knowledge_base
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=30 registry=global requires_context=True tool=get_guangdong_regular_stations
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_guangdong_regular_stations
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=31 registry=global requires_context=True tool=get_jining_regular_stations
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_jining_regular_stations
+2026-02-09 19:50:16 [info     ] data_registry_initialized      base_dir=D:\ËÝÔ´\backend\backend_data_registry entries=8289
+2026-02-09 19:50:16 [info     ] tiktoken_initialized           encoding=cl100k_base model=gpt-4
+2026-02-09 19:50:16 [debug    ] llm_provider_config_check      provider_from_settings=qwen qwen_base_url=https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1 qwen_model=qwen3
+2026-02-09 19:50:16 [info     ] llm_service_initialized        base_url=https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1 model=qwen3 provider=qwen
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=32 registry=global requires_context=True tool=query_gd_suncere_city_hour
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=query_gd_suncere_city_hour
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=33 registry=global requires_context=True tool=query_gd_suncere_regional_comparison
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=query_gd_suncere_regional_comparison
+2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=35 registry=global requires_context=False tool=get_satellite_data
+2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_satellite_data
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=80 registry=global requires_context=False tool=download_gfs_data
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=download_gfs_data
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=85 registry=global requires_context=False tool=process_gfs_data
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=process_gfs_data
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=100 registry=global requires_context=True tool=analyze_upwind_enterprises
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=analyze_upwind_enterprises
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=110 registry=global requires_context=True tool=calculate_pm_pmf
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_pm_pmf version=v2_context
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=111 registry=global requires_context=True tool=calculate_vocs_pmf
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_vocs_pmf version=v2_context
+Could not find cannot import name 'dopri5' from 'assimulo.lib' (D:\conda\Lib\site-packages\assimulo\lib\__init__.py)
+Could not find cannot import name 'rodas' from 'assimulo.lib' (D:\conda\Lib\site-packages\assimulo\lib\__init__.py)
+Could not find cannot import name 'odassl' from 'assimulo.lib' (D:\conda\Lib\site-packages\assimulo\lib\__init__.py)
+Could not find ODEPACK functions.
+Could not find RADAR5
+Could not find GLIMDA.
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=126 registry=global requires_context=True tool=calculate_obm_full_chemistry
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_obm_full_chemistry version=racm2
+2026-02-09 19:50:17 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=130 registry=global requires_context=True tool=meteorological_trajectory_analysis
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=meteorological_trajectory_analysis version=noaa_api
+2026-02-09 19:50:17 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=135 registry=global requires_context=True tool=analyze_trajectory_sources
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=analyze_trajectory_sources version=v1.0
+2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=145 registry=global requires_context=False tool=calculate_iaqi
+2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_iaqi
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=150 registry=global requires_context=False tool=predict_air_quality
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=predict_air_quality
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=160 registry=global requires_context=True tool=calculate_reconstruction
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_reconstruction
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=161 registry=global requires_context=True tool=calculate_carbon
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_carbon
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=162 registry=global requires_context=True tool=calculate_soluble
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_soluble
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=163 registry=global requires_context=True tool=calculate_crustal
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_crustal
+2026-02-09 19:50:18 [warning  ] tool_import_failed             error="cannot import name 'ELEMENT_NAME_MAPPING' from 'app.tools.analysis.calculate_trace.calculate_trace' (D:\\ËÝÔ´\\backend\\app\\tools\\analysis\\calculate_trace\\calculate_trace.py)" tool=calculate_trace
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=vocs_analysis
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=pm_analysis
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=multi_indicator_timeseries
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=regional_comparison
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=generic_timeseries
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=generic_bar
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=generic_pie
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=timeseries
+2026-02-09 19:50:18 [info     ] chart_template_alias_registered alias=timeseries target=generic_timeseries
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=wind_rose
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=profile
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=map
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=heatmap
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=radar
+2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=weather_timeseries
+2026-02-09 19:50:18 [info     ] builtin_chart_templates_registered count=14 templates=['vocs_analysis', 'pm_analysis', 'multi_indicator_timeseries', 'regional_comparison', 'generic_timeseries', 'generic_bar', 'generic_pie', 'timeseries', 'wind_rose', 'profile', 'map', 'heatmap', 'radar', 'weather_timeseries']
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=200 registry=global requires_context=True tool=generate_chart
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=generate_chart
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=201 registry=global requires_context=True tool=revise_chart
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=revise_chart
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=210 registry=global requires_context=False tool=generate_map
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=generate_map
+2026-02-09 19:50:18 [warning  ] chart_data_converter_v2_refactoring message='Ô­Ê¼chart_data_converter.pyÒÑÖØ¹¹ÎªÄ£¿é»¯½á¹¹¡£ÇëÊ¹ÓÃÐÂµÄµ¼Èë·½Ê½£ºfrom app.utils.chart_converters.chart_data_converter import convert_chart_data' new_location=app.utils.chart_converters.chart_data_converter old_location=app.utils.chart_data_converter version=2.0.2
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=220 registry=global requires_context=True tool=smart_chart_generator
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=smart_chart_generator
+2026-02-09 19:50:18 [info     ] bash_tool_initialized          max_output_size=1048576 timeout=60 working_dir=D:\ËÝÔ´
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=500 registry=global requires_context=False tool=bash
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=bash
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=501 registry=global requires_context=False tool=read_file
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=read_file
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=502 registry=global requires_context=False tool=analyze_image
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=analyze_image
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=600 registry=global requires_context=False tool=word_processor
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=word_processor
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=601 registry=global requires_context=False tool=excel_processor
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=excel_processor
+2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=602 registry=global requires_context=False tool=ppt_processor
+2026-02-09 19:50:18 [info     ] tool_loaded                    tool=ppt_processor
+2026-02-09 19:50:18 [info     ] global_tool_registry_created   tools=['get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'get_weather_data', 'get_universal_meteorology', 'search_knowledge_base', 'get_weather_forecast', 'get_guangdong_regular_stations', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'get_satellite_data', 'get_fire_hotspots', 'get_dust_data', 'get_vocs_data', 'get_particulate_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'calculate_obm_full_chemistry', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'calculate_iaqi', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'bash', 'read_file', 'analyze_image', 'word_processor', 'excel_processor', 'ppt_processor'] total_tools=44
+================================================================================
+Word Í¼Æ¬ÌáÈ¡¹¦ÄÜ - ×ÛºÏ²âÊÔ
+================================================================================
+
+================================================================================
+²âÊÔÎÄµµ: D:\ËÝÔ´\backend\test_word.docx
+================================================================================
+2026-02-09 19:50:27 [info     ] win32_app_initialized          app=Word.Application display_alerts=False visible=False
+2026-02-09 19:50:29 [info     ] word_document_opened           path=D:\ËÝÔ´\backend\test_word.docx read_only=True
+2026-02-09 19:50:30 [debug    ] word_document_closed
+2026-02-09 19:50:30 [info     ] win32_app_closed               app=Word.Application
+×´Ì¬: success
+³É¹¦: True
+ÕªÒª: ÌáÈ¡ÁË0ÕÅÍ¼Æ¬
+
+ÌáÈ¡½á¹û:
+  Í¼Æ¬ÊýÁ¿: 0
+
+================================================================================
+¹¦ÄÜÑéÖ¤²âÊÔ
+================================================================================
+
+1. ¹¤¾ß×¢²á¼ì²é:
+   - ¹¤¾ßÃû³Æ: word_processor
+   - ¹¤¾ßÃèÊö: °üº¬ 'extract_images' ²Ù×÷
+   - Ö§³ÖµÄ²Ù×÷: read, extract_images, insert, search_and_replace, tables, stats
+
+2. Êä³öÄ¿Â¼¼ì²é:
+   - Êä³öÄ¿Â¼: D:\ËÝÔ´\backend_data_registry\temp_images
+   - Ä¿Â¼´æÔÚ: ·ñ (½«ÔÚÊ×´ÎÊ¹ÓÃÊ±×Ô¶¯´´½¨)
+
+================================================================================
+²âÊÔÍê³É!
+================================================================================
+
+Ô¤ÆÚÐÐÎª:
+1. ´ò¿ª Word ÎÄµµ³É¹¦
+2. ÌáÈ¡ËùÓÐÄÚÇ¶Í¼Æ¬ (InlineShapes)
+3. ±£´æÎª PNG ¸ñÊ½µ½ backend_data_registry/temp_images
+4. ·µ»ØÍ¼Æ¬ÁÐ±í (°üº¬ index, path, width, height)
+5. ÅäºÏ analyze_image ¹¤¾ß½øÐÐÍ¼Æ¬·ÖÎö
+
+Ê¹ÓÃÊ¾Àý:
+  word_processor(path="doc.docx", operation="extract_images")
+  ¡ú ·µ»ØÍ¼Æ¬ÁÐ±í
+  analyze_image(path="doc_image_0.png", operation="analyze")
+  ¡ú ·ÖÎöÑ¡ÖÐµÄÍ¼Æ¬

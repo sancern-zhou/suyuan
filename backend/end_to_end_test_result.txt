@@ -1,0 +1,71 @@
+================================================================================
+End-to-End PM2.5 Data Flow Test
+================================================================================
+
+Step 1: API Response (Unicode superscript format)
+--------------------------------------------------------------------------------
+Record count: 1
+First record fields:
+  Code: 1067b
+  StationName: 深南中路
+  TimePoint: 2026-02-01 00:00:00
+  SO4²⁻: 8.5
+  NO₃⁻: 12.3
+  NH₄⁺: 6.7
+  Cl⁻: 1.2
+  Ca²⁺: 2.3
+  Mg²⁺: 0.8
+  K⁺: 1.5
+  Na⁺: 1.1
+  PM2_5: 35.5
+
+================================================================================
+Step 2: Data Standardization
+--------------------------------------------------------------------------------
+Standardized record count: 1
+
+Standardized fields:
+  station_code: 1067b
+  station_name: 深南中路
+  timestamp: 2026-02-01 00:00:00
+  SO4: 8.5
+  PM2_5: 35.5
+  components: (dict, 7 items)
+    NO3: 12.3
+    NH4: 6.7
+    Cl: 1.2
+    Ca: 2.3
+    Mg: 0.8
+    K: 1.5
+    Na: 1.1
+
+Components field exists: YES
+Components count: 7
+
+================================================================================
+Step 3: UnifiedParticulateData.from_raw_data() Conversion
+--------------------------------------------------------------------------------
+Unified record fields:
+  station_code: 1067b
+  station_name: 深南中路
+  timestamp: 2026-02-01 00:00:00
+  unit: ug/m3
+  components: (dict, 7 items)
+    NO3: 12.3
+    NH4: 6.7
+    Cl: 1.2
+    Ca: 2.3
+    Mg: 0.8
+    K: 1.5
+    Na: 1.1
+  PM2_5: 35.5
+  qc_flag: None
+  metadata: None
+
+================================================================================
+Final Check
+--------------------------------------------------------------------------------
+SUCCESS: Final components count = 7
+Components: ['NO3', 'NH4', 'Cl', 'Ca', 'Mg', 'K', 'Na']
+
+================================================================================
