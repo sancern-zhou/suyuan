@@ -1,0 +1,7 @@
+# Edit 工具快速测试文件
+
+这是一个测试文件，用于验证 Edit 工具的功能。
+
+第一行：Hi Universe
+第二行：This is a test file
+第三行：Edit tool testing

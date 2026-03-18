@@ -1,0 +1,11 @@
+Success: True
+Visuals count: 3
+  - image: N/A
+  - image: N/A
+  - image: N/A
+
+=== Statistics ===
+Balance Stats: {'sample_count': 5, 'slope': 0.8309, 'intercept': 0.0123, 'r_squared': np.float64(0.981), 'correlation': np.float64(0.9905), 'p_value': 0.001116, 'cation_anion_ratio_mean': np.float64(0.8926), 'cation_mean': 0.1926, 'anion_mean': 0.217, 'cation_std': 0.0473, 'anion_std': 0.0564}
+SOR/NOR Stats: {'sample_count': 0}
+Ternary Stats: {'sample_count': 5, 'S_mean': 0.2046, 'N_mean': 0.5772, 'A_mean': 0.2183, 'S_std': 0.0623, 'N_std': 0.0639, 'A_std': 0.0079, 'dominant_ion': 'nitrate', 'secondary_inorganic_type': 'nitrate_dominant', 'pm25_mean': 50.8, 'pm25_max': 64.0, 'pm25_min': 38.0}
+Available Ions: ['ammonium', 'nitrate', 'sulfate']

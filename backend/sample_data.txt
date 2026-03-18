@@ -1,0 +1,16 @@
+Ca²⁺: 0.178
+Cl⁻: 0.073
+Code: 1006b
+DataType: 0
+EC（TOT）: 1.636
+K⁺: 0.950
+Mg²⁺: 0.060
+NH₄⁺: 3.162
+NO₃⁻: 7.484
+Na⁺: 0.162
+OC（TOT）: 12.823
+PM₂.₅: 54.000
+SO₄²⁻: 3.517
+StationName: 公园前
+TimePoint: 2025-01-01T00:00:00
+TimeType: 2

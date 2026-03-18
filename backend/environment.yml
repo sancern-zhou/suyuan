@@ -1,0 +1,77 @@
+name: suyuan
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Python version
+  - python=3.10
+  
+  # Scientific computing (conda packages for better compatibility)
+  - numpy=1.26.3
+  - pandas=2.1.4
+  - scipy
+  - numba
+  
+  # ODE Solver (key package for PyBox)
+  - assimulo
+  
+  # NetCDF/GRIB data processing
+  - xarray
+  - netcdf4
+  - cfgrib
+  - eccodes
+  
+  # Database drivers
+  - asyncpg
+  - pyodbc
+  
+  # pip packages
+  - pip
+  - pip:
+    # Core Framework
+    - fastapi==0.109.0
+    - uvicorn[standard]==0.27.0
+    - pydantic==2.5.3
+    - pydantic-settings==2.1.0
+    
+    # HTTP Client
+    - httpx==0.26.0
+    - aiohttp==3.9.1
+    
+    # LLM Integration
+    - openai==1.10.0
+    - anthropic==0.18.1
+    
+    # Async & Concurrency
+    - celery==5.3.6
+    - redis==5.0.1
+    
+    # Environment & Config
+    - python-dotenv==1.0.0
+    
+    # Logging
+    - structlog==24.1.0
+    
+    # Date & Time
+    - python-dateutil==2.8.2
+    
+    # Database
+    - aioodbc==0.5.0
+    - sqlalchemy[asyncio]==2.0.25
+    - alembic==1.13.1
+    
+    # Scheduling
+    - apscheduler==3.10.4
+    
+    # Vector Database
+    - qdrant-client==1.7.0
+    
+    # Embeddings
+    - sentence-transformers==2.2.2
+    
+    # Rate Limiting
+    - slowapi==0.1.9
+    
+    # Testing
+    - pytest==7.4.3
+    - pytest-asyncio==0.21.1

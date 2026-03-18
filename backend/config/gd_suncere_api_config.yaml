@@ -1,0 +1,80 @@
+# 广东省 Suncere API 配置文件
+# 基于官方接口文档
+
+# API 基础配置
+api_base_url: "http://113.108.142.147:20161"
+api_username: "ScGuanLy"
+api_password: "Suncere$0717"
+
+# Token 配置
+token_endpoint: "/api/airprovinceproduct/AirCityBaseCommon/GetExternalApiToken"
+token_cache_duration: 1800  # 30分钟
+
+# 查询端点配置
+endpoints:
+  # 城市日报数据
+  city_day: "/api/airprovinceproduct/airdata/DATCityDay/GetDATCityDayDisplayListAsync"
+
+  # 站点小时数据
+  station_hour: "/api/airprovinceproduct/airdata/DATStationHour/GetDATStationHourDisplayListAsync"
+
+  # 站点日报数据
+  station_day: "/api/airprovinceproduct/airdata/DATStationDay/GetDATStationDayDisplayListAsync"
+
+  # 综合统计报表
+  report_data: "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync"
+
+  # 对比分析报表
+  report_compare: "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeCompareListFilterAsync"
+
+  # VOCs分析数据
+  voc_analysis: "/api/supproduct/supoperation/ComponentVOC/GetComponentVOCAnalysis"
+
+# 广东省城市代码映射
+city_codes:
+  广州: "440100"
+  深圳: "440300"
+  珠海: "440400"
+  汕头: "440500"
+  佛山: "440600"
+  韶关: "440200"
+  湛江: "440800"
+  肇庆: "441200"
+  江门: "440700"
+  茂名: "440900"
+  惠州: "441300"
+  梅州: "441400"
+  汕尾: "441500"
+  河源: "441600"
+  阳江: "441700"
+  清远: "441800"
+  东莞: "441900"
+  中山: "442000"
+  潮州: "445100"
+  揭阳: "445200"
+  云浮: "445300"
+
+# 污染物代码配置
+pollutants:
+  - "PM2.5"
+  - "PM10"
+  - "SO2"
+  - "NO2"
+  - "O3"
+  - "CO"
+
+# 数据类型配置
+data_types:
+  hour: "小时数据"
+  day: "日数据"
+  month: "月数据"
+
+# 查询超时配置
+timeout:
+  default: 30  # 默认30秒
+  long_query: 120  # 长查询120秒
+
+# 分页配置
+pagination:
+  default_page_size: 1000
+  max_page_size: 5000

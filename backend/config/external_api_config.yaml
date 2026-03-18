@@ -1,0 +1,59 @@
+# 颗粒物组分API配置文件
+# Token验证机制配置
+
+external_api:
+  # API基础URL（广东省颗粒物API - 端口20065）
+  base_url: http://113.108.142.147:20065
+
+  # 认证凭据（从环境变量读取）
+  username: ${PARTICULATE_API_USERNAME}
+  password: ${PARTICULATE_API_PASSWORD}
+
+  # 系统代码
+  sys_code: SunAirProvince    # 省级系统
+  vocs_sys_code: SunSup       # VOCs/颗粒物系统（默认）
+
+  # 强制使用特定SysCode（可选，用于特殊环境）
+  force_sys_code: null
+
+  # Token覆盖（可选，用于调试）
+  override_token: null
+
+  # API端点映射
+  endpoints:
+    # Token获取端点（颗粒物API专用）
+    token: /api/supproduct/supoperation/ExternalApiData/GetExternalApiToken
+
+    # 水溶性离子分析
+    ionic_analysis: /api/uqp/query
+
+    # 碳组分分析（OC/EC）
+    carbon_analysis: /api/uqp/query
+
+    # 地壳元素分析
+    crustal_analysis: /api/uqp/query
+
+    # 微量元素/重金属分析
+    trace_analysis: /api/uqp/query
+
+    # PM2.5组分分析（综合）
+    pm25_component_analysis: /api/uqp/query
+
+  # 请求配置
+  timeout: 30                # 请求超时时间（秒）
+  max_retries: 3             # 最大重试次数
+  retry_delay: 2             # 重试延迟（秒）
+
+  # Token缓存配置
+  token_cache_time: 1800     # Token缓存时间（秒，默认30分钟）
+  token_refresh_buffer: 300  # Token刷新缓冲期（秒，提前5分钟刷新）
+
+  # 精简模式（调试用）
+  compact: false             # false=保留完整调试信息, true=启用精简输出
+
+  # 测试模式
+  test_mode: false           # true=使用mock数据
+
+# 更新记录
+last_updated: "2025-02-04"
+version: 1.0.0

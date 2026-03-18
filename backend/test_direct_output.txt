@@ -1,0 +1,54 @@
+================================================================================
+Direct Word COM API Test
+================================================================================
+
+[1] Starting Word...
+Word version: 16.0
+
+[2] Creating test document...
+Created: D:\溯源\backend\test_word_direct.docx
+
+[3] Reading original content...
+Original (first 200 chars):
+Test DocumentAir Quality Data:- O3_8h = 41 ug/m3- PM2.5 = 35 ug/m3Other info:- 41微克/立方米 value #1- 41微克/立方米 value #2- 41微克/立方米 value #3
+
+Count of '41微克/立方米': 3
+
+[4] Performing replacement...
+Search: '41微克/立方米' -> Replace: ''
+
+Replace result:
+  result: True
+  type: bool
+
+[5] Checking content BEFORE save...
+  Count before save: 3
+  Content changed: False
+
+[6] Saving document...
+  Save successful
+
+[7] Checking content AFTER save...
+  Count after save: 3
+
+[8] Closing document...
+
+[9] Waiting for file write...
+
+[10] Reopening document to verify...
+  Count in reopened file: 3
+
+[11] Quitting Word...
+
+[12] Analysis...
+================================================================================
+Original count:    3
+After replace:     3
+After save:       3
+Reopened file:    3
+
+FAILED: File was NOT modified!
+
+[13] Cleanup...
+Cleanup complete
+================================================================================

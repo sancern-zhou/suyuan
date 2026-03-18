@@ -1,0 +1,713 @@
+"""
+PMF 源解析工具（Context-Aware V2）
+
+Refactored to use ExecutionContext and data_id references instead of receiving
+full component_data arrays from the LLM.
+
+Key Improvements:
+- Accepts data_id instead of component_data
+- Validates data schema and suitability before loading
+- Automatically loads typed data (List[VOCsSample] or List[ParticulateSample])
+- Transforms Pydantic models to calculator input format
+- Prevents LLM from handling large datasets
+
+用于 PM2.5/PM10 颗粒物与 VOCs 挥发性有机物的源解析，识别污染源类型及其贡献率。
+"""
+
+from typing import TYPE_CHECKING, Any, Dict, List, Union, Tuple
+
+import structlog
+
+from app.schemas.particulate import ParticulateSample
+from app.schemas.vocs import VOCsSample, UnifiedVOCsData
+from app.tools.analysis.calculate_pmf.calculator import PMFCalculator
+from app.tools.base.tool_interface import LLMTool, ToolCategory
+
+if TYPE_CHECKING:
+    from app.agent.context import ExecutionContext
+
+logger = structlog.get_logger()
+
+
+def truncate_data_for_llm(data: Any, max_tokens: int = 4000) -> Tuple[Any, bool]:
+    """
+    Truncate data to fit within token limit for LLM consumption.
+
+    Args:
+        data: Data to truncate (dict, list, or any type)
+        max_tokens: Maximum token count (default: 4000)
+
+    Returns:
+        Tuple of (truncated_data, was_truncated)
+    """
+    import json
+
+    def count_tokens(obj: Any) -> int:
+        """Rough token count estimation."""
+        try:
+            json_str = json.dumps(obj, ensure_ascii=False, default=str)
+            # Approximate: 1 token ≈ 4 characters for Chinese/English mixed text
+            return len(json_str) // 4
+        except Exception:
+            # Fallback: use string representation
+            return len(str(obj)) // 4
+
+    def truncate_dict(d: Dict[str, Any], remaining_tokens: int) -> Dict[str, Any]:
+        """Truncate dictionary while preserving structure."""
+        truncated = {}
+        keys = list(d.keys())
+
+        for key in keys:
+            if remaining_tokens <= 0:
+                break
+
+            value = d[key]
+            value_tokens = count_tokens(value)
+
+            if isinstance(value, dict):
+                if value_tokens <= remaining_tokens - 10:  # Reserve tokens for key
+                    truncated[key] = value
+                    remaining_tokens -= value_tokens
+                else:
+                    # Deep truncate nested dict
+                    nested_truncated, nested_was_truncated = truncate_data_for_llm(value, remaining_tokens - 10)
+                    if nested_truncated:
+                        truncated[key] = nested_truncated
+                        remaining_tokens -= count_tokens(nested_truncated)
+            elif isinstance(value, list):
+                if value_tokens <= remaining_tokens - 10:
+                    truncated[key] = value
+                    remaining_tokens -= value_tokens
+                else:
+                    # Truncate list
+                    truncated_list = []
+                    for item in value:
+                        if remaining_tokens <= 10:
+                            break
+                        item_tokens = count_tokens(item)
+                        if item_tokens <= remaining_tokens - 5:
+                            truncated_list.append(item)
+                            remaining_tokens -= item_tokens
+                    if truncated_list:
+                        truncated[key] = truncated_list
+                        truncated[f"{key}_truncated"] = True
+                        truncated[f"{key}_original_count"] = len(value)
+            else:
+                if value_tokens <= remaining_tokens - 5:
+                    truncated[key] = value
+                    remaining_tokens -= value_tokens
+
+        return truncated
+
+    # Check if truncation is needed
+    total_tokens = count_tokens(data)
+    if total_tokens <= max_tokens:
+        return data, False
+
+    # Perform truncation
+    if isinstance(data, dict):
+        truncated = truncate_dict(data, max_tokens)
+        truncated["_truncated"] = True
+        truncated["_original_token_count"] = total_tokens
+        return truncated, True
+    elif isinstance(data, list):
+        truncated_list = []
+        remaining_tokens = max_tokens - 100  # Reserve tokens for metadata
+
+        for item in data:
+            if remaining_tokens <= 0:
+                break
+            item_tokens = count_tokens(item)
+            if item_tokens <= remaining_tokens - 5:
+                truncated_list.append(item)
+                remaining_tokens -= item_tokens
+
+        result = {
+            "data": truncated_list,
+            "_truncated": True,
+            "_original_count": len(data),
+            "_original_token_count": total_tokens
+        }
+        return result, True
+    else:
+        # For other types, return as-is with warning
+        return data, True
+
+
+class CalculatePMFTool(LLMTool):
+    """
+    PMF 源解析工具（支持 PM 和 VOCs）- Context-Aware V2
+
+    使用正定矩阵因子分解（Positive Matrix Factorization）方法识别污染源类型及贡献率。
+
+    Version 2.0 Changes:
+    - Now accepts data_id instead of component_data array
+    - Automatically validates schema compatibility
+    - Checks sample count before loading data
+    - Transforms Pydantic models to calculator format
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "calculate_pmf",
+            "description": """
+执行 PMF 源解析，识别 PM2.5/PM10 或 VOCs 的污染源类型及贡献率。
+
+**重要变更（V2）**：
+此工具现在接受 data_id 参数（来自 get_component_data 工具的返回值），
+而不是直接接收完整的组分数据数组。
+
+**数据要求**:
+- PM2.5/PM10：至少 20 个样本的颗粒物组分数据
+- VOCs：至少 20 个样本的 VOCs 物种浓度数据
+
+**使用流程**:
+1. 调用 get_component_data 获取数据并得到 data_id
+2. 将 data_id 传递给此工具进行 PMF 分析
+
+**示例**:
+步骤1: data = get_component_data("深圳市前两天的小时VOCs组分数据")
+        # 返回: {"data_id": "vocs:v1:abc123", "record_count": 48, ...}
+
+步骤2: result = calculate_pmf(
+            station_name="深圳",
+            data_id="vocs:v1:abc123",  # 使用步骤1的data_id
+            pollutant_type="VOCs"
+        )
+
+**返回结果**:
+- 各污染源的贡献率（%）
+- 源类型识别（交通源、工业源、溶剂使用等）
+- 关键物种特征
+- 时间变化趋势
+            """.strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "station_name": {
+                        "type": "string",
+                        "description": "超级站点名称（例：深圳南山、广州天河）"
+                    },
+                    "data_id": {
+                        "type": "string",
+                        "description": (
+                            "组分数据的引用ID（来自 get_component_data 工具的返回值）。"
+                            "格式: 'vocs:v1:xxx' 或 'particulate:v1:xxx'。"
+                            "不要手动构造此值，必须使用 get_component_data 返回的 data_id。"
+                        )
+                    },
+                    "pollutant_type": {
+                        "type": "string",
+                        "description": "污染物类型",
+                        "enum": ["PM2.5", "PM10", "VOCs"],
+                        "default": "VOCs"
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "起始时间（可选，只用于结果描述）"
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "结束时间（可选，只用于结果描述）"
+                    },
+                },
+                "required": ["station_name", "data_id", "pollutant_type"]
+            }
+        }
+
+        super().__init__(
+            name="calculate_pmf",
+            description="PMF source apportionment for PM/VOCs (context-aware V2)",
+            category=ToolCategory.ANALYSIS,
+            function_schema=function_schema,
+            version="2.0.0",
+            requires_context=True
+        )
+
+        self.metadata = {
+            "region": "Guangdong Province",
+            "limitation": "仅支持广东省超级站；PM 和 VOCs 需 20+ 样本",
+            "supported_pollutants": ["PM2.5", "PM10", "VOCs"],
+            "algorithm": "Simplified PMF (Source Profile Matching)"
+        }
+
+    async def execute(
+        self,
+        context: "ExecutionContext",
+        station_name: str,
+        data_id: str,
+        pollutant_type: str = "VOCs",
+        start_time: str = "",
+        end_time: str = "",
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行 PMF 源解析（使用 data_id 引用）
+
+        Args:
+            context: 执行上下文（用于加载数据）
+            station_name: 超级站点名称
+            data_id: 数据引用ID（来自 get_component_data）
+            pollutant_type: 污染物类型（PM2.5/PM10/VOCs）
+            start_time: 起始时间（可选）
+            end_time: 结束时间（可选）
+
+        Returns:
+            PMF分析结果
+        """
+        logger.info(
+            "calculate_pmf_start_v2",
+            station_name=station_name,
+            data_id=data_id,
+            pollutant_type=pollutant_type,
+            session_id=context.session_id
+        )
+
+        # Step 1: Get data handle to check metadata without loading
+        try:
+            handle = context.get_handle(data_id)
+        except KeyError:
+            # 【方案A】所有返回都必须是UDF v1.0格式
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "data_not_found"
+                },
+                "summary": f"[FAIL] 未找到数据引用 {data_id}，请先调用 get_component_data 获取数据"
+            }
+
+        # Step 2: Validate schema compatibility
+        # 支持新旧两种格式：vocs_unified (新) 和 vocs (旧)
+        if pollutant_type.upper() == "VOCS":
+            accepted_schemas = ["vocs", "vocs_unified"]
+            is_compatible = any(handle.is_compatible_with(s) for s in accepted_schemas)
+            schema_desc = "vocs 或 vocs_unified"
+        else:
+            accepted_schemas = ["particulate", "particulate_unified"]
+            is_compatible = any(handle.is_compatible_with(s) for s in accepted_schemas)
+            schema_desc = "particulate 或 particulate_unified"
+
+        if not is_compatible:
+            # 【方案A】所有返回都必须是UDF v1.0格式
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "schema_mismatch",
+                    "expected": schema_desc,
+                    "actual": handle.schema
+                },
+                "summary": (
+                    f"[FAIL] PMF {pollutant_type} 分析需要 {schema_desc} 数据，"
+                    f"但 {data_id} 是 {handle.schema} 数据"
+                )
+            }
+
+        # Step 3: Validate data suitability for PMF (without loading)
+        is_valid, error_msg = handle.validate_for_pmf()
+        if not is_valid:
+            # 【方案A】所有返回都必须是UDF v1.0格式
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "validation_failed",
+                    "data_id": data_id,
+                    "record_count": handle.record_count,
+                    "available_fields": handle.get_available_fields()
+                },
+                "summary": f"[FAIL] PMF 分析数据验证失败: {error_msg}"
+            }
+
+        # Step 4: Check for specific required fields (VOCs only)
+        if pollutant_type.upper() == "VOCS":
+            # Check for at least some key VOC species
+            key_species = ["乙烯", "丙烯", "苯", "甲苯"]
+            has_key, missing = handle.has_required_fields(key_species[:2])  # At least 2
+            if not has_key:
+                logger.warning(
+                    "pmf_missing_key_species",
+                    data_id=data_id,
+                    missing=missing,
+                    available=handle.get_available_fields()
+                )
+                # Not blocking, just log warning
+
+        # Step 5: Load typed data
+        logger.info(
+            "pmf_loading_data",
+            data_id=data_id,
+            record_count=handle.record_count
+        )
+
+        try:
+            # 使用实际的schema（已经过兼容性验证）
+            typed_data = context.get_data(data_id, expected_schema=handle.schema)
+        except Exception as exc:
+            logger.error(
+                "pmf_data_load_failed",
+                data_id=data_id,
+                error=str(exc),
+                exc_info=True
+            )
+            # 【方案A】所有返回都必须是UDF v1.0格式
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "data_load_failed",
+                    "data_id": data_id
+                },
+                "summary": f"[FAIL] 无法加载数据 {data_id}: {str(exc)}"
+            }
+
+        # Step 6: Transform to calculator input format
+        try:
+            if pollutant_type.upper() == "VOCS":
+                component_data = self._transform_vocs_to_pmf_input(typed_data)
+            else:
+                component_data = self._transform_particulate_to_pmf_input(typed_data)
+        except Exception as exc:
+            logger.error(
+                "pmf_data_transform_failed",
+                data_id=data_id,
+                error=str(exc),
+                exc_info=True
+            )
+            # 【方案A】所有返回都必须是UDF v1.0格式
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "data_transform_failed",
+                    "data_id": data_id
+                },
+                "summary": f"[FAIL] PMF 输入数据格式转换失败: {str(exc)}"
+            }
+
+        logger.info(
+            "pmf_executing_calculation",
+            station_name=station_name,
+            sample_count=len(component_data),
+            pollutant_type=pollutant_type
+        )
+
+        # Step 7: Execute PMF calculation
+        calculator = PMFCalculator(
+            pollutant_type="VOCs" if pollutant_type.upper() == "VOCS" else "PM"
+        )
+
+        result = calculator.calculate(component_data, pollutant=pollutant_type.upper())
+
+        if not result.get("success"):
+            # 【方案A】所有返回都必须是UDF v1.0格式
+            return {
+                "status": "failed",
+                "success": False,
+                "data": result,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "calculation_failed",
+                    "data_id": data_id
+                },
+                "summary": f"[FAIL] PMF计算失败: {result.get('error', '未知错误')}"
+            }
+
+        # Step 8: Enrich result with metadata
+        result["station_name"] = station_name
+        result["start_time"] = start_time
+        result["end_time"] = end_time
+        result["input_data_id"] = data_id  # 原始数据ID，供LLM后续访问
+        result["component_data_id"] = data_id  # 别名，保持兼容性
+        result["sample_count"] = len(component_data)
+
+        # Step 9: 存储结果到统一存储（方案A优化：自动添加data_id）
+        # 架构原则：工具只负责生成数据，save_data自动添加data_id字段
+        print(f"\n{'='*80}")
+        print(f"💾 PMF结果保存 - 方案A: 自动添加data_id")
+        print(f"{'='*80}")
+
+        # 准备保存的数据
+        data_to_save = [result]
+
+        print(f"\n✅ 准备保存PMF结果")
+        print(f"  - 数据: {len(data_to_save)}项")
+        print(f"  - schema: pmf_result")
+
+        # 【方案A】PMF结果必须保存，否则返回错误
+        try:
+            pmf_data_id = context.save_data(
+                data=data_to_save,
+                schema="pmf_result",
+                metadata={
+                    "station_name": station_name,
+                    "pollutant_type": pollutant_type,
+                    "input_data_id": data_id,
+                    "sources_count": len(result.get("sources", [])),
+                    "sample_count": len(component_data)
+                }
+            )
+
+            print(f"\n✅ 保存成功!")
+            print(f"  - data_id: {pmf_data_id}")
+            print(f"  - schema: pmf_result")
+            print(f"  - record_count: {len(data_to_save)}")
+
+            # 【方案A关键】确保observation中包含registry_schema，让HybridMemoryManager正确识别
+            result["registry_schema"] = "pmf_result"
+            # 【关键修复】将pmf_data_id赋值给result，确保data.data_id可被提取
+            result["data_id"] = pmf_data_id
+
+            logger.info(
+                "pmf_result_saved",
+                pmf_data_id=pmf_data_id,
+                sources_count=len(result.get("sources", []))
+            )
+        except Exception as exc:
+            print(f"\n❌ 保存失败: {exc}")
+            import traceback
+            traceback.print_exc()
+            # 【方案A】保存失败则返回错误，不生成无用备用ID
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "tool_name": "calculate_pmf",
+                    "error_type": "data_save_failed",
+                    "data_id": data_id
+                },
+                "summary": f"[FAIL] PMF结果保存失败: {str(exc)}"
+            }
+
+        print(f"\n{'='*80}\n")
+
+        # Step 10: 简化数据输出 - 直接返回标准字典
+        # 移除Pydantic模型转换和存储，LLM直接使用字典格式
+        # 图表工具可以直接使用PMF返回的字典数据，无需通过data_id访问
+
+        sources = result.get("sources", [])
+        source_contributions = result.get("source_contributions", {})
+
+        # ✅ 确保result中的sources是标准字典格式（UDF v1.0合规）
+        if "sources" in result and isinstance(result["sources"], list):
+            if result["sources"] and hasattr(result["sources"][0], "model_dump"):
+                result["sources"] = [
+                    source.model_dump() if hasattr(source, "model_dump") else source.dict()
+                    for source in result["sources"]
+                ]
+
+        # ✅ 同样确保timeseries也是字典格式
+        if "timeseries" in result and isinstance(result["timeseries"], list):
+            if result["timeseries"] and hasattr(result["timeseries"][0], "model_dump"):
+                result["timeseries"] = [
+                    ts.model_dump() if hasattr(ts, "model_dump") else ts.dict()
+                    for ts in result["timeseries"]
+                ]
+
+        logger.info(
+            "pmf_results_ready_for_dict_output",
+            sources_count=len(sources),
+            contributions=source_contributions,
+            output_format="UDF_v1.0_dict"
+        )
+
+        # 生成详细的源贡献摘要（供LLM直接看到完整信息）
+        source_concentrations = result.get("source_concentrations", {})
+        if source_contributions:
+            source_contribution_summary = "\n".join([
+                f"- **{source_name}**: {contribution_pct:.2f}% (浓度: {source_concentrations.get(source_name, 0):.3f})"
+                for source_name, contribution_pct in sorted(
+                    source_contributions.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+            ])
+            main_source = max(source_contributions, key=source_contributions.get)
+            main_contribution = max(source_contributions.values())
+        else:
+            source_contribution_summary = "暂无源贡献数据"
+            main_source = "N/A"
+            main_contribution = 0.0
+
+        # 添加详细摘要到result中
+        # 安全获取R²值，避免格式化错误
+        r2_value = result.get('model_performance', {}).get('R2', 'N/A')
+        if isinstance(r2_value, (int, float)):
+            r2_str = f"{r2_value:.3f}"
+        else:
+            r2_str = str(r2_value)
+
+        result["detailed_summary"] = (
+            f"PMF源解析分析完成\n\n"
+            f"**污染源贡献率排序**:\n{source_contribution_summary}\n\n"
+            f"**模型性能**: R² = {r2_str}\n"
+            f"**数据样本**: {len(component_data)} 条记录\n"
+            f"**主要污染源**: {main_source} ({main_contribution:.1f}%)\n\n"
+            f"**数据存储**: PMF结果已存储，ID: `{pmf_data_id}`\n"
+            f"**使用建议**: 优先使用data_id传递给下游工具，减少token开销\n"
+            f"**原始数据**: 继续使用 `{data_id}` 进行后续分析"
+        )
+
+        # 应用4000 token截断，确保LLM能够充分获取信息
+        result, was_truncated = truncate_data_for_llm(result, max_tokens=4000)
+
+        if was_truncated:
+            logger.info(
+                "pmf_result_truncated_for_llm",
+                original_summary=result.get("detailed_summary", "")[:100],
+                note="Large result truncated to fit token limit"
+            )
+
+        logger.info(
+            "calculate_pmf_complete_v2",
+            station_name=station_name,
+            data_id=data_id,
+            sources_identified=len(sources),
+            success=result.get("success"),
+            source_contributions=source_contributions
+        )
+
+        # 【修复】移除VisualBlock生成，专注于数据分析
+        # 让smart_chart_generator工具处理可视化，遵循架构分离原则
+
+        # 【UDF v2.0】直接输出标准格式，包含完整元数据但不包含visuals
+        return {
+            "status": "success",
+            "success": True,
+            "data": result,  # 完整的PMF分析结果（供直接访问）
+            "metadata": {
+                "schema_version": "v2.0",  # UDF v2.0 标记
+                "tool_name": "calculate_pmf",
+                "station_name": station_name,
+                "pollutant_type": pollutant_type,
+                "data_id": data_id,  # 原始输入数据ID
+                "pmf_result_id": result.get("data_id"),  # PMF结果数据ID
+                "sources_count": len(sources),
+                "sample_count": len(component_data),
+                "source_contributions": source_contributions,
+                "generator": "calculate_pmf",
+                "generator_version": "2.0.0",
+                "scenario": "pmf_source_analysis",
+                "field_mapping_applied": True,  # PMF工具不涉及字段映射，但标记为已处理
+                "source_data_ids": [data_id, pmf_data_id]
+            },
+            "summary": f"✅ PMF源解析完成，识别出{len(sources)}个污染源，主要污染源为{main_source} ({main_contribution:.1f}%)，数据存储ID: {pmf_data_id}"
+        }
+
+    def _transform_vocs_to_pmf_input(
+        self,
+        samples: List[Union[VOCsSample, UnifiedVOCsData, Dict[str, Any]]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Transform List[VOCsSample] or List[UnifiedVOCsData] or List[Dict] to PMF calculator input format.
+
+        Input (三种格式都支持):
+            1. VOCsSample(
+                timestamp=datetime(...),
+                species={"乙烯": 1.2, "丙烯": 0.8, ...}
+            )
+            2. UnifiedVOCsData(
+                timestamp="2025-11-04 00:00:00",
+                species_data={"乙烯": 1.2, "丙烯": 0.8, ...}
+            )
+            3. Dict (字典格式):
+                {
+                    "timestamp": "2025-11-04 00:00:00",
+                    "species_data": {"乙烯": 1.2, "丙烯": 0.8, ...}
+                }
+
+        Output (PMF format):
+            {"time": "2025-11-04 00:00:00", "乙烯": 1.2, "丙烯": 0.8, ...}
+        """
+        transformed = []
+        for sample in samples:
+            # 处理字典格式（优先检查）
+            if isinstance(sample, dict):
+                # 字典格式：检查是species_data还是species字段
+                if "species_data" in sample:
+                    # 统一格式（vocs_unified）
+                    record = {
+                        "time": sample["timestamp"],
+                        **sample["species_data"]
+                    }
+                elif "species" in sample:
+                    # 原始格式（vocs）
+                    timestamp = sample["timestamp"]
+                    # 如果timestamp是datetime对象，转换为字符串
+                    if hasattr(timestamp, "strftime"):
+                        timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                    record = {
+                        "time": timestamp,
+                        **sample["species"]
+                    }
+                else:
+                    raise ValueError(f"Dictionary sample missing 'species_data' or 'species' field: {list(sample.keys())}")
+            # 处理Pydantic对象格式
+            elif isinstance(sample, UnifiedVOCsData):
+                # UnifiedVOCsData对象：species_data字段，timestamp是字符串
+                record = {
+                    "time": sample.timestamp,
+                    **sample.species_data
+                }
+            elif isinstance(sample, VOCsSample):
+                # VOCsSample对象：species字段，timestamp是datetime对象
+                record = {
+                    "time": sample.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                    **sample.species
+                }
+            else:
+                raise TypeError(f"Unsupported sample type: {type(sample)}")
+
+            transformed.append(record)
+
+        logger.debug(
+            "vocs_data_transformed",
+            sample_count=len(transformed),
+            first_record_fields=list(transformed[0].keys())[:10] if transformed else []
+        )
+
+        return transformed
+
+    def _transform_particulate_to_pmf_input(
+        self,
+        samples: List[ParticulateSample]
+    ) -> List[Dict[str, Any]]:
+        """
+        Transform List[ParticulateSample] to PMF calculator input format.
+
+        Input (Pydantic):
+            ParticulateSample(
+                timestamp=datetime(...),
+                components={"SO4": 10.5, "NO3": 8.3, ...}
+            )
+
+        Output (PMF format):
+            {"time": "2025-11-04 00:00:00", "SO4": 10.5, "NO3": 8.3, ...}
+        """
+        transformed = []
+        for sample in samples:
+            record = {
+                "time": sample.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                **sample.components  # Expand components dict
+            }
+            transformed.append(record)
+
+        logger.debug(
+            "particulate_data_transformed",
+            sample_count=len(transformed),
+            first_record_fields=list(transformed[0].keys()) if transformed else []
+        )
+
+        return transformed
