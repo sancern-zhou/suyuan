@@ -25,6 +25,7 @@ ENV/
 # Data & Cache
 backend_data_registry/
 backend_data/
+backend/models/
 data/
 *.log
 *.cache
