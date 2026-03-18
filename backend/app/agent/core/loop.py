@@ -2326,7 +2326,7 @@ class ReActLoop:
 
             # ✅ 特殊处理：办公助理工具始终显示完整内容
             # 包括：Office 工具、analyze_image、read_file、grep、glob、list_directory、任务管理工具、read_data_registry
-            is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide"]
+            is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide", "read_docx", "read_xlsx", "read_pptx"]
             is_image_tool = generator == "analyze_image"
             is_file_tool = generator == "read_file"
             is_grep_tool = generator == "grep"
@@ -2426,6 +2426,13 @@ class ReActLoop:
                     lines.append(f"**读取范围**: 第{data['range']['start']+1}-{data['range']['end']}段（共{data['range']['total']}段）")
                     if data.get("has_more"):
                         lines.append(f"⚠️ 还有{data['range']['total']-data['range']['end']}段未读取，可继续分页读取")
+
+                # 显示图片提示（read_docx 工具）
+                if "has_images" in data and data["has_images"]:
+                    if "image_note" in data:
+                        lines.append(f"\n**图片信息**: {data['image_note']}")
+                    if "image_suggestion" in data:
+                        lines.append(f"**提取建议**: {data['image_suggestion']}")
 
             elif is_grep_tool:
                 # grep 工具：显示完整搜索结果
@@ -2607,6 +2614,7 @@ class ReActLoop:
             # 特殊处理：办公助理工具
             is_image_tool = generator == "analyze_image"
             is_file_tool = generator == "read_file"
+            is_docx_tool = generator == "read_docx"
             is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide"]
             is_grep_tool = generator == "grep"
             is_glob_tool = generator in ["glob", "search_files"]
@@ -2636,6 +2644,20 @@ class ReActLoop:
                 elif "content" in data:
                     # 文本文件：显示完整的文件内容
                     lines.append(f"**文件内容**:\n{data['content']}")
+
+            elif is_docx_tool:
+                # read_docx 工具：显示完整的文档内容
+                if "content" in data:
+                    content = data["content"]
+                    # 显示完整内容（不截断）
+                    lines.append(f"**文档内容**:")
+                    lines.append(f"```\n{content}\n```")
+                    # 显示文档统计信息
+                    lines.append(f"\n**文档信息**:")
+                    lines.append(f"  文件名: {data.get('file_name', 'N/A')}")
+                    lines.append(f"  段落数: {data.get('paragraph_count', 0)}")
+                    lines.append(f"  表格数: {data.get('table_count', 0)}")
+                    lines.append(f"  文件大小: {data.get('file_size', 0)} bytes")
 
             elif is_office_tool:
                 # Word/Excel/PPT 工具：显示完整文档内容

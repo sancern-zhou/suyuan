@@ -340,8 +340,47 @@ class KnowledgeVectorStore:
                 show_progress_bar=False
             )
 
-            # 判断是否使用混合向量
+            # 判断是否使用混合向量（检测集合是否支持sparse向量）
             use_hybrid = enable_hybrid and self._jieba_initialized
+            if use_hybrid:
+                try:
+                    collection_info = self.qdrant_client.get_collection(collection_name)
+                    # 检查是否使用命名向量（named vectors）
+                    # 命名向量配置是dict类型，单一向量配置是VectorParams对象
+                    params = collection_info.config.params
+                    vectors_config = getattr(params, 'vectors_config', None)
+                    has_named_vectors = isinstance(vectors_config, dict)
+                    # 检查是否有sparse向量配置
+                    sparse_vectors_config = getattr(params, 'sparse_vectors_config', None)
+                    has_sparse = sparse_vectors_config is not None
+                    logger.info(
+                        "collection_vector_config_check",
+                        collection=collection_name,
+                        has_sparse=has_sparse,
+                        has_named_vectors=has_named_vectors,
+                        vectors_config_type=type(vectors_config).__name__,
+                        initial_use_hybrid=use_hybrid
+                    )
+                    # 只有同时支持命名向量和sparse向量才使用混合模式
+                    if not has_sparse or not has_named_vectors:
+                        logger.info(
+                            "collection_no_sparse_fallback_to_dense",
+                            collection=collection_name,
+                            has_sparse=has_sparse,
+                            has_named_vectors=has_named_vectors
+                        )
+                        use_hybrid = False
+                except Exception as e:
+                    logger.warning("collection_check_failed", error=str(e), exc_info=True)
+                    # 安全起见，禁用混合模式
+                    use_hybrid = False
+
+            logger.info(
+                "add_chunks_vector_mode",
+                collection=collection_name,
+                use_hybrid=use_hybrid,
+                jieba_initialized=self._jieba_initialized
+            )
 
             # 构建点
             points = []
@@ -395,6 +434,16 @@ class KnowledgeVectorStore:
             batch_size = 100
             for i in range(0, len(points), batch_size):
                 batch = points[i:i + batch_size]
+                # 调试：记录第一个点的向量格式
+                if batch:
+                    first_point = batch[0]
+                    logger.debug(
+                        "upsert_batch_sample",
+                        collection=collection_name,
+                        vector_type=type(first_point.vector).__name__,
+                        vector_is_dict=isinstance(first_point.vector, dict),
+                        vector_keys=list(first_point.vector.keys()) if isinstance(first_point.vector, dict) else None
+                    )
                 self.qdrant_client.upsert(
                     collection_name=collection_name,
                     points=batch
@@ -505,7 +554,7 @@ class KnowledgeVectorStore:
     ) -> List[Dict[str, Any]]:
         """
         混合检索（Dense + Sparse BM25）
-        
+
         Args:
             collection_name: Collection名称
             query: 查询文本
@@ -513,13 +562,41 @@ class KnowledgeVectorStore:
             score_threshold: 相似度阈值
             alpha: Dense向量权重 (0-1)，1=纯语义，0=纯关键词
             filters: 过滤条件
-            
+
         Returns:
             检索结果列表
         """
         # 如果jieba未初始化，降级到纯向量检索
         if not self._jieba_initialized:
             logger.warning("hybrid_search_fallback_no_jieba")
+            return await self.search(
+                collection_name, query, top_k, score_threshold, filters
+            )
+
+        # 检测集合是否支持sparse向量
+        try:
+            collection_info = self.qdrant_client.get_collection(collection_name)
+            # 检查是否使用命名向量（named vectors）
+            params = collection_info.config.params
+            vectors_config = getattr(params, 'vectors_config', None)
+            has_named_vectors = isinstance(vectors_config, dict)
+            # 检查是否有sparse向量配置
+            sparse_vectors_config = getattr(params, 'sparse_vectors_config', None)
+            has_sparse = sparse_vectors_config is not None
+            # 只有同时支持命名向量和sparse向量才使用混合模式
+            if not has_sparse or not has_named_vectors:
+                logger.info(
+                    "hybrid_search_fallback_no_sparse",
+                    collection=collection_name,
+                    has_sparse=has_sparse,
+                    has_named_vectors=has_named_vectors
+                )
+                return await self.search(
+                    collection_name, query, top_k, score_threshold, filters
+                )
+        except Exception as e:
+            logger.warning("hybrid_search_collection_check_failed", error=str(e))
+            # 安全起见，降级到纯向量检索
             return await self.search(
                 collection_name, query, top_k, score_threshold, filters
             )

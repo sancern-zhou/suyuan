@@ -21,8 +21,9 @@ import uuid
 from datetime import datetime
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.office.unpack_tool import UnpackOfficeTool
-from app.tools.office.pack_tool import PackOfficeTool
+# 延迟导入避免循环依赖
+# from app.tools.office.unpack_tool import UnpackOfficeTool
+# from app.tools.office.pack_tool import PackOfficeTool
 from app.tools.office.document import Document
 
 logger = structlog.get_logger()
@@ -112,8 +113,23 @@ class WordEditTool(LLMTool):
         )
 
         self.working_dir = Path.cwd().parent
-        self._unpack_tool = UnpackOfficeTool()
-        self._pack_tool = PackOfficeTool()
+        # 延迟初始化工具，避免循环导入
+        self._unpack_tool = None
+        self._pack_tool = None
+
+    def _get_unpack_tool(self):
+        """延迟获取UnpackOfficeTool实例"""
+        if self._unpack_tool is None:
+            from app.tools.office.unpack_tool import UnpackOfficeTool
+            self._unpack_tool = UnpackOfficeTool()
+        return self._unpack_tool
+
+    def _get_pack_tool(self):
+        """延迟获取PackOfficeTool实例"""
+        if self._pack_tool is None:
+            from app.tools.office.pack_tool import PackOfficeTool
+            self._pack_tool = PackOfficeTool()
+        return self._pack_tool
 
     async def execute(
         self,
@@ -201,7 +217,7 @@ class WordEditTool(LLMTool):
                 # 创建临时解包目录
                 unique_temp_id = uuid.uuid4().hex[:8]
                 temp_output_dir = f".word_edit_temp_{unique_temp_id}"
-                unpack_result = await self._unpack_tool.execute(
+                unpack_result = await self._get_unpack_tool().execute(
                     path=str(resolved_path),
                     output_dir=temp_output_dir
                 )
@@ -240,7 +256,7 @@ class WordEditTool(LLMTool):
                 doc.save()
 
                 # 8. Pack the document
-                pack_result = await self._pack_tool.execute(
+                pack_result = await self._get_pack_tool().execute(
                     input_dir=unpacked_dir,
                     output_file=str(output_path),
                     backup=False  # Already backed up if needed

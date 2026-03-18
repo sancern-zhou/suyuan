@@ -1,7 +1,7 @@
 """
 工具注册表
 
-定义四种Agent模式的工具列表和排序
+定义五种Agent模式的工具列表和排序
 """
 
 from typing import Dict, List
@@ -20,6 +20,14 @@ ASSISTANT_TOOLS = {
     "search_files": "搜索文件（glob模式）。参数: pattern(str)",
 
     # Office工具（复杂工具，必须先阅读 office_skills_guide.md）
+    "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
+    "unpack_office": "解包Office文件为XML（Word/Excel/PPT）。参数: path(str), output_dir(str, 可选)",
+    "pack_office": "打包XML为Office文件。参数: input_dir(str), output_path(str)",
+    "word_edit": "Word高级编辑（替换文本、插入内容）。参数: docx_path(str), edits(list)",
+    "accept_word_changes": "接受Word文档的所有修订。参数: docx_path(str), output_path(str, 可选)",
+    "find_replace_word": "Word文档查找替换。参数: docx_path(str), find(str), replace(str)",
+    "recalc_excel": "Excel公式重算。参数: xlsx_path(str), output_path(str, 可选)",
+    "add_ppt_slide": "PPT添加幻灯片。参数: pptx_path(str), slide_content(dict)",
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -93,6 +101,32 @@ QUERY_TOOLS = {
     "call_sub_agent": "调用专家Agent（深度分析）或助手Agent（生成报告）。参数: target_mode(str), task_description(str)",
 }
 
+# ===== 报告模式工具 =====
+REPORT_TOOLS = {
+    # 核心工具
+    "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
+    "generate_report": "使用python-docx生成DOCX报告。参数: time_range(dict), output_path(str), template_path(str, 可选), data_ids(list, 可选), data_matches(dict, 可选)",
+
+    # 数据查询工具（直接调用，支持并发）
+    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
+    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
+    "query_standard_comparison": "查询新旧空气质量标准对比（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str)",
+
+    # 数据读取
+    "read_data_registry": "读取已保存的数据（支持时间范围、字段选择）。参数: data_id(str), time_range(可选, str), fields(可选, list)",
+
+    # 文件操作
+    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "write_file": "写入文件内容。参数: path(str), content(str)",
+    "list_directory": "列出目录内容。参数: path(str)",
+
+    # 任务管理
+    "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
+
+    # 模式互调
+    "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
+}
+
 # ===== 编程模式工具 =====
 CODE_TOOLS = {
     # 文件操作
@@ -116,6 +150,7 @@ CODE_TOOLS = {
 # ===== 工具排序（影响展示顺序） =====
 ASSISTANT_TOOL_ORDER = [
     "bash", "read_file", "edit_file", "grep", "write_file", "list_directory", "search_files",
+    "read_docx",  # 读取DOCX文档（优先使用）
     "unpack_office", "pack_office", "word_edit", "accept_word_changes", "find_replace_word",
     "recalc_excel", "add_ppt_slide",
     "TodoWrite",  # 任务管理工具
@@ -188,13 +223,37 @@ QUERY_TOOL_ORDER = [
     "call_sub_agent",
 ]
 
+# ===== 报告模式工具排序 =====
+REPORT_TOOL_ORDER = [
+    # 核心工具
+    "read_docx",
+    "generate_report",
+
+    # 数据查询工具（支持并发）
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day_new",
+    "query_standard_comparison",
+
+    # 数据读取
+    "read_data_registry",
+
+    # 文件操作
+    "read_file", "write_file", "list_directory",
+
+    # 任务管理
+    "TodoWrite",
+
+    # 模式互调
+    "call_sub_agent",
+]
+
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
     """
     根据模式获取工具列表
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query"
+        mode: "assistant" | "expert" | "code" | "query" | "report"
 
     Returns:
         工具字典 {tool_name: description}
@@ -207,6 +266,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return CODE_TOOLS
     elif mode == "query":
         return QUERY_TOOLS
+    elif mode == "report":
+        return REPORT_TOOLS
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -216,7 +277,7 @@ def get_tool_order(mode: str) -> List[str]:
     根据模式获取工具排序
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query"
+        mode: "assistant" | "expert" | "code" | "query" | "report"
 
     Returns:
         工具名称列表（按展示顺序）
@@ -229,5 +290,7 @@ def get_tool_order(mode: str) -> List[str]:
         return CODE_TOOL_ORDER
     elif mode == "query":
         return QUERY_TOOL_ORDER
+    elif mode == "report":
+        return REPORT_TOOL_ORDER
     else:
         raise ValueError(f"Unknown mode: {mode}")
