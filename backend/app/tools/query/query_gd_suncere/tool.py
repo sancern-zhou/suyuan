@@ -2883,8 +2883,8 @@ def execute_query_standard_comparison(
                         "NO2": format_pollutant_value(apply_rounding(safe_float(record.get("nO2_Decimal") or record.get("nO2")), 'NO2', 'statistical_data'), 'NO2', 'statistical_data'),
                         "PM2_5": format_pollutant_value(apply_rounding(safe_float(record.get("pM2_5_Decimal") or record.get("pM2_5")), 'PM2_5', 'statistical_data'), 'PM2_5', 'statistical_data'),
                         "PM10": format_pollutant_value(apply_rounding(safe_float(record.get("pM10_Decimal") or record.get("pM10")), 'PM10', 'statistical_data'), 'PM10', 'statistical_data'),
-                        "CO": format_pollutant_value(apply_rounding(safe_float(record.get("cO_Decimal") or record.get("cO")), 'CO', 'statistical_data'), 'CO', 'statistical_data'),
-                        "O3_8h": format_pollutant_value(apply_rounding(safe_float(record.get("o3_8h_Decimal") or record.get("o3_8h")), 'O3_8h', 'statistical_data'), 'O3_8h', 'statistical_data'),
+                        "CO": format_pollutant_value(apply_rounding(safe_float(record.get("cO_Decimal") or record.get("cO")), 'CO', 'statistical_data'),
+                        "O3_8h": format_pollutant_value(apply_rounding(safe_float(record.get("o3_8h_Decimal") or record.get("o3_8h")), 'O3_8h', 'statistical_data'),
                         # 单项质量指数（从 API 获取）
                         "single_indexes": {
                             "SO2": safe_float(record.get("sO2_SingleIndex") or 0),
