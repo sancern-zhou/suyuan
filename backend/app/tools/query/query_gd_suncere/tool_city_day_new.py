@@ -26,6 +26,7 @@ import structlog
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
 from app.agent.context.execution_context import ExecutionContext
 from app.utils.data_standardizer import get_data_standardizer
+from app.tools.query.query_gd_suncere.tool import apply_rounding
 
 
 logger = structlog.get_logger()
@@ -148,6 +149,7 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
     将标准化记录更新为新标准字段
 
     更新内容：
+    - measurements 浓度值 → 按日数据修约规则修约（保留整数位）
     - measurements.PM2_5_IAQI → 新标准值
     - measurements.PM10_IAQI → 新标准值
     - measurements.AQI → 新标准值
@@ -157,22 +159,39 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
     Args:
         standardized_records: 标准化后的记录列表（直接修改）
     """
+    def safe_float(value, default=0.0):
+        """安全转换为浮点数"""
+        if value is None or value == '' or value == '-':
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
     for record in standardized_records:
         measurements = record.get("measurements", {})
 
         # 提取浓度值（支持多种字段名格式）
-        pm25_raw = (measurements.get("PM2_5") or measurements.get("pm2_5") or
-                   record.get("pm2_5") or record.get("PM2_5") or 0)
-        pm10_raw = (measurements.get("PM10") or measurements.get("pm10") or
-                   record.get("pm10") or record.get("PM10") or 0)
-        so2_raw = (measurements.get("SO2") or measurements.get("so2") or
-                  record.get("so2") or record.get("SO2") or 0)
-        no2_raw = (measurements.get("NO2") or measurements.get("no2") or
-                  record.get("no2") or record.get("NO2") or 0)
-        co_raw = (measurements.get("CO") or measurements.get("co") or
-                 record.get("co") or record.get("CO") or 0)
-        o3_8h_raw = (measurements.get("O3_8h") or measurements.get("o3_8h") or
-                    record.get("o3_8h") or record.get("O3_8h") or 0)
+        pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                             record.get("pm2_5") or record.get("PM2_5"))
+        pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                             record.get("pm10") or record.get("PM10"))
+        so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                            record.get("so2") or record.get("SO2"))
+        no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                            record.get("no2") or record.get("NO2"))
+        co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                           record.get("co") or record.get("CO"))
+        o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                              record.get("o3_8h") or record.get("O3_8h"))
+
+        # 应用修约规则并更新 measurements（日数据：0位小数转为整数）
+        measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+        measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+        measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+        measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+        measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
+        measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
 
         # 计算新标准 IAQI（HJ 633-2024，向上进位取整）
         pm25_iaqi = calculate_iaqi_new(pm25_raw, 'PM2_5')

@@ -173,7 +173,27 @@ class ReActAgent:
             for i, att in enumerate(attachments, 1):
                 att_type = att.get("type", "file")
                 att_name = att.get("name", "unknown")
-                att_url = att.get("url", "")
+                att_url = att.get("url") or ""
+
+                # 如果URL为空但有file_id，尝试从数据库获取文件路径
+                if not att_url:
+                    att_file_id = att.get("file_id")
+                    if att_file_id:
+                        try:
+                            from app.db.database import async_session
+                            from app.knowledge_base.models import UploadedFile
+                            from sqlalchemy import select
+
+                            async with async_session() as db:
+                                result = await db.execute(
+                                    select(UploadedFile.file_path).where(UploadedFile.id == att_file_id)
+                                )
+                                path = result.scalar_one_or_none()
+                                if path:
+                                    att_url = path
+                        except Exception as e:
+                            logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
+
                 if att_type == "image":
                     attachment_info += f"{i}. 图片: {att_name}\n"
                     attachment_info += f"   路径: {att_url}\n"
@@ -184,7 +204,8 @@ class ReActAgent:
             logger.info(
                 "attachments_added_to_query",
                 count=len(attachments),
-                attachment_types=[a.get("type") for a in attachments]
+                attachment_types=[a.get("type") for a in attachments],
+                attachment_urls=[a.get("url") for a in attachments]
             )
 
         actual_session_id, memory_manager, created_new = await self._get_or_create_session(

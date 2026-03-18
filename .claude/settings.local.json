@@ -4,7 +4,21 @@
       "Bash(ls:*)",
       "Bash(curl:*)",
       "Bash(git ls-tree:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git merge:*)",
+      "Bash(python test_api_fields.py)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(tail -500 /home/xckj/suyuan/backend/logs/*.log)",
+      "Bash(yum install:*)",
+      "Bash(dnf install:*)",
+      "Read(//tmp/**)",
+      "Bash(find . -name soffice -o -name *.rpm)",
+      "Bash(rpm -ivh *.rpm --nodeps)",
+      "Bash(soffice --version)"
     ]
   }
 }

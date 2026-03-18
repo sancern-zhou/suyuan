@@ -588,6 +588,24 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="deep_trace_workflow", error=str(e))
 
+    # ========================================
+    # Report Tools（报告工具）
+    # ========================================
+
+    try:
+        from app.tools.report.read_docx.tool import ReadDocxTool
+        registry.register(ReadDocxTool(), priority=459)
+        logger.info("tool_loaded", tool="read_docx")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="read_docx", error=str(e))
+
+    try:
+        from app.tools.report.generate_report.tool import GenerateReportTool
+        registry.register(GenerateReportTool(), priority=461)
+        logger.info("tool_loaded", tool="generate_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="generate_report", error=str(e))
+
     try:
         from app.tools.workflow.knowledge_qa_workflow import KnowledgeQAWorkflow
         registry.register(KnowledgeQAWorkflow(), priority=48)

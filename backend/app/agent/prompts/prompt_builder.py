@@ -1,5 +1,5 @@
 """
-ReAct系统提示词构建器（四模式架构）
+ReAct系统提示词构建器（五模式架构）
 """
 
 from typing import Literal, List, Optional
@@ -7,12 +7,13 @@ from .assistant_prompt import build_assistant_prompt
 from .expert_prompt import build_expert_prompt
 from .code_prompt import build_code_prompt
 from .query_prompt import build_query_prompt
+from .report_prompt import build_report_prompt
 from .tool_registry import get_tools_by_mode, get_tool_order
 import structlog
 
 logger = structlog.get_logger()
 
-AgentMode = Literal["assistant", "expert", "code", "query"]
+AgentMode = Literal["assistant", "expert", "code", "query", "report"]
 
 
 def build_react_system_prompt(
@@ -20,10 +21,10 @@ def build_react_system_prompt(
     available_tools: Optional[List[str]] = None
 ) -> str:
     """
-    构建ReAct系统提示词（四模式架构）
+    构建ReAct系统提示词（五模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "code" | "query")
+        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
 
     Returns:
@@ -57,6 +58,8 @@ def build_react_system_prompt(
         return build_code_prompt(filtered_tools)
     elif mode == "query":
         return build_query_prompt(filtered_tools)
+    elif mode == "report":
+        return build_report_prompt(filtered_tools)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 

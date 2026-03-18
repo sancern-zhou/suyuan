@@ -443,8 +443,17 @@ class SessionMemory:
 
         try:
             if path.suffix == ".json":
+                # 自定义数字解析：保持整数为整数类型
+                def parse_int(value_str):
+                    """解析整数字符串为整数"""
+                    return int(value_str)
+
+                def parse_float(value_str):
+                    """解析浮点数字符串为浮点数"""
+                    return float(value_str)
+
                 with path.open("r", encoding="utf-8") as stream:
-                    return json.load(stream)
+                    return json.load(stream, parse_int=parse_int, parse_float=parse_float)
 
             with path.open("r", encoding="utf-8") as stream:
                 return stream.read()

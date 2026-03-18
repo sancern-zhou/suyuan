@@ -402,6 +402,42 @@ class QueryGDSuncereDataTool:
                 standardized_count=len(standardized_records)
             )
 
+            # 对日数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
+            def safe_float(value, default=0.0):
+                """安全转换为浮点数"""
+                if value is None or value == '' or value == '-':
+                    return default
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            for record in standardized_records:
+                measurements = record.get("measurements", {})
+
+                # 提取原始浓度值
+                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                    record.get("pm2_5") or record.get("PM2_5"))
+                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                    record.get("pm10") or record.get("PM10"))
+                so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                                   record.get("so2") or record.get("SO2"))
+                no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                                   record.get("no2") or record.get("NO2"))
+                co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                                  record.get("co") or record.get("CO"))
+                o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                                    record.get("o3_8h") or record.get("O3_8h"))
+
+                # 应用修约规则并更新 measurements
+                # 0位小数转为整数类型，避免显示 .0
+                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+                measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+                measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+                measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
+                measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
+
             # 保存到上下文
             data_id = context.data_manager.save_data(
                 data=standardized_records,
@@ -577,6 +613,42 @@ class QueryGDSuncereDataTool:
                 raw_count=len(raw_records),
                 standardized_count=len(standardized_records)
             )
+
+            # 对小时数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
+            def safe_float(value, default=0.0):
+                """安全转换为浮点数"""
+                if value is None or value == '' or value == '-':
+                    return default
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            for record in standardized_records:
+                measurements = record.get("measurements", {})
+
+                # 提取原始浓度值
+                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                    record.get("pm2_5") or record.get("PM2_5"))
+                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                    record.get("pm10") or record.get("PM10"))
+                so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                                   record.get("so2") or record.get("SO2"))
+                no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                                   record.get("no2") or record.get("NO2"))
+                co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                                  record.get("co") or record.get("CO"))
+                o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                                    record.get("o3_8h") or record.get("O3_8h"))
+
+                # 应用修约规则并更新 measurements
+                # 0位小数转为整数类型，避免显示 .0
+                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+                measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+                measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+                measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
+                measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
 
             # 保存到上下文
             data_id = context.data_manager.save_data(
@@ -1359,7 +1431,7 @@ ROUNDING_PRECISION = {
     # 统计数据（月、季、年均值及特定百分位数）- "统计数据"列
     # 基于日数据计算时，可比日数据多保留1位或同日数据
     'statistical_data': {
-        'PM2_5': 2,      # μg/m³，保留2位（测试用）
+        'PM2_5': 1,      # μg/m³，保留1位（比日数据多1位）
         'PM10': 0,       # μg/m³，保留0位（同日数据）
         'SO2': 0,        # μg/m³，保留0位（同日数据）
         'NO2': 0,        # μg/m³，保留0位（同日数据）
@@ -1415,7 +1487,7 @@ def format_pollutant_value(value: float, pollutant: str, data_type: str = 'stati
 
     用于返回结果中的数值格式化，确保：
     - 需要保留0位小数的污染物（SO2、NO2、O3、PM10）：返回整数类型（如 15 而非 15.0）
-    - PM2.5：返回字符串类型，强制显示2位小数（如 30.00）
+    - PM2.5：返回字符串类型，强制显示1位小数（如 30.5）
     - 其他保留小数的污染物（CO等）：返回浮点数类型（如 15.2）
 
     Args:
@@ -1432,9 +1504,9 @@ def format_pollutant_value(value: float, pollutant: str, data_type: str = 'stati
     # 获取该污染物的修约精度
     precision = ROUNDING_PRECISION.get(data_type, {}).get(pollutant, 2)
 
-    # PM2.5 特殊处理：强制显示两位小数（字符串格式）
+    # PM2.5 特殊处理：强制显示一位小数（字符串格式）
     if pollutant == 'PM2_5' and data_type == 'statistical_data':
-        return f"{value:.2f}"
+        return f"{value:.1f}"
 
     # 0位小数：返回整数
     if precision == 0:
@@ -1608,7 +1680,7 @@ def calculate_new_composite_index(concentrations: dict) -> float:
 
     计算方法（按 GB 3095-2012）：
     1. 计算各污染物单项质量指数 Ii = Ci / Si（浓度/标准值）
-    2. 按权重求和：Isum = SO2 + NO2×2 + PM10 + PM2.5×3 + CO + O3×2
+    2. 按权重求和：Isum = SO2 + NO2 + PM10 + PM2.5 + CO + O3（所有权重均为1）
 
     Args:
         concentrations: 各污染物平均浓度字典
@@ -2169,6 +2241,15 @@ def execute_query_standard_comparison(
                 else:
                     air_quality_level = '严重污染'
 
+                # 更新measurements中的浓度值（按日数据修约规则：保留整数位）
+                # 0位小数转为整数类型，避免显示 .0
+                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+                measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+                measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+                measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
+                measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
+
                 # 更新measurements中的IAQI字段
                 measurements['PM2_5_IAQI'] = pm25_iaqi
                 measurements['PM10_IAQI'] = pm10_iaqi
@@ -2609,7 +2690,7 @@ def execute_query_standard_comparison(
                 o3_8h_index = round(new_standard_concentrations['O3_8h'] / ANNUAL_STANDARD_LIMITS['O3_8h'], 3)
 
                 # 计算新标准加权单项质量指数（带权重）
-                # PM2.5:3, O3_8h:2, NO2:2, SO2:1, CO:1, PM10:1
+                # 所有污染物权重均为1：PM2.5:1, PM10:1, SO2:1, NO2:1, CO:1, O3_8h:1
                 pm25_weighted_index = round(pm25_index * WEIGHTS['PM2_5'], 3)
                 pm10_weighted_index = round(pm10_index * WEIGHTS['PM10'], 3)
                 so2_weighted_index = round(so2_index * WEIGHTS['SO2'], 3)
@@ -2878,21 +2959,17 @@ def execute_query_standard_comparison(
                         "exceed_days": safe_int(record.get("overDays") or record.get("OverDays")),
                         "exceed_rate": safe_float(record.get("overRate") or record.get("OverRate")),
                         "valid_days": safe_int(record.get("validDays") or record.get("ValidDays")),
-                        # 六参数统计指标（按表3规范进行修约并格式化显示）
+                        # 四参数统计指标（按表3规范进行修约并格式化显示）
                         "SO2": format_pollutant_value(apply_rounding(safe_float(record.get("sO2_Decimal") or record.get("sO2")), 'SO2', 'statistical_data'), 'SO2', 'statistical_data'),
                         "NO2": format_pollutant_value(apply_rounding(safe_float(record.get("nO2_Decimal") or record.get("nO2")), 'NO2', 'statistical_data'), 'NO2', 'statistical_data'),
                         "PM2_5": format_pollutant_value(apply_rounding(safe_float(record.get("pM2_5_Decimal") or record.get("pM2_5")), 'PM2_5', 'statistical_data'), 'PM2_5', 'statistical_data'),
                         "PM10": format_pollutant_value(apply_rounding(safe_float(record.get("pM10_Decimal") or record.get("pM10")), 'PM10', 'statistical_data'), 'PM10', 'statistical_data'),
-                        "CO": format_pollutant_value(apply_rounding(safe_float(record.get("cO_Decimal") or record.get("cO")), 'CO', 'statistical_data'),
-                        "O3_8h": format_pollutant_value(apply_rounding(safe_float(record.get("o3_8h_Decimal") or record.get("o3_8h")), 'O3_8h', 'statistical_data'),
                         # 单项质量指数（从 API 获取）
                         "single_indexes": {
                             "SO2": safe_float(record.get("sO2_SingleIndex") or 0),
                             "NO2": safe_float(record.get("nO2_SingleIndex") or 0),
                             "PM10": safe_float(record.get("pM10_SingleIndex") or 0),
-                            "CO": safe_float(record.get("cO_SingleIndex") or 0),
-                            "PM2_5": safe_float(record.get("pM2_5_SingleIndex") or 0),
-                            "O3_8h": safe_float(record.get("o3_8h_SingleIndex") or 0)
+                            "PM2_5": safe_float(record.get("pM2_5_SingleIndex") or 0)
                         },
                         # 首要污染物统计（基于AQI > 100时的首要污染物字段）
                         "primary_pollutant_days": old_primary_pollutant_days,
@@ -2915,9 +2992,7 @@ def execute_query_standard_comparison(
                             "SO2": old_standard.get("SO2"),
                             "NO2": old_standard.get("NO2"),
                             "PM2_5": old_standard.get("PM2_5"),
-                            "PM10": old_standard.get("PM10"),
-                            "CO": old_standard.get("CO"),
-                            "O3_8h": old_standard.get("O3_8h")
+                            "PM10": old_standard.get("PM10")
                         },
                         single_indexes=old_standard.get("single_indexes", {})
                     )

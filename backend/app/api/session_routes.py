@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 @router.get("/")
+@router.get("")  # 同时支持不带斜杠的请求
 async def list_sessions(
     state: Optional[str] = None,
     limit: Optional[int] = None

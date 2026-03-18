@@ -218,7 +218,9 @@ class ReadDataRegistryTool(LLMTool):
                 "returned_records": len(data),
                 "filter_applied": bool(filter_info),
                 "filter_details": filter_info,
-                "source": "data_registry"
+                "source": "data_registry",
+                "generator": "read_data_registry",
+                "tool_name": "read_data_registry"
             },
             "summary": self._generate_summary(data, filter_info)
         }
