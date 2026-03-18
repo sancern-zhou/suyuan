@@ -2817,7 +2817,15 @@ def execute_query_standard_comparison(
                     has_city="city" in first_report,
                     cityName_value=first_report.get("cityName"),
                     city_value=first_report.get("city"),
-                    all_city_fields=[k for k in first_report.keys() if "city" in k.lower()]
+                    all_city_fields=[k for k in first_report.keys() if "city" in k.lower()],
+                    # 检查CO和O3_8h字段是否存在
+                    has_cO="cO" in first_report or "CO" in first_report,
+                    has_cO_Decimal="cO_Decimal" in first_report,
+                    has_o3_8h="o3_8h" in first_report or "O3_8h" in first_report,
+                    has_o3_8h_Decimal="o3_8h_Decimal" in first_report,
+                    cO_value=first_report.get("cO") or first_report.get("CO"),
+                    o3_8h_value=first_report.get("o3_8h") or first_report.get("O3_8h"),
+                    all_fields_with_c_or_o3=[k for k in first_report.keys() if "cO" in k or "CO" in k or "o3" in k.lower()]
                 )
 
             for record in report_data:
