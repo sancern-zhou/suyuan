@@ -120,4 +120,21 @@ node_modules/
 # Playwright
 playwright.config.ts
 playwright-*/
-docs/后端日志.md
+
+# 只提交backend和frontend文件夹
+# 其他所有文件夹都忽略
+参考/
+报告模板/
+doc/
+docs/
+scripts/
+tests/
+models--*/
+hub/
+llm_monitor/
+temp_images/
+test_results/
+tmp/
+tmpnumpy_wheels/
+__pycache__/
+D:tmp/
