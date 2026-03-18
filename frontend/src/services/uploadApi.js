@@ -3,7 +3,9 @@
  * 用于对话中的文件和图片上传
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// 使用相对路径，通过vite proxy转发到后端
+// 开发环境: /api -> http://localhost:8000 (vite proxy)
+// 生产环境: 需要配置反向代理将 /api 转发到后端
 
 /**
  * 上传文件用于对话
@@ -23,7 +25,7 @@ export async function uploadChatFile(file, sessionId = null) {
     console.log('[uploadChatFile] 上传文件:', file.name, '大小:', file.size, '类型:', file.type);
     console.log('[uploadChatFile] sessionId:', sessionId);
 
-    const response = await fetch(`${API_BASE_URL}/api/upload/chat`, {
+    const response = await fetch('/api/upload/chat', {
       method: 'POST',
       body: formData,
       // 不设置Content-Type，让浏览器自动处理multipart/form-data边界
@@ -72,7 +74,7 @@ export async function uploadChatFile(file, sessionId = null) {
  * @returns {Promise<Object>} 文件信息
  */
 export async function getFileInfo(fileId) {
-  const response = await fetch(`${API_BASE_URL}/api/upload/${fileId}/info`);
+  const response = await fetch(`/api/upload/${fileId}/info`);
 
   if (!response.ok) {
     throw new Error('获取文件信息失败');
@@ -87,7 +89,7 @@ export async function getFileInfo(fileId) {
  * @returns {Promise<Object>} 删除结果
  */
 export async function deleteChatFile(fileId) {
-  const response = await fetch(`${API_BASE_URL}/api/upload/${fileId}`, {
+  const response = await fetch(`/api/upload/${fileId}`, {
     method: 'DELETE',
   });
 
@@ -104,7 +106,7 @@ export async function deleteChatFile(fileId) {
  * @returns {string} 文件访问URL
  */
 export function getFileUrl(fileId) {
-  return `${API_BASE_URL}/api/upload/${fileId}`;
+  return `/api/upload/${fileId}`;
 }
 
 /**

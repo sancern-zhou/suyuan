@@ -139,3 +139,13 @@ tmp/
 tmpnumpy_wheels/
 __pycache__/
 D:tmp/
+
+# Backup directories
+backend_backup_*/
+frontend_backup_*/
+
+# Model directories
+bge-*-model/
+
+# Document files
+*.docx

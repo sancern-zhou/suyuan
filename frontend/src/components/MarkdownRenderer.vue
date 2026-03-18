@@ -8,6 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import markdownItKatex from '@traptitech/markdown-it-katex'
+import { markdownItTable } from 'markdown-it-table'
 import 'katex/dist/katex.min.css'
 
 // 预处理后的内容
@@ -21,7 +22,7 @@ const md = new MarkdownIt({
 }).use(markdownItKatex, {
   throwOnError: false,
   errorColor: '#cc0000'
-})
+}).use(markdownItTable)
 
 // 自定义图片渲染规则，支持base64图片
 const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
