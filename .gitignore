@@ -1,0 +1,141 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv5/
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+
+# Data & Cache
+backend_data_registry/
+backend_data/
+backend/models/
+data/
+*.log
+*.cache
+
+# Temporary files
+*.png
+*.jpg
+*.jpeg
+*.html
+*.tmp
+nul
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Test outputs
+test_outputs/
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Unpacked documents
+unpacked_*/
+unpacked_doc*/
+unpacked_pm25_doc*/
+
+# Test scripts (development only)
+test_*.py
+debug_*.py
+analyze_*.py
+extract_*.py
+record_*.py
+simulate_*.py
+verify_*.py
+check_*.py
+run_*.py
+simple_*.py
+ultimate_*.py
+deep_*.py
+interactive_*.py
+manual_*.py
+final_*.py
+find_*.py
+correct_*.py
+refactored_*.py
+expand_*.py
+click_*.py
+start_*.py
+auto_*.py
+
+# Temporary analysis files
+*_analysis.md
+*_summary.md
+*_report.md
+*_solution.md
+_comparison.md
+_implementation.md
+_optimization.md
+_fix*.md
+_test*.txt
+_extraction*.txt
+_debug*.txt
+_table*.txt
+_full*.txt
+_result*.txt
+_preview*.txt
+_log*.md
+
+# External dependencies
+Tesseract-OCR/
+table-transformer-model/
+obm-full-standalone/
+
+# Temporary data folders
+`data`
+data/
+
+# Deployment scripts
+deploy.bat
+deploy.sh
+
+# Node modules (frontend)
+node_modules/
+
+# Playwright
+playwright.config.ts
+playwright-*/
+
+# 只提交backend和frontend文件夹
+# 其他所有文件夹都忽略
+参考/
+报告模板/
+doc/
+docs/
+scripts/
+tests/
+models--*/
+hub/
+llm_monitor/
+temp_images/
+test_results/
+tmp/
+tmpnumpy_wheels/
+__pycache__/
+D:tmp/
