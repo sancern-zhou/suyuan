@@ -33,6 +33,14 @@
     >
       💻 编程
     </button>
+    <button
+      class="mode-button"
+      :class="{ active: modelValue === 'report' }"
+      @click="selectMode('report')"
+      title="报告模式 - 报告生成：基于模板和数据生成DOCX格式报告"
+    >
+      📄 报告
+    </button>
   </div>
 </template>
 
@@ -43,7 +51,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'expert', 'code', 'query'].includes(value)
+    validator: (value) => ['assistant', 'expert', 'code', 'query', 'report'].includes(value)
   }
 })
 

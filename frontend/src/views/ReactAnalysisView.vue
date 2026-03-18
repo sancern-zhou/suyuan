@@ -659,6 +659,14 @@
           title="拖拽调整右侧面板宽度，双击恢复默认"
         ></div>
 
+        <!-- 拖动时的透明遮罩层，用于捕获鼠标事件 -->
+        <div
+          v-if="isDragging"
+          class="drag-overlay"
+          @mouseup="stopDragging"
+          @mouseleave="stopDragging"
+        ></div>
+
         <div v-if="rightPanelVisible" class="viz-wrapper" :style="vizPanelStyle">
           <!-- 报告生成专家 -->
           <ReportGenerationPanel
@@ -1067,8 +1075,10 @@ const hasVizContent = computed(() => {
   const hasSources = selectedMessageId.value !== null &&
     store.messages.some(msg => msg.id === selectedMessageId.value && msg.sources)
 
-  // 检查是否有Office文档操作
-  const hasOffice = hasOfficeDocuments.value
+  // 检查是否有Office文档操作（检查消息中的observation + lastOfficeDocument）
+  const hasOfficeFromMessages = hasOfficeDocuments.value
+  const hasOfficeFromLastDoc = !!(store.lastOfficeDocument?.pdf_preview)
+  const hasOffice = hasOfficeFromMessages || hasOfficeFromLastDoc
 
   return hasCharts || hasSources || hasOffice
 })
@@ -1255,6 +1265,13 @@ const updateWidthFromCursor = (clientX) => {
 
 const handleMouseMove = (event) => {
   if (!isDragging.value) return
+
+  // 如果鼠标按钮已经释放，自动停止拖动
+  if (event.buttons === 0) {
+    stopDragging()
+    return
+  }
+
   updateWidthFromCursor(event.clientX)
 }
 
@@ -2666,6 +2683,19 @@ const handleSessionRestore = async (sessionId) => {
   border-left: 1px solid #ccc;
   border-right: 1px solid #ccc;
   flex-shrink: 0;
+  position: relative;
+  z-index: 200;
+}
+
+.drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: transparent;
+  z-index: 9999;
+  cursor: col-resize;
 }
 
 @media (max-width: 1280px) {
