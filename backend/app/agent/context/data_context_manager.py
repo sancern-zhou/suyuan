@@ -549,12 +549,18 @@ class DataContextManager:
         # ✅ 返回字典包含 data_id 和 file_path
         # 计算绝对路径（供 Agent 使用）
         try:
-            if path.is_absolute():
+            # path 可能是字符串或 Path 对象，统一转换为 Path
+            if isinstance(path, str):
+                path_obj = Path(path)
+            else:
+                path_obj = path
+
+            if path_obj.is_absolute():
                 # 已经是绝对路径
-                file_path = str(path)
+                file_path = str(path_obj)
             else:
                 # 相对路径，转换为绝对路径
-                file_path = str(Path.cwd().parent / path)
+                file_path = str(Path.cwd().parent / path_obj)
 
             # 统一路径分隔符为 /（适用于 Windows 和 Linux）
             file_path = file_path.replace("\\", "/")

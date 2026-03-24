@@ -118,19 +118,6 @@
           v-model="agentMode"
           @update:modelValue="handleAgentModeChange"
         />
-
-        <!-- 深度思考模式：仅在通用Agent模式显示 -->
-        <button
-          type="button"
-          v-if="assistantMode === 'general-agent'"
-          class="feature-button"
-          :class="{ 'feature-button-active': enableReasoning }"
-          @click="toggleReasoning"
-          :title="enableReasoning ? '已启用深度思考模式（显示LLM推理过程）' : '启用深度思考模式（显示LLM推理过程）'"
-        >
-          {{ enableReasoning ? '✓ 深度思考' : '深度思考' }}
-        </button>
-        <button class="feature-button" disabled title="敬请期待">联网搜索</button>
       </div>
     </div>
   </div>
@@ -172,17 +159,15 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:precision', 'update:enableReasoning', 'update:useReranker', 'update:agentMode'])
+const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReranker', 'update:agentMode'])
 
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
-const precision = ref('standard')  // 默认standard模式，点击按钮切换为fast
 const showKnowledgeBaseSelector = ref(false)
 const showWorkflowTools = ref(false)
 const atSymbolIndex = ref(-1)  // 记录@符号的位置
 const highlightedTool = ref(null)  // 高亮的工具
-const enableReasoning = ref(false)  // 默认禁用思考模式（不显示推理过程）
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
 // ✅ 从localStorage读取上次选择的模式，默认assistant
 const agentMode = ref(localStorage.getItem('agent-mode') || 'assistant')
@@ -200,14 +185,6 @@ const workflowTools = [
 
 const toggleKnowledgeBase = () => {
   showKnowledgeBaseSelector.value = !showKnowledgeBaseSelector.value
-}
-
-const toggleReasoning = () => {
-  // 仅在通用Agent模式下允许切换
-  if (props.assistantMode === 'general-agent') {
-    enableReasoning.value = !enableReasoning.value
-    emit('update:enableReasoning', enableReasoning.value)
-  }
 }
 
 const handleAgentModeChange = (newMode) => {
@@ -300,18 +277,6 @@ watch(() => props.modelValue, (newValue) => {
   localValue.value = newValue
 })
 
-watch(
-  () => props.assistantMode,
-  (newMode, oldMode) => {
-    // 重置精度模式为默认
-    if (precision.value !== 'standard') {
-      precision.value = 'standard'
-      emit('update:precision', 'standard')
-    }
-  },
-  { immediate: true }
-)
-
 watch(localValue, async (newValue) => {
   emit('update:modelValue', newValue)
   await nextTick()
@@ -393,12 +358,10 @@ const handleSend = () => {
     url: a.url
   }))
 
-  // 将查询、知识库ID、精度模式、思考模式、Agent模式、附件一起发送
+  // 将查询、知识库ID、Agent模式、附件一起发送
   emit('send', {
     query: localValue.value,
     knowledgeBaseIds: knowledgeBaseIds,
-    precision: precision.value,
-    enableReasoning: enableReasoning.value,
     agentMode: agentMode.value,
     attachments: attachmentsData
   })
@@ -763,79 +726,6 @@ defineExpose({
   flex-wrap: wrap;
   gap: 12px;
   padding-left: 4px;
-}
-
-.feature-button {
-  padding: 6px 16px;
-  border-radius: 999px;
-  border: 1px solid #d4dbe8;
-  background: #fff;
-  color: #6b7a99;
-  font-size: 13px;
-  cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
-  transition: all 0.2s;
-
-  &:hover:not(:disabled) {
-    border-color: #1976D2;
-    color: #1976D2;
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-}
-
-.feature-button-active {
-  background: #e3f2fd;
-  border-color: #1976D2;
-  color: #1976D2;
-  font-weight: 500;
-}
-
-.feature-hint {
-  padding: 6px 16px;
-  border-radius: 999px;
-  border: 1px solid #4CAF50;
-  background: #E8F5E9;
-  color: #2E7D32;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.grid-resolution-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border: 1px solid #d4dbe8;
-  border-radius: 999px;
-  background: #fff;
-  font-size: 13px;
-  color: #6b7a99;
-
-  label {
-    font-weight: 500;
-    white-space: nowrap;
-  }
-}
-
-.grid-resolution-select {
-  border: none;
-  background: transparent;
-  font-size: 13px;
-  color: #1976D2;
-  cursor: pointer;
-  outline: none;
-
-  &:focus {
-    outline: none;
-  }
-
-  option {
-    padding: 4px;
-  }
 }
 
 @media (max-width: 768px) {

@@ -286,7 +286,6 @@ class ExpertPlanGenerator:
                 "get_air_quality",       # 区域对比数据查询（替代get_air_quality）
                 "calculate_pm_pmf",      # PMF源解析（颗粒物专用，依赖水溶性离子+碳组分数据）
                 "calculate_vocs_pmf",    # PMF源解析（VOCs专用，用于臭氧溯源）
-                "iaqi_calculator",
                 "ml_predictor"
             ],
             "default_plan": [

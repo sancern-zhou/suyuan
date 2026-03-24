@@ -21,6 +21,7 @@
 """
 from typing import Dict, Any, List
 import math
+import asyncio
 import structlog
 
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
@@ -237,7 +238,7 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
         record['primary_pollutant'] = primary_pollutant
 
 
-def execute_query_city_day_new_standard(
+async def execute_query_city_day_new_standard(
     cities: List[str],
     start_date: str,
     end_date: str,
@@ -290,8 +291,6 @@ def execute_query_city_day_new_standard(
 
         # 如果有多个分段，使用并发查询
         if len(segments) > 1:
-            import asyncio
-
             async def fetch_all_segments():
                 from app.tools.query.query_gd_suncere.tool import query_day_data_by_segment
                 tasks = []
@@ -307,11 +306,8 @@ def execute_query_city_day_new_standard(
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 return results
 
-            # 执行并发查询
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            all_results = loop.run_until_complete(fetch_all_segments())
-            loop.close()
+            # 执行并发查询 - 直接 await（因为函数现在是 async）
+            all_results = await fetch_all_segments()
 
             # 合并结果
             raw_records = []

@@ -228,7 +228,7 @@ async def startup_event():
         from app.agent.react_agent import create_react_agent
 
         # 初始化服务（传入Agent工厂 - 使用单专家ReAct Agent）
-        init_service(agent_factory=lambda: create_react_agent(enable_multi_expert=False))
+        init_service(agent_factory=lambda: create_react_agent())
 
         # 启动调度器
         start_service()

@@ -8,7 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 import markdownItKatex from '@traptitech/markdown-it-katex'
-import { markdownItTable } from 'markdown-it-table'
+import markdownItMultimdTable from 'markdown-it-multimd-table'
 import 'katex/dist/katex.min.css'
 
 // 预处理后的内容
@@ -17,12 +17,15 @@ const processedContent = ref('')
 const md = new MarkdownIt({
   html: true,
   linkify: true,
-  breaks: true,
   typographer: true
+}).use(markdownItMultimdTable, {
+  multiline: true,  // 启用多行表格支持
+  rowspan: true,    // 启用行跨列支持
+  headerless: true  // 启用无头表格支持
 }).use(markdownItKatex, {
   throwOnError: false,
   errorColor: '#cc0000'
-}).use(markdownItTable)
+})
 
 // 自定义图片渲染规则，支持base64图片
 const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
@@ -122,15 +125,59 @@ watch(() => props.content, (newContent) => {
 
 // 已移除脱敏限制
 
+// 【Vue 3 最佳实践】使用 computed + watch 组合确保响应式更新
 const renderedHtml = computed(() => {
-  // 依赖 streaming prop，当 streaming 从 true 变为 false 时重新渲染
-  const _ = props.streaming
+  // 明确声明依赖：props.content 和 props.streaming
+  // Vue 3 会自动追踪这些依赖，当它们变化时重新计算
+  const _content = props.content
+  const _streaming = props.streaming
 
-  let content = processedContent.value || props.content || ''
+  let content = processedContent.value || _content || ''
+
+  // 【调试】
+  if (content.includes('|') && content.includes('------')) {
+    console.log('[MarkdownRenderer] ===== 开始表格渲染 =====')
+    console.log('[MarkdownRenderer] streaming:', _streaming)
+    console.log('[MarkdownRenderer] content长度:', content.length)
+    console.log('[MarkdownRenderer] content前100字符:', content.substring(0, 100))
+  }
+
+  // 【调试】检查原始内容的换行符
+  if (content.includes('|') && content.includes('------')) {
+    console.log('[MarkdownRenderer] 检测到表格内容，检查换行符')
+    const lines = content.split('\n')
+    const tableLineIndices = []
+    lines.forEach((line, idx) => {
+      if (line.includes('|')) {
+        tableLineIndices.push(idx)
+        console.log(`[MarkdownRenderer] 表格行 ${idx}: "${line.substring(0, 50)}..."`)
+      }
+    })
+    console.log('[MarkdownRenderer] 表格行索引:', tableLineIndices)
+  }
 
   // 【修复】处理字面量转义字符 \n -> 真正的换行符
   // 后端LLM可能返回包含 \n 字面量的字符串，需要转换为真正的换行符
   content = content.replace(/\\n/g, '\n')
+
+  // 【修复】修复LLM生成的不规范表格格式 - 处理流式输出时缺少换行符的问题
+  // 问题：流式输出时，表格行之间可能缺少换行符，导致类似 | ... || ... 的情况
+  // 解决：将 || 替换为 |\n|（多次执行以确保完全修复）
+
+  let oldContent = ''
+  let iterations = 0
+  const maxIterations = 10  // 防止无限循环
+
+  // 循环替换，直到没有 || 为止
+  while (content !== oldContent && iterations < maxIterations) {
+    oldContent = content
+    content = content.replace(/\|\|/g, '|\n|')
+    iterations++
+  }
+
+  if (iterations > 0) {
+    console.log(`[MarkdownRenderer] 表格格式修复: 执行了 ${iterations} 次替换，剩余 || 数量:`, (content.match(/\|\|/g) || []).length)
+  }
 
   // 【增强】自动识别并包裹数学公式
   // 检测包含 LaTeX 语法的文本（如 \cdot, ^, _, \frac 等）并自动用 $ 包裹
@@ -177,8 +224,11 @@ const renderedHtml = computed(() => {
   // 【保留占位符】让ReActMessageList.vue处理截图注入，不在这里替换占位符
 
   const rendered = md.render(content)
-  console.log('[MarkdownRenderer] 渲染后的HTML长度:', rendered.length)
-  console.log('[MarkdownRenderer] 渲染后的HTML预览:', rendered.substring(0, 500))
+
+  console.log('[MarkdownRenderer] ===== 渲染完成 =====')
+  console.log('[MarkdownRenderer] streaming:', props.streaming)
+  console.log('[MarkdownRenderer] HTML长度:', rendered.length)
+  console.log('[MarkdownRenderer] HTML预览:', rendered.substring(0, 500))
 
   // 【调试】检查渲染后的HTML中是否包含img标签
   const imgTags = rendered.match(/<img[^>]*>/g)
@@ -285,9 +335,10 @@ const renderedHtml = computed(() => {
   }
 
   :deep(.md-table-wrapper) {
-    width: 100%;
+    width: fit-content;  // 根据内容自适应宽度
+    max-width: 100%;  // 最大可以是100%页面宽度
+    margin: 16px auto;  // 居中显示
     overflow-x: auto;
-    margin: 16px 0;
     border: 1px solid #e5e7eb;
     border-radius: 10px;
     box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3);
@@ -349,10 +400,9 @@ const renderedHtml = computed(() => {
   }
 
   :deep(table) {
-    width: 100%;
+    width: auto;  // 根据内容自适应宽度
     border-collapse: separate;
     border-spacing: 0;
-    min-width: 420px;
   }
 
   :deep(th),
@@ -364,6 +414,11 @@ const renderedHtml = computed(() => {
     font-size: 13px;
     line-height: 1.5;
     background-clip: padding-box;
+    // 确保内容自动换行，避免表格过度撑大
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
+    max-width: 300px;  // 单个单元格最大宽度，超过后自动换行
   }
 
   :deep(th) {

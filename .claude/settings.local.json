@@ -18,7 +18,15 @@
       "Read(//tmp/**)",
       "Bash(find . -name soffice -o -name *.rpm)",
       "Bash(rpm -ivh *.rpm --nodeps)",
-      "Bash(soffice --version)"
+      "Bash(soffice --version)",
+      "Bash(npm install:*)",
+      "Bash(grep -rn \"搜索\\\\|search\" src/components/*.vue)",
+      "Bash(/home/xckj/suyuan/backend_backup_20260318_114455/myenv6/bin/python -c \":*)",
+      "Bash(find /tmp/claude-code-main -name *grep* -o -name *Grep*)",
+      "Bash(source /home/xckj/suyuan/backend/venv/bin/activate)",
+      "Bash(file /home/xckj/suyuan/tmp/*.xls)",
+      "Bash(find /home/xckj/suyuan -name *.xls* -type f)",
+      "Bash(/root/miniconda3/envs/backend_py311/bin/python3 -c \"from app.tools.utility.grep_tool import _RIPGREP_PATH, tool; print\\(''''ripgrep:'''', _RIPGREP_PATH\\); print\\(''''available:'''', tool.is_available\\(\\)\\)\")"
     ]
   }
 }

@@ -51,7 +51,6 @@ GENERAL_AGENT_PROMPT = """你是一位大气环境数据分析专家，能够理
 - calculate_pmf: PMF源解析
 - meteorological_trajectory_analysis: 气象轨迹分析
 - analyze_upwind_enterprises: 上风向企业分析
-- calculate_iaqi: IAQI计算
 - predict_air_quality: 空气质量预测
 
 ### 可视化工具

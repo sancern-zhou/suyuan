@@ -161,19 +161,11 @@ class TaskPlanningMixin:
                     # 执行任务
                     # ========================================
                     try:
-                        # 根据专家类型执行
-                        if task.expert_type and self.enable_multi_expert:
-                            # 使用专家系统
-                            result = await self._execute_task_with_expert(
-                                task,
-                                memory_manager
-                            )
-                        else:
-                            # 使用普通 ReAct 循环
-                            result = await self._execute_task_with_react(
-                                task,
-                                memory_manager
-                            )
+                        # 使用 ReAct 循环执行任务
+                        result = await self._execute_task_with_react(
+                            task,
+                            memory_manager
+                        )
 
                         # 任务完成
                         self.task_list.update_task(
@@ -239,51 +231,6 @@ class TaskPlanningMixin:
                     "error": str(e)
                 }
             }
-
-    async def _execute_task_with_expert(
-        self,
-        task: Task,
-        memory_manager
-    ) -> Dict:
-        """
-        使用专家系统执行任务
-
-        Args:
-            task: 任务对象
-            memory_manager: 记忆管理器
-
-        Returns:
-            执行结果
-        """
-        try:
-            # 获取专家路由器
-            expert_router = self._get_expert_router(memory_manager)
-
-            if not expert_router:
-                raise ValueError("Expert router not available")
-
-            # 构造专家查询
-            expert_query = f"{task.subject}: {task.description}"
-
-            # 执行专家分析
-            pipeline_result = await expert_router.execute_pipeline(
-                expert_query,
-                precision='standard'
-            )
-
-            # 转换结果
-            result = {
-                "success": pipeline_result.status in ["success", "partial"],
-                "data_id": pipeline_result.data_ids[0] if pipeline_result.data_ids else None,
-                "answer": pipeline_result.final_answer,
-                "expert_type": task.expert_type
-            }
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Expert execution failed: {e}", exc_info=True)
-            raise
 
     async def _execute_task_with_react(
         self,

@@ -45,10 +45,6 @@ class AgentAnalyzeRequest(BaseModel):
         'template-report-expert' - 模板报告生成专家（方案B，推荐使用 /api/report/generate-from-template-agent）
         'general-agent' 或 None - 通用Agent单专家模式（支持ReAct循环）"""
     )
-    precision: str = Field(
-        'standard',
-        description="EKMA分析精度模式: fast(快速筛查,约18秒), standard(标准分析,约3分钟,默认), full(完整分析,约7-10分钟)"
-    )
     knowledge_base_ids: Optional[List[str]] = Field(
         None,
         description="选中的知识库ID列表，用于检索增强生成"
@@ -75,7 +71,6 @@ class AgentAnalyzeRequest(BaseModel):
                 "max_iterations": 10,
                 "plan_mode": False,
                 "assistant_mode": "quick-tracing-expert",
-                "precision": "standard",
                 "knowledge_base_ids": ["kb_123", "kb_456"]
             }
         }
@@ -240,7 +235,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
         max_iterations=request.max_iterations,
         plan_mode=request.plan_mode,
         assistant_mode=request.assistant_mode,
-        precision=request.precision,
         knowledge_base_ids=request.knowledge_base_ids,
         is_interruption=request.is_interruption,
         mode=request.mode
@@ -273,15 +267,11 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             )
         elif request.assistant_mode == 'deep-tracing-expert':
             agent = deep_tracing_agent_instance
-            # 深度溯源模式默认使用 full 精度
-            if request.precision == 'standard':
-                request.precision = 'full'
             logger.info(
                 "使用深度溯源专家模式",
                 session_id=request.session_id,
                 agent_id=id(agent),
                 max_iterations=15,
-                precision=request.precision,
                 features=["analyze_trajectory_sources"]
             )
         elif request.assistant_mode == 'report-generation-expert':
@@ -304,10 +294,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                 session_id=request.session_id,
                 agent_id=id(agent)
             )
-
-        # 验证precision有效性
-        if request.precision not in ['fast', 'standard', 'full']:
-            request.precision = 'standard'
 
         # 构建分析参数
         analyze_kwargs = {

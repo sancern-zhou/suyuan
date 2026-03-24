@@ -1431,12 +1431,12 @@ ROUNDING_PRECISION = {
     # 统计数据（月、季、年均值及特定百分位数）- "统计数据"列
     # 基于日数据计算时，可比日数据多保留1位或同日数据
     'statistical_data': {
-        'PM2_5': 1,      # μg/m³，保留1位（比日数据多1位）
-        'PM10': 0,       # μg/m³，保留0位（同日数据）
-        'SO2': 0,        # μg/m³，保留0位（同日数据）
-        'NO2': 0,        # μg/m³，保留0位（同日数据）
-        'O3_8h': 0,      # μg/m³，保留0位（同日数据）
-        'CO': 1,         # mg/m³，保留1位（同日数据）
+        'PM2_5': 1,      # μg/m³，保留1位
+        'PM10': 1,       # μg/m³，保留1位
+        'SO2': 1,        # μg/m³，保留1位
+        'NO2': 1,        # μg/m³，保留1位
+        'O3_8h': 1,      # μg/m³，保留1位
+        'CO': 2,         # mg/m³，保留2位
         'NO': 0,         # μg/m³，保留0位（同日数据）
         'NOx': 0,        # μg/m³，保留0位（同日数据）
     },
@@ -1451,6 +1451,15 @@ ROUNDING_PRECISION = {
         'exceed_multiple': 2,  # 超标倍数，保留2位
         'compliance_rate': 1,  # 达标率（%），保留1位
     },
+    # 最终输出修约规则（一般修约规范）
+    'final_output': {
+        'PM2_5': 1,      # μg/m³，保留1位小数
+        'CO': 1,         # mg/m³，保留1位小数
+        'SO2': 0,        # μg/m³，取整
+        'NO2': 0,        # μg/m³，取整
+        'PM10': 0,       # μg/m³，取整
+        'O3_8h': 0,      # μg/m³，取整
+    },
     # 其他指标（中间计算值）
     'other': {
         'composite_index': 2,      # 综合指数，保留2位
@@ -1459,14 +1468,47 @@ ROUNDING_PRECISION = {
 }
 
 
+def safe_round(value: float, precision: int) -> float:
+    """
+    通用修约函数（四舍六入五成双）
+
+    使用Decimal进行精确修约，避免浮点数精度问题
+
+    Args:
+        value: 原始值
+        precision: 保留的小数位数
+
+    Returns:
+        修约后的值
+    """
+    if value is None:
+        return 0.0
+
+    from decimal import Decimal, ROUND_HALF_EVEN
+
+    # 将浮点数转换为字符串再转换为Decimal，避免浮点数精度问题
+    value_str = format(value, f'.{precision + 5}f').rstrip('0').rstrip('.')
+    decimal_value = Decimal(value_str)
+
+    # 构造修约单位（如0.01表示保留2位小数）
+    quantize_unit = Decimal('0.' + '0' * precision) if precision > 0 else Decimal('1')
+
+    # 使用ROUND_HALF_EVEN进行修约
+    rounded = decimal_value.quantize(quantize_unit, rounding=ROUND_HALF_EVEN)
+
+    return float(rounded)
+
+
 def apply_rounding(value: float, pollutant: str, data_type: str = 'statistical_data') -> float:
     """
     应用修约规则（四舍六入五成双）
 
+    使用Decimal进行精确修约，避免浮点数精度问题
+
     Args:
         value: 原始值
         pollutant: 污染物名称（如'PM2_5', 'SO2'等）
-        data_type: 数据类型（'raw_data', 'statistical_data', 'evaluation_data'）
+        data_type: 数据类型（'raw_data', 'statistical_data', 'evaluation_data', 'final_output'）
 
     Returns:
         修约后的值
@@ -1477,23 +1519,23 @@ def apply_rounding(value: float, pollutant: str, data_type: str = 'statistical_d
     # 获取该污染物的修约精度
     precision = ROUNDING_PRECISION.get(data_type, {}).get(pollutant, 2)
 
-    # 使用Python的round()函数（四舍六入五成双）
-    return round(value, precision)
+    # 调用通用修约函数
+    return safe_round(value, precision)
 
 
-def format_pollutant_value(value: float, pollutant: str, data_type: str = 'statistical_data'):
+def format_pollutant_value(value: float, pollutant: str, data_type: str = 'statistical_data', use_final_rounding: bool = False):
     """
-    格式化污染物浓度值，确保按表3规范正确显示小数位数
+    格式化污染物浓度值，确保按修约规范正确显示小数位数
 
-    用于返回结果中的数值格式化，确保：
-    - 需要保留0位小数的污染物（SO2、NO2、O3、PM10）：返回整数类型（如 15 而非 15.0）
-    - PM2.5：返回字符串类型，强制显示1位小数（如 30.5）
-    - 其他保留小数的污染物（CO等）：返回浮点数类型（如 15.2）
+    用于返回结果中的数值格式化：
+    - 默认（综合指数计算）：所有污染物（除CO外）保留1位小数，CO保留2位小数
+    - 最终输出（use_final_rounding=True）：PM2.5和CO保留1位小数，其他四个指标取整
 
     Args:
         value: 已修约的数值
         pollutant: 污染物名称
         data_type: 数据类型
+        use_final_rounding: 是否使用最终输出修约规则（一般修约规范）
 
     Returns:
         格式化后的值（整数、浮点数或字符串）
@@ -1501,19 +1543,17 @@ def format_pollutant_value(value: float, pollutant: str, data_type: str = 'stati
     if value is None:
         return 0.0
 
-    # 获取该污染物的修约精度
-    precision = ROUNDING_PRECISION.get(data_type, {}).get(pollutant, 2)
+    # 如果使用最终输出修约规则，重新应用修约
+    if use_final_rounding:
+        rounded_value = apply_rounding(value, pollutant, 'final_output')
+        # 获取修约精度，决定返回类型
+        precision = ROUNDING_PRECISION.get('final_output', {}).get(pollutant, 2)
+        if precision == 0:
+            return int(rounded_value)  # 返回整数类型
+        return rounded_value
 
-    # PM2.5 特殊处理：强制显示一位小数（字符串格式）
-    if pollutant == 'PM2_5' and data_type == 'statistical_data':
-        return f"{value:.1f}"
-
-    # 0位小数：返回整数
-    if precision == 0:
-        return int(value)
-    # 1位或更多小数：返回浮点数
-    else:
-        return float(value)
+    # 返回浮点数（已修约的值）
+    return float(value)
 
 
 # -----------------------------------------------------------------------------
@@ -1534,11 +1574,32 @@ STANDARD_LIMITS = {
     'O3_8h': 160   # 日最大8小时平均二级标准
 }
 
+# 旧标准24小时平均限值（用于旧标准超标判断）
+# 参考：HJ 633-2011 环境空气质量评价技术规范
+OLD_STANDARD_LIMITS = {
+    'PM2_5': 75,   # 旧标准24小时平均二级标准（HJ 633-2011，IAQI=100对应75）
+    'PM10': 150,   # 旧标准24小时平均二级标准（HJ 633-2011，IAQI=100对应150）
+    'SO2': 150,    # 24小时平均二级标准（与新标准相同）
+    'NO2': 80,     # 24小时平均二级标准（与新标准相同）
+    'CO': 4,       # 24小时平均二级标准（mg/m³，与新标准相同）
+    'O3_8h': 160   # 日最大8小时平均二级标准（与新标准相同）
+}
+
 # 用于年均综合指数计算的标准限值（与超标判断分开）
 # 注意：PM10和PM2.5采用收严后的新标准限值
 ANNUAL_STANDARD_LIMITS = {
     'PM2_5': 30,   # 年平均二级标准（新标准收严：35→30）
     'PM10': 60,    # 年平均二级标准（新标准收严：70→60）
+    'SO2': 60,     # 年平均二级标准
+    'NO2': 40,     # 年平均二级标准
+    'CO': 4,       # 24小时平均二级标准（mg/m³）
+    'O3_8h': 160   # 日最大8小时平均二级标准
+}
+
+# 旧标准年均标准限值（HJ 633-2011）
+ANNUAL_STANDARD_LIMITS_OLD = {
+    'PM2_5': 35,   # 年平均二级标准（旧标准）
+    'PM10': 70,    # 年平均二级标准（旧标准）
     'SO2': 60,     # 年平均二级标准
     'NO2': 40,     # 年平均二级标准
     'CO': 4,       # 24小时平均二级标准（mg/m³）
@@ -1668,7 +1729,8 @@ def calculate_iaqi(concentration: float, pollutant: str, standard: str = 'new') 
             if bp_hi == bp_lo:  # 防止除零
                 return iaqi_hi
             iaqi = (iaqi_hi - iaqi_lo) / (bp_hi - bp_lo) * (concentration - bp_lo) + iaqi_lo
-            return int(round(iaqi))
+            # 返回浮点数，由调用方决定如何取整（四舍五入或向上进位）
+            return iaqi
 
     # 浓度超过最高分段，返回最高IAQI
     return breakpoints[-1][1]
@@ -1889,22 +1951,417 @@ async def query_day_data_by_segment(
         return []
 
 
-def execute_query_standard_comparison(
+def calculate_old_standard_stats_from_daily(
+    daily_records: List[Dict],
+    city_name: str
+) -> Dict[str, Any]:
+    """
+    从日报数据计算旧标准统计指标（HJ 633-2011）
+
+    业务规则：
+    - 使用旧标准限值和IAQI断点表
+    - 扣沙日数据已由上游清洗（PM2.5/PM10为None，原始值保存在 PM2_5_original/PM10_original）
+    - 旧标准PM2.5断点：IAQI=100时75μg/m³（新标准60）
+    - 旧标准PM10断点：IAQI=100时150μg/m³（新标准120）
+
+    Args:
+        daily_records: 日报数据列表（已清洗扣沙日）
+        city_name: 城市名称
+
+    Returns:
+        旧标准统计结果
+    """
+    if not daily_records:
+        return {}
+
+    logger.info("calculating_old_standard_stats", city=city_name, day_count=len(daily_records))
+
+    # 初始化统计变量
+    total_days = len(daily_records)
+    exceed_days = 0
+    exceed_details = []
+    pm25_sum = 0
+    pm10_sum = 0
+    pm25_valid_count = 0  # PM2.5有效天数（剔除扣沙日）
+    pm10_valid_count = 0  # PM10有效天数（剔除扣沙日）
+    so2_sum = 0
+    no2_sum = 0
+    co_sum = 0
+    o3_8h_sum = 0
+
+    # 收集每日浓度值用于计算百分位数
+    daily_co_values = []
+    daily_o3_8h_values = []
+    daily_so2_values = []
+    daily_no2_values = []
+    daily_pm10_values = []
+    daily_pm25_values = []
+
+    # 首要污染物统计
+    primary_pollutant_days = {
+        'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+    }
+
+    # 各污染物超标天数统计
+    exceed_days_by_pollutant = {
+        'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+    }
+
+    for record in daily_records:
+        measurements = record.get("measurements", {})
+
+        def safe_float(value, default=0.0):
+            if value is None or value == '' or value == '-':
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        # 检查是否为扣沙日
+        is_sand_day = record.get("is_sand_deduction_day", False)
+
+        # 提取浓度值
+        pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                record.get("pm2_5") or record.get("PM2_5"))
+        pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                record.get("pm10") or record.get("PM10"))
+        so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+               record.get("so2") or record.get("SO2"))
+        no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+               record.get("no2") or record.get("NO2"))
+        co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+              record.get("co") or record.get("CO"))
+        o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                record.get("o3_8h") or record.get("O3_8h"))
+
+        # 按原始监测数据规则修约
+        pm25 = apply_rounding(pm25_raw, 'PM2_5', 'raw_data')
+        pm10 = apply_rounding(pm10_raw, 'PM10', 'raw_data')
+        so2 = apply_rounding(so2_raw, 'SO2', 'raw_data')
+        no2 = apply_rounding(no2_raw, 'NO2', 'raw_data')
+        co = apply_rounding(co_raw, 'CO', 'raw_data')
+        o3_8h = apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data')
+
+        # 扣沙日的AQI和首要污染物使用原始值计算
+        if is_sand_day:
+            pm25_original_raw = safe_float(record.get("PM2_5_original"))
+            pm10_original_raw = safe_float(record.get("PM10_original"))
+            pm25_for_aqi = apply_rounding(pm25_original_raw, 'PM2_5', 'raw_data')
+            pm10_for_aqi = apply_rounding(pm10_original_raw, 'PM10', 'raw_data')
+        else:
+            pm25_for_aqi = pm25
+            pm10_for_aqi = pm10
+
+        # 累加修约后的浓度值（扣沙日PM2.5/PM10为0，不计入）
+        if pm25 > 0:
+            pm25_sum += pm25
+            pm25_valid_count += 1
+        if pm10 > 0:
+            pm10_sum += pm10
+            pm10_valid_count += 1
+
+        # 其他污染物正常累加
+        so2_sum += so2
+        no2_sum += no2
+        co_sum += co
+        o3_8h_sum += o3_8h
+
+        # 收集修约后的每日值（用于百分位数计算）
+        if co > 0:
+            daily_co_values.append(co)
+        if o3_8h > 0:
+            daily_o3_8h_values.append(o3_8h)
+        if so2 > 0:
+            daily_so2_values.append(so2)
+        if no2 > 0:
+            daily_no2_values.append(no2)
+        if pm10 > 0:
+            daily_pm10_values.append(pm10)
+        if pm25 > 0:
+            daily_pm25_values.append(pm25)
+
+        # 计算旧标准单项质量指数 Ii = Ci / Si
+        pm25_index_old = pm25 / OLD_STANDARD_LIMITS['PM2_5']
+        pm10_index_old = pm10 / OLD_STANDARD_LIMITS['PM10']
+        so2_index_old = so2 / OLD_STANDARD_LIMITS['SO2']
+        no2_index_old = no2 / OLD_STANDARD_LIMITS['NO2']
+        co_index_old = co / OLD_STANDARD_LIMITS['CO']
+        o3_8h_index_old = o3_8h / OLD_STANDARD_LIMITS['O3_8h']
+
+        # 判断该日是否超标
+        max_single_index_old = max(pm25_index_old, pm10_index_old, so2_index_old,
+                                   no2_index_old, co_index_old, o3_8h_index_old)
+
+        # 计算旧标准IAQI并向上进位取整数
+        import math
+        pm25_iaqi_old = math.ceil(calculate_iaqi(pm25_for_aqi, 'PM2_5', 'old'))
+        pm10_iaqi_old = math.ceil(calculate_iaqi(pm10_for_aqi, 'PM10', 'old'))
+        so2_iaqi_old = math.ceil(calculate_iaqi(so2, 'SO2', 'old'))
+        no2_iaqi_old = math.ceil(calculate_iaqi(no2, 'NO2', 'old'))
+        co_iaqi_old = math.ceil(calculate_iaqi(co, 'CO', 'old'))
+        o3_8h_iaqi_old = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'old'))
+
+        # 统计首要污染物（使用向上取整后的IAQI）
+        pollutants_with_iaqi_old = {
+            'PM2_5': pm25_iaqi_old, 'PM10': pm10_iaqi_old, 'SO2': so2_iaqi_old,
+            'NO2': no2_iaqi_old, 'CO': co_iaqi_old, 'O3_8h': o3_8h_iaqi_old
+        }
+        # AQI 向上进位取整数
+        aqi_old = math.ceil(max(pollutants_with_iaqi_old.values()))
+
+        # 【调试日志】输出旧标准计算结果
+        timestamp = record.get("timestamp", "unknown")
+        date_only = timestamp[:10] if len(timestamp) >= 10 else timestamp
+
+        # 只输出关键日期的详细日志
+        if date_only in ['2026-01-17', '2026-01-20', '2026-01-01', '2026-01-24']:
+            logger.info(
+                "old_standard_daily_calculation_debug",
+                date=date_only,
+                concentrations={
+                    'PM2_5': f"{pm25_for_aqi:.1f}",
+                    'PM10': f"{pm10_for_aqi:.1f}",
+                    'SO2': f"{so2:.1f}",
+                    'NO2': f"{no2:.1f}",
+                    'CO': f"{co:.1f}",
+                    'O3_8h': f"{o3_8h:.1f}"
+                },
+                iaqi_old={
+                    'PM2_5': f"{pm25_iaqi_old:.1f}",
+                    'PM10': f"{pm10_iaqi_old:.1f}",
+                    'SO2': f"{so2_iaqi_old:.1f}",
+                    'NO2': f"{no2_iaqi_old:.1f}",
+                    'CO': f"{co_iaqi_old:.1f}",
+                    'O3_8h': f"{o3_8h_iaqi_old:.1f}"
+                },
+                index_old={
+                    'PM2_5': f"{pm25_index_old:.3f}",
+                    'PM10': f"{pm10_index_old:.3f}",
+                    'SO2': f"{so2_index_old:.3f}",
+                    'NO2': f"{no2_index_old:.3f}",
+                    'CO': f"{co_index_old:.3f}",
+                    'O3_8h': f"{o3_8h_index_old:.3f}"
+                },
+                aqi_old=f"{aqi_old:.1f}",
+                max_single_index_old=f"{max_single_index_old:.3f}"
+            )
+
+        # 确定首要污染物
+        primary_pollutants_this_day_old = []
+        if aqi_old > 50:
+            for pollutant, iaqi in pollutants_with_iaqi_old.items():
+                if iaqi == aqi_old:
+                    primary_pollutant_days[pollutant] += 1
+                    primary_pollutants_this_day_old.append(pollutant)
+
+        # 【调试日志】输出旧标准首要污染物判断结果
+        if date_only in ['2026-01-17', '2026-01-20', '2026-01-01', '2026-01-24']:
+            logger.info(
+                "old_standard_primary_pollutant_debug",
+                date=date_only,
+                aqi_old=f"{aqi_old:.1f}",
+                aqi_gt_50=aqi_old > 50,
+                primary_pollutants=primary_pollutants_this_day_old,
+                max_single_index=f"{max_single_index_old:.3f}",
+                is_exceeded=max_single_index_old > 1
+            )
+
+        # 统计各污染物超标天数（单项质量指数 > 1）
+        if pm25_index_old > 1:
+            exceed_days_by_pollutant['PM2_5'] += 1
+        if pm10_index_old > 1:
+            exceed_days_by_pollutant['PM10'] += 1
+        if so2_index_old > 1:
+            exceed_days_by_pollutant['SO2'] += 1
+        if no2_index_old > 1:
+            exceed_days_by_pollutant['NO2'] += 1
+        if co_index_old > 1:
+            exceed_days_by_pollutant['CO'] += 1
+        if o3_8h_index_old > 1:
+            exceed_days_by_pollutant['O3_8h'] += 1
+
+        # 旧标准超标天数统计
+        if max_single_index_old > 1:
+            exceed_days += 1
+            # 记录超标详情
+            exceed_pollutants = []
+            pollutants = {
+                'PM2_5': (pm25, pm25_index_old), 'PM10': (pm10, pm10_index_old),
+                'SO2': (so2, so2_index_old), 'NO2': (no2, no2_index_old),
+                'CO': (co, co_index_old), 'O3_8h': (o3_8h, o3_8h_index_old)
+            }
+            for name, (conc, index) in pollutants.items():
+                if index > 1:
+                    exceed_pollutants.append({
+                        'name': name, 'concentration': conc, 'index': safe_round(index, 3)
+                    })
+            exceed_detail = {
+                'date': record.get("timestamp", "unknown"),
+                'max_index': safe_round(max_single_index_old, 3),
+                'exceed_pollutants': exceed_pollutants
+            }
+            exceed_details.append(exceed_detail)
+
+            # 【调试日志】输出旧标准超标详情
+            date_only = record.get("timestamp", "unknown")[:10] if len(record.get("timestamp", "")) >= 10 else record.get("timestamp", "unknown")
+            if date_only in ['2026-01-17', '2026-01-20', '2026-01-01', '2026-01-24']:
+                logger.info(
+                    "old_standard_exceed_detail_debug",
+                    date=date_only,
+                    max_index=f"{max_single_index_old:.3f}",
+                    exceed_pollutants_count=len(exceed_pollutants),
+                    exceed_pollutants=exceed_pollutants,
+                    primary_pollutants_this_day=primary_pollutants_this_day_old,
+                    note="旧标准超标天记录"
+                )
+
+    # 计算平均浓度（按国家标准修约）
+    avg_pm25 = apply_rounding(pm25_sum / pm25_valid_count if pm25_valid_count > 0 else 0, 'PM2_5', 'statistical_data')
+    avg_pm10 = apply_rounding(pm10_sum / pm10_valid_count if pm10_valid_count > 0 else 0, 'PM10', 'statistical_data')
+    avg_so2 = apply_rounding(so2_sum / total_days, 'SO2', 'statistical_data') if total_days > 0 else 0
+    avg_no2 = apply_rounding(no2_sum / total_days, 'NO2', 'statistical_data') if total_days > 0 else 0
+    avg_co = apply_rounding(co_sum / total_days, 'CO', 'statistical_data') if total_days > 0 else 0
+    avg_o3_8h = apply_rounding(o3_8h_sum / total_days, 'O3_8h', 'statistical_data') if total_days > 0 else 0
+
+    # 计算百分位数
+    def calculate_percentile(values, percentile):
+        if not values:
+            return 0.0
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+        index = (percentile / 100) * (n - 1)
+        lower = int(index)
+        upper = lower + 1
+        if upper >= n:
+            return float(sorted_values[-1])
+        weight = index - lower
+        return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+
+    co_percentile_95 = apply_rounding(calculate_percentile(daily_co_values, 95), 'CO', 'statistical_data')
+    o3_8h_percentile_90 = apply_rounding(calculate_percentile(daily_o3_8h_values, 90), 'O3_8h', 'statistical_data')
+    so2_percentile_98 = apply_rounding(calculate_percentile(daily_so2_values, 98), 'SO2', 'statistical_data')
+    no2_percentile_98 = apply_rounding(calculate_percentile(daily_no2_values, 98), 'NO2', 'statistical_data')
+    pm10_percentile_95 = apply_rounding(calculate_percentile(daily_pm10_values, 95), 'PM10', 'statistical_data')
+    pm25_percentile_95 = apply_rounding(calculate_percentile(daily_pm25_values, 95), 'PM2_5', 'statistical_data')
+
+    # 计算旧标准综合指数
+    old_standard_concentrations = {
+        'PM2_5': avg_pm25, 'PM10': avg_pm10, 'SO2': avg_so2,
+        'NO2': avg_no2, 'CO': co_percentile_95, 'O3_8h': o3_8h_percentile_90
+    }
+
+    # 计算旧标准单项质量指数
+    pm25_index = safe_round(old_standard_concentrations['PM2_5'] / ANNUAL_STANDARD_LIMITS_OLD['PM2_5'], 3)
+    pm10_index = safe_round(old_standard_concentrations['PM10'] / ANNUAL_STANDARD_LIMITS_OLD['PM10'], 3)
+    so2_index = safe_round(old_standard_concentrations['SO2'] / ANNUAL_STANDARD_LIMITS_OLD['SO2'], 3)
+    no2_index = safe_round(old_standard_concentrations['NO2'] / ANNUAL_STANDARD_LIMITS_OLD['NO2'], 3)
+    co_index = safe_round(old_standard_concentrations['CO'] / ANNUAL_STANDARD_LIMITS_OLD['CO'], 3)
+    o3_8h_index = safe_round(old_standard_concentrations['O3_8h'] / ANNUAL_STANDARD_LIMITS_OLD['O3_8h'], 3)
+
+    # 计算加权单项质量指数（所有权重均为1）
+    pm25_weighted_index = safe_round(pm25_index * WEIGHTS['PM2_5'], 3)
+    pm10_weighted_index = safe_round(pm10_index * WEIGHTS['PM10'], 3)
+    so2_weighted_index = safe_round(so2_index * WEIGHTS['SO2'], 3)
+    no2_weighted_index = safe_round(no2_index * WEIGHTS['NO2'], 3)
+    co_weighted_index = safe_round(co_index * WEIGHTS['CO'], 3)
+    o3_8h_weighted_index = safe_round(o3_8h_index * WEIGHTS['O3_8h'], 3)
+
+    # 计算综合指数
+    avg_composite_index = safe_round(
+        pm25_weighted_index + pm10_weighted_index + so2_weighted_index +
+        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 2
+    )
+
+    # 计算达标率和超标率
+    valid_days = total_days
+    compliance_rate = safe_round((total_days - exceed_days) / total_days, 1) if total_days > 0 else 0
+    exceed_rate = safe_round(exceed_days / valid_days * 100, 1) if valid_days > 0 else 0
+
+    # 计算首要污染物比例
+    total_primary_days = sum(primary_pollutant_days.values())
+    primary_pollutant_ratio = {}
+    if total_primary_days > 0:
+        for pollutant, days in primary_pollutant_days.items():
+            primary_pollutant_ratio[pollutant] = safe_round(days / total_primary_days * 100, 1)
+    else:
+        for pollutant in primary_pollutant_days.keys():
+            primary_pollutant_ratio[pollutant] = 0.0
+
+    # 计算各污染物超标率
+    exceed_rate_by_pollutant = {}
+    for pollutant, days in exceed_days_by_pollutant.items():
+        if valid_days > 0:
+            exceed_rate_by_pollutant[pollutant] = safe_round(days / valid_days * 100, 1)
+        else:
+            exceed_rate_by_pollutant[pollutant] = 0.0
+
+    logger.info(
+        "old_standard_stats_calculated",
+        city=city_name,
+        composite_index=avg_composite_index,
+        exceed_days=exceed_days,
+        compliance_rate=compliance_rate,
+        sand_deduction_stats={
+            "total_days": total_days,
+            "pm25_valid_count": pm25_valid_count,
+            "pm10_valid_count": pm10_valid_count
+        }
+    )
+
+    return {
+        "composite_index": avg_composite_index,
+        "exceed_days": exceed_days,
+        "exceed_details": exceed_details,
+        "valid_days": valid_days,
+        "exceed_rate": exceed_rate,
+        "compliance_rate": compliance_rate,
+        "total_days": total_days,
+        # 六参数统计指标
+        "SO2": format_pollutant_value(avg_so2, 'SO2', 'statistical_data', use_final_rounding=True),
+        "SO2_P98": format_pollutant_value(so2_percentile_98, 'SO2', 'statistical_data', use_final_rounding=True),
+        "NO2": format_pollutant_value(avg_no2, 'NO2', 'statistical_data', use_final_rounding=True),
+        "NO2_P98": format_pollutant_value(no2_percentile_98, 'NO2', 'statistical_data', use_final_rounding=True),
+        "PM10": format_pollutant_value(avg_pm10, 'PM10', 'statistical_data', use_final_rounding=True),
+        "PM10_P95": format_pollutant_value(pm10_percentile_95, 'PM10', 'statistical_data', use_final_rounding=True),
+        "PM2_5": format_pollutant_value(avg_pm25, 'PM2_5', 'statistical_data', use_final_rounding=True),
+        "PM2_5_P95": format_pollutant_value(pm25_percentile_95, 'PM2_5', 'statistical_data', use_final_rounding=True),
+        "CO_P95": format_pollutant_value(co_percentile_95, 'CO', 'statistical_data', use_final_rounding=True),
+        "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data', use_final_rounding=True),
+        # 加权单项质量指数
+        "single_indexes": {
+            "SO2": so2_weighted_index, "NO2": no2_weighted_index,
+            "PM10": pm10_weighted_index, "CO": co_weighted_index,
+            "PM2_5": pm25_weighted_index, "O3_8h": o3_8h_weighted_index
+        },
+        # 首要污染物统计
+        "primary_pollutant_days": primary_pollutant_days,
+        "primary_pollutant_ratio": primary_pollutant_ratio,
+        "total_primary_days": total_primary_days,
+        # 各污染物超标统计
+        "exceed_days_by_pollutant": exceed_days_by_pollutant,
+        "exceed_rate_by_pollutant": exceed_rate_by_pollutant
+    }
+
+
+async def execute_query_standard_comparison(
     cities: List[str],
     start_date: str,
     end_date: str,
-    context: ExecutionContext
+    context: ExecutionContext,
+    enable_sand_deduction: bool = True
 ) -> Dict[str, Any]:
     """
-    查询新旧标准对比统计指标
+    查询新旧标准对比统计指标（重构版）
 
-    并发查询日报数据和统计数据，计算新旧标准对比
+    复用 query_new_standard_report 的计算结果，并基于日数据计算旧标准统计
 
     Args:
         cities: 城市名称列表
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         context: 执行上下文
+        enable_sand_deduction: 是否启用扣沙处理（默认True）
 
     Returns:
         新旧标准对比结果
@@ -1955,6 +2412,11 @@ def execute_query_standard_comparison(
 
     测试命令：
     python tests/test_api_response_structure.py
+
+    【重构说明】
+    - 复用 query_new_standard_report 获取新标准统计（含扣沙处理）
+    - 基于日数据计算旧标准统计（使用旧标准限值和IAQI断点）
+    - 合并新旧标准对比结果
     """
     logger.info(
         "query_standard_comparison_start",
@@ -1964,1123 +2426,126 @@ def execute_query_standard_comparison(
     )
 
     try:
-        # 使用线程池并发查询
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # 步骤1：调用 query_new_standard_report 获取新标准统计和日数据
+        from app.tools.query.query_new_standard_report.tool import execute_query_new_standard_report
 
-        api_client = get_gd_suncere_api_client()
+        new_standard_result = await execute_query_new_standard_report(
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            enable_sand_deduction=enable_sand_deduction,
+            context=context
+        )
 
-        # 转换城市名称为编码
-        city_codes = QueryGDSuncereDataTool.geo_resolver.resolve_city_codes(cities)
-
-        if not city_codes:
-            raise Exception(f"未找到任何有效的城市代码: {cities}")
-
-        # 准备查询参数
-        start_time = f"{start_date} 00:00:00"
-        end_time = f"{end_date} 23:59:59"
-        data_source = QueryGDSuncereDataTool.calculate_data_source(end_time)
-
-        # 存储查询结果
-        day_data = None
-        report_data = None
-        errors = []
-
-        def query_day_data():
-            """查询日报数据（智能分段：3天内用原始实况，3天外用审核实况）"""
-            nonlocal day_data
-            try:
-                logger.info("querying_day_data_with_segments", cities=cities, start_date=start_date, end_date=end_date)
-
-                # 计算分段
-                segments = calculate_date_segments(start_date, end_date)
-                logger.info("day_data_segments_calculated", segment_count=len(segments), segments=segments)
-
-                # 使用异步IO并发查询各分段
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                async def fetch_all_segments():
-                    tasks = []
-                    for seg_start, seg_end, data_type in segments:
-                        task = query_day_data_by_segment(
-                            api_client=api_client,
-                            city_codes=city_codes,
-                            start_date=seg_start,
-                            end_date=seg_end,
-                            data_type=data_type
-                        )
-                        tasks.append(task)
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    return results
-
-                # 执行并发查询
-                all_results = loop.run_until_complete(fetch_all_segments())
-                loop.close()
-
-                # 合并结果
-                merged_data = []
-                for i, result in enumerate(all_results):
-                    if isinstance(result, Exception):
-                        logger.error("segment_query_error", segment_index=i, error=str(result))
-                        errors.append(f"分段{i+1}查询异常: {str(result)}")
-                    elif isinstance(result, list):
-                        merged_data.extend(result)
-                        logger.info("segment_query_success", segment_index=i, record_count=len(result))
-
-                day_data = merged_data
-
-                # 记录原始数据结构，便于调试
-                if merged_data:
-                    first_record = merged_data[0]
-                    logger.info(
-                        "day_data_raw_structure",
-                        record_count=len(merged_data),
-                        sample_fields=list(first_record.keys())[:30],
-                        has_cityName="cityName" in first_record if merged_data else False,
-                        has_city="city" in first_record if merged_data else False,
-                        has_city_name="city_name" in first_record if merged_data else False
-                    )
-                logger.info("day_data_query_success", record_count=len(day_data), segments_count=len(segments))
-
-            except Exception as e:
-                errors.append(f"日报数据查询异常: {str(e)}")
-                logger.error("day_data_query_error", error=str(e))
-
-        def query_report_data():
-            """查询统计数据（不分段，根据结束日期智能选择数据源）"""
-            nonlocal report_data
-            try:
-                from datetime import datetime
-
-                logger.info("querying_report_data", cities=cities, start_time=start_time, end_time=end_time)
-
-                # 统计数据不分段，根据查询结束日期智能选择数据源类型
-                # 规则：三天内不包含当天，即昨天(1天前)、前天(2天前)、大前天(3天前)用原始实况
-                #       今天(0天前)和4天前及更早用审核实况
-                today = datetime.now().date()
-                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
-                days_from_today = (today - end_date_obj).days
-
-                # 智能选择数据源类型
-                # 原始实况：今天（0天前）及3天内（1-3天前）
-                # 审核实况：4天前及更早
-                if days_from_today <= 3:
-                    report_data_type = 0  # 原始实况
-                    data_type_name = "原始实况"
-                else:
-                    report_data_type = 1  # 审核实况
-                    data_type_name = "审核实况"
-
-                logger.info(
-                    "report_data_type_selected",
-                    end_date=end_date,
-                    days_from_today=days_from_today,
-                    data_type=report_data_type,
-                    data_type_name=data_type_name
-                )
-
-                endpoint = "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync"
-
-                payload = {
-                    "AreaType": 2,  # 城市级别
-                    "TimeType": 8,  # 任意时间
-                    "TimePoint": [start_time, end_time],
-                    "StationCode": city_codes,
-                    "DataSource": report_data_type
-                }
-
-                token = api_client.get_token()
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "SysCode": "SunAirProvince",
-                    "syscode": "SunAirProvince",
-                    "Content-Type": "application/json"
-                }
-
-                url = f"{api_client.BASE_URL}{endpoint}"
-                import requests
-                response = requests.post(url, headers=headers, json=payload, timeout=30)
-
-                if response.status_code == 200:
-                    response_data = response.json()
-                    if response_data.get("success"):
-                        result = response_data.get("result")
-                        # 处理不同的响应格式
-                        if isinstance(result, list):
-                            report_data = result
-                        elif isinstance(result, dict):
-                            report_data = result.get("items", [])
-                        else:
-                            report_data = []
-                        logger.info(
-                            "report_data_query_success",
-                            data_type=report_data_type,
-                            data_type_name=data_type_name,
-                            record_count=len(report_data) if report_data else 0
-                        )
-                    else:
-                        errors.append(f"统计数据查询失败: {response_data.get('msg', 'Unknown error')}")
-                else:
-                    errors.append(f"统计数据查询HTTP错误: {response.status_code}")
-
-            except Exception as e:
-                errors.append(f"统计数据查询异常: {str(e)}")
-                logger.error("report_data_query_error", error=str(e))
-
-        # 并发执行查询
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(query_day_data), executor.submit(query_report_data)]
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    errors.append(f"查询执行异常: {str(e)}")
-
-        # 检查是否有数据
-        if not day_data and not report_data:
-            error_msg = "; ".join(errors) if errors else "未查询到任何数据"
+        if not new_standard_result.get("success"):
             return {
                 "status": "failed",
                 "success": False,
-                "error": error_msg,
+                "error": "新标准查询失败",
                 "data": None,
                 "metadata": {},
-                "summary": f"新旧标准对比查询失败: {error_msg}"
+                "summary": f"新标准查询失败: {new_standard_result.get('summary', 'Unknown error')}"
             }
 
-        # 处理日报数据，计算新标准指标
-        new_standard_stats = {}
-        statistical_concentrations = {}
-        city_stats = {}
-        day_data_id = None  # 用于存储日报数据的 data_id
+        # 提取新标准结果和日数据data_id
+        new_standard_data = new_standard_result.get("result", {})
+        day_data_id = new_standard_result.get("metadata", {}).get("data_id")
 
-        if day_data:
-            logger.info("processing_day_data", record_count=len(day_data))
+        # 步骤2：获取日数据用于计算旧标准统计
+        if not day_data_id:
+            return {
+                "status": "failed",
+                "success": False,
+                "error": "未获取到日数据ID",
+                "data": None,
+                "metadata": {},
+                "summary": "新标准查询未返回日数据ID"
+            }
 
-            # 数据标准化
-            standardizer = get_data_standardizer()
-            standardized_records = standardizer.standardize(day_data)
+        # 从上下文获取日数据（使用get_raw_data获取字典格式）
+        daily_data = context.data_manager.get_raw_data(day_data_id)
 
-            logger.info(
-                "standard_comparison_day_data_standardized",
-                raw_count=len(day_data),
-                standardized_count=len(standardized_records),
-                # 记录第一条数据的字段名，便于调试
-                sample_fields=list(standardized_records[0].keys())[:20] if standardized_records else [],
-                has_city_field="city" in standardized_records[0] if standardized_records else False,
-                has_city_name_field="city_name" in standardized_records[0] if standardized_records else False
+        if not daily_data:
+            return {
+                "status": "failed",
+                "success": False,
+                "error": "无法加载日数据",
+                "data": None,
+                "metadata": {},
+                "summary": f"无法加载日数据: {day_data_id}"
+            }
+
+        # 步骤3：按城市分组并计算旧标准统计
+        from collections import defaultdict
+
+        daily_data_by_city = defaultdict(list)
+        for record in daily_data:
+            city_name = (
+                record.get("city", "") or
+                record.get("city_name", "") or
+                record.get("cityName", "") or
+                record.get("name", "")
             )
+            if city_name:
+                daily_data_by_city[city_name].append(record)
 
-            # 更新为新标准字段（避免Agent误认为旧标准数据）
-            # 定义安全转换函数（处理API返回的字符串类型浓度值）
-            def safe_float(value, default=0.0):
-                """安全转换为浮点数，处理None、空字符串等异常情况"""
-                if value is None or value == '' or value == '-':
-                    return default
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    return default
+        # 容错：如果没有城市字段，使用查询参数
+        if not daily_data_by_city and len(cities) == 1:
+            daily_data_by_city[cities[0]] = daily_data
 
-            for record in standardized_records:
-                measurements = record.get("measurements", {})
+        # 计算各城市的旧标准统计
+        city_comparison = {}
 
-                # 提取浓度值（使用safe_float确保类型正确）
-                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
-                                    record.get("pm2_5") or record.get("PM2_5"))
-                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
-                                    record.get("pm10") or record.get("PM10"))
-                so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
-                                   record.get("so2") or record.get("SO2"))
-                no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
-                                   record.get("no2") or record.get("NO2"))
-                co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
-                                  record.get("co") or record.get("CO"))
-                o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
-                                    record.get("o3_8h") or record.get("O3_8h"))
+        for city, city_daily_records in daily_data_by_city.items():
+            logger.info("calculating_old_standard_for_city", city=city, day_count=len(city_daily_records))
 
-                # 计算新标准IAQI（HJ 633-2024）
-                pm25_iaqi = calculate_iaqi(pm25_raw, 'PM2_5', 'new')
-                pm10_iaqi = calculate_iaqi(pm10_raw, 'PM10', 'new')
-                so2_iaqi = calculate_iaqi(so2_raw, 'SO2', 'new')
-                no2_iaqi = calculate_iaqi(no2_raw, 'NO2', 'new')
-                co_iaqi = calculate_iaqi(co_raw, 'CO', 'new')
-                o3_8h_iaqi = calculate_iaqi(o3_8h_raw, 'O3_8h', 'new')
+            # 计算旧标准统计
+            old_standard_stats = calculate_old_standard_stats_from_daily(city_daily_records, city)
 
-                # 计算AQI（最大IAQI）
-                aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+            # 获取新标准统计
+            if len(cities) == 1:
+                # 单城市查询，new_standard_data 直接是城市统计
+                new_standard_stats = new_standard_data
+            else:
+                # 多城市查询，new_standard_data 是城市字典
+                new_standard_stats = new_standard_data.get(city, {})
 
-                # 确定首要污染物（AQI > 50时）
-                pollutants_with_iaqi = {
-                    'PM2_5': pm25_iaqi,
-                    'PM10': pm10_iaqi,
-                    'SO2': so2_iaqi,
-                    'NO2': no2_iaqi,
-                    'CO': co_iaqi,
-                    'O3_8h': o3_8h_iaqi
-                }
-                primary_pollutant = None
-                if aqi > 50:
-                    for pollutant, iaqi in pollutants_with_iaqi.items():
-                        if iaqi == aqi:
-                            primary_pollutant = pollutant
-                            break
+            # 计算对比数据
+            comparison = {}
+            if new_standard_stats and old_standard_stats:
+                new_index = new_standard_stats.get("composite_index", 0)
+                old_index = old_standard_stats.get("composite_index", 0)
+                new_exceed = new_standard_stats.get("exceed_days", 0)
+                old_exceed = old_standard_stats.get("exceed_days", 0)
 
-                # 确定空气质量等级
-                if aqi <= 50:
-                    air_quality_level = '优'
-                elif aqi <= 100:
-                    air_quality_level = '良'
-                elif aqi <= 150:
-                    air_quality_level = '轻度污染'
-                elif aqi <= 200:
-                    air_quality_level = '中度污染'
-                elif aqi <= 300:
-                    air_quality_level = '重度污染'
-                else:
-                    air_quality_level = '严重污染'
-
-                # 更新measurements中的浓度值（按日数据修约规则：保留整数位）
-                # 0位小数转为整数类型，避免显示 .0
-                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
-                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
-                measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
-                measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
-                measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
-                measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
-
-                # 更新measurements中的IAQI字段
-                measurements['PM2_5_IAQI'] = pm25_iaqi
-                measurements['PM10_IAQI'] = pm10_iaqi
-                measurements['SO2_IAQI'] = so2_iaqi
-                measurements['NO2_IAQI'] = no2_iaqi
-                measurements['CO_IAQI'] = co_iaqi
-                measurements['O3_8h_IAQI'] = o3_8h_iaqi
-                measurements['AQI'] = aqi
-
-                # 更新顶层字段
-                record['air_quality_level'] = air_quality_level
-                record['primary_pollutant'] = primary_pollutant
-
-            logger.info(
-                "new_standard_fields_updated",
-                record_count=len(standardized_records),
-                update_fields=["PM2_5_IAQI", "PM10_IAQI", "AQI", "air_quality_level", "primary_pollutant"]
-            )
-
-            # 保存到上下文，返回 data_id 和 file_path
-            save_result = context.data_manager.save_data(
-                data=standardized_records,
-                schema="air_quality_unified",
-                metadata={
-                    "source": "gd_suncere_api",
-                    "query_type": "standard_comparison_day_data",
-                    "cities": cities,
-                    "date_range": f"{start_date} to {end_date}",
-                    "schema_version": "v2.0",
-                    "field_mapping_applied": True,
-                    "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
-                }
-            )
-
-            # save_data 返回字典: {data_id, file_path}
-            day_data_id = save_result["data_id"]
-            day_data_file_path = save_result["file_path"]
-
-            logger.info(
-                "standard_comparison_day_data_saved",
-                data_id=day_data_id,
-                file_path=day_data_file_path,
-                record_count=len(standardized_records)
-            )
-
-            # 按城市分组统计（使用标准化后的数据）
-            from collections import defaultdict
-            city_daily_data = defaultdict(list)
-
-            for record in standardized_records:
-                # 标准化后字段名从 city_name 变为 city，需要兼容两种字段名
-                city_name = record.get("city", "") or record.get("city_name", "")
-                if city_name:
-                    city_daily_data[city_name].append(record)
-
-            # 【关键修复】如果日报数据中没有城市字段（API不返回），使用查询参数中的城市名称
-            if not city_daily_data and len(cities) == 1:
-                logger.info(
-                    "no_city_field_in_day_data",
-                    message="日报数据中没有城市字段，使用查询参数中的城市名称",
-                    query_city=cities[0],
-                    record_count=len(standardized_records)
-                )
-                # 将所有记录归类到查询的城市
-                city_daily_data[cities[0]] = standardized_records
-
-            logger.info(
-                "city_grouping_completed",
-                total_records=len(standardized_records),
-                cities_found=list(city_daily_data.keys()),
-                records_per_city={city: len(recs) for city, recs in city_daily_data.items()}
-            )
-
-            # 对每个城市计算新标准统计
-            for city, daily_records in city_daily_data.items():
-                logger.info("calculating_new_standard", city=city, day_count=len(daily_records))
-
-                # 初始化统计变量
-                total_days = len(daily_records)
-                exceed_days = 0
-                exceed_details = []  # 记录新标准超标详情
-                old_exceed_details = []  # 记录旧标准超标详情（基于AQI>100）
-                pm25_sum = 0
-                pm10_sum = 0
-                so2_sum = 0
-                no2_sum = 0
-                co_sum = 0
-                o3_8h_sum = 0
-                no_sum = 0
-                nox_sum = 0
-
-                # 收集每日浓度值用于计算百分位数
-                # CO: 第95百分位数，O3_8h: 第90百分位数
-                # SO2/NO2: 第98百分位数，PM10/PM2.5: 第95百分位数
-                daily_co_values = []
-                daily_o3_8h_values = []
-                daily_so2_values = []
-                daily_no2_values = []
-                daily_pm10_values = []
-                daily_pm25_values = []
-
-                # 首要污染物统计
-                primary_pollutant_days = {
-                    'PM2_5': 0,
-                    'PM10': 0,
-                    'SO2': 0,
-                    'NO2': 0,
-                    'CO': 0,
-                    'O3_8h': 0
+                comparison = {
+                    "composite_index_change": safe_round(new_index - old_index, 2),
+                    "composite_index_change_rate": safe_round(((new_index - old_index) / old_index * 100) if old_index > 0 else 0, 2),
+                    "exceed_days_change": new_exceed - old_exceed
                 }
 
-                # 各污染物超标天数统计
-                exceed_days_by_pollutant = {
-                    'PM2_5': 0,
-                    'PM10': 0,
-                    'SO2': 0,
-                    'NO2': 0,
-                    'CO': 0,
-                    'O3_8h': 0
-                }
+            city_comparison[city] = {
+                "new_standard": new_standard_stats,
+                "old_standard": old_standard_stats,
+                "comparison": comparison
+            }
 
-                # 旧标准首要污染物统计（与新标准使用相同的逻辑）
-                old_primary_pollutant_days = {
-                    'PM2_5': 0,
-                    'PM10': 0,
-                    'SO2': 0,
-                    'NO2': 0,
-                    'CO': 0,
-                    'O3_8h': 0
-                }
+        # 步骤4：构建返回结果
+        total_days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
 
-                # 旧标准各污染物超标天数统计（基于单项质量指数 > 1，与新标准相同方法）
-                old_exceed_days_by_pollutant = {
-                    'PM2_5': 0,
-                    'PM10': 0,
-                    'SO2': 0,
-                    'NO2': 0,
-                    'CO': 0,
-                    'O3_8h': 0
-                }
-
-                for record in daily_records:
-                    # 提取浓度值
-                    # 数据被标准化为 UnifiedDataRecord 格式后，污染物数据在 measurements 字段中
-                    # 需要同时检查顶层字段和 measurements 嵌套字段
-                    measurements = record.get("measurements", {})
-                    # 安全转换函数（处理API返回的字符串类型浓度值）
-                    def safe_float(value, default=0.0):
-                        if value is None or value == '' or value == '-':
-                            return default
-                        try:
-                            return float(value)
-                        except (TypeError, ValueError):
-                            return default
-
-                    # 优先从 measurements 中提取，其次从顶层字段提取
-                    pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
-                            record.get("pm2_5") or record.get("PM2_5"))
-                    pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
-                            record.get("pm10") or record.get("PM10"))
-                    so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
-                           record.get("so2") or record.get("SO2"))
-                    no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
-                           record.get("no2") or record.get("NO2"))
-                    co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
-                          record.get("co") or record.get("CO"))
-                    o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
-                            record.get("o3_8h") or record.get("O3_8h"))
-                    no_raw = safe_float(measurements.get("NO") or measurements.get("no") or
-                          record.get("no") or record.get("NO"))
-                    nox_raw = safe_float(measurements.get("NOx") or measurements.get("nox") or
-                          record.get("nox") or record.get("NOx"))
-
-                    # 按原始监测数据规则修约日数据（GB/T 8170-2008）
-                    # 日数据修约：PM2.5/PM10/SO2/NO2/O3/NO/NOx保留0位，CO保留1位
-                    pm25 = apply_rounding(pm25_raw, 'PM2_5', 'raw_data')
-                    pm10 = apply_rounding(pm10_raw, 'PM10', 'raw_data')
-                    so2 = apply_rounding(so2_raw, 'SO2', 'raw_data')
-                    no2 = apply_rounding(no2_raw, 'NO2', 'raw_data')
-                    co = apply_rounding(co_raw, 'CO', 'raw_data')
-                    o3_8h = apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data')
-                    no = apply_rounding(no_raw, 'NO', 'raw_data')
-                    nox = apply_rounding(nox_raw, 'NOx', 'raw_data')
-
-                    # 调试日志：记录第一条记录的提取和修约情况
-                    if record == daily_records[0]:
-                        logger.info(
-                            "daily_data_rounding_debug",
-                            raw_values={
-                                "PM2_5": pm25_raw,
-                                "SO2": so2_raw,
-                                "NO2": no2_raw,
-                                "CO": co_raw
-                            },
-                            rounded_values={
-                                "PM2_5": pm25,
-                                "SO2": so2,
-                                "NO2": no2,
-                                "CO": co
-                            }
-                        )
-
-                    # 累加修约后的浓度值（用于平均值计算）
-                    pm25_sum += pm25
-                    pm10_sum += pm10
-                    so2_sum += so2
-                    no2_sum += no2
-                    co_sum += co
-                    o3_8h_sum += o3_8h
-                    no_sum += no
-                    nox_sum += nox
-
-                    # 收集修约后的每日值（用于百分位数计算）
-                    if co > 0:  # 排除无效值
-                        daily_co_values.append(co)
-                    if o3_8h > 0:  # 排除无效值
-                        daily_o3_8h_values.append(o3_8h)
-                    if so2 > 0:  # 排除无效值
-                        daily_so2_values.append(so2)
-                    if no2 > 0:  # 排除无效值
-                        daily_no2_values.append(no2)
-                    if pm10 > 0:  # 排除无效值
-                        daily_pm10_values.append(pm10)
-                    if pm25 > 0:  # 排除无效值
-                        daily_pm25_values.append(pm25)
-
-                    # 计算该日各污染物的单项质量指数 Ii = Ci / Si
-                    # 使用24小时平均标准限值进行超标判断
-                    pm25_index = pm25 / STANDARD_LIMITS['PM2_5']
-                    pm10_index = pm10 / STANDARD_LIMITS['PM10']
-                    so2_index = so2 / STANDARD_LIMITS['SO2']
-                    no2_index = no2 / STANDARD_LIMITS['NO2']
-                    co_index = co / STANDARD_LIMITS['CO']
-                    o3_8h_index = o3_8h / STANDARD_LIMITS['O3_8h']
-
-                    # 计算各污染物的 IAQI（空气质量分指数）
-                    # 使用分段线性插值公式：IAQIP = (IAQIHi - IAQILo) / (BPHi - BPLo) × (CP - BPLo) + IAQILo
-                    # 新标准
-                    pm25_iaqi_new = calculate_iaqi(pm25, 'PM2_5', 'new')
-                    pm10_iaqi_new = calculate_iaqi(pm10, 'PM10', 'new')
-                    so2_iaqi_new = calculate_iaqi(so2, 'SO2', 'new')
-                    no2_iaqi_new = calculate_iaqi(no2, 'NO2', 'new')
-                    co_iaqi_new = calculate_iaqi(co, 'CO', 'new')
-                    o3_8h_iaqi_new = calculate_iaqi(o3_8h, 'O3_8h', 'new')
-
-                    # 旧标准
-                    pm25_iaqi_old = calculate_iaqi(pm25, 'PM2_5', 'old')
-                    pm10_iaqi_old = calculate_iaqi(pm10, 'PM10', 'old')
-                    so2_iaqi_old = calculate_iaqi(so2, 'SO2', 'old')
-                    no2_iaqi_old = calculate_iaqi(no2, 'NO2', 'old')
-                    co_iaqi_old = calculate_iaqi(co, 'CO', 'old')
-                    o3_8h_iaqi_old = calculate_iaqi(o3_8h, 'O3_8h', 'old')
-
-                    # 判断该日是否超标：任意污染物单项质量指数 > 1
-                    max_single_index = max(pm25_index, pm10_index, so2_index, no2_index, co_index, o3_8h_index)
-
-                    # 统计首要污染物（新标准）
-                    # AQI = MAX(IAQIP)，即所有污染物的最大IAQI值
-                    # 当 AQI > 50 时，IAQI最大的污染物为首要污染物
-                    pollutants_with_iaqi_new = {
-                        'PM2_5': pm25_iaqi_new,
-                        'PM10': pm10_iaqi_new,
-                        'SO2': so2_iaqi_new,
-                        'NO2': no2_iaqi_new,
-                        'CO': co_iaqi_new,
-                        'O3_8h': o3_8h_iaqi_new
-                    }
-                    aqi_new = max(pollutants_with_iaqi_new.values())
-                    if aqi_new > 50:
-                        for pollutant, iaqi in pollutants_with_iaqi_new.items():
-                            if iaqi == aqi_new:
-                                primary_pollutant_days[pollutant] += 1
-
-                    # 统计首要污染物（旧标准）
-                    pollutants_with_iaqi_old = {
-                        'PM2_5': pm25_iaqi_old,
-                        'PM10': pm10_iaqi_old,
-                        'SO2': so2_iaqi_old,
-                        'NO2': no2_iaqi_old,
-                        'CO': co_iaqi_old,
-                        'O3_8h': o3_8h_iaqi_old
-                    }
-                    aqi_old = max(pollutants_with_iaqi_old.values())
-                    if aqi_old > 50:
-                        for pollutant, iaqi in pollutants_with_iaqi_old.items():
-                            if iaqi == aqi_old:
-                                old_primary_pollutant_days[pollutant] += 1
-
-                    # 统计各污染物超标天数（单项质量指数 > 1）
-                    if pm25_index > 1:
-                        exceed_days_by_pollutant['PM2_5'] += 1
-                        old_exceed_days_by_pollutant['PM2_5'] += 1
-                    if pm10_index > 1:
-                        exceed_days_by_pollutant['PM10'] += 1
-                        old_exceed_days_by_pollutant['PM10'] += 1
-                    if so2_index > 1:
-                        exceed_days_by_pollutant['SO2'] += 1
-                        old_exceed_days_by_pollutant['SO2'] += 1
-                    if no2_index > 1:
-                        exceed_days_by_pollutant['NO2'] += 1
-                        old_exceed_days_by_pollutant['NO2'] += 1
-                    if co_index > 1:
-                        exceed_days_by_pollutant['CO'] += 1
-                        old_exceed_days_by_pollutant['CO'] += 1
-                    if o3_8h_index > 1:
-                        exceed_days_by_pollutant['O3_8h'] += 1
-                        old_exceed_days_by_pollutant['O3_8h'] += 1
-
-                    if max_single_index > 1:
-                        exceed_days += 1
-                        # 记录超标详情
-                        exceed_pollutants = []
-                        pollutants = {
-                            'PM2_5': (pm25, pm25_index),
-                            'PM10': (pm10, pm10_index),
-                            'SO2': (so2, so2_index),
-                            'NO2': (no2, no2_index),
-                            'CO': (co, co_index),
-                            'O3_8h': (o3_8h, o3_8h_index)
-                        }
-                        for name, (conc, index) in pollutants.items():
-                            if index > 1:
-                                exceed_pollutants.append({
-                                    'name': name,
-                                    'concentration': conc,
-                                    'index': round(index, 3)
-                                })
-                        exceed_details.append({
-                            'date': record.get("timestamp", "unknown"),
-                            'max_index': round(max_single_index, 3),
-                            'exceed_pollutants': exceed_pollutants
-                        })
-
-                    # 计算旧标准超标详情（基于AQI > 100）
-                    # 从记录中提取AQI值
-                    aqi = (measurements.get("AQI") or measurements.get("aqi") or
-                           record.get("aqi") or record.get("AQI") or 0)
-                    if aqi > 100:
-                        # AQI > 100 判定为超标，记录超标详情
-                        # 尝试获取首要污染物
-                        primary_pollutant = (record.get("primary_pollutant") or
-                                           record.get("primaryPollutant") or
-                                           "Unknown")
-                        old_exceed_details.append({
-                            'date': record.get("timestamp", "unknown"),
-                            'aqi': int(aqi),
-                            'primary_pollutant': primary_pollutant
-                        })
-
-                    # 调试日志：记录第一天的超标判断详情
-                    if record == daily_records[0]:
-                        logger.info(
-                            "exceed_judgment_debug",
-                            date=record.get("timestamp", "unknown"),
-                            single_indexes={
-                                "PM2_5": round(pm25_index, 3),
-                                "PM10": round(pm10_index, 3),
-                                "SO2": round(so2_index, 3),
-                                "NO2": round(no2_index, 3),
-                                "CO": round(co_index, 3),
-                                "O3_8h": round(o3_8h_index, 3)
-                            },
-                            max_single_index=round(max_single_index, 3),
-                            is_exceeded=max_single_index > 1
-                        )
-
-                # 计算平均浓度（按国家标准修约）
-                # 统计数据修约规则：PM2.5保留1位，PM10/SO2/NO2/O3保留0位，CO保留1位
-                avg_pm25 = apply_rounding(pm25_sum / total_days, 'PM2_5', 'statistical_data') if total_days > 0 else 0
-                avg_pm10 = apply_rounding(pm10_sum / total_days, 'PM10', 'statistical_data') if total_days > 0 else 0
-                avg_so2 = apply_rounding(so2_sum / total_days, 'SO2', 'statistical_data') if total_days > 0 else 0
-                avg_no2 = apply_rounding(no2_sum / total_days, 'NO2', 'statistical_data') if total_days > 0 else 0
-                avg_co = apply_rounding(co_sum / total_days, 'CO', 'statistical_data') if total_days > 0 else 0
-                avg_o3_8h = apply_rounding(o3_8h_sum / total_days, 'O3_8h', 'statistical_data') if total_days > 0 else 0
-                avg_no = apply_rounding(no_sum / total_days, 'NO', 'statistical_data') if total_days > 0 else 0
-                avg_nox = apply_rounding(nox_sum / total_days, 'NOx', 'statistical_data') if total_days > 0 else 0
-
-                # 计算百分位数（按国家标准）
-                # CO: 第95百分位数，O3_8h: 第90百分位数
-                def calculate_percentile(values, percentile):
-                    """计算百分位数"""
-                    if not values:
-                        return 0.0
-                    sorted_values = sorted(values)
-                    n = len(sorted_values)
-                    index = (percentile / 100) * (n - 1)
-                    lower = int(index)
-                    upper = lower + 1
-                    if upper >= n:
-                        return float(sorted_values[-1])
-                    # 线性插值
-                    weight = index - lower
-                    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
-
-                # 计算百分位数（按国家标准修约）
-                # CO使用95百分位，O3_8h使用90百分位，SO2/NO2使用98百分位，PM10/PM2.5使用95百分位
-                co_percentile_95 = apply_rounding(calculate_percentile(daily_co_values, 95), 'CO', 'statistical_data')
-                o3_8h_percentile_90 = apply_rounding(calculate_percentile(daily_o3_8h_values, 90), 'O3_8h', 'statistical_data')
-                so2_percentile_98 = apply_rounding(calculate_percentile(daily_so2_values, 98), 'SO2', 'statistical_data')
-                no2_percentile_98 = apply_rounding(calculate_percentile(daily_no2_values, 98), 'NO2', 'statistical_data')
-                pm10_percentile_95 = apply_rounding(calculate_percentile(daily_pm10_values, 95), 'PM10', 'statistical_data')
-                pm25_percentile_95 = apply_rounding(calculate_percentile(daily_pm25_values, 95), 'PM2_5', 'statistical_data')
-
-                logger.info(
-                    "percentile_calculated",
-                    co_values_count=len(daily_co_values),
-                    o3_8h_values_count=len(daily_o3_8h_values),
-                    so2_values_count=len(daily_so2_values),
-                    no2_values_count=len(daily_no2_values),
-                    pm10_values_count=len(daily_pm10_values),
-                    pm25_values_count=len(daily_pm25_values),
-                    co_percentile_95=co_percentile_95,
-                    o3_8h_percentile_90=o3_8h_percentile_90,
-                    so2_percentile_98=so2_percentile_98,
-                    no2_percentile_98=no2_percentile_98,
-                    pm10_percentile_95=pm10_percentile_95,
-                    pm25_percentile_95=pm25_percentile_95
-                )
-
-                # 计算新标准综合指数
-                # 按国家标准：CO使用95百分位，O3_8h使用90百分位，其余使用平均值
-                new_standard_concentrations = {
-                    'PM2_5': avg_pm25,      # 平均值
-                    'PM10': avg_pm10,       # 平均值
-                    'SO2': avg_so2,         # 平均值
-                    'NO2': avg_no2,         # 平均值
-                    'CO': co_percentile_95,     # ✅ 第95百分位数
-                    'O3_8h': o3_8h_percentile_90  # ✅ 第90百分位数
-                }
-
-                # 计算新标准单项质量指数 Ii = Ci / Si
-                # 注意：综合指数计算使用年均标准限值
-                pm25_index = round(new_standard_concentrations['PM2_5'] / ANNUAL_STANDARD_LIMITS['PM2_5'], 3)
-                pm10_index = round(new_standard_concentrations['PM10'] / ANNUAL_STANDARD_LIMITS['PM10'], 3)
-                so2_index = round(new_standard_concentrations['SO2'] / ANNUAL_STANDARD_LIMITS['SO2'], 3)
-                no2_index = round(new_standard_concentrations['NO2'] / ANNUAL_STANDARD_LIMITS['NO2'], 3)
-                co_index = round(new_standard_concentrations['CO'] / ANNUAL_STANDARD_LIMITS['CO'], 3)
-                o3_8h_index = round(new_standard_concentrations['O3_8h'] / ANNUAL_STANDARD_LIMITS['O3_8h'], 3)
-
-                # 计算新标准加权单项质量指数（带权重）
-                # 所有污染物权重均为1：PM2.5:1, PM10:1, SO2:1, NO2:1, CO:1, O3_8h:1
-                pm25_weighted_index = round(pm25_index * WEIGHTS['PM2_5'], 3)
-                pm10_weighted_index = round(pm10_index * WEIGHTS['PM10'], 3)
-                so2_weighted_index = round(so2_index * WEIGHTS['SO2'], 3)
-                no2_weighted_index = round(no2_index * WEIGHTS['NO2'], 3)
-                co_weighted_index = round(co_index * WEIGHTS['CO'], 3)
-                o3_8h_weighted_index = round(o3_8h_index * WEIGHTS['O3_8h'], 3)
-
-                # 计算综合指数（加权单项质量指数之和）
-                avg_composite_index = round(
-                    pm25_weighted_index + pm10_weighted_index + so2_weighted_index +
-                    no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 2
-                )
-
-                logger.info(
-                    "new_composite_index_calculated",
-                    concentrations_used=new_standard_concentrations,
-                    avg_composite_index=avg_composite_index,
-                    single_indexes={
-                        "PM2_5": pm25_index,
-                        "PM10": pm10_index,
-                        "SO2": so2_index,
-                        "NO2": no2_index,
-                        "CO": co_index,
-                        "O3_8h": o3_8h_index
-                    },
-                    weighted_indexes={
-                        "PM2_5": pm25_weighted_index,
-                        "PM10": pm10_weighted_index,
-                        "SO2": so2_weighted_index,
-                        "NO2": no2_weighted_index,
-                        "CO": co_weighted_index,
-                        "O3_8h": o3_8h_weighted_index
-                    },
-                    calculation_detail={
-                        "PM2_5": {"avg": avg_pm25, "index": pm25_index, "weighted": pm25_weighted_index, "weight": WEIGHTS['PM2_5']},
-                        "PM10": {"avg": avg_pm10, "index": pm10_index, "weighted": pm10_weighted_index, "weight": WEIGHTS['PM10']},
-                        "SO2": {"avg": avg_so2, "index": so2_index, "weighted": so2_weighted_index, "weight": WEIGHTS['SO2']},
-                        "NO2": {"avg": avg_no2, "index": no2_index, "weighted": no2_weighted_index, "weight": WEIGHTS['NO2']},
-                        "CO": {
-                            "avg": avg_co,
-                            "p95": co_percentile_95,
-                            "avg_index": round(avg_co / 4, 3),
-                            "p95_index": co_index,
-                            "weighted": co_weighted_index,
-                            "weight": WEIGHTS['CO']
-                        },
-                        "O3_8h": {
-                            "avg": avg_o3_8h,
-                            "p90": o3_8h_percentile_90,
-                            "avg_index": round(avg_o3_8h / 160, 3),
-                            "p90_index": o3_8h_index,
-                            "weighted": o3_8h_weighted_index,
-                            "weight": WEIGHTS['O3_8h']
-                        }
-                    }
-                )
-
-                # 计算达标率和超标率（按国家标准修约）
-                # 达标率保留1位小数
-                valid_days = total_days  # 有效天数等于总天数
-                compliance_rate = round((total_days - exceed_days) / total_days, 1) if total_days > 0 else 0
-                exceed_rate = round(exceed_days / valid_days * 100, 1) if valid_days > 0 else 0
-
-                logger.info(
-                    "city_new_standard_stats_calculated",
-                    city=city,
-                    total_days=total_days,
-                    exceed_days=exceed_days,
-                    valid_days=valid_days,
-                    compliance_rate=compliance_rate,
-                    exceed_rate=exceed_rate,
-                    avg_composite_index=avg_composite_index,
-                    pm25_avg=avg_pm25,
-                    pm10_avg=avg_pm10,
-                    co_p95=co_percentile_95,
-                    o3_8h_p90=o3_8h_percentile_90,
-                    so2_p98=so2_percentile_98,
-                    no2_p98=no2_percentile_98,
-                    pm10_p95=pm10_percentile_95,
-                    pm25_p95=pm25_percentile_95,
-                    single_indexes={
-                        "SO2": so2_weighted_index,
-                        "NO2": no2_weighted_index,
-                        "PM10": pm10_weighted_index,
-                        "CO": co_weighted_index,
-                        "PM2_5": pm25_weighted_index,
-                        "O3_8h": o3_8h_weighted_index
-                    },
-                    primary_pollutant_days=primary_pollutant_days
-                )
-
-                # 计算首要污染物比例
-                # 总的首要污染物天数（同日多首要污染物的情况都计入）
-                total_primary_days = sum(primary_pollutant_days.values())
-                primary_pollutant_ratio = {}
-                if total_primary_days > 0:
-                    for pollutant, days in primary_pollutant_days.items():
-                        primary_pollutant_ratio[pollutant] = round(days / total_primary_days * 100, 1)
-                else:
-                    for pollutant in primary_pollutant_days.keys():
-                        primary_pollutant_ratio[pollutant] = 0.0
-
-                # 计算各污染物超标率（超标天数/有效天数）
-                exceed_rate_by_pollutant = {}
-                for pollutant, days in exceed_days_by_pollutant.items():
-                    if valid_days > 0:
-                        exceed_rate_by_pollutant[pollutant] = round(days / valid_days * 100, 1)
-                    else:
-                        exceed_rate_by_pollutant[pollutant] = 0.0
-
-                # 计算旧标准首要污染物比例
-                old_total_primary_days = sum(old_primary_pollutant_days.values())
-                old_primary_pollutant_ratio = {}
-                if old_total_primary_days > 0:
-                    for pollutant, days in old_primary_pollutant_days.items():
-                        old_primary_pollutant_ratio[pollutant] = round(days / old_total_primary_days * 100, 1)
-                else:
-                    for pollutant in old_primary_pollutant_days.keys():
-                        old_primary_pollutant_ratio[pollutant] = 0.0
-
-                # 计算旧标准各污染物超标率
-                old_exceed_rate_by_pollutant = {}
-                for pollutant, days in old_exceed_days_by_pollutant.items():
-                    if valid_days > 0:
-                        old_exceed_rate_by_pollutant[pollutant] = round(days / valid_days * 100, 1)
-                    else:
-                        old_exceed_rate_by_pollutant[pollutant] = 0.0
-
-                city_stats[city] = {
-                    "new_standard": {
-                        "composite_index": avg_composite_index,
-                        "exceed_days": exceed_days,
-                        "exceed_details": exceed_details,  # 新标准超标详情列表
-                        "valid_days": valid_days,
-                        "exceed_rate": exceed_rate,
-                        "compliance_rate": compliance_rate,
-                        "total_days": total_days,
-                        # 六参数统计指标（按国家标准修约并格式化显示）
-                        "SO2": format_pollutant_value(avg_so2, 'SO2', 'statistical_data'),
-                        "SO2_P98": format_pollutant_value(so2_percentile_98, 'SO2', 'statistical_data'),
-                        "NO2": format_pollutant_value(avg_no2, 'NO2', 'statistical_data'),
-                        "NO2_P98": format_pollutant_value(no2_percentile_98, 'NO2', 'statistical_data'),
-                        "PM10": format_pollutant_value(avg_pm10, 'PM10', 'statistical_data'),
-                        "PM10_P95": format_pollutant_value(pm10_percentile_95, 'PM10', 'statistical_data'),
-                        "PM2_5": format_pollutant_value(avg_pm25, 'PM2_5', 'statistical_data'),
-                        "PM2_5_P95": format_pollutant_value(pm25_percentile_95, 'PM2_5', 'statistical_data'),
-                        "CO": format_pollutant_value(avg_co, 'CO', 'statistical_data'),
-                        "CO_P95": format_pollutant_value(co_percentile_95, 'CO', 'statistical_data'),
-                        "O3_8h": format_pollutant_value(avg_o3_8h, 'O3_8h', 'statistical_data'),
-                        "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data'),
-                        # 加权单项质量指数（带权重）
-                        "single_indexes": {
-                            "SO2": so2_weighted_index,
-                            "NO2": no2_weighted_index,
-                            "PM10": pm10_weighted_index,
-                            "CO": co_weighted_index,
-                            "PM2_5": pm25_weighted_index,
-                            "O3_8h": o3_8h_weighted_index
-                        },
-                        # 首要污染物统计
-                        "primary_pollutant_days": primary_pollutant_days,
-                        "primary_pollutant_ratio": primary_pollutant_ratio,
-                        "total_primary_days": total_primary_days,
-                        # 各污染物超标统计
-                        "exceed_days_by_pollutant": exceed_days_by_pollutant,
-                        "exceed_rate_by_pollutant": exceed_rate_by_pollutant
-                    },
-                    # 暂存旧标准超标详情（基于AQI>100），后面会合并API数据
-                    "old_standard_exceed_details": old_exceed_details
-                }
-
-                logger.info(
-                    "city_new_standard_calculated",
-                    city=city,
-                    composite_index=avg_composite_index,
-                    exceed_days=exceed_days,
-                    compliance_rate=compliance_rate
-                )
-
-        # 处理统计数据（旧标准）
-        # API 返回字段映射（原始字段名 → 本地字段名）：
-        #   cityName       → city           (城市名称)
-        #   compositeIndex → composite_index (综合指数)
-        #   overDays       → exceed_days     (超标天数)
-        #   overRate       → exceed_rate     (超标率)
-        #   rank           → rank           (排名)
-        #   validDays      → valid_days     (有效天数)
-        #   pM2_5_Rank     → pm2_5_rank     (PM2.5排名)
-        #
-        # 注意：report_data 是原始 API 返回数据，未经标准化，字段名是驼峰格式
-        if report_data:
-            logger.info(
-                "processing_report_data",
-                record_count=len(report_data),
-                sample_fields=list(report_data[0].keys())[:15] if report_data else [],
-                existing_cities=list(city_stats.keys())
-            )
-
-            # 【调试】记录统计数据第一条记录的城市字段
-            if report_data:
-                first_report = report_data[0]
-                logger.info(
-                    "report_data_city_field_debug",
-                    has_cityName="cityName" in first_report,
-                    has_city="city" in first_report,
-                    cityName_value=first_report.get("cityName"),
-                    city_value=first_report.get("city"),
-                    all_city_fields=[k for k in first_report.keys() if "city" in k.lower()],
-                    # 检查CO和O3_8h字段是否存在
-                    has_cO="cO" in first_report or "CO" in first_report,
-                    has_cO_Decimal="cO_Decimal" in first_report,
-                    has_o3_8h="o3_8h" in first_report or "O3_8h" in first_report,
-                    has_o3_8h_Decimal="o3_8h_Decimal" in first_report,
-                    cO_value=first_report.get("cO") or first_report.get("CO"),
-                    o3_8h_value=first_report.get("o3_8h") or first_report.get("O3_8h"),
-                    all_fields_with_c_or_o3=[k for k in first_report.keys() if "cO" in k or "CO" in k or "o3" in k.lower()]
-                )
-
-            for record in report_data:
-                # 统计数据是原始 API 格式，需要从原始字段名提取
-                # 原始字段是驼峰命名：cityName, compositeIndex, overDays 等
-                city_name = (
-                    record.get("city", "") or           # 标准化后的字段
-                    record.get("city_name", "") or      # 备用字段
-                    record.get("cityName", "") or      # 原始 API 字段（驼峰）
-                    ""
-                )
-
-                logger.info(
-                    "report_record_city_check",
-                    city_name=city_name,
-                    in_city_stats=city_name in city_stats,
-                    city_stats_keys=list(city_stats.keys()),
-                    # 记录所有可能的城市相关字段值
-                    city_fields_debug={
-                        "city": record.get("city"),
-                        "city_name": record.get("city_name"),
-                        "cityName": record.get("cityName"),
-                        "CityName": record.get("CityName")
-                    }
-                )
-                if city_name and city_name in city_stats:
-                    # 提取旧标准统计指标
-                    # 注意：API 返回的字段可能是字符串类型，需要转换为数字
-                    # 使用辅助函数安全转换数字类型
-                    def safe_float(value, default=0):
-                        """安全转换为浮点数"""
-                        if value is None:
-                            return default
-                        try:
-                            return float(value)
-                        except (ValueError, TypeError):
-                            return default
-
-                    def safe_int(value, default=0):
-                        """安全转换为整数"""
-                        if value is None:
-                            return default
-                        try:
-                            return int(float(value))  # 先转float再转int，支持 "2.0" 格式
-                        except (ValueError, TypeError):
-                            return default
-
-                    old_standard = {
-                        "composite_index": safe_float(record.get("compositeIndex") or record.get("CompositeIndex")),
-                        "exceed_days": safe_int(record.get("overDays") or record.get("OverDays")),
-                        "exceed_rate": safe_float(record.get("overRate") or record.get("OverRate")),
-                        "valid_days": safe_int(record.get("validDays") or record.get("ValidDays")),
-                        # 四参数统计指标（按表3规范进行修约并格式化显示）
-                        "SO2": format_pollutant_value(apply_rounding(safe_float(record.get("sO2_Decimal") or record.get("sO2")), 'SO2', 'statistical_data'), 'SO2', 'statistical_data'),
-                        "NO2": format_pollutant_value(apply_rounding(safe_float(record.get("nO2_Decimal") or record.get("nO2")), 'NO2', 'statistical_data'), 'NO2', 'statistical_data'),
-                        "PM2_5": format_pollutant_value(apply_rounding(safe_float(record.get("pM2_5_Decimal") or record.get("pM2_5")), 'PM2_5', 'statistical_data'), 'PM2_5', 'statistical_data'),
-                        "PM10": format_pollutant_value(apply_rounding(safe_float(record.get("pM10_Decimal") or record.get("pM10")), 'PM10', 'statistical_data'), 'PM10', 'statistical_data'),
-                        # 单项质量指数（从 API 获取）
-                        "single_indexes": {
-                            "SO2": safe_float(record.get("sO2_SingleIndex") or 0),
-                            "NO2": safe_float(record.get("nO2_SingleIndex") or 0),
-                            "PM10": safe_float(record.get("pM10_SingleIndex") or 0),
-                            "PM2_5": safe_float(record.get("pM2_5_SingleIndex") or 0)
-                        },
-                        # 首要污染物统计（基于AQI > 100时的首要污染物字段）
-                        "primary_pollutant_days": old_primary_pollutant_days,
-                        "primary_pollutant_ratio": old_primary_pollutant_ratio,
-                        "total_primary_days": old_total_primary_days,
-                        # 各污染物超标统计（基于单项质量指数 > 1）
-                        "exceed_days_by_pollutant": old_exceed_days_by_pollutant,
-                        "exceed_rate_by_pollutant": old_exceed_rate_by_pollutant
-                    }
-
-                    # 调试日志：记录旧标准指标提取结果
-                    logger.info(
-                        "old_standard_extracted",
-                        city=city,
-                        composite_index=old_standard["composite_index"],
-                        exceed_days=old_standard["exceed_days"],
-                        raw_compositeIndex=record.get("compositeIndex"),
-                        raw_type=type(record.get("compositeIndex")),
-                        concentrations={
-                            "SO2": old_standard.get("SO2"),
-                            "NO2": old_standard.get("NO2"),
-                            "PM2_5": old_standard.get("PM2_5"),
-                            "PM10": old_standard.get("PM10")
-                        },
-                        single_indexes=old_standard.get("single_indexes", {})
-                    )
-
-                    # 合并旧标准超标详情（从日报数据的AQI计算得出）
-                    old_standard_exceed_details = city_stats[city].get("old_standard_exceed_details", [])
-                    old_standard["exceed_details"] = old_standard_exceed_details
-
-                    city_stats[city]["old_standard"] = old_standard
-
-                    # 计算对比数据
-                    new_index = city_stats[city]["new_standard"]["composite_index"]
-                    old_index = old_standard["composite_index"]
-                    new_exceed = city_stats[city]["new_standard"]["exceed_days"]
-                    old_exceed = old_standard["exceed_days"]
-
-                    city_stats[city]["comparison"] = {
-                        "composite_index_change": round(new_index - old_index, 2),
-                        "composite_index_change_rate": round(((new_index - old_index) / old_index * 100) if old_index > 0 else 0, 2),
-                        "exceed_days_change": new_exceed - old_exceed
-                    }
-
-        # 构建返回结果
-        # 如果只有一个城市，直接返回该城市的统计
-        # 如果有多个城市，返回汇总统计
-
-        logger.info(
-            "building_final_result",
-            total_cities_in_stats=len(city_stats),
-            city_names=list(city_stats.keys()),
-            has_day_data=day_data is not None,
-            has_report_data=report_data is not None,
-            # 详细调试信息
-            has_old_standard=bool(any("old_standard" in v for v in city_stats.values())),
-            cities_with_old_standard=[city for city, data in city_stats.items() if "old_standard" in data]
-        )
-
-        # 【调试】如果统计数据存在但未匹配，记录详细信息
-        if report_data and not any("old_standard" in v for v in city_stats.values()):
-            logger.warning(
-                "report_data_not_matched",
-                message="统计数据存在但未能匹配到任何城市",
-                report_count=len(report_data),
-                city_stats_keys=list(city_stats.keys()),
-                sample_report_cityName=report_data[0].get("cityName") if report_data else None,
-                sample_report_city=report_data[0].get("city") if report_data else None,
-                sample_report_fields=list(report_data[0].keys())[:10] if report_data else []
-            )
-
-        # 【调试】记录标准化后第一条记录的结构，帮助排查浓度提取问题
-        if standardized_records:
-            first_record = standardized_records[0]
-            has_measurements = "measurements" in first_record
-            measurements_keys = list(first_record.get("measurements", {}).keys()) if has_measurements else []
-            logger.info(
-                "standardized_record_structure_debug",
-                has_measurements=has_measurements,
-                measurements_count=len(measurements_keys),
-                measurements_keys=measurements_keys[:20],
-                top_level_fields=[k for k in first_record.keys() if k != "measurements"][:15],
-                # 尝试从多个位置提取 PM2.5
-                pm25_direct=first_record.get("pm2_5") or first_record.get("PM2_5"),
-                pm25_from_measurements=first_record.get("measurements", {}).get("PM2_5") if has_measurements else None
-            )
-
-        result_data = None
-        result_summary = {}
-
-        if len(cities) == 1 and city_stats:
+        if len(cities) == 1 and city_comparison:
             # 单城市查询
-            city = list(city_stats.keys())[0]
-            city_data = city_stats[city]
-
+            city = list(city_comparison.keys())[0]
             result_summary = {
                 "city": city,
-                "old_standard": city_data.get("old_standard", {}),
-                "new_standard": city_data["new_standard"],
-                "comparison": city_data.get("comparison", {})
+                **city_comparison[city]
             }
         else:
             # 多城市查询
             result_summary = {
-                "cities": list(city_stats.keys()),
-                "city_stats": city_stats
+                "cities": list(city_comparison.keys()),
+                "city_stats": city_comparison
             }
-
-        # 构建元数据
-        total_days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
 
         metadata = {
             "tool_name": "query_standard_comparison",
@@ -3088,37 +2553,27 @@ def execute_query_standard_comparison(
             "date_range": f"{start_date} to {end_date}",
             "schema_version": "v2.0",
             "total_days": total_days,
-            "data_id": day_data_id,  # 数据传递符号
-            "file_path": f"backend_data_registry/datasets/{day_data_id.replace(':', '_')}.json"  # 存储地址（相对路径）
+            "data_id": day_data_id
         }
 
         # 构建摘要
         if len(cities) == 1:
-            city = list(city_stats.keys())[0] if city_stats else cities[0]
-            summary_parts = [
-                f"{city} 新旧标准对比查询完成"
-            ]
-
-            # 在摘要中添加数据存储信息
+            city = list(city_comparison.keys())[0] if city_comparison else cities[0]
+            summary_text = f"{city} 新旧标准对比查询完成"
             if day_data_id:
-                summary_parts.append(f"日报数据已保存 (data_id: {day_data_id})")
-
-            result_summary_text = " | ".join(summary_parts)
-
+                summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
         else:
-            result_summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_stats)} 个城市"
-
-            # 在摘要中添加数据存储信息
+            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市"
             if day_data_id:
-                result_summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
+                summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
 
         return {
             "status": "success",
             "success": True,
-            "data": result_data,  # 统计工具不返回详细记录
+            "data": None,
             "metadata": metadata,
-            "summary": result_summary_text,
-            "result": result_summary  # 详细结果在summary字段中
+            "summary": summary_text,
+            "result": result_summary
         }
 
     except Exception as e:

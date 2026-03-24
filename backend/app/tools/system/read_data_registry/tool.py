@@ -88,7 +88,7 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "jq_filter": {
                         "type": "string",
-                        "description": "高级：jq 过滤表达式（如 '.[] | select(.temperature > 30)'）。注意：jq_filter 在 time_range 和 fields 之后应用"
+                        "description": "高级：jq 过滤表达式。注意：数据是数组格式，需要用 .[] 迭代或用 map/select。示例：'.[] | select(.temperature > 30)' 或 'map(select(.measurements.PM10 == null))'。注意：jq_filter 在 time_range 和 fields 之后应用"
                     }
                 },
                 "required": ["data_id"]
@@ -189,9 +189,19 @@ class ReadDataRegistryTool(LLMTool):
                 "summary": f"字段名称不匹配。请求的字段 {mismatched_fields} 不存在，共有 {len(available_fields)} 个可用字段。请查看 data 字段获取完整字段列表。"
             }
 
-        # 应用 jq 过滤
+        # 应用 jq 过滤（带智能修正）
         if jq_filter:
             try:
+                # 智能修正：如果用户直接写 .field 而不是 .[] | .field
+                # 自动添加 .[] 迭代器
+                corrected_filter = self._auto_correct_jq_filter(jq_filter)
+                if corrected_filter != jq_filter:
+                    filter_info["jq_filter_corrected"] = {
+                        "original": jq_filter,
+                        "corrected": corrected_filter
+                    }
+                    jq_filter = corrected_filter
+
                 result = subprocess.run(
                     ["jq", jq_filter],
                     input=json.dumps(data, ensure_ascii=False),
@@ -203,7 +213,14 @@ class ReadDataRegistryTool(LLMTool):
                     data = json.loads(result.stdout)
                     filter_info["jq_filter"] = jq_filter
                 else:
-                    return {"success": False, "error": f"jq 过滤失败: {result.stderr}"}
+                    # 提供更友好的错误提示
+                    error_hint = self._get_jq_error_hint(result.stderr, jq_filter)
+                    return {
+                        "success": False,
+                        "error": f"jq 过滤失败: {result.stderr}",
+                        "hint": error_hint,
+                        "suggestion": "数据是数组格式，请使用 .[] 迭代或 map/select 函数"
+                    }
             except FileNotFoundError:
                 filter_info["jq_warning"] = "jq 未安装，跳过 jq 过滤"
             except Exception as e:
@@ -498,6 +515,42 @@ class ReadDataRegistryTool(LLMTool):
                 return f"数据内容: 共 {returned} 条记录"
         else:
             return f"数据内容: {json.dumps(data, ensure_ascii=False)[:200]}"
+
+    def _auto_correct_jq_filter(self, jq_filter: str) -> str:
+        """智能修正 jq 过滤表达式
+
+        常见错误模式：
+        1. 直接写 .field (应该是 .[] | .field 或 map(.field))
+        2. .field == value (应该是 .[] | select(.field == value))
+        """
+        jq_filter = jq_filter.strip()
+
+        # 如果已经包含 .[] 或 map(，说明用户已经知道需要迭代
+        if ".[]" in jq_filter or "map(" in jq_filter or "select(" in jq_filter:
+            return jq_filter
+
+        # 模式1：简单的字段比较，如 .field == null 或 .field == ""
+        if jq_filter.startswith(".") and "==" in jq_filter:
+            # 将 .field == null 转换为 map(select(.field == null))
+            return f"map(select({jq_filter}))"
+
+        # 模式2：简单的字段访问，如 .field
+        if jq_filter.startswith(".") and "==" not in jq_filter and "|" not in jq_filter:
+            # 将 .field 转换为 map(.field)
+            return f"map({jq_filter})"
+
+        return jq_filter
+
+    def _get_jq_error_hint(self, stderr: str, jq_filter: str) -> str:
+        """根据 jq 错误信息提供友好提示"""
+        if "Cannot index array" in stderr:
+            return "数据是数组格式，需要使用 .[] 迭代或使用 map/select 函数"
+        elif "syntax error" in stderr:
+            return "jq 语法错误，请检查表达式格式"
+        elif "unexpected end" in stderr:
+            return "jq 表达式未结束，可能缺少括号或引号"
+        else:
+            return "请检查 jq 表达式语法"
 
 
 # 工具注册

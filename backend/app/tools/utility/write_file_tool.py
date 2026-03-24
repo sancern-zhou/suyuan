@@ -53,10 +53,15 @@ class WriteFileTool(LLMTool):
 - 导出数据到文本文件（report.txt, data.csv）
 - 创建文档（README.md, notes.txt）
 
+路径说明（重要）：
+- 报告文件：/home/xckj/suyuan/backend_data_registry/report.md
+- 数据文件：/home/xckj/suyuan/backend_data_registry/data.json
+- 相对路径：backend/output.txt（相对于项目根目录）
+
 示例：
-- write_file(path="D:/work/config.json", content='{"port": 8000}')
-- write_file(path="D:/work/script.py", content="def main():\\n    print('hello')")
-- write_file(path="D:/work/data.txt", content="line1\\nline2\\nline3")
+- write_file(path="/home/xckj/suyuan/backend_data_registry/report.md", content="# 报告内容")
+- write_file(path="backend/output.txt", content="output data")
+- write_file(path="config.json", content='{"port": 8000}')
 
 参数说明：
 - path: 文件路径（必填，绝对路径或相对路径）
@@ -66,7 +71,7 @@ class WriteFileTool(LLMTool):
 
 注意：
 - 如果文件已存在，会完全覆写（不是追加）
-- 工作目录限制：D:/溯源/ 及其子目录
+- 工作目录限制：/home/xckj/suyuan/ 及其子目录
 - 文件大小限制：最大 10MB
 - 二进制文件请使用其他工具
 """,
@@ -229,6 +234,11 @@ class WriteFileTool(LLMTool):
 创建新文件或完全覆写已有文件的内容。
 自动创建父目录（如不存在）。
 
+路径说明（重要）：
+- 报告文件：/home/xckj/suyuan/backend_data_registry/report.md
+- 数据文件：/home/xckj/suyuan/backend_data_registry/data.json
+- 相对路径：backend/output.txt（相对于项目根目录）
+
 使用场景：
 - 创建配置文件、代码文件、文档
 - 导出数据到文本文件
@@ -236,7 +246,7 @@ class WriteFileTool(LLMTool):
 
 注意：
 - 如果文件已存在，会完全覆写（不是追加）
-- 工作目录限制：D:/溯源/ 及其子目录
+- 工作目录限制：/home/xckj/suyuan/ 及其子目录
 - 文件大小限制：最大 10MB
 """,
             "parameters": {

@@ -356,6 +356,11 @@ export const useReactStore = defineStore('react', {
             if (msg) {
               // 【修复】确保流式结束状态，并触发响应式更新
               msg.streaming = false
+              // 【关键修复】用后端返回的完整response覆盖content（确保格式正确）
+              if (data?.response) {
+                msg.content = data.response
+                this.finalAnswer = data.response
+              }
               // 使用 Object.assign 确保响应式更新
               Object.assign(msg, {
                 data: {
@@ -871,7 +876,6 @@ export const useReactStore = defineStore('react', {
         assistantMode = null,
         useFullChemistry = false,  // RACM2完整化学机理分析选项
         gridResolution = 21,  // 网格分辨率选项
-        enableMultiExpert = false,  // ✅ 是否启用多专家系统（通用Agent默认关闭）
         agentMode = this.agentMode,  // ✅ 双模式架构：assistant | expert
         knowledgeBaseIds = null,  // ✅ 知识库ID列表
         attachments = null  // ✅ 附件列表
@@ -926,7 +930,6 @@ export const useReactStore = defineStore('react', {
           assistantMode: assistantMode,  // 传递助手模式
           useFullChemistry: useFullChemistry,  // RACM2完整化学机理分析选项
           gridResolution: gridResolution,  // 网格分辨率选项
-          enableMultiExpert: enableMultiExpert,  // ✅ 传递多专家开关
           isInterruption: isInterruption,  // ✅ 传递中断标志
           agentMode: agentMode,  // ✅ 双模式架构
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表

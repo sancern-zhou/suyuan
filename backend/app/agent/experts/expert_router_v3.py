@@ -28,7 +28,6 @@ from .weather_executor import WeatherExecutor
 from .component_executor import ComponentExecutor
 from .viz_executor import VizExecutor
 from .report_executor import ReportExecutor
-from .template_report_executor import TemplateReportExecutor
 
 logger = structlog.get_logger()
 
@@ -94,7 +93,6 @@ class ExpertRouterV3:
             "component": ComponentExecutor(),
             "viz": VizExecutor(),
             "report": ReportExecutor(),
-            "template_report": TemplateReportExecutor()
         }
 
         # 为专家执行器设置memory_manager和data_manager
@@ -822,7 +820,6 @@ class ExpertRouterV3:
             "component": "污染物组分分析",
             "viz": "数据可视化生成",
             "report": "综合报告生成",
-            "template_report": "模板报告生成"
         }
 
         # 专家描述映射
@@ -831,7 +828,6 @@ class ExpertRouterV3:
             "component": f"分析{parsed_query.location}的污染物组分（VOCs/PM2.5等）",
             "viz": "生成可视化图表",
             "report": "生成综合分析报告",
-            "template_report": "生成格式化模板报告"
         }
 
         # 按组创建任务

@@ -117,46 +117,40 @@ class ReadDocxTool(LLMTool):
             paragraph_count = 0  # 统计非空段落数
             table_count = 0
             image_count = 0  # 统计图片数量
-            paragraph_index = 0  # 用于在 doc.paragraphs 中的索引
-            table_index = 0  # 用于在 doc.tables 中的索引
 
-            # 遍历文档的所有子元素（段落和表格混合）
-            for child in doc.element.body:
+            # 使用 iter_inner_content() 按原始顺序遍历段落和表格
+            from docx.table import Table
+            from docx.text.paragraph import Paragraph
+
+            for item in doc.iter_inner_content():
                 if paragraph_count >= max_paragraphs:
                     break
 
-                # 判断是段落还是表格
-                if isinstance(child, CT_P):
-                    # 段落
-                    if paragraph_index < len(doc.paragraphs):
-                        para = doc.paragraphs[paragraph_index]
-                        text = para.text.strip()
-                        if text:
-                            # 检查是否是标题
-                            if para.style and para.style.name.startswith("Heading"):
-                                level = para.style.name.replace("Heading ", "")
-                                try:
-                                    level_int = int(level)
-                                    content_parts.append(f"{'#' * level_int} {text}")
-                                except ValueError:
-                                    content_parts.append(text)
-                            else:
+                if isinstance(item, Paragraph):
+                    # 处理段落
+                    text = item.text.strip()
+                    if text:
+                        # 检查是否是标题
+                        if item.style and item.style.name.startswith("Heading"):
+                            level = item.style.name.replace("Heading ", "")
+                            try:
+                                level_int = int(level)
+                                content_parts.append(f"{'#' * level_int} {text}")
+                            except ValueError:
                                 content_parts.append(text)
-                            paragraph_count += 1
-                        paragraph_index += 1
+                        else:
+                            content_parts.append(text)
+                        paragraph_count += 1
 
-                elif isinstance(child, CT_Tbl) and include_tables:
-                    # 表格
+                elif isinstance(item, Table) and include_tables:
+                    # 处理表格
                     if table_count >= 20:  # 限制表格数量
                         break
 
-                    if table_index < len(doc.tables):
-                        table = doc.tables[table_index]
-                        table_text = self._extract_table_text(table)
-                        if table_text:
-                            content_parts.append(table_text)
-                            table_count += 1
-                        table_index += 1
+                    table_text = self._extract_table_text(item)
+                    if table_text:
+                        content_parts.append(table_text)
+                        table_count += 1
 
             # 统计段落中嵌入的图片
             for para in doc.paragraphs:
@@ -239,7 +233,7 @@ class ReadDocxTool(LLMTool):
             }
 
     def _extract_table_text(self, table: Table) -> str:
-        """从表格提取文本"""
+        """从表格提取文本（完整保留内容）"""
         try:
             lines = []
             col_count = 0
@@ -253,9 +247,7 @@ class ReadDocxTool(LLMTool):
                     text = text.replace('\n', ' ').replace('\r', '').strip()
                     # 移除多余空格
                     text = ' '.join(text.split())
-                    # 限制每个单元格的文本长度
-                    if len(text) > 100:
-                        text = text[:100] + "..."
+                    # ✅ 完整保留内容，不再限制字符长度
                     cells.append(text)
 
                 line = " | ".join(cells)

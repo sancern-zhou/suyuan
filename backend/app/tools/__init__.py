@@ -233,8 +233,29 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_new", error=str(e))
 
     try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayOldStandardTool
+        registry.register(QueryGDSuncereCityDayOldStandardTool(), priority=39)
+        logger.info("tool_loaded", tool="query_gd_suncere_city_day_old_standard")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_old_standard", error=str(e))
+
+    try:
+        from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
+        registry.register(QueryNewStandardReportTool(), priority=40)
+        logger.info("tool_loaded", tool="query_new_standard_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_new_standard_report", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereOldStandardReportTool
+        registry.register(QueryGDSuncereOldStandardReportTool(), priority=41)
+        logger.info("tool_loaded", tool="query_old_standard_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_old_standard_report", error=str(e))
+
+    try:
         from app.tools.query.get_satellite_data.tool import GetSatelliteDataTool
-        registry.register(GetSatelliteDataTool(), priority=38)
+        registry.register(GetSatelliteDataTool(), priority=42)
         logger.info("tool_loaded", tool="get_satellite_data")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
@@ -302,12 +323,8 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="analyze_trajectory_sources", error=str(e))
 
-    try:
-        from app.tools.analysis.iaqi_calculator.tool import IAQICalculatorTool
-        registry.register(IAQICalculatorTool(), priority=145)
-        logger.info("tool_loaded", tool="calculate_iaqi")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="calculate_iaqi", error=str(e))
+    # IAQI计算功能已整合到 aggregate_data 工具（使用新标准 HJ 633-2024）
+    # 旧的 iaqi_calculator 工具已删除
 
     try:
         from app.tools.analysis.ml_predictor.tool import MLPredictorTool
@@ -356,6 +373,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="calculate_trace", error=str(e))
 
+    try:
+        from app.tools.analysis.aggregate_data.tool import AggregateDataTool
+        registry.register(AggregateDataTool(), priority=75)
+        logger.info("tool_loaded", tool="aggregate_data")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="aggregate_data", error=str(e))
+
     # ========================================
     # Visualization Tools（可视化工具）
     # ========================================
@@ -398,6 +422,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="bash")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="bash", error=str(e))
+
+    try:
+        from app.tools.utility.execute_python_tool import ExecutePythonTool
+        registry.register(ExecutePythonTool(), priority=501)
+        logger.info("tool_loaded", tool="execute_python")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_python", error=str(e))
 
     # ========================================
     # File & Image Tools（文件和图片工具）
@@ -598,13 +629,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="read_docx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="read_docx", error=str(e))
-
-    try:
-        from app.tools.report.generate_report.tool import GenerateReportTool
-        registry.register(GenerateReportTool(), priority=461)
-        logger.info("tool_loaded", tool="generate_report")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="generate_report", error=str(e))
 
     try:
         from app.tools.workflow.knowledge_qa_workflow import KnowledgeQAWorkflow
