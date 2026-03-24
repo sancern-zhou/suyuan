@@ -708,14 +708,15 @@ class QueryStandardComparisonTool(LLMTool):
 - 返回统计浓度值（SO2, NO2, PM10, CO, PM2_5, NO, NOx, O3_8h）
 
 【新旧标准差异】
-- PM2.5断点：IAQI=50时35→30μg/m³，IAQI=100时75→60μg/m³
-- PM10断点：IAQI=100时150→120μg/m³
+- PM2.5断点：IAQI=50时35μg/m³（无变化），IAQI=100时75→60μg/m³（收严）
+- PM10断点：IAQI=100时150→120μg/m³（收严）
 - 新标准综合指数：PM2.5权重3，O3权重2，NO2权重2，其他权重1
 
 【输入参数】
 - cities: 城市列表
 - start_date: 开始日期 (YYYY-MM-DD)
 - end_date: 结束日期 (YYYY-MM-DD)
+- enable_sand_deduction: 是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）
 
 【返回数据】
 统计摘要包含：
@@ -739,6 +740,10 @@ class QueryStandardComparisonTool(LLMTool):
                     "end_date": {
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
+                    },
+                    "enable_sand_deduction": {
+                        "type": "boolean",
+                        "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -770,26 +775,33 @@ class QueryStandardComparisonTool(LLMTool):
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
+            **kwargs: 工具参数
+                - enable_sand_deduction: 是否启用扣沙处理（默认true）
 
         Returns:
             新旧标准对比结果
         """
         from app.tools.query.query_gd_suncere.tool import execute_query_standard_comparison
 
+        # 提取可选参数
+        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+
         logger.info(
             "query_standard_comparison_tool_start",
             cities=cities,
             start_date=start_date,
             end_date=end_date,
+            enable_sand_deduction=enable_sand_deduction,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
         # 调用核心实现函数
-        result = execute_query_standard_comparison(
+        result = await execute_query_standard_comparison(
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            context=context
+            context=context,
+            enable_sand_deduction=enable_sand_deduction
         )
 
         return result
@@ -926,13 +938,258 @@ data_type=1  # 查询审核实况数据（默认）
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        # 调用核心实现函数
-        result = execute_query_city_day_new_standard(
+        # 调用核心实现函数（async）
+        result = await execute_query_city_day_new_standard(
             cities=cities,
             start_date=start_date,
             end_date=end_date,
             context=context,
             data_type=data_type
+        )
+
+        return result
+
+
+class QueryGDSuncereCityDayOldStandardTool(LLMTool):
+    """
+    广东省城市日数据查询工具（旧标准：十三五/十四五）
+
+    查询广东省城市日空气质量数据，支持十三五和十四五两种标准。
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_gd_suncere_city_day_old_standard",
+            "description": """
+查询广东省城市日空气质量数据（旧标准：十三五/十四五）。
+
+【核心功能】
+- 查询广东省城市的日级别空气质量统计数据
+- 支持十三五（planType=135）和十四五（planType=0）两种标准
+- 返回综合统计报表数据
+
+【规划类型】
+- planType=0: 十四五标准（默认）
+- planType=135: 十三五标准
+
+【数据源】
+- data_source=1: 审核实况（默认）
+- data_source=0: 原始实况
+
+【使用场景】
+- 历史数据对比分析（十三五 vs 十四五）
+- 旧标准数据查询
+- 统计报表生成
+
+【输入参数】
+- cities: 城市名称列表（如 ["广州", "深圳", "佛山"]）
+- start_date: 开始日期，格式 "YYYY-MM-DD"
+- end_date: 结束日期，格式 "YYYY-MM-DD"
+- plan_type: 规划类型（0=十四五默认, 135=十三五）
+- data_source: 数据源（1=审核实况默认, 0=原始实况）
+
+【重要】
+- 返回综合统计数据，非原始日数据
+- 返回 UDF v2.0 标准格式数据
+- 可直接传递给可视化工具
+            """.strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称列表，如 ['广州', '深圳', '佛山']"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "开始日期，格式 'YYYY-MM-DD'"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "结束日期，格式 'YYYY-MM-DD'"
+                    },
+                    "plan_type": {
+                        "type": "integer",
+                        "description": "规划类型：0=十四五（默认），135=十三五",
+                        "enum": [0, 135]
+                    },
+                    "data_source": {
+                        "type": "integer",
+                        "description": "数据源：1=审核实况（默认），0=原始实况",
+                        "enum": [0, 1]
+                    }
+                },
+                "required": ["cities", "start_date", "end_date"]
+            }
+        }
+
+        super().__init__(
+            name="query_gd_suncere_city_day_old_standard",
+            description="Query Guangdong city daily air quality data (Old Standard: 13th/14th Five-Year Plan)",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=True
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        cities: List[str],
+        start_date: str,
+        end_date: str,
+        plan_type: int = 0,
+        data_source: int = 1,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """执行查询"""
+        from app.tools.query.query_gd_suncere.tool_city_day_old_standard import execute_query_city_day_old_standard
+
+        logger.info(
+            "query_gd_suncere_city_day_old_standard_tool_start",
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            plan_type=plan_type,
+            data_source=data_source,
+            session_id=getattr(context, 'session_id', 'unknown')
+        )
+
+        result = await execute_query_city_day_old_standard(
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            context=context,
+            plan_type=plan_type,
+            data_source=data_source
+        )
+
+        return result
+
+
+class QueryGDSuncereOldStandardReportTool(LLMTool):
+    """
+    旧标准统计报表查询工具（HJ 633-2011）
+
+    查询基于旧标准的空气质量统计报表，返回旧标准综合指数、超标天数、首要污染物等统计指标。
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_old_standard_report",
+            "description": """
+查询基于旧标准（HJ 633-2011）的空气质量统计报表。
+
+【核心功能】
+- 旧标准综合指数计算（所有污染物权重均为1）
+- 超标天数和达标率统计（基于单项质量指数 > 1）
+- 六参数统计浓度（SO2_P98, NO2_P98, PM10_P95, PM2_5_P95, CO_P95, O3_8h_P90）
+- 首要污染物分析
+
+【旧标准特点】
+- PM2.5断点：IAQI=100时75μg/m³（新标准60）
+- PM10断点：IAQI=100时150μg/m³（新标准120）
+- 超标判断：基于单项质量指数 > 1
+
+【返回数据说明】
+- result字段：统计汇总结果（综合指数、超标天数、首要污染物比例等）
+- data_id字段：完整日报数据（基于HJ 633-2011旧标准计算）
+
+**重要**：data_id中的日报数据已用旧标准计算结果覆盖原始字段，Agent可直接使用：
+- AQI：旧标准空气质量指数（覆盖原始值）
+- primary_pollutant：旧标准首要污染物（覆盖原始值）
+- IAQI_PM2_5、IAQI_PM10、IAQI_SO2、IAQI_NO2、IAQI_CO、IAQI_O3_8h：旧标准分指数（覆盖原始值）
+- single_index_PM2_5_old、single_index_PM10_old等：单项质量指数（新增字段）
+
+使用示例：
+- read_data_registry(data_id="xxx", fields=["timestamp", "AQI", "primary_pollutant", "IAQI_PM2_5"])
+
+【输入参数】
+- cities: 城市列表
+- start_date: 开始日期 (YYYY-MM-DD)
+- end_date: 结束日期 (YYYY-MM-DD)
+- enable_sand_deduction: 是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）
+
+【重要】
+- 工具会自动将城市名称转换为编码
+- 返回 UDF v2.0 标准格式数据
+- 旧标准与新标准的差异在于PM2.5和PM10的断点和限值
+
+示例：
+cities=["广州", "深圳", "佛山"]
+start_date="2026-01-01"
+end_date="2026-01-31"
+enable_sand_deduction=true  # 启用扣沙处理
+
+【返回数据】
+- result: 统计汇总结果（综合指数、超标天数、首要污染物比例等）
+- data_id: 完整日报数据（旧标准AQI/IAQI/首要污染物）
+            """.strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称列表，如 ['广州', '深圳', '佛山']"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "开始日期，格式 'YYYY-MM-DD'"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "结束日期，格式 'YYYY-MM-DD'"
+                    },
+                    "enable_sand_deduction": {
+                        "type": "boolean",
+                        "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
+                    }
+                },
+                "required": ["cities", "start_date", "end_date"]
+            }
+        }
+
+        super().__init__(
+            name="query_old_standard_report",
+            description="Query old standard (HJ 633-2011) air quality statistical report - Suncere API",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=True
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        cities: List[str],
+        start_date: str,
+        end_date: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """执行旧标准统计报表查询"""
+        from app.tools.query.query_gd_suncere.tool_city_day_old_standard_report import execute_query_old_standard_report
+
+        # 提取可选参数
+        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+
+        logger.info(
+            "query_old_standard_report_tool_start",
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            enable_sand_deduction=enable_sand_deduction,
+            session_id=getattr(context, 'session_id', 'unknown')
+        )
+
+        # 调用核心实现函数（async）
+        result = await execute_query_old_standard_report(
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            enable_sand_deduction=enable_sand_deduction,
+            context=context
         )
 
         return result

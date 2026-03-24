@@ -62,7 +62,6 @@ EXPERT_TOOLS = {
     "calculate_soluble": "水溶性离子分析（需先调用get_pm25_ionic获取数据）。参数: data_id(str)",
     "calculate_crustal": "地壳元素分析（需先调用get_pm25_crustal获取数据）。参数: data_id(str)",
     "calculate_trace": "微量元素分析（需先调用get_pm25_crustal获取数据）。参数: data_id(str)",
-    "calculate_iaqi": "IAQI计算（需先调用get_air_quality获取数据）。参数: data_id(str)",
     "predict_air_quality": "空气质量预测（需先调用get_air_quality获取至少7天数据）。参数: city(str), days(int, 可选, 默认7)",
 
     # 可视化工具
@@ -81,18 +80,27 @@ EXPERT_TOOLS = {
 
 # ===== 问数模式工具 =====
 QUERY_TOOLS = {
+    # === 源码查看工具（了解工具实现细节） ===
+    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+
     # === 现有参数化查询工具（复用） ===
     "get_pm25_ionic": "查询PM2.5水溶性离子。参数: start_time(str), end_time(str), locations(可选)",
     "get_pm25_carbon": "查询PM2.5碳组分。参数: start_time(str), end_time(str), locations(可选)",
     "get_pm25_crustal": "查询PM2.5地壳元素。参数: start_time(str), end_time(str), locations(可选)",
     "get_weather_data": "查询气象数据。参数: data_type(str), start_time(str), end_time(str), lat/lon(可选)",
     "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
-    "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准）。参数: cities(list), start_date(str), end_date(str)",
-    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，PM2.5日平均60、PM10日平均120）。参数: cities(list), start_date(str), end_date(str)",
-    "query_standard_comparison": "查询新旧空气质量标准对比（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str)",
+    "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
+    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
+    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "query_standard_comparison": "新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
 
      # === 新增：数据注册表工具 ===
     "read_data_registry": "读取已保存的数据（支持时间范围、字段选择，使用 fields 参数前，必须先用 list_fields=true 确认字段名）。参数: data_id(str), time_range(可选, str), fields(可选, list), jq_filter(可选, str)",
+
+    # === 数据分析工具 ===
+    "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -105,12 +113,13 @@ QUERY_TOOLS = {
 REPORT_TOOLS = {
     # 核心工具
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
-    "generate_report": "使用python-docx生成DOCX报告。参数: time_range(dict), output_path(str), template_path(str, 可选), data_ids(list, 可选), data_matches(dict, 可选)",
 
     # 数据查询工具（直接调用，支持并发）
     "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
-    "query_standard_comparison": "查询新旧空气质量标准对比（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str)",
+    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
+    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
+    "query_standard_comparison": "查询新旧空气质量标准对比（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
 
     # 数据读取
     "read_data_registry": "读取已保存的数据（支持时间范围、字段选择）。参数: data_id(str), time_range(可选, str), fields(可选, list)",
@@ -122,6 +131,9 @@ REPORT_TOOLS = {
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
+
+    # 代码执行
+    "execute_python": "执行 Python 代码（用于生成文档、数据处理、可视化）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 模式互调
     "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
@@ -170,7 +182,7 @@ EXPERT_TOOL_ORDER = [
     "calculate_obm_ofp",
     "analyze_upwind_enterprises", "meteorological_trajectory_analysis", "analyze_trajectory_sources",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble", "calculate_crustal", "calculate_trace",
-    "calculate_iaqi", "predict_air_quality",
+    "predict_air_quality",
 
     # 可视化
     "generate_chart", "smart_chart_generator", "revise_chart", "generate_map",
@@ -203,15 +215,20 @@ CODE_TOOL_ORDER = [
 ]
 
 QUERY_TOOL_ORDER = [
+    # 源码查看工具
+    "grep", "read_file",
+
     # 参数化查询工具
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "get_weather_data",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day", "query_gd_suncere_city_day_new", "query_gd_suncere_regional_comparison",
     "query_gd_suncere_report", "query_gd_suncere_report_compare",
+    "query_new_standard_report",  # 新标准统计报表
+    "query_old_standard_report",  # 旧标准统计报表
     "query_standard_comparison",  # 新旧标准对比
 
-    # SQL工具
-    "generate_sql_query", "aggregate_data",
+    # 数据分析工具
+    "aggregate_data",
 
     # 数据注册表
     "read_data_registry",
@@ -227,11 +244,12 @@ QUERY_TOOL_ORDER = [
 REPORT_TOOL_ORDER = [
     # 核心工具
     "read_docx",
-    "generate_report",
 
     # 数据查询工具（支持并发）
     "query_gd_suncere_city_hour",
     "query_gd_suncere_city_day_new",
+    "query_new_standard_report",  # 新标准统计报表
+    "query_old_standard_report",  # 旧标准统计报表
     "query_standard_comparison",
 
     # 数据读取
@@ -242,6 +260,9 @@ REPORT_TOOL_ORDER = [
 
     # 任务管理
     "TodoWrite",
+
+    # 代码执行
+    "execute_python",
 
     # 模式互调
     "call_sub_agent",

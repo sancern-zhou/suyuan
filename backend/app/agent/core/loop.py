@@ -2335,9 +2335,17 @@ class ReActLoop:
             is_browser_tool = generator == "browser"
             is_todo_write_tool = generator == "TodoWrite"
             is_read_data_registry_tool = generator == "read_data_registry"
+            is_execute_python_tool = generator == "execute_python"
 
-            # 🔍 详细日志：验证工具识别
-            if is_image_tool or is_file_tool or is_office_tool or is_grep_tool or is_glob_tool or is_list_dir_tool or is_browser_tool or is_todo_write_tool:
+            # 检查是否是办公助理工具
+            is_any_office_tool = (
+                is_image_tool or is_file_tool or is_office_tool or is_grep_tool or
+                is_glob_tool or is_list_dir_tool or is_browser_tool or is_todo_write_tool or
+                is_read_data_registry_tool or is_execute_python_tool or "stdout" in data or "stderr" in data
+            )
+
+            if is_any_office_tool:
+                # 🔍 详细日志：验证工具识别
                 logger.info(
                     "office_tool_detected",
                     generator=generator,
@@ -2348,199 +2356,212 @@ class ReActLoop:
                     is_glob_tool=is_glob_tool,
                     is_list_dir_tool=is_list_dir_tool,
                     is_todo_write_tool=is_todo_write_tool,
+                    is_execute_python_tool=is_execute_python_tool,
                     has_analysis="analysis" in data,
                     has_content="content" in data,
                     has_results="results" in data,
                     has_files="files" in data,
                     has_entries="entries" in data,
                     has_rendered="rendered" in data,
+                    has_output="output" in data,
                     data_type=data.get("type", "unknown")
                 )
 
-            if is_image_tool and "analysis" in data:
-                # analyze_image 工具：显示完整的图片分析结果
-                lines.append(f"**完整分析结果**:\n{data['analysis']}")
-                # 🔍 详细日志：记录完整分析结果
-                logger.info(
-                    "analyze_image_full_result_added",
-                    analysis_length=len(data['analysis']),
-                    analysis_preview=data['analysis'][:200] if len(data['analysis']) > 200 else data['analysis']
-                )
-            elif is_file_tool:
-                # read_file 工具：根据文件类型显示不同内容
-                file_type = data.get("type", "")
-                if file_type == "image":
-                    # 图片文件：显示分析结果（不显示 base64）
-                    if "analysis" in data:
-                        lines.append(f"**图片分析结果**:\n{data['analysis']}")
-                        # 🔍 详细日志：记录完整分析结果
-                        logger.info(
-                            "read_file_image_analysis_added",
-                            analysis_length=len(data['analysis']),
-                            analysis_preview=data['analysis'][:200] if len(data['analysis']) > 200 else data['analysis']
-                        )
-                    elif "analysis_error" in data:
-                        lines.append(f"**分析失败**: {data['analysis_error']}")
-                    # 显示图片信息
-                    lines.append(f"\n**图片信息**:")
-                    lines.append(f"  路径: `{data.get('path', 'N/A')}`")
-                    lines.append(f"  格式: {data.get('format', 'N/A')}")
-                    lines.append(f"  大小: {data.get('size', 0)} bytes")
-                elif "content" in data:
-                    # 文本文件：显示完整的文件内容
-                    lines.append(f"**文件内容**:\n{data['content']}")
-            elif is_office_tool:
-                # Word/Excel/PPT 工具：显示完整文档内容
-                if "content" in data:
-                    lines.append(f"**文档内容**:\n```\n{data['content']}\n```")
-                elif "images" in data:
-                    # extract_images 操作：显示完整图片列表
-                    images = data["images"]
-                    if isinstance(images, list):
-                        # extract_images 返回的图片列表
-                        lines.append(f"**提取的图片数量**: {len(images)}")
-                        for img in images:
-                            lines.append(f"\n**图片 {img['index']}**:")
-                            lines.append(f"  路径: `{img['path']}`")
-                            lines.append(f"  尺寸: {img['width']} x {img['height']}")
-                    elif isinstance(images, int):
-                        # stats 操作返回的图片数量
-                        lines.append(f"**图片数量**: {images}")
-                elif "tables" in data:
-                    # 表格数据（完整显示）
-                    tables = data["tables"]
-                    lines.append(f"**表格数量**: {data.get('table_count', len(tables))}")
-                    for idx, table in enumerate(tables):
-                        lines.append(f"\n**表格 {idx + 1}**: {table['rows']}行 × {table['cols']}列")
-                        lines.append(f"```json\n{json.dumps(table['data'], ensure_ascii=False, indent=2)}\n```")
-                elif "data" in data and isinstance(data.get("data"), list):
-                    # Excel 数据（二维数组）
-                    lines.append(f"**数据内容**:\n```json\n{json.dumps(data['data'], ensure_ascii=False, indent=2)}\n```")
+                if is_image_tool and "analysis" in data:
+                    # analyze_image 工具：显示完整的图片分析结果
+                    lines.append(f"**完整分析结果**:\n{data['analysis']}")
+                    # 🔍 详细日志：记录完整分析结果
+                    logger.info(
+                        "analyze_image_full_result_added",
+                        analysis_length=len(data['analysis']),
+                        analysis_preview=data['analysis'][:200] if len(data['analysis']) > 200 else data['analysis']
+                    )
+                elif is_file_tool:
+                    # read_file 工具：根据文件类型显示不同内容
+                    file_type = data.get("type", "")
+                    if file_type == "image":
+                        # 图片文件：显示分析结果（不显示 base64）
+                        if "analysis" in data:
+                            lines.append(f"**图片分析结果**:\n{data['analysis']}")
+                            # 🔍 详细日志：记录完整分析结果
+                            logger.info(
+                                "read_file_image_analysis_added",
+                                analysis_length=len(data['analysis']),
+                                analysis_preview=data['analysis'][:200] if len(data['analysis']) > 200 else data['analysis']
+                            )
+                        elif "analysis_error" in data:
+                            lines.append(f"**分析失败**: {data['analysis_error']}")
+                        # 显示图片信息
+                        lines.append(f"\n**图片信息**:")
+                        lines.append(f"  路径: `{data.get('path', 'N/A')}`")
+                        lines.append(f"  格式: {data.get('format', 'N/A')}")
+                        lines.append(f"  大小: {data.get('size', 0)} bytes")
+                    elif "content" in data:
+                        # 文本文件：显示完整的文件内容
+                        lines.append(f"**文件内容**:\n{data['content']}")
+                elif is_office_tool:
+                    # Word/Excel/PPT 工具：显示完整文档内容
+                    if "content" in data:
+                        lines.append(f"**文档内容**:\n```\n{data['content']}\n```")
+                    elif "images" in data:
+                        # extract_images 操作：显示完整图片列表
+                        images = data["images"]
+                        if isinstance(images, list):
+                            # extract_images 返回的图片列表
+                            lines.append(f"**提取的图片数量**: {len(images)}")
+                            for img in images:
+                                lines.append(f"\n**图片 {img['index']}**:")
+                                lines.append(f"  路径: `{img['path']}`")
+                                lines.append(f"  尺寸: {img['width']} x {img['height']}")
+                        elif isinstance(images, int):
+                            # stats 操作返回的图片数量
+                            lines.append(f"**图片数量**: {images}")
+                    elif "tables" in data:
+                        # 表格数据（完整显示）
+                        tables = data["tables"]
+                        lines.append(f"**表格数量**: {data.get('table_count', len(tables))}")
+                        for idx, table in enumerate(tables):
+                            lines.append(f"\n**表格 {idx + 1}**: {table['rows']}行 × {table['cols']}列")
+                            lines.append(f"```json\n{json.dumps(table['data'], ensure_ascii=False, indent=2)}\n```")
+                    elif "data" in data and isinstance(data.get("data"), list):
+                        # Excel 数据（二维数组）
+                        lines.append(f"**数据内容**:\n```json\n{json.dumps(data['data'], ensure_ascii=False, indent=2)}\n```")
 
-                # 显示统计信息
-                if "stats" in data:
-                    lines.append(f"**统计信息**: {data['stats']}")
+                    # 显示统计信息
+                    if "stats" in data:
+                        lines.append(f"**统计信息**: {data['stats']}")
 
-                # 显示范围信息（如果有）
-                if "range" in data:
-                    lines.append(f"**读取范围**: 第{data['range']['start']+1}-{data['range']['end']}段（共{data['range']['total']}段）")
-                    if data.get("has_more"):
-                        lines.append(f"⚠️ 还有{data['range']['total']-data['range']['end']}段未读取，可继续分页读取")
+                    # 显示范围信息（如果有）
+                    if "range" in data:
+                        lines.append(f"**读取范围**: 第{data['range']['start']+1}-{data['range']['end']}段（共{data['range']['total']}段）")
+                        if data.get("has_more"):
+                            lines.append(f"⚠️ 还有{data['range']['total']-data['range']['end']}段未读取，可继续分页读取")
 
-                # 显示图片提示（read_docx 工具）
-                if "has_images" in data and data["has_images"]:
-                    if "image_note" in data:
-                        lines.append(f"\n**图片信息**: {data['image_note']}")
-                    if "image_suggestion" in data:
-                        lines.append(f"**提取建议**: {data['image_suggestion']}")
+                    # 显示图片提示（read_docx 工具）
+                    if "has_images" in data and data["has_images"]:
+                        if "image_note" in data:
+                            lines.append(f"\n**图片信息**: {data['image_note']}")
+                        if "image_suggestion" in data:
+                            lines.append(f"**提取建议**: {data['image_suggestion']}")
 
-            elif is_grep_tool:
-                # grep 工具：显示完整搜索结果
-                if "results" in data:
-                    results = data["results"]
-                    total_matches = data.get("total_matches", 0)
-                    lines.append(f"**搜索结果** (共 {total_matches} 处匹配):")
-                    if isinstance(results, list):
-                        for result in results[:50]:  # 最多显示前50个结果
-                            if isinstance(result, dict):
-                                file_path = result.get("file", "")
-                                line_num = result.get("line", "")
-                                content = result.get("content", "")
-                                lines.append(f"\n`{file_path}:{line_num}`: {content}")
-                            else:
-                                lines.append(f"  {result}")
-                        if len(results) > 50:
-                            lines.append(f"\n... 还有 {len(results) - 50} 个结果")
-                elif "output_text" in data:
-                    # 文本输出模式
-                    lines.append(f"**搜索结果**:\n{data['output_text']}")
+                elif is_grep_tool:
+                    # grep 工具：显示完整搜索结果
+                    if "results" in data:
+                        results = data["results"]
+                        total_matches = data.get("total_matches", 0)
+                        lines.append(f"**搜索结果** (共 {total_matches} 处匹配):")
+                        if isinstance(results, list):
+                            for result in results[:50]:  # 最多显示前50个结果
+                                if isinstance(result, dict):
+                                    file_path = result.get("file", "")
+                                    line_num = result.get("line", "")
+                                    content = result.get("content", "")
+                                    lines.append(f"\n`{file_path}:{line_num}`: {content}")
+                                else:
+                                    lines.append(f"  {result}")
+                            if len(results) > 50:
+                                lines.append(f"\n... 还有 {len(results) - 50} 个结果")
+                    elif "output_text" in data:
+                        # 文本输出模式
+                        lines.append(f"**搜索结果**:\n{data['output_text']}")
 
-            elif is_glob_tool:
-                # glob/search_files 工具：显示完整文件列表
-                if "files" in data:
-                    files = data["files"]
-                    count = data.get("count", len(files))
-                    lines.append(f"**找到的文件** (共 {count} 个):")
-                    if isinstance(files, list):
-                        for file in files[:100]:  # 最多显示前100个文件
-                            lines.append(f"  - {file}")
-                        if len(files) > 100:
-                            lines.append(f"\n... 还有 {len(files) - 100} 个文件")
+                elif is_glob_tool:
+                    # glob/search_files 工具：显示完整文件列表
+                    if "files" in data:
+                        files = data["files"]
+                        count = data.get("count", len(files))
+                        lines.append(f"**找到的文件** (共 {count} 个):")
+                        if isinstance(files, list):
+                            for file in files[:100]:  # 最多显示前100个文件
+                                lines.append(f"  - {file}")
+                            if len(files) > 100:
+                                lines.append(f"\n... 还有 {len(files) - 100} 个文件")
 
-            elif is_list_dir_tool:
-                # list_directory 工具：显示完整目录列表
-                if "entries" in data:
-                    entries = data["entries"]
-                    count = data.get("count", len(entries))
-                    lines.append(f"**目录内容** (共 {count} 项):")
-                    if isinstance(entries, list):
-                        for entry in entries[:100]:  # 最多显示前100项
-                            if isinstance(entry, dict):
-                                name = entry.get("name", "")
-                                entry_type = entry.get("type", "")
-                                size = entry.get("size", "")
-                                type_icon = "📁" if entry_type == "directory" else "📄"
-                                size_str = f" ({size} bytes)" if size else ""
-                                lines.append(f"  {type_icon} {name}{size_str}")
-                            else:
-                                lines.append(f"  {entry}")
-                        if len(entries) > 100:
-                            lines.append(f"\n... 还有 {len(entries) - 100} 项")
+                elif is_list_dir_tool:
+                    # list_directory 工具：显示完整目录列表
+                    if "entries" in data:
+                        entries = data["entries"]
+                        count = data.get("count", len(entries))
+                        lines.append(f"**目录内容** (共 {count} 项):")
+                        if isinstance(entries, list):
+                            for entry in entries[:100]:  # 最多显示前100项
+                                if isinstance(entry, dict):
+                                    name = entry.get("name", "")
+                                    entry_type = entry.get("type", "")
+                                    size = entry.get("size", "")
+                                    type_icon = "📁" if entry_type == "directory" else "📄"
+                                    size_str = f" ({size} bytes)" if size else ""
+                                    lines.append(f"  {type_icon} {name}{size_str}")
+                                else:
+                                    lines.append(f"  {entry}")
+                            if len(entries) > 100:
+                                lines.append(f"\n... 还有 {len(entries) - 100} 项")
 
-            elif is_browser_tool:
-                # browser 工具：显示完整的执行结果（办公工具原则）
-                # 使用统一的格式化函数处理所有浏览器操作
-                from app.agent.core.browser_result_formatter import format_browser_result
+                elif is_browser_tool:
+                    # browser 工具：显示完整的执行结果（办公工具原则）
+                    # 使用统一的格式化函数处理所有浏览器操作
+                    from app.agent.core.browser_result_formatter import format_browser_result
 
-                browser_lines = format_browser_result(data)
-                lines.extend(browser_lines)
+                    browser_lines = format_browser_result(data)
+                    lines.extend(browser_lines)
 
-            # 任务管理工具：显示完整的任务列表信息
-            elif is_todo_write_tool:
-                # TodoWrite tool: display rendered todo list
-                if "rendered" in data:
-                    # Display the formatted todo list
-                    lines.append(f"**任务清单**:")
-                    lines.append(data["rendered"])
-                elif "task_id" in data:
-                    # get_task/update_task/create_task 工具：显示单个任务
-                    task_id = data.get("task_id", "N/A")
-                    subject = data.get("subject", "无标题")
-                    status = data.get("status", "unknown")
-                    description = data.get("description", "")
-                    progress = data.get("progress", 0)
-                    depends_on = data.get("depends_on", [])
+                # 任务管理工具：显示完整的任务列表信息
+                elif is_todo_write_tool:
+                    # TodoWrite tool: display rendered todo list
+                    if "rendered" in data:
+                        # Display the formatted todo list
+                        lines.append(f"**任务清单**:")
+                        lines.append(data["rendered"])
+                    elif "task_id" in data:
+                        # get_task/update_task/create_task 工具：显示单个任务
+                        task_id = data.get("task_id", "N/A")
+                        subject = data.get("subject", "无标题")
+                        status = data.get("status", "unknown")
+                        description = data.get("description", "")
+                        progress = data.get("progress", 0)
+                        depends_on = data.get("depends_on", [])
 
-                    lines.append(f"**任务ID**: {task_id}")
-                    lines.append(f"**标题**: {subject}")
-                    lines.append(f"**状态**: {status}")
-                    if progress > 0:
-                        lines.append(f"**进度**: {progress}%")
-                    if description:
-                        lines.append(f"**描述**: {description}")
-                    if depends_on:
-                        lines.append(f"**依赖**: {', '.join(depends_on)}")
+                        lines.append(f"**任务ID**: {task_id}")
+                        lines.append(f"**标题**: {subject}")
+                        lines.append(f"**状态**: {status}")
+                        if progress > 0:
+                            lines.append(f"**进度**: {progress}%")
+                        if description:
+                            lines.append(f"**描述**: {description}")
+                        if depends_on:
+                            lines.append(f"**依赖**: {', '.join(depends_on)}")
 
-            # read_data_registry 工具：显示完整的 data 字段内容
-            elif is_read_data_registry_tool:
-                # 显示完整的 data 字段内容（JSON 格式）
-                lines.append(f"**完整结果**:")
-                lines.append(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}\n```")
+                # read_data_registry 工具：显示完整的 data 字段内容
+                elif is_read_data_registry_tool:
+                    # 显示完整的 data 字段内容（JSON 格式）
+                    lines.append(f"**完整结果**:")
+                    lines.append(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}\n```")
 
-            # 对于 bash 工具，包含完整的 stdout/stderr
-            elif "stdout" in data or "stderr" in data:
-                if "stdout" in data and data["stdout"]:
-                    # 完整输出，不截断
-                    lines.append(f"**命令输出**:\n{data['stdout']}")
+                # execute_python 工具：显示完整的代码输出和生成的文件
+                elif is_execute_python_tool:
+                    if "output" in data and data["output"]:
+                        lines.append(f"**代码输出**:\n{data['output']}")
+                    if "files" in data and data["files"]:
+                        lines.append(f"\n**生成的文件**:")
+                        for file_path in data["files"]:
+                            file_name = os.path.basename(file_path)
+                            lines.append(f"  - {file_name}")
+                            lines.append(f"    路径: `{file_path}`")
 
-                if "stderr" in data and data["stderr"]:
-                    lines.append(f"**错误输出**:\n{data['stderr']}")
+                # 对于 bash 工具，包含完整的 stdout/stderr
+                elif "stdout" in data or "stderr" in data:
+                    if "stdout" in data and data["stdout"]:
+                        # 完整输出，不截断
+                        lines.append(f"**命令输出**:\n{data['stdout']}")
 
-                if "exit_code" in data:
-                    lines.append(f"**退出码**: {data['exit_code']}")
+                    if "stderr" in data and data["stderr"]:
+                        lines.append(f"**错误输出**:\n{data['stderr']}")
 
-                if "command" in data:
-                    lines.append(f"**执行命令**: {data['command']}")
+                    if "exit_code" in data:
+                        lines.append(f"**退出码**: {data['exit_code']}")
+
+                    if "command" in data:
+                        lines.append(f"**执行命令**: {data['command']}")
 
         # ✅ 数据查询工具：显示采样后的数据列表
         elif success and "data" in observation and isinstance(observation["data"], list):
@@ -2573,6 +2594,13 @@ class ReActLoop:
                 data_id = observation.get("data_id")
                 if data_id and sampling_applied:
                     lines.append(f"\n💡 完整数据({original_count}条)已存储在: `{data_id}`")
+
+        # ✅ 数据分析工具：data 是字典（统计结果），完整显示JSON
+        elif success and "data" in observation and isinstance(observation["data"], dict):
+            data_dict = observation["data"]
+            if data_dict:  # 只有非空结果才显示
+                lines.append(f"**统计结果**:")
+                lines.append(f"```json\n{json.dumps(data_dict, ensure_ascii=False, indent=2, default=str)}\n```")
 
         # 摘要（作为补充，不是主要信息源）
         if "summary" in observation:
@@ -2622,8 +2650,20 @@ class ReActLoop:
             is_browser_tool = generator == "browser"
             is_todo_write_tool = generator == "TodoWrite"
             is_read_data_registry_tool = generator == "read_data_registry"
+            is_execute_python_tool = generator == "execute_python"
 
-            if is_image_tool and "analysis" in data:
+            if is_execute_python_tool:
+                # execute_python 工具：显示完整的代码输出
+                if "output" in data and data["output"]:
+                    lines.append(f"**代码输出**:\n{data['output']}")
+                if "files" in data and data["files"]:
+                    lines.append(f"\n**生成的文件**:")
+                    for file_path in data["files"]:
+                        file_name = os.path.basename(file_path)
+                        lines.append(f"  - {file_name}")
+                        lines.append(f"    路径: `{file_path}`")
+
+            elif is_image_tool and "analysis" in data:
                 # analyze_image 工具：显示完整的图片分析结果
                 lines.append(f"**完整分析结果**:\n{data['analysis']}")
 

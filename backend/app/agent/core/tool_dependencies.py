@@ -579,15 +579,6 @@ TOOL_OUTPUT_SCHEMAS = {
             "model_stats": "Dict - 模型统计信息"
         }
     },
-    "iaqi_calculator": {
-        "required_fields": ["data_id", "iaqi_values"],
-        "optional_fields": ["pollutant_iaqi"],
-        "data_structure": {
-            "data_id": "str - IAQI计算结果ID",
-            "iaqi_values": "Dict - IAQI指数值",
-            "pollutant_iaqi": "Dict - 各污染物IAQI"
-        }
-    },
     # ========================================
     # 颗粒物组分分析工具输出schema（新增）
     # ========================================

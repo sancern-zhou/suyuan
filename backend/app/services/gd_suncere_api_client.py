@@ -474,6 +474,77 @@ class GDSuncereAPIClient:
 
         return self._make_request(endpoint, payload, method="POST")
 
+    def query_city_day_old_standard(
+        self,
+        city_codes: List[str],
+        start_time: str,
+        end_time: str,
+        plan_type: int = 0,
+        time_type: int = 8,
+        area_type: int = 2,
+        pollutant_codes: Optional[List[str]] = None,
+        revise_type: int = 0,
+        data_source: int = 1,
+        sand_type: int = 0,
+        skip_count: int = 0,
+        max_result_count: int = 40
+    ) -> Dict[str, Any]:
+        """
+        查询城市日数据（旧标准：十三五/十四五）
+
+        综合统计报表接口，支持十三五和十四五两种数据类型。
+
+        Args:
+            city_codes: 城市代码列表
+            start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
+            end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
+            plan_type: 规划类型（0=十四五, 135=十三五）
+            time_type: 时间类型（8=任意时间, 3=周报, 4=月报, 5=季报, 7=年报）
+            area_type: 区域类型（2=城市, 1=区县, 0=站点）
+            pollutant_codes: 污染物代码列表（如 ["so2", "no2", "pm2.5"]）
+            revise_type: 修订类型（0=不扣沙）
+            data_source: 数据源类型（1=审核实况, 0=原始实况）
+            sand_type: 扣沙类型（0=不扣沙）
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
+
+        Returns:
+            API 响应数据
+        """
+        endpoint = "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync"
+
+        # 默认污染物代码（如果未指定）
+        if pollutant_codes is None:
+            pollutant_codes = ["so2", "no2", "pm2_5", "pm10", "co", "o3"]
+
+        # 根据网页端请求格式构造 payload
+        payload = {
+            "skipCount": skip_count,
+            "maxResultCount": max_result_count,
+            "TimeType": time_type,
+            "AreaType": area_type,
+            "PollutantCode": pollutant_codes,
+            "ReviseType": revise_type,
+            "TimePoint": [start_time, end_time],
+            "dataSource": data_source,
+            "planType": plan_type,
+            "sandType": sand_type,
+            "codes": city_codes
+        }
+
+        logger.info(
+            "query_city_day_old_standard",
+            city_codes=city_codes,
+            start_time=start_time,
+            end_time=end_time,
+            plan_type=plan_type,
+            time_type=time_type,
+            area_type=area_type,
+            pollutant_codes=pollutant_codes
+        )
+
+        return self._make_request(endpoint, payload, method="POST")
+
 
 # 全局单例
 _api_client_instance: Optional[GDSuncereAPIClient] = None

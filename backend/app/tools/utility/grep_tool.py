@@ -1,243 +1,182 @@
 """
-Grep 工具 - 正则搜索文件内容
+Grep 工具 - 基于ripgrep的高速文件内容搜索
 
-纯 Python 实现（无需外部依赖），功能对标 ripgrep：
-- 支持正则表达式搜索
-- 三种输出模式：内容行 / 文件路径 / 匹配数量
-- 文件类型过滤（glob 模式 / 类型别名）
-- 上下文行显示（-A / -B / -C）
-- 大小写不敏感 / 多行匹配
-- 工作目录安全限制
+依赖：ripgrep (rg命令)
+安装：
+  - Ubuntu/Debian: apt install ripgrep
+  - macOS: brew install ripgrep
+  - 其他: https://github.com/BurntSushi/ripgrep
 """
-import re
-import fnmatch
+import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 import structlog
 
 logger = structlog.get_logger()
 
-# 文件类型别名映射（类似 rg --type）
-FILE_TYPE_MAP = {
-    "py":   ["*.py"],
-    "js":   ["*.js", "*.mjs", "*.cjs"],
-    "ts":   ["*.ts", "*.tsx"],
-    "json": ["*.json"],
-    "yaml": ["*.yaml", "*.yml"],
-    "md":   ["*.md", "*.markdown"],
-    "txt":  ["*.txt"],
-    "html": ["*.html", "*.htm"],
-    "css":  ["*.css", "*.scss", "*.less"],
-    "sh":   ["*.sh", "*.bash"],
-    "sql":  ["*.sql"],
-    "xml":  ["*.xml"],
-    "toml": ["*.toml"],
-    "ini":  ["*.ini", "*.cfg"],
-    "env":  ["*.env", ".env*"],
-    "log":  ["*.log"],
-    "csv":  ["*.csv"],
-}
 
-# 二进制文件扩展名（跳过）
-BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".svg",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
-    ".exe", ".dll", ".so", ".pyc", ".pyd",
-    ".mp3", ".mp4", ".avi", ".mov", ".wav",
-    ".ttf", ".woff", ".woff2", ".eot",
-    ".db", ".sqlite", ".pkl", ".npy", ".npz",
-}
+def _find_ripgrep() -> Optional[str]:
+    """查找ripgrep可执行文件"""
+    import platform
 
-# 默认忽略的目录
-IGNORED_DIRS = {
-    "__pycache__", ".git", ".svn", "node_modules", ".venv", "venv",
-    "env", ".env", "dist", "build", ".pytest_cache", ".mypy_cache",
-    "backend_data_registry", ".idea", ".vscode",
-}
+    # 1. 尝试系统PATH中的rg
+    for cmd in ["rg", "ripgrep"]:
+        try:
+            result = subprocess.run(
+                [cmd, "--version"],
+                capture_output=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                return cmd
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+
+    # 2. 尝试Claude Code内置的ripgrep
+    machine = platform.machine().lower()
+    if machine == "x86_64":
+        machine = "x64"
+    elif machine == "aarch64":
+        machine = "arm64"
+
+    system = platform.system().lower()
+    if system == "linux":
+        system = "linux"
+    elif system == "darwin":
+        system = "darwin"
+
+    # Claude Code vendor路径
+    vendor_paths = [
+        f"/usr/local/node-v20.18.0-linux-x64/lib/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/{machine}-{system}/rg",
+        f"/usr/local/node-v20.18.0-linux-x64/lib/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/{machine}-linux/rg",
+    ]
+
+    for path in vendor_paths:
+        if Path(path).exists():
+            return path
+
+    return None
+
+
+# ripgrep路径（模块加载时检测）
+_RIPGREP_PATH = _find_ripgrep()
 
 
 class GrepTool(LLMTool):
     """
-    文件内容搜索工具
+    文件内容搜索工具（基于ripgrep）
 
     功能：
     - 正则表达式搜索文件内容
     - 三种输出模式：content / files_with_matches / count
-    - 文件过滤：glob 模式或类型别名
-    - 上下文行：-A（后）/ -B（前）/ -C（前后）
-    - 输出限制：head_limit / offset
+    - 文件类型过滤（type参数）
+    - 上下文行显示（context参数）
+    - 大小写不敏感搜索
     """
 
     def __init__(self):
         super().__init__(
             name="grep",
-            description="""搜索文件内容（正则表达式，类似 ripgrep）
+            description="""搜索文件内容（基于ripgrep，高速）
 
-功能：
-- 在文件或目录中搜索匹配正则表达式的内容
-- 三种输出模式：content（匹配行）/ files_with_matches（文件路径）/ count（匹配数）
-- 支持文件过滤（glob 模式或文件类型）
-- 支持显示匹配行的上下文（前后几行）
+仅搜索 backend/ 目录下的代码文件。
+自动跳过 logs/, node_modules/, .git/, __pycache__ 等目录。
 
 示例：
-- grep(pattern="class.*Agent", path="backend/app/agent")          # 搜索类定义
-- grep(pattern="def execute", path="backend/app/tools", type="py") # 仅搜索 Python 文件
-- grep(pattern="ERROR", path="backend/app", output_mode="count")   # 统计错误出现次数
-- grep(pattern="import.*asyncio", glob="*.py", context=2)          # 带上下文行
-- grep(pattern="PORT", path="backend/app/config.py", output_mode="content") # 搜索单个文件
+- grep(pattern="query_standard", path="app/agent")              # 搜索agent目录
+- grep(pattern="class.*Agent", type="py")                        # 搜索Python文件
+- grep(pattern="def execute", output_mode="content")             # 显示匹配行
+- grep(pattern="TODO|FIXME", case_insensitive=True)              # 忽略大小写
 
 参数说明：
 - pattern: 正则表达式（必填）
-- path: 搜索路径，文件或目录（默认当前工作目录）
+- path: 搜索路径，相对于backend/（默认 "."）
 - output_mode: content（匹配行）/ files_with_matches（文件列表）/ count（统计）
-- glob: 文件名过滤（如 "*.py", "**/*.ts"）
-- type: 文件类型别名（py/js/ts/json/yaml/md/txt/html/css/sh/sql/xml/toml/ini）
-- context: 匹配行前后各显示几行（等同于 -C）
-- A: 匹配行后显示几行（等同于 -A）
-- B: 匹配行前显示几行（等同于 -B）
-- case_insensitive: 是否忽略大小写（默认 False）
-- multiline: 是否多行匹配（默认 False）
-- head_limit: 最多返回几条结果（默认 0 不限制）
-- show_line_numbers: 是否显示行号（默认 True）
+- type: 文件类型（py/js/ts/json/yaml/md/txt/html/css/sh/sql/xml）
+- context: 匹配行前后各显示几行
+- case_insensitive: 是否忽略大小写
+- head_limit: 最多返回几条结果
 
-限制：
-- 工作目录：D:/溯源/ 及其子目录
-- 自动跳过二进制文件
-- 自动跳过 __pycache__、node_modules、.git 等目录
+注意：
+- 需要安装ripgrep: apt install ripgrep 或 brew install ripgrep
+- 搜索范围限制在backend/目录内
+- 30秒超时自动中断
 """,
             category=ToolCategory.QUERY,
-            version="1.0.0",
+            version="2.0.0",
             requires_context=False
         )
 
-        self.working_dir = Path.cwd().parent  # D:\溯源\ 或 /opt/app/ 等
+        # 获取backend目录路径
+        self.backend_dir = Path(__file__).parent.parent.parent.parent  # backend/
 
     async def execute(
         self,
         pattern: str,
         path: str = ".",
         output_mode: str = "files_with_matches",
-        glob: Optional[str] = None,
         type: Optional[str] = None,
         context: int = 0,
-        A: int = 0,
-        B: int = 0,
         case_insensitive: bool = False,
-        multiline: bool = False,
         head_limit: int = 0,
-        show_line_numbers: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        搜索文件内容
+        执行ripgrep搜索
 
         Returns:
             {
                 "success": bool,
                 "data": {
-                    "results": [...],      # 搜索结果
-                    "total_matches": int,  # 总匹配数
-                    "files_searched": int, # 搜索文件数
-                    "files_matched": int,  # 匹配文件数
-                    "output_mode": str,
-                    "pattern": str
+                    "results": [...],
+                    "output_text": str,
+                    "total_matches": int,
+                    "files_matched": int,
+                    "method": "ripgrep"
                 },
                 "summary": str
             }
         """
         try:
-            # 1. 路径解析
-            resolved_path = self._resolve_path(path)
-            if not resolved_path:
-                return {
-                    "success": False,
-                    "error": f"路径无效或超出工作目录范围: {path}",
-                    "summary": f"搜索失败：路径不合法"
-                }
+            # 1. 构建ripgrep命令
+            cmd = self._build_rg_command(
+                pattern, path, output_mode, type, context, case_insensitive
+            )
 
-            if not resolved_path.exists():
-                return {
-                    "success": False,
-                    "error": f"路径不存在: {path}",
-                    "summary": f"搜索失败：路径不存在"
-                }
+            logger.info("grep_executing", command=" ".join(cmd), path=path)
 
-            # 2. 编译正则表达式
-            regex_flags = 0
-            if case_insensitive:
-                regex_flags |= re.IGNORECASE
-            if multiline:
-                regex_flags |= re.MULTILINE | re.DOTALL
+            # 2. 执行搜索
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(self.backend_dir)
+            )
 
-            try:
-                compiled_pattern = re.compile(pattern, regex_flags)
-            except re.error as e:
-                return {
-                    "success": False,
-                    "error": f"正则表达式无效: {str(e)}",
-                    "summary": f"搜索失败：正则语法错误"
-                }
+            # 3. 解析输出
+            return self._parse_output(
+                result.stdout,
+                output_mode,
+                pattern,
+                head_limit
+            )
 
-            # 3. 确定上下文行数
-            lines_before = max(B, context)
-            lines_after = max(A, context)
-
-            # 4. 收集要搜索的文件
-            target_files = self._collect_files(resolved_path, glob, type)
-
-            # 5. 执行搜索
-            results = []
-            total_matches = 0
-            files_matched = 0
-
-            for file_path in target_files:
-                file_results, match_count = self._search_file(
-                    file_path,
-                    compiled_pattern,
-                    output_mode,
-                    lines_before,
-                    lines_after,
-                    show_line_numbers,
-                    resolved_path  # 用于计算相对路径
-                )
-
-                if match_count > 0:
-                    files_matched += 1
-                    total_matches += match_count
-                    results.extend(file_results)
-
-                    # 应用 head_limit（对 content 模式逐条限制）
-                    if head_limit > 0 and output_mode == "content" and len(results) >= head_limit:
-                        results = results[:head_limit]
-                        break
-
-            # 6. 对 files_with_matches 和 count 模式应用 head_limit
-            if head_limit > 0 and output_mode != "content":
-                results = results[:head_limit]
-
-            # 7. 格式化输出
-            output_text = self._format_output(results, output_mode)
-
+        except subprocess.TimeoutExpired:
+            logger.error("grep_timeout", pattern=pattern, path=path)
             return {
-                "success": True,
-                "data": {
-                    "results": results,
-                    "output_text": output_text,
-                    "total_matches": total_matches,
-                    "files_searched": len(target_files),
-                    "files_matched": files_matched,
-                    "output_mode": output_mode,
-                    "pattern": pattern,
-                    "path": str(resolved_path)
-                },
-                "summary": self._build_summary(
-                    output_mode, total_matches, files_matched,
-                    len(target_files), pattern
-                )
+                "success": False,
+                "error": "搜索超时（30秒）",
+                "summary": "搜索失败：超时"
             }
-
+        except FileNotFoundError:
+            logger.error("grep_not_found")
+            return {
+                "success": False,
+                "error": "ripgrep未安装，请运行: apt install ripgrep 或 brew install ripgrep",
+                "summary": "搜索失败：缺少ripgrep"
+            }
         except Exception as e:
             logger.error("grep_failed", pattern=pattern, path=path, error=str(e))
             return {
@@ -246,262 +185,175 @@ class GrepTool(LLMTool):
                 "summary": f"搜索失败：{str(e)[:80]}"
             }
 
-    def _collect_files(
+    def _build_rg_command(
         self,
-        root: Path,
-        glob_pattern: Optional[str],
-        file_type: Optional[str]
-    ) -> List[Path]:
-        """收集要搜索的文件列表"""
-        # 如果是单个文件，直接返回
-        if root.is_file():
-            return [root] if not self._is_binary(root) else []
-
-        # 确定文件过滤模式
-        type_patterns: List[str] = []
-        if file_type and file_type in FILE_TYPE_MAP:
-            type_patterns = FILE_TYPE_MAP[file_type]
-        elif glob_pattern:
-            # 将 glob 拆分为文件名模式（忽略路径部分用于简单匹配）
-            type_patterns = [glob_pattern]
-
-        files = []
-        for file_path in root.rglob("*"):
-            if not file_path.is_file():
-                continue
-
-            # 跳过忽略目录
-            if any(part in IGNORED_DIRS for part in file_path.parts):
-                continue
-
-            # 跳过二进制文件
-            if self._is_binary(file_path):
-                continue
-
-            # 文件类型过滤
-            if type_patterns:
-                matched = False
-                for tp in type_patterns:
-                    # 支持 **/ 前缀的 glob
-                    name_pattern = tp.lstrip("**/")
-                    if fnmatch.fnmatch(file_path.name, name_pattern):
-                        matched = True
-                        break
-                    # 也尝试完整路径匹配
-                    if fnmatch.fnmatch(str(file_path), tp):
-                        matched = True
-                        break
-                if not matched:
-                    continue
-
-            files.append(file_path)
-
-        return sorted(files)
-
-    def _search_file(
-        self,
-        file_path: Path,
-        pattern: re.Pattern,
+        pattern: str,
+        path: str,
         output_mode: str,
-        lines_before: int,
-        lines_after: int,
-        show_line_numbers: bool,
-        root: Path
-    ) -> Tuple[List[Any], int]:
-        """在单个文件中搜索，返回 (结果列表, 匹配数)"""
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return [], 0
+        file_type: Optional[str],
+        context: int,
+        case_insensitive: bool
+    ) -> list:
+        """构建ripgrep命令行参数"""
+        if not _RIPGREP_PATH:
+            raise RuntimeError("ripgrep不可用")
 
-        # 计算相对路径（用于显示）
-        try:
-            rel_path = str(file_path.relative_to(root)) if root.is_dir() else file_path.name
-        except ValueError:
-            rel_path = str(file_path)
+        cmd = [_RIPGREP_PATH, pattern]
 
-        lines = content.splitlines()
-        match_count = 0
-        results = []
-
-        if output_mode == "count":
-            # 仅统计模式：计算总匹配行数
-            for line in lines:
-                if pattern.search(line):
-                    match_count += 1
-            if match_count > 0:
-                results.append({
-                    "file": rel_path,
-                    "count": match_count
-                })
-            return results, match_count
-
-        elif output_mode == "files_with_matches":
-            # 文件路径模式：只要有一个匹配就收录文件
-            for line in lines:
-                if pattern.search(line):
-                    match_count += 1
-                    break
-            if match_count > 0:
-                results.append(rel_path)
-            return results, match_count
-
-        else:  # content 模式
-            # 找到所有匹配行的索引
-            matched_line_indices = set()
-            for i, line in enumerate(lines):
-                if pattern.search(line):
-                    matched_line_indices.add(i)
-                    match_count += 1
-
-            if not matched_line_indices:
-                return [], 0
-
-            # 计算需要显示的行范围（含上下文）
-            display_ranges: List[Tuple[int, int, bool]] = []  # (start, end, is_match)
-            covered = set()
-
-            for idx in sorted(matched_line_indices):
-                start = max(0, idx - lines_before)
-                end = min(len(lines) - 1, idx + lines_after)
-                for i in range(start, end + 1):
-                    if i not in covered:
-                        covered.add(i)
-                        display_ranges.append((
-                            i + 1,           # 行号（1-based）
-                            lines[i],        # 行内容
-                            i in matched_line_indices  # 是否为匹配行
-                        ))
-
-            # 格式化每个匹配块
-            current_block_lines = []
-            prev_lineno = None
-
-            for lineno, line_content, is_match in display_ranges:
-                # 不连续时插入分隔符
-                if prev_lineno is not None and lineno > prev_lineno + 1:
-                    if current_block_lines:
-                        results.append({
-                            "file": rel_path,
-                            "lines": current_block_lines
-                        })
-                        current_block_lines = []
-
-                entry: Dict[str, Any] = {"lineno": lineno, "text": line_content}
-                if is_match:
-                    entry["match"] = True
-                current_block_lines.append(entry)
-                prev_lineno = lineno
-
-            if current_block_lines:
-                results.append({
-                    "file": rel_path,
-                    "lines": current_block_lines
-                })
-
-            return results, match_count
-
-    def _format_output(self, results: List[Any], output_mode: str) -> str:
-        """将结构化结果转换为可读文本"""
-        if not results:
-            return "(无匹配)"
-
-        lines = []
+        # 输出模式
         if output_mode == "files_with_matches":
-            lines = [str(r) for r in results]
+            cmd.append("-l")
+        elif output_mode == "count":
+            cmd.append("-c")
+        else:  # content
+            cmd.append("-n")  # 显示行号
+            if context > 0:
+                cmd.extend(["-C", str(context)])
+
+        # 文件类型
+        if file_type:
+            cmd.extend(["-t", file_type])
+
+        # 忽略大小写
+        if case_insensitive:
+            cmd.append("-i")
+
+        # 排除目录和文件
+        cmd.extend([
+            "--glob", "!logs/*",
+            "--glob", "!*.log",
+            "--glob", "!node_modules/*",
+            "--glob", "!.git/*",
+            "--glob", "!__pycache__/*",
+            "--glob", "!.pytest_cache/*",
+            "--glob", "!*.pyc",
+        ])
+
+        # 搜索路径（相对于backend/）
+        search_path = self.backend_dir / path
+        cmd.append(str(search_path))
+
+        return cmd
+
+    def _parse_output(
+        self,
+        stdout: str,
+        output_mode: str,
+        pattern: str,
+        head_limit: int
+    ) -> Dict[str, Any]:
+        """解析ripgrep输出为标准格式"""
+        lines = [line for line in stdout.strip().splitlines() if line]
+
+        # 应用结果限制
+        if head_limit > 0:
+            lines = lines[:head_limit]
+
+        if not lines:
+            return {
+                "success": True,
+                "data": {
+                    "results": [],
+                    "output_text": "(无匹配)",
+                    "total_matches": 0,
+                    "files_matched": 0,
+                    "method": "ripgrep"
+                },
+                "summary": f"搜索完成：未找到匹配 \"{pattern[:30]}\""
+            }
+
+        if output_mode == "files_with_matches":
+            # 转换为相对路径
+            results = [self._to_rel_path(line) for line in lines]
+            return {
+                "success": True,
+                "data": {
+                    "results": results,
+                    "output_text": "\n".join(results),
+                    "total_matches": len(results),
+                    "files_matched": len(results),
+                    "method": "ripgrep"
+                },
+                "summary": f"搜索完成：在 {len(results)} 个文件中找到匹配"
+            }
 
         elif output_mode == "count":
-            for r in results:
-                lines.append(f"{r['file']}: {r['count']}")
+            results = []
+            total = 0
+            for line in lines:
+                if ":" in line:
+                    file_path, count = line.rsplit(":", 1)
+                    try:
+                        count_int = int(count)
+                        total += count_int
+                        results.append({
+                            "file": self._to_rel_path(file_path),
+                            "count": count_int
+                        })
+                    except ValueError:
+                        pass
+            return {
+                "success": True,
+                "data": {
+                    "results": results,
+                    "output_text": "\n".join(lines),
+                    "total_matches": total,
+                    "files_matched": len(results),
+                    "method": "ripgrep"
+                },
+                "summary": f"统计完成：共 {total} 次匹配，涉及 {len(results)} 个文件"
+            }
 
         else:  # content
-            for block in results:
-                file_name = block["file"]
-                for entry in block["lines"]:
-                    lineno = entry["lineno"]
-                    text = entry["text"]
-                    is_match = entry.get("match", False)
-                    prefix = f"{file_name}:{lineno}:" if is_match else f"{file_name}:{lineno}-"
-                    lines.append(f"{prefix}{text}")
-                lines.append("--")
+            return {
+                "success": True,
+                "data": {
+                    "output_text": "\n".join(lines),
+                    "total_matches": len(lines),
+                    "method": "ripgrep"
+                },
+                "summary": f"搜索完成：{len(lines)} 行匹配"
+            }
 
-            # 移除末尾分隔符
-            if lines and lines[-1] == "--":
-                lines.pop()
-
-        return "\n".join(lines)
-
-    def _build_summary(
-        self,
-        output_mode: str,
-        total_matches: int,
-        files_matched: int,
-        files_searched: int,
-        pattern: str
-    ) -> str:
-        pat_preview = pattern[:30] + ("..." if len(pattern) > 30 else "")
-        if total_matches == 0:
-            return f"搜索完成：未找到匹配 \"{pat_preview}\"（共搜索 {files_searched} 个文件）"
-
-        if output_mode == "files_with_matches":
-            return (f"搜索完成：在 {files_matched}/{files_searched} 个文件中找到"
-                    f" \"{pat_preview}\" 的匹配")
-        elif output_mode == "count":
-            return (f"统计完成：\"{pat_preview}\" 共出现 {total_matches} 次，"
-                    f"涉及 {files_matched} 个文件")
-        else:
-            return (f"搜索完成：找到 {total_matches} 处匹配 \"{pat_preview}\"，"
-                    f"涉及 {files_matched}/{files_searched} 个文件")
-
-    def _is_binary(self, file_path: Path) -> bool:
-        """判断是否为二进制文件"""
-        return file_path.suffix.lower() in BINARY_EXTENSIONS
-
-    def _resolve_path(self, path: str) -> Optional[Path]:
-        """解析路径，确保在工作目录范围内"""
+    def _to_rel_path(self, path: str) -> str:
+        """转换为相对路径（相对于项目根目录，格式：backend/xxx）"""
         try:
-            p = Path(path)
-            if not p.is_absolute():
-                p = self.working_dir / p
-            p = p.resolve()
-
-            if not p.is_relative_to(self.working_dir):
-                logger.warning("grep_path_escape", requested=path, allowed=str(self.working_dir))
-                return None
-            return p
-        except Exception as e:
-            logger.error("grep_path_resolve_failed", path=path, error=str(e))
-            return None
+            # 先转换为相对于backend/的路径
+            rel_to_backend = Path(path).relative_to(self.backend_dir)
+            # 然后添加 backend/ 前缀，这样read_file工具可以正确解析
+            return f"backend/{rel_to_backend}"
+        except ValueError:
+            return path
 
     def get_function_schema(self) -> Dict[str, Any]:
         """获取 Function Calling Schema"""
         return {
             "name": "grep",
-            "description": """搜索文件内容（正则表达式，类似 ripgrep）
+            "description": """搜索文件内容（基于ripgrep，高速）
 
-在文件或目录中搜索正则表达式匹配的内容。
-支持三种输出模式、文件类型过滤、上下文行显示。
+在backend/目录下搜索正则表达式匹配的内容。
+自动跳过logs、node_modules、.git等目录。
 
 使用场景：
 - 查找代码中的类/函数定义
 - 搜索配置文件中的参数
 - 统计关键词出现次数
-- 定位错误日志
 
 注意：
-- 自动跳过二进制文件、__pycache__、node_modules 等
-- 工作目录限制：D:/溯源/ 及其子目录
+- 需要安装ripgrep: apt install ripgrep
+- 搜索范围限制在backend/目录
+- 30秒超时自动中断
 """,
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "正则表达式模式。示例：\"class.*Agent\"、\"def execute\"、\"PORT\\s*=\\s*\\d+\""
+                        "description": "正则表达式模式。示例：\"class.*Agent\"、\"def execute\"、\"TODO|FIXME\""
                     },
                     "path": {
                         "type": "string",
-                        "description": "搜索路径（文件或目录）。示例：\"backend/app/agent\"、\"backend/app/config.py\"",
+                        "description": "搜索路径，相对于backend/。示例：\"app/agent\"、\"app/tools\"",
                         "default": "."
                     },
                     "output_mode": {
@@ -509,55 +361,31 @@ class GrepTool(LLMTool):
                         "enum": ["content", "files_with_matches", "count"],
                         "description": (
                             "输出模式：\n"
-                            "- content: 显示匹配的具体行内容（默认建议）\n"
-                            "- files_with_matches: 只显示包含匹配的文件路径（快速定位）\n"
+                            "- content: 显示匹配的具体行内容\n"
+                            "- files_with_matches: 只显示包含匹配的文件路径\n"
                             "- count: 统计每个文件的匹配次数"
                         ),
                         "default": "files_with_matches"
                     },
-                    "glob": {
-                        "type": "string",
-                        "description": "文件名过滤 glob 模式。示例：\"*.py\"、\"*.{ts,tsx}\"、\"**/*.json\""
-                    },
                     "type": {
                         "type": "string",
-                        "enum": list(FILE_TYPE_MAP.keys()),
-                        "description": "文件类型别名（比 glob 更简洁）。示例：\"py\" 等同于 glob=\"*.py\""
+                        "enum": ["py", "js", "ts", "json", "yaml", "md", "txt", "html", "css", "sh", "sql", "xml"],
+                        "description": "文件类型别名。示例：\"py\" 仅搜索Python文件"
                     },
                     "context": {
                         "type": "integer",
-                        "description": "匹配行前后各显示几行（等同于 rg -C）",
-                        "default": 0
-                    },
-                    "A": {
-                        "type": "integer",
-                        "description": "匹配行后显示几行（等同于 rg -A）",
-                        "default": 0
-                    },
-                    "B": {
-                        "type": "integer",
-                        "description": "匹配行前显示几行（等同于 rg -B）",
+                        "description": "匹配行前后各显示几行",
                         "default": 0
                     },
                     "case_insensitive": {
                         "type": "boolean",
-                        "description": "是否忽略大小写（等同于 rg -i）",
-                        "default": False
-                    },
-                    "multiline": {
-                        "type": "boolean",
-                        "description": "是否多行匹配，让 . 能匹配换行符（等同于 rg -U --multiline-dotall）",
+                        "description": "是否忽略大小写",
                         "default": False
                     },
                     "head_limit": {
                         "type": "integer",
                         "description": "最多返回几条结果（0 表示不限制）",
                         "default": 0
-                    },
-                    "show_line_numbers": {
-                        "type": "boolean",
-                        "description": "是否在 content 模式下显示行号",
-                        "default": True
                     }
                 },
                 "required": ["pattern"]
@@ -565,7 +393,8 @@ class GrepTool(LLMTool):
         }
 
     def is_available(self) -> bool:
-        return True
+        """检查ripgrep是否可用"""
+        return _RIPGREP_PATH is not None
 
 
 # 创建工具实例

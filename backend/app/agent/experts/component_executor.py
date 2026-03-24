@@ -203,12 +203,8 @@ class ComponentExecutor(ExpertExecutor):
         except ImportError:
             pass
 
-        # RACM2完整化学机理OBM分析工具 (102物种, 504反应)
-        try:
-            from app.tools.analysis.iaqi_calculator.tool import IAQICalculatorTool
-            tools["iaqi_calculator"] = IAQICalculatorTool()
-        except ImportError:
-            pass
+        # IAQI计算功能已整合到 aggregate_data 工具（使用新标准 HJ 633-2024）
+        # 旧的 iaqi_calculator 工具已删除
 
         # ========================================
         # 颗粒物组分分析工具（新增）

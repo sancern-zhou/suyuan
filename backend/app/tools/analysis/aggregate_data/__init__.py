@@ -1,5 +1,5 @@
 """数据聚合分析工具"""
 
-from .tool import __init__
+from .tool import AggregateDataTool
 
-__all__ = ["__init__"]
+__all__ = ["AggregateDataTool"]

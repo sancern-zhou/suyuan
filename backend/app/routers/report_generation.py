@@ -2,29 +2,22 @@
 报告生成API路由
 场景2：模板化报告生成
 """
-from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File, Form
+from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import json
 import structlog
 import uuid
-from fastapi import HTTPException
-from fastapi import HTTPException
-from typing import Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.report_generation import (
     TemplateReportRequest, CreateTemplateRequest, QuickGenerateRequest,
     ReportOptions
 )
-from app.services.template_report_engine import TemplateReportEngine
 from app.services.tool_executor import ToolExecutor
 from app.services.report_formatter import ReportFormatter
 from app.routers.utils_docx import convert_docx_to_markdown, sanitize_template_time_references
-from app.agent.experts.template_report_executor import TemplateReportExecutor
-from app.agent.core.expert_plan_generator import ExpertTask
 from app.agent.context.data_context_manager import DataContextManager
-from app.agent.context.execution_context import ExecutionContext
 from app.db.database import get_db
 from app.db.models.report_template import ReportTemplate, ReportGenerationHistory
 from sqlalchemy import select
@@ -36,7 +29,6 @@ router = APIRouter(prefix="/report", tags=["report-generation"])
 # 全局服务实例
 _react_agent = None
 _tool_executor = None
-_template_engine = None
 
 def get_react_agent():
     """
@@ -65,14 +57,6 @@ def get_tool_executor() -> ToolExecutor:
         logger.info("ToolExecutor initialized with React Agent")
     return _tool_executor
 
-def get_template_engine() -> TemplateReportEngine:
-    """获取模板报告引擎实例"""
-    global _template_engine
-    if _template_engine is None:
-        tool_executor = get_tool_executor()
-        _template_engine = TemplateReportEngine(tool_executor)
-        logger.info("TemplateReportEngine initialized")
-    return _template_engine
 
 
 def _stream_template_report_agent(
@@ -85,8 +69,6 @@ def _stream_template_report_agent(
     - generate-from-template-agent（JSON 版）与
       generate-from-template-file（文件上传版）都复用此逻辑。
     """
-
-    executor = TemplateReportExecutor()
 
     async def event_generator():
         """
@@ -104,12 +86,6 @@ def _stream_template_report_agent(
             reset_session=False
         )
 
-        data_manager = DataContextManager(memory_manager)
-
-        # 将上下文注入执行器，使其内部并发工具调用复用同一 DataContextManager / Memory
-        executor._memory_manager = memory_manager
-        executor._data_manager = data_manager
-
         try:
             # 起始事件：将真实的 ReAct 会话 ID 暴露给前端，便于后续连续对话复用
             yield format_sse_event({
@@ -120,38 +96,39 @@ def _stream_template_report_agent(
                 }
             })
 
-            # 为模板报告专家构造任务，上下文中仅放入模板和时间范围
-            task = ExpertTask(
-                task_id=f"template_report_{uuid.uuid4().hex[:6]}",
-                expert_type="template_report",
-                task_description="临时报告生成",
-                context={
-                    "template_content": template_content,
-                    "target_time_range": target_time_range,
-                    "session_id": session_id
-                }
-            )
+            # 构造用户消息，包含模板内容和时间范围要求
+            display = target_time_range.get("display", f"{target_time_range.get('start', '')}至{target_time_range.get('end', '')}")
 
-            result = await executor.execute(task)
+            user_message = f"""请根据以下模板内容，生成{display}的空气质量DOCX报告。
 
-            # 将生成的整篇报告作为一次“助手回复”写入会话对话历史，
-            # 方便后续 ReAct 在同一 session 中引用报告内容进行修改/追问。
-            try:
-                memory_manager.session.add_assistant_message(result.analysis.section_content)
-            except Exception as log_err:  # 不影响主流程
-                logger.warning(
-                    "template_report_add_assistant_message_failed",
-                    error=str(log_err)
-                )
+【模板内容】
+{template_content}
 
-            # 完成事件：除了原有字段，还回传统一的 session_id，便于前端保存
+【要求】
+1. 分析模板结构，理解报告章节安排
+2. 并发查询所需数据（使用query_new_standard_report或query_old_standard_report）
+3. 使用execute_python + python-docx生成DOCX报告
+4. 报告保存到：/home/xckj/suyuan/backend_data_registry/report.docx
+
+请开始执行。"""
+
+            # 调用ReAct Agent分析（报告模式）
+            agent_mode = "report"
+            async for event in react_agent.analyze(
+                message=user_message,
+                session_id=session_id,
+                agent_mode=agent_mode
+            ):
+                # 转发Agent事件到前端
+                if isinstance(event, dict):
+                    yield format_sse_event(event)
+
+            # 完成事件
             yield format_sse_event({
                 "type": "complete",
                 "data": {
                     "session_id": session_id,
-                    "report_content": result.analysis.section_content,
-                    "data_ids": result.data_ids,
-                    "status": result.status
+                    "status": "success"
                 }
             })
 
@@ -249,74 +226,6 @@ async def generate_from_template_file(
         target_time_range=target_time_range
     )
 
-@router.post("/generate-from-template")
-async def generate_from_template(
-    request: TemplateReportRequest
-):
-    """
-    基于模板生成报告（流式返回）
-
-    Request:
-        {
-            "template_content": "历史报告Markdown内容...",
-            "target_time_range": {
-                "start": "2025-01-01",
-                "end": "2025-07-31"
-            },
-            "options": {
-                "include_analysis": true,
-                "include_charts": false
-            }
-        }
-
-    Response: SSE流
-        event: phase_started
-        data: {"phase": "parsing", "description": "解析报告结构"}
-
-        event: structure_parsed
-        data: {"sections_count": 5, "tables_count": 2, "rankings_count": 3}
-
-        event: phase_started
-        data: {"phase": "data_fetching", "description": "获取数据"}
-
-        event: data_fetched
-        data: {"record_count": 100, "requirements_count": 10}
-
-        event: report_completed
-        data: {"report_content": "# 生成的报告\n..."}
-    """
-    engine = get_template_engine()
-
-    async def event_generator():
-        try:
-            # 时间标准化处理：将模板中的具体时间替换为占位符
-            sanitized_template = sanitize_template_time_references(request.template_content)
-            
-            # 生成报告
-            async for event in engine.generate_from_template(
-                template_content=sanitized_template,
-                target_time_range=request.target_time_range,
-                options=ReportOptions(**(request.options or {}))
-            ):
-                # 格式化事件为SSE格式
-                yield format_sse_event(event)
-        except Exception as e:
-            logger.error(f"Report generation error: {str(e)}")
-            error_event = {
-                "type": "error",
-                "data": {"error": str(e)}
-            }
-            yield format_sse_event(error_event)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
 
 @router.post("/templates")
 async def create_template(
@@ -431,50 +340,6 @@ async def list_templates(
             }
         )
 
-@router.post("/templates/{template_id}/generate")
-async def generate_from_saved_template(
-    template_id: str,
-    request: QuickGenerateRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    从已保存模板快速生成
-
-    Args:
-        template_id: 模板ID
-        request: 快速生成请求
-        db: 数据库会话
-
-    Returns:
-        SSE流式响应
-    """
-    engine = get_template_engine()
-
-    async def event_generator():
-        try:
-            async for event in engine.generate_quick(
-                template_id=template_id,
-                time_range=request.time_range,
-                db_session=db
-            ):
-                yield format_sse_event(event)
-        except Exception as e:
-            logger.error(f"Quick generation error: {str(e)}")
-            error_event = {
-                "type": "error",
-                "data": {"error": str(e)}
-            }
-            yield format_sse_event(error_event)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
 
 @router.post("/upload-template")
 async def upload_template(

@@ -178,7 +178,6 @@ class ReActAgentExtended(ReActAgent, TaskPlanningMixin):
 # 便捷函数：创建扩展版 Agent
 def create_react_agent_extended(
     enable_task_planning: bool = True,
-    enable_multi_expert: bool = True,
     **kwargs
 ) -> ReActAgentExtended:
     """
@@ -186,7 +185,6 @@ def create_react_agent_extended(
 
     Args:
         enable_task_planning: 是否启用任务规划
-        enable_multi_expert: 是否启用多专家系统
         **kwargs: 其他参数
 
     Returns:
@@ -194,6 +192,5 @@ def create_react_agent_extended(
     """
     return ReActAgentExtended(
         enable_task_planning=enable_task_planning,
-        enable_multi_expert=enable_multi_expert,
         **kwargs
     )

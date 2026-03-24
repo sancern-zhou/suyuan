@@ -644,6 +644,8 @@ path = get_response_path("particulate")
 - **验证点**: 数据格式、字段映射、工具集成、向后兼容性
 - **运行命令**: `pytest tests/test_udf_v2_full_chain.py -v`
 
+**数值修约规范** (2026-03-20): 使用 `Decimal` 进行精确修约（四舍六入五成双），避免 Python `round()` 函数的浮点数精度问题（如 0.835 被存储为 0.834999... 导致修约为 0.83 而非 0.84），实现位置：`backend/app/tools/query/query_new_standard_report/tool.py:apply_rounding()`
+
 ## 设计理念
 
 **"LLM完全自由 + 系统智能适配"**

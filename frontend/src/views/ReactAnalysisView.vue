@@ -643,8 +643,6 @@
             :use-reranker="useReranker"
             @send="handleSend"
             @pause="handlePause"
-            @update:precision="handlePrecisionChange"
-            @update:enableReasoning="handleEnableReasoningChange"
             @update:useReranker="handleRerankerChange"
             @update:agentMode="handleAgentModeChange"
           />
@@ -896,7 +894,6 @@ const isDragging = ref(false)
 const layoutRef = ref(null)
 const activeAssistant = ref('general-agent')
 const fullscreenMode = ref(false)
-const precision = ref('standard')  // 默认standard模式，点击按钮切换为fast
 const vizPanelRef = ref(null)  // VisualizationPanel的引用
 const vizPanelVisible = ref(false)  // 可视化面板是否可见
 const inputBoxRef = ref(null)  // InputBox组件的引用
@@ -971,17 +968,6 @@ const sessionHistoryFilter = ref('all')
 // 获取今天的日期字符串
 const today = new Date()
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
-const handlePrecisionChange = (value) => {
-  precision.value = value
-  console.log('精度模式:', value === 'fast' ? '极速模式(fast)' : '标准模式(standard)')
-}
-
-const handleEnableReasoningChange = (value) => {
-  // enableReasoning状态由InputBox组件管理，这里只是接收更新
-  // 实际值会在handleSend时从payload中获取
-  console.log('思考模式:', value ? '已启用（显示推理过程）' : '已禁用（隐藏推理过程）')
-}
 
 const handleRerankerChange = (value) => {
   useReranker.value = value
@@ -2175,27 +2161,15 @@ const handleSend = async (payload) => {
   // 处理新的输入格式：可能是字符串（向后兼容）或对象
   const query = typeof payload === 'string' ? payload : payload.query
   const knowledgeBaseIds = typeof payload === 'object' ? payload.knowledgeBaseIds || [] : []
-  const selectedPrecision = typeof payload === 'object' ? payload.precision || 'standard' : 'standard'
-  const enableReasoning = typeof payload === 'object' ? payload.enableReasoning || false : false
   const agentMode = typeof payload === 'object' ? payload.agentMode || store.agentMode : store.agentMode  // ✅ 使用store.agentMode作为默认值
   const attachments = typeof payload === 'object' ? payload.attachments || null : null  // ✅ 提取附件信息
 
   // 构建分析选项
-  // ✅ 强制设置：通用Agent模式下禁用极速模式，使用默认standard
-  const forceDisableFast = activeAssistant.value === 'general-agent'
   const options = {
     assistantMode: activeAssistant.value,
-    precision: forceDisableFast ? 'standard' : selectedPrecision,  // 精度模式选项
     knowledgeBaseIds: knowledgeBaseIds,  // 选中的知识库ID列表
-    enableMultiExpert: false,  // ✅ 通用Agent使用单专家模式，支持真正的ReAct循环
-    enableReasoning: enableReasoning,  // ✅ 思考模式开关（是否显示LLM推理过程）
     agentMode: agentMode,  // ✅ 双模式架构：assistant | expert
     attachments: attachments  // ✅ 传递附件信息
-  }
-
-  // ✅ 如果是通用Agent模式，重置精度模式为默认
-  if (forceDisableFast) {
-    precision.value = 'standard'
   }
 
   // 根据选择的助手模式调用不同的分析方法

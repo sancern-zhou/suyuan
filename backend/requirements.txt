@@ -77,3 +77,6 @@ jinja2==3.1.4
 
 # Browser Automation (for browser tool)
 playwright==1.48.0  # Cross-platform browser automation
+
+# Optional: Python code execution (for execute_python tool)
+ipython>=8.0.0  # Optional, for better output capture and error handling

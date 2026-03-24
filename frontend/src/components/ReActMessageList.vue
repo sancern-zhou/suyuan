@@ -44,7 +44,13 @@
         </div>
 
         <div class="message-content" v-if="useMarkdown && message.content">
-          <MarkdownRenderer :content="message.content" :streaming="message.streaming === true" />
+          <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
+          <!-- 当 streaming 从 true 变为 false 时，key 变化，组件会重新创建 -->
+          <MarkdownRenderer
+            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}`"
+            :content="message.content"
+            :streaming="message.streaming === true"
+          />
         </div>
         <div class="message-content" v-else-if="message.content">{{ message.content }}</div>
 
@@ -59,7 +65,12 @@
       <!-- 移除 v-once 以支持流式更新 -->
       <div v-else-if="message.type === 'final'" class="message agent-message final">
         <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
-        <details v-if="getUnifiedProcessMessages(message, messages).length > 0" class="process-collapse">
+        <details
+          v-if="getUnifiedProcessMessages(message, messages).length > 0"
+          class="process-collapse"
+          :open="isProcessExpanded(message.id)"
+          @toggle="handleProcessToggle(message.id, $event)"
+        >
           <summary>查看分析过程 ({{ getUnifiedProcessMessages(message, messages).length }} 个步骤)</summary>
           <div class="process-content">
             <div v-for="(procMsg, idx) in getUnifiedProcessMessages(message, messages)" :key="idx" class="process-item">
@@ -88,14 +99,22 @@
         </details>
 
         <div class="message-content" v-if="useMarkdown">
-          <MarkdownRenderer :content="message.content" :streaming="message.streaming === true" />
+          <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
+          <MarkdownRenderer
+            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}`"
+            :content="message.content"
+            :streaming="message.streaming === true"
+          />
         </div>
         <div class="message-content" v-else>{{ message.content }}</div>
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
           <div v-if="reportContentCacheMap.get(message.data.expert_results.report).markdown_content">
-            <MarkdownRenderer :content="reportContentCacheMap.get(message.data.expert_results.report).markdown_content" />
+            <MarkdownRenderer
+              :key="`report-${message.id}`"
+              :content="reportContentCacheMap.get(message.data.expert_results.report).markdown_content"
+            />
           </div>
           <div v-else class="report-section" v-for="(section, sectionKey) in reportContentCacheMap.get(message.data.expert_results.report)" :key="sectionKey">
             <h5 class="section-title">{{ formatSectionTitle(sectionKey) }}</h5>
@@ -544,6 +563,51 @@ const filteredMessages = computed(() => {
 // 【新增】折叠的过程消息ID集合
 const collapsedProcessIds = ref(new Set())
 
+// 【新增】details展开状态管理（用于控制<details>的open属性）
+const expandedProcessIds = ref(new Set())
+
+// 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
+const isInitialLoad = ref(true)
+
+// 【新增】判断final消息的过程区域是否应该展开
+const isProcessExpanded = (messageId) => {
+  // 【关键修复】初次加载时，强制所有 details 折叠
+  if (isInitialLoad.value) {
+    console.log('[ReActMessageList] isProcessExpanded: initial load, forcing collapse')
+    return undefined
+  }
+
+  // 处理 messageId 为 undefined 或 null 的情况
+  if (!messageId) {
+    console.log('[ReActMessageList] isProcessExpanded: messageId is empty, returning undefined (collapsed)')
+    return undefined
+  }
+
+  const isExpanded = expandedProcessIds.value.has(messageId)
+  console.log('[ReActMessageList] isProcessExpanded:', {
+    messageId,
+    isExpanded,
+    expandedIds: Array.from(expandedProcessIds.value)
+  })
+
+  if (isExpanded) {
+    return true
+  } else {
+    return undefined  // 返回 undefined 确保 details 折叠
+  }
+}
+
+// 【新增】处理details的toggle事件
+const handleProcessToggle = (messageId, event) => {
+  // event.target 是 <details> 元素
+  // event.target.open 表示当前状态（toggle之后的状态）
+  if (event.target.open) {
+    expandedProcessIds.value.add(messageId)
+  } else {
+    expandedProcessIds.value.delete(messageId)
+  }
+}
+
 // 【新增】检测并折叠当前final消息之前的所有过程消息
 const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
   const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
@@ -594,29 +658,112 @@ const isOfficeToolWithPdf = (message) => {
 
 // 【新增】获取当前final消息之前的过程消息（用于统一折叠区域）
 // 【修复】只返回该轮对话的过程消息，不包括之前轮次的
+// 【性能优化】使用缓存避免重复计算
+const processMessagesCache = ref(new Map())
+
 const getUnifiedProcessMessages = (finalMessage, allMessages) => {
-  const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
-  if (finalIndex === -1) return []
+  // 【性能优化】使用缓存键：final消息的引用或ID
+  const cacheKey = finalMessage.id || JSON.stringify(finalMessage)
 
-  // 获取该final之前的消息
-  const beforeMessages = allMessages.slice(0, finalIndex)
+  // 检查缓存
+  if (processMessagesCache.value.has(cacheKey)) {
+    return processMessagesCache.value.get(cacheKey)
+  }
 
-  // 找到上一个final的位置，只获取两轮final之间的过程消息
-  let lastFinalIndex = -1
-  for (let i = finalIndex - 1; i >= 0; i--) {
-    if (allMessages[i].type === 'final') {
-      lastFinalIndex = i
-      break
+  // 【关键调试】检查 finalMessage.id 是否存在
+  console.log('[getUnifiedProcessMessages] 接收到final消息:', {
+    hasId: !!finalMessage.id,
+    id: finalMessage.id,
+    type: finalMessage.type,
+    allMessagesCount: allMessages.length
+  })
+
+  let processMessages = []
+
+  // 如果 finalMessage.id 不存在，尝试使用其他方式查找
+  if (!finalMessage.id) {
+    console.warn('[getUnifiedProcessMessages] finalMessage.id 为空，尝试使用索引查找')
+
+    // 尝试在 allMessages 中直接查找这个 finalMessage
+    const finalIndex = allMessages.findIndex(m => m === finalMessage || (m.type === 'final' && !m.id))
+    if (finalIndex === -1) {
+      console.error('[getUnifiedProcessMessages] 无法找到final消息索引')
+      processMessages = []
+    } else {
+      console.log('[getUnifiedProcessMessages] 通过引用找到final消息，索引:', finalIndex)
+
+      // 获取该final之前的消息
+      const beforeMessages = allMessages.slice(0, finalIndex)
+
+      // 找到上一个final的位置
+      let lastFinalIndex = -1
+      for (let i = finalIndex - 1; i >= 0; i--) {
+        if (allMessages[i].type === 'final') {
+          lastFinalIndex = i
+          break
+        }
+      }
+
+      const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
+      processMessages = currentRoundMessages.filter(msg =>
+        (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation')
+      )
+
+      console.log('[getUnifiedProcessMessages] 通过引用找到过程消息:', {
+        processMessageCount: processMessages.length,
+        types: processMessages.map(m => m.type)
+      })
+    }
+  } else {
+    // 正常情况：使用 id 查找
+    const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
+    console.log('[getUnifiedProcessMessages] 开始查找过程消息:', {
+      finalMessageId: finalMessage.id,
+      finalIndex,
+      totalMessages: allMessages.length
+    })
+
+    if (finalIndex === -1) {
+      console.log('[getUnifiedProcessMessages] 未找到final消息，返回空数组')
+      processMessages = []
+    } else {
+      // 获取该final之前的消息
+      const beforeMessages = allMessages.slice(0, finalIndex)
+
+      // 找到上一个final的位置，只获取两轮final之间的过程消息
+      let lastFinalIndex = -1
+      for (let i = finalIndex - 1; i >= 0; i--) {
+        if (allMessages[i].type === 'final') {
+          lastFinalIndex = i
+          break
+        }
+      }
+
+      // 只获取上一轮final之后、当前final之前的过程消息
+      const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
+
+      processMessages = currentRoundMessages.filter(msg =>
+        (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation')
+      )
+
+      console.log('[getUnifiedProcessMessages] 找到过程消息:', {
+        processMessageCount: processMessages.length,
+        types: processMessages.map(m => m.type)
+      })
     }
   }
 
-  // 只获取上一轮final之后、当前final之前的过程消息
-  const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
+  // 【性能优化】缓存结果
+  processMessagesCache.value.set(cacheKey, processMessages)
 
-  return currentRoundMessages.filter(msg =>
-    (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation')
-  )
+  return processMessages
 }
+
+// 【新增】监听消息变化，清空缓存
+watch(() => props.messages, () => {
+  processMessagesCache.value.clear()
+  console.log('[getUnifiedProcessMessages] 消息变化，清空缓存')
+}, { deep: true })
 
 // 【修复】智能滚动控制
 const scrollToBottom = () => {
@@ -688,8 +835,22 @@ onMounted(() => {
 // 【修复】监听新final消息的添加，自动折叠之前的过程消息
 watch(
   () => props.messages,
-  (newMessages) => {
+  (newMessages, oldMessages) => {
     if (!newMessages || newMessages.length === 0) return
+
+    // 【新增】检测是否是初次加载历史对话（从空数组变为有数据）
+    const isFirstLoad = !oldMessages || oldMessages.length === 0
+    if (isFirstLoad) {
+      // 初次加载时，清空展开状态，确保所有 details 默认折叠
+      expandedProcessIds.value.clear()
+      console.log('[ReActMessageList] 初次加载历史对话，默认折叠所有过程消息')
+
+      // 【新增】延迟一段时间后允许用户手动展开 details
+      setTimeout(() => {
+        isInitialLoad.value = false
+        console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
+      }, 3000) // 3秒后允许用户手动展开
+    }
 
     const lastMessage = newMessages[newMessages.length - 1]
     // 如果最后一条消息是final消息，自动折叠之前的过程消息
