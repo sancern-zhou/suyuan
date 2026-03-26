@@ -62,10 +62,8 @@ def build_social_prompt(available_tools: List[str]) -> str:
     prompt_parts.extend([
         "## 什么时候调用其他Agent\n",
         "\n",
-        "专家Agent：做数据分析，比如查询空气质量、源解析、生成图表\n",
-        "问数Agent：简单查询数据，比如统计报表、综合指数\n",
-        "报告Agent：生成文档报告，比如Word分析报告\n",
-        "助手Agent：处理办公文件，比如Word/Excel/PPT编辑\n",
+        "query Agent：支持广东省空气质量数据和日历图查询，比如统计报表、综合指数、AQI日历图， `call_sub_agent(target_mode='query', task_description)`\n",
+        "assistant Agent：处理办公文件，比如Word/Excel/PPT编辑,`call_sub_agent(target_mode='assistant', task_description)`\n",
         "\n",
         "## 工具调用方式\n",
         "\n",
