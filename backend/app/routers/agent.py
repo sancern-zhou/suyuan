@@ -13,7 +13,7 @@ import json
 import structlog
 
 from app.agent import create_react_agent
-from app.agent.session import SessionManager, Session, SessionState
+from app.agent.session import SessionManager, Session, SessionState, get_session_manager
 
 logger = structlog.get_logger()
 
@@ -30,7 +30,6 @@ class AgentAnalyzeRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
     max_iterations: int = Field(30, ge=1, le=30, description="最大迭代次数")
-    plan_mode: bool = Field(False, description="是否使用 ReWOO 规划模式（一次性生成完整计划）")
     mode: Optional[str] = Field(
         "expert",
         description="✅ Agent模式（三模式架构）：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'code' - 编程模式（工具开发）"
@@ -69,7 +68,6 @@ class AgentAnalyzeRequest(BaseModel):
                 "session_id": None,
                 "enhance_with_history": True,
                 "max_iterations": 10,
-                "plan_mode": False,
                 "assistant_mode": "quick-tracing-expert",
                 "knowledge_base_ids": ["kb_123", "kb_456"]
             }
@@ -233,7 +231,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
         query=request.query[:100],
         session_id=request.session_id,
         max_iterations=request.max_iterations,
-        plan_mode=request.plan_mode,
         assistant_mode=request.assistant_mode,
         knowledge_base_ids=request.knowledge_base_ids,
         is_interruption=request.is_interruption,
@@ -301,7 +298,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             "session_id": request.session_id,
             "enhance_with_history": request.enhance_with_history,
             "max_iterations": request.max_iterations,
-            "plan_mode": request.plan_mode,
             "knowledge_base_ids": request.knowledge_base_ids,
             "enable_reasoning": request.enable_reasoning,
             "is_interruption": request.is_interruption,
@@ -309,8 +305,8 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             "attachments": request.attachments  # ✅ 传递附件信息
         }
 
-        # 初始化会话管理器
-        session_manager = SessionManager()
+        # 初始化会话管理器（使用全局单例，确保内存缓存一致）
+        session_manager = get_session_manager()
         actual_session_id = request.session_id
         conversation_history = []
         collected_data_ids = []
@@ -328,23 +324,32 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             if actual_session_id:
                 session = session_manager.load_session(actual_session_id)
                 if session:
-                    logger.info("session_restored", session_id=actual_session_id)
-                    conversation_history = session.conversation_history
-                    # ✅ 如果有历史对话，传递给 agent.analyze()
-                    if conversation_history:
-                        analyze_kwargs["initial_messages"] = conversation_history
-                        logger.info(
-                            "passing_conversation_history_to_agent",
-                            session_id=actual_session_id,
-                            message_count=len(conversation_history)
-                        )
+                    logger.info(
+                        "session_restored",
+                        session_id=actual_session_id,
+                        state=session.state.value if session.state else None,
+                        has_conversation_history=bool(session.conversation_history),
+                        conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
+                        has_data_ids=bool(session.data_ids),
+                        data_ids_count=len(session.data_ids) if session.data_ids else 0
+                    )
+                    conversation_history = session.conversation_history or []
+
+                    # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
+                    # 避免重复加载历史消息
                 else:
-                    logger.warning("session_not_found_creating_new", session_id=actual_session_id)
+                    logger.warning(
+                        "session_not_found_creating_new",
+                        session_id=actual_session_id,
+                        hint="SessionManager中未找到该会话，将创建新会话"
+                    )
                     session = Session(session_id=actual_session_id, query=request.query)
+                    conversation_history = []
             else:
                 import uuid
                 actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
                 session = Session(session_id=actual_session_id, query=request.query)
+                conversation_history = []
                 logger.info("session_created", session_id=actual_session_id)
                 # 更新 analyze_kwargs 中的 session_id
                 analyze_kwargs["session_id"] = actual_session_id

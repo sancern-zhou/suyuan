@@ -137,7 +137,6 @@ class ReActAgent:
         enhance_with_history: bool = True,
         max_iterations: Optional[int] = None,
         reset_session: bool = False,
-        plan_mode: bool = False,
         knowledge_base_ids: Optional[list] = None,
         enable_reasoning: bool = False,
         is_interruption: bool = False,
@@ -154,7 +153,6 @@ class ReActAgent:
             enhance_with_history: 是否使用长期记忆增强
             max_iterations: 本次执行的最大迭代数
             reset_session: 是否强制重置会话
-            plan_mode: 是否使用 ReWOO 规划模式（一次性生成完整计划）
             knowledge_base_ids: 知识库ID列表（暂未启用，预留参数）
             enable_reasoning: 是否启用思考模式（默认False，启用后会显示LLM的推理过程，适用于MiniMax等支持思考模式的模型）
             is_interruption: 是否为用户中断后的对话（用户暂停后继续对话时为True）
@@ -173,26 +171,27 @@ class ReActAgent:
             for i, att in enumerate(attachments, 1):
                 att_type = att.get("type", "file")
                 att_name = att.get("name", "unknown")
+                att_file_id = att.get("file_id")
                 att_url = att.get("url") or ""
 
-                # 如果URL为空但有file_id，尝试从数据库获取文件路径
-                if not att_url:
-                    att_file_id = att.get("file_id")
-                    if att_file_id:
-                        try:
-                            from app.db.database import async_session
-                            from app.knowledge_base.models import UploadedFile
-                            from sqlalchemy import select
+                # 对于图片和有file_id的附件，优先使用本地文件路径
+                # 因为analyze_image等工具可以直接读取本地文件
+                if att_file_id and (att_type == "image" or not att_url.startswith("/")):
+                    try:
+                        from app.db.database import async_session
+                        from app.knowledge_base.models import UploadedFile
+                        from sqlalchemy import select
 
-                            async with async_session() as db:
-                                result = await db.execute(
-                                    select(UploadedFile.file_path).where(UploadedFile.id == att_file_id)
-                                )
-                                path = result.scalar_one_or_none()
-                                if path:
-                                    att_url = path
-                        except Exception as e:
-                            logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
+                        async with async_session() as db:
+                            result = await db.execute(
+                                select(UploadedFile.file_path).where(UploadedFile.id == att_file_id)
+                            )
+                            path = result.scalar_one_or_none()
+                            if path:
+                                att_url = path
+                                logger.info("using_local_file_path", file_id=att_file_id, path=path)
+                    except Exception as e:
+                        logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
 
                 if att_type == "image":
                     attachment_info += f"{i}. 图片: {att_name}\n"
@@ -224,7 +223,6 @@ class ReActAgent:
             query=user_query[:100],
             iteration_limit=iteration_limit,
             reused_session=not created_new,
-            plan_mode=plan_mode,
             mode="react",
             manual_mode=manual_mode or "expert",
             knowledge_base_ids=knowledge_base_ids  # 记录知识库ID
@@ -243,7 +241,6 @@ class ReActAgent:
                 max_iterations=iteration_limit,
                 stream_enabled=True,
                 is_interruption=is_interruption,
-                plan_mode=plan_mode,
                 enable_reasoning=enable_reasoning,
                 knowledge_base_ids=knowledge_base_ids  # ✅ 传递知识库ID列表
             )
@@ -411,18 +408,74 @@ class ReActAgent:
         """
         获取或创建会话记忆管理器
 
+        ✅ 修复：从 SessionManager 恢复历史会话状态，确保历史对话上下文不丢失
+
         返回:
             (session_id, memory_manager, created_new)
         """
         async with self._session_lock:
             self._cleanup_expired_sessions_locked()
 
+            # ✅ 优先重用内存中的会话
             if not reset_session and session_id and session_id in self._session_store:
                 entry = self._session_store[session_id]
                 entry["last_used"] = datetime.utcnow()
                 logger.info("react_session_reused", session_id=session_id)
                 return session_id, entry["memory"], False
 
+            # ✅ 新增：尝试从 SessionManager 恢复会话
+            if session_id and not reset_session:
+                try:
+                    from app.agent.session import get_session_manager
+                    session_manager = get_session_manager()
+                    saved_session = session_manager.load_session(session_id)
+
+                    if saved_session and saved_session.conversation_history:
+                        logger.info(
+                            "react_session_restored_from_manager",
+                            session_id=session_id,
+                            history_length=len(saved_session.conversation_history),
+                            has_data_ids=bool(saved_session.data_ids),
+                            data_ids_count=len(saved_session.data_ids) if saved_session.data_ids else 0
+                        )
+
+                        # 创建新的 memory_manager（但会从 saved_session 恢复历史）
+                        memory_manager = HybridMemoryManager(
+                            session_id=session_id,
+                            max_working_iterations=self.max_working_memory,
+                            large_data_threshold=self.large_data_threshold,
+                            working_context_limit=self.working_context_limit,
+                            batch_compress_threshold=11,  # 第11次触发首次压缩
+                            compress_batch_size=10  # 每次压缩10条
+                        )
+
+                        # ✅ 立即加载历史消息到 memory_manager.session
+                        if saved_session.conversation_history:
+                            memory_manager.session.load_history_messages(saved_session.conversation_history)
+                            logger.info(
+                                "react_session_history_loaded",
+                                session_id=session_id,
+                                message_count=len(saved_session.conversation_history)
+                            )
+
+                        # 保存到内存缓存
+                        self._session_store[session_id] = {
+                            "memory": memory_manager,
+                            "created": datetime.utcnow(),
+                            "last_used": datetime.utcnow()
+                        }
+
+                        return session_id, memory_manager, False  # False 表示不是新建，是恢复的
+
+                except Exception as e:
+                    logger.warning(
+                        "react_session_restore_failed",
+                        session_id=session_id,
+                        error=str(e),
+                        hint="将创建新会话"
+                    )
+
+            # 创建全新会话
             actual_session_id = session_id or self._generate_session_id()
 
             if actual_session_id in self._session_store:

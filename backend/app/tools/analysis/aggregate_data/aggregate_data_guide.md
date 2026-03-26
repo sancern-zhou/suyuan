@@ -57,11 +57,23 @@ aggregate_data(
 - `AQI` - 空气质量指数（取各污染物IAQI最大值）
 - `PRIMARY_POLLUTANT` - 首要污染物（IAQI最大的污染物）
 
-**注意**：AQI只用于计算和评价日粒度的空气数据，多日的数据应该用单项指数和综合指数评价。
+**⚠️ 重要限制**：IAQI/AQI/PRIMARY_POLLUTANT **仅限单日数据评价**
+
+- 这些函数基于**日平均浓度**设计（HJ 633-2024标准）
+- 如果数据跨越多日，工具会**返回错误**，提示使用 `start_date`/`end_date` 限制为单日
+- **原因**：多日数据先求平均再计算IAQI，会平滑掉高值，导致评价结果不准确
+- **正确用法**：使用 `start_date` 和 `end_date` 参数限制为单日（见下方示例）
 
 ### 质量指数函数
 - `SINGLE_INDEX` - 单项指数（浓度/标准限值）
 - `COMPREHENSIVE_INDEX` - 综合指数（六项污染物单项指数之和）
+
+**⚠️ 重要限制**：SINGLE_INDEX/COMPREHENSIVE_INDEX **仅限多日数据评价（至少2天）**
+
+- 这些函数用于**月/季/年等时段**的综合空气质量评价
+- 如果数据只有单日，工具会**返回错误**，提示扩大时间范围
+- **原因**：综合指数基于年平均标准设计，单日数据计算没有统计学意义
+- **正确用法**：确保数据包含至少2天（见下方示例）
 
 ## 参数说明
 
@@ -185,10 +197,23 @@ aggregations=[{'column':'composite','function':'COMPREHENSIVE_INDEX'}]
 
 ## 注意事项
 
-1. IAQI和SINGLE_INDEX函数必须提供pollutant参数
-2. AQI和COMPREHENSIVE_INDEX要求数据中包含所有六参数浓度
-3. 百分位数计算时需要提供percentile参数
-4. 支持分组聚合和时间粒度聚合
-5. 自动应用国家标准修约规则（四舍六入五成双）
-6. **日期过滤**：使用start_date和end_date参数可以只计算指定日期范围的数据，日期格式为YYYY-MM-DD
-7. 日期过滤支持多种时间格式自动识别（如"2026-01-17 12:00:00"、"2026-01-17T12:00:00"等）
+1. **天数限制（重要）**：
+   - **IAQI/AQI/PRIMARY_POLLUTANT**：仅限单日数据，多日数据会返回错误
+   - **SINGLE_INDEX/COMPREHENSIVE_INDEX**：仅限多日数据（≥2天），单日数据会返回错误
+   - 这些限制基于HJ 633-2024标准，确保评价结果的科学性和准确性
+
+2. IAQI和SINGLE_INDEX函数必须提供pollutant参数
+
+3. AQI和COMPREHENSIVE_INDEX要求数据中包含所有六参数浓度
+
+4. 百分位数计算时需要提供percentile参数
+
+5. 支持分组聚合和时间粒度聚合
+
+6. 自动应用国家标准修约规则（四舍六入五成双）
+
+7. **日期过滤**：使用start_date和end_date参数可以只计算指定日期范围的数据，日期格式为YYYY-MM-DD
+
+8. 日期过滤支持多种时间格式自动识别（如"2026-01-17 12:00:00"、"2026-01-17T12:00:00"等）
+
+9. **时间列自动检测**：工具会自动检测时间列（支持timestamp、time、date、datetime、time_point等字段名）

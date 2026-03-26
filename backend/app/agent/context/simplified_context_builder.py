@@ -61,7 +61,8 @@ class SimplifiedContextBuilder:
         iteration: int,
         latest_observation: str = "",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
-        mode: str = "expert"  # ✅ 新增：Agent模式
+        mode: str = "expert",  # ✅ 新增：Agent模式
+        is_interruption: bool = False  # ✅ 新增：中断标志
     ) -> Dict[str, Any]:
         """
         为 Thought + Action 构建完整上下文
@@ -97,7 +98,8 @@ class SimplifiedContextBuilder:
             query=query,
             iteration=iteration,
             latest_observation=latest_observation,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            is_interruption=is_interruption  # ✅ 传递中断标志
         )
         user_tokens = token_budget_manager.count_tokens(user_conversation)
 
@@ -186,7 +188,8 @@ class SimplifiedContextBuilder:
         query: str,
         iteration: int,
         latest_observation: str,
-        conversation_history: Optional[List[Dict[str, Any]]]
+        conversation_history: Optional[List[Dict[str, Any]]],
+        is_interruption: bool = False  # ✅ 新增：中断标志
     ) -> str:
         """
         构建用户对话内容（动态部分）
@@ -201,11 +204,23 @@ class SimplifiedContextBuilder:
             iteration: 当前迭代次数
             latest_observation: 最新观察结果
             conversation_history: 对话历史（LLM格式，优先使用）
+            is_interruption: 是否为用户中断后的对话
 
         Returns:
             用户对话内容字符串
         """
         sections = []
+
+        # ✅ 检测到中断时，在对话历史前添加明确提示
+        if is_interruption:
+            sections.append("""⚠️ **用户已中断对话并重新输入**
+
+用户之前中断了对话，这通常意味着之前的分析方向不符合预期。请：
+1. **优先理解用户新输入的完整意图**，而不是继续之前的方向
+2. 结合对话历史中的数据和结果，但**不要被之前的分析思路限制**
+3. 重新规划执行步骤，确保符合用户当前的真实需求
+
+---""")
 
         # 1. 对话历史（优先使用LLM格式）
         if conversation_history:

@@ -25,6 +25,7 @@ import sys
 import logging
 from pathlib import Path
 import os
+import asyncio
 
 # Configure Python logging first
 logging.basicConfig(
@@ -144,6 +145,10 @@ app.include_router(upload_router, prefix="/api/upload")
 from app.api.office_routes import router as office_router
 app.include_router(office_router)
 
+# Include Social Platform routes (社交平台管理)
+from app.routers import social_routes
+app.include_router(social_routes.router)
+
 
 # 全局异常处理器：捕获请求验证错误
 @app.exception_handler(RequestValidationError)
@@ -237,6 +242,94 @@ async def startup_event():
         logger.error("scheduled_task_service_failed", error=str(e), exc_info=True)
         logger.warning("continuing_without_scheduled_tasks")
 
+    # 1.6 初始化社交平台服务
+    try:
+        from app.social.message_bus import MessageBus
+        from app.social.session_mapper import SessionMapper
+        from app.social.agent_bridge import AgentBridge
+        from app.social.config import SocialConfig
+        from app.channels.manager import ChannelManager
+        from app.agent.react_agent import create_react_agent
+
+        # 加载社交平台配置
+        social_config = SocialConfig.load_from_yaml(settings.social_config_path)
+
+        # 检查是否启用了任何平台
+        if not any([social_config.qq.enabled, social_config.weixin.enabled]):
+            logger.info("social_platform_disabled", reason="no_platforms_enabled")
+        else:
+            # 创建消息总线
+            message_bus = MessageBus()
+
+            # 创建会话映射器
+            session_mapper = SessionMapper()
+            await session_mapper.load()
+
+            # 创建Agent桥接层（使用社交模式）
+            agent = create_react_agent()
+            agent_bridge = AgentBridge(
+                agent=agent,
+                message_bus=message_bus,
+                session_mapper=session_mapper,
+                mode="social"  # ⚠️ Social模式：移动端呼吸式Agent
+            )
+
+            # 创建Channel管理器（传递配置）
+            channel_manager = ChannelManager(config=social_config, bus=message_bus)
+
+            # 启动Agent桥接层（后台任务）
+            async def run_agent_bridge():
+                try:
+                    logger.info("agent_bridge_starting")
+                    await agent_bridge.start()
+                    logger.info("agent_bridge_started")
+                except Exception as e:
+                    logger.error("agent_bridge_failed", error=str(e), exc_info=True)
+
+            # 启动Channel管理器（后台任务）
+            async def run_channel_manager():
+                try:
+                    logger.info("channel_manager_starting")
+                    await channel_manager.start_all()
+                    logger.info("channel_manager_started")
+                except Exception as e:
+                    logger.error("channel_manager_failed", error=str(e), exc_info=True)
+
+            # 创建后台任务
+            try:
+                app.state.agent_bridge_task = asyncio.create_task(run_agent_bridge())
+                logger.info("agent_bridge_task_created", task_id=id(app.state.agent_bridge_task))
+            except Exception as e:
+                logger.error("agent_bridge_task_creation_failed", error=str(e), exc_info=True)
+
+            try:
+                app.state.channel_manager_task = asyncio.create_task(run_channel_manager())
+                logger.info("channel_manager_task_created", task_id=id(app.state.channel_manager_task))
+            except Exception as e:
+                logger.error("channel_manager_task_creation_failed", error=str(e), exc_info=True)
+
+            # 保存引用以便后续清理
+            app.state.social_config = social_config
+            app.state.message_bus = message_bus
+            app.state.session_mapper = session_mapper
+            app.state.agent_bridge = agent_bridge
+            app.state.channel_manager = channel_manager
+
+            enabled_platforms = [name for name, config in [
+                ("qq", social_config.qq),
+                ("weixin", social_config.weixin)
+            ] if config.enabled]
+
+            logger.info(
+                "social_platform_service_started",
+                enabled_platforms=enabled_platforms,
+                agent_bridge_running=True,
+                channel_manager_running=True
+            )
+    except Exception as e:
+        logger.error("social_platform_service_failed", error=str(e), exc_info=True)
+        logger.warning("continuing_without_social_platforms")
+
     # 2. 初始化数据库（如果配置了DATABASE_URL）
     if os.getenv("DATABASE_URL"):
         try:
@@ -317,8 +410,46 @@ async def shutdown_event():
         logger.info("scheduled_task_service_stopped")
     except Exception as e:
         logger.warning("scheduled_task_service_stop_failed", error=str(e))
-    """Shutdown event handler."""
-    logger.info("application_shutting_down")
+
+    # 停止社交平台服务
+    try:
+        # 取消后台任务
+        if hasattr(app.state, "channel_manager_task") and app.state.channel_manager_task:
+            app.state.channel_manager_task.cancel()
+            try:
+                await app.state.channel_manager_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("channel_manager_task_cancelled")
+
+        if hasattr(app.state, "agent_bridge_task") and app.state.agent_bridge_task:
+            app.state.agent_bridge_task.cancel()
+            try:
+                await app.state.agent_bridge_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("agent_bridge_task_cancelled")
+
+        # 停止Channel管理器
+        if hasattr(app.state, "channel_manager") and app.state.channel_manager:
+            await app.state.channel_manager.stop_all()
+            logger.info("channel_manager_stopped")
+
+        # 停止Agent桥接层
+        if hasattr(app.state, "agent_bridge") and app.state.agent_bridge:
+            await app.state.agent_bridge.stop()
+            logger.info("agent_bridge_stopped")
+
+        # 保存会话映射器状态
+        if hasattr(app.state, "session_mapper") and app.state.session_mapper:
+            await app.state.session_mapper.save()
+            # 清理过期会话
+            cleaned = await app.state.session_mapper.cleanup_expired(ttl_hours=24)
+            logger.info("session_mapper_saved_and_cleaned", cleaned_count=cleaned)
+
+        logger.info("social_platform_service_stopped")
+    except Exception as e:
+        logger.warning("social_platform_service_stop_failed", error=str(e))
 
     # 1. 停止数据获取后台
     try:

@@ -188,19 +188,21 @@ class SessionManager:
         """
         sessions = []
 
-        for file_path in self.storage_path.glob("session_*.json"):
-            try:
-                session_data = json.loads(file_path.read_text(encoding='utf-8'))
-                session = Session(**session_data)
+        # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*
+        for pattern in ["session_*.json", "assistant_session_*.json", "query_session_*.json", "report_session_*.json"]:
+            for file_path in self.storage_path.glob(pattern):
+                try:
+                    session_data = json.loads(file_path.read_text(encoding='utf-8'))
+                    session = Session(**session_data)
 
-                # 状态过滤
-                if state and session.state != state:
-                    continue
+                    # 状态过滤
+                    if state and session.state != state:
+                        continue
 
-                sessions.append(session.to_summary())
+                    sessions.append(session.to_summary())
 
-            except Exception as e:
-                logger.error(f"Failed to read session file {file_path}: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to read session file {file_path}: {e}")
 
         # 按更新时间降序排序
         sessions.sort(key=lambda x: x.updated_at, reverse=True)
@@ -245,24 +247,26 @@ class SessionManager:
         cutoff_date = datetime.now() - timedelta(days=self.retention_days)
         deleted_count = 0
 
-        for file_path in self.storage_path.glob("session_*.json"):
-            try:
-                session_data = json.loads(file_path.read_text(encoding='utf-8'))
-                session = Session(**session_data)
+        # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*
+        for pattern in ["session_*.json", "assistant_session_*.json", "query_session_*.json", "report_session_*.json"]:
+            for file_path in self.storage_path.glob(pattern):
+                try:
+                    session_data = json.loads(file_path.read_text(encoding='utf-8'))
+                    session = Session(**session_data)
 
-                # 检查是否过期
-                if session.updated_at < cutoff_date:
-                    # 只删除已完成或失败的会话
-                    if session.state in [
-                        SessionState.COMPLETED,
-                        SessionState.FAILED,
-                        SessionState.ARCHIVED
-                    ]:
-                        self.delete_session(session.session_id)
-                        deleted_count += 1
+                    # 检查是否过期
+                    if session.updated_at < cutoff_date:
+                        # 只删除已完成或失败的会话
+                        if session.state in [
+                            SessionState.COMPLETED,
+                            SessionState.FAILED,
+                            SessionState.ARCHIVED
+                        ]:
+                            self.delete_session(session.session_id)
+                            deleted_count += 1
 
-            except Exception as e:
-                logger.error(f"Failed to process session file {file_path}: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to process session file {file_path}: {e}")
 
         if deleted_count > 0:
             logger.info(f"Cleaned up {deleted_count} expired sessions")

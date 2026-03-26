@@ -1,7 +1,9 @@
 """
 工具注册表
 
-定义五种Agent模式的工具列表和排序
+定义六种Agent模式的工具列表和排序
+
+⚠️ 注意：保留现有的query模式（WEB端问数模式），新增social模式（移动端呼吸式Agent）
 """
 
 from typing import Dict, List
@@ -95,12 +97,16 @@ QUERY_TOOLS = {
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_standard_comparison": "新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
 
      # === 新增：数据注册表工具 ===
-    "read_data_registry": "读取已保存的数据（支持时间范围、字段选择，使用 fields 参数前，必须先用 list_fields=true 确认字段名）。参数: data_id(str), time_range(可选, str), fields(可选, list), jq_filter(可选, str)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str)",
 
     # === 数据分析工具 ===
     "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
+
+    # === 可视化工具 ===
+    "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_new_standard_report等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -120,9 +126,10 @@ REPORT_TOOLS = {
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
     "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
     "query_standard_comparison": "查询新旧空气质量标准对比（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
+    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
 
     # 数据读取
-    "read_data_registry": "读取已保存的数据（支持时间范围、字段选择）。参数: data_id(str), time_range(可选, str), fields(可选, list)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list)",
 
     # 文件操作
     "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
@@ -137,6 +144,30 @@ REPORT_TOOLS = {
 
     # 模式互调
     "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
+}
+
+# ===== 社交模式工具（移动端助理） =====
+SOCIAL_TOOLS = {
+    # === 文件操作 ===
+    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "write_file": "写入文件内容。参数: path(str), content(str)",
+    "list_directory": "列出目录内容。参数: path(str)",
+    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+
+    # === 模式互调 ===
+    "call_sub_agent": "调用专家Agent进行数据分析。参数: target_mode(str), task_description(str)",
+
+    # === 呼吸式特有工具 ===
+    "schedule_task": "创建定时任务。参数: task_description(str), schedule(str, cron表达式), channels(list, 可选)",
+    "send_notification": "主动发送通知。参数: message(str), channels(list, 可选)",
+
+    # === 记忆管理 ===
+    "remember_fact": "记住重要事实。参数: fact(str), category(str, 可选, 默认general)",
+    "search_history": "搜索历史对话。参数: query(str), limit(int, 可选, 默认10)",
+
+    # === 任务管理 ===
+    "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 }
 
 # ===== 编程模式工具 =====
@@ -226,9 +257,13 @@ QUERY_TOOL_ORDER = [
     "query_new_standard_report",  # 新标准统计报表
     "query_old_standard_report",  # 旧标准统计报表
     "query_standard_comparison",  # 新旧标准对比
+    "compare_standard_reports",  # 新标准报表对比分析
 
     # 数据分析工具
     "aggregate_data",
+
+    # 可视化工具
+    "generate_aqi_calendar",
 
     # 数据注册表
     "read_data_registry",
@@ -251,6 +286,7 @@ REPORT_TOOL_ORDER = [
     "query_new_standard_report",  # 新标准统计报表
     "query_old_standard_report",  # 旧标准统计报表
     "query_standard_comparison",
+    "compare_standard_reports",  # 新标准报表对比分析
 
     # 数据读取
     "read_data_registry",
@@ -268,13 +304,34 @@ REPORT_TOOL_ORDER = [
     "call_sub_agent",
 ]
 
+# ===== 社交模式工具排序 =====
+SOCIAL_TOOL_ORDER = [
+    # 数据查询
+    "query_new_standard_report",
+    "get_weather_data",
+
+    # 呼吸式特有工具
+    "schedule_task",
+    "send_notification",
+
+    # 记忆管理
+    "remember_fact",
+    "search_history",
+
+    # 任务管理
+    "TodoWrite",
+
+    # 模式互调
+    "call_sub_agent",
+]
+
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
     """
     根据模式获取工具列表
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report"
+        mode: "assistant" | "expert" | "code" | "query" | "report" | "social"
 
     Returns:
         工具字典 {tool_name: description}
@@ -289,6 +346,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return QUERY_TOOLS
     elif mode == "report":
         return REPORT_TOOLS
+    elif mode == "social":
+        return SOCIAL_TOOLS
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -298,7 +357,7 @@ def get_tool_order(mode: str) -> List[str]:
     根据模式获取工具排序
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report"
+        mode: "assistant" | "expert" | "code" | "query" | "report" | "social"
 
     Returns:
         工具名称列表（按展示顺序）
@@ -313,5 +372,7 @@ def get_tool_order(mode: str) -> List[str]:
         return QUERY_TOOL_ORDER
     elif mode == "report":
         return REPORT_TOOL_ORDER
+    elif mode == "social":
+        return SOCIAL_TOOL_ORDER
     else:
         raise ValueError(f"Unknown mode: {mode}")

@@ -207,6 +207,23 @@ class ComponentExecutor(ExpertExecutor):
         # 旧的 iaqi_calculator 工具已删除
 
         # ========================================
+        # 新标准统计报表工具（HJ 633-2024）
+        # ========================================
+        try:
+            from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
+            tools["query_new_standard_report"] = QueryNewStandardReportTool()
+            logger.info("新标准统计报表工具加载成功: query_new_standard_report（HJ 633-2024）")
+        except ImportError as e:
+            logger.warning("新标准统计报表工具加载失败", tool="query_new_standard_report", error=str(e))
+
+        try:
+            from app.tools.query.compare_standard_reports.tool import CompareStandardReportsTool
+            tools["compare_standard_reports"] = CompareStandardReportsTool()
+            logger.info("新标准报表对比分析工具加载成功: compare_standard_reports（对比两个时间段的统计指标）")
+        except ImportError as e:
+            logger.warning("新标准报表对比分析工具加载失败", tool="compare_standard_reports", error=str(e))
+
+        # ========================================
         # 颗粒物组分分析工具（新增）
         # 7大组分重构、碳组分、地壳元素、水溶性离子、微量元素
         # ========================================

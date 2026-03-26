@@ -1,107 +1,499 @@
 // ReAct Agent状态管理
-// 简化的状态管理，专注于ReAct循环
+// 多模式并行任务系统 - 按模式隔离状态
 
 import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 
+// 辅助函数：创建空的模式状态
+const createEmptyModeState = () => ({
+  // 基础状态
+  sessionId: null,
+  isAnalyzing: false,
+  error: null,
+  isInterruption: false,
+
+  // 对话
+  messages: [],
+  currentMessage: '',
+
+  // 分析状态
+  isComplete: false,
+  iterations: 0,
+  maxIterations: 30,
+
+  // 增强功能
+  showReflexion: false,
+  reflexionCount: 0,
+
+  // 多专家系统状态
+  expertSystemEnabled: false,
+  expertResults: {},
+  lastExpertResults: null,
+  selectedExperts: [],
+
+  // Office文档预览状态
+  lastOfficeDocument: null,
+
+  // 结果
+  finalAnswer: '',
+  finalAnswers: [],
+  hasResults: false,
+
+  // 可视化
+  currentVisualization: null,
+  visualizationHistory: [],
+  groupedVisualizations: {
+    weather: [],
+    component: []
+  },
+
+  // 结果管理系统
+  results: {
+    map: null,
+    charts: [],
+    tables: [],
+    text: ''
+  },
+
+  // 原有工作流字段
+  sessionRound: 0,
+  interventionQueue: [],
+
+  // 流式渲染状态
+  streamingAnswerMessageId: null,
+  _forceRenderCount: 0,
+
+  // 内部状态
+  _lastProcessedExpertResultsHash: null
+})
+
 export const useReactStore = defineStore('react', {
-  state: () => ({
-    // 基础状态
-    sessionId: null,
-    isAnalyzing: false,
-    error: null,
-    isInterruption: false,  // 标记是否为用户中断后的对话
-    agentMode: localStorage.getItem('agent-mode') || 'assistant',  // ✅ 双模式架构：从localStorage读取，默认assistant
+  state: () => {
+    // 从localStorage恢复currentMode
+    const savedMode = localStorage.getItem('current-mode') || 'assistant'
 
-    // 对话
-    messages: [],
-    currentMessage: '',
+    return {
+      // 当前激活的模式
+      currentMode: savedMode,
 
-    // 分析状态
-    isComplete: false,
-    iterations: 0,
-    maxIterations: 30,
+      // 所有模式的状态（按模式隔离）
+      modeStates: {
+        assistant: createEmptyModeState(),
+        expert: createEmptyModeState(),
+        query: createEmptyModeState(),
+        code: createEmptyModeState(),
+        report: createEmptyModeState()
+      },
 
-    // 增强功能
-    showReflexion: false,  // 显示Reflexion状态
-    reflexionCount: 0,  // Reflexion次数计数
-
-    // 多专家系统状态
-    expertSystemEnabled: false,
-    expertResults: {},  // 存储各专家结果
-    lastExpertResults: null,  // 存储最新的专家结果
-    selectedExperts: [],  // 选中的专家列表
-
-    // Office文档预览状态
-    lastOfficeDocument: null,  // 最新的Office文档PDF预览数据
-
-    // 结果
-    finalAnswer: '',
-    finalAnswers: [],
-    hasResults: false,
-
-    // 可视化
-    currentVisualization: null,
-    visualizationHistory: [],
-    // 按专家类型分组的可视化数据（优化：一次性处理，避免重复计算）
-    groupedVisualizations: {
-      weather: [],
-      component: []
-    },
-
-    // 工具（调试用）
-    availableTools: [],
-
-    // 采用原有工作流的结果管理系统
-    results: {
-      map: null,
-      charts: [],
-      tables: [],
-      text: ''
-    },
-
-    // 原有工作流字段
-    sessionRound: 0,
-    interventionQueue: [],
-
-    // 最终答案流式渲染状态
-    streamingAnswerMessageId: null,
-    _forceRenderCount: 0  // 强制渲染计数器，用于流式完成后触发重新渲染
-  }),
+      // 工具列表（全局共享）
+      availableTools: []
+    }
+  },
 
   getters: {
+    // ✅ 向后兼容：当前模式的状态（核心getter）
+    currentState: (state) => {
+      return state.modeStates[state.currentMode] || state.modeStates.assistant
+    },
+
+    // ✅ 向后兼容：sessionId
+    sessionId: (state) => state.modeStates[state.currentMode]?.sessionId || null,
+
+    // ✅ 向后兼容：isAnalyzing
+    isAnalyzing: (state) => state.modeStates[state.currentMode]?.isAnalyzing || false,
+
+    // ✅ 向后兼容：messages
+    messages: (state) => state.modeStates[state.currentMode]?.messages || [],
+
+    // ✅ 向后兼容：agentMode (返回currentMode)
+    agentMode: (state) => state.currentMode,
+
+    // ✅ 向后兼容：error
+    error: (state) => state.modeStates[state.currentMode]?.error || null,
+
+    // ✅ 向后兼容：finalAnswer
+    finalAnswer: (state) => state.modeStates[state.currentMode]?.finalAnswer || '',
+
+    // ✅ 向后兼容：hasResults
+    hasResults: (state) => state.modeStates[state.currentMode]?.hasResults || false,
+
+    // ✅ 向后兼容：visualizationHistory
+    visualizationHistory: (state) => state.modeStates[state.currentMode]?.visualizationHistory || [],
+
+    // ✅ 向后兼容：lastExpertResults
+    lastExpertResults: (state) => state.modeStates[state.currentMode]?.lastExpertResults || null,
+
+    // ✅ 向后兼容：lastOfficeDocument
+    lastOfficeDocument: (state) => state.modeStates[state.currentMode]?.lastOfficeDocument || null,
+
+    // ✅ 向后兼容：groupedVisualizations
+    groupedVisualizations: (state) => state.modeStates[state.currentMode]?.groupedVisualizations || { weather: [], component: [] },
+
+    // ✅ 向后兼容：currentVisualization
+    currentVisualization: (state) => state.modeStates[state.currentMode]?.currentVisualization || null,
+
+    // ✅ 向后兼容：isComplete
+    isComplete: (state) => state.modeStates[state.currentMode]?.isComplete || false,
+
+    // ✅ 向后兼容：iterations
+    iterations: (state) => state.modeStates[state.currentMode]?.iterations || 0,
+
+    // ✅ 向后兼容：maxIterations
+    maxIterations: (state) => state.modeStates[state.currentMode]?.maxIterations || 30,
+
+    // ✅ 向后兼容：sessionRound
+    sessionRound: (state) => state.modeStates[state.currentMode]?.sessionRound || 0,
+
+    // 新增：获取所有正在运行的模式
+    runningModes: (state) => {
+      return Object.entries(state.modeStates)
+        .filter(([_, modeState]) => modeState.isAnalyzing)
+        .map(([mode, _]) => mode)
+    },
+
+    // 新增：获取每个模式的消息数量
+    modeMessageCounts: (state) => {
+      const counts = {}
+      for (const [mode, modeState] of Object.entries(state.modeStates)) {
+        counts[mode] = modeState.messages.length
+      }
+      return counts
+    },
+
     // 对话列表（排除内部事件）
     conversation: (state) => {
-      return state.messages.filter(msg =>
+      const currentMessages = state.modeStates[state.currentMode]?.messages || []
+      return currentMessages.filter(msg =>
         msg.type === 'user' || msg.type === 'agent' || msg.type === 'thought' || msg.type === 'final'
       )
     },
 
     // 分析日志（内部事件）
     analysisLog: (state) => {
-      return state.messages.filter(msg =>
+      const currentMessages = state.modeStates[state.currentMode]?.messages || []
+      return currentMessages.filter(msg =>
         msg.type === 'start' || msg.type === 'action' || msg.type === 'observation' || msg.type === 'error'
       )
     },
 
     // 可输入状态
-    canInput: (state) => !state.isAnalyzing,
+    canInput: (state) => {
+      const currentModeState = state.modeStates[state.currentMode]
+      return currentModeState ? !currentModeState.isAnalyzing : true
+    },
 
     // 进度
     progress: (state) => {
-      if (state.maxIterations === 0) return 0
-      return Math.min(100, Math.round((state.iterations / state.maxIterations) * 100))
+      const currentModeState = state.modeStates[state.currentMode]
+      if (!currentModeState || currentModeState.maxIterations === 0) return 0
+      return Math.min(100, Math.round((currentModeState.iterations / currentModeState.maxIterations) * 100))
     },
 
     // 已完成的工具调用
     completedTools: (state) => {
-      return state.messages
+      const currentMessages = state.modeStates[state.currentMode]?.messages || []
+      return currentMessages
         .filter(m => m.type === 'action' && m.data?.status === 'success' && m.data?.tool)
         .map(m => m.data.tool)
     }
   },
 
   actions: {
+    // ========== 新增：模式切换核心逻辑 ==========
+
+    /**
+     * 切换到指定模式
+     * - 保存当前模式状态到localStorage
+     * - 切换模式
+     * - 恢复目标模式状态
+     */
+    switchMode(newMode) {
+      if (!['assistant', 'expert', 'query', 'code', 'report'].includes(newMode)) {
+        console.warn('[switchMode] Invalid mode:', newMode)
+        return
+      }
+
+      if (newMode === this.currentMode) {
+        console.log('[switchMode] Already in mode:', newMode)
+        return
+      }
+
+      console.log('[switchMode] Switching from', this.currentMode, 'to', newMode)
+
+      // 1. 保存当前模式状态到 localStorage
+      this._persistModeState(this.currentMode)
+
+      // 2. 切换模式
+      const oldMode = this.currentMode
+      this.currentMode = newMode
+      localStorage.setItem('current-mode', newMode)
+
+      // 3. 恢复目标模式状态
+      this._restoreModeState(newMode)
+
+      console.log('[switchMode] Mode switched successfully')
+      console.log('[switchMode] Old mode running:', this.modeStates[oldMode]?.isAnalyzing)
+      console.log('[switchMode] New mode running:', this.modeStates[newMode]?.isAnalyzing)
+      console.log('[switchMode] ✅ Multi-mode parallel working enabled')
+    },
+
+    /**
+     * 保存模式状态到 localStorage
+     * - 只保存最近50条消息
+     * - 保存完整的模式状态
+     */
+    _persistModeState(mode) {
+      if (!this.modeStates[mode]) return
+
+      const modeState = this.modeStates[mode]
+
+      // 只保存最近50条消息（避免localStorage超限）
+      const messagesToSave = modeState.messages.slice(-50)
+
+      const stateToSave = {
+        sessionId: modeState.sessionId,
+        isAnalyzing: modeState.isAnalyzing,
+        error: modeState.error,
+        isInterruption: modeState.isInterruption,
+        messages: messagesToSave,
+        currentMessage: modeState.currentMessage,
+        isComplete: modeState.isComplete,
+        iterations: modeState.iterations,
+        maxIterations: modeState.maxIterations,
+        showReflexion: modeState.showReflexion,
+        reflexionCount: modeState.reflexionCount,
+        expertSystemEnabled: modeState.expertSystemEnabled,
+        expertResults: modeState.expertResults,
+        lastExpertResults: modeState.lastExpertResults,
+        selectedExperts: modeState.selectedExperts,
+        lastOfficeDocument: modeState.lastOfficeDocument,
+        finalAnswer: modeState.finalAnswer,
+        finalAnswers: modeState.finalAnswers,
+        hasResults: modeState.hasResults,
+        currentVisualization: modeState.currentVisualization,
+        visualizationHistory: modeState.visualizationHistory,
+        groupedVisualizations: modeState.groupedVisualizations,
+        results: modeState.results,
+        sessionRound: modeState.sessionRound,
+        interventionQueue: modeState.interventionQueue,
+        streamingAnswerMessageId: modeState.streamingAnswerMessageId,
+        _forceRenderCount: modeState._forceRenderCount,
+        _lastProcessedExpertResultsHash: modeState._lastProcessedExpertResultsHash
+      }
+
+      try {
+        localStorage.setItem(`mode-state-${mode}`, JSON.stringify(stateToSave))
+        console.log(`[_persistModeState] Saved ${mode} state with ${messagesToSave.length} messages`)
+      } catch (error) {
+        console.error(`[_persistModeState] Failed to save ${mode} state:`, error)
+        // localStorage超限，清空旧状态重试
+        try {
+          const minimalState = {
+            sessionId: modeState.sessionId,
+            messages: messagesToSave.slice(-10), // 只保留最后10条
+            isAnalyzing: modeState.isAnalyzing
+          }
+          localStorage.setItem(`mode-state-${mode}`, JSON.stringify(minimalState))
+          console.log(`[_persistModeState] Saved minimal ${mode} state`)
+        } catch (retryError) {
+          console.error(`[_persistModeState] Failed to save minimal state:`, retryError)
+        }
+      }
+    },
+
+    /**
+     * 从 localStorage 恢复模式状态
+     */
+    _restoreModeState(mode) {
+      try {
+        const savedStateJSON = localStorage.getItem(`mode-state-${mode}`)
+        if (!savedStateJSON) {
+          console.log(`[_restoreModeState] No saved state for ${mode}`)
+          return
+        }
+
+        const savedState = JSON.parse(savedStateJSON)
+
+        // 合并保存的状态到当前模式状态
+        Object.assign(this.modeStates[mode], savedState)
+
+        console.log(`[_restoreModeState] Restored ${mode} state with ${savedState.messages?.length || 0} messages`)
+      } catch (error) {
+        console.error(`[_restoreModeState] Failed to restore ${mode} state:`, error)
+      }
+    },
+
+    /**
+     * 重置指定模式的状态
+     */
+    resetMode(mode) {
+      if (!this.modeStates[mode]) return
+
+      // 创建新的空状态
+      const emptyState = createEmptyModeState()
+      Object.assign(this.modeStates[mode], emptyState)
+
+      // 清除localStorage
+      localStorage.removeItem(`mode-state-${mode}`)
+
+      console.log(`[resetMode] Reset mode: ${mode}`)
+    },
+
+    /**
+     * 重置所有模式的状态
+     */
+    resetAllModes() {
+      for (const mode of ['assistant', 'expert', 'query', 'code', 'report']) {
+        this.resetMode(mode)
+      }
+      console.log('[resetAllModes] All modes reset')
+    },
+
+    /**
+     * 清理旧的模式状态（超过7天）
+     */
+    cleanupOldStates() {
+      const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
+      let cleanedCount = 0
+
+      for (const mode of ['assistant', 'expert', 'query', 'code', 'report']) {
+        const stateKey = `mode-state-${mode}`
+        const savedStateJSON = localStorage.getItem(stateKey)
+
+        if (savedStateJSON) {
+          try {
+            const savedState = JSON.parse(savedStateJSON)
+
+            // 检查最后一条消息的时间戳
+            const lastMessage = savedState.messages && savedState.messages[savedState.messages.length - 1]
+            if (lastMessage && lastMessage.timestamp) {
+              const lastMessageTime = new Date(lastMessage.timestamp).getTime()
+              if (lastMessageTime < sevenDaysAgo) {
+                localStorage.removeItem(stateKey)
+                cleanedCount++
+                console.log(`[cleanupOldStates] Cleaned up ${mode} state (last message from ${new Date(lastMessageTime).toLocaleDateString()})`)
+              }
+            }
+          } catch (error) {
+            console.error(`[cleanupOldStates] Failed to parse ${mode} state:`, error)
+            // 如果解析失败，删除该状态
+            localStorage.removeItem(stateKey)
+            cleanedCount++
+          }
+        }
+      }
+
+      console.log(`[cleanupOldStates] Cleanup complete: ${cleanedCount} modes cleaned`)
+      return cleanedCount
+    },
+
+    /**
+     * 设置当前模式的消息列表（用于会话恢复）
+     */
+    setMessages(messages) {
+      if (!Array.isArray(messages)) {
+        console.warn('[setMessages] Invalid messages:', messages)
+        return
+      }
+      this.currentState.messages = messages
+      console.log(`[setMessages] Set ${messages.length} messages for mode ${this.currentMode}`)
+    },
+
+    /**
+     * 从 sessionId 中提取模式
+     * sessionId 格式: ${mode}_session_${timestamp}_${random}
+     */
+    extractModeFromSessionId(sessionId) {
+      if (!sessionId || typeof sessionId !== 'string') {
+        return null
+      }
+      const match = sessionId.match(/^([a-z]+)_session_/)
+      return match ? match[1] : null
+    },
+
+    /**
+     * 根据 sessionId 获取对应模式的状态
+     */
+    getModeStateBySessionId(sessionId) {
+      const mode = this.extractModeFromSessionId(sessionId)
+      if (!mode || !this.modeStates[mode]) {
+        console.warn('[getModeStateBySessionId] Cannot find mode for sessionId:', sessionId)
+        return this.currentState  // 降级：返回当前模式状态
+      }
+      return this.modeStates[mode]
+    },
+
+    /**
+     * 设置当前模式的 sessionId（用于会话恢复）
+     */
+    setSessionId(sessionId) {
+      if (!sessionId || typeof sessionId !== 'string') {
+        console.warn('[setSessionId] Invalid sessionId:', sessionId)
+        return
+      }
+      this.currentState.sessionId = sessionId
+      console.log(`[setSessionId] Set sessionId for mode ${this.currentMode}:`, sessionId)
+    },
+
+    /**
+     * 设置当前模式的可视化历史（用于会话恢复）
+     */
+    setVisualizationHistory(visualizations) {
+      if (!Array.isArray(visualizations)) {
+        console.warn('[setVisualizationHistory] Invalid visualizations:', visualizations)
+        return
+      }
+      this.currentState.visualizationHistory = visualizations
+      console.log(`[setVisualizationHistory] Set ${visualizations.length} visualizations for mode ${this.currentMode}`)
+    },
+
+    /**
+     * 设置当前模式的专家结果（用于会话恢复）
+     */
+    setLastExpertResults(results) {
+      this.currentState.lastExpertResults = results
+      console.log(`[setLastExpertResults] Set expert results for mode ${this.currentMode}`)
+    },
+
+    /**
+     * 设置当前模式的完成状态（用于会话恢复）
+     */
+    setComplete(isComplete) {
+      this.currentState.isComplete = !!isComplete
+      console.log(`[setComplete] Set complete=${isComplete} for mode ${this.currentMode}`)
+    },
+
+    /**
+     * 批量设置会话状态（用于会话恢复）
+     */
+    restoreSessionState(sessionData) {
+      if (!sessionData) return
+
+      if (sessionData.session_id) {
+        this.setSessionId(sessionData.session_id)
+      }
+
+      if (sessionData.conversation_history && Array.isArray(sessionData.conversation_history)) {
+        this.setMessages(sessionData.conversation_history)
+      }
+
+      if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
+        this.setVisualizationHistory(sessionData.visualizations)
+      }
+
+      if (sessionData.last_result) {
+        this.currentState.lastExpertResults = sessionData.last_result
+      }
+
+      if (sessionData.state === 'completed') {
+        this.setComplete(true)
+      }
+
+      console.log(`[restoreSessionState] Session restored for mode ${this.currentMode}`)
+    },
+
+    // ========== 原有方法（适配多模式）==========
+
     // 获取专家标签
     getExpertLabel(expertType) {
       const labelMap = {
@@ -120,10 +512,16 @@ export const useReactStore = defineStore('react', {
         const tools = await agentAPI.getTools()
         this.availableTools = tools.tools
         console.log('Available tools:', this.availableTools)
+
+        // 恢复所有模式的状态
+        for (const mode of ['assistant', 'expert', 'query', 'code', 'report']) {
+          this._restoreModeState(mode)
+        }
       } catch (error) {
         this.availableTools = []
-        if (!this.messages.find(msg => msg.type === 'error' && msg.source === 'tools')) {
-          this.addMessage('error', '工具列表加载失败，可稍后在顶部“工具管理”里重试。', { source: 'tools', error: error.message })
+        const currentMsgs = this.currentState.messages
+        if (!currentMsgs.find(msg => msg.type === 'error' && msg.source === 'tools')) {
+          this.addMessage('error', '工具列表加载失败，可稍后在顶部”工具管理”里重试。', { source: 'tools', error: error.message })
         }
         console.error('Failed to load tools:', error)
       }
@@ -131,12 +529,13 @@ export const useReactStore = defineStore('react', {
 
     // 继续会话（原有工作流逻辑）
     continueSession() {
-      this.sessionRound = Math.max(this.sessionRound + 1, 1)
-      this.isAnalyzing = false
-      this.error = null
+      const current = this.currentState
+      current.sessionRound = Math.max(current.sessionRound + 1, 1)
+      current.isAnalyzing = false
+      current.error = null
       // 保留finalAnswer，让它保持直到新答案到来
       // 保留messages，但清空本轮的可视化结果
-      this.results = {
+      current.results = {
         map: null,
         charts: [],
         tables: [],
@@ -144,44 +543,30 @@ export const useReactStore = defineStore('react', {
       }
     },
 
-    // 创建会话ID
+    // 创建会话ID（按模式隔离）
     createSessionId() {
-      if (!this.sessionId) {
-        this.sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        console.log('Created session:', this.sessionId)
+      const current = this.currentState
+      if (!current.sessionId) {
+        const mode = this.currentMode
+        current.sessionId = `${mode}_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        console.log('[createSessionId] Created session for', mode, ':', current.sessionId)
       }
     },
 
-    // 重置会话
+    // 重置当前模式的会话
     reset() {
-      this.sessionId = null
-      this.messages = []
-      this.isAnalyzing = false
-      this.isComplete = false
-      this.iterations = 0
-      this.error = null
-      this.finalAnswer = ''
-      this.finalAnswers = []
-      this.hasResults = false
-      this.currentVisualization = null
-      this.visualizationHistory = []
-      this.sessionRound = 0
-      this.expertSystemEnabled = false
-      this.expertResults = {}
-      this.lastExpertResults = null
-      this.selectedExperts = []
-      this._lastProcessedExpertResultsHash = null  // 【新增】重置防重复检查
-      this.lastOfficeDocument = null  // 重置Office文档状态
-      this.results = {
-        map: null,
-        charts: [],
-        tables: [],
-        text: ''
-      }
-      this.streamingAnswerMessageId = null
+      const current = this.currentState
+      const emptyState = createEmptyModeState()
+
+      // 保留一些字段
+      emptyState.maxIterations = current.maxIterations
+
+      Object.assign(current, emptyState)
+
+      console.log('[reset] Reset current mode:', this.currentMode)
     },
 
-    // 添加消息
+    // 添加消息（添加到当前模式）
     addMessage(type, content, data = null, attachments = null, extraFields = {}) {
       const message = {
         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -192,35 +577,137 @@ export const useReactStore = defineStore('react', {
         timestamp: new Date().toISOString(),
         ...extraFields  // 支持额外字段（如 streaming, streamingAnswerId 等）
       }
-      this.messages.push(message)
+      this.currentState.messages.push(message)
       return message.id
     },
 
-    // 处理ReAct事件
+    /**
+     * 添加消息到指定模式（用于事件路由）
+     */
+    addMessageToMode(mode, type, content, data = null, attachments = null, extraFields = {}) {
+      console.log(`[addMessageToMode] Called with mode=${mode}, type=${type}`)
+      console.log(`[addMessageToMode] this.currentMode=${this.currentMode}`)
+      console.log(`[addMessageToMode] Available modes:`, Object.keys(this.modeStates))
+
+      if (!mode || !this.modeStates[mode]) {
+        console.warn('[addMessageToMode] Invalid mode:', mode, ', falling back to current mode', this.currentMode)
+        mode = this.currentMode
+      }
+
+      const message = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        content,
+        data,
+        attachments,
+        timestamp: new Date().toISOString(),
+        ...extraFields
+      }
+
+      console.log(`[addMessageToMode] Adding message to mode ${mode}, before push: ${this.modeStates[mode].messages.length} messages`)
+      this.modeStates[mode].messages.push(message)
+      console.log(`[addMessageToMode] After push: ${this.modeStates[mode].messages.length} messages`)
+      console.log(`[addMessageToMode] Current mode ${this.currentMode} has ${this.currentState.messages.length} messages`)
+
+      return message.id
+    },
+
+    /**
+     * 获取事件的目标模式状态
+     */
+    getEventTargetState(eventData) {
+      const sessionId = eventData?.session_id
+      const eventMode = this.extractModeFromSessionId(sessionId)
+
+      if (!eventMode) {
+        // 无法从 sessionId 提取模式，使用当前模式
+        return this.currentState
+      }
+
+      if (!this.modeStates[eventMode]) {
+        console.warn('[getEventTargetState] Invalid mode:', eventMode)
+        return this.currentState
+      }
+
+      return this.modeStates[eventMode]
+    },
+
+    // 处理ReAct事件（根据sessionId路由到正确的模式）
     handleEvent(event) {
-      console.log('ReAct event:', event)
+      console.log('[handleEvent] ========================================')
+      console.log('[handleEvent] Received event:', event.type)
+      console.log('[handleEvent] event.data:', event.data)
+      console.log('[handleEvent] event.data?.session_id:', event.data?.session_id)
+      console.log('[handleEvent] this.currentMode:', this.currentMode)
 
       const { type, data } = event
+
+      // 确定目标模式
+      // 【修复】完全基于session_id路由，支持真正的多模式并行任务
+      const sessionId = data?.session_id || event?.session_id
+      console.log('[handleEvent] sessionId:', sessionId)
+
+      const eventMode = this.extractModeFromSessionId(sessionId)
+      console.log('[handleEvent] Extracted eventMode:', eventMode)
+
+      // 【关键修复】路由逻辑：
+      // 1. 优先使用session_id提取的模式（支持并行任务）
+      // 2. 如果没有session_id，使用currentMode（兼容旧版事件）
+      // 3. 否则使用currentMode作为默认值
+      const targetMode = eventMode || this.currentMode
+      console.log('[handleEvent] targetMode:', targetMode)
+
+      // 【调试】并行任务状态
+      if (eventMode && eventMode !== this.currentMode) {
+        console.log(`[handleEvent] ✅ PARALLEL TASK: routing to ${eventMode} (current: ${this.currentMode}, type: ${type})`)
+        console.log(`[handleEvent] Current mode state:`, {
+          mode: this.currentMode,
+          isAnalyzing: this.currentState.isAnalyzing,
+          messageCount: this.currentState.messages.length
+        })
+        console.log(`[handleEvent] Target mode state:`, {
+          mode: eventMode,
+          isAnalyzing: this.modeStates[eventMode]?.isAnalyzing,
+          messageCount: this.modeStates[eventMode]?.messages?.length
+        })
+      }
+
+      const targetState = this.modeStates[targetMode] || this.currentState
+      console.log('[handleEvent] targetState:', targetState)
+      console.log('[handleEvent] targetState.messages.length:', targetState?.messages?.length)
+
+      // 如果事件属于非当前模式，记录日志
+      if (eventMode && eventMode !== this.currentMode) {
+        console.log(`[handleEvent] ⚠️ ROUTING event to mode ${eventMode} (current: ${this.currentMode}, type: ${type})`)
+      }
+
+      // 创建局部的 addMessage 函数，自动路由到正确的模式
+      const addMessage = (msgType, msgContent, msgData = null, msgAttachments = null, msgExtraFields = {}) => {
+        console.log(`[handleEvent] addMessage called: mode=${targetMode}, type=${msgType}, content=${msgContent?.substring(0, 50)}...`)
+        const msgId = this.addMessageToMode(targetMode, msgType, msgContent, msgData, msgAttachments, msgExtraFields)
+        console.log(`[handleEvent] Message added to ${targetMode}, total messages: ${this.modeStates[targetMode]?.messages?.length}`)
+        return msgId
+      }
 
       switch (type) {
         case 'start':
           // 分析开始
-          this.addMessage('start', `开始分析: ${data?.query || ''}`)
+          addMessage('start', `开始分析: ${data?.query || ''}`)
           if (data?.session_id) {
-            this.sessionId = data.session_id
+            targetState.sessionId = data.session_id
           }
-          this.iterations = 0
+          targetState.iterations = 0
           break
 
         case 'thought':
           // LLM思考
           const thoughtContent = data?.thought || '思考中...'
-          this.addMessage('thought', thoughtContent, null)
+          addMessage('thought', thoughtContent, null)
 
           // 检测Reflexion
           if (data?.thought && data.thought.includes('[Reflexion 反思]')) {
-            this.showReflexion = true
-            this.reflexionCount++
+            targetState.showReflexion = true
+            targetState.reflexionCount++
           }
           break
 
@@ -249,18 +736,19 @@ export const useReactStore = defineStore('react', {
             actionContent = `调用工具: ${toolName}`
           }
 
-          this.addMessage('action', actionContent, actionData)
+          addMessage('action', actionContent, actionData)
           break
 
         case 'observation':
           // 观察结果
           const obsContent = data?.observation || '获得结果'
-          this.addMessage('observation', obsContent, data)
+          addMessage('observation', obsContent, data)
           break
 
         case 'office_document':
           // Office文档PDF预览事件（用于驱动文档预览面板）
-          this.lastOfficeDocument = {
+          // 【修复】使用targetState而不是currentState
+          targetState.lastOfficeDocument = {
             pdf_preview: data?.pdf_preview,
             file_path: data?.file_path,
             generator: data?.generator,
@@ -270,7 +758,8 @@ export const useReactStore = defineStore('react', {
           console.log('[reactStore] office_document事件:', {
             generator: data?.generator,
             pdf_id: data?.pdf_preview?.pdf_id,
-            file_path: data?.file_path
+            file_path: data?.file_path,
+            targetMode: targetMode
           })
           break
 
@@ -288,19 +777,19 @@ export const useReactStore = defineStore('react', {
           // console.log(`[streaming_text] Chunk #${this._streamDebug.chunkCount}, ${elapsed}ms, length: ${chunk.length}`)
 
           if (chunk) {
-            // 如果是第一个块，创建新消息
-            if (!this.streamingAnswerMessageId) {
-              this.streamingAnswerMessageId = this.addMessage('final', '', {
+            // 【关键修复】如果是第一个块，创建新消息
+            if (!targetState.streamingAnswerMessageId) {
+              targetState.streamingAnswerMessageId = addMessage('final', '', {
                 timestamp: data?.timestamp
               }, null, { streaming: true })
             }
 
-            // 找到消息并直接追加内容（Pinia 会自动追踪变化）
-            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+            // 【关键修复】找到消息并直接追加内容（使用targetState而不是currentState）
+            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
             if (msg) {
               msg.content += chunk
               // 同步更新 finalAnswer
-              this.finalAnswer += chunk
+              targetState.finalAnswer += chunk
             }
           }
 
@@ -311,15 +800,15 @@ export const useReactStore = defineStore('react', {
             // console.log(`[streaming_text] 完成！共 ${this._streamDebug.chunkCount} 个 chunks，总耗时 ${totalTime}ms`)
             // this._streamDebug = null
 
-            if (this.streamingAnswerMessageId) {
-              const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+            if (targetState.streamingAnswerMessageId) {
+              const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
               if (msg) {
                 msg.streaming = false
                 // 强制触发响应式更新，确保流式完成后重新渲染
-                this._forceRenderCount++
+                targetState._forceRenderCount++
               }
             }
-            this.streamingAnswerMessageId = null
+            targetState.streamingAnswerMessageId = null
           }
           break
 
@@ -334,32 +823,33 @@ export const useReactStore = defineStore('react', {
           console.log('[event:complete] has expert_results:', !!data?.expert_results)
           console.log('[event:complete] has visuals:', !!(data?.visuals && Array.isArray(data.visuals) && data.visuals.length > 0))
 
-          this.isAnalyzing = false
-          this.isComplete = true
-          this.iterations = data?.iterations || this.iterations
+          // 【修复】使用targetState而不是currentState，确保状态更新到正确的模式
+          targetState.isAnalyzing = false
+          targetState.isComplete = true
+          targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
-          this.finalAnswer = data?.response || data?.answer || ''
-          this.hasResults = true
+          targetState.finalAnswer = data?.response || data?.answer || ''
+          targetState.hasResults = true
 
           // 记录最终答案（原有工作流逻辑）
-          this.finalAnswers.push({
-            run: this.sessionRound,
+          targetState.finalAnswers.push({
+            run: targetState.sessionRound,
             content: data?.response || data?.answer || '分析完成',
             timestamp: new Date().toISOString()
           })
 
           // 添加最终答案消息到UI
           // 如果已经通过 answer_delta 流式创建了最终答案消息，则只更新其元数据，避免重复追加一条消息
-          console.log('[event:complete] streamingAnswerMessageId:', this.streamingAnswerMessageId)
-          if (this.streamingAnswerMessageId) {
-            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+          console.log('[event:complete] streamingAnswerMessageId:', targetState.streamingAnswerMessageId)
+          if (targetState.streamingAnswerMessageId) {
+            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
             if (msg) {
               // 【修复】确保流式结束状态，并触发响应式更新
               msg.streaming = false
               // 【关键修复】用后端返回的完整response覆盖content（确保格式正确）
               if (data?.response) {
                 msg.content = data.response
-                this.finalAnswer = data.response
+                targetState.finalAnswer = data.response
               }
               // 使用 Object.assign 确保响应式更新
               Object.assign(msg, {
@@ -373,21 +863,21 @@ export const useReactStore = defineStore('react', {
                 }
               })
               // 触发数组响应式更新
-              this.messages = [...this.messages]
+              targetState.messages = [...targetState.messages]
               console.log('[event:complete] 更新已有消息的数据，streaming设置为false')
             }
           } else if (data?.answer || data?.response) {
             // 【修复】优先使用response字段，兼容answer字段
             const finalContent = data?.response || data?.answer || ''
             console.log('[event:complete] 添加final消息，content:', finalContent.substring(0, 50) + '...')
-            this.addMessage('final', finalContent, {
+            addMessage('final', finalContent, {
               iterations: data?.iterations,
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
               sources: data?.sources || null  // ✅ 知识问答参考来源
             }, null, { streaming: false })  // 【修复】明确设置 streaming: false
-            console.log('[event:complete] messages数量:', this.messages.length)
+            console.log('[event:complete] messages数量:', targetState.messages.length)
           } else {
             console.log('[event:complete] 警告：没有answer或response字段，不添加final消息')
           }
@@ -403,7 +893,7 @@ export const useReactStore = defineStore('react', {
             console.log('[event:complete] 调用 _processExpertResultsForVisualization')
             this._processExpertResultsForVisualization(data.expert_results)
             // 【重要】同时存储完整的专家结果供前端使用
-            this.lastExpertResults = {
+            targetState.lastExpertResults = {
               expert_results: data.expert_results
             }
             console.log('[event:complete] lastExpertResults已设置')
@@ -424,22 +914,22 @@ export const useReactStore = defineStore('react', {
               })
               // 【关键修复】同步更新 groupedVisualizations
               const targetGroup = this._classifyVizForComplete(viz)
-              if (!this.groupedVisualizations[targetGroup]) {
-                this.groupedVisualizations[targetGroup] = []
+              if (!targetState.groupedVisualizations[targetGroup]) {
+                targetState.groupedVisualizations[targetGroup] = []
               }
-              this.groupedVisualizations[targetGroup].push({
+              targetState.groupedVisualizations[targetGroup].push({
                 ...viz,
                 meta: {
                   ...viz.meta,
                   schema_version: 'v2.0'
                 }
               })
-              console.log(`[event:complete] 已添加到 ${targetGroup} 组，count=${this.groupedVisualizations[targetGroup].length}`)
+              console.log(`[event:complete] 已添加到 ${targetGroup} 组，count=${targetState.groupedVisualizations[targetGroup].length}`)
             }
-            this.hasResults = true
+            targetState.hasResults = true
             console.log('[event:complete] 更新后的 groupedVisualizations:', JSON.stringify({
-              weather: this.groupedVisualizations.weather?.length,
-              component: this.groupedVisualizations.component?.length
+              weather: targetState.groupedVisualizations.weather?.length,
+              component: targetState.groupedVisualizations.component?.length
             }))
           } else {
             console.log('[event:complete] 无visuals字段或为空')
@@ -448,34 +938,34 @@ export const useReactStore = defineStore('react', {
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）
           if (data?.sources && Array.isArray(data.sources) && data.sources.length > 0) {
             // 保存到当前消息的sources字段，供VisualizationPanel使用
-            if (this.messages.length > 0) {
-              const lastMsg = this.messages[this.messages.length - 1]
+            if (targetState.messages.length > 0) {
+              const lastMsg = targetState.messages[targetState.messages.length - 1]
               lastMsg.sources = data.sources
             }
           }
 
           // 流式最终答案结束，重置状态
-          this.streamingAnswerMessageId = null
+          targetState.streamingAnswerMessageId = null
           break
 
         case 'incomplete':
           // 未完成（达到最大迭代）
-          this.isAnalyzing = false
-          this.isComplete = true
-          this.iterations = data?.iterations || this.iterations
+          this.currentState.isAnalyzing = false
+          this.currentState.isComplete = true
+          this.currentState.iterations = data?.iterations || this.currentState.iterations
           // ✅ 优先使用response字段，兼容answer字段
-          this.finalAnswer = data?.response || data?.answer || '分析未完成'
+          this.currentState.finalAnswer = data?.response || data?.answer || '分析未完成'
 
           // 记录最终答案（原有工作流逻辑）
-          this.finalAnswers.push({
-            run: this.sessionRound,
+          this.currentState.finalAnswers.push({
+            run: this.currentState.sessionRound,
             content: data?.response || data?.answer || '分析未完成',
             timestamp: new Date().toISOString()
           })
 
           // 添加最终答案消息到UI
-          if (this.streamingAnswerMessageId) {
-            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+          if (this.currentState.streamingAnswerMessageId) {
+            const msg = this.currentState.messages.find(m => m.id === this.currentState.streamingAnswerMessageId)
             if (msg) {
               msg.data = {
                 ...(msg.data || {}),
@@ -486,7 +976,7 @@ export const useReactStore = defineStore('react', {
               }
             }
           } else if (data?.answer) {
-            this.addMessage('final', data.answer, {
+            addMessage('final', data.answer, {
               iterations: data?.iterations,
               reason: data?.reason,
               timestamp: data?.timestamp,
@@ -499,26 +989,26 @@ export const useReactStore = defineStore('react', {
             console.log('[incomplete] 处理多专家系统最终结果:', data.expert_results)
             this._processExpertResultsForVisualization(data.expert_results)
             // 【重要】同时存储完整的专家结果供前端使用
-            this.lastExpertResults = {
+            this.currentState.lastExpertResults = {
               expert_results: data.expert_results
             }
           }
 
           // 流式最终答案结束，重置状态
-          this.streamingAnswerMessageId = null
+          this.currentState.streamingAnswerMessageId = null
           break
 
         case 'error':
           // 迭代错误
-          this.addMessage('error', `错误: ${data?.error || '未知错误'}`, data)
+          addMessage('error', `错误: ${data?.error || '未知错误'}`, data)
           break
 
         case 'fatal_error':
           // 致命错误
-          this.isAnalyzing = false
-          this.error = data?.error || '致命错误'
-          this.addMessage('error', `致命错误: ${this.error}`, data)
-          this.streamingAnswerMessageId = null
+          this.currentState.isAnalyzing = false
+          this.currentState.error = data?.error || '致命错误'
+          addMessage('error', `致命错误: ${targetState.error}`, data)
+          this.currentState.streamingAnswerMessageId = null
           break
 
         case 'result':
@@ -528,12 +1018,12 @@ export const useReactStore = defineStore('react', {
 
         case 'pipeline_started':
           // 流水线开始事件
-          this.addMessage('start', `开始多专家分析: ${data?.query || ''}`)
+          addMessage('start', `开始多专家分析: ${data?.query || ''}`)
           break
 
         case 'query_parsed':
           // 查询解析完成事件
-          this.addMessage('observation', `查询解析完成 - 地点: ${data?.location || '未知'} | 分析类型: ${data?.analysis_type || '未知'}`, {
+          addMessage('observation', `查询解析完成 - 地点: ${data?.location || '未知'} | 分析类型: ${data?.analysis_type || '未知'}`, {
             query_parsed: data
           })
           break
@@ -541,14 +1031,14 @@ export const useReactStore = defineStore('react', {
         case 'experts_selected':
           // 专家选择完成事件
           const experts = data?.selected_experts || []
-          this.addMessage('observation', `已选择 ${experts.length} 个专家: ${experts.map(e => this.getExpertLabel(e)).join('、')}`, {
+          addMessage('observation', `已选择 ${experts.length} 个专家: ${experts.map(e => this.getExpertLabel(e)).join('、')}`, {
             selected_experts: experts
           })
           break
 
         case 'expert_group_started':
           // 专家组开始事件
-          this.addMessage('action', `启动专家组: ${data?.group?.map(e => this.getExpertLabel(e)).join('、')}`, {
+          addMessage('action', `启动专家组: ${data?.group?.map(e => this.getExpertLabel(e)).join('、')}`, {
             group: data?.group
           })
           break
@@ -556,7 +1046,7 @@ export const useReactStore = defineStore('react', {
         case 'expert_started':
           // 单个专家开始事件
           const expertName = this.getExpertLabel(data?.expert_type)
-          this.addMessage('action', `执行【${expertName}】专家任务 (工具数: ${data?.tool_count || 0})`, {
+          addMessage('action', `执行【${expertName}】专家任务 (工具数: ${data?.tool_count || 0})`, {
             expert_type: data?.expert_type,
             task_id: data?.task_id
           })
@@ -565,7 +1055,7 @@ export const useReactStore = defineStore('react', {
         case 'expert_completed':
           // 专家完成事件
           const completedExpertName = this.getExpertLabel(data?.expert_type)
-          this.addMessage('observation', `【${completedExpertName}】专家完成 - 状态: ${data?.status} | 数据ID: ${(data?.data_ids || []).length}个`, {
+          addMessage('observation', `【${completedExpertName}】专家完成 - 状态: ${data?.status} | 数据ID: ${(data?.data_ids || []).length}个`, {
             expert_type: data?.expert_type,
             status: data?.status,
             data_ids: data?.data_ids
@@ -574,7 +1064,7 @@ export const useReactStore = defineStore('react', {
 
         case 'expert_group_completed':
           // 专家组完成事件
-          this.addMessage('observation', `专家组执行完成: ${Object.entries(data?.results || {}).map(([k, v]) => `${this.getExpertLabel(k)}(${v})`).join('、')}`, {
+          addMessage('observation', `专家组执行完成: ${Object.entries(data?.results || {}).map(([k, v]) => `${this.getExpertLabel(k)}(${v})`).join('、')}`, {
             group_results: data?.results
           })
           break
@@ -601,7 +1091,7 @@ export const useReactStore = defineStore('react', {
               .join('\n\n')
 
             // 添加到主对话框显示
-            this.addMessage('observation', `多专家系统阶段性结果:\n\n${expertResultsText}`, {
+            addMessage('observation', `多专家系统阶段性结果:\n\n${expertResultsText}`, {
               expert_results: data.expert_results,
               is_expert_result: true
             })
@@ -611,26 +1101,26 @@ export const useReactStore = defineStore('react', {
             this._processExpertResultsForVisualization(data.expert_results)
 
             // 【重要】确保lastExpertResults具有正确的结构
-            this.lastExpertResults = {
+            this.currentState.lastExpertResults = {
               expert_results: data.expert_results
             }
             console.log('[event:expert_result] lastExpertResults已设置')
           } else {
             // 如果没有expert_results字段，直接存储data
             console.log('[event:expert_result] 无expert_results，直接存储data')
-            this.lastExpertResults = data
+            this.currentState.lastExpertResults = data
           }
           break
 
         case 'pipeline_error':
           // 流水线错误事件
-          this.addMessage('error', `多专家系统错误: ${data?.error || '未知错误'}`, data)
+          addMessage('error', `多专家系统错误: ${data?.error || '未知错误'}`, data)
           break
 
         case 'expert_error':
           // 专家错误事件
           const errorExpertName = this.getExpertLabel(data?.expert_type)
-          this.addMessage('error', `【${errorExpertName}】专家执行失败: ${data?.error || '未知错误'}`, data)
+          addMessage('error', `【${errorExpertName}】专家执行失败: ${data?.error || '未知错误'}`, data)
           break
 
         case 'answer_delta':
@@ -640,29 +1130,29 @@ export const useReactStore = defineStore('react', {
           }
 
           // 如果还没有为本轮回答创建消息，先创建一条最终答案消息
-          if (!this.streamingAnswerMessageId) {
-            const msgId = this.addMessage('final', data.delta, {
+          if (!this.currentState.streamingAnswerMessageId) {
+            const msgId = addMessage('final', data.delta, {
               session_id: data?.session_id,
               timestamp: data?.timestamp
             }, null, { streaming: true })
-            this.streamingAnswerMessageId = msgId
+            this.currentState.streamingAnswerMessageId = msgId
           } else {
             // 已存在流式消息，直接在原有内容后追加
-            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+            const msg = this.currentState.messages.find(m => m.id === this.currentState.streamingAnswerMessageId)
             if (msg) {
               msg.content = (msg.content || '') + data.delta
             } else {
               // 找不到消息时，退化为创建新消息，避免用户看不到内容
-              const msgId = this.addMessage('final', data.delta, {
+              const msgId = addMessage('final', data.delta, {
                 session_id: data?.session_id,
                 timestamp: data?.timestamp
               }, null, { streaming: true })
-              this.streamingAnswerMessageId = msgId
+              this.currentState.streamingAnswerMessageId = msgId
             }
           }
 
           // 同步更新 finalAnswer，方便其他地方直接读取
-          this.finalAnswer = (this.finalAnswer || '') + data.delta
+          this.currentState.finalAnswer = (this.currentState.finalAnswer || '') + data.delta
           break
 
         case 'final_answer':
@@ -680,17 +1170,17 @@ export const useReactStore = defineStore('react', {
             direct_from_workflow: data?.direct_from_workflow,
             sources: sources  // 保存sources供知识溯源面板使用
           }, null, { streaming: false })  // 【修复】明确设置 streaming: false
-          this.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
+          this.currentState.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
 
           // 更新finalAnswer
-          this.finalAnswer = finalContent
+          this.currentState.finalAnswer = finalContent
           break
 
         case 'stream_start':
           // 流式输出开始
           console.log('[event:stream_start] 流式输出开始')
-          if (!this.streamingAnswerMessageId) {
-            this.streamingAnswerMessageId = this.addMessage('final', '', {
+          if (!this.currentState.streamingAnswerMessageId) {
+            targetState.streamingAnswerMessageId = addMessage('final', '', {
               timestamp: data?.timestamp
             }, null, { streaming: true })
           }
@@ -699,14 +1189,14 @@ export const useReactStore = defineStore('react', {
         case 'stream_content':
           // 流式内容块
           const content = data?.content || ''
-          if (content && this.streamingAnswerMessageId) {
-            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+          if (content && this.currentState.streamingAnswerMessageId) {
+            const msg = this.currentState.messages.find(m => m.id === this.currentState.streamingAnswerMessageId)
             if (msg) {
               msg.content += content
               // 触发响应式更新
-              this.messages = [...this.messages]
+              this.currentState.messages = [...this.currentState.messages]
               // 同步更新 finalAnswer
-              this.finalAnswer = msg.content
+              this.currentState.finalAnswer = msg.content
             }
           }
           break
@@ -715,17 +1205,17 @@ export const useReactStore = defineStore('react', {
           // 流式输出结束
           console.log('[event:stream_end] 流式输出结束')
           const endContent = data?.content || ''
-          if (endContent && this.streamingAnswerMessageId) {
-            const msg = this.messages.find(m => m.id === this.streamingAnswerMessageId)
+          if (endContent && this.currentState.streamingAnswerMessageId) {
+            const msg = this.currentState.messages.find(m => m.id === this.currentState.streamingAnswerMessageId)
             if (msg) {
               // 确保内容完整
               msg.content = endContent
               msg.streaming = false  // 标记为完成
-              this._forceRenderCount++  // 强制触发响应式更新
-              this.finalAnswer = endContent
+              this.currentState._forceRenderCount++  // 强制触发响应式更新
+              this.currentState.finalAnswer = endContent
             }
           }
-          this.streamingAnswerMessageId = null
+          this.currentState.streamingAnswerMessageId = null
           break
 
         default:
@@ -734,7 +1224,7 @@ export const useReactStore = defineStore('react', {
 
       // 更新迭代次数
       if (type === 'thought' || type === 'action' || type === 'observation') {
-        this.iterations += 0.5 // 每个循环算作0.5，因为thought+action+observation是一个完整循环
+        this.currentState.iterations += 0.5 // 每个循环算作0.5，因为thought+action+observation是一个完整循环
       }
     },
 
@@ -748,8 +1238,8 @@ export const useReactStore = defineStore('react', {
         timestamp: visualization.timestamp || new Date().toISOString()
       }
 
-      this.currentVisualization = record
-      this.visualizationHistory.push(record)
+      this.currentState.currentVisualization = record
+      this.currentState.visualizationHistory.push(record)
     },
 
     // 处理结果（UDF v2.0格式 + v3.0图表格式）
@@ -796,14 +1286,14 @@ export const useReactStore = defineStore('react', {
         })
 
         console.log('[handleResult] UDF v2.0 visuals处理完成，已添加', resultData.visuals.length, '个图表到历史记录')
-        this.hasResults = true
+        this.currentState.hasResults = true
         return
       }
 
       // 处理v3.0格式或其他格式
       if (resultData.type === 'map' || resultData.mapConfig) {
         const mapData = resultData.mapConfig || resultData
-        this.results.map = mapData
+        this.currentState.results.map = mapData
 
         const mapVisualization = {
           ...mapData,
@@ -817,7 +1307,7 @@ export const useReactStore = defineStore('react', {
       } else if (['chart', 'pie', 'bar', 'line', 'timeseries', 'radar', 'wind_rose', 'profile'].includes(resultData.type) || resultData.chartConfig) {
         // 处理v3.0图表格式：支持所有图表类型
         const chartData = resultData.chartConfig || resultData
-        this.results.charts.push(chartData)
+        this.currentState.results.charts.push(chartData)
 
         const chartVisualization = {
           ...chartData,
@@ -832,7 +1322,7 @@ export const useReactStore = defineStore('react', {
         console.log('[handleResult] 设置图表可视化 (v3.0):', chartVisualization)
       } else if (resultData.type === 'table' || resultData.tableConfig) {
         const tableData = resultData.tableConfig || resultData
-        this.results.tables.push(tableData)
+        this.currentState.results.tables.push(tableData)
 
         const tableVisualization = {
           type: 'table',
@@ -853,7 +1343,7 @@ export const useReactStore = defineStore('react', {
         console.log('[handleResult] 设置图片可视化')
       } else if (resultData.type === 'text' || resultData.text) {
         const text = resultData.text || resultData.content || ''
-        this.results.text = this.results.text ? `${this.results.text}\n${text}` : text
+        this.currentState.results.text = this.currentState.results.text ? `${this.currentState.results.text}\n${text}` : text
 
         const textVisualization = {
           type: 'text',
@@ -868,7 +1358,7 @@ export const useReactStore = defineStore('react', {
         console.log('[handleResult] 设置通用可视化')
       }
 
-      this.hasResults = true
+      this.currentState.hasResults = true
     },
     // 开始分析
     async startAnalysis(query, options = {}) {
@@ -886,35 +1376,35 @@ export const useReactStore = defineStore('react', {
       }
 
       // 首次分析或继续分析
-      if (!this.sessionId) {
+      if (!this.currentState.sessionId) {
         this.createSessionId()
-        this.sessionRound = 1
-        this.finalAnswers = []
+        this.currentState.sessionRound = 1
+        this.currentState.finalAnswers = []
       } else {
         this.continueSession()
       }
 
       // 重置状态
       this.addMessage('user', query, null, attachments)
-      this.currentMessage = ''
-      this.isAnalyzing = true
-      this.isComplete = false
-      this.error = null
-      this.iterations = 0
+      this.currentState.currentMessage = ''
+      this.currentState.isAnalyzing = true
+      this.currentState.isComplete = false
+      this.currentState.error = null
+      this.currentState.iterations = 0
 
       // 如果是中断状态，传递给后端，然后重置标志
-      const isInterruption = this.isInterruption
+      const isInterruption = this.currentState.isInterruption
       if (isInterruption) {
         console.log('[ReAct] 检测到用户中断，将传递给后端')
-        this.isInterruption = false  // 重置标志
+        this.currentState.isInterruption = false  // 重置标志
       }
 
       // 重置Reflexion状态
-      this.showReflexion = false
-      this.reflexionCount = 0
+      this.currentState.showReflexion = false
+      this.currentState.reflexionCount = 0
 
       // 清空本轮结果
-      this.results = {
+      this.currentState.results = {
         map: null,
         charts: [],
         tables: [],
@@ -924,7 +1414,7 @@ export const useReactStore = defineStore('react', {
       try {
         // 调用ReAct Agent
         await agentAPI.analyze(query, {
-          sessionId: this.sessionId,
+          sessionId: this.currentState.sessionId,
           enhanceWithHistory: true,
           maxIterations: this.maxIterations,
           assistantMode: assistantMode,  // 传递助手模式
@@ -946,8 +1436,8 @@ export const useReactStore = defineStore('react', {
           // isAnalyzing已在pauseAnalysis中设置为false
         } else {
           console.error('Analysis failed:', error)
-          this.isAnalyzing = false
-          this.error = error.message
+          this.currentState.isAnalyzing = false
+          this.currentState.error = error.message
           this.addMessage('error', `分析失败: ${error.message}`)
         }
       }
@@ -955,13 +1445,13 @@ export const useReactStore = defineStore('react', {
 
     // 继续分析（新问题）
     async continueAnalysis(query, options = {}) {
-      if (this.isAnalyzing) {
+      if (this.currentState.isAnalyzing) {
         const confirmStop = confirm('当前正在分析中，是否停止并开始新分析？')
         if (!confirmStop) {
           return
         }
         agentAPI.cancel()
-        this.isAnalyzing = false
+        this.currentState.isAnalyzing = false
       }
 
       // 使用 startAnalysis，它会处理会话延续
@@ -971,17 +1461,17 @@ export const useReactStore = defineStore('react', {
     // 停止分析
     stopAnalysis() {
       agentAPI.cancel()
-      this.isAnalyzing = false
+      this.currentState.isAnalyzing = false
       // 不添加系统消息
     },
 
     // 暂停分析（与stopAnalysis相同）
     pauseAnalysis() {
       agentAPI.cancel()
-      this.isAnalyzing = false
-      this.isComplete = false
-      this.error = null
-      this.isInterruption = true  // 标记为中断状态
+      this.currentState.isAnalyzing = false
+      this.currentState.isComplete = false
+      this.currentState.error = null
+      this.currentState.isInterruption = true  // 标记为中断状态
       // 不添加系统消息
     },
 
@@ -1149,7 +1639,7 @@ export const useReactStore = defineStore('react', {
             console.log(`[processExpertResults] 分类结果: ${viz.id} -> ${targetGroup}`)
             viz.meta.expert_source = targetGroup  // 确保 meta 中有正确的分类
             groups[targetGroup].push(viz)
-            this.visualizationHistory.push(viz)
+            this.currentState.visualizationHistory.push(viz)
           }
 
           // 兼容直接的可视化格式（包括EKMA专业图表的image类型）
@@ -1167,15 +1657,15 @@ export const useReactStore = defineStore('react', {
             console.log(`[processExpertResults] 直接格式分类: ${result.type} -> ${targetGroup}`)
             viz.meta.expert_source = targetGroup
             groups[targetGroup].push(viz)
-            this.visualizationHistory.push(viz)
+            this.currentState.visualizationHistory.push(viz)
           }
         }
       }
 
       // 更新分组状态
-      this.groupedVisualizations = groups
-      this.expertResults = expertResults
-      this.lastExpertResults = { expert_results: expertResults }
+      this.currentState.groupedVisualizations = groups
+      this.currentState.expertResults = expertResults
+      this.currentState.lastExpertResults = { expert_results: expertResults }
 
       console.log(`[processExpertResults] 完成: weather=${groups.weather.length}, component=${groups.component.length}`)
       console.log(`[processExpertResults] weather图表详情:`, groups.weather.map(v => ({ id: v.id, type: v.type, title: v.title })))

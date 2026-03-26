@@ -27,8 +27,9 @@ class GeoMappingResolver:
     参考 Vanna 项目的 geo_mappings.json，提供：
     1. 城市名称 → 城市编码映射
     2. 站点名称 → 站点编码映射
+    3. 区域名称 → 区域编码映射
 
-    LLM 输出城市/站点名称，工具内部自动转换为编码
+    LLM 输出城市/站点/区域名称，工具内部自动转换为编码
     """
 
     # 广东省城市代码映射（完整版，支持别名）
@@ -133,6 +134,26 @@ class GeoMappingResolver:
         "浈江十里亭": "1437A",
     }
 
+    # 广东省区域代码映射
+    REGION_CODE_MAP = {
+        # 标准名称
+        "广东省": "440001",
+        "全省": "440001",
+        "粤东": "440003",
+        "粤西": "440004",
+        "粤北": "440005",
+        "珠三角": "440002",
+        "非珠三角": "440006",
+        # 别名
+        "广东": "440001",
+        "广东省全省": "440001",
+        "粤东地区": "440003",
+        "粤西地区": "440004",
+        "粤北地区": "440005",
+        "珠三角地区": "440002",
+        "非珠三角地区": "440006",
+    }
+
     @classmethod
     def resolve_city_codes(cls, city_names: List[str]) -> List[str]:
         """
@@ -149,7 +170,12 @@ class GeoMappingResolver:
         for city_name in city_names:
             city_name = city_name.strip()
 
-            # 直接查找
+            # 优先查找区域编码
+            if city_name in cls.REGION_CODE_MAP:
+                city_codes.append(cls.REGION_CODE_MAP[city_name])
+                continue
+
+            # 直接查找城市编码
             if city_name in cls.CITY_CODE_MAP:
                 city_codes.append(cls.CITY_CODE_MAP[city_name])
                 continue
@@ -168,7 +194,8 @@ class GeoMappingResolver:
             logger.warning(
                 "city_code_not_found",
                 city_name=city_name,
-                available_cities=list(cls.CITY_CODE_MAP.keys())
+                available_cities=list(cls.CITY_CODE_MAP.keys()),
+                available_regions=list(cls.REGION_CODE_MAP.keys())
             )
 
         logger.info(
@@ -245,14 +272,18 @@ class QueryGDSuncereDataTool:
     @classmethod
     def get_city_code(cls, city_name: str) -> str:
         """
-        城市名称转代码
+        城市名称转代码（支持城市和区域编码）
 
         Args:
-            city_name: 城市名称
+            city_name: 城市名称或区域名称
 
         Returns:
-            城市代码
+            城市代码或区域代码
         """
+        # 优先查找区域编码
+        if city_name in cls.geo_resolver.REGION_CODE_MAP:
+            return cls.geo_resolver.REGION_CODE_MAP[city_name]
+        # 查找城市编码
         return cls.geo_resolver.CITY_CODE_MAP.get(city_name, "")
 
     @classmethod

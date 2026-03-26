@@ -50,7 +50,8 @@ class AnalyzeImageTool(LLMTool):
 
 支持输入格式：
 - 本地文件路径：D:/work_dir/image.png 或 ./image.png
-- HTTP URL：http://localhost:8000/api/image/xxx（自动下载到临时文件）
+- HTTP URL：http://localhost:8000/api/upload/xxx（用户上传的图片，自动下载）
+- HTTP URL：http://localhost:8000/api/image/xxx（系统生成的图表，自动下载）
 
 使用场景：
 - OCR 文字识别：提取图片中的文字
