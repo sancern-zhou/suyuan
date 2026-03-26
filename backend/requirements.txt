@@ -80,3 +80,11 @@ playwright==1.48.0  # Cross-platform browser automation
 
 # Optional: Python code execution (for execute_python tool)
 ipython>=8.0.0  # Optional, for better output capture and error handling
+
+# Social Platform Integration (QQ, WeChat, DingTalk, WeCom)
+qq-botpy>=1.0.0  # QQ robot SDK
+qrcode>=8.0  # QR code generation for WeChat login
+pycryptodome>=3.20.0  # Cryptographic library for WeChat
+dingtalk-stream>=0.24.0  # DingTalk streaming SDK
+wecom-aibot-sdk-python>=0.1.5  # WeCom (WeChat Work) SDK
+pyyaml>=6.0  # YAML configuration parsing

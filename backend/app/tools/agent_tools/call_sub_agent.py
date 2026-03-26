@@ -4,6 +4,7 @@
 功能：
 - 专家Agent可以调用助手Agent处理办公任务
 - 助手Agent可以调用专家Agent处理数据分析
+- Social Agent可以调用专家Agent进行数据分析
 """
 
 from typing import Dict, Any, Literal, Optional
@@ -13,7 +14,8 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
 
-AgentMode = Literal["assistant", "expert"]
+# ⚠️ 支持6种模式：assistant, expert, code, query, report, social
+AgentMode = Literal["assistant", "expert", "code", "query", "report", "social"]
 
 
 class CallSubAgentTool(LLMTool):
@@ -40,8 +42,8 @@ class CallSubAgentTool(LLMTool):
                 "properties": {
                     "target_mode": {
                         "type": "string",
-                        "enum": ["assistant", "expert"],
-                        "description": "目标Agent模式（assistant=助手模式，expert=专家模式）"
+                        "enum": ["assistant", "expert", "code", "query", "report", "social"],
+                        "description": "目标Agent模式（assistant=助手, expert=专家, social=社交, query=问数, report=报告, code=编程）"
                     },
                     "task_description": {
                         "type": "string",
@@ -234,10 +236,15 @@ class CallSubAgentTool(LLMTool):
                     query_parts.append(f"- {key}: {value}")
 
         # 根据目标模式添加提示
-        if target_mode == "assistant":
-            query_parts.append("\n注意：你是作为子Agent被调用，专注完成上述办公任务即可。")
-        else:
-            query_parts.append("\n注意：你是作为子Agent被调用，专注完成上述数据分析任务即可。")
+        mode_hints = {
+            "assistant": "注意：你是作为子Agent被调用，专注完成上述办公任务即可。",
+            "expert": "注意：你是作为子Agent被调用，专注完成上述数据分析任务即可。",
+            "social": "注意：你是作为子Agent被调用，专注完成上述社交平台任务即可。",
+            "query": "注意：你是作为子Agent被调用，专注完成上述数据查询任务即可。",
+            "report": "注意：你是作为子Agent被调用，专注完成上述报告生成任务即可。",
+            "code": "注意：你是作为子Agent被调用，专注完成上述编程任务即可。",
+        }
+        query_parts.append(f"\n{mode_hints.get(target_mode, '')}")
 
         return "\n".join(query_parts)
 
@@ -269,4 +276,12 @@ class CallSubAgentTool(LLMTool):
 
     def _get_mode_name(self, mode: str) -> str:
         """获取模式的友好名称"""
-        return "助手Agent" if mode == "assistant" else "专家Agent"
+        mode_names = {
+            "assistant": "助手Agent",
+            "expert": "专家Agent",
+            "social": "社交Agent",
+            "query": "问数Agent",
+            "report": "报告Agent",
+            "code": "编程Agent",
+        }
+        return mode_names.get(mode, mode)

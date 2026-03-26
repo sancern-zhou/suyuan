@@ -739,6 +739,7 @@ async def execute_query_new_standard_report(
     start_date: str,
     end_date: str,
     enable_sand_deduction: bool = True,
+    exclude_exceed_details: bool = False,
     context: Optional[ExecutionContext] = None
 ) -> Dict[str, Any]:
     """
@@ -749,6 +750,7 @@ async def execute_query_new_standard_report(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
+        exclude_exceed_details: 是否排除超标详情（默认False），为True时不返回exceed_details字段
         context: 执行上下文（可选）
 
     Returns:
@@ -924,6 +926,9 @@ async def execute_query_new_standard_report(
         co_sum = 0
         o3_8h_sum = 0
 
+        # 有效天数统计（所有六项污染物都有数据的天数）
+        valid_days = 0  # 所有六项都有数据的天数
+
         # 收集每日浓度值用于计算百分位数
         daily_co_values = []
         daily_o3_8h_values = []
@@ -1016,6 +1021,10 @@ async def execute_query_new_standard_report(
             no2_sum += no2
             co_sum += co
             o3_8h_sum += o3_8h
+
+            # 统计有效天数（所有六项污染物都有数据的天数）
+            if pm25 > 0 and pm10 > 0 and so2 > 0 and no2 > 0 and co > 0 and o3_8h > 0:
+                valid_days += 1
 
             # 收集修约后的每日值（用于百分位数计算）
             if co > 0:
@@ -1280,8 +1289,8 @@ async def execute_query_new_standard_report(
         )
 
         # 计算达标率和超标率
-        valid_days = total_days
-        compliance_rate = safe_round((total_days - exceed_days) / total_days, 1) if total_days > 0 else 0
+        # 达标率和超标率使用有效天数作为分母（所有六项污染物都有数据的天数）
+        compliance_rate = safe_round((valid_days - exceed_days) / valid_days * 100, 1) if valid_days > 0 else 0
         exceed_rate = safe_round(exceed_days / valid_days * 100, 1) if valid_days > 0 else 0
 
         # 计算首要污染物比例
@@ -1306,7 +1315,6 @@ async def execute_query_new_standard_report(
         city_stats[city] = {
             "composite_index": avg_composite_index,
             "exceed_days": exceed_days,
-            "exceed_details": exceed_details,
             "valid_days": valid_days,
             "exceed_rate": exceed_rate,
             "compliance_rate": compliance_rate,
@@ -1340,6 +1348,10 @@ async def execute_query_new_standard_report(
             "exceed_days_by_pollutant": exceed_days_by_pollutant,
             "exceed_rate_by_pollutant": exceed_rate_by_pollutant
         }
+
+        # 可选：添加超标详情（如果未排除）
+        if not exclude_exceed_details:
+            city_stats[city]["exceed_details"] = exceed_details
 
         logger.info(
             "city_new_standard_calculated",
@@ -1549,6 +1561,7 @@ class QueryNewStandardReportTool(LLMTool):
         start_date = kwargs.get("start_date", "")
         end_date = kwargs.get("end_date", "")
         enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        exclude_exceed_details = kwargs.get("exclude_exceed_details", False)  # 默认false（保留详情）
 
         # 参数验证
         if not cities:
@@ -1600,5 +1613,6 @@ class QueryNewStandardReportTool(LLMTool):
             start_date=start_date,
             end_date=end_date,
             enable_sand_deduction=enable_sand_deduction,
+            exclude_exceed_details=exclude_exceed_details,
             context=context
         )

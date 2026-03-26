@@ -30,19 +30,22 @@ class ReadDataRegistryTool(LLMTool):
             name="read_data_registry",
             description="""从 backend_data_registry/datasets/ 读取已保存的数据。
 
+⚠️ 【重要】为避免读取大量原始数据导致性能问题，**必须指定 time_range 参数**限制时间范围。
+
 使用场景：
 - 查看工具返回的完整数据
 - 按时间范围过滤数据
 - 选择特定字段
 - 对数据进行高级过滤
 
-【字段使用说明】
-方式1 - 先查看字段（推荐）：
-- read_data_registry(data_id="xxx", list_fields=true)  # 查看可用字段
+【参数使用说明】
+1. 先查看字段（推荐）：
+   - read_data_registry(data_id="xxx", list_fields=true)  # 查看可用字段和**时间范围**
+   - list_fields=true 时不需要 time_range，会自动返回数据的时间范围信息
 
-方式2 - 直接使用字段（容错）：
-- read_data_registry(data_id="xxx", fields=["temperature", "humidity"])
-- 如果字段名不匹配，工具会返回完整的可用字段列表，您可以根据返回信息重试
+2. 读取数据（必须指定时间范围）：
+   - read_data_registry(data_id="xxx", time_range="2024-01-01,2024-01-31", fields=["temperature", "humidity"])
+   - ⚠️ 不指定 time_range 可能读取数万条记录，严重影响性能
 
 时间过滤示例：
 - read_data_registry(data_id="weather_001", time_range="2024-01-01,2024-01-31")  # 指定月份
@@ -55,6 +58,7 @@ class ReadDataRegistryTool(LLMTool):
 注意：
 - time_range 格式：开始日期,结束日期（逗号分隔，任一可省略）
 - 时间字段会自动识别（timestamp, time, datetime, date 等）
+- list_fields=true 时会返回数据的完整时间范围，便于您设置 time_range 参数
 - 如果 fields 参数中的字段名不存在，工具会返回字段不匹配错误及可用字段列表
 """,
             category=ToolCategory.QUERY,
@@ -75,11 +79,11 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "list_fields": {
                         "type": "boolean",
-                        "description": "【推荐】设置为 true 时，只返回可用字段列表（不返回数据），用于确认正确的字段名后再使用 fields 参数"
+                        "description": "设置为 true 时，只返回可用字段列表和数据的时间范围（不返回数据），用于确认字段名和时间范围后再使用 time_range 参数。注意：list_fields=true 时不需要 time_range 参数"
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "时间范围过滤，格式：开始日期,结束日期（如 '2024-01-01,2024-01-31'）。任一可省略（'2024-01-01,' 从某日期开始；',2024-01-31' 到某日期结束）。支持格式：YYYY-MM-DD, YYYY-MM-DD HH:MM:SS"
+                        "description": "【必填】时间范围过滤，格式：开始日期,结束日期（如 '2024-01-01,2024-01-31'）。任一可省略（'2024-01-01,' 从某日期开始；',2024-01-31' 到某日期结束）。支持格式：YYYY-MM-DD, YYYY-MM-DD HH:MM:SS。⚠️ 必须指定此参数以避免读取大量数据"
                     },
                     "fields": {
                         "type": "array",
@@ -91,7 +95,10 @@ class ReadDataRegistryTool(LLMTool):
                         "description": "高级：jq 过滤表达式。注意：数据是数组格式，需要用 .[] 迭代或用 map/select。示例：'.[] | select(.temperature > 30)' 或 'map(select(.measurements.PM10 == null))'。注意：jq_filter 在 time_range 和 fields 之后应用"
                     }
                 },
-                "required": ["data_id"]
+                "anyOf": [
+                    {"required": ["data_id", "list_fields"]},  # list_fields 模式（不需要 time_range）
+                    {"required": ["data_id", "time_range"]}    # 数据读取模式（必须指定 time_range）
+                ]
             }
         }
 
@@ -140,22 +147,37 @@ class ReadDataRegistryTool(LLMTool):
         if not isinstance(data, list):
             return {"success": False, "error": f"数据格式错误: 期望数组，得到 {type(data).__name__}"}
 
-        # 【新增】list_fields 功能：只返回字段列表
+        # 【新增】list_fields 功能：只返回字段列表和时间范围
         if list_fields:
             if data:
                 first_record = data[0]
                 if isinstance(first_record, dict):
                     # 获取所有字段名（包括嵌套字段）
                     field_list = self._extract_all_fields(first_record)
+
+                    # 【新增】计算时间范围
+                    time_range_info = self._calculate_data_time_range(data)
+
+                    # 构建返回数据
+                    result_data = {
+                        "data_id": data_id,
+                        "total_fields": len(field_list),
+                        "fields": field_list,
+                        "sample_values": self._get_sample_values(first_record, field_list[:10]),
+                        "time_range": time_range_info  # 新增时间范围信息
+                    }
+
+                    # 构建摘要信息
+                    summary_parts = [f"数据ID {data_id} 包含 {len(field_list)} 个字段"]
+                    if time_range_info.get("min_time") and time_range_info.get("max_time"):
+                        summary_parts.append(f"，时间范围：{time_range_info['min_time']} ~ {time_range_info['max_time']}")
+                        summary_parts.append(f"，共 {time_range_info.get('total_records', len(data))} 条记录")
+                    summary = ''.join(summary_parts)
+
                     return {
                         "success": True,
-                        "data": {
-                            "data_id": data_id,
-                            "total_fields": len(field_list),
-                            "fields": field_list,
-                            "sample_values": self._get_sample_values(first_record, field_list[:10])
-                        },
-                        "summary": f"数据ID {data_id} 包含 {len(field_list)} 个字段：{', '.join(field_list[:15])}{'...' if len(field_list) > 15 else ''}"
+                        "data": result_data,
+                        "summary": summary
                     }
             return {"success": False, "error": "数据为空，无法提取字段"}
 
@@ -540,6 +562,64 @@ class ReadDataRegistryTool(LLMTool):
             return f"map({jq_filter})"
 
         return jq_filter
+
+    def _calculate_data_time_range(self, data: List[Dict]) -> Dict[str, Any]:
+        """计算数据的时间范围
+
+        返回格式：
+        {
+            "time_field": "timestamp",
+            "min_time": "2024-01-01 00:00:00",
+            "max_time": "2024-12-31 23:00:00",
+            "count": 8760
+        }
+        """
+        if not data:
+            return {
+                "time_field": None,
+                "min_time": None,
+                "max_time": None,
+                "count": 0,
+                "message": "数据为空"
+            }
+
+        # 查找时间字段
+        time_field = self._find_time_field(data)
+        if not time_field:
+            return {
+                "time_field": None,
+                "min_time": None,
+                "max_time": None,
+                "count": len(data),
+                "message": f"未找到时间字段，尝试的字段: {self.TIME_FIELDS}"
+            }
+
+        # 提取所有时间值
+        times = []
+        for record in data:
+            time_val = record.get(time_field)
+            if time_val is not None:
+                times.append(str(time_val))
+
+        if times:
+            # 排序以获取最小最大值
+            sorted_times = sorted(times)
+            return {
+                "time_field": time_field,
+                "min_time": sorted_times[0],
+                "max_time": sorted_times[-1],
+                "count": len(times),
+                "total_records": len(data)
+            }
+        else:
+            return {
+                "time_field": time_field,
+                "min_time": None,
+                "max_time": None,
+                "count": 0,
+                "total_records": len(data),
+                "message": "时间字段存在但无有效值"
+            }
 
     def _get_jq_error_hint(self, stderr: str, jq_filter: str) -> str:
         """根据 jq 错误信息提供友好提示"""

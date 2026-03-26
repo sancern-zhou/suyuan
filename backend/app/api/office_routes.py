@@ -140,3 +140,64 @@ async def delete_pdf(pdf_id: str):
         raise HTTPException(status_code=404, detail="PDF not found or already deleted")
 
     return {"success": True, "message": "PDF deleted"}
+
+
+@router.post("/download-word")
+async def download_word(request: Request):
+    """
+    Download Word document
+
+    Args:
+        file_path: Path to the Word document
+
+    Returns:
+        Word document as FileResponse
+    """
+    try:
+        data = await request.json()
+        file_path = data.get("file_path")
+
+        if not file_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required field: file_path"
+            )
+
+        # 安全检查：防止路径穿越攻击
+        resolved_path = Path(file_path).resolve()
+
+        # 检查文件是否存在
+        if not resolved_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # 检查文件扩展名
+        if resolved_path.suffix.lower() not in ['.docx', '.doc']:
+            raise HTTPException(
+                status_code=400,
+                detail="Only Word documents (.docx, .doc) are supported"
+            )
+
+        # 提取文件名
+        filename = resolved_path.name
+
+        logger.info(f"Downloading Word document: {file_path}")
+
+        # 根据文件扩展名设置正确的媒体类型
+        media_type = (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            if resolved_path.suffix.lower() == '.docx'
+            else "application/msword"
+        )
+
+        return FileResponse(
+            path=str(resolved_path),
+            media_type=media_type,
+            filename=filename,
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading Word document: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

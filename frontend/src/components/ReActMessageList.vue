@@ -845,19 +845,47 @@ watch(
       expandedProcessIds.value.clear()
       console.log('[ReActMessageList] 初次加载历史对话，默认折叠所有过程消息')
 
+      // 【修复】遍历所有final消息，折叠它们之前的过程消息
+      nextTick(() => {
+        let lastFinalIndex = -1
+        let totalCollapsedCount = 0
+
+        // 找到所有的final消息
+        for (let i = 0; i < newMessages.length; i++) {
+          const msg = newMessages[i]
+          if (msg.type === 'final') {
+            // 获取上一个final之后、当前final之前的所有消息
+            const messagesBetween = newMessages.slice(lastFinalIndex + 1, i)
+
+            // 折叠这些消息中的过程消息
+            for (const procMsg of messagesBetween) {
+              if (procMsg.type === 'thought' || procMsg.type === 'action' || procMsg.type === 'observation') {
+                collapsedProcessIds.value.add(procMsg.id)
+                totalCollapsedCount++
+              }
+            }
+
+            lastFinalIndex = i
+          }
+        }
+
+        console.log(`[ReActMessageList] 初次加载：已折叠 ${totalCollapsedCount} 个过程消息`)
+      })
+
       // 【新增】延迟一段时间后允许用户手动展开 details
       setTimeout(() => {
         isInitialLoad.value = false
         console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
       }, 3000) // 3秒后允许用户手动展开
-    }
-
-    const lastMessage = newMessages[newMessages.length - 1]
-    // 如果最后一条消息是final消息，自动折叠之前的过程消息
-    if (lastMessage?.type === 'final') {
-      nextTick(() => {
-        collapsePreviousProcessMessages(lastMessage, newMessages)
-      })
+    } else {
+      // 非初次加载：只处理新添加的final消息
+      const lastMessage = newMessages[newMessages.length - 1]
+      // 如果最后一条消息是final消息，自动折叠之前的过程消息
+      if (lastMessage?.type === 'final') {
+        nextTick(() => {
+          collapsePreviousProcessMessages(lastMessage, newMessages)
+        })
+      }
     }
   },
   { deep: true }

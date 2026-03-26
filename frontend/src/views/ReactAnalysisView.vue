@@ -620,11 +620,168 @@
             </div>
           </div>
 
+          <!-- 社交平台管理面板 -->
+          <div v-else-if="managementPanel === 'social-platform'" class="management-panel social-platform-panel">
+            <div class="panel-header">
+              <h3>社交平台管理</h3>
+              <button class="panel-btn small" @click="refreshSocialPlatformStatus" :disabled="socialPlatformLoading">
+                {{ socialPlatformLoading ? '刷新中...' : '刷新' }}
+              </button>
+              <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
+            </div>
+
+            <div class="social-platform-content">
+              <!-- 平台状态卡片 -->
+              <div class="platform-cards">
+                <!-- QQ平台 -->
+                <div class="platform-card qq">
+                  <div class="card-header">
+                    <div class="platform-icon">
+                      <span class="icon-qq">QQ</span>
+                    </div>
+                    <div class="platform-info">
+                      <h4>QQ机器人</h4>
+                      <span class="status-badge" :class="getPlatformStatusClass(socialPlatformStatus.qq)">
+                        {{ getPlatformStatusText(socialPlatformStatus.qq) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="card-metrics">
+                    <div class="metric">
+                      <span class="metric-label">消息接收</span>
+                      <span class="metric-value">{{ socialPlatformMetrics.qq?.messages_received || 0 }}</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">消息发送</span>
+                      <span class="metric-value">{{ socialPlatformMetrics.qq?.messages_sent || 0 }}</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">错误率</span>
+                      <span class="metric-value">{{ socialPlatformMetrics.qq?.error_rate || '0%' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 微信平台 -->
+                <div class="platform-card weixin">
+                  <div class="card-header">
+                    <div class="platform-icon">
+                      <span class="icon-weixin">微信</span>
+                    </div>
+                    <div class="platform-info">
+                      <h4>微信机器人</h4>
+                      <span class="status-badge" :class="getPlatformStatusClass(socialPlatformStatus.weixin)">
+                        {{ getPlatformStatusText(socialPlatformStatus.weixin) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="card-metrics">
+                    <div class="metric">
+                      <span class="metric-label">消息接收</span>
+                      <span class="metric-value">{{ socialPlatformMetrics.weixin?.messages_received || 0 }}</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">消息发送</span>
+                      <span class="metric-value">{{ socialPlatformMetrics.weixin?.messages_sent || 0 }}</span>
+                    </div>
+                    <div class="metric">
+                      <span class="metric-label">错误率</span>
+                      <span class="metric-value">{{ socialPlatformMetrics.weixin?.error_rate || '0%' }}</span>
+                    </div>
+                  </div>
+
+                  <!-- 微信登录按钮 -->
+                  <div class="card-actions">
+                    <!-- 调试信息 -->
+                    <div style="font-size: 11px; color: #999; margin-bottom: 8px;">
+                      调试: logged_in={{ socialPlatformStatus.weixin?.logged_in }},
+                      enabled={{ socialPlatformStatus.weixin?.enabled }},
+                      按钮显示={{ !socialPlatformStatus.weixin?.logged_in }}
+                    </div>
+                    <button
+                      v-if="!socialPlatformStatus.weixin?.logged_in"
+                      class="panel-btn primary"
+                      @click="showWeixinQRModal = true"
+                    >
+                      扫码登录
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 系统健康状态 -->
+              <div class="health-section">
+                <h4>系统健康状态</h4>
+                <div class="health-cards">
+                  <div class="health-card" :class="{ healthy: socialPlatformHealth.healthy }">
+                    <div class="health-icon">{{ socialPlatformHealth.healthy ? '✓' : '!' }}</div>
+                    <div class="health-info">
+                      <span class="health-label">整体状态</span>
+                      <span class="health-value">{{ socialPlatformHealth.healthy ? '运行正常' : '存在异常' }}</span>
+                    </div>
+                  </div>
+                  <div class="health-card cache">
+                    <div class="health-icon">📊</div>
+                    <div class="health-info">
+                      <span class="health-label">缓存命中率</span>
+                      <span class="health-value">{{ socialPlatformCacheStats.hit_rate || '0%' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 微信QR码弹窗 -->
+            <div v-if="showWeixinQRModal" class="qr-modal-overlay" @click="showWeixinQRModal = false">
+              <div class="qr-modal" @click.stop>
+                <div class="qr-modal-header">
+                  <h4>微信登录</h4>
+                  <button class="close-btn" @click="showWeixinQRModal = false">×</button>
+                </div>
+
+                <div class="qr-modal-body">
+                  <div v-if="weixinQRCodeUrl" class="qr-code-container">
+                    <img :src="weixinQRCodeUrl" alt="微信登录QR码" class="qr-code-image" />
+
+                    <div class="status-container">
+                      <div class="status-indicator" :class="weixinLoginStatus.class">
+                        {{ weixinLoginStatus.text }}
+                      </div>
+                    </div>
+
+                    <div class="instructions">
+                      <h5>登录步骤：</h5>
+                      <ol>
+                        <li>打开微信，点击右上角的"扫一扫"</li>
+                        <li>扫描上方二维码</li>
+                        <li>在手机上确认登录</li>
+                      </ol>
+                    </div>
+                  </div>
+
+                  <div v-else class="qr-loading">
+                    <div class="spinner"></div>
+                    <p>正在生成二维码...</p>
+                  </div>
+                </div>
+
+                <div class="qr-modal-footer">
+                  <button class="panel-btn secondary" @click="refreshWeixinQRCode" :disabled="weixinQRLoading">
+                    {{ weixinQRLoading ? '加载中...' : '刷新二维码' }}
+                  </button>
+                  <button class="panel-btn primary" @click="checkWeixinLoginStatus">
+                    检查状态
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <ReActMessageList
             v-if="!managementPanel"
-            :messages="store.messages"
-            :show-reflexion="store.showReflexion"
-            :reflexion-count="store.reflexionCount"
+            :messages="currentModeMessages"
+            :show-reflexion="store.currentState.showReflexion"
+            :reflexion-count="store.currentState.reflexionCount"
             :use-markdown="true"
             :assistant-mode="activeAssistant"
             :selected-message-id="selectedMessageId"
@@ -635,9 +792,9 @@
           <InputBox
             v-if="!managementPanel"
             ref="inputBoxRef"
-            v-model="store.currentMessage"
+            v-model="currentModeCurrentMessage"
             :disabled="inputDisabled"
-            :is-analyzing="store.isAnalyzing"
+            :is-analyzing="currentModeIsAnalyzing"
             :placeholder="inputPlaceholder"
             :assistant-mode="activeAssistant"
             :use-reranker="useReranker"
@@ -694,11 +851,11 @@
             <VisualizationPanel
               v-show="activeRightTab === 'visualization'"
               ref="vizPanelRef"
-              :content="store.currentVisualization"
-              :history="store.messages"
+              :content="currentModeVisualization"
+              :history="currentModeMessages"
               :selected-message-id="selectedMessageId"
               :assistant-mode="activeAssistant"
-              :expert-results="store.lastExpertResults"
+              :expert-results="currentModeExpertResults"
               @fullscreen="openFullscreen"
               @fullscreen-expert="handleExpertFullscreen"
             />
@@ -707,8 +864,8 @@
             <OfficeDocumentPanel
               v-show="activeRightTab === 'document'"
               ref="officePanelRef"
-              :history="store.messages"
-              :session-id="store.currentSessionId"
+              :history="currentModeMessages"
+              :session-id="currentModeSessionId || ''"
               @submit-edit="handleOfficeEditSubmit"
             />
           </template>
@@ -720,7 +877,7 @@
     <FullscreenDashboard
       :visible="fullscreenMode"
       :assistant-mode="activeAssistant"
-      :expert-results="store.lastExpertResults"
+      :expert-results="currentModeExpertResults"
       @close="closeFullscreen"
     />
 
@@ -965,6 +1122,23 @@ const sessionHistoryData = ref([])
 const sessionHistoryStats = ref(null)
 const sessionHistoryFilter = ref('all')
 
+// 社交平台管理相关状态
+const socialPlatformLoading = ref(false)
+const socialPlatformStatus = ref({
+  qq: { enabled: false, running: false, logged_in: false },
+  weixin: { enabled: false, running: false, logged_in: false }
+})
+const socialPlatformMetrics = ref({
+  qq: { messages_received: 0, messages_sent: 0, error_rate: '0%' },
+  weixin: { messages_received: 0, messages_sent: 0, error_rate: '0%' }
+})
+const socialPlatformHealth = ref({ healthy: true })
+const socialPlatformCacheStats = ref({ hit_rate: '0%', size: 0 })
+const showWeixinQRModal = ref(false)
+const weixinQRCodeUrl = ref('')
+const weixinQRLoading = ref(false)
+const weixinLoginStatus = ref({ text: '等待扫描', class: 'waiting' })
+
 // 获取今天的日期字符串
 const today = new Date()
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -974,11 +1148,34 @@ const handleRerankerChange = (value) => {
 }
 
 const handleAgentModeChange = (value) => {
-  // ✅ 处理双模式架构的模式变化
-  store.agentMode = value
-  localStorage.setItem('agent-mode', value)  // ✅ 保存到localStorage
-  console.log('[ReactAnalysisView] Agent模式切换:', value === 'assistant' ? '助手模式（办公任务）' : '专家模式（数据分析）')
+  // ✅ 处理多模式架构的模式变化
+  store.switchMode(value)
+  console.log('[ReactAnalysisView] Agent模式切换:', value)
 }
+
+// ========== 多模式响应式计算属性 ==========
+// 确保模式切换时 UI 正确更新
+
+// 当前模式的对话消息
+const currentModeMessages = computed(() => store.currentState.messages)
+
+// 当前模式的可视化数据
+const currentModeVisualization = computed(() => store.currentState.currentVisualization)
+
+// 当前模式的可视化历史
+const currentModeVisualizationHistory = computed(() => store.currentState.visualizationHistory)
+
+// 当前模式的专家结果
+const currentModeExpertResults = computed(() => store.currentState.lastExpertResults)
+
+// 当前模式的会话ID
+const currentModeSessionId = computed(() => store.currentState.sessionId)
+
+// 当前模式的分析状态
+const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
+
+// 当前模式的当前消息
+const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
 
 const vizPanelStyle = computed(() => ({
   width: `${vizWidth.value}%`,  // 使用可拖动调整的宽度
@@ -991,13 +1188,13 @@ const vizPanelStyle = computed(() => ({
 
 const allVisualizations = computed(() => {
   const vizList = []
-  if (store.visualizationHistory?.length) {
-    vizList.push(...store.visualizationHistory)
+  if (store.currentState.visualizationHistory?.length) {
+    vizList.push(...store.currentState.visualizationHistory)
   }
-  if (store.currentVisualization) {
-    if (store.currentVisualization.visuals) {
+  if (store.currentState.currentVisualization) {
+    if (store.currentState.currentVisualization.visuals) {
       // 兼容两种格式：VisualBlock格式 和 直接格式
-      const visuals = store.currentVisualization.visuals.map(v => {
+      const visuals = store.currentState.currentVisualization.visuals.map(v => {
         if (v.payload) {
           return { ...v.payload, meta: v.meta }
         } else {
@@ -1006,7 +1203,7 @@ const allVisualizations = computed(() => {
       })
       vizList.push(...visuals)
     } else {
-      vizList.push(store.currentVisualization)
+      vizList.push(store.currentState.currentVisualization)
     }
   }
   const seen = new Set()
@@ -1140,7 +1337,7 @@ const handleOfficeEditSubmit = async (editData) => {
         file_path: editData.file_path,
         content: editData.content,
         doc_type: editData.doc_type,
-        session_id: store.currentSessionId
+        session_id: store.currentState.sessionId || ''
       })
     })
 
@@ -1310,7 +1507,7 @@ const switchToGeneral = () => {
 }
 
 const handleAssistantSelect = async (moduleId) => {
-  if (moduleId !== 'general-agent' && store.isAnalyzing) {
+  if (moduleId !== 'general-agent' && store.currentState.isAnalyzing) {
     await store.pauseAnalysis()
   }
 }
@@ -1352,6 +1549,14 @@ const handleSidebarAction = async (actionId) => {
       } else {
         managementPanel.value = 'session-history'
         await refreshSessionHistory()
+      }
+      break
+    case 'social-platform':
+      if (managementPanel.value === 'social-platform') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'social-platform'
+        await refreshSocialPlatformStatus()
       }
       break
     case 'restart-session':
@@ -1940,36 +2145,36 @@ const quickLoadSession = async (session) => {
       return
     }
 
-    // 更新当前会话ID
-    store.currentSessionId = session.session_id
+    // 使用新的 set 方法恢复会话状态
+    store.setSessionId(sessionData.session_id)
 
     // 恢复对话历史
     if (Array.isArray(sessionData.conversation_history)) {
-      store.messages = sessionData.conversation_history
-      console.log('[会话恢复] 已恢复对话历史，消息数量:', store.messages.length)
+      store.setMessages(sessionData.conversation_history)
+      console.log('[会话恢复] 已恢复对话历史，消息数量:', store.currentState.messages.length)
     }
 
     // 恢复分析状态
     if (sessionData.last_result) {
-      store.lastResult = sessionData.last_result
+      store.currentState.lastExpertResults = sessionData.last_result
       console.log('[会话恢复] 已恢复分析结果')
     }
 
     // 恢复可视化历史
     if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
-      store.visualizationHistory = sessionData.visualizations
-      console.log('[会话恢复] 已恢复可视化历史，图表数量:', store.visualizationHistory.length)
+      store.setVisualizationHistory(sessionData.visualizations)
+      console.log('[会话恢复] 已恢复可视化历史，图表数量:', store.currentState.visualizationHistory.length)
     }
 
     // 恢复专家结果
     if (sessionData.expert_results) {
-      store.lastExpertResults = sessionData.expert_results
+      store.setLastExpertResults(sessionData.expert_results)
       console.log('[会话恢复] 已恢复专家结果')
     }
 
     // 关闭管理面板并显示成功提示
     managementPanel.value = null
-    alert(`已加载对话，共 ${store.messages.length} 条消息`)
+    alert(`已加载对话，共 ${store.currentState.messages.length} 条消息`)
 
   } catch (error) {
     console.error('Failed to restore session:', error)
@@ -2052,6 +2257,143 @@ const handleSessionCleanup = async () => {
   }
 }
 
+// 社交平台管理方法
+const refreshSocialPlatformStatus = async () => {
+  socialPlatformLoading.value = true
+  try {
+    // 获取平台状态
+    const statusResponse = await fetch('/api/social/status')
+    if (statusResponse.ok) {
+      const statusData = await statusResponse.json()
+      console.log('🔍 社交平台状态原始数据:', statusData)
+
+      // 如果后端返回空channels，使用配置文件状态（临时兜底）
+      if (!statusData.channels || Object.keys(statusData.channels).length === 0) {
+        socialPlatformStatus.value = {
+          qq: { enabled: false, running: false, logged_in: false },
+          // 默认启用微信（根据配置文件 social_config.yaml）
+          weixin: { enabled: true, running: false, logged_in: false }
+        }
+      } else {
+        // 确保 logged_in 字段存在
+        const channels = {}
+        for (const [key, value] of Object.entries(statusData.channels)) {
+          channels[key] = {
+            ...value,
+            logged_in: value.logged_in || false
+          }
+        }
+        socialPlatformStatus.value = channels
+      }
+      console.log('✅ 社交平台状态处理后:', socialPlatformStatus.value)
+      console.log('✅ 微信登录状态:', socialPlatformStatus.value.weixin?.logged_in)
+      console.log('✅ 按钮应该显示:', !socialPlatformStatus.value.weixin?.logged_in)
+    }
+
+    // 获取性能指标
+    const metricsResponse = await fetch('/api/social/metrics')
+    if (metricsResponse.ok) {
+      const metricsData = await metricsResponse.json()
+      socialPlatformMetrics.value = metricsData.channels || {
+        qq: { messages_received: 0, messages_sent: 0, error_rate: '0%' },
+        weixin: { messages_received: 0, messages_sent: 0, error_rate: '0%' }
+      }
+    }
+
+    // 获取健康状态
+    const healthResponse = await fetch('/api/social/health')
+    if (healthResponse.ok) {
+      socialPlatformHealth.value = await healthResponse.json()
+    }
+
+    // 获取缓存统计
+    const cacheResponse = await fetch('/api/social/cache/stats')
+    if (cacheResponse.ok) {
+      socialPlatformCacheStats.value = await cacheResponse.json()
+    }
+  } catch (error) {
+    console.error('Failed to refresh social platform status:', error)
+  } finally {
+    socialPlatformLoading.value = false
+  }
+}
+
+const getPlatformStatusText = (platform) => {
+  if (!platform?.enabled) return '未启用'
+  if (!platform?.running) return '已停止'
+  if (platform?.logged_in) return '已登录'
+  return '运行中'
+}
+
+const getPlatformStatusClass = (platform) => {
+  if (!platform?.enabled) return 'status-disabled'
+  if (!platform?.running) return 'status-stopped'
+  if (platform?.logged_in) return 'status-success'
+  return 'status-running'
+}
+
+const refreshWeixinQRCode = async () => {
+  weixinQRLoading.value = true
+  weixinQRCodeUrl.value = ''
+
+  try {
+    const response = await fetch('/api/social/weixin/qrcode')
+    if (!response.ok) throw new Error('Failed to fetch QR code')
+
+    const blob = await response.blob()
+    weixinQRCodeUrl.value = URL.createObjectURL(new Blob([blob]))
+
+    // 重置登录状态
+    weixinLoginStatus.value = { text: '等待扫描', class: 'waiting' }
+
+    // 开始轮询登录状态
+    startWeixinLoginPolling()
+  } catch (error) {
+    console.error('Failed to fetch QR code:', error)
+    alert('获取二维码失败')
+  } finally {
+    weixinQRLoading.value = false
+  }
+}
+
+const checkWeixinLoginStatus = async () => {
+  try {
+    const response = await fetch('/api/social/weixin/status')
+    if (!response.ok) throw new Error('Failed to check status')
+
+    const status = await response.json()
+
+    if (status.logged_in) {
+      weixinLoginStatus.value = { text: '登录成功！', class: 'success' }
+      showWeixinQRModal.value = false
+      await refreshSocialPlatformStatus()
+
+      // 停止轮询
+      stopWeixinLoginPolling()
+    } else if (status.scanned) {
+      weixinLoginStatus.value = { text: '已扫描，等待确认', class: 'scanned' }
+    }
+  } catch (error) {
+    console.error('Failed to check login status:', error)
+  }
+}
+
+let weixinLoginPollingInterval = null
+
+const startWeixinLoginPolling = () => {
+  stopWeixinLoginPolling()
+  weixinLoginPollingInterval = setInterval(() => {
+    checkWeixinLoginStatus()
+  }, 3000)
+}
+
+const stopWeixinLoginPolling = () => {
+  if (weixinLoginPollingInterval) {
+    clearInterval(weixinLoginPollingInterval)
+    weixinLoginPollingInterval = null
+  }
+}
+
 const toggleSessionExpand = (session) => {
   session.isExpanded = !session.isExpanded
 }
@@ -2069,28 +2411,28 @@ const handleLoadSession = async (sessionId) => {
       return
     }
 
-    // 更新当前会话ID
-    store.currentSessionId = sessionId
+    // 更新当前会话ID（使用 Pinia 状态的 sessionId，而非 currentSessionId）
+    store.setSessionId(sessionData.session_id)
 
     // 恢复对话历史
     if (Array.isArray(sessionData.conversation_history)) {
-      store.messages = sessionData.conversation_history
-      console.log('[快速加载会话] 已恢复对话历史，消息数量:', store.messages.length)
+      store.setMessages(sessionData.conversation_history)
+      console.log('[快速加载会话] 已恢复对话历史，消息数量:', store.currentState.messages.length)
     }
 
     // 恢复分析状态
     if (sessionData.last_result) {
-      store.lastResult = sessionData.last_result
+      store.currentState.lastExpertResults = sessionData.last_result
     }
 
     // 恢复可视化历史
     if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
-      store.visualizationHistory = sessionData.visualizations
+      store.setVisualizationHistory(sessionData.visualizations)
     }
 
     // 恢复专家结果
     if (sessionData.expert_results) {
-      store.lastExpertResults = sessionData.expert_results
+      store.setLastExpertResults(sessionData.expert_results)
     }
 
     // 【新增】恢复Office文档预览（用于历史对话PDF预览）
@@ -2127,7 +2469,7 @@ const handleLoadSession = async (sessionId) => {
 
 // 选择消息查看来源详情（支持所有final消息）
 function selectMessage(index, message) {
-  const msg = message || store.messages[index]
+  const msg = message || store.currentState.messages[index]
   if (!msg) return
 
   // 如果点击的是final消息
@@ -2145,6 +2487,7 @@ function selectMessage(index, message) {
 onMounted(async () => {
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('mouseup', stopDragging)
+  window.addEventListener('keydown', handleKeyboardShortcuts)
   await store.init()
   // 加载知识库列表并自动全选
   await kbStore.fetchKnowledgeBases()
@@ -2153,7 +2496,33 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('mouseup', stopDragging)
+  window.removeEventListener('keydown', handleKeyboardShortcuts)
 })
+
+// 键盘快捷键：Ctrl+1~5 切换模式
+const handleKeyboardShortcuts = (e) => {
+  // 检查是否在输入框中（如果在输入框中，不触发快捷键）
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+    return
+  }
+
+  // Ctrl+1~5 快速切换模式
+  if (e.ctrlKey && e.key >= '1' && e.key <= '5') {
+    e.preventDefault()
+    const modeMap = {
+      '1': 'assistant',
+      '2': 'expert',
+      '3': 'query',
+      '4': 'code',
+      '5': 'report'
+    }
+    const mode = modeMap[e.key]
+    if (mode) {
+      store.switchMode(mode)
+      console.log('[键盘快捷键] 切换到模式:', mode)
+    }
+  }
+}
 
 const handleSend = async (payload) => {
   if (!isAssistantReady.value) return
@@ -2218,7 +2587,7 @@ const handleSessionRestore = async (sessionId) => {
     console.log('[会话恢复] 前3条原始消息:', sessionData.conversation_history.slice(0, 3))
 
     // 更新当前会话ID
-    store.sessionId = sessionData.session_id
+    store.setSessionId(sessionData.session_id)
     console.log('[会话恢复] 已更新sessionId:', sessionData.session_id)
 
     // ✅ 转换旧格式消息（兼容没有 content 字段的历史消息）
@@ -2268,18 +2637,19 @@ const handleSessionRestore = async (sessionId) => {
     console.log('[会话恢复] 转换后的消息数量:', convertedHistory.length)
     console.log('[会话恢复] 转换后前3条消息:', convertedHistory.slice(0, 3))
 
-    // 清空现有消息
-    console.log('[会话恢复] 清空前 store.messages 长度:', store.messages.length)
-    store.messages = []
+    // 清空现有消息并恢复会话状态到store（使用新的setMessages方法）
+    console.log('[会话恢复] 清空前 store.currentState.messages 长度:', store.currentState.messages.length)
 
-    // 恢复会话状态到store
-    store.messages = convertedHistory
-    console.log('[会话恢复] 赋值后 store.messages 长度:', store.messages.length)
-    console.log('[会话恢复] 赋值后 store.messages 前3条:', store.messages.slice(0, 3))
+    // 使用 store 的 restoreSessionState 方法批量恢复状态
+    store.setSessionId(sessionData.session_id)
+    store.setMessages(convertedHistory)
+
+    console.log('[会话恢复] 赋值后 store.currentState.messages 长度:', store.currentState.messages.length)
+    console.log('[会话恢复] 赋值后 store.currentState.messages 前3条:', store.currentState.messages.slice(0, 3))
 
     // 等待DOM更新
     await nextTick()
-    console.log('[会话恢复] nextTick后 store.messages 长度:', store.messages.length)
+    console.log('[会话恢复] nextTick后 store.currentState.messages 长度:', store.currentState.messages.length)
 
     // 如果有数据ID，可以加载相关数据
     if (sessionData.data_ids && sessionData.data_ids.length > 0) {
@@ -4184,5 +4554,381 @@ input:disabled + .scheduled-slider {
 .session-btn-danger:hover {
   background: #fff1f0;
   border-color: #ffa39e;
+}
+
+/* 社交平台管理面板样式 */
+.social-platform-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.social-platform-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.platform-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.platform-card {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.platform-card .card-header {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  background: #fafafa;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.platform-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.platform-card.qq .platform-icon {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.platform-card.weixin .platform-icon {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.platform-info h4 {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-badge.status-disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.status-badge.status-running {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.status-badge.status-success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.status-stopped {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.card-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 16px;
+}
+
+.metric {
+  text-align: center;
+}
+
+.metric-label {
+  display: block;
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-bottom: 4px;
+}
+
+.metric-value {
+  display: block;
+  font-size: 18px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.card-actions {
+  padding: 12px 16px;
+  background: #fafafa;
+  border-top: 1px solid #e8e8e8;
+}
+
+.health-section {
+  margin-top: 8px;
+}
+
+.health-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.health-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.health-card {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  gap: 10px;
+}
+
+.health-card.healthy {
+  border-color: #52c41a;
+  background: #f6ffed;
+}
+
+.health-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.health-card.healthy .health-icon {
+  background: #52c41a;
+  color: #fff;
+}
+
+.health-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.health-label {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.health-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #262626;
+}
+
+/* QR码弹窗样式 */
+.qr-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.qr-modal {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.qr-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.qr-modal-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.qr-modal-header .close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #8c8c8c;
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.qr-modal-header .close-btn:hover {
+  background: #f3f4f6;
+  color: #262626;
+}
+
+.qr-modal-body {
+  padding: 20px;
+}
+
+.qr-code-container {
+  text-align: center;
+}
+
+.qr-code-image {
+  width: 260px;
+  height: 260px;
+  margin: 0 auto 16px;
+  border: 2px solid #e8e8e8;
+  border-radius: 8px;
+  display: block;
+}
+
+.status-container {
+  margin: 16px 0;
+}
+
+.status-indicator {
+  display: inline-block;
+  padding: 8px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.status-indicator.waiting {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-indicator.scanned {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.status-indicator.success {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.instructions {
+  margin-top: 16px;
+  text-align: left;
+  background: #fafafa;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.instructions h5 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.instructions ol {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #595959;
+  line-height: 1.8;
+}
+
+.qr-loading {
+  text-align: center;
+  padding: 60px 20px;
+  color: #8c8c8c;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #1890ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.qr-modal-footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid #e8e8e8;
+  justify-content: flex-end;
+}
+
+.qr-modal-footer .panel-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.qr-modal-footer .panel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.qr-modal-footer .panel-btn.primary {
+  background: #52c41a;
+  color: white;
+}
+
+.qr-modal-footer .panel-btn.primary:hover:not(:disabled) {
+  background: #389e0d;
+}
+
+.qr-modal-footer .panel-btn.secondary {
+  background: #f3f4f6;
+  color: #262626;
+}
+
+.qr-modal-footer .panel-btn.secondary:hover:not(:disabled) {
+  background: #e8e8e8;
 }
 </style>

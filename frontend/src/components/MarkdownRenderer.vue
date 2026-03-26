@@ -1,18 +1,31 @@
 <template>
-  <div class="markdown-renderer">
-    <div v-html="renderedHtml"></div>
+  <div class="markdown-renderer" ref="markdownRef">
+    <div v-html="renderedHtml" @click="handleImageClick"></div>
   </div>
+
+  <ImageLightbox
+    v-model:visible="lightboxVisible"
+    :images="lightboxImages"
+    v-model:start-index="currentImageIndex"
+  />
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
 import markdownItKatex from '@traptitech/markdown-it-katex'
 import markdownItMultimdTable from 'markdown-it-multimd-table'
 import 'katex/dist/katex.min.css'
+import ImageLightbox from './ImageLightbox.vue'
 
 // 预处理后的内容
 const processedContent = ref('')
+const markdownRef = ref(null)
+
+// 图片灯箱相关
+const lightboxVisible = ref(false)
+const lightboxImages = ref([])
+const currentImageIndex = ref(0)
 
 const md = new MarkdownIt({
   html: true,
@@ -243,6 +256,85 @@ const renderedHtml = computed(() => {
 
   return rendered
 })
+
+// 收集Markdown中的所有图片
+const collectImages = () => {
+  nextTick(() => {
+    if (!markdownRef.value) return
+
+    // 等待所有图片加载完成后再收集
+    const imgElements = markdownRef.value.querySelectorAll('img')
+    const images = []
+
+    imgElements.forEach((img, index) => {
+      // 使用 getAttribute 确保获取到完整的 src
+      const src = img.getAttribute('src') || img.currentSrc || img.src
+      const alt = img.getAttribute('alt') || img.alt || `图片 ${index + 1}`
+
+      console.log(`[MarkdownRenderer] 图片 ${index + 1}:`, {
+        tagName: img.tagName,
+        src: src,
+        getAttribute_src: img.getAttribute('src'),
+        img_src: img.src,
+        img_currentSrc: img.currentSrc,
+        complete: img.complete,
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight
+      })
+
+      if (src) {
+        images.push({ src, alt })
+      }
+    })
+
+    lightboxImages.value = images
+    console.log('[MarkdownRenderer] 收集到图片:', images.length, images)
+  })
+}
+
+// 监听内容变化，重新收集图片
+watch(renderedHtml, () => {
+  // 等待下一帧，确保 DOM 完全渲染
+  nextTick(() => {
+    collectImages()
+
+    // 再次等待，确保图片开始加载
+    setTimeout(() => {
+      collectImages()
+    }, 100)
+  })
+})
+
+// 处理图片点击 - 实时收集，确保获取最新状态
+const handleImageClick = (e) => {
+  if (e.target.tagName === 'IMG') {
+    // 点击时实时收集图片信息
+    const imgElements = markdownRef.value?.querySelectorAll('img') || []
+    const images = []
+
+    imgElements.forEach((img, index) => {
+      const src = img.getAttribute('src') || img.currentSrc || img.src
+      const alt = img.getAttribute('alt') || img.alt || `图片 ${index + 1}`
+      if (src) {
+        images.push({ src, alt })
+      }
+    })
+
+    lightboxImages.value = images
+
+    const clickedIndex = Array.from(imgElements).indexOf(e.target)
+    if (clickedIndex !== -1) {
+      currentImageIndex.value = clickedIndex
+      lightboxVisible.value = true
+      console.log('[MarkdownRenderer] 点击图片', {
+        index: clickedIndex,
+        targetSrc: e.target.src,
+        targetGetAttribute: e.target.getAttribute('src'),
+        images: lightboxImages.value
+      })
+    }
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -345,20 +437,29 @@ const renderedHtml = computed(() => {
     background: linear-gradient(180deg, #ffffff 0%, #f8f9ff 100%);
   }
 
-  // 图片样式 - 简化为无装饰样式
+  // 图片样式 - 无边框样式
   :deep(.md-image-wrapper) {
     margin: 16px 0;
     text-align: center;
+
+    img {
+      cursor: zoom-in;
+      transition: transform 0.2s;
+
+      &:hover {
+        transform: scale(1.02);
+      }
+    }
   }
 
   :deep(.md-base64-image) {
-    max-width: 60%;
+    max-width: 100%;
     height: auto;
     display: block;
   }
 
   :deep(.md-external-image) {
-    max-width: 60%;
+    max-width: 100%;
     height: auto;
     display: block;
   }
@@ -391,12 +492,18 @@ const renderedHtml = computed(() => {
     clear: both;
   }
 
-  // 普通img标签样式 - 简化为无装饰
+  // 普通img标签样式 - 无边框样式
   :deep(img) {
     max-width: 60%;
     height: auto;
     display: block;
     margin: 12px auto;
+    cursor: zoom-in;
+    transition: transform 0.2s;
+
+    &:hover {
+      transform: scale(1.02);
+    }
   }
 
   :deep(table) {

@@ -4,9 +4,7 @@ ReAct Loop Engine (Refactored)
 ReAct 循环引擎，实现 Thought → Action → Observation 循环。
 
 重构后的模块化结构：
-- ReWOOExecutor: ReWOO 规划执行
 - MemoryToolsHandler: 内存工具管理
-- AutoTokenManager: 自动Token管理（学习Mini-Agent）
 - AgentLogger: 运行日志追踪（学习Mini-Agent）
 """
 
@@ -16,15 +14,13 @@ import structlog
 import json
 
 from ..memory.hybrid_manager import HybridMemoryManager
-from .rewoo_executor import ReWOOExecutor
 from .memory_tools_handler import MemoryToolsHandler
 
-# 新增：自动Token管理和运行日志（学习Mini-Agent）
-from ...utils.auto_token_manager import AutoTokenManager
+# 运行日志（学习Mini-Agent）
 from ...utils.agent_logger import AgentLogger
 from ..prompts.react_prompts import format_finish_summary_prompt
 
-# 新增：简化的上下文构建器
+# 简化的上下文构建器
 from ..context.simplified_context_builder import SimplifiedContextBuilder
 
 logger = structlog.get_logger()
@@ -39,12 +35,7 @@ class ReActLoop:
     - Action: 决定下一步行动（工具调用或完成）
     - Observation: 记录执行结果
 
-    支持两种执行模式：
-    1. ReAct 模式（默认）: 动态循环，灵活应对
-    2. ReWOO 模式: 一次性规划，减少 LLM 调用
-
     新增特性（学习Mini-Agent）：
-    - 自动Token管理：防止长对话context溢出
     - 运行日志追踪：完整记录执行过程，便于调试
     """
 
@@ -55,13 +46,10 @@ class ReActLoop:
         tool_executor,
         max_iterations: int = 10,
         stream_enabled: bool = True,
-        plan_mode: bool = False,
-        # 新增：Token管理和日志配置
-        token_limit: int = 80000,
+        # 日志配置
         enable_agent_logging: bool = True,
         log_dir: str = "./logs/agent_runs",
         enable_reasoning: bool = False,  # ✅ 思考模式开关（是否显示LLM推理过程）
-        single_step_mode: bool = False,  # ✅ V4优化：单步模式（合并Thought+Action）
         is_interruption: bool = False,  # ✅ 是否为用户中断后的对话
         knowledge_base_ids: Optional[list] = None  # ✅ 知识库ID列表
     ):
@@ -74,11 +62,8 @@ class ReActLoop:
             tool_executor: 工具执行器
             max_iterations: 最大迭代次数
             stream_enabled: 是否启用流式输出
-            plan_mode: 是否使用 ReWOO 规划模式
-            token_limit: Token上限（用于自动压缩）
             enable_agent_logging: 是否启用Agent运行日志
             log_dir: 日志目录
-            single_step_mode: V4优化：单步模式（一次LLM调用同时生成Thought和Action）
             is_interruption: 是否为用户中断后的对话（用户暂停后继续对话时为True）
             knowledge_base_ids: 知识库ID列表（用于知识问答工作流）
         """
@@ -87,26 +72,20 @@ class ReActLoop:
         self.executor = tool_executor
         self.max_iterations = max_iterations
         self.stream_enabled = stream_enabled
-        self.plan_mode = plan_mode
-        self.single_step_mode = single_step_mode  # V4优化
         self.is_interruption = is_interruption  # ✅ 保存中断标志
         self.knowledge_base_ids = knowledge_base_ids  # ✅ 保存知识库ID列表
 
         # 初始化处理器模块
-        self.rewoo_executor = ReWOOExecutor(memory_manager, llm_planner, tool_executor)
         self.memory_tools_handler = MemoryToolsHandler(memory_manager, tool_executor)
 
-        # 新增：自动Token管理器（学习Mini-Agent）
-        self.token_manager = AutoTokenManager(token_limit=token_limit)
-
-        # 新增：Agent运行日志（学习Mini-Agent）
+        # Agent运行日志
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = AgentLogger(
             log_dir=log_dir,
             enable_file_logging=enable_agent_logging
         ) if enable_agent_logging else None
 
-        # 新增：简化的上下文构建器
+        # 简化的上下文构建器
         # llm_planner 是 ReActPlanner 实例，使用 llm_service 属性
         llm_client = llm_planner.llm_service if hasattr(llm_planner, 'llm_service') else None
         self.context_builder = SimplifiedContextBuilder(
@@ -128,11 +107,8 @@ class ReActLoop:
             "react_loop_initialized",
             session_id=memory_manager.session_id,
             max_iterations=max_iterations,
-            plan_mode=plan_mode,
-            token_limit=token_limit,
             agent_logging=enable_agent_logging,
             enable_reasoning=enable_reasoning,
-            single_step_mode=single_step_mode,  # V4优化
             knowledge_base_ids=knowledge_base_ids  # ✅ 记录知识库ID
         )
 
@@ -164,24 +140,15 @@ class ReActLoop:
             manual_override=manual_mode is not None
         )
 
-        # 模式路由：plan_mode 是回退选项
-        if self.plan_mode:
-            logger.info("using_rewoo_mode_fallback", query=user_query[:100])
-            async for event in self.rewoo_executor.execute_plan(
-                user_query,
-                max_iterations=self.max_iterations
-            ):
-                yield event
-        else:
-            # 单步模式（默认）
-            async for event in self._run_react_loop(
-                user_query,
-                enhance_with_history,
-                initial_messages  # ✅ 传递历史消息
-            ):
-                # 附加模式信息到事件
-                event["mode"] = self.current_mode
-                yield event
+        # ReAct 循环（默认）
+        async for event in self._run_react_loop(
+            user_query,
+            enhance_with_history,
+            initial_messages  # ✅ 传递历史消息
+        ):
+            # 附加模式信息到事件
+            event["mode"] = self.current_mode
+            yield event
 
     async def _run_react_loop(
         self,
@@ -190,7 +157,7 @@ class ReActLoop:
         initial_messages: Optional[List[Dict[str, Any]]] = None  # ✅ 新增：历史消息注入
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        V4单步模式：ReAct 循环（合并 Thought + Action）
+        ReAct 循环（Thought + Action + Observation）
 
         核心流程：
         1. think_and_action() - 单次LLM调用，同时生成 thought 和 action
@@ -225,13 +192,16 @@ class ReActLoop:
             if self.is_interruption:
                 logger.info("interruption_flag_set", is_interruption=True, query=user_query[:100])
 
-            # ✅ Step 0a: 如果有历史消息，先加载到 session（用于会话恢复）
-            if initial_messages:
-                self.memory.session.load_history_messages(initial_messages)
+            # ✅ 检查 session 是否已有历史消息（从 _get_or_create_session 恢复）
+            existing_history = self.memory.session.get_messages_for_llm()
+            if existing_history:
                 logger.info(
-                    "initial_messages_loaded",
+                    "session_already_has_history",
                     session_id=self.memory.session_id,
-                    message_count=len(initial_messages)
+                    history_length=len(existing_history),
+                    first_role=existing_history[0].get("role") if existing_history else None,
+                    last_role=existing_history[-1].get("role") if existing_history else None,
+                    hint="会话已在 _get_or_create_session 中从 SessionManager 恢复"
                 )
 
             # Step 0: 记录用户消息
@@ -262,15 +232,12 @@ class ReActLoop:
                 }
             }
 
-            # Step 3: 单步模式循环（V4）
+            # Step 3: ReAct 循环
             while iteration_count < self.max_iterations and not task_completed:
                 iteration_count += 1
 
-                # Token检查
-                await self._check_and_compress_tokens()
-
                 logger.info(
-                    "single_step_iteration",
+                    "react_iteration",
                     iteration=iteration_count,
                     max_iterations=self.max_iterations
                 )
@@ -297,7 +264,8 @@ class ReActLoop:
                         iteration=iteration_count,
                         latest_observation=latest_observation_str,
                         conversation_history=conversation_history,
-                        mode=self.current_mode  # ✅ 传递当前模式
+                        mode=self.current_mode,  # ✅ 传递当前模式
+                        is_interruption=self.is_interruption  # ✅ 传递中断标志
                     )
 
                     # Phase 3: think_and_action（流式LLM调用）
@@ -328,7 +296,8 @@ class ReActLoop:
                                         "chunk": chunk,
                                         "is_complete": is_complete,
                                         "timestamp": datetime.now().isoformat()
-                                    }
+                                    },
+                                    "session_id": self.memory.session_id  # 【修复】添加session_id确保事件路由到正确模式
                                 }
 
                             if is_complete:
@@ -968,11 +937,18 @@ class ReActLoop:
                     )
                     if isinstance(data, dict) and data.get("pdf_preview"):
                         metadata = observation.get("metadata", {})
+                        # 获取文件路径，支持多种字段名：file_path, path, source_file, output_file
+                        file_path = (
+                            data.get("file_path") or
+                            data.get("path") or
+                            data.get("source_file") or
+                            data.get("output_file")
+                        )
                         yield {
                             "type": "office_document",
                             "data": {
                                 "pdf_preview": data["pdf_preview"],
-                                "file_path": data.get("file_path") or data.get("source_file") or data.get("output_file"),
+                                "file_path": file_path,
                                 "generator": metadata.get("generator"),
                                 "summary": observation.get("summary", ""),
                                 "timestamp": datetime.now().isoformat()
@@ -982,7 +958,7 @@ class ReActLoop:
                             "office_document_event_sent",
                             generator=metadata.get("generator"),
                             pdf_id=data["pdf_preview"].get("pdf_id"),
-                            file_path=data.get("file_path") or data.get("source_file")
+                            file_path=file_path
                         )
 
                     # 记忆更新
@@ -1532,71 +1508,7 @@ class ReActLoop:
             )
 
     def __repr__(self) -> str:
-        mode = "ReWOO" if self.plan_mode else "ReAct"
-        return f"<ReActLoop session={self.memory.session_id} mode={mode} max_iter={self.max_iterations}>"
-
-    # ==================== 新增：Token管理和日志辅助方法 ====================
-
-    async def _check_and_compress_tokens(self):
-        """
-        检查Token使用并按需压缩（学习Mini-Agent）
-
-        与现有三层记忆系统协同工作：
-        - 检查会话记忆的消息历史
-        - 超限时触发自动摘要
-        - 保持三层记忆的独立性
-        """
-        try:
-            # 获取会话消息用于Token检查
-            session_messages = self.memory.session.get_messages_for_llm()
-
-            # 检查是否需要摘要
-            if self.token_manager.should_summarize(session_messages):
-                logger.info(
-                    "token_limit_approaching",
-                    estimated_tokens=self.token_manager.estimate_tokens(session_messages),
-                    limit=self.token_manager.token_limit
-                )
-
-                # 使用LLM生成摘要的回调
-                async def llm_summarizer(prompt: str) -> str:
-                    try:
-                        result = await self.planner.generate_summary(prompt)
-                        return result
-                    except Exception:
-                        return ""
-
-                # 执行摘要
-                compressed_messages = await self.token_manager.maybe_summarize(
-                    session_messages,
-                    llm_summarizer=llm_summarizer
-                )
-
-                # 更新会话记忆（如果有压缩）
-                if len(compressed_messages) < len(session_messages):
-                    self.memory.session.update_messages(compressed_messages)
-                    logger.info(
-                        "session_messages_compressed",
-                        before=len(session_messages),
-                        after=len(compressed_messages),
-                        tokens_saved=self.token_manager.stats.get("tokens_saved", 0)
-                    )
-
-        except Exception as e:
-            logger.warning(
-                "token_compression_failed",
-                error=str(e)
-            )
-            # Token压缩失败不应阻断主流程
-
-    def get_token_stats(self) -> Dict[str, Any]:
-        """
-        获取Token使用统计
-
-        Returns:
-            Token统计信息
-        """
-        return self.token_manager.get_stats()
+        return f"<ReActLoop session={self.memory.session_id} max_iter={self.max_iterations}>"
 
     def get_agent_log_summary(self) -> Optional[Dict[str, Any]]:
         """
@@ -1611,655 +1523,17 @@ class ReActLoop:
 
     def get_enhanced_stats(self) -> Dict[str, Any]:
         """
-        获取增强的统计信息（包含记忆、Token、日志）
+        获取增强的统计信息（包含记忆、日志）
 
         Returns:
             综合统计信息
         """
         stats = self.get_memory_stats()
-        stats["token_management"] = self.get_token_stats()
 
         if self.agent_logger:
             stats["current_run"] = self.agent_logger.get_run_summary()
 
         return stats
-
-    async def _run_react_loop_single_step(
-        self,
-        user_query: str,
-        enhance_with_history: bool = True
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        V4优化：单步模式 ReAct 循环
-
-        合并 Thought + Action 为单次 LLM 调用，显著减少 LLM 调用次数。
-
-        流程：
-        1. 调用 think_and_action() 同时生成 thought 和 action
-        2. 如果是 TOOL_CALLS，执行并行工具调用
-        3. 如果是 TOOL_CALL，执行单工具调用
-        4. 如果是 FINISH，生成最终答案
-
-        Args:
-            user_query: 用户查询
-            enhance_with_history: 是否使用长期记忆增强
-
-        Yields:
-            流式事件
-        """
-        try:
-            # 开始运行日志记录
-            if self.agent_logger:
-                run_id = self.agent_logger.start_new_run(
-                    session_id=self.memory.session_id,
-                    query=user_query,
-                    metadata={
-                        "enhance_with_history": enhance_with_history,
-                        "mode": "single_step"
-                    }
-                )
-                logger.info("agent_run_started", run_id=run_id)
-
-            # Step 0: 记录用户消息
-            self.memory.session.add_user_message(user_query)
-
-            # Step 1: 使用原始查询（长期记忆增强已移除）
-            enhanced_query = user_query
-
-            # Step 2: 初始化循环状态
-            iteration_count = 0
-            task_completed = False
-            final_answer = None
-            direct_from_workflow = False  # ✅ 跟踪是否来自工作流直接返回
-            workflow_sources = []  # ✅ 保存工作流的sources数据
-
-            # Yield start event
-            yield {
-                "type": "start",
-                "data": {
-                    "query": user_query,
-                    "session_id": self.memory.session_id,
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
-
-            # Step 3: 单步模式循环
-            while iteration_count < self.max_iterations and not task_completed:
-                iteration_count += 1
-
-                # Token 检查
-                await self._check_and_compress_tokens()
-
-                logger.info(
-                    "single_step_iteration_start",
-                    iteration=iteration_count,
-                    max_iterations=self.max_iterations
-                )
-
-                try:
-                    # Phase 1: 获取上一次观察结果（用于反思）
-                    latest_observation = None
-                    if iteration_count > 1:
-                        iterations = self.memory.get_iterations()
-                        if iterations:
-                            latest_observation = iterations[-1].get("observation")
-
-                    # Phase 2: 使用简化的上下文构建器
-                    conversation_history = self.memory.session.get_messages_for_llm()
-
-                    # 格式化latest_observation为字符串
-                    latest_observation_str = ""
-                    if latest_observation:
-                        latest_observation_str = self._format_observation(latest_observation)
-
-                    # 使用SimplifiedContextBuilder构建上下文
-                    context_result = await self.context_builder.build_for_thought_action(
-                        query=enhanced_query,
-                        iteration=iteration_count,
-                        latest_observation=latest_observation_str,
-                        conversation_history=conversation_history,
-                        mode=self.current_mode  # ✅ 传递当前模式
-                    )
-
-                    # Phase 3: 调用流式版本的 think_and_action_v2_streaming 方法
-                    thought = None
-                    reasoning = None
-                    action = None
-                    streaming_buffer = ""  # 流式文本缓冲区
-                    think_action_result = None  # 初始化变量，避免后续引用错误
-
-                    async for event in self.planner.think_and_action_v2_streaming(
-                        query=enhanced_query,
-                        system_prompt=context_result["system_prompt"],
-                        user_conversation=context_result["user_conversation"],
-                        iteration=iteration_count,
-                        latest_observation=latest_observation
-                    ):
-                        if event["type"] == "streaming_text":
-                            # ✅ 流式文本：立即转发给前端
-                            chunk = event["data"]["chunk"]
-                            is_complete = event["data"]["is_complete"]
-
-                            if chunk:  # 只在有内容时才发送
-                                streaming_buffer += chunk
-                                yield {
-                                    "type": "streaming_text",
-                                    "data": {
-                                        "chunk": chunk,
-                                        "is_complete": is_complete,
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                }
-
-                            if is_complete:
-                                # 流式完成，创建 FINAL_ANSWER action
-                                action = {
-                                    "type": "FINAL_ANSWER",
-                                    "answer": streaming_buffer.strip()
-                                }
-
-                        elif event["type"] == "action":
-                            # 最终 action（thought + action）
-                            thought = event["data"]["thought"]
-                            reasoning = event["data"].get("reasoning")
-                            action = event["data"]["action"]
-
-                            # ✅ 保存 think_action_result 供后续使用
-                            think_action_result = event["data"]
-
-                            # Yield thought事件（FINAL_ANSWER 除外）
-                            action_type = action.get("type", "TOOL_CALL")
-                            if action_type != "FINAL_ANSWER":
-                                yield {
-                                    "type": "thought",
-                                    "data": {
-                                        "iteration": iteration_count,
-                                        "thought": thought,
-                                        "reasoning": reasoning,
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                }
-
-                    # 如果没有 action（异常情况），降级处理
-                    if not action:
-                        logger.warning("no_action_from_streaming_planner", iteration=iteration_count)
-                        think_action_result = await self.planner.think_and_action_v2(
-                            query=enhanced_query,
-                            system_prompt=context_result["system_prompt"],
-                            user_conversation=context_result["user_conversation"],
-                            iteration=iteration_count,
-                            latest_observation=latest_observation
-                        )
-                        thought = think_action_result["thought"]
-                        reasoning = think_action_result.get("reasoning")
-                        action = think_action_result["action"]
-
-                        yield {
-                            "type": "thought",
-                            "data": {
-                                "iteration": iteration_count,
-                                "thought": thought,
-                                "reasoning": reasoning,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-
-                    logger.info(
-                        "single_step_action_decided",
-                        action_type=action_type if action else "UNKNOWN",
-                        iteration=iteration_count
-                    )
-
-                    # 如果没有 action，跳过后续处理
-                    if not action:
-                        continue
-
-                    # Phase 2: 执行 Action
-                    action_type = action.get("type", "FINAL_ANSWER")
-
-                    # FINAL_ANSWER: 直接展示 LLM 的最终回答（已在流式阶段输出）
-                    if action_type == "FINAL_ANSWER":
-                        task_completed = True
-                        final_answer = action.get("answer", "")
-
-                        self.memory.add_iteration(
-                            thought=thought,
-                            action=action,
-                            observation={"success": True, "summary": "任务完成"}
-                        )
-
-                        self.memory.session.add_assistant_message(
-                            final_answer,
-                            thought=thought,
-                            reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
-                        )
-
-                        logger.info("task_completed_final_answer", iterations=iteration_count)
-                        break
-
-                    # FINISH_SUMMARY: 结束并生成最终答案
-                    if action_type == "FINISH_SUMMARY":
-                        # ✅ 任务状态守卫：在完成任务前检查是否有未完成任务
-                        guard_result = await self._guard_task_completion(self.memory.session_id)
-
-                        if guard_result["has_incomplete"]:
-                            # ⚠️ 有未完成任务：阻止完成，将警告作为观察结果返回给 LLM
-                            observation = {
-                                "success": False,
-                                "warning": True,
-                                "incomplete_tasks": guard_result["incomplete_tasks"],
-                                "summary": f"有 {guard_result['incomplete_count']} 个任务尚未完成，不能生成最终答案。请先完成所有任务。",
-                                "guard_warning": guard_result["warning_message"]
-                            }
-
-                            yield {
-                                "type": "observation",
-                                "data": {
-                                    "iteration": iteration_count,
-                                    "observation": observation,
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                            }
-
-                            # 记录到记忆
-                            self.memory.add_iteration(
-                                thought=thought,
-                                action=action,
-                                observation=observation
-                            )
-
-                            # 将警告添加到对话历史（让 LLM 看到）
-                            warning_message = f"**任务未完成警告**：\n\n{guard_result['warning_message']}"
-                            self.memory.session.add_assistant_message(
-                                warning_message,
-                                thought=thought,
-                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
-                            )
-
-                            logger.info(
-                                "task_guard_blocked_finish_summary",
-                                incomplete_count=guard_result["incomplete_count"]
-                            )
-                            # 不设置 task_completed，让 LLM 继续执行
-                            continue
-
-                        # 没有未完成任务，正常完成
-                        task_completed = True
-
-                        # 获取工具结果数据（使用简化版上下文）
-                        tool_results = self.memory.session.get_compressed_summary()
-
-                        # 生成最终答案提示词
-                        prompt = format_finish_summary_prompt(
-                            user_query=user_query,
-                            tool_results=tool_results or "无工具调用数据",
-                            final_thought=thought
-                        )
-
-                        # 调用 LLM 生成最终答案（流式输出）
-                        final_answer = ""
-                        chunk_count = 0
-                        async for chunk in self.planner.stream_user_answer(prompt):
-                            final_answer += chunk
-                            chunk_count += 1
-                            # 流式输出每个 chunk（使用前端已支持的 streaming_text 事件类型）
-                            yield {
-                                "type": "streaming_text",
-                                "data": {
-                                    "chunk": chunk,
-                                    "is_complete": False
-                                }
-                            }
-                        # 发送流式完成标记
-                        yield {
-                            "type": "streaming_text",
-                            "data": {
-                                "chunk": "",
-                                "is_complete": True
-                            }
-                        }
-                        logger.info(f"[stream_user_answer] 流式输出完成，共 {chunk_count} 个 chunks，总长度: {len(final_answer)}")
-
-                        # 记录到记忆
-                        self.memory.add_iteration(
-                            thought=thought,
-                            action=action,
-                            observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
-                        )
-
-                        if final_answer:
-                            self.memory.session.add_assistant_message(
-                                final_answer,
-                                thought=thought,
-                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
-                            )
-
-                        yield {
-                            "type": "observation",
-                            "data": {
-                                "iteration": iteration_count,
-                                "observation": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-
-                        break
-
-                    # 执行工具调用
-                    if action_type == "TOOL_CALLS":
-                        # 并行执行多个工具
-                        tools = action.get("tools", [])
-
-                        # ✅ 为 knowledge_qa_workflow 自动注入 knowledge_base_ids
-                        if self.knowledge_base_ids:
-                            for tool in tools:
-                                if tool.get("tool") == "knowledge_qa_workflow":
-                                    args = tool.get("args", {})
-                                    if not isinstance(args, dict):
-                                        args = {}
-                                    # 创建新的args副本，避免修改原数据
-                                    tool["args"] = {**args, "knowledge_base_ids": self.knowledge_base_ids}
-                                    logger.info(
-                                        "knowledge_base_ids_injected_parallel_v3",
-                                        knowledge_base_ids_count=len(self.knowledge_base_ids)
-                                    )
-
-                        parallel_result = await self.executor.execute_tools_parallel(
-                            tools=tools,
-                            iteration=iteration_count
-                        )
-
-                        observation = {
-                            "success": parallel_result.get("success", False),
-                            "partial_success": parallel_result.get("partial_success", False),
-                            "data": parallel_result.get("data", []),
-                            "visuals": parallel_result.get("visuals", []),
-                            "data_ids": parallel_result.get("data_ids", []),
-                            "tool_results": parallel_result.get("tool_results", []),
-                            "summary": parallel_result.get("summary", "并行执行完成"),
-                            "parallel": True
-                        }
-
-                        # 处理 visuals（复用原有逻辑）
-                        if observation.get("visuals"):
-                            for idx, visual_block in enumerate(observation["visuals"]):
-                                payload = visual_block.get("payload", {})
-                                meta = visual_block.get("meta", {})
-                                self.memory.add_chart_observation({
-                                    "visual_id": visual_block.get("id", f"visual_{idx}"),
-                                    "chart_id": payload.get("id", f"chart_{idx}"),
-                                    "chart_type": payload.get("type", "unknown"),
-                                    "chart_title": payload.get("title", "无标题"),
-                                    "summary": f"已生成图表: {payload.get('title', '')}",
-                                    "data_id": meta.get("source_data_ids", [None])[0],
-                                    "source_tools": [t.get("tool") for t in tools],
-                                    "schema_version": "v2.0"
-                                })
-
-                        yield {
-                            "type": "action",
-                            "data": {
-                                "iteration": iteration_count,
-                                "action": {**action, "parallel_result": parallel_result},
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-
-                        # 发送observation事件
-                        yield {
-                            "type": "observation",
-                            "data": {
-                                "iteration": iteration_count,
-                                "observation": observation,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-
-                        # 检查并行工具结果中是否有PDF预览，发送office_document事件
-                        tool_results = observation.get("tool_results", [])
-                        for tool_result in tool_results:
-                            result_data = tool_result.get("result", {})
-                            if isinstance(result_data, dict) and result_data.get("pdf_preview"):
-                                metadata = tool_result.get("metadata", {})
-                                yield {
-                                    "type": "office_document",
-                                    "data": {
-                                        "pdf_preview": result_data["pdf_preview"],
-                                        "file_path": result_data.get("file_path")
-                                                    or result_data.get("source_file")
-                                                    or result_data.get("output_file"),
-                                        "generator": metadata.get("generator"),
-                                        "summary": result_data.get("summary", ""),
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                }
-                                logger.info(
-                                    "office_document_event_sent_parallel_simple",
-                                    generator=metadata.get("generator"),
-                                    pdf_id=result_data["pdf_preview"].get("pdf_id")
-                                )
-
-                    elif action_type == "TOOL_CALL":
-                        # 单工具执行
-                        tool_name = action.get("tool")
-                        tool_args = action.get("args", {})
-
-                        # ✅ 自动注入 knowledge_base_ids（如果存在）
-                        if self.knowledge_base_ids and tool_name == "knowledge_qa_workflow":
-                            tool_args = dict(tool_args)  # 创建副本避免修改原参数
-                            tool_args["knowledge_base_ids"] = self.knowledge_base_ids
-                            logger.info(
-                                "knowledge_base_ids_injected_run_loop_v2",
-                                tool_name=tool_name,
-                                knowledge_base_ids_count=len(self.knowledge_base_ids)
-                            )
-
-                        yield {
-                            "type": "action",
-                            "data": {
-                                "iteration": iteration_count,
-                                "action": action,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-
-                        observation = await self.executor.execute_tool(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            iteration=iteration_count
-                        )
-                    else:
-                        observation = {
-                            "success": False,
-                            "error": f"未知的 action type: {action_type}",
-                            "summary": f"任务失败：未知的 action type"
-                        }
-
-                    # Phase 3: Observation
-                    yield {
-                        "type": "observation",
-                        "data": {
-                            "iteration": iteration_count,
-                            "observation": observation,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    }
-
-                    # 发送office_document事件（用于前端PDF预览面板）
-                    data = observation.get("data", {})
-                    logger.info(
-                        "office_document_event_check",
-                        has_data=data is not None,
-                        data_is_dict=isinstance(data, dict),
-                        data_keys=list(data.keys()) if isinstance(data, dict) else "N/A",
-                        has_pdf_preview=isinstance(data, dict) and "pdf_preview" in data,
-                        pdf_preview_type=type(data.get("pdf_preview")).__name__ if isinstance(data, dict) else "N/A",
-                        observation_keys=list(observation.keys()),
-                    )
-                    if isinstance(data, dict) and data.get("pdf_preview"):
-                        metadata = observation.get("metadata", {})
-                        yield {
-                            "type": "office_document",
-                            "data": {
-                                "pdf_preview": data["pdf_preview"],
-                                "file_path": data.get("file_path") or data.get("source_file") or data.get("output_file"),
-                                "generator": metadata.get("generator"),
-                                "summary": observation.get("summary", ""),
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-                        logger.info(
-                            "office_document_event_sent",
-                            generator=metadata.get("generator"),
-                            pdf_id=data["pdf_preview"].get("pdf_id"),
-                            file_path=data.get("file_path") or data.get("source_file")
-                        )
-
-                    # 添加到记忆
-                    self.memory.add_iteration(
-                        thought=thought,
-                        action=action,
-                        observation=observation
-                    )
-
-                    if observation.get("summary"):
-                        # 使用完整格式化内容（包含完整数据）而非仅摘要
-                        full_message = self._format_observation(observation)
-                        # 添加工具调用信息（帮助LLM了解历史操作）
-                        action_info = self._format_action_info(action)
-                        full_message = f"{action_info}\n\n{full_message}"
-
-                        # 🔍 详细日志：验证完整数据传递
-                        metadata = observation.get("metadata", {})
-                        generator = metadata.get("generator", "")
-                        data = observation.get("data")
-                        logger.info(
-                            "format_observation_debug",
-                            generator=generator,
-                            full_message_length=len(full_message),
-                            full_message_preview=full_message[:500] if len(full_message) > 500 else full_message,
-                            has_analysis=isinstance(data, dict) and "analysis" in data,
-                            observation_keys=list(observation.keys()),
-                            data_keys=list(data.keys()) if isinstance(data, dict) else []
-                        )
-
-                        self.memory.session.add_assistant_message(
-                            full_message,
-                            thought=thought,
-                            reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
-                        )
-
-                    # 早停检查：连续3次工具失败则停止
-                    recent_iterations = self.memory.get_iterations()
-                    _recent = recent_iterations[-3:]
-                    _failures = sum(1 for it in _recent if not it.get("observation", {}).get("success", True))
-                    if len(_recent) >= 3 and _failures >= 3:
-                        logger.warning("early_stop_consecutive_failures", iteration=iteration_count)
-                        break
-
-                except Exception as e:
-                    logger.error(
-                        "single_step_iteration_failed",
-                        iteration=iteration_count,
-                        error=str(e),
-                        exc_info=True
-                    )
-
-                    yield {
-                        "type": "error",
-                        "data": {
-                            "iteration": iteration_count,
-                            "error": str(e),
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    }
-
-                    if "fatal" in str(e).lower():
-                        break
-
-            # Step 4: 完成或超时
-            if task_completed:
-                logger.info(
-                    "single_step_loop_completed",
-                    iterations=iteration_count,
-                    session_id=self.memory.session_id
-                )
-
-                if self.agent_logger:
-                    self.agent_logger.end_run(
-                        status="completed",
-                        final_answer=final_answer,
-                        metadata={"iterations": iteration_count}
-                    )
-
-                if final_answer:
-                    self.memory.session.add_assistant_response(final_answer)
-
-                await self._save_successful_strategy(
-                    self.memory.get_iterations(),
-                    user_query
-                )
-
-                # Note: 长期记忆保存已移除
-
-                yield {
-                    "type": "complete",
-                    "data": {
-                        "answer": final_answer,
-                        "response": final_answer,  # ✅ 同时返回response字段
-                        "iterations": iteration_count,
-                        "session_id": self.memory.session_id,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                }
-            else:
-                logger.warning(
-                    "single_step_loop_max_iterations",
-                    iterations=iteration_count,
-                    session_id=self.memory.session_id
-                )
-
-                if self.agent_logger:
-                    self.agent_logger.end_run(
-                        status="timeout",
-                        metadata={"iterations": iteration_count}
-                    )
-
-                partial_answer = await self._generate_partial_answer()
-
-                if partial_answer:
-                    self.memory.session.add_assistant_response(partial_answer)
-
-                # Note: 长期记忆保存已移除
-
-                yield {
-                    "type": "incomplete",
-                    "data": {
-                        "answer": partial_answer,
-                        "iterations": iteration_count,
-                        "reason": "max_iterations_reached",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                }
-
-        except Exception as e:
-            logger.error(
-                "single_step_loop_fatal_error",
-                error=str(e),
-                exc_info=True
-            )
-
-            if self.agent_logger:
-                self.agent_logger.log_error(error=str(e), error_type="fatal")
-                self.agent_logger.end_run(status="failed")
-
-            yield {
-                "type": "fatal_error",
-                "data": {
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         """

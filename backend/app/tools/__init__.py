@@ -247,6 +247,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_new_standard_report", error=str(e))
 
     try:
+        from app.tools.query.compare_standard_reports.tool import CompareStandardReportsTool
+        registry.register(CompareStandardReportsTool(), priority=41)
+        logger.info("tool_loaded", tool="compare_standard_reports")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="compare_standard_reports", error=str(e))
+
+    try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereOldStandardReportTool
         registry.register(QueryGDSuncereOldStandardReportTool(), priority=41)
         logger.info("tool_loaded", tool="query_old_standard_report")
@@ -412,6 +419,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="smart_chart_generator", error=str(e))
 
+    try:
+        from app.tools.visualization.generate_aqi_calendar import GenerateAQICalendarTool
+        registry.register(GenerateAQICalendarTool(), priority=221)
+        logger.info("tool_loaded", tool="generate_aqi_calendar")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="generate_aqi_calendar", error=str(e))
+
     # ========================================
     # Utility Tools（实用工具）
     # ========================================
@@ -551,6 +565,38 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="create_scheduled_task")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_scheduled_task", error=str(e))
+
+    # ========================================
+    # Social Mode Tools（社交模式工具 - 呼吸式Agent）
+    # ========================================
+
+    try:
+        from app.tools.social.schedule_task.tool import ScheduleTaskTool
+        registry.register(ScheduleTaskTool(), priority=701)
+        logger.info("tool_loaded", tool="schedule_task")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="schedule_task", error=str(e))
+
+    try:
+        from app.tools.social.send_notification.tool import SendNotificationTool
+        registry.register(SendNotificationTool(), priority=702)
+        logger.info("tool_loaded", tool="send_notification")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="send_notification", error=str(e))
+
+    try:
+        from app.tools.social.remember_fact.tool import RememberFactTool
+        registry.register(RememberFactTool(), priority=703)
+        logger.info("tool_loaded", tool="remember_fact")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="remember_fact", error=str(e))
+
+    try:
+        from app.tools.social.search_history.tool import SearchHistoryTool
+        registry.register(SearchHistoryTool(), priority=704)
+        logger.info("tool_loaded", tool="search_history")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="search_history", error=str(e))
 
     # ========================================
     # Task Management Tools（任务管理工具）

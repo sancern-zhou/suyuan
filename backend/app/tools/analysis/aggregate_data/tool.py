@@ -214,13 +214,20 @@ class AggregateDataTool(LLMTool):
                 "\n"
                 "**支持15种聚合函数：**\n"
                 "- 基础统计：SUM、AVG、MAX、MIN、COUNT、STDDEV、VAR、MEDIAN、PERCENTILE、O3_8H_MAX\n"
-                "- 空气质量指数：IAQI（空气质量分指数）、AQI（空气质量指数）、PRIMARY_POLLUTANT（首要污染物）\n"
-                "- 质量指数：SINGLE_INDEX（单项指数）、COMPREHENSIVE_INDEX（综合指数）\n"
+                "- 空气质量指数（仅限单日数据）：IAQI（空气质量分指数）、AQI（空气质量指数）、PRIMARY_POLLUTANT（首要污染物）\n"
+                "- 质量指数（限多日数据）：SINGLE_INDEX（单项指数）、COMPREHENSIVE_INDEX（综合指数）\n"
                 "\n"
-                "**日期过滤功能（重要）：**\n"
+                "**⚠️ 重要使用限制（HJ 633-2024标准）：**\n"
+                "- **IAQI/AQI/PRIMARY_POLLUTANT**：仅限单日数据评价，基于日平均浓度设计\n"
+                "  - 使用start_date和end_date参数限制为单日（如start_date='2026-01-17', end_date='2026-01-17'）\n"
+                "  - 多日数据会先求平均再计算，导致评价结果不准确\n"
+                "- **SINGLE_INDEX/COMPREHENSIVE_INDEX**：仅限多日数据评价（至少2天）\n"
+                "  - 用于月/季/年等时段的综合评价\n"
+                "  - 单日数据计算无统计学意义\n"
+                "\n"
+                "**日期过滤功能：**\n"
                 "- 使用start_date和end_date参数可以只计算指定日期范围的数据\n"
                 "- 日期格式：YYYY-MM-DD（如2026-01-17）\n"
-                "- 示例：start_date='2026-01-01', end_date='2026-01-31' 只计算1月的数据\n"
                 "\n"
                 "**⚠️ IAQI函数使用注意事项（重要）：**\n"
                 "- 使用IAQI函数时，column参数应指定**浓度字段**（如measurements.PM2_5、measurements.NO2）\n"
@@ -360,6 +367,16 @@ class AggregateDataTool(LLMTool):
                         "error": f"percentile参数必须在0-100之间，当前值: {percentile}"
                     }
 
+            # 验证IAQI函数的pollutant参数
+            if func == "IAQI":
+                pollutant = agg.get("pollutant")
+                if not pollutant:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "error": "IAQI函数必须提供pollutant参数（如PM2_5、NO2、SO2等）"
+                    }
+
         logger.info(
             "data_aggregation_start",
             data_id=data_id,
@@ -414,6 +431,38 @@ class AggregateDataTool(LLMTool):
                         "success": False,
                         "error": f"日期过滤后数据为空，请检查日期范围是否正确（start_date={start_date}, end_date={end_date}）"
                     }
+
+            # 步骤1.6：验证数据时间范围是否符合聚合函数要求
+            time_column_for_validation = time_column or self._detect_time_column(data)
+            for agg in aggregations:
+                func = agg.get("function", "").upper()
+
+                # IAQI/AQI/PRIMARY_POLLUTANT：限制单日数据
+                if func in ["IAQI", "AQI", "PRIMARY_POLLUTANT"]:
+                    validation_result = self._validate_single_day_data(data, time_column_for_validation)
+                    if not validation_result["is_valid"]:
+                        return {
+                            "status": "failed",
+                            "success": False,
+                            "error": (
+                                f"{func}函数只能用于单日数据评价，{validation_result['reason']}。"
+                                f"请使用start_date和end_date参数限制为单日，"
+                                f"或使用其他聚合函数（如AVG、MAX等）。"
+                            )
+                        }
+
+                # SINGLE_INDEX/COMPREHENSIVE_INDEX：限制多日数据
+                elif func in ["SINGLE_INDEX", "COMPREHENSIVE_INDEX"]:
+                    validation_result = self._validate_multi_day_data(data, time_column_for_validation, min_days=2)
+                    if not validation_result["is_valid"]:
+                        return {
+                            "status": "failed",
+                            "success": False,
+                            "error": (
+                                f"{func}函数只能用于多日数据评价（至少2天），{validation_result['reason']}。"
+                                f"请扩大时间范围。"
+                            )
+                        }
 
             # 【调试日志】检查 2026-01-17 的原始数据和展平后的数据
             for record in data:
@@ -1245,6 +1294,136 @@ class AggregateDataTool(LLMTool):
                 continue
 
         return filtered_data
+
+    def _validate_single_day_data(
+        self,
+        data: List[Dict[str, Any]],
+        time_column: Optional[str]
+    ) -> Dict[str, Any]:
+        """
+        验证数据是否只包含单日数据
+
+        用于IAQI、AQI、PRIMARY_POLLUTANT等函数，这些函数基于日平均浓度设计，
+        不能用于多日数据的平均。
+
+        Args:
+            data: 数据列表
+            time_column: 时间列名
+
+        Returns:
+            {"is_valid": bool, "reason": str}
+        """
+        if not data:
+            return {"is_valid": False, "reason": "数据为空"}
+
+        # 尝试检测时间列
+        if not time_column:
+            time_column = self._detect_time_column(data)
+
+        if not time_column:
+            # 无法检测时间列，假设数据有效（向后兼容）
+            return {"is_valid": True, "reason": ""}
+
+        # 提取所有日期
+        dates = set()
+        for record in data:
+            timestamp = record.get(time_column) or record.get("timestamp") or record.get("time") or record.get("date") or record.get("time_date")
+            if timestamp is None:
+                # 尝试在嵌套的measurements中查找
+                if isinstance(record.get('measurements'), dict):
+                    timestamp = record['measurements'].get('timestamp')
+
+            if timestamp is not None:
+                try:
+                    # 解析日期部分
+                    if isinstance(timestamp, str):
+                        # 提取日期部分（YYYY-MM-DD）
+                        date_part = timestamp.split('T')[0].split(' ')[0].split('+')[0]
+                        if len(date_part) == 10 and date_part[4] == '-' and date_part[7] == '-':
+                            dates.add(date_part)
+                except Exception:
+                    pass
+
+        if len(dates) == 0:
+            # 无法解析任何日期，假设数据有效（向后兼容）
+            return {"is_valid": True, "reason": ""}
+        elif len(dates) == 1:
+            return {"is_valid": True, "reason": ""}
+        else:
+            sorted_dates = sorted(dates)
+            return {
+                "is_valid": False,
+                "reason": f"当前数据跨越{len(dates)}天（从{sorted_dates[0]}到{sorted_dates[-1]}）"
+            }
+
+    def _validate_multi_day_data(
+        self,
+        data: List[Dict[str, Any]],
+        time_column: Optional[str],
+        min_days: int = 2
+    ) -> Dict[str, Any]:
+        """
+        验证数据是否包含至少指定天数的数据
+
+        用于SINGLE_INDEX、COMPREHENSIVE_INDEX等函数，这些函数用于多日评价，
+        不应用于单日数据。
+
+        Args:
+            data: 数据列表
+            time_column: 时间列名
+            min_days: 最少天数要求
+
+        Returns:
+            {"is_valid": bool, "reason": str}
+        """
+        if not data:
+            return {"is_valid": False, "reason": "数据为空"}
+
+        # 尝试检测时间列
+        if not time_column:
+            time_column = self._detect_time_column(data)
+
+        if not time_column:
+            # 无法检测时间列，假设数据有效（向后兼容）
+            return {"is_valid": True, "reason": ""}
+
+        # 提取所有日期
+        dates = set()
+        for record in data:
+            timestamp = record.get(time_column) or record.get("timestamp") or record.get("time") or record.get("date") or record.get("time_date")
+            if timestamp is None:
+                # 尝试在嵌套的measurements中查找
+                if isinstance(record.get('measurements'), dict):
+                    timestamp = record['measurements'].get('timestamp')
+
+            if timestamp is not None:
+                try:
+                    # 解析日期部分
+                    if isinstance(timestamp, str):
+                        # 提取日期部分（YYYY-MM-DD）
+                        date_part = timestamp.split('T')[0].split(' ')[0].split('+')[0]
+                        if len(date_part) == 10 and date_part[4] == '-' and date_part[7] == '-':
+                            dates.add(date_part)
+                except Exception:
+                    pass
+
+        if len(dates) == 0:
+            # 无法解析任何日期，假设数据有效（向后兼容）
+            return {"is_valid": True, "reason": ""}
+        elif len(dates) >= min_days:
+            return {"is_valid": True, "reason": ""}
+        else:
+            sorted_dates = sorted(dates)
+            if len(sorted_dates) == 1:
+                return {
+                    "is_valid": False,
+                    "reason": f"当前数据仅包含单日（{sorted_dates[0]}），需要至少{min_days}天数据"
+                }
+            else:
+                return {
+                    "is_valid": False,
+                    "reason": f"当前数据仅包含{len(dates)}天，需要至少{min_days}天数据"
+                }
 
 
 def __init__() -> None:

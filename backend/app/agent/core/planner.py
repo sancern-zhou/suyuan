@@ -17,6 +17,7 @@ from app.agent.context.execution_context import ExecutionContext
 from app.services.llm_service import llm_service
 from app.utils.llm_response_parser import LLMResponseParser
 from app.utils.llm_context_logger import get_llm_context_logger
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -98,8 +99,15 @@ class ReActPlanner:
         ]
 
         # 调用LLM
-        logger.debug(f"[Planner V2] 调用LLM，iteration={iteration}")
-        llm_response = await self.llm_service.chat(messages)
+        logger.debug(f"[Planner V2] 调用LLM，iteration={iteration}, mode={mode}")
+
+        # ✅ 报告模式设置max_tokens限制，避免代码过长导致截断
+        max_tokens = None
+        if mode == "report":
+            max_tokens = settings.report_mode_max_tokens
+            logger.info(f"[Planner V2] 报告模式设置max_tokens={max_tokens}")
+
+        llm_response = await self.llm_service.chat(messages, max_tokens=max_tokens)
 
         # ✅ 添加完整LLM响应日志（调试用）
         logger.info(f"[Planner V2] LLM完整响应 - iteration={iteration}, length={len(llm_response)}")

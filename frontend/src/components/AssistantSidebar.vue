@@ -137,6 +137,14 @@ const modules = [
     desc: '查看和管理历史会话',
     badge: '记录',
     isAction: true
+  },
+  {
+    id: 'social-platform',
+    name: '社交管理',
+    abbr: '社交',
+    desc: '管理QQ、微信等社交机器人',
+    badge: '管理',
+    isAction: true
   }
 ]
 

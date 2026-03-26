@@ -13,10 +13,31 @@
         <div v-for="doc in officeDocuments" :key="doc.pdf_id || doc.file_path" class="doc-item">
           <!-- Preview mode: PDF preview (with transition animation) -->
           <div v-if="!isEditMode" class="doc-preview">
-            <!-- Edit button in top-right corner -->
-            <button @click="toggleEditMode" class="edit-float-btn" title="编辑模式">
-              ✏️ 编辑
-            </button>
+            <!-- Action buttons in top-right corner -->
+            <div class="action-buttons">
+              <button @click="toggleEditMode" class="action-btn edit-btn" title="编辑模式">
+                ✏️ 编辑
+              </button>
+
+              <!-- Download dropdown menu -->
+              <div class="download-dropdown">
+                <button @click="toggleDownloadMenu" class="action-btn download-btn" title="下载文档">
+                  ⬇️ 下载
+                </button>
+                <div v-if="showDownloadMenu" class="download-menu">
+                  <button @click="downloadPDF(doc)" class="download-item">
+                    📄 下载PDF文件
+                  </button>
+                  <button
+                    @click="downloadWord(doc)"
+                    class="download-item"
+                    :disabled="!doc.file_path || doc.file_path === ''"
+                  >
+                    📝 下载Word文档
+                  </button>
+                </div>
+              </div>
+            </div>
 
             <!-- Loading state -->
             <div v-if="doc.loading" class="preview-loading">
@@ -91,7 +112,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 
 const reactStore = useReactStore()
@@ -112,9 +133,29 @@ const props = defineProps({
 const isEditMode = ref(false)
 const isExpanded = ref(true)
 const showHistory = ref(false)
+const showDownloadMenu = ref(false)
 const officeDocuments = ref([])
 const editHistory = ref([])
 const refreshTimeouts = ref(new Map())
+
+// 点击外部关闭下载菜单
+function handleClickOutside(event) {
+  // 检查点击是否在下载菜单或按钮之外
+  if (showDownloadMenu.value) {
+    const downloadDropdown = event.target.closest('.download-dropdown')
+    if (!downloadDropdown) {
+      showDownloadMenu.value = false
+    }
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 
 const hasOfficeDocuments = computed(() => {
   return officeDocuments.value.length > 0
@@ -205,6 +246,88 @@ function onPdfLoaded(doc) {
 // Toggle edit mode
 function toggleEditMode() {
   isEditMode.value = !isEditMode.value
+}
+
+// Toggle download menu
+function toggleDownloadMenu() {
+  showDownloadMenu.value = !showDownloadMenu.value
+}
+
+// Download PDF file
+function downloadPDF(doc) {
+  if (!doc.pdf_url) {
+    console.error('[OfficeDocumentPanel] PDF URL not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    // 创建下载链接
+    const link = document.createElement('a')
+    link.href = doc.pdf_url
+    link.download = `${doc.file_name || 'document'}.pdf`
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    console.log('[OfficeDocumentPanel] PDF download started:', doc.file_name)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] PDF download failed:', error)
+  }
+}
+
+// Download Word document
+async function downloadWord(doc) {
+  if (!doc.file_path || doc.file_path === '') {
+    console.error('[OfficeDocumentPanel] Word file path not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    // 调用后端API下载Word文档
+    const response = await fetch('/api/office/download-word', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        file_path: doc.file_path
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    // 获取文件名
+    const contentDisposition = response.headers.get('Content-Disposition')
+    let fileName = doc.file_name || 'document.docx'
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+      if (match && match[1]) {
+        fileName = match[1].replace(/['"]/g, '')
+      }
+    }
+
+    // 下载文件
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    console.log('[OfficeDocumentPanel] Word download started:', fileName)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Word download failed:', error)
+  }
 }
 
 // Cancel edit
@@ -386,11 +509,16 @@ defineExpose({
   overflow: hidden;
 }
 
-.edit-float-btn {
+.action-buttons {
   position: absolute;
   top: 12px;
   right: 12px;
+  display: flex;
+  gap: 8px;
   z-index: 10;
+}
+
+.action-btn {
   padding: 6px 16px;
   border: 1px solid #1976d2;
   background: #1976d2;
@@ -400,10 +528,57 @@ defineExpose({
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
 
   &:hover {
     background: #1565c0;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+}
+
+.download-dropdown {
+  position: relative;
+}
+
+.download-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  min-width: 160px;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.download-item {
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: white;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #333;
+
+  &:hover:not(:disabled) {
+    background: #f5f5f5;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &:not(:last-child) {
+    border-bottom: 1px solid #f0f0f0;
   }
 }
 

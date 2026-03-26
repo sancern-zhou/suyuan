@@ -584,73 +584,158 @@ class SessionMemory:
                      或标准格式 [{"role": "user/assistant", "content": "..."}]
         """
         if not messages:
+            logger.warning("load_history_messages_empty", session_id=self.session_id)
             return
 
-        for msg in messages:
-            # 支持 ReAct 事件格式
-            if "type" in msg:
-                msg_type = msg.get("type")
-                data = msg.get("data", {})
+        logger.info(
+            "load_history_messages_start",
+            session_id=self.session_id,
+            input_count=len(messages),
+            first_message_type=messages[0].get("type") if messages else None,
+            first_message_keys=list(messages[0].keys()) if messages else None,
+            current_history_length=len(self.conversation_history)
+        )
 
-                # 提取消息内容
-                if msg_type == "thought":
-                    content = data.get("thought", "")
-                    if content:
-                        self.conversation_history.append(
-                            ConversationTurn(
-                                role="assistant",
-                                content=f"[思考] {content}",
-                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+        loaded_count = 0
+        skipped_count = 0
+        error_count = 0
+
+        for msg in messages:
+            try:
+                # 支持 ReAct 事件格式
+                if "type" in msg:
+                    msg_type = msg.get("type")
+                    data = msg.get("data", {})
+
+                    # 提取消息内容
+                    if msg_type == "thought":
+                        content = data.get("thought", "")
+                        if content:
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="assistant",
+                                    content=f"[思考] {content}",
+                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                                )
                             )
-                        )
-                elif msg_type == "action":
-                    tool_calls = data.get("tool_calls", [])
-                    if tool_calls:
-                        content = f"[行动] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
-                        self.conversation_history.append(
-                            ConversationTurn(
-                                role="assistant",
-                                content=content,
-                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    elif msg_type == "action":
+                        tool_calls = data.get("tool_calls", [])
+                        if tool_calls:
+                            content = f"[行动] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="assistant",
+                                    content=content,
+                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                                )
                             )
-                        )
-                elif msg_type == "observation":
-                    result = data.get("result", "")
-                    if result:
-                        # 截断过长的结果
-                        summary = result[:500] + "..." if len(str(result)) > 500 else result
-                        self.conversation_history.append(
-                            ConversationTurn(
-                                role="assistant",
-                                content=f"[观察] {summary}",
-                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    elif msg_type == "observation":
+                        result = data.get("result", "")
+                        if result:
+                            # 截断过长的结果
+                            summary = result[:500] + "..." if len(str(result)) > 500 else result
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="assistant",
+                                    content=f"[观察] {summary}",
+                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                                )
                             )
-                        )
-                elif msg_type == "complete":
-                    answer = data.get("answer", "")
-                    if answer:
-                        self.conversation_history.append(
-                            ConversationTurn(
-                                role="assistant",
-                                content=answer,
-                                timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    elif msg_type == "complete":
+                        answer = data.get("answer", "")
+                        if answer:
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="assistant",
+                                    content=answer,
+                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
+                                )
                             )
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    elif msg_type == "final":
+                        # final 类型（前端格式，等同于 complete）
+                        answer = data.get("answer", "") if isinstance(data, dict) else ""
+                        content = msg.get("content", "")
+                        if answer or content:
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="assistant",
+                                    content=answer or content,
+                                    timestamp=data.get("timestamp") if isinstance(data, dict) else msg.get("timestamp", datetime.utcnow().isoformat())
+                                )
+                            )
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    elif msg_type == "user":
+                        # user 类型（前端格式）
+                        content = msg.get("content", "")
+                        if content:
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="user",
+                                    content=content,
+                                    timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                                )
+                            )
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    else:
+                        logger.debug(
+                            "load_history_messages_unknown_type",
+                            session_id=self.session_id,
+                            msg_type=msg_type,
+                            msg_keys=list(msg.keys())
                         )
-            # 支持标准消息格式
-            elif "role" in msg and "content" in msg:
-                self.conversation_history.append(
-                    ConversationTurn(
-                        role=msg["role"],
-                        content=msg["content"],
-                        timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                        skipped_count += 1
+                # 支持标准消息格式
+                elif "role" in msg and "content" in msg:
+                    self.conversation_history.append(
+                        ConversationTurn(
+                            role=msg["role"],
+                            content=msg["content"],
+                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                        )
                     )
+                    loaded_count += 1
+                else:
+                    logger.debug(
+                        "load_history_messages_unrecognized_format",
+                        session_id=self.session_id,
+                        msg_keys=list(msg.keys())
+                    )
+                    skipped_count += 1
+
+            except Exception as e:
+                error_count += 1
+                logger.error(
+                    "load_history_message_failed",
+                    session_id=self.session_id,
+                    message=msg,
+                    error=str(e)
                 )
 
         logger.info(
             "history_messages_loaded",
             session_id=self.session_id,
-            message_count=len(messages),
-            history_length=len(self.conversation_history)
+            total_input=len(messages),
+            successfully_loaded=loaded_count,
+            skipped=skipped_count,
+            errors=error_count,
+            final_history_length=len(self.conversation_history),
+            previous_history_length=len(self.conversation_history) - loaded_count
         )
 
     def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None) -> None:

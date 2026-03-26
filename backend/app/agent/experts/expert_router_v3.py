@@ -22,7 +22,7 @@ from app.agent.core.structured_query_parser import StructuredQuery, StructuredQu
 from app.agent.core.expert_plan_generator import ExpertPlanGenerator, ExpertTask
 from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
 from app.agent.task import TaskList, TaskStatus
-from app.agent.session import SessionManager, Session, SessionState
+from app.agent.session import SessionManager, Session, SessionState, get_session_manager
 from .expert_executor import ExpertResult
 from .weather_executor import WeatherExecutor
 from .component_executor import ComponentExecutor
@@ -84,8 +84,8 @@ class ExpertRouterV3:
         # 设置任务更新回调（用于WebSocket推送）
         self.task_list.on_task_update = self._on_task_update
 
-        # 初始化会话管理器
-        self.session_manager = SessionManager()
+        # 初始化会话管理器（使用全局单例，确保内存缓存一致）
+        self.session_manager = get_session_manager()
 
         # 初始化专家执行器
         self.executors: Dict[str, Any] = {

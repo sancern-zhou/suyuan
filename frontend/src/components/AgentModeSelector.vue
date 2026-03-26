@@ -3,49 +3,60 @@
     <span class="mode-label">Agent模式:</span>
     <button
       class="mode-button"
-      :class="{ active: modelValue === 'assistant' }"
+      :class="{ active: store.currentMode === 'assistant', running: isModeRunning('assistant') }"
       @click="selectMode('assistant')"
       title="助手模式 - 通用办公任务：文件处理、Word/Excel/PPT、Shell命令"
     >
+      <span v-if="isModeRunning('assistant')" class="running-indicator">●</span>
       🧑‍💼 助手
     </button>
     <button
       class="mode-button"
-      :class="{ active: modelValue === 'expert' }"
+      :class="{ active: store.currentMode === 'expert', running: isModeRunning('expert') }"
       @click="selectMode('expert')"
       title="专家模式 - 环境数据分析：空气质量、污染溯源、数据可视化"
     >
+      <span v-if="isModeRunning('expert')" class="running-indicator">●</span>
       🔬 专家
     </button>
     <button
       class="mode-button"
-      :class="{ active: modelValue === 'query' }"
+      :class="{ active: store.currentMode === 'query', running: isModeRunning('query') }"
       @click="selectMode('query')"
       title="问数模式 - 数据查询专家：本地数据库查询、SQL生成、数据聚合分析"
     >
+      <span v-if="isModeRunning('query')" class="running-indicator">●</span>
       🔍 问数
     </button>
     <button
       class="mode-button"
-      :class="{ active: modelValue === 'code' }"
+      :class="{ active: store.currentMode === 'code', running: isModeRunning('code') }"
       @click="selectMode('code')"
       title="编程模式 - 工具开发：创建、编辑、测试工具，查看代码"
     >
+      <span v-if="isModeRunning('code')" class="running-indicator">●</span>
       💻 编程
     </button>
     <button
       class="mode-button"
-      :class="{ active: modelValue === 'report' }"
+      :class="{ active: store.currentMode === 'report', running: isModeRunning('report') }"
       @click="selectMode('report')"
       title="报告模式 - 报告生成：基于模板和数据生成DOCX格式报告"
     >
+      <span v-if="isModeRunning('report')" class="running-indicator">●</span>
       📄 报告
     </button>
+
+    <!-- 后台运行提示 -->
+    <div v-if="backgroundRunningModes.length > 0" class="background-hint">
+      后台运行: {{ backgroundRunningModes.map(m => getModeLabel(m)).join('、') }}
+    </div>
   </div>
 </template>
 
 <script setup>
-import { defineProps, defineEmits } from 'vue'
+import { defineProps, defineEmits, computed } from 'vue'
+import { useReactStore } from '@/stores/reactStore'
 
 const props = defineProps({
   modelValue: {
@@ -56,12 +67,36 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue'])
+const store = useReactStore()
+
+// 检查模式是否正在运行
+const isModeRunning = (mode) => {
+  return store.modeStates[mode]?.isAnalyzing || false
+}
+
+// 获取后台运行的模式（排除当前模式）
+const backgroundRunningModes = computed(() => {
+  return store.runningModes.filter(mode => mode !== store.currentMode)
+})
+
+// 获取模式标签
+const getModeLabel = (mode) => {
+  const labelMap = {
+    'assistant': '助手',
+    'expert': '专家',
+    'query': '问数',
+    'code': '编程',
+    'report': '报告'
+  }
+  return labelMap[mode] || mode
+}
 
 const selectMode = (mode) => {
-  if (mode !== props.modelValue) {
+  if (mode !== store.currentMode) {
+    // 使用store的switchMode方法
+    store.switchMode(mode)
+    // 触发emit以保持向后兼容
     emit('update:modelValue', mode)
-    // 保存到localStorage
-    localStorage.setItem('agent-mode', mode)
   }
 }
 </script>
@@ -71,6 +106,7 @@ const selectMode = (mode) => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .mode-label {
@@ -80,6 +116,7 @@ const selectMode = (mode) => {
 }
 
 .mode-button {
+  position: relative;
   padding: 4px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 4px;
@@ -90,6 +127,9 @@ const selectMode = (mode) => {
   transition: all 0.2s ease;
   outline: none;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .mode-button:hover {
@@ -102,6 +142,55 @@ const selectMode = (mode) => {
   border-color: #3182ce;
   background: #3182ce;
   color: white;
+}
+
+.mode-button.running {
+  border-color: #ed8936;
+  background: #fffaf0;
+  color: #c05621;
+}
+
+.mode-button.running:hover {
+  border-color: #dd6b20;
+  background: #feebc8;
+  color: #9c4221;
+}
+
+.mode-button.active.running {
+  border-color: #ed8936;
+  background: #ed8936;
+  color: white;
+}
+
+.running-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
+}
+
+.background-hint {
+  font-size: 11px;
+  color: #ed8936;
+  padding: 2px 8px;
+  background: #fffaf0;
+  border-radius: 4px;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* 暗色主题支持 */
@@ -126,6 +215,29 @@ const selectMode = (mode) => {
     background: #3182ce;
     color: white;
     border-color: #3182ce;
+  }
+
+  .mode-button.running {
+    border-color: #ed8936;
+    background: #7c2d12;
+    color: #fed7aa;
+  }
+
+  .mode-button.running:hover {
+    border-color: #f97316;
+    background: #9a3412;
+    color: #fef3c7;
+  }
+
+  .mode-button.active.running {
+    background: #ed8936;
+    color: white;
+    border-color: #ed8936;
+  }
+
+  .background-hint {
+    background: #7c2d12;
+    color: #fed7aa;
   }
 }
 </style>

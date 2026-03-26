@@ -1,9 +1,11 @@
 """
 Application settings and configuration management.
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+import yaml
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -127,6 +129,12 @@ class Settings(BaseSettings):
     mimo_model: str = Field(
         default="mimo-v2-flash",
         description="Xiaomi Mimo model name"
+    )
+
+    # 报告模式配置
+    report_mode_max_tokens: int = Field(
+        default=8000,
+        description="Max tokens for report mode (generate DOCX reports)"
     )
 
     # 千问3配置
@@ -269,6 +277,16 @@ class Settings(BaseSettings):
         description="Station-level pollutant query template"
     )
 
+    # Social Platform Configuration
+    social_config_path: str = Field(
+        default="config/social_config.yaml",
+        description="Path to social platform configuration file"
+    )
+    social_enabled: bool = Field(
+        default=False,
+        description="Enable social platform integration"
+    )
+
     @property
     def redis_url(self) -> str:
         """Construct Redis URL."""
@@ -321,6 +339,44 @@ class Settings(BaseSettings):
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")
+
+    def load_social_config(self) -> Dict[str, Any]:
+        """
+        Load social platform configuration from YAML file.
+
+        Returns:
+            Dictionary with channel configurations
+        """
+        config_path = Path(self.social_config_path)
+
+        if not config_path.exists():
+            # Return default empty config
+            return {
+                "qq": {"enabled": False, "allow_from": ["*"]},
+                "weixin": {"enabled": False, "allow_from": ["*"]},
+                "dingtalk": {"enabled": False, "allow_from": ["*"]},
+                "wecom": {"enabled": False, "allow_from": ["*"]},
+                "channels": {
+                    "send_progress": True,
+                    "send_tool_hints": False,
+                    "send_max_retries": 3
+                }
+            }
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+
+            # Validate config structure
+            if not isinstance(config, dict):
+                raise ValueError("Invalid social config structure")
+
+            return config
+        except Exception as e:
+            import structlog
+            logger = structlog.get_logger()
+            logger.warning("Failed to load social config, using defaults", error=str(e))
+            return self.load_social_config()  # Return default config
 
 
 # Global settings instance

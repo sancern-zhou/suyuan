@@ -32,29 +32,66 @@ class LLMService:
         Yields:
             str: 每次返回一个文本块（chunk）
         """
+        # 调试统计
+        total_lines = 0
+        data_lines = 0
+        done_count = 0
+        skipped_parse_error = 0
+        skipped_no_choices = 0
+        skipped_invalid_choice = 0
+        skipped_empty_content = 0
+        yielded_chunks = 0
+        total_content_length = 0
+
+        logger.debug(
+            f"[SSE] 开始解析流式响应, "
+            f"provider={self.provider}, model={self.model}"
+        )
+
         async for line in response.aiter_lines():
+            total_lines += 1
             if not line:
                 continue
 
             # OpenAI / Qwen 兼容接口使用 "data: {...}" 和 "data: [DONE]" 形式
             if line.startswith("data: "):
+                data_lines += 1
                 data_str = line[len("data: "):].strip()
                 if data_str == "[DONE]":
+                    done_count += 1
+                    logger.debug(f"[SSE] 收到 [DONE] 信号")
                     break
 
                 try:
                     chunk = json.loads(data_str)
-                except Exception:
-                    # 非法 JSON 片段直接跳过
+                except Exception as e:
+                    skipped_parse_error += 1
+                    if skipped_parse_error <= 5:
+                        logger.warning(
+                            f"[SSE] JSON 解析失败 (#{skipped_parse_error}): {e}, "
+                            f"数据预览: {data_str[:200]}"
+                        )
                     continue
 
                 # 兼容不同provider的流式返回格式
                 choices = chunk.get("choices")
                 if not isinstance(choices, list) or not choices:
+                    skipped_no_choices += 1
+                    if skipped_no_choices <= 5:
+                        logger.warning(
+                            f"[SSE] choices 不合法 (#{skipped_no_choices}): "
+                            f"type={type(choices)}, value={choices}"
+                        )
                     continue
 
                 first_choice = choices[0]
                 if not isinstance(first_choice, dict):
+                    skipped_invalid_choice += 1
+                    if skipped_invalid_choice <= 5:
+                        logger.warning(
+                            f"[SSE] first_choice 不是字典 (#{skipped_invalid_choice}): "
+                            f"type={type(first_choice)}, value={first_choice}"
+                        )
                     continue
 
                 # 提取内容片段
@@ -62,7 +99,28 @@ class LLMService:
                 piece = delta.get("content") or ""
 
                 if piece:
+                    yielded_chunks += 1
+                    total_content_length += len(piece)
                     yield piece
+                else:
+                    skipped_empty_content += 1
+                    # 空内容不记录（可能很频繁）
+
+        # 记录最终统计
+        logger.info(
+            f"[SSE] 流解析完成: "
+            f"total_lines={total_lines}, data_lines={data_lines}, done={done_count}, "
+            f"yielded_chunks={yielded_chunks}, total_content_length={total_content_length}, "
+            f"skipped_parse={skipped_parse_error}, skipped_no_choices={skipped_no_choices}, "
+            f"skipped_invalid_choice={skipped_invalid_choice}, skipped_empty={skipped_empty_content}"
+        )
+
+        # 如果没有任何 yield，记录警告
+        if yielded_chunks == 0 and data_lines > 0:
+            logger.error(
+                f"[SSE] 警告: 处理了 {data_lines} 条 data 行但没有 yield 任何内容! "
+                f"这表明 API 响应格式可能与预期不符"
+            )
 
     async def _parse_sse_stream_with_status(
         self,
@@ -78,31 +136,68 @@ class LLMService:
                   - chunk: 文本块内容
                   - is_complete: 流是否结束
         """
+        # 调试统计
+        total_lines = 0
+        data_lines = 0
+        done_count = 0
+        skipped_parse_error = 0
+        skipped_no_choices = 0
+        skipped_invalid_choice = 0
+        skipped_empty_content = 0
+        yielded_chunks = 0
+        total_content_length = 0
+
+        logger.debug(
+            f"[SSE-with-status] 开始解析流式响应, "
+            f"provider={self.provider}, model={self.model}"
+        )
+
         async for line in response.aiter_lines():
+            total_lines += 1
             if not line:
                 continue
 
             # OpenAI / Qwen 兼容接口使用 "data: {...}" 和 "data: [DONE]" 形式
             if line.startswith("data: "):
+                data_lines += 1
                 data_str = line[len("data: "):].strip()
                 if data_str == "[DONE]":
+                    done_count += 1
+                    logger.debug(f"[SSE-with-status] 收到 [DONE] 信号")
                     # 流结束，yield结束标记
                     yield {"chunk": "", "is_complete": True}
                     return
 
                 try:
                     chunk = json.loads(data_str)
-                except Exception:
-                    # 非法 JSON 片段直接跳过
+                except Exception as e:
+                    skipped_parse_error += 1
+                    if skipped_parse_error <= 5:
+                        logger.warning(
+                            f"[SSE-with-status] JSON 解析失败 (#{skipped_parse_error}): {e}, "
+                            f"数据预览: {data_str[:200]}"
+                        )
                     continue
 
                 # 兼容不同provider的流式返回格式
                 choices = chunk.get("choices")
                 if not isinstance(choices, list) or not choices:
+                    skipped_no_choices += 1
+                    if skipped_no_choices <= 5:
+                        logger.warning(
+                            f"[SSE-with-status] choices 不合法 (#{skipped_no_choices}): "
+                            f"type={type(choices)}, value={choices}"
+                        )
                     continue
 
                 first_choice = choices[0]
                 if not isinstance(first_choice, dict):
+                    skipped_invalid_choice += 1
+                    if skipped_invalid_choice <= 5:
+                        logger.warning(
+                            f"[SSE-with-status] first_choice 不是字典 (#{skipped_invalid_choice}): "
+                            f"type={type(first_choice)}, value={first_choice}"
+                        )
                     continue
 
                 # 提取内容片段
@@ -110,7 +205,28 @@ class LLMService:
                 piece = delta.get("content") or ""
 
                 if piece:
+                    yielded_chunks += 1
+                    total_content_length += len(piece)
                     yield {"chunk": piece, "is_complete": False}
+                else:
+                    skipped_empty_content += 1
+                    # 空内容不记录（可能很频繁）
+
+        # 记录最终统计
+        logger.info(
+            f"[SSE-with-status] 流解析完成: "
+            f"total_lines={total_lines}, data_lines={data_lines}, done={done_count}, "
+            f"yielded_chunks={yielded_chunks}, total_content_length={total_content_length}, "
+            f"skipped_parse={skipped_parse_error}, skipped_no_choices={skipped_no_choices}, "
+            f"skipped_invalid_choice={skipped_invalid_choice}, skipped_empty={skipped_empty_content}"
+        )
+
+        # 如果没有任何 yield，记录警告
+        if yielded_chunks == 0 and data_lines > 0:
+            logger.error(
+                f"[SSE-with-status] 警告: 处理了 {data_lines} 条 data 行但没有 yield 任何内容! "
+                f"这表明 API 响应格式可能与预期不符"
+            )
 
     async def _call_llm_with_retry(
         self,

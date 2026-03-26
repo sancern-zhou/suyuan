@@ -47,7 +47,7 @@ async def list_sessions(
     sessions = session_manager.list_sessions(state=state_filter, limit=limit)
 
     return {
-        "sessions": [s.model_dump() for s in sessions],
+        "sessions": [s.model_dump(mode='json') for s in sessions],
         "total": len(sessions)
     }
 
@@ -78,7 +78,7 @@ async def get_active_sessions():
     sessions = session_manager.get_active_sessions()
 
     return {
-        "sessions": [s.model_dump() for s in sessions],
+        "sessions": [s.model_dump(mode='json') for s in sessions],
         "total": len(sessions)
     }
 
@@ -100,7 +100,7 @@ async def get_session(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
-    return session.model_dump()
+    return session.model_dump(mode='json')
 
 
 @router.post("/{session_id}/save")
@@ -161,7 +161,8 @@ async def restore_session(session_id: str):
                     messages=session.conversation_history[:3])
 
     # 返回完整会话数据（包含conversation_history）
-    session_data = session.model_dump()
+    # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
+    session_data = session.model_dump(mode='json')
 
     # 【新增】从react_agent的_session_store中获取office_documents
     try:
@@ -314,5 +315,5 @@ async def import_session(input_path: str):
 
     return {
         "message": f"Session imported successfully",
-        "session": session.to_summary().model_dump()
+        "session": session.to_summary().model_dump(mode='json')
     }
