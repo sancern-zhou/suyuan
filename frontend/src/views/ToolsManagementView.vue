@@ -2,11 +2,6 @@
   <div class="tools-management-view">
     <header class="page-header">
       <div class="header-left">
-        <button class="btn-back" @click="goBack">
-          <span class="back-icon">←</span>
-          返回主页
-        </button>
-        <h1>工具/技能管理</h1>
         <span class="stats" v-if="stats">
           共 {{ stats.total }} 个工具 / {{ stats.enabled }} 已启用 / {{ stats.disabled }} 已禁用
         </span>
@@ -214,10 +209,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { getToolsList, updateToolStatus } from '@/api/toolsManagement'
-
-const router = useRouter()
 
 const loading = ref(false)
 const tools = ref([])
@@ -372,14 +364,11 @@ const viewToolDetail = async (tool) => {
   showDetailDialog.value = true
 }
 
-const goBack = () => {
-  router.push('/')
-}
 </script>
 
 <style scoped>
 .tools-management-view {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: #f5f6fb;
@@ -398,30 +387,6 @@ const goBack = () => {
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.btn-back {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  background: #f5f5f5;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  color: #333;
-  transition: all 0.2s;
-}
-
-.btn-back:hover {
-  background: #e6f7ff;
-  border-color: #1890ff;
-  color: #1890ff;
-}
-
-.back-icon {
-  font-size: 14px;
 }
 
 .header-left h1 {

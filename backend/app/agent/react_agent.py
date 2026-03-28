@@ -42,7 +42,7 @@ class ReActAgent:
 
     def __init__(
         self,
-        max_iterations: int = 10,
+        max_iterations: int = 30,  # ✅ 默认30次（适应复杂分析任务）
         max_working_memory: int = 20,
         working_context_limit: int = 50000,
         large_data_threshold: int = 1000,

@@ -16,6 +16,7 @@ class MessageBus:
     def __init__(self):
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
+        self.agent_bridge = None  # ✅ 新增：AgentBridge 引用（用于工具访问）
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""

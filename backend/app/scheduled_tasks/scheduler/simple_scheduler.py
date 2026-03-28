@@ -10,6 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.schedulers.base import BaseScheduler
 
 from ..models.task import ScheduledTask, ScheduleType
 from ..storage import TaskStorage
@@ -31,7 +32,8 @@ class SimpleScheduler:
 
     def __init__(self, task_storage: TaskStorage):
         self.task_storage = task_storage
-        self.scheduler = AsyncIOScheduler()
+        # ✅ 设置时区为北京时间 (Asia/Shanghai)
+        self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
         self.running_tasks: Dict[str, asyncio.Task] = {}  # task_id -> asyncio.Task
         self.task_callback: Optional[Callable] = None
 
@@ -68,14 +70,14 @@ class SimpleScheduler:
         if task.schedule_type in self.CRON_TEMPLATES:
             # 预设cron模板
             cron_config = self.CRON_TEMPLATES[task.schedule_type]
-            trigger = CronTrigger(**cron_config)
+            trigger = CronTrigger(**cron_config, timezone="Asia/Shanghai")
 
         elif task.schedule_type == ScheduleType.ONCE:
             # 一次性任务
             if not task.run_at:
                 logger.error(f"Task {task.task_id}: schedule_type=once but run_at is not set")
                 return
-            trigger = DateTrigger(run_date=task.run_at)
+            trigger = DateTrigger(run_date=task.run_at, timezone="Asia/Shanghai")
             logger.info(f"Scheduled one-time task: {task.name} at {task.run_at}")
 
         elif task.schedule_type == ScheduleType.INTERVAL:
@@ -83,7 +85,7 @@ class SimpleScheduler:
             if not task.interval_minutes:
                 logger.error(f"Task {task.task_id}: schedule_type=interval but interval_minutes is not set")
                 return
-            trigger = IntervalTrigger(minutes=task.interval_minutes)
+            trigger = IntervalTrigger(minutes=task.interval_minutes, timezone="Asia/Shanghai")
             logger.info(f"Scheduled interval task: {task.name} every {task.interval_minutes} minutes")
 
         elif task.schedule_type == ScheduleType.DAILY_CUSTOM:
@@ -91,7 +93,7 @@ class SimpleScheduler:
             if task.hour is None or task.minute is None:
                 logger.error(f"Task {task.task_id}: schedule_type=daily_custom but hour/minute is not set")
                 return
-            trigger = CronTrigger(hour=task.hour, minute=task.minute)
+            trigger = CronTrigger(hour=task.hour, minute=task.minute, timezone="Asia/Shanghai")
             logger.info(f"Scheduled daily task: {task.name} at {task.hour:02d}:{task.minute:02d}")
 
         else:
@@ -113,8 +115,8 @@ class SimpleScheduler:
             misfire_grace_time=60  # 允许1分钟的延迟
         )
 
-        # 计算下次运行时间
-        next_run = trigger.get_next_fire_time(None, datetime.now())
+        # 计算下次运行时间（传入None让APScheduler自动使用当前时区时间）
+        next_run = trigger.get_next_fire_time(None, None)
         if next_run:
             task.next_run_at = next_run
             self.task_storage.update(task)
@@ -178,7 +180,7 @@ class SimpleScheduler:
         """从调度器移除任务"""
         try:
             self.scheduler.remove_job(task_id)
-            logger.info(f"Removed task from scheduler: {task_id}")
+            logger.info(f"Removed task from scheduler: {task.task_id}")
         except Exception as e:
             logger.warning(f"Failed to remove task {task_id}: {e}")
 

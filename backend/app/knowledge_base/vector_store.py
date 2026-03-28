@@ -210,7 +210,7 @@ class KnowledgeVectorStore:
             是否创建成功
         """
         try:
-            from qdrant_client.models import Distance, VectorParams
+            from qdrant_client.models import Distance, VectorParams, HnswConfigDiff
 
             # 检查是否已存在
             collections = self.qdrant_client.get_collections().collections
@@ -223,16 +223,26 @@ class KnowledgeVectorStore:
                 )
                 return True
 
+            # HNSW索引配置：降低full_scan_threshold以优化小数据集性能
+            # 默认10000，改为100让小数据集也使用索引
+            hnsw_config = HnswConfigDiff(
+                m=16,                    # 每个节点最多连接16个其他节点
+                ef_construct=100,        # 构建索引时搜索100个最近邻
+                full_scan_threshold=100, # 低于100个向量就使用索引（默认10000）
+                max_indexing_threads=0   # 0=使用所有可用CPU核心
+            )
+
             if enable_hybrid and self._jieba_initialized:
                 # 创建支持混合检索的Collection
                 from qdrant_client.models import SparseVectorParams, SparseIndexParams
-                
+
                 self.qdrant_client.create_collection(
                     collection_name=collection_name,
                     vectors_config={
                         "dense": VectorParams(
                             size=self._embedding_dim,
-                            distance=Distance.COSINE
+                            distance=Distance.COSINE,
+                            hnsw_config=hnsw_config
                         )
                     },
                     sparse_vectors_config={
@@ -245,7 +255,8 @@ class KnowledgeVectorStore:
                     "collection_created_hybrid",
                     collection=collection_name,
                     dense_dim=self._embedding_dim,
-                    sparse_dim=self._sparse_dim
+                    sparse_dim=self._sparse_dim,
+                    full_scan_threshold=100
                 )
             else:
                 # 创建仅支持稠密向量的Collection（向后兼容）
@@ -253,13 +264,15 @@ class KnowledgeVectorStore:
                     collection_name=collection_name,
                     vectors_config=VectorParams(
                         size=self._embedding_dim,
-                        distance=Distance.COSINE
+                        distance=Distance.COSINE,
+                        hnsw_config=hnsw_config
                     )
                 )
                 logger.info(
                     "collection_created_dense_only",
                     collection=collection_name,
-                    vector_size=self._embedding_dim
+                    vector_size=self._embedding_dim,
+                    full_scan_threshold=100
                 )
             
             return True
@@ -342,25 +355,37 @@ class KnowledgeVectorStore:
 
             # 判断是否使用混合向量（检测集合是否支持sparse向量）
             use_hybrid = enable_hybrid and self._jieba_initialized
+            use_named_vectors = False  # 是否使用命名向量格式
+
             if use_hybrid:
                 try:
                     collection_info = self.qdrant_client.get_collection(collection_name)
                     # 检查是否使用命名向量（named vectors）
-                    # 命名向量配置是dict类型，单一向量配置是VectorParams对象
+                    # 注意：Qdrant返回的属性名是vectors/sparse_vectors，不是vectors_config/sparse_vectors_config
                     params = collection_info.config.params
-                    vectors_config = getattr(params, 'vectors_config', None)
-                    has_named_vectors = isinstance(vectors_config, dict)
+                    vectors = getattr(params, 'vectors', None)
+                    sparse_vectors = getattr(params, 'sparse_vectors', None)
+
+                    # 判断是否使用命名向量
+                    # - 如果vectors是dict，说明使用命名向量（如 {"dense": {...}}）
+                    # - 如果vectors是VectorParams对象，说明使用单一向量
+                    has_named_vectors = isinstance(vectors, dict)
+
                     # 检查是否有sparse向量配置
-                    sparse_vectors_config = getattr(params, 'sparse_vectors_config', None)
-                    has_sparse = sparse_vectors_config is not None
+                    has_sparse = sparse_vectors is not None
+
                     logger.info(
                         "collection_vector_config_check",
                         collection=collection_name,
                         has_sparse=has_sparse,
                         has_named_vectors=has_named_vectors,
-                        vectors_config_type=type(vectors_config).__name__,
+                        vectors_type=type(vectors).__name__,
                         initial_use_hybrid=use_hybrid
                     )
+
+                    # 记录是否使用命名向量格式（用于后续插入）
+                    use_named_vectors = has_named_vectors
+
                     # 只有同时支持命名向量和sparse向量才使用混合模式
                     if not has_sparse or not has_named_vectors:
                         logger.info(
@@ -379,6 +404,7 @@ class KnowledgeVectorStore:
                 "add_chunks_vector_mode",
                 collection=collection_name,
                 use_hybrid=use_hybrid,
+                use_named_vectors=use_named_vectors,
                 jieba_initialized=self._jieba_initialized
             )
 
@@ -389,12 +415,12 @@ class KnowledgeVectorStore:
                     metadata.get("document_id", ""),
                     i
                 )
-                
+
                 if use_hybrid:
-                    # 混合向量模式：稠密+稀疏
+                    # 混合向量模式：稠密+稀疏（使用命名向量）
                     from qdrant_client.models import SparseVector
                     sparse_vec = self._compute_sparse_vector(chunk["content"])
-                    
+
                     points.append(PointStruct(
                         id=point_id,
                         vector={
@@ -414,8 +440,25 @@ class KnowledgeVectorStore:
                             **metadata
                         }
                     ))
+                elif use_named_vectors:
+                    # 命名向量模式（无sparse）：使用命名向量格式，但只有dense向量
+                    points.append(PointStruct(
+                        id=point_id,
+                        vector={
+                            "dense": embedding.tolist()
+                        },
+                        payload={
+                            "content": chunk["content"],
+                            "chunk_index": i,
+                            "chunk_id": chunk.get("id", f"chunk_{i}"),
+                            "start_char": chunk.get("start_char"),
+                            "end_char": chunk.get("end_char"),
+                            "chunk_metadata": chunk.get("metadata", {}),
+                            **metadata
+                        }
+                    ))
                 else:
-                    # 仅稠密向量模式（向后兼容）
+                    # 单一向量模式（向后兼容）
                     points.append(PointStruct(
                         id=point_id,
                         vector=embedding.tolist(),
@@ -486,6 +529,23 @@ class KnowledgeVectorStore:
         Returns:
             检索结果列表
         """
+        import asyncio
+
+        # 在线程池中执行同步的Qdrant调用，实现真正的并行
+        return await asyncio.to_thread(
+            self._search_sync,
+            collection_name, query, top_k, score_threshold, filters
+        )
+
+    def _search_sync(
+        self,
+        collection_name: str,
+        query: str,
+        top_k: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """同步检索方法（在线程池中执行）"""
         try:
             # 生成查询向量
             query_embedding = self.embedding_model.encode(
@@ -503,14 +563,35 @@ class KnowledgeVectorStore:
                 ]
                 qdrant_filter = Filter(must=conditions)
 
-            # 检索
-            results = self.qdrant_client.search(
-                collection_name=collection_name,
-                query_vector=query_embedding.tolist(),
-                limit=top_k,
-                score_threshold=score_threshold,
-                query_filter=qdrant_filter
-            )
+            # 检测Collection是否使用命名向量
+            use_named_vectors = False
+            try:
+                collection_info = self.qdrant_client.get_collection(collection_name)
+                params = collection_info.config.params
+                vectors = getattr(params, 'vectors', None)
+                use_named_vectors = isinstance(vectors, dict)
+            except Exception as e:
+                logger.warning("check_named_vectors_failed", error=str(e))
+
+            # 根据向量配置选择检索方式
+            if use_named_vectors:
+                # 使用命名向量检索
+                results = self.qdrant_client.search(
+                    collection_name=collection_name,
+                    query_vector=("dense", query_embedding.tolist()),
+                    limit=top_k,
+                    score_threshold=score_threshold,
+                    query_filter=qdrant_filter
+                )
+            else:
+                # 使用单一向量检索
+                results = self.qdrant_client.search(
+                    collection_name=collection_name,
+                    query_vector=query_embedding.tolist(),
+                    limit=top_k,
+                    score_threshold=score_threshold,
+                    query_filter=qdrant_filter
+                )
 
             # 格式化返回
             formatted_results = []
@@ -531,7 +612,8 @@ class KnowledgeVectorStore:
                 "search_completed",
                 collection=collection_name,
                 query_length=len(query),
-                result_count=len(formatted_results)
+                result_count=len(formatted_results),
+                use_named_vectors=use_named_vectors
             )
             return formatted_results
 
@@ -577,12 +659,16 @@ class KnowledgeVectorStore:
         try:
             collection_info = self.qdrant_client.get_collection(collection_name)
             # 检查是否使用命名向量（named vectors）
+            # 注意：Qdrant返回的属性名是vectors/sparse_vectors，不是vectors_config/sparse_vectors_config
             params = collection_info.config.params
-            vectors_config = getattr(params, 'vectors_config', None)
-            has_named_vectors = isinstance(vectors_config, dict)
+            vectors = getattr(params, 'vectors', None)
+            sparse_vectors = getattr(params, 'sparse_vectors', None)
+
+            # 判断是否使用命名向量
+            has_named_vectors = isinstance(vectors, dict)
             # 检查是否有sparse向量配置
-            sparse_vectors_config = getattr(params, 'sparse_vectors_config', None)
-            has_sparse = sparse_vectors_config is not None
+            has_sparse = sparse_vectors is not None
+
             # 只有同时支持命名向量和sparse向量才使用混合模式
             if not has_sparse or not has_named_vectors:
                 logger.info(
@@ -600,77 +686,14 @@ class KnowledgeVectorStore:
             return await self.search(
                 collection_name, query, top_k, score_threshold, filters
             )
-        
+
+        # 在线程池中执行混合检索
+        import asyncio
         try:
-            from qdrant_client.models import (
-                Filter, FieldCondition, MatchValue,
-                SparseVector, Prefetch, FusionQuery, Fusion
+            return await asyncio.to_thread(
+                self._hybrid_search_sync,
+                collection_name, query, top_k, score_threshold, filters
             )
-
-            # 生成查询向量
-            dense_embedding = self.embedding_model.encode(
-                query,
-                normalize_embeddings=True
-            )
-            sparse_vector = self._compute_sparse_vector(query)
-
-            # 构建过滤条件
-            qdrant_filter = None
-            if filters:
-                conditions = [
-                    FieldCondition(key=k, match=MatchValue(value=v))
-                    for k, v in filters.items()
-                ]
-                qdrant_filter = Filter(must=conditions)
-
-            # 使用Qdrant的混合检索（RRF融合）
-            results = self.qdrant_client.query_points(
-                collection_name=collection_name,
-                prefetch=[
-                    Prefetch(
-                        query=dense_embedding.tolist(),
-                        using="dense",
-                        limit=top_k * 2
-                    ),
-                    Prefetch(
-                        query=SparseVector(
-                            indices=list(sparse_vector.keys()),
-                            values=list(sparse_vector.values())
-                        ) if sparse_vector else SparseVector(indices=[], values=[]),
-                        using="sparse",
-                        limit=top_k * 2
-                    )
-                ],
-                query=FusionQuery(fusion=Fusion.RRF),
-                limit=top_k,
-                query_filter=qdrant_filter
-            )
-
-            # 格式化返回
-            formatted_results = []
-            for hit in results.points:
-                score = hit.score if hit.score else 0.0
-                if score >= score_threshold:
-                    formatted_results.append({
-                        "content": hit.payload.get("content"),
-                        "score": score,
-                        "document_id": hit.payload.get("document_id"),
-                        "filename": hit.payload.get("filename"),
-                        "chunk_index": hit.payload.get("chunk_index"),
-                        "metadata": {
-                            k: v for k, v in hit.payload.items()
-                            if k not in ["content", "document_id", "filename", "chunk_index"]
-                        }
-                    })
-
-            logger.debug(
-                "hybrid_search_completed",
-                collection=collection_name,
-                query=query[:50],
-                result_count=len(formatted_results)
-            )
-            return formatted_results
-
         except Exception as e:
             logger.error("hybrid_search_failed", error=str(e))
             # 降级到纯向量检索
@@ -678,6 +701,84 @@ class KnowledgeVectorStore:
             return await self.search(
                 collection_name, query, top_k, score_threshold, filters
             )
+
+    def _hybrid_search_sync(
+        self,
+        collection_name: str,
+        query: str,
+        top_k: int,
+        score_threshold: float,
+        filters: Optional[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """同步混合检索方法（在线程池中执行）"""
+        from qdrant_client.models import (
+            Filter, FieldCondition, MatchValue,
+            SparseVector, Prefetch, FusionQuery, Fusion
+        )
+
+        # 生成查询向量
+        dense_embedding = self.embedding_model.encode(
+            query,
+            normalize_embeddings=True
+        )
+        sparse_vector = self._compute_sparse_vector(query)
+
+        # 构建过滤条件
+        qdrant_filter = None
+        if filters:
+            conditions = [
+                FieldCondition(key=k, match=MatchValue(value=v))
+                for k, v in filters.items()
+            ]
+            qdrant_filter = Filter(must=conditions)
+
+        # 使用Qdrant的混合检索（RRF融合）
+        results = self.qdrant_client.query_points(
+            collection_name=collection_name,
+            prefetch=[
+                Prefetch(
+                    query=dense_embedding.tolist(),
+                    using="dense",
+                    limit=top_k * 2
+                ),
+                Prefetch(
+                    query=SparseVector(
+                        indices=list(sparse_vector.keys()),
+                        values=list(sparse_vector.values())
+                    ) if sparse_vector else SparseVector(indices=[], values=[]),
+                    using="sparse",
+                    limit=top_k * 2
+                )
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
+            limit=top_k,
+            query_filter=qdrant_filter
+        )
+
+        # 格式化返回
+        formatted_results = []
+        for hit in results.points:
+            score = hit.score if hit.score else 0.0
+            if score >= score_threshold:
+                formatted_results.append({
+                    "content": hit.payload.get("content"),
+                    "score": score,
+                    "document_id": hit.payload.get("document_id"),
+                    "filename": hit.payload.get("filename"),
+                    "chunk_index": hit.payload.get("chunk_index"),
+                    "metadata": {
+                        k: v for k, v in hit.payload.items()
+                        if k not in ["content", "document_id", "filename", "chunk_index"]
+                    }
+                })
+
+        logger.debug(
+            "hybrid_search_completed",
+            collection=collection_name,
+            query=query[:50],
+            result_count=len(formatted_results)
+        )
+        return formatted_results
 
     async def delete_by_document(
         self,

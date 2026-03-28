@@ -82,7 +82,7 @@ async def main():
     await session_mapper.load()
 
     logger.info("Initializing ReActAgent")
-    agent = await create_react_agent()
+    agent = await create_react_agent()  # 使用默认 max_iterations=30
 
     logger.info("Initializing agent bridge")
     agent_bridge = AgentBridge(

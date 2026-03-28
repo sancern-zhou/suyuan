@@ -2,16 +2,37 @@
   <aside class="assistant-sidebar" :class="{ collapsed: isCollapsed }">
     <div class="sidebar-header">
       <template v-if="!isCollapsed">
-        <h2>风清气智Agent</h2>
+        <div class="header-title-wrapper">
+          <img src="/wechat-screenshot.png" alt="企业微信截图" class="header-image">
+          <h2>风清气智</h2>
+        </div>
       </template>
       <button class="collapse-btn" type="button" @click="toggleCollapse" :title="isCollapsed ? '展开' : '收起'">
         <span class="collapse-icon" :class="{ collapsed: isCollapsed }"></span>
       </button>
     </div>
 
+    <!-- 新对话按钮固定在header下方 -->
+    <div class="new-session-section">
+      <button
+        class="module-card new-session-btn"
+        type="button"
+        @click="handleModuleSelect('restart-session')"
+      >
+        <template v-if="isCollapsed">
+          <span class="module-abbr">新对话</span>
+        </template>
+        <template v-else>
+          <div class="module-info">
+            <p class="module-title">新对话</p>
+          </div>
+        </template>
+      </button>
+    </div>
+
     <div class="module-list">
       <button
-        v-for="module in modules"
+        v-for="module in filteredModules"
         :key="module.id"
         class="module-card"
         :class="{ active: isActive(module.id) }"
@@ -55,7 +76,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -151,7 +172,7 @@ const modules = [
 const handleModuleSelect = (moduleId) => {
   const module = modules.find(m => m.id === moduleId)
 
-  // 所有功能都触发事件
+  // 所有管理功能：触发事件（包括工具管理、知识库管理、社交账号管理等）
   emit('action', moduleId)
 }
 
@@ -180,6 +201,11 @@ const refreshRecentSessions = async () => {
 const loadSession = (session) => {
   emit('loadSession', session.session_id)
 }
+
+// 过滤后的模块列表（排除"新对话"）
+const filteredModules = computed(() => {
+  return modules.filter(m => m.id !== 'restart-session')
+})
 
 // 获取状态图标
 const getSessionStateIcon = (state) => {
@@ -245,16 +271,28 @@ onMounted(() => {
 }
 
 .sidebar-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   margin-bottom: 16px;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
+  background: #fafbff;
+  padding-top: 4px;
+  padding-bottom: 8px;
+
+  .header-title-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+  }
 
   h2 {
     margin: 0;
     font-size: 18px;
     color: #1f2a44;
-    flex: 1;
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
@@ -267,9 +305,32 @@ onMounted(() => {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
 
+  .header-image {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
   .collapsed & {
     justify-content: center;
     margin-bottom: 12px;
+  }
+}
+
+.new-session-section {
+  position: sticky;
+  top: 84px;
+  z-index: 9;
+  background: #fafbff;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+
+  .collapsed & {
+    position: static;
+    margin-bottom: 12px;
+    padding-bottom: 0;
   }
 }
 
@@ -338,7 +399,7 @@ onMounted(() => {
 
 .module-abbr {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 400;
   color: #1976d2;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
@@ -351,7 +412,7 @@ onMounted(() => {
   margin: 0;
   font-size: 15px;
   color: #1f2a44;
-  font-weight: 500;
+  font-weight: 400;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
@@ -360,6 +421,14 @@ onMounted(() => {
   font-size: 12px;
   color: #7a86a0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+}
+
+.new-session-btn {
+  /* 继承默认的 .module-card 样式 */
+
+  .module-title {
+    color: #1f2a44;
+  }
 }
 
 /* 最近对话列表样式 */

@@ -14,6 +14,7 @@ from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
 from app.social.heartbeat_service import HeartbeatService
 from app.social.memory_store import MemoryStore
+from app.social.task_status_store import TaskStatusStore
 
 logger = structlog.get_logger(__name__)
 
@@ -67,21 +68,46 @@ class AgentBridge:
         self._running = False
         self._consume_task: Optional[asyncio.Task] = None
 
-        # ✅ 新增：心跳服务（social模式）
-        self.heartbeat: Optional[HeartbeatService] = None
-        if enable_heartbeat and mode == "social":
-            self.heartbeat = HeartbeatService(
-                interval_s=30 * 60,  # 30分钟
-                on_execute=self._on_heartbeat_execute,
-                on_notify=self._on_heartbeat_notify
-            )
-            logger.info("heartbeat_service_initialized")
+        # ✅ 替换全局 HeartbeatService 为 UserHeartbeatManager
+        from app.social.user_heartbeat_manager import UserHeartbeatManager
+        from app.social.user_heartbeat_singleton import set_user_heartbeat_manager
 
-        # ✅ 新增：记忆存储（social模式）
-        self.memory: Optional[MemoryStore] = None
+        self.user_heartbeat_manager: Optional[UserHeartbeatManager] = None
+        if enable_heartbeat and mode == "social":
+            self.user_heartbeat_manager = UserHeartbeatManager(
+                on_execute_callback=self._on_heartbeat_execute,
+                on_notify_callback=self._on_heartbeat_notify
+            )
+            # 设置全局单例，供工具使用
+            set_user_heartbeat_manager(self.user_heartbeat_manager)
+            logger.info("user_heartbeat_manager_initialized")
+
+        # ✅ 替换全局 MemoryStore 为 UserMemoryManager
+        from app.social.user_memory_manager import UserMemoryManager
+
+        self.user_memory_manager: Optional[UserMemoryManager] = None
         if enable_memory and mode == "social":
-            self.memory = MemoryStore()
-            logger.info("memory_store_initialized")
+            self.user_memory_manager = UserMemoryManager()
+            logger.info("user_memory_manager_initialized")
+
+        # ✅ 新增：SubagentManager（后台任务管理）
+        from app.social.subagent_manager import SubagentManager
+        from app.social.subagent_singleton import set_subagent_manager
+
+        self.subagent_manager: Optional[SubagentManager] = None
+        if mode == "social":
+            self.task_status_store = TaskStatusStore(db_manager=None)  # JSON storage
+            self.subagent_manager = SubagentManager(
+                agent=self.agent,
+                task_store=self.task_status_store,
+                message_bus=message_bus
+            )
+            # 设置全局单例，供工具使用
+            set_subagent_manager(self.subagent_manager)
+            logger.info("subagent_manager_initialized")
+
+        # ✅ 新增：Channel 映射（用于获取机器人账号）
+        self._channel_map: Dict[str, "BaseChannel"] = {}
 
     async def start(self) -> None:
         """Start consuming inbound messages and processing them."""
@@ -92,9 +118,11 @@ class AgentBridge:
         self._running = True
         self._consume_task = asyncio.create_task(self._consume_loop())
 
-        # ✅ 启动心跳服务（social模式）
-        if self.heartbeat:
-            asyncio.create_task(self.heartbeat.start())
+        # ✅ UserHeartbeatManager 不需要全局启动，每个用户独立启动
+
+        # ✅ 启动 SubagentManager
+        if self.subagent_manager:
+            await self.subagent_manager.start()
 
         logger.info("AgentBridge started", mode=self.mode)
 
@@ -109,11 +137,46 @@ class AgentBridge:
             except asyncio.CancelledError:
                 pass
 
-        # ✅ 停止心跳服务
-        if self.heartbeat:
-            await self.heartbeat.stop()
+        # ✅ 停止所有用户心跳服务
+        if self.user_heartbeat_manager:
+            await self.user_heartbeat_manager.shutdown()
+
+        # ✅ 停止 SubagentManager
+        if self.subagent_manager:
+            await self.subagent_manager.shutdown()
 
         logger.info("AgentBridge stopped")
+
+    def register_channel(self, channel: "BaseChannel") -> None:
+        """
+        注册渠道（用于获取机器人账号）
+
+        Args:
+            channel: 渠道实例
+        """
+        from app.channels.base import BaseChannel
+
+        if not isinstance(channel, BaseChannel):
+            logger.warning("invalid_channel_type", type=type(channel))
+            return
+
+        self._channel_map[channel.name] = channel
+        logger.info("channel_registered", channel_name=channel.name)
+
+    async def _get_bot_account(self, channel_name: str) -> str:
+        """
+        获取机器人账号
+
+        Args:
+            channel_name: 渠道名称
+
+        Returns:
+            机器人账号（如 wxid_abc）
+        """
+        channel = self._channel_map.get(channel_name)
+        if channel:
+            return channel.bot_account
+        return "default"
 
     async def _consume_loop(self) -> None:
         """Main consumption loop."""
@@ -154,22 +217,34 @@ class AgentBridge:
                        sender_id=msg.sender_id,
                        content_length=len(msg.content))
 
-            # Get or create agent session
-            session_id = await self.session_mapper.get_or_create_session(
-                f"{msg.channel}:{msg.sender_id}"
-            )
+            # ✅ 获取机器人账号并构建用户ID
+            bot_account = await self._get_bot_account(msg.channel)
+            social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+
+            # Get or create agent session（传递模式参数）
+            session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
 
             logger.info("Session obtained",
                        channel=msg.channel,
                        sender_id=msg.sender_id,
+                       bot_account=bot_account,
                        session_id=session_id,
+                       chat_id=msg.chat_id,
                        mode=self.mode)
 
-            # ✅ 加载记忆上下文（social模式）
+            # ✅ 设置全局 chat_id 和 channel（用于工具访问）
+            from app.social.message_bus_singleton import set_current_chat_id, set_current_channel
+            set_current_chat_id(msg.chat_id)
+            set_current_channel(msg.channel)
+            logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel)
+
+            # ✅ 加载用户专属记忆上下文（social模式）
             memory_context = ""
-            if self.memory and self.mode == "social":
-                memory_context = self.memory.get_memory_context()
+            if self.user_memory_manager and self.mode == "social":
+                memory_store = await self.user_memory_manager.get_user_memory(social_user_id)
+                memory_context = memory_store.get_memory_context()
                 logger.debug("memory_context_loaded",
+                           user_id=social_user_id,
                            length=len(memory_context))
 
             # Aggregate events from agent
@@ -181,6 +256,7 @@ class AgentBridge:
                 content=msg.content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
+                channel=msg.channel,  # ✅ 传递渠道信息
                 memory_context=memory_context  # ✅ 传递记忆上下文
             )
 
@@ -188,10 +264,17 @@ class AgentBridge:
                        session_id=session_id,
                        response_length=len(final_answer) if final_answer else 0)
 
-            # ✅ 整合到记忆（social模式）
-            if self.memory and self.mode == "social":
-                # TODO: 收集对话历史并整合
-                pass
+            # ✅ 整合到用户专属记忆（social模式）
+            if self.user_memory_manager and self.mode == "social":
+                # 收集本次对话消息
+                from datetime import datetime
+                messages = [
+                    {"role": "user", "content": msg.content, "timestamp": datetime.now().isoformat()},
+                    {"role": "assistant", "content": final_answer, "timestamp": datetime.now().isoformat()}
+                ]
+
+                # 执行整合（内部会检查触发条件）
+                await self._check_and_consolidate_memory(session_id, social_user_id)
 
             # ✅ 提取图片URL和文档路径
             media_files = self._extract_media_files(final_answer)
@@ -236,6 +319,7 @@ class AgentBridge:
         content: str,
         session_id: str,
         chat_id: str,
+        channel: str = None,  # ✅ 新增：渠道信息
         memory_context: str = ""
     ) -> str:
         """
@@ -245,6 +329,7 @@ class AgentBridge:
             content: User query
             session_id: Agent session ID
             chat_id: Chat ID for progress tracking
+            channel: Channel name (weixin/qq/dingtalk/wecom)
             memory_context: Memory context (social mode)
 
         Returns:
@@ -314,10 +399,10 @@ class AgentBridge:
                     tool_calls.append(tool_name)
 
                 elif event_type == "complete":
-                    # Extract final answer
+                    # Extract final answer (loop.py returns "answer" field)
                     final_data = event.get("data", {})
                     if isinstance(final_data, dict):
-                        final_answer = final_data.get("final_answer", "")
+                        final_answer = final_data.get("answer", "")
                         if final_answer:
                             return final_answer
 
@@ -327,6 +412,16 @@ class AgentBridge:
                     error_msg = error_data.get("error", "Unknown error")
                     logger.warning("Agent error event", error=error_msg)
                     return f"处理查询时出错: {error_msg}"
+
+                elif event_type == "fatal_error":
+                    # Handle fatal error events
+                    error_data = event.get("data", {})
+                    if isinstance(error_data, dict):
+                        error_msg = error_data.get("error", "未知错误")
+                        logger.error("Agent fatal error event", error=error_msg)
+                        return f"⚠️ 系统遇到错误：{error_msg}\n\n请稍后重试或联系技术支持。"
+
+                    return "⚠️ 系统遇到错误，请稍后重试。"
 
             # If no complete event, aggregate streaming text
             if streaming_text_parts:
@@ -378,7 +473,8 @@ class AgentBridge:
         media_files = []
 
         # 1. 提取图片URL（/api/image/{image_id}）
-        image_pattern = r'\[.*?\]\(/api/image/([a-zA-Z0-9_-]+)\)'
+        # 支持 Markdown 图片语法：![描述](/api/image/xxx) 和普通链接：[描述](/api/image/xxx)
+        image_pattern = r'!?\[.*?\]\(/api/image/([a-zA-Z0-9_-]+)\)'
         for match in re.finditer(image_pattern, content):
             image_id = match.group(1)
             # 转换为实际文件路径
@@ -388,8 +484,8 @@ class AgentBridge:
                 logger.debug("image_extracted", image_id=image_id, path=image_path)
 
         # 2. 提取本地文档路径
-        # 匹配常见文档格式：.docx, .xlsx, .pptx, .pdf
-        doc_pattern = r'([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf))'
+        # 匹配常见文档格式：.docx, .xlsx, .pptx, .pdf, .md（支持 Office 文档和 Markdown）
+        doc_pattern = r'([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf|md))'
         for match in re.finditer(doc_pattern, content):
             doc_path = match.group(1)
             if Path(doc_path).exists():
@@ -426,7 +522,7 @@ class AgentBridge:
             filename = Path(match.group(1)).name
             return f"\n[文件：{filename}]\n"
 
-        content = re.sub(r'\([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf)\)', replace_doc_path, content)
+        content = re.sub(r'\([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf|md)\)', replace_doc_path, content)
 
         # 4. 清理多余的空行
         content = re.sub(r'\n{3,}', '\n\n', content)
@@ -459,36 +555,237 @@ class AgentBridge:
             resuming=resuming
         )
 
-    async def _on_heartbeat_execute(self, tasks: list) -> dict:
+    async def _check_and_consolidate_memory(
+        self,
+        session_id: str,
+        social_user_id: str
+    ) -> bool:
+        """
+        检查并执行记忆整合
+
+        触发条件：
+        1. Session 历史 token 数超过 80% 上下文窗口
+        2. 距离上次整合超过 10 条消息
+
+        Returns:
+            是否执行了整合
+        """
+        from app.utils.token_budget import token_budget_manager
+
+        # 1. 获取 session 历史
+        session_data = self.agent._session_store.get(session_id)
+        if not session_data:
+            return False
+
+        memory_manager = session_data.get("memory")
+        if not memory_manager:
+            return False
+
+        messages = memory_manager.session.get_messages_for_llm()
+
+        # 2. 计算 token 数
+        total_tokens = 0
+        for msg in messages:
+            total_tokens += token_budget_manager.count_tokens(msg.get("content", ""))
+
+        # 3. 获取 session 映射信息
+        mapping = await self.session_mapper.get_mapping_info(social_user_id)
+        if not mapping:
+            return False
+
+        last_offset = mapping.get("last_consolidated_offset", 0)
+        new_message_count = len(messages) - last_offset
+
+        # 4. 触发条件检查
+        max_tokens = int(token_budget_manager.max_context_tokens * 0.8)
+        should_consolidate = (
+            total_tokens > max_tokens or  # Token 超限
+            new_message_count >= 10  # 新增 10 条以上消息
+        )
+
+        if should_consolidate and new_message_count > 0:
+            logger.info(
+                "memory_consolidation_triggered",
+                session_id=session_id,
+                social_user_id=social_user_id,
+                total_tokens=total_tokens,
+                max_tokens=max_tokens,
+                new_message_count=new_message_count,
+                last_offset=last_offset
+            )
+
+            # 5. 执行整合
+            await self._consolidate_session_memory(
+                session_id=session_id,
+                social_user_id=social_user_id,
+                messages=messages,
+                start_offset=last_offset
+            )
+
+            return True
+
+        return False
+
+    async def _consolidate_session_memory(
+        self,
+        session_id: str,
+        social_user_id: str,
+        messages: List[Dict[str, Any]],
+        start_offset: int
+    ) -> None:
+        """
+        执行 session 记忆整合（使用改进版）
+
+        Args:
+            session_id: Session ID
+            social_user_id: 社交平台用户ID
+            messages: 完整消息列表
+            start_offset: 起始偏移量
+        """
+        from app.social.memory_store import ImprovedMemoryStore
+
+        # 1. 创建改进版 MemoryStore
+        memory_store = ImprovedMemoryStore(user_id=social_user_id)
+
+        # 2. 提取要合并的消息（从 start_offset 开始）
+        messages_to_consolidate = messages[start_offset:] if start_offset > 0 else messages
+
+        if not messages_to_consolidate:
+            logger.debug("no_messages_to_consolidate", session_id=session_id, start_offset=start_offset)
+            return
+
+        # 3. 添加时间戳（如果没有）
+        from datetime import datetime
+        for msg in messages_to_consolidate:
+            if "timestamp" not in msg:
+                msg["timestamp"] = datetime.now().isoformat()
+
+        # 4. 执行改进版整合（使用 JSON 响应，不需要工具调用）
+        success = await memory_store.consolidate_improved(
+            messages=messages_to_consolidate,
+            model="mimo-v2-flash"
+        )
+
+        if success:
+            # 5. 更新 session 映射偏移量
+            await self.session_mapper.update_consolidation_offset(
+                social_user_id=social_user_id,
+                new_offset=len(messages),
+                total_count=len(messages)
+            )
+
+            logger.info(
+                "memory_consolidation_completed",
+                session_id=session_id,
+                social_user_id=social_user_id,
+                old_offset=start_offset,
+                new_offset=len(messages),
+                method="improved"
+            )
+        else:
+            logger.warning(
+                "memory_consolidation_failed",
+                session_id=session_id,
+                social_user_id=social_user_id
+            )
+
+    async def _on_heartbeat_execute(self, tasks: list, user_id: str) -> dict:
         """
         心跳执行回调：执行HEARTBEAT.md中的任务
 
         Args:
             tasks: 任务列表
+            user_id: 用户ID
 
         Returns:
             执行结果
         """
-        logger.info("heartbeat_execute_callback", task_count=len(tasks))
+        from datetime import datetime
 
-        # TODO: 实现任务执行逻辑
-        # 可以调用Agent来执行任务
-        return {
-            "should_notify": False,
-            "summary": f"执行了 {len(tasks)} 个任务"
-        }
+        logger.info("heartbeat_execute_callback", task_count=len(tasks), user_id=user_id)
 
-    async def _on_heartbeat_notify(self, response: dict) -> None:
+        if not tasks:
+            return {"should_notify": False, "summary": "无任务执行"}
+
+        # 构建任务描述
+        task_description = "\n".join([
+            f"- {task.get('name', '未知任务')}: {task.get('description', '')}"
+            for task in tasks
+        ])
+
+        # 调用 Agent 执行任务
+        try:
+            # 使用特殊的 session_id
+            heartbeat_session_id = f"heartbeat_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+            # 构建查询
+            query = f"""请执行以下定时任务：
+
+{task_description}
+
+请逐个执行这些任务，并返回执行结果。"""
+
+            # 调用 Agent
+            events = []
+            async for event in self.agent.analyze(
+                user_query=query,
+                session_id=heartbeat_session_id,
+                manual_mode=self.mode
+            ):
+                events.append(event)
+
+                # 提取最终答案
+                if event.get("type") == "complete":
+                    final_data = event.get("data", {})
+                    final_answer = final_data.get("final_answer", "")
+
+                    return {
+                        "should_notify": True,
+                        "summary": final_answer or f"执行了 {len(tasks)} 个任务"
+                    }
+
+            return {"should_notify": False, "summary": f"处理了 {len(tasks)} 个任务"}
+
+        except Exception as e:
+            logger.error("heartbeat_execution_failed", error=str(e), exc_info=True, user_id=user_id)
+            return {"should_notify": False, "summary": f"任务执行失败: {str(e)}"}
+
+    async def _on_heartbeat_notify(self, response: dict, user_id: str) -> None:
         """
         心跳通知回调：主动推送结果
 
         Args:
             response: 执行结果
+            user_id: 用户ID
         """
-        logger.info("heartbeat_notify_callback", summary=response.get("summary"))
+        logger.info("heartbeat_notify_callback", summary=response.get("summary"), user_id=user_id)
 
-        # TODO: 实现通知发送逻辑
-        # 可以通过MessageBus发送通知到所有订阅用户
+        # 解析 user_id: {channel}:{bot_account}:{sender_id}
+        parts = user_id.split(":")
+        if len(parts) < 3:
+            logger.warning("invalid_user_id_format", user_id=user_id)
+            return
+
+        channel, bot_account, sender_id = parts[0], parts[1], parts[2]
+        chat_id = sender_id  # 微信等渠道 chat_id = sender_id
+
+        summary = response.get("summary", "")
+        if not summary:
+            logger.debug("empty_summary_no_notification_sent", user_id=user_id)
+            return
+
+        # 发送通知
+        try:
+            outbound_msg = OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content=f"【定时任务通知】\n\n{summary}",
+                reply_to=sender_id
+            )
+            await self.message_bus.publish_outbound(outbound_msg)
+            logger.info("heartbeat_notification_sent", user_id=user_id, channel=channel)
+        except Exception as e:
+            logger.error("heartbeat_notification_failed", error=str(e), exc_info=True, user_id=user_id)
 
     async def send_message(
         self,

@@ -52,11 +52,37 @@ class ExecutePythonTool(LLMTool):
     """
 
     def __init__(self):
+        # 永久文件存储目录（使用项目目录）
+        self.PERMANENT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "backend_data_registry", "python_generated_files")
+        self.PERMANENT_DIR = os.path.abspath(self.PERMANENT_DIR)
+
+        # 确保永久目录存在
+        os.makedirs(self.PERMANENT_DIR, exist_ok=True)
+
         super().__init__(
             name="execute_python",
-            description="执行 Python 代码（用于生成文档、数据处理、可视化）",
+            description=f"""执行 Python 代码（用于生成文档、数据处理、可视化）
+
+重要说明：
+- 当前工作目录：{self.PERMANENT_DIR}
+- 生成文件时请使用相对路径（如：'report.docx'），不要使用绝对路径（如：/root/xxx.docx）
+- 工具会自动将生成的文件保存到永久目录，并返回完整路径
+- 支持 python-docx, matplotlib, pandas 等所有 Python 库
+- 超时时间：30秒（可调整）
+
+示例：
+```python
+# ✅ 正确：使用相对路径
+from docx import Document
+doc = Document()
+doc.add_paragraph('Hello')
+doc.save('report.docx')  # 保存到当前工作目录
+
+# ❌ 错误：使用绝对路径（可能导致权限问题）
+doc.save('/root/report.docx')
+```""",
             category=ToolCategory.QUERY,
-            version="1.0.0",
+            version="1.0.1",
             requires_context=False
         )
 

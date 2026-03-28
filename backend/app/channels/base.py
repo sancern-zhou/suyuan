@@ -163,3 +163,17 @@ class BaseChannel(ABC):
     def is_running(self) -> bool:
         """Check if the channel is running."""
         return self._running
+
+    @property
+    def bot_account(self) -> str:
+        """
+        获取机器人账号标识
+
+        Returns:
+            机器人账号（如 wxid_abc、qq_id_123）
+
+        Note:
+            子类应重写此方法返回实际的机器人账号
+            默认返回 "default"
+        """
+        return "default"

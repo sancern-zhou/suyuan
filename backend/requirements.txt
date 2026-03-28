@@ -88,3 +88,6 @@ pycryptodome>=3.20.0  # Cryptographic library for WeChat
 dingtalk-stream>=0.24.0  # DingTalk streaming SDK
 wecom-aibot-sdk-python>=0.1.5  # WeCom (WeChat Work) SDK
 pyyaml>=6.0  # YAML configuration parsing
+
+# Search APIs (for web_search tool)
+tencentcloud-sdk-python>=3.0.0  # Tencent Cloud WSA API (optional, for enhanced Chinese search)

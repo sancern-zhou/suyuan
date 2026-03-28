@@ -5,6 +5,7 @@ import FetchersView from '@/views/FetchersView.vue'
 import MapTestView from '@/views/MapTestView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import ToolsManagementView from '@/views/ToolsManagementView.vue'
+import SocialAccountsView from '@/views/SocialAccountsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -46,6 +47,12 @@ const router = createRouter({
       name: 'tools-management',
       component: ToolsManagementView,
       meta: { title: '工具/技能管理' }
+    },
+    {
+      path: '/social-accounts',
+      name: 'social-accounts',
+      component: SocialAccountsView,
+      meta: { title: '社交账号管理' }
     },
     {
       path: '/:pathMatch(.*)*',

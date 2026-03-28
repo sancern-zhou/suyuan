@@ -124,37 +124,35 @@ class ToolListResponse(BaseModel):
 # Global Agent Instances
 # ========================================
 
-# 通用Agent实例
+# 通用Agent实例（使用默认 max_iterations=30）
 multi_expert_agent_instance = create_react_agent(
-    with_test_tools=False,
-    max_iterations=10
+    with_test_tools=False
 )
 
-# 气象专家模式全局实例
+# 气象专家模式全局实例（使用默认 max_iterations=30）
 meteorology_expert_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=10,
     max_working_memory=25
 )
 
-# 快速溯源专家模式全局实例
+# 快速溯源专家模式全局实例（快速响应，减少迭代）
 quick_tracing_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=8,
+    max_iterations=8,  # ⚠️ 特殊配置：快速溯源只需8次
     max_working_memory=20
 )
 
-# 数据可视化专家模式全局实例
+# 数据可视化专家模式全局实例（专注图表，减少迭代）
 data_viz_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=8,
+    max_iterations=8,  # ⚠️ 特殊配置：可视化只需8次
     max_working_memory=15
 )
 
-# 深度溯源专家模式全局实例
+# 深度溯源专家模式全局实例（深度分析，中等迭代）
 deep_tracing_agent_instance = create_react_agent(
     with_test_tools=False,
-    max_iterations=15,
+    max_iterations=15,  # ⚠️ 特殊配置：深度溯源15次
     max_working_memory=30
 )
 

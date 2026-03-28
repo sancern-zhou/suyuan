@@ -44,7 +44,7 @@ class ReActLoop:
         memory_manager: HybridMemoryManager,
         llm_planner,
         tool_executor,
-        max_iterations: int = 10,
+        max_iterations: int,  # ⚠️ 必须从调用者接收，无默认值（单一配置源：ReactAgent）
         stream_enabled: bool = True,
         # 日志配置
         enable_agent_logging: bool = True,
@@ -844,6 +844,21 @@ class ReActLoop:
                             # 特殊工具已处理，跳过常规流程
                             continue
 
+                    # ERROR: 处理解析错误
+                    elif action_type == "ERROR":
+                        error_msg = action.get("error", "未知错误")
+                        observation = {
+                            "success": False,
+                            "error": f"输出格式错误: {error_msg}",
+                            "summary": f"你的输出格式不正确，请返回严格的JSON格式。错误信息: {error_msg}",
+                            "requires_retry": True
+                        }
+                        logger.warning(
+                            "action_error_requires_retry",
+                            error=error_msg,
+                            iteration=iteration_count
+                        )
+
                     else:
                         observation = {
                             "success": False,
@@ -1078,19 +1093,30 @@ class ReActLoop:
                         metadata={"iterations": iteration_count, "reason": "max_iterations_reached"}
                     )
 
-                partial_answer = "抱歉，达到最大迭代次数限制，未能完成分析。请尝试简化查询或分步提问。"
+                partial_answer = (
+                    "分析任务较复杂，已尝试多种方法但未能在规定步骤内完成。\n\n"
+                    "💡 建议：\n"
+                    "• 将复杂问题拆分成几个简单问题\n"
+                    "• 提供更具体的背景信息\n"
+                    "• 直接询问某个特定方面"
+                )
 
                 # 记录助手回复
                 if partial_answer:
                     self.memory.session.add_assistant_response(partial_answer)
 
+                # ✅ 使用 complete 事件类型（与正常完成一致）
+                # agent_bridge 无需特殊处理，直接提取 answer 字段即可
                 yield {
-                    "type": "incomplete",
+                    "type": "complete",
                     "data": {
                         "answer": partial_answer,
+                        "response": partial_answer,
                         "iterations": iteration_count,
-                        "reason": "max_iterations_reached",
-                        "timestamp": datetime.now().isoformat()
+                        "session_id": self.memory.session_id,
+                        "timestamp": datetime.now().isoformat(),
+                        "status": "incomplete",  # ✅ 标记状态（可选）
+                        "reason": "max_iterations_reached"
                     }
                 }
 
@@ -1599,7 +1625,7 @@ class ReActLoop:
             generator = metadata.get("generator", "")
 
             # ✅ 特殊处理：办公助理工具始终显示完整内容
-            # 包括：Office 工具、analyze_image、read_file、grep、glob、list_directory、任务管理工具、read_data_registry
+            # 包括：Office 工具、analyze_image、read_file、grep、glob、list_directory、任务管理工具、read_data_registry、web_search、search_history
             is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide", "read_docx", "read_xlsx", "read_pptx"]
             is_image_tool = generator == "analyze_image"
             is_file_tool = generator == "read_file"
@@ -1610,12 +1636,16 @@ class ReActLoop:
             is_todo_write_tool = generator == "TodoWrite"
             is_read_data_registry_tool = generator == "read_data_registry"
             is_execute_python_tool = generator == "execute_python"
+            is_web_search_tool = generator == "web_search"
+            is_search_history_tool = generator == "search_history"
+            is_web_fetch_tool = generator == "web_fetch"
 
             # 检查是否是办公助理工具
             is_any_office_tool = (
                 is_image_tool or is_file_tool or is_office_tool or is_grep_tool or
                 is_glob_tool or is_list_dir_tool or is_browser_tool or is_todo_write_tool or
-                is_read_data_registry_tool or is_execute_python_tool or "stdout" in data or "stderr" in data
+                is_read_data_registry_tool or is_execute_python_tool or is_web_search_tool or
+                is_search_history_tool or is_web_fetch_tool or "stdout" in data or "stderr" in data
             )
 
             if is_any_office_tool:
@@ -1837,6 +1867,30 @@ class ReActLoop:
                     if "command" in data:
                         lines.append(f"**执行命令**: {data['command']}")
 
+                # ✅ web_search 工具：显示完整的搜索结果
+                elif is_web_search_tool:
+                    if "results_text" in data:
+                        lines.append(f"**搜索结果**:\n{data['results_text']}")
+                    # 显示其他元数据
+                    if "provider" in data:
+                        lines.append(f"\n**搜索来源**: {data['provider']}")
+                    if "count" in data:
+                        lines.append(f"**结果数量**: {data['count']}")
+
+                # ✅ web_fetch 工具：显示完整的网页抓取内容
+                elif is_web_fetch_tool:
+                    if "text" in data:
+                        lines.append(f"**网页内容**:\n{data['text']}")
+                    # 显示其他元数据
+                    if "final_url" in data:
+                        lines.append(f"\n**最终URL**: {data['final_url']}")
+                    if "status" in data:
+                        lines.append(f"**HTTP状态码**: {data['status']}")
+                    if "length" in data:
+                        lines.append(f"**内容长度**: {data['length']} 字符")
+                    if "extractor" in data:
+                        lines.append(f"**抓取方式**: {data['extractor']}")
+
         # ✅ 数据查询工具：显示采样后的数据列表
         elif success and "data" in observation and isinstance(observation["data"], list):
             data_list = observation["data"]
@@ -1879,6 +1933,28 @@ class ReActLoop:
         # 摘要（作为补充，不是主要信息源）
         if "summary" in observation:
             lines.append(f"**摘要**: {observation['summary']}")
+
+        # ✅ 处理 results 字段（search_history 工具返回的搜索结果）
+        if success and "results" in observation and isinstance(observation["results"], list):
+            results = observation["results"]
+            metadata = observation.get("metadata", {})
+            generator = metadata.get("generator", "")
+
+            # search_history 工具：完整显示搜索结果
+            if generator == "search_history" and results:
+                lines.append(f"**搜索结果** (共 {len(results)} 条):")
+                for idx, result in enumerate(results[:20], 1):  # 最多显示前20条
+                    if isinstance(result, dict):
+                        match = result.get("match", "")
+                        context = result.get("context", "")
+                        line_number = result.get("line_number", 0)
+                        lines.append(f"\n{idx}. **匹配内容**: {match}")
+                        if context:
+                            lines.append(f"   **上下文**: {context[:200]}...")  # 限制上下文长度
+                        if line_number:
+                            lines.append(f"   **行号**: {line_number}")
+                if len(results) > 20:
+                    lines.append(f"\n... 还有 {len(results) - 20} 条结果")
 
         # ✅ 处理 result 字段（包含详细的结构化数据）
         # 例如：query_standard_comparison 工具的详细对比数据

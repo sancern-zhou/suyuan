@@ -91,19 +91,54 @@ class SearchHistoryTool(LLMTool):
             }
 
         try:
-            # 如果有MemoryStore，使用MemoryStore
-            if self.memory_store:
-                results = self.memory_store.search_history(
-                    query=query,
-                    limit=limit
-                )
+            # ✅ 获取当前用户ID
+            from app.social.message_bus_singleton import get_current_chat_id, get_current_channel
+
+            channel = get_current_channel()
+            chat_id = get_current_chat_id()
+
+            if not channel or not chat_id:
+                # 如果无法获取用户信息，使用传入的 memory_store（向后兼容）
+                if self.memory_store:
+                    results = self.memory_store.search_history(
+                        query=query,
+                        limit=limit
+                    )
+                else:
+                    logger.warning(
+                        "no_memory_store_available",
+                        query=query
+                    )
+                    results = []
             else:
-                # 降级方案：返回空结果
-                logger.warning(
-                    "no_memory_store_available",
-                    query=query
-                )
-                results = []
+                # ✅ 使用 UserMemoryManager 获取用户专属记忆
+                from app.social.message_bus_singleton import get_message_bus
+
+                message_bus = get_message_bus()
+
+                if not message_bus or not message_bus.agent_bridge:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "summary": "AgentBridge 未初始化"
+                    }
+
+                agent_bridge = message_bus.agent_bridge
+
+                if not agent_bridge.user_memory_manager:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "summary": "用户记忆管理器未初始化"
+                    }
+
+                # 获取机器人账号并构建用户ID
+                bot_account = await agent_bridge._get_bot_account(channel)
+                user_id = f"{channel}:{bot_account}:{chat_id}"
+
+                # 获取用户专属 MemoryStore
+                memory_store = await agent_bridge.user_memory_manager.get_user_memory(user_id)
+                results = memory_store.search_history(query=query, limit=limit)
 
             logger.info(
                 "history_searched",
