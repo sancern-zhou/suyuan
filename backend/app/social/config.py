@@ -22,13 +22,29 @@ class SocialChannelConfig:
     corp_id: Optional[str] = None  # WeCom
     agent_id: Optional[str] = None  # WeCom
 
+    # WeChat multi-instance accounts
+    accounts: List[Any] = None  # List of WeixinAccountConfig objects
+
     def __post_init__(self):
         if self.allow_from is None:
             self.allow_from = ["*"]
+        if self.accounts is None:
+            self.accounts = []
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'SocialChannelConfig':
         """Create from dictionary."""
+        # Parse accounts field for WeChat multi-instance support
+        accounts_data = data.get('accounts', [])
+        accounts = []
+        if accounts_data:
+            # Convert dict accounts to WeixinAccountConfig objects
+            for account_dict in accounts_data:
+                if isinstance(account_dict, dict):
+                    # Create a simple object to hold account config
+                    from types import SimpleNamespace
+                    accounts.append(SimpleNamespace(**account_dict))
+
         return cls(
             enabled=data.get('enabled', False),
             allow_from=data.get('allow_from', ['*']),
@@ -38,7 +54,8 @@ class SocialChannelConfig:
             app_key=data.get('app_key'),
             app_secret=data.get('app_secret'),
             corp_id=data.get('corp_id'),
-            agent_id=data.get('agent_id')
+            agent_id=data.get('agent_id'),
+            accounts=accounts
         )
 
 

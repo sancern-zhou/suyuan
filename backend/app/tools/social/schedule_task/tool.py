@@ -32,7 +32,7 @@ class ScheduleTaskTool(LLMTool):
     - HeartbeatService定期读取并执行
     """
 
-    def __init__(self, heartbeat_service=None):
+    def __init__(self, heartbeat_service=None, user_heartbeat_manager=None):
         # 定义 function_schema
         function_schema = {
             "name": "schedule_task",
@@ -51,7 +51,7 @@ class ScheduleTaskTool(LLMTool):
                     "channels": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "目标通道列表（如['weixin', 'qq']）",
+                        "description": "目标通道列表（支持: 'weixin'(微信)|'qq'(QQ)|'dingtalk'(钉钉)|'wecom'(企业微信)，默认['weixin']）",
                         "default": ["weixin"]
                     }
                 },
@@ -69,6 +69,17 @@ class ScheduleTaskTool(LLMTool):
         )
 
         self.heartbeat_service = heartbeat_service
+        self.user_heartbeat_manager = user_heartbeat_manager
+
+        # 如果没有传入 user_heartbeat_manager，尝试从全局单例获取
+        if not self.user_heartbeat_manager:
+            try:
+                from app.social.user_heartbeat_singleton import get_user_heartbeat_manager
+                self.user_heartbeat_manager = get_user_heartbeat_manager()
+                if self.user_heartbeat_manager:
+                    logger.debug("user_heartbeat_manager_loaded_from_singleton")
+            except Exception as e:
+                logger.debug("failed_to_load_user_heartbeat_manager_from_singleton", error=str(e))
 
     async def execute(
         self,
@@ -113,6 +124,45 @@ class ScheduleTaskTool(LLMTool):
             # 生成任务名称（从描述中提取关键词）
             task_name = self._generate_task_name(task_description)
 
+            # ✅ 如果没有指定 channels，使用当前 channel
+            if not channels:
+                try:
+                    from app.social.message_bus_singleton import get_current_channel
+                    current_channel = get_current_channel()
+                    if current_channel:
+                        channels = [current_channel]
+                        logger.debug("using_current_channel_as_default", channel=current_channel)
+                    else:
+                        channels = ["weixin"]  # 默认微信
+                except Exception:
+                    channels = ["weixin"]  # 默认微信
+
+            # ✅ 通道名称映射（支持中文、英文变体、常见错误写法 → 标准英文key）
+            CHANNEL_NAME_MAP = {
+                # 微信
+                "微信": "weixin",
+                "wechat": "weixin",      # 常见错误
+                "weixin": "weixin",      # 标准写法
+                # QQ
+                "QQ": "qq",
+                "qq": "qq",              # 标准写法
+                # 钉钉
+                "钉钉": "dingtalk",
+                "dingtalk": "dingtalk",  # 标准写法
+                # 企业微信
+                "企业微信": "wecom",
+                "企微": "wecom",
+                "wecom": "wecom",        # 标准写法
+            }
+
+            # 标准化通道名称
+            if channels:
+                normalized_channels = []
+                for ch in channels:
+                    normalized_ch = CHANNEL_NAME_MAP.get(ch, ch)
+                    normalized_channels.append(normalized_ch)
+                channels = normalized_channels
+
             # 验证cron表达式
             if not self._validate_cron(schedule):
                 return {
@@ -121,8 +171,33 @@ class ScheduleTaskTool(LLMTool):
                     "summary": f"无效的cron表达式: {schedule}"
                 }
 
+            # 获取当前用户ID（用于用户专属任务）
+            user_id = "global"
+            if self.user_heartbeat_manager:
+                try:
+                    from app.social.message_bus_singleton import get_current_chat_id, get_current_channel
+                    current_chat_id = get_current_chat_id()
+                    current_channel = get_current_channel()
+
+                    if current_chat_id and current_channel:
+                        user_id = f"{current_channel}:default:{current_chat_id}"
+                        logger.debug("using_user_context_for_task", user_id=user_id, channel=current_channel, chat_id=current_chat_id)
+                except Exception as e:
+                    logger.debug("failed_to_get_user_context", error=str(e))
+                    user_id = "global"
+
             # 添加到HEARTBEAT.md
-            if self.heartbeat_service:
+            if self.user_heartbeat_manager and user_id != "global":
+                # 使用用户专属 HeartbeatService
+                heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(user_id)
+                heartbeat.add_task(
+                    name=task_name,
+                    schedule=schedule,
+                    description=task_description,
+                    channels=channels or ["weixin"]
+                )
+            elif self.heartbeat_service:
+                # 降级：使用全局 HeartbeatService
                 self.heartbeat_service.add_task(
                     name=task_name,
                     schedule=schedule,
@@ -135,14 +210,16 @@ class ScheduleTaskTool(LLMTool):
                     task_name=task_name,
                     schedule=schedule,
                     description=task_description,
-                    channels=channels or ["weixin"]
+                    channels=channels or ["weixin"],
+                    user_id=user_id
                 )
 
             logger.info(
                 "task_scheduled",
                 task_name=task_name,
                 schedule=schedule,
-                channels=channels
+                channels=channels,
+                user_id=user_id
             )
 
             return {
@@ -151,7 +228,8 @@ class ScheduleTaskTool(LLMTool):
                 "task_name": task_name,
                 "schedule": schedule,
                 "channels": channels or ["weixin"],
-                "summary": f"已创建定时任务：{task_name}，执行时间：{schedule}"
+                "user_id": user_id,
+                "summary": f"已创建定时任务：{task_name}，执行时间：{schedule}，用户：{user_id}"
             }
 
         except Exception as e:
@@ -199,10 +277,17 @@ class ScheduleTaskTool(LLMTool):
         task_name: str,
         schedule: str,
         description: str,
-        channels: list
+        channels: list,
+        user_id: str = "global"
     ) -> None:
         """降级方案：直接写入HEARTBEAT.md文件"""
         workspace = Path("backend_data_registry/social/heartbeat")
+
+        # 如果是用户专属任务，使用用户专属目录
+        if user_id and user_id != "global":
+            safe_user_id = user_id.replace(":", "_")
+            workspace = workspace / safe_user_id
+
         workspace.mkdir(parents=True, exist_ok=True)
         heartbeat_file = workspace / "HEARTBEAT.md"
 
@@ -226,5 +311,6 @@ class ScheduleTaskTool(LLMTool):
         logger.info(
             "task_written_to_heartbeat_file",
             task_name=task_name,
-            path=str(heartbeat_file)
+            path=str(heartbeat_file),
+            user_id=user_id
         )

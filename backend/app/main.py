@@ -34,6 +34,10 @@ logging.basicConfig(
     level=logging.INFO,  # 确保 INFO 级别能输出
 )
 
+# 禁用 httpx 的 HTTP 请求日志
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 # Configure structured logging
 # 优化: 使用易读的控制台输出，同时避免截断，支持大型LLM输出
 # 根据环境变量决定输出格式：开发环境使用彩色易读格式，生产环境使用JSON
@@ -149,6 +153,10 @@ app.include_router(office_router)
 from app.routers import social_routes
 app.include_router(social_routes.router)
 
+# Include Social Account Management routes (多微信账号管理)
+from app.api import social_account_routes
+app.include_router(social_account_routes.router)
+
 
 # 全局异常处理器：捕获请求验证错误
 @app.exception_handler(RequestValidationError)
@@ -261,12 +269,17 @@ async def startup_event():
             # 创建消息总线
             message_bus = MessageBus()
 
+            # ✅ 设置全局 message_bus 单例（用于工具访问）
+            from app.social.message_bus_singleton import set_message_bus
+            set_message_bus(message_bus)
+            logger.info("global_message_bus_set")
+
             # 创建会话映射器
             session_mapper = SessionMapper()
             await session_mapper.load()
 
             # 创建Agent桥接层（使用社交模式）
-            agent = create_react_agent()
+            agent = create_react_agent()  # 使用默认 max_iterations=30
             agent_bridge = AgentBridge(
                 agent=agent,
                 message_bus=message_bus,
@@ -274,8 +287,16 @@ async def startup_event():
                 mode="social"  # ⚠️ Social模式：移动端呼吸式Agent
             )
 
-            # 创建Channel管理器（传递配置）
-            channel_manager = ChannelManager(config=social_config, bus=message_bus)
+            # ✅ 设置 message_bus.agent_bridge 引用（用于工具访问）
+            message_bus.agent_bridge = agent_bridge
+            logger.info("message_bus_agent_bridge_set")
+
+            # 创建Channel管理器（传递配置和 agent_bridge）
+            channel_manager = ChannelManager(
+                config=social_config,
+                bus=message_bus,
+                agent_bridge=agent_bridge  # ✅ 新增：传递 AgentBridge
+            )
 
             # 启动Agent桥接层（后台任务）
             async def run_agent_bridge():

@@ -37,7 +37,7 @@ class ContextCompressor:
 - 数据查询工具（get_*/calculate_*/download_*等）：压缩为 "调用 get_weather_data → data_id: weather_001 (30条记录, 温度25°C)"
 - 思考过程：提炼为关键决策点 "决定先分析气象条件"
 - 分析结果：保留核心结论 "发现15天高温天气导致O3浓度升高"
-- 办公助理工具（bash/read_file/analyze_image/Office工具/read_docx/grep/glob/list_directory/execute_python）：完整保留工具返回的 data 字段内容
+- 办公助理工具（bash/read_file/analyze_image/Office工具/read_docx/grep/glob/list_directory/execute_python/web_search/search_history）：完整保留工具返回的 data/results 字段内容
 
 **重要**：
 - 保持对话的逻辑连贯性

@@ -1,39 +1,61 @@
-# Social Platform Configuration
-# 大气污染溯源分析系统 - 社交平台接入配置
-
-qq:
-  enabled: false  # 启用QQ机器人
-  app_id: ""  # QQ机器人App ID (从 https://qun.qq.com/ 获取)
-  secret: ""  # QQ机器人App Secret
-  allow_from:
-    - "*"  # 允许所有人访问 (测试环境); 生产环境请指定具体用户ID
-  streaming: false  # 流式响应 (暂不支持)
-
-weixin:
-  enabled: true  # 启用微信个人号机器人
-  allow_from:
-    - "*"  # 允许所有人访问 (测试环境)
-  streaming: false
-
-dingtalk:
-  enabled: false  # 启用钉钉机器人
-  app_key: ""  # 钉钉应用AppKey
-  app_secret: ""  # 钉钉应用AppSecret
-  allow_from:
-    - "*"  # 允许所有人访问
-  streaming: false
-
-wecom:
-  enabled: false  # 启用企业微信应用
-  corp_id: ""  # 企业微信企业ID
-  agent_id: ""  # 企业微信应用AgentID
-  secret: ""  # 企业微信应用Secret
-  allow_from:
-    - "*"  # 允许所有人访问
-  streaming: false
-
-# 全局设置
 channels:
-  send_progress: true  # 发送进度更新
-  send_tool_hints: false  # 发送工具调用提示
-  send_max_retries: 3  # 发送失败重试次数
+  send_max_retries: 3
+  send_progress: true
+  send_tool_hints: false
+dingtalk:
+  allow_from:
+  - '*'
+  app_key: ''
+  app_secret: ''
+  enabled: false
+  streaming: false
+qq:
+  allow_from:
+  - '*'
+  app_id: ''
+  enabled: false
+  secret: ''
+  streaming: false
+wecom:
+  agent_id: ''
+  allow_from:
+  - '*'
+  corp_id: ''
+  enabled: false
+  secret: ''
+  streaming: false
+weixin:
+  accounts:
+  - allow_from:
+    - '*'
+    auto_start: true
+    base_url: https://ilinkai.weixin.qq.com
+    enabled: true
+    id: auto_mn89uu4t
+    name: 65a14590ea81@im.bot
+    token: 65a14590ea81@im.bot:060000c26b682d87356a1e432ad68552efadab
+  - allow_from:
+    - '*'
+    auto_start: true
+    base_url: https://ilinkai.weixin.qq.com
+    enabled: true
+    id: auto_mn8k8rry
+    name: 597a70dd5641@im.bot
+    token: 597a70dd5641@im.bot:060000f1a03fd22a3051c3f70631cc35d5a899
+  - allow_from:
+    - '*'
+    auto_start: true
+    base_url: https://ilinkai.weixin.qq.com
+    enabled: true
+    id: auto_mn8ka95x
+    name: aab9025fc8b4@im.bot
+    token: aab9025fc8b4@im.bot:0600008bf30ffc32479bd65bb7f90acb3b60a4
+  - allow_from:
+    - '*'
+    auto_start: true
+    base_url: https://ilinkai.weixin.qq.com
+    enabled: true
+    id: auto_mn8nnwzs
+    name: e20f11cc0912@im.bot
+    token: e20f11cc0912@im.bot:0600001a6a73eb32e9685c39b842f1c9031a01
+  enabled: true

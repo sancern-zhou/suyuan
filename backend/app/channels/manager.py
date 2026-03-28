@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -10,6 +11,7 @@ import structlog
 from app.social.events import OutboundMessage
 from app.social.message_bus import MessageBus
 from app.channels.base import BaseChannel
+from config.settings import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -27,37 +29,38 @@ class ChannelManager:
     - Route outbound messages
     """
 
-    def __init__(self, config: Any, bus: MessageBus):
+    def __init__(self, config: Any, bus: MessageBus, agent_bridge=None):
         """
         Initialize the channel manager.
 
         Args:
             config: Configuration object or dict with channel settings
             bus: Message bus for communication
+            agent_bridge: Optional AgentBridge instance for channel registration
         """
         self.config = config
         self.bus = bus
+        self.agent_bridge = agent_bridge  # ✅ 新增：AgentBridge 引用
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
 
         self._init_channels()
 
     def _init_channels(self) -> None:
-        """Initialize enabled channels from configuration."""
-        # SocialConfig has separate channel attributes (qq, weixin, dingtalk, wecom)
-        # not a 'channels' dict
-        channel_names = ['qq', 'weixin', 'dingtalk', 'wecom']
+        """
+        Initialize enabled channels from configuration.
 
-        for name in channel_names:
+        Supports multi-instance channels (e.g., multiple WeChat accounts).
+        Channel keys use format: "type:instance_id" (e.g., "weixin:account_1")
+        """
+        # 单实例渠道（QQ、钉钉、企业微信）
+        for name in ['qq', 'dingtalk', 'wecom']:
             channel_config = getattr(self.config, name, None)
             if not channel_config:
                 logger.debug(f"Channel {name}: no config found")
                 continue
 
-            # Check if enabled
             is_enabled = getattr(channel_config, 'enabled', False)
-            logger.info(f"Channel {name}: enabled={is_enabled}, config={channel_config}")
-
             if not is_enabled:
                 continue
 
@@ -69,15 +72,145 @@ class ChannelManager:
             except Exception as e:
                 logger.warning("Channel not available", name=name, error=str(e), exc_info=True)
 
+        # ✅ 多实例渠道（微信）
+        weixin_config = getattr(self.config, 'weixin', None)
+        if weixin_config and getattr(weixin_config, 'enabled', False):
+            # 清理无效状态（在初始化之前）
+            self._cleanup_orphaned_weixin_states(weixin_config)
+            self._init_weixin_channels(weixin_config)
+
         self._validate_allow_from()
 
-    def _create_channel(self, name: str, config: Any) -> BaseChannel | None:
+    def _cleanup_orphaned_weixin_states(self, weixin_config: Any) -> None:
+        """
+        清理没有配置文件但有状态文件的微信账户
+
+        Args:
+            weixin_config: WeixinConfig object
+        """
+        # 获取配置文件中的所有账户 ID
+        configured_accounts = set()
+        accounts = getattr(weixin_config, 'accounts', [])
+        for account in accounts:
+            account_id = getattr(account, 'id', None)
+            if account_id:
+                configured_accounts.add(account_id)
+
+        logger.info(
+            "cleanup_weixin_states_start",
+            configured_count=len(configured_accounts),
+            configured_ids=list(configured_accounts)
+        )
+
+        # 扫描状态目录
+        weixin_state_dir = Path(settings.data_registry_dir) / "social" / "weixin"
+
+        if not weixin_state_dir.exists():
+            logger.debug("cleanup_weixin_states_dir_not_found", path=str(weixin_state_dir))
+            return
+
+        # 遍历所有子目录（每个账户一个子目录）
+        cleaned_count = 0
+        for item in weixin_state_dir.iterdir():
+            if not item.is_dir():
+                continue
+
+            # 跳过特殊目录
+            if item.name in ['media', 'qrcode', 'default']:
+                continue
+
+            # 检查是否在配置中
+            if item.name not in configured_accounts:
+                try:
+                    # 删除整个账户目录
+                    import shutil
+                    shutil.rmtree(item)
+                    cleaned_count += 1
+                    logger.info(
+                        "cleanup_weixin_states_removed",
+                        account_id=item.name,
+                        path=str(item)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "cleanup_weixin_states_failed",
+                        account_id=item.name,
+                        error=str(e)
+                    )
+
+        logger.info(
+            "cleanup_weixin_states_completed",
+            cleaned_count=cleaned_count,
+            remaining_count=len(configured_accounts)
+        )
+
+    def _init_weixin_channels(self, weixin_config: Any) -> None:
+        """
+        Initialize multiple WeChat channel instances.
+
+        Args:
+            weixin_config: WeixinConfig object with accounts list
+        """
+        accounts = getattr(weixin_config, 'accounts', [])
+
+        if not accounts:
+            logger.warning("WeChat enabled but no accounts configured")
+            return
+
+        logger.info(f"Initializing {len(accounts)} WeChat account(s)")
+
+        for account_config in accounts:
+            if not getattr(account_config, 'enabled', True):
+                logger.info(f"WeChat account {account_config.id}: disabled, skipping")
+                continue
+
+            try:
+                channel = self._create_weixin_channel(account_config)
+                if channel:
+                    channel_key = f"weixin:{account_config.id}"
+                    self.channels[channel_key] = channel
+                    logger.info(
+                        "WeChat account initialized",
+                        account_id=account_config.id,
+                        name=account_config.name,
+                        channel_key=channel_key
+                    )
+            except Exception as e:
+                logger.error(
+                    "Failed to initialize WeChat account",
+                    account_id=account_config.id,
+                    error=str(e),
+                    exc_info=True
+                )
+
+    def _create_weixin_channel(self, account_config: Any) -> Any:
+        """
+        Create a single WeChat channel instance.
+
+        Args:
+            account_config: WeixinAccountConfig object
+
+        Returns:
+            WeixinChannel instance
+        """
+        from app.channels.weixin import WeixinChannel
+
+        # 创建渠道实例，传入账号ID作为instance_id
+        channel = WeixinChannel(
+            config=account_config,
+            bus=self.bus,
+            instance_id=account_config.id
+        )
+        return channel
+
+    def _create_channel(self, name: str, config: Any, instance_id: str = None) -> BaseChannel | None:
         """
         Create a channel instance by name.
 
         Args:
             name: Channel name (qq, weixin, dingtalk, wecom)
             config: Channel configuration
+            instance_id: Optional instance ID for multi-instance channels
 
         Returns:
             Channel instance or None if not available
@@ -89,7 +222,7 @@ class ChannelManager:
                 return QQChannel(config, self.bus)
             elif name == "weixin":
                 from app.channels.weixin import WeixinChannel
-                return WeixinChannel(config, self.bus)
+                return WeixinChannel(config, self.bus, instance_id=instance_id)
             elif name == "dingtalk":
                 from app.channels.dingtalk import DingTalkChannel
                 return DingTalkChannel(config, self.bus)
@@ -130,12 +263,25 @@ class ChannelManager:
 
     async def start_all(self) -> None:
         """Start all channels and the outbound dispatcher."""
+        logger.info("start_all_called", channels_count=len(self.channels), channels=list(self.channels.keys()))
+
+        # Start outbound dispatcher first (even if no channels initially)
+        # This allows dynamic channel creation to work properly
+        if not self._dispatch_task or self._dispatch_task.done():
+            logger.info("starting_outbound_dispatcher")
+            self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+            logger.info("outbound_dispatcher_started", task_id=id(self._dispatch_task))
+
         if not self.channels:
-            logger.warning("No channels enabled")
+            logger.info("No channels initially, dispatcher will handle dynamic channel creation")
+            # Keep dispatcher running, don't return
             return
 
-        # Start outbound dispatcher
-        self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+        # ✅ 注册 channels 到 AgentBridge（用于获取机器人账号）
+        if self.agent_bridge:
+            for name, channel in self.channels.items():
+                self.agent_bridge.register_channel(channel)
+                logger.info("channel_registered_to_agent_bridge", channel_name=name)
 
         # Start channels
         tasks = []
@@ -166,9 +312,60 @@ class ChannelManager:
             except Exception as e:
                 logger.error("Error stopping channel", name=name, error=str(e))
 
+    async def reload_channels(self) -> None:
+        """
+        重新加载渠道配置（支持动态增删账户）
+
+        - 停止已删除的账户
+        - 启动新添加的账户
+        - 保留仍在运行的账户
+        """
+        logger.info("reload_channels_called", current_channels=list(self.channels.keys()))
+
+        # 保存当前渠道列表
+        old_channels = dict(self.channels)
+
+        # 清空当前渠道列表
+        self.channels.clear()
+
+        # 重新初始化渠道（会清理无效状态）
+        self._init_channels()
+
+        # 找出被删除的渠道并停止它们
+        for name, channel in old_channels.items():
+            if name not in self.channels:
+                try:
+                    await channel.stop()
+                    logger.info("stopped_deleted_channel", name=name)
+                except Exception as e:
+                    logger.error("failed_to_stop_deleted_channel", name=name, error=str(e))
+
+        # 找出新添加的渠道并启动它们
+        for name, channel in self.channels.items():
+            if name not in old_channels:
+                logger.info("found_new_channel", name=name, will_start=True)
+
+        # 启动所有新渠道
+        new_channels = {name: ch for name, ch in self.channels.items() if name not in old_channels}
+        if new_channels:
+            logger.info("starting_new_channels", channels=list(new_channels.keys()))
+            tasks = []
+            for name, channel in new_channels.items():
+                tasks.append(asyncio.create_task(self._start_channel(name, channel)))
+
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        logger.info(
+            "reload_channels_completed",
+            old_count=len(old_channels),
+            new_count=len(self.channels),
+            added=len(new_channels),
+            removed=len(old_channels) - len(self.channels) + len(new_channels)
+        )
+
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
-        logger.info("Outbound dispatcher started")
+        logger.info("Outbound dispatcher started", available_channels=list(self.channels.keys()))
 
         while True:
             try:
@@ -176,6 +373,12 @@ class ChannelManager:
                     self.bus.consume_outbound(),
                     timeout=1.0
                 )
+
+                logger.info("Outbound message received",
+                           channel=msg.channel,
+                           chat_id=msg.chat_id,
+                           content_preview=msg.content[:50] if msg.content else "",
+                           available_channels=list(self.channels.keys()))
 
                 # Check if message should be sent (progress filtering)
                 if msg.metadata.get("_progress"):
@@ -188,11 +391,16 @@ class ChannelManager:
                     ):
                         continue
 
+                # ✅ 精确匹配：channel 必须是完整的 key（如 "weixin:auto_mn8k8rry"）
+                # 不能使用模糊匹配，否则会导致消息发给错误的用户
                 channel = self.channels.get(msg.channel)
                 if channel:
+                    logger.info("Channel found, sending message", channel=msg.channel)
                     await self._send_with_retry(channel, msg)
                 else:
-                    logger.warning("Unknown channel", channel=msg.channel)
+                    logger.error("Unknown channel - message not sent",
+                                  channel=msg.channel,
+                                  available_channels=list(self.channels.keys()))
 
             except asyncio.TimeoutError:
                 continue

@@ -273,7 +273,7 @@ class KnowledgeBaseService:
         chunking_strategy: str = "llm",
         chunk_size: int = 800,
         chunk_overlap: int = 100,
-        llm_mode: str = "local"
+        llm_mode: str = "online"  # 优先使用线上API（更快）
     ) -> Document:
         """
         上传并处理文档

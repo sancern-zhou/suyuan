@@ -1375,6 +1375,16 @@ export const useReactStore = defineStore('react', {
         return
       }
 
+      // 【修复】确定使用的模式：优先从 sessionId 提取，否则使用 currentMode
+      let actualMode = agentMode
+      if (this.currentState.sessionId) {
+        const sessionMode = this.extractModeFromSessionId(this.currentState.sessionId)
+        if (sessionMode) {
+          actualMode = sessionMode
+          console.log(`[startAnalysis] sessionId=${this.currentState.sessionId}, 提取模式=${sessionMode}, currentMode=${this.currentMode}`)
+        }
+      }
+
       // 首次分析或继续分析
       if (!this.currentState.sessionId) {
         this.createSessionId()
@@ -1421,7 +1431,7 @@ export const useReactStore = defineStore('react', {
           useFullChemistry: useFullChemistry,  // RACM2完整化学机理分析选项
           gridResolution: gridResolution,  // 网格分辨率选项
           isInterruption: isInterruption,  // ✅ 传递中断标志
-          agentMode: agentMode,  // ✅ 双模式架构
+          agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
           attachments: attachments,  // ✅ 传递附件列表
           onEvent: (event) => {

@@ -265,7 +265,7 @@ async def upload_document(
     chunking_strategy: str = Form(default="llm"),
     chunk_size: int = Form(default=800),
     chunk_overlap: int = Form(default=100),
-    llm_mode: str = Form(default="local"),
+    llm_mode: str = Form(default="online"),  # 优先使用线上API（更快）
     db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)

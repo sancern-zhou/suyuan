@@ -598,6 +598,31 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_history", error=str(e))
 
+    try:
+        from app.tools.social.web_search.tool import WebSearchTool
+        registry.register(WebSearchTool(), priority=705)
+        logger.info("tool_loaded", tool="web_search")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="web_search", error=str(e))
+
+    try:
+        from app.tools.social.web_search.tool import WebFetchTool
+        registry.register(WebFetchTool(), priority=706)
+        logger.info("tool_loaded", tool="web_fetch")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="web_fetch", error=str(e))
+
+    # ========================================
+    # Social Mode Tools - Background Tasks（后台任务工具）
+    # ========================================
+
+    try:
+        from app.tools.social.spawn.tool import SpawnTool
+        registry.register(SpawnTool(), priority=710)
+        logger.info("tool_loaded", tool="spawn")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="spawn", error=str(e))
+
     # ========================================
     # Task Management Tools（任务管理工具）
     # ========================================

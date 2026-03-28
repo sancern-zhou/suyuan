@@ -78,21 +78,48 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".ico"
 _VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
 
 
+def _parse_aes_key(aes_key_b64: str) -> bytes:
+    """Parse a base64-encoded AES key, handling both encodings.
+
+    From nanobot pic-decrypt.ts parseAesKey:
+    * base64(raw 16 bytes)            → images (media.aes_key)
+    * base64(hex string of 16 bytes)  → file / voice / video
+
+    In the second case base64-decoding yields 32 ASCII hex chars which must
+    then be parsed as hex to recover the actual 16-byte key.
+    """
+    import re
+    decoded = base64.b64decode(aes_key_b64)
+    if len(decoded) == 16:
+        return decoded
+    if len(decoded) == 32 and re.fullmatch(rb"[0-9a-fA-F]{32}", decoded):
+        # hex-encoded key: base64 → hex string → raw bytes
+        return bytes.fromhex(decoded.decode("ascii"))
+    raise ValueError(
+        f"aes_key must decode to 16 raw bytes or 32-char hex string, got {len(decoded)} bytes"
+    )
+
+
 def _decrypt_aes_ecb(encrypted_data: bytes, key_b64: str) -> bytes:
-    """Decrypt AES-ECB encrypted data.
+    """Decrypt AES-128-ECB media data.
 
     Args:
         encrypted_data: Encrypted bytes
-        key_b64: Base64-encoded AES key
+        key_b64: Base64-encoded AES key (always base64-encoded)
 
     Returns:
         Decrypted bytes
     """
     try:
+        key = _parse_aes_key(key_b64)
+    except Exception as e:
+        logger.warning("Failed to parse AES key", error=str(e))
+        raise
+
+    try:
         from Crypto.Cipher import AES
         from Crypto.Util.Padding import unpad
 
-        key = base64.b64decode(key_b64)
         cipher = AES.new(key, AES.MODE_ECB)
         decrypted = cipher.decrypt(encrypted_data)
         # Remove PKCS#7 padding
@@ -116,6 +143,81 @@ def _ext_for_type(media_type: str) -> str:
     elif media_type == "file":
         return ".bin"
     return ".bin"
+
+
+def _is_url(path: str) -> bool:
+    """Check if path is a URL."""
+    return path.startswith(("http://", "https://"))
+
+
+async def _download_from_url(url: str, dest_dir: Path, client: httpx.AsyncClient) -> Path | None:
+    """Download file from URL to local temp directory."""
+    try:
+        response = await client.get(url)
+        response.raise_for_status()
+
+        # Generate filename from URL
+        import urllib.parse
+        url_path = urllib.parse.urlparse(url).path
+        filename = os.path.basename(url_path) or f"download_{int(time.time())}.bin"
+
+        # Try to get extension from Content-Type
+        content_type = response.headers.get("content-type", "")
+        if "image/png" in content_type:
+            if "." not in filename or not filename.endswith(".png"):
+                filename = filename.rsplit(".", 1)[0] + ".png" if "." in filename else filename + ".png"
+        elif "image/jpeg" in content_type or "image/jpg" in content_type:
+            if "." not in filename or not filename.endswith((".jpg", ".jpeg")):
+                filename = filename.rsplit(".", 1)[0] + ".jpg" if "." in filename else filename + ".jpg"
+
+        dest_path = dest_dir / filename
+        dest_path.write_bytes(response.content)
+
+        logger.info("Downloaded media from URL", url=url, dest=str(dest_path))
+        return dest_path
+
+    except Exception as e:
+        logger.error("Failed to download media from URL", url=url, error=str(e))
+        return None
+
+
+def _parse_aes_key(aes_key_b64: str) -> bytes:
+    """Parse a base64-encoded AES key.
+
+    From nanobot-main: supports two encodings:
+    - base64(raw 16 bytes) → images
+    - base64(hex string of 16 bytes) → file/voice/video
+    """
+    decoded = base64.b64decode(aes_key_b64)
+    if len(decoded) == 16:
+        return decoded  # 直接是 16 字节原始密钥
+    if len(decoded) == 32 and re.fullmatch(rb"[0-9a-fA-F]{32}", decoded):
+        # hex-encoded key: base64 → hex string → raw bytes
+        return bytes.fromhex(decoded.decode("ascii"))
+    raise ValueError(
+        f"aes_key must decode to 16 raw bytes or 32-char hex string, got {len(decoded)} bytes"
+    )
+
+
+def _encrypt_aes_ecb(data: bytes, aes_key_b64: str) -> bytes:
+    """Encrypt data with AES-128-ECB and PKCS7 padding."""
+    try:
+        key = _parse_aes_key(aes_key_b64)
+    except Exception as e:
+        logger.warning("Failed to parse AES key for encryption", error=str(e))
+        return data
+
+    # PKCS7 padding
+    pad_len = 16 - len(data) % 16
+    padded = data + bytes([pad_len] * pad_len)
+
+    try:
+        from Crypto.Cipher import AES
+        cipher = AES.new(key, AES.MODE_ECB)
+        return cipher.encrypt(padded)
+    except ImportError:
+        logger.warning("pycryptodome not installed, cannot encrypt")
+        return data
 
 
 def _split_message(text: str, max_len: int) -> list[str]:
@@ -147,10 +249,12 @@ class WeixinChannel(BaseChannel):
     Connects to ilinkai.weixin.qq.com API to receive and send personal
     WeChat messages. Authentication is via QR code login which produces
     a bot token.
+
+    Supports multiple instances with instance_id parameter.
     """
 
-    name = "weixin"
-    display_name = "WeChat"
+    name = "weixin"  # 会被实例ID覆盖
+    display_name = "WeChat"  # 会被配置中的name覆盖
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:
@@ -163,10 +267,27 @@ class WeixinChannel(BaseChannel):
             "token": "",
             "state_dir": "",
             "poll_timeout": DEFAULT_LONG_POLL_TIMEOUT_S,
+            # 多实例支持
+            "id": "",  # 账号ID
+            "name": "",  # 显示名称
+            "auto_start": True,  # 是否自动启动
         }
 
-    def __init__(self, config: Any, bus: MessageBus):
+    def __init__(self, config: Any, bus: MessageBus, instance_id: str = None):
+        """
+        Initialize WeixinChannel.
+
+        Args:
+            config: Channel configuration
+            bus: Message bus instance
+            instance_id: Instance ID for multi-account support (e.g., "account_1")
+        """
         super().__init__(config, bus)
+
+        # ✅ 多实例支持
+        self.instance_id = instance_id or getattr(config, 'id', None) or "default"
+        self.name = f"weixin:{self.instance_id}"
+        self.display_name = getattr(config, 'name', f"WeChat ({self.instance_id})")
 
         # State
         self._client: httpx.AsyncClient | None = None
@@ -175,6 +296,7 @@ class WeixinChannel(BaseChannel):
         self._processed_ids: OrderedDict[str, None] = OrderedDict()
         self._state_dir: Path | None = None
         self._token: str = ""
+        self._bot_id: str = ""  # ✅ 新增：机器人账号ID
         self._poll_task: asyncio.Task | None = None
         self._next_poll_timeout_s: int = DEFAULT_LONG_POLL_TIMEOUT_S
         self._session_pause_until: float = 0.0
@@ -183,12 +305,20 @@ class WeixinChannel(BaseChannel):
         self._current_qr_code_path: Path | None = None
         self._current_qr_code_id: str = ""
         self._qr_scanned: bool = False
+        self._qr_code_ready = asyncio.Event()  # ✅ 新增：二维码就绪事件
+        self._qr_code_ready.clear()  # 确保初始状态为未就绪
 
     # ------------------------------------------------------------------
     # State persistence
     # ------------------------------------------------------------------
 
     def _get_state_dir(self) -> Path:
+        """
+        Get state directory for this instance.
+
+        Each instance has its own subdirectory for isolation.
+        Format: backend_data_registry/social/weixin/{instance_id}/
+        """
         if self._state_dir:
             return self._state_dir
 
@@ -196,7 +326,8 @@ class WeixinChannel(BaseChannel):
         if state_dir:
             d = Path(state_dir).expanduser()
         else:
-            d = Path(settings.data_registry_dir) / "social" / "weixin"
+            # ✅ 多实例支持：每个账号独立的子目录
+            d = Path(settings.data_registry_dir) / "social" / "weixin" / self.instance_id
 
         d.mkdir(parents=True, exist_ok=True)
         self._state_dir = d
@@ -205,12 +336,22 @@ class WeixinChannel(BaseChannel):
     def _load_state(self) -> bool:
         """Load saved account state. Returns True if a valid token was found."""
         state_file = self._get_state_dir() / "account.json"
+
+        logger.info(
+            "loading_state",
+            instance_id=self.instance_id,
+            state_file=str(state_file),
+            file_exists=state_file.exists()
+        )
+
         if not state_file.exists():
+            logger.info("state_file_not_found", instance_id=self.instance_id, path=str(state_file))
             return False
 
         try:
             data = json.loads(state_file.read_text())
             self._token = data.get("token", "")
+            self._bot_id = data.get("bot_id", "")  # ✅ 新增：加载机器人账号
             self._get_updates_buf = data.get("get_updates_buf", "")
             context_tokens = data.get("context_tokens", {})
             if isinstance(context_tokens, dict):
@@ -224,16 +365,37 @@ class WeixinChannel(BaseChannel):
             base_url = data.get("base_url", "")
             if base_url:
                 self.config.base_url = base_url
+
+            logger.info(
+                "state_loaded_successfully",
+                instance_id=self.instance_id,
+                has_token=bool(self._token),
+                token_preview=self._token[:20] if self._token else "",
+                bot_id=self._bot_id,
+                context_tokens_count=len(self._context_tokens)
+            )
+
             return bool(self._token)
         except Exception as e:
-            logger.warning("Failed to load WeChat state", error=str(e))
+            logger.warning(
+                "Failed to load WeChat state",
+                instance_id=self.instance_id,
+                error=str(e),
+                exc_info=True
+            )
             return False
 
-    def _save_state(self) -> None:
+    def _save_state(self, update_config: bool = True) -> None:
+        """Save state to local file and optionally update config file.
+
+        Args:
+            update_config: Whether to update the token in config file (for persistence)
+        """
         state_file = self._get_state_dir() / "account.json"
         try:
             data = {
                 "token": self._token,
+                "bot_id": self._bot_id,  # ✅ 新增：保存机器人账号
                 "get_updates_buf": self._get_updates_buf,
                 "context_tokens": self._context_tokens,
                 "base_url": getattr(self.config, 'base_url', 'https://ilinkai.weixin.qq.com'),
@@ -241,6 +403,31 @@ class WeixinChannel(BaseChannel):
             state_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except Exception as e:
             logger.warning("Failed to save WeChat state", error=str(e))
+
+        # ✅ 更新配置文件中的 token（确保重启后能恢复登录）
+        if update_config and self._token and hasattr(self.config, 'token'):
+            try:
+                # 保存 token 到配置对象
+                self.config.token = self._token
+
+                # 如果有 instance_id，更新配置文件
+                if self.instance_id:
+                    from config.social_config import load_social_config, save_social_config
+                    config = load_social_config()
+
+                    # 找到对应的账号并更新 token
+                    for acc in config.weixin.accounts:
+                        if acc.id == self.instance_id:
+                            acc.token = self._token
+                            # logger.info("Updating token in config file", account_id=self.instance_id)  # 已禁用日志
+                            break
+
+                    # 保存配置
+                    save_social_config(config)
+                    # logger.info("Token saved to config file", account_id=self.instance_id)  # 已禁用日志
+
+            except Exception as e:
+                logger.warning("Failed to save token to config file", error=str(e))
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -318,9 +505,107 @@ class WeixinChannel(BaseChannel):
             raise RuntimeError(f"Failed to get QR code from WeChat API: {data}")
         return qrcode_id, (qrcode_img_content or qrcode_id)
 
+    async def _init_qr_login(self) -> str:
+        """
+        初始化二维码登录（只生成二维码，不等待扫码）
+
+        Returns:
+            二维码ID
+        """
+        # ✅ 清除就绪事件，准备生成新的二维码
+        self._qr_code_ready.clear()
+
+        logger.info("Initializing WeChat QR code...")
+        qrcode_id, scan_url = await self._fetch_qr_code()
+
+        # Save QR code as image for web UI
+        self._save_qr_code_image(scan_url, qrcode_id)
+
+        # Also print to terminal
+        self._print_qr_code(scan_url)
+
+        logger.info("QR code initialized", qrcode_id=qrcode_id)
+        return qrcode_id
+
+    async def _wait_for_qr_scan(self, qrcode_id: str) -> bool:
+        """
+        等待已有二维码的扫码（不生成新二维码）
+
+        Args:
+            qrcode_id: 二维码ID
+
+        Returns:
+            是否登录成功
+        """
+        logger.info("Waiting for QR code scan...", qrcode_id=qrcode_id)
+
+        refresh_count = 0
+        while self._running:
+            try:
+                status_data = await self._api_get(
+                    "ilink/bot/get_qrcode_status",
+                    params={"qrcode": qrcode_id},
+                    auth=False,
+                    extra_headers={"iLink-App-ClientVersion": "1"},
+                )
+            except httpx.TimeoutException:
+                continue
+
+            status = status_data.get("status", "")
+            if status == "confirmed":
+                token = status_data.get("bot_token", "")
+                bot_id = status_data.get("ilink_bot_id", "")
+                base_url = status_data.get("baseurl", "")
+                user_id = status_data.get("ilink_user_id", "")
+                if token:
+                    self._token = token
+                    self._bot_id = bot_id
+                    if base_url:
+                        self.config.base_url = base_url
+                    self._save_state()
+                    logger.info(
+                        "WeChat login successful",
+                        bot_id=bot_id,
+                        user_id=user_id
+                    )
+                    return True
+                else:
+                    logger.error("Login confirmed but no bot_token in response")
+                    return False
+            elif status == "scaned":
+                logger.info("QR code scanned, waiting for confirmation...")
+            elif status == "expired":
+                refresh_count += 1
+                if refresh_count > MAX_QR_REFRESH_COUNT:
+                    logger.warning(
+                        "QR code expired too many times, giving up",
+                        count=refresh_count,
+                        max_count=MAX_QR_REFRESH_COUNT
+                    )
+                    return False
+                logger.warning(
+                    "QR code expired, refreshing...",
+                    count=refresh_count,
+                    max_count=MAX_QR_REFRESH_COUNT
+                )
+                # 刷新二维码（生成新的）
+                qrcode_id, scan_url = await self._fetch_qr_code()
+                self._save_qr_code_image(scan_url, qrcode_id)
+                self._print_qr_code(scan_url)
+                logger.info("New QR code generated, waiting for scan...")
+                continue
+
+            await asyncio.sleep(1)
+
+        logger.error("WeChat QR scan wait failed")
+        return False
+
     async def _qr_login(self) -> bool:
         """Perform QR code login flow. Returns True on success."""
         try:
+            # ✅ 清除就绪事件，准备生成新的二维码
+            self._qr_code_ready.clear()
+
             logger.info("Starting WeChat QR code login...")
             refresh_count = 0
             qrcode_id, scan_url = await self._fetch_qr_code()
@@ -351,6 +636,7 @@ class WeixinChannel(BaseChannel):
                     user_id = status_data.get("ilink_user_id", "")
                     if token:
                         self._token = token
+                        self._bot_id = bot_id  # ✅ 新增：保存机器人账号
                         if base_url:
                             self.config.base_url = base_url
                         self._save_state()
@@ -434,6 +720,9 @@ class WeixinChannel(BaseChannel):
             self._current_qr_code_path = qr_path
             self._current_qr_code_id = qrcode_id
 
+            # ✅ 设置二维码就绪事件
+            self._qr_code_ready.set()
+
             logger.info("QR code saved", path=str(qr_path))
         except Exception as e:
             logger.warning("Failed to save QR code image", error=str(e))
@@ -478,16 +767,72 @@ class WeixinChannel(BaseChannel):
             follow_redirects=True,
         )
 
-        config_token = getattr(self.config, 'token', '')
-        if config_token:
-            self._token = config_token
-        elif not self._load_state():
-            if not await self._qr_login():
-                logger.error("WeChat login failed")
-                self._running = False
-                return
+        logger.info(
+            "WeChat channel starting",
+            instance_id=self.instance_id,
+            state_dir=str(self._get_state_dir())
+        )
 
-        logger.info("WeChat channel starting with long-poll...")
+        config_token = getattr(self.config, 'token', '')
+        logger.info(
+            "weixin_start_token_check",
+            instance_id=self.instance_id,
+            has_config_token=bool(config_token),
+            config_token_preview=config_token[:10] if config_token else ""
+        )
+
+        if config_token:
+            # 配置文件中指定了 token，使用配置的 token
+            self._token = config_token
+            logger.info("using_config_token", instance_id=self.instance_id)
+        else:
+            # 尝试从状态文件加载
+            state_loaded = self._load_state()
+            logger.info(
+                "state_load_attempt",
+                instance_id=self.instance_id,
+                state_loaded=state_loaded,
+                has_token=bool(self._token),
+                token_preview=self._token[:10] if self._token else "",
+                bot_id=self._bot_id
+            )
+
+            if not state_loaded:
+                # 状态文件不存在或无效
+                # 检查是否已经有二维码在等待（由 _init_qr_login 生成）
+                if self._current_qr_code_path and self._current_qr_code_id:
+                    # 已有二维码，继续等待扫码
+                    logger.info(
+                        "existing_qrcode_found_continuing_wait",
+                        instance_id=self.instance_id,
+                        qrcode_id=self._current_qr_code_id
+                    )
+                    # 继续等待该二维码的扫码状态
+                    if not await self._wait_for_qr_scan(self._current_qr_code_id):
+                        logger.error("WeChat QR scan wait failed", instance_id=self.instance_id)
+                        self._running = False
+                        return
+                else:
+                    # 没有二维码，生成新的并等待扫码
+                    logger.info("no_saved_state_starting_qr_login", instance_id=self.instance_id)
+                    if not await self._qr_login():
+                        logger.error("WeChat QR login failed", instance_id=self.instance_id)
+                        self._running = False
+                        return
+            else:
+                logger.info(
+                    "loaded_saved_state",
+                    instance_id=self.instance_id,
+                    bot_id=self._bot_id,
+                    token_valid=bool(self._token)
+                )
+
+        logger.info(
+            "WeChat channel starting with long-poll",
+            instance_id=self.instance_id,
+            has_token=bool(self._token),
+            bot_id=self._bot_id
+        )
 
         consecutive_failures = 0
         while self._running:
@@ -523,6 +868,19 @@ class WeixinChannel(BaseChannel):
             self._client = None
         self._save_state()
         logger.info("WeChat channel stopped")
+
+    @property
+    def bot_account(self) -> str:
+        """
+        获取微信机器人账号标识
+
+        Returns:
+            机器人账号ID（格式：wxid_abc）或带实例ID的默认值
+        """
+        if self._bot_id:
+            return self._bot_id
+        # 返回带实例ID的默认标识
+        return f"weixin_{self.instance_id}"
 
     # ------------------------------------------------------------------
     # Polling
@@ -702,7 +1060,9 @@ class WeixinChannel(BaseChannel):
                     content_parts.append(f"[file: {file_name}]\n[File: source: {file_path}]")
                     media_paths.append(file_path)
                 else:
-                    content_parts.append(f"[file: {file_name}]")
+                    # 文件下载失败，明确提示
+                    logger.warning("File download failed, adding error message to content", file_name=file_name)
+                    content_parts.append(f"[file: {file_name}]\n⚠️ 文件下载失败，无法读取文件内容。请尝试重新发送文件。")
 
             elif item_type == ITEM_VIDEO:
                 video_item = item.get("video_item") or {}
@@ -748,6 +1108,7 @@ class WeixinChannel(BaseChannel):
             encrypt_query_param = media.get("encrypt_query_param", "")
 
             if not encrypt_query_param:
+                logger.warning("WeChat media item missing encrypt_query_param", media_type=media_type, filename=filename)
                 return None
 
             # Resolve AES key
@@ -757,8 +1118,12 @@ class WeixinChannel(BaseChannel):
             aes_key_b64: str = ""
             if raw_aeskey_hex:
                 aes_key_b64 = base64.b64encode(bytes.fromhex(raw_aeskey_hex)).decode()
+                logger.debug("Using raw_aeskey_hex for decryption", media_type=media_type)
             elif media_aes_key_b64:
                 aes_key_b64 = media_aes_key_b64
+                logger.debug("Using media_aes_key_b64 for decryption", media_type=media_type)
+
+            logger.debug("AES key info", has_key=bool(aes_key_b64), media_type=media_type, filename=filename)
 
             # Build CDN download URL
             cdn_base = getattr(self.config, 'cdn_base_url', 'https://novac2c.cdn.weixin.qq.com/c2c')
@@ -772,8 +1137,14 @@ class WeixinChannel(BaseChannel):
             resp.raise_for_status()
             data = resp.content
 
+            # 尝试 AES 解密（所有媒体类型都需要解密）
             if aes_key_b64 and data:
-                data = _decrypt_aes_ecb(data, aes_key_b64)
+                try:
+                    data = _decrypt_aes_ecb(data, aes_key_b64)
+                    logger.debug("AES decryption successful", type=media_type, filename=filename)
+                except Exception as decrypt_error:
+                    logger.error("AES decryption failed", type=media_type, error=str(decrypt_error))
+                    return None
             elif not aes_key_b64:
                 logger.debug("No AES key for media item, using raw bytes", type=media_type)
 
@@ -790,8 +1161,10 @@ class WeixinChannel(BaseChannel):
             safe_name = os.path.basename(filename)
             file_path = media_dir / safe_name
             file_path.write_bytes(data)
-            logger.debug("Downloaded WeChat media", type=media_type, path=str(file_path))
-            return str(file_path)
+            # 返回绝对路径，避免工具查找时路径不匹配
+            absolute_path = file_path.resolve()
+            logger.debug("Downloaded WeChat media", type=media_type, path=str(absolute_path))
+            return str(absolute_path)
 
         except Exception as e:
             logger.error("Error downloading WeChat media", error=str(e))
@@ -809,6 +1182,12 @@ class WeixinChannel(BaseChannel):
         - 流式中间片段：快速发送，不分割
         - 最终消息：正常处理（分割长消息）
         """
+        logger.info("WeChat send called",
+                   chat_id=msg.chat_id,
+                   content_preview=msg.content[:50] if msg.content else "",
+                   context_tokens_count=len(self._context_tokens),
+                   available_context_tokens=list(self._context_tokens.keys()))
+
         if not self._client or not self._token:
             logger.warning("WeChat client not initialized or not authenticated")
             return
@@ -822,7 +1201,9 @@ class WeixinChannel(BaseChannel):
         content = msg.content.strip()
         ctx_token = self._context_tokens.get(msg.chat_id, "")
         if not ctx_token:
-            logger.warning("WeChat: no context_token for chat_id", chat_id=msg.chat_id)
+            logger.warning("WeChat: no context_token for chat_id",
+                           chat_id=msg.chat_id,
+                           available_tokens=list(self._context_tokens.keys()))
             return
 
         # ✅ 检查是否为流式消息（social模式）
@@ -830,10 +1211,16 @@ class WeixinChannel(BaseChannel):
         is_stream_end = msg.metadata.get("_stream_end", True) if msg.metadata else True
 
         # Send media files first（仅最终消息）
+        logger.info("WeChat send: checking media",
+                   media_count=len(msg.media or []),
+                   media_list=msg.media,
+                   is_stream_end=is_stream_end)
         if is_stream_end:
             for media_path in (msg.media or []):
                 try:
+                    logger.info("WeChat send: attempting to send media", path=media_path)
                     await self._send_media_file(msg.chat_id, media_path, ctx_token)
+                    logger.info("WeChat send: media sent successfully", path=media_path)
                 except Exception as e:
                     filename = Path(media_path).name
                     logger.error("Failed to send WeChat media", path=media_path, error=str(e))
@@ -890,7 +1277,18 @@ class WeixinChannel(BaseChannel):
             "base_info": BASE_INFO,
         }
 
+        logger.info("WeChat API calling",
+                   endpoint="ilink/bot/sendmessage",
+                   to_user_id=to_user_id,
+                   text_length=len(text),
+                   has_context_token=bool(context_token))
+
         data = await self._api_post("ilink/bot/sendmessage", body)
+
+        logger.info("WeChat API response received",
+                   errcode=data.get("errcode", 0),
+                   response=data)
+
         errcode = data.get("errcode", 0)
         if errcode and errcode != 0:
             logger.warning(
@@ -898,6 +1296,10 @@ class WeixinChannel(BaseChannel):
                 code=errcode,
                 message=data.get("errmsg", "")
             )
+        else:
+            logger.info("WeChat message sent successfully",
+                       to_user_id=to_user_id,
+                       text_length=len(text))
 
     async def _send_media_file(
         self,
@@ -905,230 +1307,167 @@ class WeixinChannel(BaseChannel):
         media_path: str,
         context_token: str,
     ) -> None:
-        """Send a media file (image, video, or file)."""
-        try:
-            # 检查文件是否存在
-            if not Path(media_path).exists():
-                logger.warning("Media file not found", path=media_path)
-                filename = Path(media_path).name
-                await self._send_text(to_user_id, f"[文件不存在: {filename}]", context_token)
-                return
+        """Upload a local file to WeChat CDN and send it as a media message.
 
-            # 判断文件类型
-            filename = Path(media_path).name
-            suffix = Path(media_path).suffix.lower()
+        Follows the exact protocol from @tencent-weixin/openclaw-weixin v1.0.3:
+        1. Generate a random 16-byte AES key (client-side).
+        2. Call getuploadurl with file metadata + hex-encoded AES key.
+        3. AES-128-ECB encrypt the file and POST to CDN.
+        4. Read x-encrypted-param header from CDN response as the download param.
+        5. Send a sendmessage with the appropriate media item referencing the upload.
 
-            if suffix in _IMAGE_EXTS:
-                # 上传并发送图片
-                await self._send_image(to_user_id, media_path, context_token)
-            elif suffix in _VIDEO_EXTS:
-                # 上传并发送视频
-                await self._send_video(to_user_id, media_path, context_token)
-            else:
-                # 上传并发送文件
-                await self._send_file(to_user_id, media_path, context_token)
-
-            logger.info("Media file sent successfully", path=media_path, type=suffix)
-
-        except Exception as e:
-            logger.error("Failed to send media file", path=media_path, error=str(e))
-            filename = Path(media_path).name
-            await self._send_text(to_user_id, f"[发送文件失败: {filename}]", context_token)
-
-    async def _upload_media(
-        self,
-        file_path: str,
-        media_type: int
-    ) -> str | None:
+        Note: Simplified from nanobot implementation - no URL download support.
         """
-        上传媒体文件到微信服务器
-
-        Args:
-            file_path: 文件路径
-            media_type: 媒体类型（1=图片, 2=视频, 3=文件）
-
-        Returns:
-            media_id 或 None
-        """
+        p = Path(media_path)
         try:
-            if not Path(file_path).exists():
-                logger.warning("File not found for upload", path=file_path)
-                return None
+            if not p.is_file():
+                raise FileNotFoundError(f"Media file not found: {media_path}")
+        except PermissionError as e:
+            logger.error(
+                "Permission denied when accessing file",
+                path=media_path,
+                error=str(e)
+            )
+            raise FileNotFoundError(
+                f"Cannot access file (permission denied): {media_path}. "
+                f"Please ensure the file is in a readable location (not in /root/ directory)."
+            )
 
-            # 读取文件
-            with open(file_path, "rb") as f:
-                file_data = f.read()
+        raw_data = p.read_bytes()
+        raw_size = len(raw_data)
+        raw_md5 = hashlib.md5(raw_data).hexdigest()
 
-            # 构建multipart/form-data请求
-            filename = Path(file_path).name
-            files = {
-                "media": (filename, file_data),
-                "type": str(media_type)
-            }
+        # Determine upload media type from extension
+        ext = p.suffix.lower()
+        if ext in _IMAGE_EXTS:
+            upload_type = UPLOAD_MEDIA_IMAGE
+            item_type = ITEM_IMAGE
+            item_key = "image_item"
+        elif ext in _VIDEO_EXTS:
+            upload_type = UPLOAD_MEDIA_VIDEO
+            item_type = ITEM_VIDEO
+            item_key = "video_item"
+        else:
+            upload_type = UPLOAD_MEDIA_FILE
+            item_type = ITEM_FILE
+            item_key = "file_item"
 
-            # 发送上传请求
-            url = f"{getattr(self.config, 'base_url', 'https://ilinkai.weixin.qq.com')}/ilink/bot/uploadmedia"
+        # Generate client-side AES-128 key (16 random bytes)
+        aes_key_raw = os.urandom(16)
+        aes_key_hex = aes_key_raw.hex()
 
-            headers = {
-                "Authorization": f"ilink_bot_token {self._token}",
-            }
+        # Compute encrypted size: PKCS7 padding to 16-byte boundary
+        padded_size = ((raw_size + 1 + 15) // 16) * 16
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, headers=headers, files=files)
-                response.raise_for_status()
-                data = response.json()
+        # Step 1: Get upload URL (upload_param) from server
+        file_key = os.urandom(16).hex()
+        upload_body: dict[str, Any] = {
+            "filekey": file_key,
+            "media_type": upload_type,
+            "to_user_id": to_user_id,
+            "rawsize": raw_size,
+            "rawfilemd5": raw_md5,
+            "filesize": padded_size,
+            "no_need_thumb": True,  # ✅ 关键参数：不需要生成缩略图
+            "aeskey": aes_key_hex,
+        }
 
-            # 检查上传结果
-            errcode = data.get("errcode", 0)
-            if errcode == 0:
-                media_id = data.get("data", {}).get("media_id")
-                logger.info("Media uploaded successfully", media_id=media_id, path=file_path)
-                return media_id
-            else:
-                logger.error("Failed to upload media", errcode=errcode, errmsg=data.get("errmsg"))
-                return None
+        assert self._client is not None
+        upload_resp = await self._api_post("ilink/bot/getuploadurl", upload_body)
+        logger.debug("WeChat getuploadurl response", response=upload_resp)
 
-        except Exception as e:
-            logger.error("Error uploading media", path=file_path, error=str(e))
-            return None
+        upload_param = upload_resp.get("upload_param", "")
+        if not upload_param:
+            raise RuntimeError(f"getuploadurl returned no upload_param: {upload_resp}")
 
-    async def _send_image(
-        self,
-        to_user_id: str,
-        image_path: str,
-        context_token: str,
-    ) -> None:
-        """发送图片"""
-        # 上传图片
-        media_id = await self._upload_media(image_path, UPLOAD_MEDIA_IMAGE)
-        if not media_id:
-            logger.warning("Failed to upload image", path=image_path)
-            filename = Path(image_path).name
-            await self._send_text(to_user_id, f"[图片上传失败: {filename}]", context_token)
-            return
+        # Step 2: AES-128-ECB encrypt and POST to CDN
+        aes_key_b64 = base64.b64encode(aes_key_raw).decode()
+        encrypted_data = _encrypt_aes_ecb(raw_data, aes_key_b64)
 
-        # 发送图片消息
+        cdn_base = getattr(self.config, 'cdn_base_url', 'https://novac2c.cdn.weixin.qq.com/c2c')
+        cdn_upload_url = (
+            f"{cdn_base}/upload"
+            f"?encrypted_query_param={quote(upload_param)}"
+            f"&filekey={quote(file_key)}"
+        )
+        logger.debug(
+            "WeChat CDN POST",
+            url=cdn_upload_url[:80],
+            ciphertext_size=len(encrypted_data)
+        )
+
+        cdn_resp = await self._client.post(
+            cdn_upload_url,
+            content=encrypted_data,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        cdn_resp.raise_for_status()
+
+        # The download encrypted_query_param comes from CDN response header
+        download_param = cdn_resp.headers.get("x-encrypted-param", "")
+        if not download_param:
+            raise RuntimeError(
+                "CDN upload response missing x-encrypted-param header; "
+                f"status={cdn_resp.status_code} headers={dict(cdn_resp.headers)}"
+            )
+        logger.debug("WeChat CDN upload success", filename=p.name)
+
+        # Step 3: Send message with the media item
+        cdn_aes_key_b64 = base64.b64encode(aes_key_hex.encode()).decode()
+
+        media_item: dict[str, Any] = {
+            "media": {
+                "encrypt_query_param": download_param,
+                "aes_key": cdn_aes_key_b64,
+                "encrypt_type": 1,
+            },
+        }
+
+        if item_type == ITEM_IMAGE:
+            media_item["mid_size"] = padded_size
+        elif item_type == ITEM_VIDEO:
+            media_item["video_size"] = padded_size
+        elif item_type == ITEM_FILE:
+            media_item["file_name"] = p.name
+            media_item["len"] = str(raw_size)
+
         client_id = f"suyuan-{uuid.uuid4().hex[:12]}"
+        item_list: list[dict] = [{"type": item_type, item_key: media_item}]
 
-        item_list = [
-            {
-                "type": ITEM_IMAGE,
-                "image_item": {
-                    "image_id": media_id
-                }
-            }
-        ]
-
-        weixin_msg = {
+        weixin_msg: dict[str, Any] = {
             "from_user_id": "",
             "to_user_id": to_user_id,
             "client_id": client_id,
             "message_type": MESSAGE_TYPE_BOT,
             "message_state": MESSAGE_STATE_FINISH,
             "item_list": item_list,
-            "context_token": context_token
         }
+        if context_token:
+            weixin_msg["context_token"] = context_token
 
-        body = {
+        body: dict[str, Any] = {
             "msg": weixin_msg,
-            "base_info": BASE_INFO
+            "base_info": BASE_INFO,
         }
 
         data = await self._api_post("ilink/bot/sendmessage", body)
         errcode = data.get("errcode", 0)
         if errcode and errcode != 0:
-            logger.warning("Failed to send image", errcode=errcode, errmsg=data.get("errmsg"))
+            raise RuntimeError(
+                f"WeChat send media error (code {errcode}): {data.get('errmsg', '')}"
+            )
+        logger.info(
+            "WeChat media sent successfully",
+            filename=p.name,
+            type=item_key,
+            size=raw_size,
+            source="url" if _is_url(media_path) else "local"
+        )
 
-    async def _send_video(
-        self,
-        to_user_id: str,
-        video_path: str,
-        context_token: str,
-    ) -> None:
-        """发送视频"""
-        # 上传视频
-        media_id = await self._upload_media(video_path, UPLOAD_MEDIA_VIDEO)
-        if not media_id:
-            logger.warning("Failed to upload video", path=video_path)
-            filename = Path(video_path).name
-            await self._send_text(to_user_id, f"[视频上传失败: {filename}]", context_token)
-            return
-
-        # 发送视频消息
-        client_id = f"suyuan-{uuid.uuid4().hex[:12]}"
-
-        item_list = [
-            {
-                "type": ITEM_VIDEO,
-                "video_item": {
-                    "video_id": media_id
-                }
-            }
-        ]
-
-        weixin_msg = {
-            "from_user_id": "",
-            "to_user_id": to_user_id,
-            "client_id": client_id,
-            "message_type": MESSAGE_TYPE_BOT,
-            "message_state": MESSAGE_STATE_FINISH,
-            "item_list": item_list,
-            "context_token": context_token
-        }
-
-        body = {
-            "msg": weixin_msg,
-            "base_info": BASE_INFO
-        }
-
-        data = await self._api_post("ilink/bot/sendmessage", body)
-        errcode = data.get("errcode", 0)
-        if errcode and errcode != 0:
-            logger.warning("Failed to send video", errcode=errcode, errmsg=data.get("errmsg"))
-
-    async def _send_file(
-        self,
-        to_user_id: str,
-        file_path: str,
-        context_token: str,
-    ) -> None:
-        """发送文件"""
-        # 上传文件
-        media_id = await self._upload_media(file_path, UPLOAD_MEDIA_FILE)
-        if not media_id:
-            logger.warning("Failed to upload file", path=file_path)
-            filename = Path(file_path).name
-            await self._send_text(to_user_id, f"[文件上传失败: {filename}]", context_token)
-            return
-
-        # 发送文件消息
-        client_id = f"suyuan-{uuid.uuid4().hex[:12]}"
-
-        item_list = [
-            {
-                "type": ITEM_FILE,
-                "file_item": {
-                    "file_id": media_id
-                }
-            }
-        ]
-
-        weixin_msg = {
-            "from_user_id": "",
-            "to_user_id": to_user_id,
-            "client_id": client_id,
-            "message_type": MESSAGE_TYPE_BOT,
-            "message_state": MESSAGE_STATE_FINISH,
-            "item_list": item_list,
-            "context_token": context_token
-        }
-
-        body = {
-            "msg": weixin_msg,
-            "base_info": BASE_INFO
-        }
-
-        data = await self._api_post("ilink/bot/sendmessage", body)
-        errcode = data.get("errcode", 0)
-        if errcode and errcode != 0:
-            logger.warning("Failed to send file", errcode=errcode, errmsg=data.get("errmsg"))
+        # Cleanup: delete temp file if it was downloaded from URL
+        if _is_url(media_path) and p.exists():
+            try:
+                p.unlink()
+                logger.debug("Cleaned up temp file", path=str(p))
+            except Exception as e:
+                logger.warning("Failed to cleanup temp file", path=str(p), error=str(e))

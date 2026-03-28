@@ -2,9 +2,10 @@
 
 import asyncio
 import json
+import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 import structlog
 
@@ -39,6 +40,10 @@ class SessionMapper:
         # In-memory cache
         self._mappings: Dict[str, str] = {}
         self._timestamp_cache: Dict[str, datetime] = {}
+
+        # ✅ 新增缓存：偏移量和消息计数
+        self._offset_cache: Dict[str, int] = {}
+        self._message_count_cache: Dict[str, int] = {}
 
         # Lock for thread safety
         self._lock = asyncio.Lock()
@@ -101,6 +106,9 @@ class SessionMapper:
                 if last_used > cutoff:
                     self._mappings[social_user_id] = entry['session_id']
                     self._timestamp_cache[social_user_id] = last_used
+                    # ✅ 新增：加载偏移量和消息计数
+                    self._offset_cache[social_user_id] = entry.get('last_consolidated_offset', 0)
+                    self._message_count_cache[social_user_id] = entry.get('total_message_count', 0)
 
             logger.info("Loaded session mappings from file", count=len(self._mappings))
         except Exception as e:
@@ -168,7 +176,10 @@ class SessionMapper:
                 last_used = self._timestamp_cache.get(social_user_id, datetime.now())
                 data[social_user_id] = {
                     'session_id': session_id,
-                    'last_used': last_used.isoformat()
+                    'last_used': last_used.isoformat(),
+                    # ✅ 新增：保存偏移量和消息计数
+                    'last_consolidated_offset': self._offset_cache.get(social_user_id, 0),
+                    'total_message_count': self._message_count_cache.get(social_user_id, 0)
                 }
 
             with open(self.mappings_file, 'w', encoding='utf-8') as f:
@@ -178,12 +189,13 @@ class SessionMapper:
         except Exception as e:
             logger.error("Failed to save session mappings to file", error=str(e))
 
-    async def get_or_create_session(self, social_user_id: str) -> str:
+    async def get_or_create_session(self, social_user_id: str, mode: str = "assistant") -> str:
         """
         Get existing session ID or create a new one.
 
         Args:
             social_user_id: Social platform user ID (e.g., "qq:123456")
+            mode: Agent mode (assistant, expert, query, code, report)
 
         Returns:
             Agent session ID
@@ -204,14 +216,19 @@ class SessionMapper:
             if social_user_id in self._mappings:
                 return self._mappings[social_user_id]
 
-            # 创建新session ID
-            session_id = f"react_session_{social_user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            # 【修复】使用标准 sessionId 格式：${mode}_session_${timestamp}_${random}
+            # 避免使用 social_user_id（包含特殊字符），改用随机字符串
+            timestamp = int(datetime.now().timestamp() * 1000)
+            random_str = secrets.token_hex(6)  # 12字符随机字符串
+            session_id = f"{mode}_session_{timestamp}_{random_str}"
+
             self._mappings[social_user_id] = session_id
             self._timestamp_cache[social_user_id] = datetime.now()
 
             logger.info("Created new session mapping",
                        social_user_id=social_user_id,
-                       session_id=session_id)
+                       session_id=session_id,
+                       mode=mode)
 
         # 异步保存（释放锁后再保存）
         asyncio.create_task(self.save())
@@ -296,3 +313,56 @@ class SessionMapper:
     def mapping_count(self) -> int:
         """Get the number of active mappings."""
         return len(self._mappings)
+
+    async def get_mapping_info(self, social_user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        获取完整的 session 映射信息
+
+        Args:
+            social_user_id: 社交平台用户ID
+
+        Returns:
+            映射信息字典或 None
+        """
+        async with self._lock:
+            if social_user_id not in self._mappings:
+                return None
+
+            return {
+                "social_user_id": social_user_id,
+                "session_id": self._mappings[social_user_id],
+                "last_used": self._timestamp_cache.get(social_user_id),
+                "last_consolidated_offset": self._offset_cache.get(social_user_id, 0),
+                "total_message_count": self._message_count_cache.get(social_user_id, 0)
+            }
+
+    async def update_consolidation_offset(
+        self,
+        social_user_id: str,
+        new_offset: int,
+        total_count: int
+    ) -> None:
+        """
+        更新整合偏移量
+
+        Args:
+            social_user_id: 社交平台用户ID
+            new_offset: 新的偏移量
+            total_count: 总消息数
+        """
+        async with self._lock:
+            if social_user_id not in self._mappings:
+                return
+
+            self._offset_cache[social_user_id] = new_offset
+            self._message_count_cache[social_user_id] = total_count
+
+            # 异步保存
+            asyncio.create_task(self.save())
+
+            logger.info(
+                "consolidation_offset_updated",
+                social_user_id=social_user_id,
+                new_offset=new_offset,
+                total_count=total_count
+            )

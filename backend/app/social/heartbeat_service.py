@@ -11,9 +11,12 @@
 """
 
 import asyncio
+import time
 from pathlib import Path
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any, List
 import structlog
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 logger = structlog.get_logger(__name__)
 
@@ -36,7 +39,8 @@ class HeartbeatService:
         workspace: Optional[Path] = None,
         on_execute: Optional[Callable] = None,
         on_notify: Optional[Callable] = None,
-        llm_service=None
+        llm_service=None,
+        user_id: Optional[str] = None
     ):
         """
         初始化心跳服务
@@ -47,6 +51,7 @@ class HeartbeatService:
             on_execute: 执行任务回调函数，签名为 async def tasks: list -> dict
             on_notify: 发送通知回调函数，签名为 async def response: dict -> None
             llm_service: LLM服务（用于决策）
+            user_id: 用户ID（用于多用户隔离），默认为 "global"
         """
         self.interval_s = interval_s
         self.workspace = workspace or Path("backend_data_registry/social/heartbeat")
@@ -55,6 +60,8 @@ class HeartbeatService:
         self.on_execute = on_execute
         self.on_notify = on_notify
         self.llm_service = llm_service
+        self.user_id = user_id or "global"
+        self.timezone = ZoneInfo("Asia/Shanghai")  # ✅ 使用北京时区
 
         self._running = False
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -68,7 +75,8 @@ class HeartbeatService:
         logger.info(
             "heartbeat_service_initialized",
             interval_s=interval_s,
-            workspace=str(self.workspace)
+            workspace=str(self.workspace),
+            user_id=self.user_id
         )
 
     def _init_heartbeat_file(self) -> None:
@@ -142,16 +150,50 @@ class HeartbeatService:
         logger.info("heartbeat_service_stopped")
 
     async def _heartbeat_loop(self) -> None:
-        """心跳循环"""
+        """心跳循环（动态调度器）"""
         while self._running:
             try:
-                # 等待指定间隔
-                await asyncio.sleep(self.interval_s)
+                # 1. 读取任务列表
+                if not self.heartbeat_file.exists():
+                    logger.debug("heartbeat_file_not_exist")
+                    await asyncio.sleep(60)  # 文件不存在，等待1分钟
+                    continue
+
+                heartbeat_content = self.heartbeat_file.read_text(encoding="utf-8")
+                all_tasks = self._parse_tasks(heartbeat_content)
+
+                if not all_tasks:
+                    logger.debug("no_tasks_found")
+                    await asyncio.sleep(self.interval_s)  # 没有任务，使用默认间隔
+                    continue
+
+                # 2. 计算最近的唤醒时间
+                next_wake_ms = self._get_next_wake_ms(all_tasks)
+
+                if next_wake_ms is None:
+                    # 没有即将执行的任务，使用默认间隔
+                    logger.debug("no_upcoming_tasks", interval_s=self.interval_s)
+                    await asyncio.sleep(self.interval_s)
+                    continue
+
+                # 3. 精确等待到下次执行时间
+                now_ms = int(time.time() * 1000)
+                delay_ms = max(0, next_wake_ms - now_ms)
+                delay_s = delay_ms / 1000
+
+                logger.info(
+                    "dynamic_scheduling",
+                    next_wake=datetime.fromtimestamp(next_wake_ms / 1000, tz=self.timezone).strftime("%Y-%m-%d %H:%M:%S"),
+                    delay_s=delay_s,
+                    user_id=self.user_id
+                )
+
+                await asyncio.sleep(delay_s)
 
                 if not self._running:
                     break
 
-                # 执行一次心跳检查
+                # 4. 执行一次心跳检查
                 await self._tick()
 
             except asyncio.CancelledError:
@@ -163,7 +205,8 @@ class HeartbeatService:
                     error=str(e),
                     exc_info=True
                 )
-                # 继续运行，不因单次错误而停止
+                # 出错后等待一段时间再重试
+                await asyncio.sleep(60)
 
     async def _tick(self) -> None:
         """执行一次心跳检查"""
@@ -174,32 +217,97 @@ class HeartbeatService:
             heartbeat_content = self.heartbeat_file.read_text(encoding="utf-8")
 
             # 2. 解析任务列表
-            tasks = self._parse_tasks(heartbeat_content)
+            all_tasks = self._parse_tasks(heartbeat_content)
 
-            if not tasks:
+            if not all_tasks:
                 logger.debug("no_tasks_found_in_heartbeat")
                 return
 
-            # 3. LLM决策：是否需要执行任务
-            should_execute = await self._llm_decide(tasks)
+            # 3. 筛选到期的任务（简单比较时间戳）
+            current_time = datetime.now(self.timezone)
+            current_time_ms = int(current_time.timestamp() * 1000)
 
-            if not should_execute:
-                logger.info("heartbeat_skipped", reason="llm_decided_not_to_execute")
+            due_tasks = []
+            updated_tasks = []
+
+            for task in all_tasks:
+                next_run_str = task.get("next_run_at")
+                schedule = task.get("schedule", "")
+
+                if not schedule:
+                    continue
+
+                try:
+                    # 如果没有next_run_at，先计算
+                    if not next_run_str:
+                        next_run = self._compute_next_run(schedule, current_time)
+                        if next_run:
+                            task["next_run_at"] = next_run.isoformat()
+                            next_run_str = next_run.isoformat()
+
+                    # 检查是否到期
+                    if next_run_str:
+                        next_run = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
+                        next_run_ms = int(next_run.timestamp() * 1000)
+
+                        # 如果当前时间 >= 下次运行时间，则执行
+                        if current_time_ms >= next_run_ms:
+                            due_tasks.append(task)
+                            logger.info(
+                                "task_is_due",
+                                task_name=task.get("name"),
+                                schedule=schedule,
+                                next_run_at=next_run.strftime("%Y-%m-%d %H:%M:%S")
+                            )
+
+                    # 重新计算下次运行时间
+                    next_run = self._compute_next_run(schedule, current_time)
+                    if next_run:
+                        task["next_run_at"] = next_run.isoformat()
+                        updated_tasks.append(task)
+
+                except Exception as e:
+                    logger.warning(
+                        "task_check_failed",
+                        task_name=task.get("name"),
+                        error=str(e)
+                    )
+
+            # 4. 更新HEARTBEAT.md中的next_run_at字段
+            if updated_tasks:
+                self._update_task_next_runs(updated_tasks)
+
+            if not due_tasks:
+                logger.debug(
+                    "no_due_tasks",
+                    total_tasks=len(all_tasks),
+                    current_time=current_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+                )
                 return
 
-            # 4. 执行任务
-            if self.on_execute:
-                logger.info("executing_heartbeat_tasks", task_count=len(tasks))
-                result = await self.on_execute(tasks)
+            logger.info(
+                "tasks_due_for_execution",
+                due_count=len(due_tasks),
+                total_count=len(all_tasks),
+                current_time=current_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            )
 
-                # 5. 发送通知（如果需要）
+            # 5. 执行到期的任务
+            if self.on_execute:
+                logger.info("executing_heartbeat_tasks", task_count=len(due_tasks), user_id=self.user_id)
+                result = await self.on_execute(due_tasks)
+
+                # 6. 发送通知（如果需要）
                 if self.on_notify and result.get("should_notify", False):
-                    await self.on_notify(result)
+                    # 将 user_id 添加到结果中
+                    result_with_user = {**result, "user_id": self.user_id}
+                    await self.on_notify(result_with_user)
 
                 logger.info(
                     "heartbeat_completed",
-                    tasks_executed=len(tasks),
-                    result=result.get("summary", "")
+                    tasks_executed=len(due_tasks),
+                    result=result.get("summary", ""),
+                    user_id=self.user_id
                 )
 
         except Exception as e:
@@ -217,32 +325,139 @@ class HeartbeatService:
             content: HEARTBEAT.md文件内容
 
         Returns:
-            任务列表
+            任务列表（包含next_run_at字段）
         """
         # 简化实现：使用正则表达式提取任务
         # TODO: 后续可以使用更完善的YAML解析
         import re
 
         tasks = []
-        task_pattern = r'-\s*name:\s*(.+?)\s+schedule:\s*["\'](.+?)["\']\s+description:\s*(.+?)\s+enabled:\s*(true|false)'
+        # 更新模式以匹配next_run_at字段（可选）
+        task_pattern = r'-\s*name:\s*(.+?)\s+schedule:\s*["\'](.+?)["\'].*?description:\s*(.+?)\s+enabled:\s*(true|false)(?:\s+next_run_at:\s*["\'](.+?)["\'])?'
 
         matches = re.findall(task_pattern, content, re.DOTALL)
         for match in matches:
-            name, schedule, description, enabled = match
+            name, schedule, description, enabled, next_run_at = match
             if enabled.lower() == "true":
-                tasks.append({
+                task = {
                     "name": name.strip(),
                     "schedule": schedule.strip(),
                     "description": description.strip(),
                     "enabled": True
-                })
+                }
+                # 如果文件中有next_run_at，使用它；否则稍后计算
+                if next_run_at:
+                    task["next_run_at"] = next_run_at.strip()
+
+                tasks.append(task)
 
         logger.debug("tasks_parsed", count=len(tasks))
         return tasks
 
+    def _filter_due_tasks(self, tasks: List[Dict[str, Any]], current_time: datetime) -> List[Dict[str, Any]]:
+        """
+        根据cron表达式筛选到期的任务
+
+        Args:
+            tasks: 所有启用的任务列表
+            current_time: 当前时间（时区感知）
+
+        Returns:
+            到期需要执行的任务列表
+        """
+        due_tasks = []
+
+        for task in tasks:
+            schedule = task.get("schedule", "")
+            if not schedule:
+                logger.warning("task_no_schedule", task_name=task.get("name"))
+                continue
+
+            try:
+                # 检查cron表达式是否匹配当前时间
+                if self._should_run_now(schedule, current_time):
+                    due_tasks.append(task)
+                    logger.debug(
+                        "task_is_due",
+                        task_name=task.get("name"),
+                        schedule=schedule,
+                        current_time=current_time.strftime("%H:%M")
+                    )
+            except Exception as e:
+                logger.warning(
+                    "task_schedule_check_failed",
+                    task_name=task.get("name"),
+                    schedule=schedule,
+                    error=str(e)
+                )
+
+        return due_tasks
+
+    def _compute_next_run(self, cron_expr: str, current_time: datetime) -> Optional[datetime]:
+        """
+        计算任务的下一次运行时间（使用croniter）
+
+        Args:
+            cron_expr: cron表达式
+            current_time: 当前时间（时区感知）
+
+        Returns:
+            下次运行时间（时区感知），如果无法计算则返回None
+        """
+        try:
+            from croniter import croniter
+
+            # 使用croniter计算下次执行时间
+            cron = croniter(cron_expr, current_time)
+            next_run = cron.get_next(datetime)
+
+            logger.debug(
+                "computed_next_run",
+                cron_expr=cron_expr,
+                current_time=current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                next_run=next_run.strftime("%Y-%m-%d %H:%M:%S")
+            )
+
+            return next_run
+
+        except Exception as e:
+            logger.warning("compute_next_run_failed", cron_expr=cron_expr, error=str(e))
+            return None
+
+    def _get_next_wake_ms(self, tasks: List[Dict[str, Any]]) -> Optional[int]:
+        """
+        获取所有任务中最近的下次唤醒时间（毫秒时间戳）
+
+        Args:
+            tasks: 任务列表（包含next_run_at字段）
+
+        Returns:
+            最近的唤醒时间（毫秒），如果没有任务则返回None
+        """
+        now_ms = int(time.time() * 1000)
+        wake_times = []
+
+        for task in tasks:
+            next_run_str = task.get("next_run_at")
+            if not next_run_str:
+                continue
+
+            try:
+                # 解析ISO格式时间字符串
+                next_run = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
+                next_run_ms = int(next_run.timestamp() * 1000)
+
+                # 只考虑未来的任务
+                if next_run_ms > now_ms:
+                    wake_times.append(next_run_ms)
+            except Exception as e:
+                logger.warning("parse_next_run_failed", task=task.get("name"), error=str(e))
+
+        return min(wake_times) if wake_times else None
+
     async def _llm_decide(self, tasks: list[Dict[str, Any]]) -> bool:
         """
-        LLM决策：是否需要执行任务
+        LLM决策：是否需要执行任务（已废弃，保留用于兼容）
 
         Args:
             tasks: 任务列表
@@ -250,13 +465,50 @@ class HeartbeatService:
         Returns:
             是否执行任务
         """
-        if not self.llm_service:
-            # 如果没有LLM服务，默认执行
-            return True
-
-        # 简化实现：如果有任务就执行
-        # TODO: 可以使用LLM进行更智能的决策
+        # ✅ 不再使用LLM决策，改为基于cron表达式判断
+        # 这个方法保留用于向后兼容
         return len(tasks) > 0
+
+    def _update_task_next_runs(self, tasks: List[Dict[str, Any]]) -> None:
+        """
+        更新HEARTBEAT.md文件中任务的next_run_at字段
+
+        Args:
+            tasks: 包含更新后next_run_at的任务列表
+        """
+        try:
+            # 读取文件内容
+            content = self.heartbeat_file.read_text(encoding="utf-8")
+
+            # 更新每个任务的next_run_at字段
+            for task in tasks:
+                task_name = task.get("name")
+                next_run_at = task.get("next_run_at")
+
+                if not task_name or not next_run_at:
+                    continue
+
+                # 使用正则表达式替换
+                import re
+                # 匹配任务块并添加/更新next_run_at字段
+                pattern = rf'(- name: {re.escape(task_name)}.*?schedule: ".*?".*?)\n(  description:.*?\n)'
+                replacement = rf'\1  next_run_at: "{next_run_at}"\n\2'
+
+                content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+
+            # 写回文件
+            self.heartbeat_file.write_text(content, encoding="utf-8")
+
+            logger.debug(
+                "updated_task_next_runs",
+                count=len(tasks)
+            )
+
+        except Exception as e:
+            logger.warning(
+                "update_task_next_runs_failed",
+                error=str(e)
+            )
 
     def add_task(
         self,
@@ -276,12 +528,18 @@ class HeartbeatService:
         """
         channels = channels or ["weixin"]
 
+        # 计算下次运行时间
+        current_time = datetime.now(self.timezone)
+        next_run = self._compute_next_run(schedule, current_time)
+        next_run_at_str = next_run.isoformat() if next_run else ""
+
         new_task = f"""
 - name: {name}
   schedule: "{schedule}"
   description: {description}
   enabled: true
   channels: {channels}
+  next_run_at: "{next_run_at_str}"
 """
 
         # 追加到文件
@@ -292,7 +550,8 @@ class HeartbeatService:
         logger.info(
             "task_added_to_heartbeat",
             name=name,
-            schedule=schedule
+            schedule=schedule,
+            next_run_at=next_run_at_str
         )
 
     def list_tasks(self) -> list[Dict[str, Any]]:

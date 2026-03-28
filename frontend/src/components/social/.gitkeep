@@ -1,0 +1,25 @@
+# 社交账号管理组件目录
+
+此目录包含多微信账号管理相关的前端组件。
+
+## 组件列表
+
+### 1. SocialAccountsView.vue
+账号管理主页面，显示所有微信账号的列表和状态。
+
+### 2. QRCodeModal.vue
+二维码弹窗组件，用于显示微信登录二维码。
+
+### 3. CreateAccountModal.vue
+创建账号弹窗组件，用于添加新的微信账号。
+
+## 实施参考
+
+详细实施代码请参考：`backend/docs/multi_weixin_accounts_design.md`
+
+## 快速开始
+
+1. 创建组件文件
+2. 复制设计文档中的代码
+3. 在 `frontend/src/router/index.js` 中添加路由
+4. 在导航栏添加入口链接

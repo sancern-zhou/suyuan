@@ -1,7 +1,7 @@
 """Database models for social platform integration."""
 
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Index
+from sqlalchemy import Column, String, DateTime, Index, Integer
 from app.db.database import Base
 
 
@@ -23,6 +23,13 @@ class SocialSessionMapping(Base):
 
     last_used = Column(DateTime, default=datetime.now, nullable=False)
     """Last used timestamp for session expiry"""
+
+    # ✅ 新增字段：记忆整合追踪
+    last_consolidated_offset = Column(Integer, default=0, nullable=False)
+    """Last consolidated message offset (for incremental consolidation)"""
+
+    total_message_count = Column(Integer, default=0, nullable=False)
+    """Total message count for this session"""
 
     # Index for efficient cleanup of expired sessions
     __table_args__ = (

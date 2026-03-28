@@ -148,19 +148,41 @@ REPORT_TOOLS = {
 
 # ===== 社交模式工具（移动端助理） =====
 SOCIAL_TOOLS = {
+    # === 系统操作 ===
+    "bash": "执行Shell命令（谨慎使用）。参数: command(str), timeout(int, 可选, 默认60), working_dir(str, 可选)",
+
     # === 文件操作 ===
     "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
     "grep": "搜索文件内容。参数: pattern(str), path(str)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "list_directory": "列出目录内容。参数: path(str)",
     "search_files": "搜索文件（glob模式）。参数: pattern(str)",
 
+    # === 图片分析 ===
+    "analyze_image": "分析图片内容。参数: path(str), operation(str, 可选, 默认analyze), prompt(str, 可选)",
+
+    # === 知识库检索 ===
+    "search_knowledge_base": "在知识库中检索相关信息。参数: query(str), knowledge_base_ids(list, 可选), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5)",
+
+    # === 数据查询 ===
+    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str)",
+    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
+    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+    "get_weather_data": "查询气象数据。参数: data_type(str), start_time(str), end_time(str)",
+
     # === 模式互调 ===
-    "call_sub_agent": "调用专家Agent进行数据分析。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用子Agent（code=编程任务, expert=数据分析）。参数: target_mode(str), task_description(str), context_data(dict, 可选)",
 
     # === 呼吸式特有工具 ===
-    "schedule_task": "创建定时任务。参数: task_description(str), schedule(str, cron表达式), channels(list, 可选)",
-    "send_notification": "主动发送通知。参数: message(str), channels(list, 可选)",
+    "schedule_task": "创建定时任务。参数: task_description(str), schedule(str, cron表达式), channels(list, 可选, 支持'weixin'|'qq')",
+    "send_notification": "主动发送通知（支持文本、图片、文件，自动发送到当前对话的用户）。参数: message(str), media(list, 可选, 支持本地路径或URL)",
+    "spawn": "⭐创建后台子Agent执行长时间任务（不阻塞主对话，完成后主动通知）。参数: task(str, 任务描述), label(str, 可选, 任务标签), timeout(int, 可选, 超时秒数, 默认3600, 范围60-86400)",
+
+    # === 网络搜索 ===
+    "web_search": "搜索互联网。参数: query(str), count(int, 可选, 默认5, 范围1-10)",
+    "web_fetch": "抓取网页并提取可读内容。参数: url(str), maxChars(int, 可选, 默认10000)",
 
     # === 记忆管理 ===
     "remember_fact": "记住重要事实。参数: fact(str), category(str, 可选, 默认general)",
@@ -306,13 +328,38 @@ REPORT_TOOL_ORDER = [
 
 # ===== 社交模式工具排序 =====
 SOCIAL_TOOL_ORDER = [
+    # 系统操作
+    "bash",  # 执行Shell命令
+
+    # 文件操作
+    "read_file",
+    "edit_file",  # 编辑文件
+    "read_docx",
+    "grep",
+    "write_file",
+    "list_directory",
+    "search_files",
+
+    # 图片分析
+    "analyze_image",
+
     # 数据查询
+    "query_gd_suncere_city_day_new",
     "query_new_standard_report",
+    "compare_standard_reports",
     "get_weather_data",
+
+    # 知识库检索
+    "search_knowledge_base",
 
     # 呼吸式特有工具
     "schedule_task",
     "send_notification",
+    "spawn",  # ⭐ 后台任务工具
+
+    # 网络搜索
+    "web_search",
+    "web_fetch",
 
     # 记忆管理
     "remember_fact",
