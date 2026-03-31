@@ -245,12 +245,108 @@ class ReportExecutor(ExpertExecutor):
                     if not isinstance(visual, dict):
                         continue
 
+                    # ✅ 提取图片URL信息
+                    image_url = ""
+                    image_id = ""
+                    visual_id = visual.get("id", "")
+
+                    # 【调试】记录visual_id的类型
+                    logger.info(
+                        "[DEBUG_REPORT_VISUAL]",
+                        visual_id_type=type(visual_id).__name__,
+                        visual_id_preview=str(visual_id)[:200]
+                    )
+
+                    # 处理不同类型的id字段
+                    if isinstance(visual_id, str):
+                        # id是纯字符串，直接使用
+                        image_id = visual_id
+                    elif isinstance(visual_id, dict):
+                        # ⚠️ id是字典，需要提取真正的image_id
+                        logger.info(
+                            "[DEBUG_REPORT_VISUAL_ID_IS_DICT]",
+                            keys=list(visual_id.keys()),
+                            has_image_id="image_id" in visual_id,
+                            has_id="id" in visual_id,
+                            has_url="url" in visual_id
+                        )
+                        # 情况1: {'image_id': 'charge_balance_xxx', ...}
+                        if "image_id" in visual_id:
+                            image_id = visual_id["image_id"]
+                        # 情况2: {'id': 'charge_balance_xxx', ...}
+                        elif "id" in visual_id and isinstance(visual_id["id"], str):
+                            image_id = visual_id["id"]
+                        else:
+                            # 都没有，记录警告并跳过
+                            logger.warning(
+                                "chart_id_is_dict_without_valid_id",
+                                visual_id_keys=list(visual_id.keys()),
+                                visual_preview=str(visual_id)[:200]
+                            )
+                            continue
+
+                        # ✅ 同时尝试从字典中提取预生成的URL
+                        # ⚠️ 检查url字段是否是字符串
+                        dict_url = visual_id.get("url", "")
+                        if isinstance(dict_url, str) and dict_url.startswith("/api/"):
+                            image_url = dict_url
+                        elif isinstance(dict_url, dict):
+                            # url字段也是字典，尝试提取
+                            logger.warning(
+                                "url_field_is_dict",
+                                url_keys=list(dict_url.keys())
+                            )
+                            image_url = dict_url.get("url", "") or dict_url.get("image_url", "")
+
+                        logger.info(
+                            "[DEBUG_REPORT_EXTRACTED_FROM_DICT]",
+                            extracted_image_id=image_id,
+                            extracted_image_url=image_url,
+                            extracted_image_url_type=type(image_url).__name__
+                        )
+                    else:
+                        # id既不是字符串也不是字典，跳过
+                        logger.warning(
+                            "chart_id_unexpected_type",
+                            id_type=type(visual_id).__name__,
+                            visual_preview=str(visual_id)[:200]
+                        )
+                        continue
+
+                    # 如果没有从字典中获取到URL，尝试从visual顶层获取
+                    if not image_url:
+                        visual_top_image_url = visual.get("image_url", "")
+                        # 检查是否是字符串
+                        if isinstance(visual_top_image_url, str):
+                            image_url = visual_top_image_url
+                        elif isinstance(visual_top_image_url, dict):
+                            logger.warning(
+                                "visual_top_image_url_is_dict",
+                                url_keys=list(visual_top_image_url.keys())
+                            )
+
+                    # 如果仍然没有URL但有image_id，构建标准URL
+                    if not image_url and image_id:
+                        image_url = f"/api/image/{image_id}"
+
                     chart_info = {
-                        "id": visual.get("id", ""),
+                        "id": image_id,  # ✅ 使用纯字符串ID
+                        "image_id": image_id,  # ✅ 明确的image_id字段
+                        "image_url": image_url,  # ✅ 完整的URL
                         "title": self._extract_chart_title(visual),
                         "type": visual.get("type", ""),
                         "expert": expert_type
                     }
+
+                    # 【调试】记录chart_info
+                    logger.info(
+                        "[DEBUG_REPORT_CHART_INFO]",
+                        chart_id=chart_info.get("id"),
+                        chart_id_type=type(chart_info.get("id")).__name__,
+                        chart_image_id=chart_info.get("image_id"),
+                        chart_image_url=chart_info.get("image_url"),
+                        chart_title=chart_info.get("title")[:50]
+                    )
 
                     # 如果没有ID，跳过
                     if not chart_info["id"]:
@@ -669,8 +765,37 @@ class ReportExecutor(ExpertExecutor):
         for i, chart in enumerate(charts, start=start_index):
             title = chart.get("title", "分析图表")
             chart_type = chart.get("type", "")
+
+            # 【调试】记录chart的详细信息
+            logger.info(
+                "[DEBUG_FORMAT_CHART]",
+                chart_index=i,
+                chart_id=chart.get("id"),
+                chart_id_type=type(chart.get("id")).__name__,
+                chart_image_id=chart.get("image_id"),
+                chart_image_url=chart.get("image_url"),
+                chart_title=title[:50]
+            )
+
             # 【关键修复】优先使用visual的原始ID，确保与前端图表引用ID一致
             chart_id = chart.get("id", "")
+
+            # ⚠️ 如果chart_id仍然是字典，说明前面的修复没有生效
+            if isinstance(chart_id, dict):
+                logger.error(
+                    "[BUG] chart_id_is_still_dict",
+                    chart_index=i,
+                    chart_id_keys=list(chart_id.keys()),
+                    chart_id_preview=str(chart_id)[:200]
+                )
+                # 强制提取字符串ID
+                if "image_id" in chart_id:
+                    chart_id = chart_id["image_id"]
+                elif "id" in chart_id and isinstance(chart_id["id"], str):
+                    chart_id = chart_id["id"]
+                else:
+                    chart_id = f"chart_{i}"
+
             if not chart_id:
                 # 只有在真正没有ID时才使用fallback，但仍保持简洁格式避免ID不匹配
                 chart_id = f"chart_{i}"
@@ -685,10 +810,40 @@ class ReportExecutor(ExpertExecutor):
             image_url = chart.get("image_url", "")
             markdown_image = chart.get("markdown_image", "")
 
+            # 【调试】记录URL获取情况
+            logger.info(
+                "[DEBUG_FORMAT_CHART_URL]",
+                chart_index=i,
+                has_image_url=bool(image_url),
+                has_markdown_image=bool(markdown_image),
+                image_url_type=type(image_url).__name__,
+                image_url_preview=str(image_url)[:100] if image_url else "",
+                markdown_image_preview=str(markdown_image)[:100] if markdown_image else ""
+            )
+
             # 如果没有预生成的URL，构建标准URL
             if not image_url:
                 image_id = chart.get("image_id") or chart_id
-                image_url = f"{backend_host}/api/image/{image_id}"
+
+                # 【调试】记录image_id获取情况
+                logger.info(
+                    "[DEBUG_FORMAT_CHART_BUILD_URL]",
+                    chart_index=i,
+                    image_id=image_id,
+                    image_id_type=type(image_id).__name__,
+                    chart_id=chart_id,
+                    chart_id_type=type(chart_id).__name__
+                )
+
+                # 【修复】使用相对路径，让前端通过vite代理或同域访问
+                image_url = f"/api/image/{image_id}"
+
+            # 【调试】记录最终URL
+            logger.info(
+                "[DEBUG_FORMAT_CHART_FINAL_URL]",
+                chart_index=i,
+                final_image_url=image_url[:150]
+            )
 
             # 使用markdown_image（如果有的话），否则构建标准Markdown
             if markdown_image:
@@ -985,7 +1140,8 @@ class ReportExecutor(ExpertExecutor):
             # 如果没有预生成的URL，构建标准URL
             if not image_url:
                 url_id = chart.get("image_id") or chart_id or f"chart_{i}"
-                image_url = f"{backend_host}/api/image/{url_id}"
+                # 【修复】使用相对路径，让前端通过vite代理或同域访问
+                image_url = f"/api/image/{url_id}"
 
             # 使用markdown_image（如果有的话），否则构建标准Markdown
             if markdown_image:

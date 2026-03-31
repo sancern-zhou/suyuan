@@ -28,7 +28,9 @@ TOOLS_WITH_BUILTIN_VISUALS = {
 # 自带图表的数据schema（用于识别来自上述工具的数据）
 SCHEMAS_WITH_BUILTIN_VISUALS = {
     "trajectory_result",
+    "trajectory_endpoints",  # 轨迹端点数据（已包含轨迹地图）
     "upwind_enterprise_result",
+    "particulate_analysis",  # 组分分析结果（已包含电荷平衡、EC/OC、地壳、痕量元素等专业图表）
     # "pmf_result",  # 已移除，PMF不再自带图表，由viz expert通过smart_chart_generator生成
 }
 
@@ -61,7 +63,7 @@ class ExpertPlanGenerator:
     # 工具规范定义（明确每个工具的参数要求）
     TOOL_SPECS = {
         # ========================================
-        # 空气质量数据查询工具（优先级：jining > guangdong > air_quality）
+        # 空气质量数据查询工具（优先级：jining > xcai_city_history）
         # ========================================
         "get_jining_regular_stations": {
             "param_type": "natural_language",
@@ -70,12 +72,17 @@ class ExpertPlanGenerator:
             "description": "查询济宁市区域对比空气质量数据（区县/站点对比），**优先使用**",
             "example": "查询济宁市各区县2025-01-01至2025-12-31的PM2.5浓度月度数据，按浓度排序"
         },
-        "get_air_quality": {
-            "param_type": "natural_language",
-            "required_param": "question",
-            "priority": 2,  # 最低优先级（仅当非济宁/广东地区使用）
-            "description": "全国城市空气质量数据查询，**仅当查询非济宁/广东地区，或前两者查询失败时使用**",
-            "example": "查询北京市2025-01-01至2025-01-31的PM2.5日均数据"
+        "query_xcai_city_history": {
+            "param_type": "structured",
+            "required_params": ["cities", "data_type", "start_time", "end_time"],
+            "priority": 2,  # 全国城市历史数据（SQL Server XcAiDb）
+            "description": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库），支持小时数据（2017-至今）和日数据（2021-至今），**优先使用**",
+            "example": {
+                "cities": ["广州市", "深圳市"],
+                "data_type": "hour",
+                "start_time": "2025-01-01 00:00:00",
+                "end_time": "2025-01-31 23:00:00"
+            }
         },
         "get_vocs_data": {
             "param_type": "natural_language",
@@ -277,20 +284,20 @@ class ExpertPlanGenerator:
         },
         "component": {
             "description": "组分分析专家",
-            "required_tools": ["get_air_quality"],
+            "required_tools": ["query_xcai_city_history"],
             "optional_tools": [
                 "get_vocs_data",         # VOCs数据查询（端口9092）
                 "get_pm25_ionic",        # PM2.5水溶性离子数据查询（端口9093）
                 "get_pm25_carbon",       # PM2.5碳组分数据查询（端口9093）
                 "get_pm25_crustal",      # PM2.5地壳元素数据查询（端口9093）
-                "get_air_quality",       # 区域对比数据查询（替代get_air_quality）
+                "query_xcai_city_history",  # 全国城市历史数据查询（SQL Server）
                 "calculate_pm_pmf",      # PMF源解析（颗粒物专用，依赖水溶性离子+碳组分数据）
                 "calculate_vocs_pmf",    # PMF源解析（VOCs专用，用于臭氧溯源）
                 "ml_predictor"
             ],
             "default_plan": [
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",  # 使用LLM自动生成参数
                     "purpose": "获取常规污染物数据"
                 }
@@ -298,20 +305,20 @@ class ExpertPlanGenerator:
             "tracing_plan": [
                 # 【基础数据】获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
                 # 【区域对比分析】城市级（station_code为空，获取周边城市数据）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 【区域对比分析】站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is not None"
@@ -350,14 +357,14 @@ class ExpertPlanGenerator:
             "pm_tracing_plan": [
                 # 0. 区域传输分析 - 城市级（station_code为空，或location是城市级别）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的PM2.5/PM10小时数据（判断区域传输）",
                     "condition": "is_city_level_query or station_code is None"
                 },
                 # 0. 区域传输分析 - 站点级（station_code不为空且location是站点级别）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",
                     "purpose": "获取目标站点周边城市的PM2.5/PM10、AQI小时数据（判断区域传输）",
                     "condition": "station_code is not None and not is_city_level_query"
@@ -403,7 +410,7 @@ class ExpertPlanGenerator:
                 },
                 # 5. 获取常规污染物数据（用于水溶性离子分析的SOR/NOR计算）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（SO2、NO2用于SOR/NOR计算）"
                 },
@@ -430,7 +437,7 @@ class ExpertPlanGenerator:
                     "depends_on": [1, 5],  # 依赖水溶性离子数据（索引1）和气体数据（索引5）
                     "input_bindings": {
                         "data_id": "get_pm25_ionic[role=water-soluble].data_id",
-                        "gas_data_id": "get_air_quality[FIRST].data_id",
+                        "gas_data_id": "query_xcai_city_history[FIRST].data_id",
                         "analysis_type": "full"
                     }
                 },
@@ -492,21 +499,21 @@ class ExpertPlanGenerator:
             "ozone_tracing_plan": [
                 # 0. 区域传输分析 - 城市级（station_code为空，根据城市获取周边城市数据）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的O3/PM2.5小时数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 0. 区域传输分析 - 站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的O3/PM2.5小时数据（判断区域传输）",
                     "condition": "station_code is not None"
                 },
                 # 1. 获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
@@ -529,20 +536,20 @@ class ExpertPlanGenerator:
             "tracing_plan_full_chemistry": [
                 # 【基础数据】获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
                 # 【区域对比分析】城市级（station_code为空）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 【区域对比分析】站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is not None"
@@ -576,20 +583,20 @@ class ExpertPlanGenerator:
             "deep_tracing_plan": [
                 # 【基础数据】获取常规污染物数据（包含O3、NOx，用于OBM分析）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "auto",
                     "purpose": "获取常规污染物数据（O3、NOx、PM2.5等）"
                 },
                 # 【区域对比分析】城市级（station_code为空）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_city_comparison",
                     "purpose": "获取目标城市与周边城市的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is None"
                 },
                 # 【区域对比分析】站点级（station_code不为空，获取周边站点数据）
                 {
-                    "tool": "get_air_quality",
+                    "tool": "query_xcai_city_history",
                     "param_template": "regional_nearby_stations",
                     "purpose": "获取目标站点周边站点的目标污染物时序数据（判断区域传输）",
                     "condition": "station_code is not None"
@@ -711,6 +718,12 @@ class ExpertPlanGenerator:
         template = self.EXPERT_TEMPLATES.get(expert_type, {})
         task_id = f"{expert_type}_{uuid.uuid4().hex[:8]}"
 
+        # ✨ viz专家特殊处理：动态生成可视化工具计划
+        if expert_type == "viz":
+            return self._generate_viz_task(
+                task_id, query, upstream_results
+            )
+
         # 构建上下文
         context = self._build_context(query, expert_type)
         context["expert_type"] = expert_type  # 添加专家类型到上下文
@@ -768,6 +781,88 @@ class ExpertPlanGenerator:
         return ExpertTask(
             task_id=task_id,
             expert_type=expert_type,
+            task_description=task_description,
+            context=context,
+            tool_plan=tool_plan,
+            upstream_data_ids=upstream_data_ids
+        )
+
+    def _generate_viz_task(
+        self,
+        task_id: str,
+        query: StructuredQuery,
+        upstream_results: Dict[str, Any]
+    ) -> ExpertTask:
+        """
+        为viz专家生成可视化任务
+
+        特点：
+        - 动态为每个上游data_id生成smart_chart_generator工具计划
+        - 自动过滤已自带专业图表的数据（如trajectory_result、upwind_enterprise_result）
+        - 利用smart_chart_generator的智能推荐功能（chart_type="auto"）
+
+        Args:
+            task_id: 任务ID
+            query: 结构化查询
+            upstream_results: 上游专家结果
+
+        Returns:
+            ExpertTask: viz专家任务
+        """
+        # 1. 收集上游data_id（已过滤自带图表的数据）
+        upstream_data_ids = self._collect_upstream_data_ids(
+            "viz", upstream_results
+        )
+
+        # 2. 为每个data_id生成工具计划
+        tool_plan = []
+        for idx, data_id in enumerate(upstream_data_ids):
+            # 提取schema类型（用于日志和purpose描述）
+            schema = data_id.split(":")[0] if ":" in data_id else "unknown"
+
+            tool_plan.append(ToolCallPlan(
+                tool="smart_chart_generator",
+                params={
+                    "data_id": data_id,  # 直接使用实际的data_id（不使用占位符）
+                    "chart_type": "auto",  # 智能推荐图表类型
+                },
+                input_bindings={},  # 不使用input_bindings（避免依赖解析问题）
+                purpose=f"为{schema}数据生成可视化图表（智能推荐类型）",
+                depends_on=[],  # 不使用depends_on（data_id已经在params中了）
+                role=f"viz_{schema}"  # 角色标识
+            ))
+
+        # 3. 生成任务描述
+        location_str = query.location or "目标区域"
+        pollutant_str = "、".join(query.pollutants) if query.pollutants else "污染物"
+
+        data_sources_summary = []
+        for did in upstream_data_ids:
+            schema = did.split(":")[0] if ":" in did else "unknown"
+            data_sources_summary.append(schema)
+
+        task_description = (
+            f"【任务目标】为{location_str}的{pollutant_str}分析结果生成可视化图表\n"
+            f"【执行重点】数据可视化、图表类型智能选择、多图表布局\n"
+            f"【数据来源】共{len(upstream_data_ids)}个数据源：{', '.join(set(data_sources_summary))}\n"
+            f"【输出要求】生成时序图、分布图、对比图等专业图表，支持智能类型推荐"
+        )
+
+        # 4. 构建上下文
+        context = self._build_context(query, "viz")
+        context["expert_type"] = "viz"
+
+        logger.info(
+            "viz_task_generated",
+            data_ids_count=len(upstream_data_ids),
+            tools_count=len(tool_plan),
+            data_sources=data_sources_summary,
+            upstream_data_ids=upstream_data_ids
+        )
+
+        return ExpertTask(
+            task_id=task_id,
+            expert_type="viz",
             task_description=task_description,
             context=context,
             tool_plan=tool_plan,
@@ -837,8 +932,8 @@ class ExpertPlanGenerator:
         Returns:
             True表示需要跳过可视化，False表示需要生成图表
         """
-        # 只对 get_air_quality 工具进行判断
-        if tool_name != "get_air_quality":
+        # 只对 query_xcai_city_history 工具进行判断
+        if tool_name != "query_xcai_city_history":
             return False
 
         # 如果使用 regional_* 模板（区域对比），需要生成图表
@@ -847,24 +942,25 @@ class ExpertPlanGenerator:
 
         # 如果是 auto 模板，检查是否是近30天数据（用于SOR/NOR计算）
         if param_template == "auto":
-            question = params.get("question", "")
+            start_time = params.get("start_time", "")
             pollutants = context.get("pollutants", [])
 
             # 判断是否为颗粒物溯源
             is_pm_tracing = any(p in pollutants for p in ["PM2.5", "PM10", "颗粒物"])
 
-            if is_pm_tracing:
-                # 从问题中提取时间范围，判断是否是近30天
-                # 格式如："查询阳江市2025-11-25到2025-12-24期间的小时粒度的空气污染物数据"
+            if is_pm_tracing and start_time:
+                # 从start_time中提取日期，判断是否是近30天
+                # 格式如："2025-11-25 00:00:00"
                 import re
-                # 匹配 "XXXX-XX-XX到XXXX-XX-XX" 格式的日期范围
-                date_range_match = re.search(r'(\d{4}-\d{2}-\d{2})到(\d{4}-\d{2}-\d{2})', question)
-                if date_range_match:
+                # 匹配 "XXXX-XX-XX" 格式的日期
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', start_time)
+                if date_match:
                     from datetime import datetime, timedelta
                     try:
-                        start_date = datetime.strptime(date_range_match.group(1), "%Y-%m-%d")
-                        end_date = datetime.strptime(date_range_match.group(2), "%Y-%m-%d")
-                        date_range = (end_date - start_date).days + 1
+                        start_date = datetime.strptime(date_match.group(1), "%Y-%m-%d")
+                        # 假设结束时间是开始时间后30天
+                        end_date = start_date + timedelta(days=30)
+                        date_range = (end_date - start_date).days
 
                         # 如果时间范围 >= 25天，认为是用于计算的数据，不需要图表
                         if date_range >= 25:
@@ -959,20 +1055,20 @@ class ExpertPlanGenerator:
                 )
 
                 for idx, data_id in enumerate(upstream_data_ids):
+                    # 【关键修复】将 param_template 添加到 context 中
+                    context_with_template = {**context, "param_template": param_template}
+
                     # 生成参数
-                    if param_template == "auto":
-                        try:
-                            params = self._generate_sync_params(tool_name, context, [data_id])
-                        except Exception as e:
-                            logger.error(
-                                "auto_param_generation_failed",
-                                tool=tool_name,
-                                data_id=data_id,
-                                error=str(e)
-                            )
-                            params = {}
-                    else:
-                        params = self._fill_params(param_template, context, upstream_results)
+                    try:
+                        params = self._generate_sync_params(tool_name, context_with_template, [data_id])
+                    except Exception as e:
+                        logger.error(
+                            "auto_param_generation_failed",
+                            tool=tool_name,
+                            data_id=data_id,
+                            error=str(e)
+                        )
+                        params = {}
 
                     # 为每个工具调用创建独立的plan
                     tool_plan = ToolCallPlan(
@@ -987,116 +1083,23 @@ class ExpertPlanGenerator:
                     tool_plans.append(tool_plan)
             else:
                 # 原有逻辑：生成单个工具调用
-                # 生成参数
-                if param_template == "auto":
-                    # 使用智能参数生成
-                    import asyncio
-                    try:
-                        # 在同步方法中调用异步方法需要特殊处理
-                        # 这里我们暂时使用同步生成，简化处理
-                        params = self._generate_sync_params(tool_name, context, upstream_data_ids)
-                    except Exception as e:
-                        logger.error(
-                            "auto_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = {}
-                elif param_template == "regional_city_comparison":
-                    # 城市级对比：目标城市+周边城市的目标污染物时序
-                    try:
-                        params = self._generate_regional_city_comparison_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "regional_city_comparison_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = self._generate_natural_language_params_sync(tool_name, context)
-                elif param_template == "regional_station_comparison":
-                    # 站点级对比：目标城市所有国控站点的目标污染物时序
-                    try:
-                        params = self._generate_regional_station_comparison_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "regional_station_comparison_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = self._generate_natural_language_params_sync(tool_name, context)
-                elif param_template == "regional_nearby_stations":
-                    # 周边站点对比：目标站点周边城市的目标污染物时序
-                    try:
-                        params = self._generate_regional_nearby_stations_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "regional_nearby_stations_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = self._generate_natural_language_params_sync(tool_name, context)
-                # ========================================
-                # 【关键修改】颗粒物溯源专用查询参数模板
-                # 支持拆分为多个独立查询，并发执行
-                # ========================================
-                elif param_template == "pm_soluble_ions":
-                    # 水溶性离子数据查询
-                    try:
-                        params = self._generate_pm_soluble_ions_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "pm_soluble_ions_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = {"question": f"查询{context.get('location', '目标区域')}的PM2.5水溶性离子数据（SO4、NO3、NH4等）"}
-                elif param_template == "pm_carbon":
-                    # 碳组分数据查询
-                    try:
-                        params = self._generate_pm_carbon_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "pm_carbon_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = {"question": f"查询{context.get('location', '目标区域')}的PM2.5碳组分数据（OC、EC）"}
-                elif param_template == "pm_crustal":
-                    # 地壳元素数据查询
-                    try:
-                        params = self._generate_pm_crustal_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "pm_crustal_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = {"question": f"查询{context.get('location', '目标区域')}的PM2.5地壳元素数据（Al、Si、Fe等）"}
-                elif param_template == "pm_trace_elements":
-                    # 微量元素/重金属数据查询
-                    try:
-                        params = self._generate_pm_trace_elements_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "pm_trace_elements_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = {"question": f"查询{context.get('location', '目标区域')}的PM2.5微量元素/重金属数据（Zn、Pb等）"}
-                elif param_template == "pm_all_components":
-                    # 【关键修改】完整PM2.5组分数据单次查询（包含所有4种类型）
-                    try:
-                        params = self._generate_pm_all_components_params(context)
-                    except Exception as e:
-                        logger.error(
-                            "pm_all_components_param_generation_failed",
-                            tool=tool_name,
-                            error=str(e)
-                        )
-                        params = {"question": f"查询{context.get('location', '目标区域')}的PM2.5完整组分数据（包括水溶性离子、碳组分、地壳元素、微量元素）"}
-                else:
-                    # 使用原有参数填充逻辑
-                    params = self._fill_params(param_template, context, upstream_results)
+                # 生成参数 - 统一使用 _generate_sync_params
+
+                # 【关键修复】将 param_template 添加到 context 中
+                context_with_template = {**context, "param_template": param_template}
+
+                try:
+                    params = self._generate_sync_params(tool_name, context_with_template, upstream_data_ids)
+                except Exception as e:
+                    logger.error(
+                        "param_generation_failed",
+                        tool=tool_name,
+                        param_template=param_template,
+                        error=str(e)
+                    )
+                    params = {}
+
+                # 判断是否需要跳过可视化（用于计算型数据，如近30天空气质量用于SOR/NOR计算）
 
                 # 判断是否需要跳过可视化（用于计算型数据，如近30天空气质量用于SOR/NOR计算）
                 skip_viz = self._should_skip_viz(tool_name, param_template, context, params)
@@ -1181,45 +1184,7 @@ class ExpertPlanGenerator:
         granularity_desc = "小时粒度的"
 
         # 根据工具类型生成不同查询 - 确保调用不同的API
-        if tool_name == "get_air_quality":
-            # 常规污染物监测数据
-            question = f"查询{location}"
-            if time_range:
-                question += f"{time_range}期间"
-
-            # 【新增】判断是否为颗粒物溯源的周边站点对比场景（station_code不为空）
-            is_pm_tracing = any(p in pollutants for p in ["PM2.5", "PM10", "颗粒物"])
-            station_code = context.get("station_code", "")
-
-            if is_pm_tracing and station_code:
-                # 【颗粒物溯源+周边站点场景】查询目标城市及周边城市的PM2.5、PM10、AQI小时数据
-                from .structured_query_parser import GUANGDONG_CITIES
-
-                # 清理城市名并获取周边城市
-                location_clean = location.replace("站", "").replace("监测点", "").replace("市", "").replace("区", "").replace("县", "")
-                available_cities = [c for c in GUANGDONG_CITIES if c != location_clean]
-                neighbor_regions = available_cities[:4]
-                regions_str = "、".join([f"{r}市" for r in neighbor_regions])
-
-                question = f"查询{location_clean}市及周边城市（{regions_str}）{start_time}至{end_time}的{granularity_desc}PM2.5、PM10污染物浓度和AQI小时数据，用于判断区域传输和污染成因分析"
-            else:
-                # 其他场景：常规查询
-                question += f"的{granularity_desc}空气污染物数据"
-                if pollutants:
-                    # 【关键修复】对于O3溯源分析，EKMA/OBM需要NO2数据
-                    # 确保查询包含完整的必需污染物
-                    required_pollutants = set(pollutants)
-                    if any(p in ["O3", "臭氧", "ozone"] for p in pollutants):
-                        # O3分析需要NO2进行敏感性分析
-                        required_pollutants.add("NO2")
-                    # 溯源分析需要完整数据（所有查询默认为溯源模式）
-                    required_pollutants.update(["PM2.5", "PM10", "O3", "NO2", "SO2", "CO"])
-                    question += f"，重点关注{', '.join(sorted(required_pollutants))}"
-                else:
-                    question += "，包括PM2.5、PM10、O3、NO2、SO2、CO等常规污染物"
-                question += "浓度变化趋势和AQI指数"
-
-        elif tool_name == "get_vocs_data":
+        if tool_name == "get_vocs_data":
             # VOCs组分数据（端口9092）
             question = f"查询{location}"
             if time_range:
@@ -1268,13 +1233,6 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
                     question += f"{analysis_prefix}"
                 question += "PM2.5/PM10颗粒物组分数据"
                 question += "，包括SO4、NO3、NH4、OC、EC等水溶性离子和碳组分浓度"
-
-        elif tool_name == "get_air_quality":
-            # 广东监测站点数据
-            question = f"获取{location}及周边地区的空气监测站列表和数据"
-            if time_range:
-                question += f"，时间范围为{time_range}期间"
-            question += "，包括站点名称、站点代码、监测项目、数据获取方式"
 
         else:
             # 其他工具的默认查询
@@ -1722,6 +1680,70 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         required_params = tool_spec.get("required_params", [])
         optional_params = tool_spec.get("optional_params", [])
 
+        # 【特殊处理】query_xcai_city_history 需要生成城市列表和确定数据类型
+        if tool_name == "query_xcai_city_history":
+            location = context.get("location", "目标城市")
+            start_time = context.get("start_time", "")
+            end_time = context.get("end_time", "")
+            param_template = context.get("param_template", "auto")
+
+            # 根据参数模板确定查询类型
+            if param_template == "regional_city_comparison":
+                # 区域对比：查询目标城市和周边城市
+                from .structured_query_parser import GUANGDONG_CITIES
+
+                # 清理城市名
+                location_clean = location.replace("站", "").replace("监测点", "").replace("市", "").replace("区", "").replace("县", "")
+
+                # 获取周边城市（取前4个）
+                available_cities = [c for c in GUANGDONG_CITIES if c != location_clean]
+                neighbor_cities = available_cities[:4]
+
+                # 构建城市列表（目标城市 + 周边城市）
+                cities = [f"{location_clean}市"] + [f"{c}市" for c in neighbor_cities]
+
+                logger.info(
+                    "regional_city_comparison_query_generated",
+                    neighbors=neighbor_cities,
+                    pollutant=context.get("pollutants", ["PM2.5", "PM10"]),
+                    question=f"查询{'、'.join(cities)}{start_time}至{end_time}的污染物数据",
+                    target=location
+                )
+            else:
+                # 默认：只查询目标城市
+                cities = [location]
+
+            # 确定数据类型（根据时间跨度判断）
+            # 小于等于24小时用小时数据，否则用日数据
+            try:
+                from datetime import datetime
+                start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+                time_diff_hours = (end_dt - start_dt).total_seconds() / 3600
+
+                # 时间跨度小于等于3天用小时数据
+                data_type = "hour" if time_diff_hours <= 72 else "day"
+            except:
+                # 解析失败时默认使用小时数据
+                data_type = "hour"
+
+            params = {
+                "cities": cities,
+                "data_type": data_type,
+                "start_time": start_time,
+                "end_time": end_time
+            }
+
+            logger.info(
+                "xcai_city_history_params_generated",
+                cities=cities,
+                data_type=data_type,
+                time_range=f"{start_time} to {end_time}",
+                param_template=param_template
+            )
+
+            return params
+
         # 【特殊处理】analyze_upwind_enterprises需要从气象数据中提取风向风速
         if tool_name == "analyze_upwind_enterprises":
             # 上风向企业分析工具特殊处理
@@ -1959,45 +1981,7 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         granularity_desc = "小时粒度的"
 
         # 根据工具类型生成不同查询 - 确保调用不同的API
-        if tool_name == "get_air_quality":
-            # 常规污染物监测数据
-            question = f"查询{location}"
-            if time_range:
-                question += f"{time_range}期间"
-
-            # 【新增】判断是否为颗粒物溯源的周边站点对比场景（station_code不为空）
-            is_pm_tracing = any(p in pollutants for p in ["PM2.5", "PM10", "颗粒物"])
-            station_code = context.get("station_code", "")
-
-            if is_pm_tracing and station_code:
-                # 【颗粒物溯源+周边站点场景】查询目标城市及周边城市的PM2.5、PM10、AQI小时数据
-                from .structured_query_parser import GUANGDONG_CITIES
-
-                # 清理城市名并获取周边城市
-                location_clean = location.replace("站", "").replace("监测点", "").replace("市", "").replace("区", "").replace("县", "")
-                available_cities = [c for c in GUANGDONG_CITIES if c != location_clean]
-                neighbor_regions = available_cities[:4]
-                regions_str = "、".join([f"{r}市" for r in neighbor_regions])
-
-                question = f"查询{location_clean}市及周边城市（{regions_str}）{start_time}至{end_time}的{granularity_desc}PM2.5、PM10污染物浓度和AQI小时数据，用于判断区域传输和污染成因分析"
-            else:
-                # 其他场景：常规查询
-                question += f"的{granularity_desc}空气污染物数据"
-                if pollutants:
-                    # 【关键修复】对于O3溯源分析，EKMA/OBM需要NO2数据
-                    # 确保查询包含完整的必需污染物
-                    required_pollutants = set(pollutants)
-                    if any(p in ["O3", "臭氧", "ozone"] for p in pollutants):
-                        # O3分析需要NO2进行敏感性分析
-                        required_pollutants.add("NO2")
-                    # 溯源分析需要完整数据（所有查询默认为溯源模式）
-                    required_pollutants.update(["PM2.5", "PM10", "O3", "NO2", "SO2", "CO"])
-                    question += f"，重点关注{', '.join(sorted(required_pollutants))}"
-                else:
-                    question += "，包括PM2.5、PM10、O3、NO2、SO2、CO等常规污染物"
-                question += "浓度变化趋势和AQI指数"
-
-        elif tool_name == "get_vocs_data":
+        if tool_name == "get_vocs_data":
             # VOCs组分数据（端口9092）
             question = f"查询{location}"
             if time_range:
@@ -2046,13 +2030,6 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
                     question += f"{analysis_prefix}"
                 question += "PM2.5/PM10颗粒物组分数据"
                 question += "，包括SO4、NO3、NH4、OC、EC等水溶性离子和碳组分浓度"
-
-        elif tool_name == "get_air_quality":
-            # 广东监测站点数据
-            question = f"获取{location}及周边地区的空气监测站列表和数据"
-            if time_range:
-                question += f"，时间范围为{time_range}期间"
-            question += "，包括站点名称、站点代码、监测项目、数据获取方式"
 
         else:
             # 其他工具的默认查询
@@ -2264,23 +2241,41 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         
         return data_ids
     
-    def _has_builtin_visuals(self, data_id: str) -> bool:
+    def _has_builtin_visuals(self, data_id: Any) -> bool:
         """检查数据是否来自自带专业图表的工具
-        
+
         通过 data_id 的 schema 前缀判断，如:
         - enhanced_obm_result:v1:xxx
         - obm_full_chemistry_result:v1:xxx
         - trajectory_result:v1:xxx
+
+        Args:
+            data_id: 可以是字符串或字典（兼容性处理）
         """
         if not data_id:
             return False
-        
+
+        # 兼容性处理：如果是字典，提取 data_id 字段
+        if isinstance(data_id, dict):
+            data_id = data_id.get("data_id")
+            if not data_id:
+                return False
+
+        # 确保 data_id 是字符串
+        if not isinstance(data_id, str):
+            logger.warning(
+                "invalid_data_id_type",
+                data_id_type=type(data_id).__name__,
+                data_id=data_id
+            )
+            return False
+
         # 从 data_id 中提取 schema（格式: schema:version:hash）
         parts = data_id.split(":")
         if len(parts) >= 1:
             schema = parts[0]
             return schema in SCHEMAS_WITH_BUILTIN_VISUALS
-        
+
         return False
     
     def _generate_task_description(

@@ -100,6 +100,7 @@ class DataStandardizer:
             "所属城市": "city",
             "市区名称": "district",
             "地区": "city",
+            "Area": "city",  # XcAiDb字段
 
             # 站点编码
             "station_code": "station_code",
@@ -171,6 +172,7 @@ class DataStandardizer:
             "O38h": "O3_8h",
             "臭氧8小时": "O3_8h",  # 新增：中文
             "臭氧(O₃) - 8小时平均": "O3_8h",  # 新增：完整中文
+            "O3_8h_24h": "O3_8h",  # XcAiDb日数据字段
 
             # NO2
             "NO2": "NO2",
@@ -219,12 +221,14 @@ class DataStandardizer:
             # 首要污染物
             "primary_pollutant": "primary_pollutant",
             "primaryPollutant": "primary_pollutant",
+            "PrimaryPollutant": "primary_pollutant",  # XcAiDb字段
             "首要污染物": "primary_pollutant",
 
             # 空气质量等级
             "air_quality_level": "air_quality_level",
             "quality_type": "air_quality_level",
             "qualityType": "air_quality_level",
+            "Quality": "air_quality_level",  # XcAiDb字段
             "空气质量等级": "air_quality_level",
             "quality_type": "air_quality_level"
         }

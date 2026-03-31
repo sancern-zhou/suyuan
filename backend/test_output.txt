@@ -1,200 +1,430 @@
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=10 registry=global requires_context=True tool=get_air_quality
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_air_quality
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=20 registry=global requires_context=True tool=get_weather_data
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_weather_data
-D:\conda\Lib\site-packages\pydantic\_internal\_config.py:383: UserWarning: Valid config keys have changed in V2:
-* 'schema_extra' has been renamed to 'json_schema_extra'
-  warnings.warn(message, UserWarning)
-D:\ËİÔ´\backend\app\schemas\unified.py:67: UserWarning: Field name "schema" in "VisualBlock" shadows an attribute in parent "BaseModel"
-  class VisualBlock(BaseModel):
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=30 registry=global requires_context=True tool=get_weather_forecast
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_weather_forecast
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=15 registry=global requires_context=False tool=get_current_weather
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_current_weather
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=16 registry=global requires_context=False tool=get_weather_situation_map
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_weather_situation_map
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=40 registry=global requires_context=False tool=get_fire_hotspots
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_fire_hotspots
-2026-02-09 19:50:15 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=50 registry=global requires_context=False tool=get_dust_data
-2026-02-09 19:50:15 [info     ] tool_loaded                    tool=get_dust_data
-2026-02-09 19:50:15 [warning  ] sqlserver_password_override    message='SECURITY WARNING: Hardcoded password in use!' reason='Empty password in .env, using hardcoded fallback'
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=61 registry=global requires_context=True tool=get_vocs_data
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_vocs_data
-2026-02-09 19:50:16 [info     ] tool_disabled                  reason=ÒÑ½ûÓÃ£ºÇëÊ¹ÓÃ½á¹¹»¯²éÑ¯¹¤¾ß£¨get_pm25_ionic/get_pm25_carbon/get_pm25_crustal£© tool=get_particulate_data
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=62 registry=global requires_context=True tool=get_particulate_data
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_particulate_data
-2026-02-09 19:50:16 [error    ] station_load_failed            error="[Errno 2] No such file or directory: 'D:\\\\ËİÔ´\\\\station_info.json'"
-[31m©°©¤[0m[31m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[31m [0m[1;31mTraceback [0m[1;2;31m(most recent call last)[0m[31m [0m[31m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[31m©¤©´[0m
-[31m©¦[0m D:\ËİÔ´\backend\app\utils\geo_matcher.py:96 in _load_stations               [31m©¦[0m
-[31m©¦[0m                                                                             [31m©¦[0m
-[31m©¦[0m   [2m 93 [0m[2m©¦   ©¦   [0mstation_file = Path([91m__file__[0m).parent.parent.parent.parent / [33m"[0m [31m©¦[0m
-[31m©¦[0m   [2m 94 [0m[2m©¦   ©¦   [0m                                                              [31m©¦[0m
-[31m©¦[0m   [2m 95 [0m[2m©¦   ©¦   [0m[94mtry[0m:                                                          [31m©¦[0m
-[31m©¦[0m [31m> [0m 96 [2m©¦   ©¦   ©¦   [0m[94mwith[0m [96mopen[0m(station_file, [33m'[0m[33mr[0m[33m'[0m, encoding=[33m'[0m[33mutf-8[0m[33m'[0m) [94mas[0m f:      [31m©¦[0m
-[31m©¦[0m   [2m 97 [0m[2m©¦   ©¦   ©¦   ©¦   [0mdata = json.load(f)                                   [31m©¦[0m
-[31m©¦[0m   [2m 98 [0m[2m©¦   ©¦   ©¦   [0m                                                          [31m©¦[0m
-[31m©¦[0m   [2m 99 [0m[2m©¦   ©¦   ©¦   [0mresults = data.get([33m"[0m[33mresults[0m[33m"[0m, [])                         [31m©¦[0m
-[31m©¦[0m                                                                             [31m©¦[0m
-[31m©¦[0m [34m©°©¤[0m[34m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[34m locals [0m[34m©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤[0m[34m©¤©´[0m [31m©¦[0m
-[31m©¦[0m [34m©¦[0m            [3;33me[0m[31m =[0m [1;35mFileNotFoundError[0m[1m([0m[1;36m2[0m, [32m'No such file or directory'[0m[1m)[0m        [34m©¦[0m [31m©¦[0m
-[31m©¦[0m [34m©¦[0m         [3;33mself[0m[31m =[0m [1m<[0m[1;95mapp.utils.geo_matcher.GeoMatcher[0m[39m object at [0m             [34m©¦[0m [31m©¦[0m
-[31m©¦[0m [34m©¦[0m                [1;36m0x000001D2634CCAD0[0m[1m>[0m                                      [34m©¦[0m [31m©¦[0m
-[31m©¦[0m [34m©¦[0m [3;33mstation_file[0m[31m =[0m [1;35mWindowsPath[0m[1m([0m[32m'D:/ËİÔ´/station_info.json'[0m[1m)[0m                 [34m©¦[0m [31m©¦[0m
-[31m©¦[0m [34m©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼[0m [31m©¦[0m
-[31m©¸©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¤©¼[0m
-[1;91mFileNotFoundError: [0m[1m[[0mErrno [1;36m2[0m[1m][0m No such file or directory: 
-[32m'D:\\ËİÔ´\\station_info.json'[0m
+2026-03-30 12:49:23 [warning  ] sqlserver_password_override    message='SECURITY WARNING: Hardcoded password in use!' reason='Empty password in .env, using hardcoded fallback'
+2026-03-30 12:49:23 [info     ] data_registry_initialized      base_dir=/home/xckj/suyuan/backend/backend_data_registry entries=1245
+2026-03-30 12:49:23 [warning  ] tiktoken_not_available         message='Using character-based estimation. Install tiktoken for accurate token counting: pip install tiktoken'
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=5 registry=global requires_context=True tool=read_data_registry
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=read_data_registry
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=10 registry=global requires_context=True tool=get_air_quality
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_air_quality
+2026-03-30 12:49:23 [warning  ] tool_import_failed             error="No module named 'asyncpg'" tool=get_weather_data
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=30 registry=global requires_context=True tool=get_weather_forecast
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_weather_forecast
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=15 registry=global requires_context=False tool=get_current_weather
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_current_weather
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=16 registry=global requires_context=False tool=get_weather_situation_map
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_weather_situation_map
+2026-03-30 12:49:23 [warning  ] tool_import_failed             error="No module named 'asyncpg'" tool=get_fire_hotspots
+2026-03-30 12:49:23 [warning  ] tool_import_failed             error="No module named 'asyncpg'" tool=get_dust_data
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=61 registry=global requires_context=True tool=get_vocs_data
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_vocs_data
+2026-03-30 12:49:23 [info     ] stations_loaded                cities=21 count=0
+2026-03-30 12:49:23 [info     ] venues_loaded                  count=91
+2026-03-30 12:49:23 [info     ] geo_mappings_loaded            cities=52 districts=142 stations=64
+2026-03-30 12:49:23 [info     ] geo_matcher_initialized        aliases=10 cities=21 city_codes=52 district_codes=142 station_codes=64 stations=0 venues=91
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=63 registry=global requires_context=True tool=get_pm25_ionic
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_pm25_ionic
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=64 registry=global requires_context=True tool=get_pm25_carbon
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_pm25_carbon
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=65 registry=global requires_context=True tool=get_pm25_crustal
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_pm25_crustal
+2026-03-30 12:49:23 [warning  ] tool_no_input_adapter          message=å»ºè®®æä¾›è¾“å…¥é€‚é…å™¨è§„åˆ™ä»¥æ”¯æŒå®½è¿›ä¸¥å‡ºåŸåˆ™ tool=get_nearby_stations
+2026-03-30 12:49:23 [info     ] tool_registered                category=query has_adapter=False has_schema=True priority=70 registry=global requires_context=False tool=get_nearby_stations
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_nearby_stations
+2026-03-30 12:49:23 [warning  ] tool_import_failed             error="No module named 'asyncpg'" tool=get_universal_meteorology
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=27 registry=global requires_context=False tool=search_knowledge_base
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=search_knowledge_base
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=31 registry=global requires_context=True tool=get_jining_regular_stations
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_jining_regular_stations
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=32 registry=global requires_context=True tool=query_gd_suncere_city_hour
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_city_hour
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=33 registry=global requires_context=True tool=query_gd_suncere_regional_comparison
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_regional_comparison
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=34 registry=global requires_context=True tool=query_gd_suncere_city_day
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_city_day
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=35 registry=global requires_context=True tool=query_gd_suncere_report
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_report
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=36 registry=global requires_context=True tool=query_gd_suncere_report_compare
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_report_compare
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=37 registry=global requires_context=True tool=query_standard_comparison
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_standard_comparison
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=38 registry=global requires_context=True tool=query_gd_suncere_city_day_new
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_city_day_new
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=39 registry=global requires_context=True tool=query_gd_suncere_city_day_old_standard
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_gd_suncere_city_day_old_standard
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=40 registry=global requires_context=True tool=query_new_standard_report
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_new_standard_report
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=41 registry=global requires_context=True tool=compare_standard_reports
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=compare_standard_reports
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=41 registry=global requires_context=True tool=query_old_standard_report
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_old_standard_report
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=42 registry=global requires_context=False tool=get_satellite_data
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=get_satellite_data
+2026-03-30 12:49:23 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=43 registry=global requires_context=True tool=query_xcai_city_history
+2026-03-30 12:49:23 [info     ] tool_loaded                    tool=query_xcai_city_history
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=80 registry=global requires_context=False tool=download_gfs_data
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=download_gfs_data
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=85 registry=global requires_context=False tool=process_gfs_data
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=process_gfs_data
+2026-03-30 12:49:24 [info     ] config_initialized             sections=7 source=defaults
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=100 registry=global requires_context=True tool=analyze_upwind_enterprises
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=analyze_upwind_enterprises
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=110 registry=global requires_context=True tool=calculate_pm_pmf
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=calculate_pm_pmf version=v2_context
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=111 registry=global requires_context=True tool=calculate_vocs_pmf
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=calculate_vocs_pmf version=v2_context
+2026-03-30 12:49:24 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=130 registry=global requires_context=True tool=meteorological_trajectory_analysis
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=meteorological_trajectory_analysis version=noaa_api
+2026-03-30 12:49:24 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=135 registry=global requires_context=True tool=analyze_trajectory_sources
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=analyze_trajectory_sources version=v1.0
+2026-03-30 12:49:24 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=150 registry=global requires_context=False tool=predict_air_quality
+2026-03-30 12:49:24 [info     ] tool_loaded                    tool=predict_air_quality
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=160 registry=global requires_context=True tool=calculate_reconstruction
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=calculate_reconstruction
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=161 registry=global requires_context=True tool=calculate_carbon
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=calculate_carbon
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=162 registry=global requires_context=True tool=calculate_soluble
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=calculate_soluble
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=163 registry=global requires_context=True tool=calculate_crustal
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=calculate_crustal
+2026-03-30 12:49:25 [warning  ] tool_import_failed             error="cannot import name 'ELEMENT_NAME_MAPPING' from 'app.tools.analysis.calculate_trace.calculate_trace' (/home/xckj/suyuan/backend/app/tools/analysis/calculate_trace/calculate_trace.py)" tool=calculate_trace
+2026-03-30 12:49:25 [warning  ] tool_import_failed             error="No module named 'asyncpg'" tool=aggregate_data
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=vocs_analysis
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=pm_analysis
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=multi_indicator_timeseries
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=regional_comparison
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=generic_timeseries
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=generic_bar
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=generic_pie
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=timeseries
+2026-03-30 12:49:25 [info     ] chart_template_alias_registered alias=timeseries target=generic_timeseries
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=wind_rose
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=profile
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=map
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=heatmap
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=radar
+2026-03-30 12:49:25 [info     ] chart_template_registered      template_id=weather_timeseries
+2026-03-30 12:49:25 [info     ] builtin_chart_templates_registered count=14 templates=['vocs_analysis', 'pm_analysis', 'multi_indicator_timeseries', 'regional_comparison', 'generic_timeseries', 'generic_bar', 'generic_pie', 'timeseries', 'wind_rose', 'profile', 'map', 'heatmap', 'radar', 'weather_timeseries']
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=200 registry=global requires_context=True tool=generate_chart
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=generate_chart
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=201 registry=global requires_context=True tool=revise_chart
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=revise_chart
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=210 registry=global requires_context=False tool=generate_map
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=generate_map
+2026-03-30 12:49:25 [warning  ] chart_data_converter_v2_refactoring message='åŸå§‹chart_data_converter.pyå·²é‡æ„ä¸ºæ¨¡å—åŒ–ç»“æ„ã€‚è¯·ä½¿ç”¨æ–°çš„å¯¼å…¥æ–¹å¼ï¼šfrom app.utils.chart_converters.chart_data_converter import convert_chart_data' new_location=app.utils.chart_converters.chart_data_converter old_location=app.utils.chart_data_converter version=2.0.2
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=220 registry=global requires_context=True tool=smart_chart_generator
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=smart_chart_generator
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=221 registry=global requires_context=False tool=generate_aqi_calendar
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=generate_aqi_calendar
+2026-03-30 12:49:25 [info     ] bash_tool_initialized          max_output_size=1048576 timeout=60 working_dir=/home/xckj/suyuan
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=500 registry=global requires_context=False tool=bash
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=bash
+2026-03-30 12:49:25 [info     ] execute_python_tool_initialized charts_dir=/home/xckj/suyuan/backend/backend_data_registry/charts permanent_dir=/home/xckj/suyuan/backend/backend_data_registry/python_generated_files timeout=30 use_ipython=True
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=501 registry=global requires_context=False tool=execute_python
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=execute_python
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=501 registry=global requires_context=False tool=read_file
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=read_file
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=502 registry=global requires_context=False tool=analyze_image
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=analyze_image
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=503 registry=global requires_context=False tool=edit_file
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=edit_file
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=504 registry=global requires_context=False tool=grep
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=grep
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=505 registry=global requires_context=False tool=write_file
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=write_file
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=506 registry=global requires_context=False tool=search_files
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=search_files
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=507 registry=global requires_context=False tool=list_directory
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=list_directory
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=598 registry=global requires_context=False tool=unpack_office
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=unpack_office
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=599 registry=global requires_context=False tool=pack_office
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=pack_office
+2026-03-30 12:49:25 [warning  ] tool_import_failed             error="No module named 'defusedxml'" tool=word_edit
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=596 registry=global requires_context=False tool=accept_word_changes
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=accept_word_changes
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=597 registry=global requires_context=False tool=find_replace_word
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=find_replace_word
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=595 registry=global requires_context=False tool=recalc_excel
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=recalc_excel
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=594 registry=global requires_context=False tool=add_ppt_slide
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=add_ppt_slide
+2026-03-30 12:49:25 [warning  ] tool_import_failed             error="No module named 'apscheduler'" tool=create_scheduled_task
+2026-03-30 12:49:25 [debug    ] failed_to_load_user_heartbeat_manager_from_singleton error="cannot import name 'ReActAgent' from partially initialized module 'app.agent.react_agent' (most likely due to a circular import) (/home/xckj/suyuan/backend/app/agent/react_agent.py)"
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=701 registry=global requires_context=False tool=schedule_task
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=schedule_task
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=702 registry=global requires_context=False tool=send_notification
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=send_notification
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=703 registry=global requires_context=False tool=remember_fact
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=remember_fact
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=704 registry=global requires_context=False tool=search_history
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=search_history
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=705 registry=global requires_context=False tool=web_search
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=web_search
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=706 registry=global requires_context=False tool=web_fetch
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=web_fetch
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=710 registry=global requires_context=False tool=spawn
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=spawn
+2026-03-30 12:49:25 [warning  ] tool_no_input_adapter          message=å»ºè®®æä¾›è¾“å…¥é€‚é…å™¨è§„åˆ™ä»¥æ”¯æŒå®½è¿›ä¸¥å‡ºåŸåˆ™ tool=TodoWrite
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.TASK_MANAGEMENT: 'task_management'> has_adapter=False has_schema=True priority=800 registry=global requires_context=True tool=TodoWrite
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=TodoWrite
+2026-03-30 12:49:25 [warning  ] tool_import_failed             error="No module named 'playwright'" tool=browser
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=900 registry=global requires_context=True tool=call_sub_agent
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=call_sub_agent
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=850 registry=global requires_context=False tool=validate_tool
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=validate_tool
+Registered workflow tool: quick_trace_workflow
+Registered workflow tool: deep_trace_workflow
+Registered workflow tool: knowledge_qa_workflow
+2026-03-30 12:49:25 [info     ] workflow_tools_initialized     tools=['quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow'] total_tools=3
+2026-03-30 12:49:25 [info     ] tool_registered                category=quick_trace has_adapter=True has_schema=True priority=45 registry=global requires_context=False tool=quick_trace_workflow
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=quick_trace_workflow
+2026-03-30 12:49:25 [info     ] tool_registered                category=deep_trace has_adapter=True has_schema=True priority=47 registry=global requires_context=True tool=deep_trace_workflow
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=deep_trace_workflow
+2026-03-30 12:49:25 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=459 registry=global requires_context=False tool=read_docx
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=read_docx
+2026-03-30 12:49:25 [info     ] tool_registered                category=knowledge_qa has_adapter=True has_schema=True priority=48 registry=global requires_context=False tool=knowledge_qa_workflow
+2026-03-30 12:49:25 [info     ] tool_loaded                    tool=knowledge_qa_workflow
+2026-03-30 12:49:25 [info     ] global_tool_registry_created   tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent'] total_tools=71
+2026-03-30 12:49:25 [debug    ] llm_provider_config_check      provider_from_settings=mimo qwen_base_url=https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1 qwen_model=qwen3
+2026-03-30 12:49:25 [debug    ] llm_loading_provider_config    config_exists=True provider=mimo url_default=https://api.xiaomimimo.com/v1 url_env=MIMO_BASE_URL
+2026-03-30 12:49:25 [info     ] llm_config_loaded              base_url=https://api.xiaomimimo.com/v1 has_api_key=True model=mimo-v2-flash provider=mimo
+2026-03-30 12:49:25 [info     ] llm_service_initialized        base_url=https://api.xiaomimimo.com/v1 model=mimo-v2-flash provider=mimo
+2026-03-30 12:49:25 [warning  ] json_repair_not_available      message=json-repairåº“æœªå®‰è£…ï¼Œå°†è·³è¿‡JSONä¿®å¤æ­¥éª¤
 
-2026-02-09 19:50:16 [info     ] venues_loaded                  count=91
-2026-02-09 19:50:16 [info     ] geo_mappings_loaded            cities=52 districts=142 stations=64
-2026-02-09 19:50:16 [info     ] geo_matcher_initialized        aliases=10 cities=0 city_codes=52 district_codes=142 station_codes=64 stations=0 venues=91
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=63 registry=global requires_context=True tool=get_pm25_ionic
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_pm25_ionic
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=64 registry=global requires_context=True tool=get_pm25_carbon
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_pm25_carbon
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=65 registry=global requires_context=True tool=get_pm25_crustal
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_pm25_crustal
-2026-02-09 19:50:16 [info     ] config_loaded                  sections=7 source=file
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=70 registry=global requires_context=False tool=get_nearby_stations
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_nearby_stations
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=25 registry=global requires_context=True tool=get_universal_meteorology
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_universal_meteorology
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=27 registry=global requires_context=False tool=search_knowledge_base
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=search_knowledge_base
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=30 registry=global requires_context=True tool=get_guangdong_regular_stations
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_guangdong_regular_stations
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=31 registry=global requires_context=True tool=get_jining_regular_stations
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_jining_regular_stations
-2026-02-09 19:50:16 [info     ] data_registry_initialized      base_dir=D:\ËİÔ´\backend\backend_data_registry entries=8289
-2026-02-09 19:50:16 [info     ] tiktoken_initialized           encoding=cl100k_base model=gpt-4
-2026-02-09 19:50:16 [debug    ] llm_provider_config_check      provider_from_settings=qwen qwen_base_url=https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1 qwen_model=qwen3
-2026-02-09 19:50:16 [info     ] llm_service_initialized        base_url=https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1 model=qwen3 provider=qwen
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=32 registry=global requires_context=True tool=query_gd_suncere_city_hour
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=query_gd_suncere_city_hour
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=33 registry=global requires_context=True tool=query_gd_suncere_regional_comparison
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=query_gd_suncere_regional_comparison
-2026-02-09 19:50:16 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=35 registry=global requires_context=False tool=get_satellite_data
-2026-02-09 19:50:16 [info     ] tool_loaded                    tool=get_satellite_data
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=80 registry=global requires_context=False tool=download_gfs_data
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=download_gfs_data
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=85 registry=global requires_context=False tool=process_gfs_data
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=process_gfs_data
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=100 registry=global requires_context=True tool=analyze_upwind_enterprises
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=analyze_upwind_enterprises
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=110 registry=global requires_context=True tool=calculate_pm_pmf
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_pm_pmf version=v2_context
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=111 registry=global requires_context=True tool=calculate_vocs_pmf
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_vocs_pmf version=v2_context
-Could not find cannot import name 'dopri5' from 'assimulo.lib' (D:\conda\Lib\site-packages\assimulo\lib\__init__.py)
-Could not find cannot import name 'rodas' from 'assimulo.lib' (D:\conda\Lib\site-packages\assimulo\lib\__init__.py)
-Could not find cannot import name 'odassl' from 'assimulo.lib' (D:\conda\Lib\site-packages\assimulo\lib\__init__.py)
-Could not find ODEPACK functions.
-Could not find RADAR5
-Could not find GLIMDA.
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=126 registry=global requires_context=True tool=calculate_obm_full_chemistry
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_obm_full_chemistry version=racm2
-2026-02-09 19:50:17 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=130 registry=global requires_context=True tool=meteorological_trajectory_analysis
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=meteorological_trajectory_analysis version=noaa_api
-2026-02-09 19:50:17 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=135 registry=global requires_context=True tool=analyze_trajectory_sources
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=analyze_trajectory_sources version=v1.0
-2026-02-09 19:50:17 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=145 registry=global requires_context=False tool=calculate_iaqi
-2026-02-09 19:50:17 [info     ] tool_loaded                    tool=calculate_iaqi
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=150 registry=global requires_context=False tool=predict_air_quality
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=predict_air_quality
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=160 registry=global requires_context=True tool=calculate_reconstruction
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_reconstruction
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=161 registry=global requires_context=True tool=calculate_carbon
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_carbon
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=162 registry=global requires_context=True tool=calculate_soluble
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_soluble
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.ANALYSIS: 'analysis'> has_adapter=True has_schema=True priority=163 registry=global requires_context=True tool=calculate_crustal
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=calculate_crustal
-2026-02-09 19:50:18 [warning  ] tool_import_failed             error="cannot import name 'ELEMENT_NAME_MAPPING' from 'app.tools.analysis.calculate_trace.calculate_trace' (D:\\ËİÔ´\\backend\\app\\tools\\analysis\\calculate_trace\\calculate_trace.py)" tool=calculate_trace
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=vocs_analysis
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=pm_analysis
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=multi_indicator_timeseries
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=regional_comparison
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=generic_timeseries
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=generic_bar
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=generic_pie
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=timeseries
-2026-02-09 19:50:18 [info     ] chart_template_alias_registered alias=timeseries target=generic_timeseries
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=wind_rose
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=profile
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=map
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=heatmap
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=radar
-2026-02-09 19:50:18 [info     ] chart_template_registered      template_id=weather_timeseries
-2026-02-09 19:50:18 [info     ] builtin_chart_templates_registered count=14 templates=['vocs_analysis', 'pm_analysis', 'multi_indicator_timeseries', 'regional_comparison', 'generic_timeseries', 'generic_bar', 'generic_pie', 'timeseries', 'wind_rose', 'profile', 'map', 'heatmap', 'radar', 'weather_timeseries']
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=200 registry=global requires_context=True tool=generate_chart
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=generate_chart
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=201 registry=global requires_context=True tool=revise_chart
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=revise_chart
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=210 registry=global requires_context=False tool=generate_map
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=generate_map
-2026-02-09 19:50:18 [warning  ] chart_data_converter_v2_refactoring message='Ô­Ê¼chart_data_converter.pyÒÑÖØ¹¹ÎªÄ£¿é»¯½á¹¹¡£ÇëÊ¹ÓÃĞÂµÄµ¼Èë·½Ê½£ºfrom app.utils.chart_converters.chart_data_converter import convert_chart_data' new_location=app.utils.chart_converters.chart_data_converter old_location=app.utils.chart_data_converter version=2.0.2
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.VISUALIZATION: 'visualization'> has_adapter=True has_schema=True priority=220 registry=global requires_context=True tool=smart_chart_generator
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=smart_chart_generator
-2026-02-09 19:50:18 [info     ] bash_tool_initialized          max_output_size=1048576 timeout=60 working_dir=D:\ËİÔ´
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=500 registry=global requires_context=False tool=bash
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=bash
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=501 registry=global requires_context=False tool=read_file
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=read_file
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=502 registry=global requires_context=False tool=analyze_image
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=analyze_image
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=600 registry=global requires_context=False tool=word_processor
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=word_processor
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=601 registry=global requires_context=False tool=excel_processor
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=excel_processor
-2026-02-09 19:50:18 [info     ] tool_registered                category=<ToolCategory.QUERY: 'query'> has_adapter=True has_schema=True priority=602 registry=global requires_context=False tool=ppt_processor
-2026-02-09 19:50:18 [info     ] tool_loaded                    tool=ppt_processor
-2026-02-09 19:50:18 [info     ] global_tool_registry_created   tools=['get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'get_weather_data', 'get_universal_meteorology', 'search_knowledge_base', 'get_weather_forecast', 'get_guangdong_regular_stations', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'get_satellite_data', 'get_fire_hotspots', 'get_dust_data', 'get_vocs_data', 'get_particulate_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'calculate_obm_full_chemistry', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'calculate_iaqi', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'bash', 'read_file', 'analyze_image', 'word_processor', 'excel_processor', 'ppt_processor'] total_tools=44
-================================================================================
-Word Í¼Æ¬ÌáÈ¡¹¦ÄÜ - ×ÛºÏ²âÊÔ
-================================================================================
+============================================================
+ExpertRouterV3 ä¿®å¤éªŒè¯æµ‹è¯•
+============================================================
 
-================================================================================
-²âÊÔÎÄµµ: D:\ËİÔ´\backend\test_word.docx
-================================================================================
-2026-02-09 19:50:27 [info     ] win32_app_initialized          app=Word.Application display_alerts=False visible=False
-2026-02-09 19:50:29 [info     ] word_document_opened           path=D:\ËİÔ´\backend\test_word.docx read_only=True
-2026-02-09 19:50:30 [debug    ] word_document_closed
-2026-02-09 19:50:30 [info     ] win32_app_closed               app=Word.Application
-×´Ì¬: success
-³É¹¦: True
-ÕªÒª: ÌáÈ¡ÁË0ÕÅÍ¼Æ¬
+============================================================
+æµ‹è¯•1: MemoryManager åˆå§‹åŒ–
+============================================================
+2026-03-30 12:49:25 [info     ] session_memory_initialized     directory=/tmp/agent_session_test_session session_id=test_session use_llm_compression=True
+2026-03-30 12:49:25 [debug    ] hybrid_memory_initialized      batch_compress_threshold=11 compress_batch_size=10 intelligent_context=False longterm_memory=False max_working=20 session_id=test_session threshold=5000
+âœ… MemoryManager åˆ›å»ºæˆåŠŸ
+   - session_id: test_session
+   - max_working_iterations: 20
 
-ÌáÈ¡½á¹û:
-  Í¼Æ¬ÊıÁ¿: 0
+============================================================
+æµ‹è¯•2: DataContextManager åˆ›å»º
+============================================================
+2026-03-30 12:49:25 [info     ] session_memory_initialized     directory=/tmp/agent_session_test_session session_id=test_session use_llm_compression=True
+2026-03-30 12:49:25 [debug    ] hybrid_memory_initialized      batch_compress_threshold=11 compress_batch_size=10 intelligent_context=False longterm_memory=False max_working=20 session_id=test_session threshold=5000
+   MemoryManager åˆ›å»ºæˆåŠŸ: HybridMemoryManager
+   DataContextManager å¯¼å…¥æˆåŠŸ
+2026-03-30 12:49:25 [info     ] data_context_manager_initialized session_id=test_session
+âœ… DataContextManager åˆ›å»ºæˆåŠŸ
+   - memory: HybridMemoryManager
+   - session_id: test_session
 
-================================================================================
-¹¦ÄÜÑéÖ¤²âÊÔ
-================================================================================
+============================================================
+æµ‹è¯•3: ExpertRouterV3 å¸¦ MemoryManager åˆå§‹åŒ–
+============================================================
+2026-03-30 12:49:25 [info     ] session_memory_initialized     directory=/tmp/agent_session_test_router_session session_id=test_router_session use_llm_compression=True
+2026-03-30 12:49:25 [debug    ] hybrid_memory_initialized      batch_compress_threshold=11 compress_batch_size=10 intelligent_context=False longterm_memory=False max_working=20 session_id=test_router_session threshold=5000
+2026-03-30 12:49:25 [info     ] station_info_loaded            count=64
+2026-03-30 12:49:25 [info     ] structured_query_parser_initialized station_count=64
+2026-03-30 12:49:25 [info     ] expert_plan_generator_initialized
+2026-03-30 12:49:25 [info     ] SessionManager initialized with storage path: backend_data_registry/sessions, retention_days: 30
+2026-03-30 12:49:25 [warning  ] æ°”è±¡æ•°æ®å·¥å…·åŠ è½½å¤±è´¥                     error="No module named 'asyncpg'" tool=get_weather_data
+2026-03-30 12:49:25 [warning  ] é€šç”¨æ°”è±¡å·¥å…·åŠ è½½å¤±è´¥                     error="No module named 'asyncpg'" tool=get_universal_meteorology
+2026-03-30 12:49:25 [info     ] å½“å‰å¤©æ°”å·¥å…·åŠ è½½æˆåŠŸ: get_current_weather
+2026-03-30 12:49:25 [info     ] å¤©æ°”é¢„æŠ¥å·¥å…·åŠ è½½æˆåŠŸ: get_weather_forecast
+2026-03-30 12:49:25 [info     ] å«æ˜Ÿæ•°æ®å·¥å…·åŠ è½½æˆåŠŸ: get_satellite_data
+2026-03-30 12:49:25 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
+2026-03-30 12:49:25 [info     ] æ°”è±¡è½¨è¿¹åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: meteorological_trajectory_analysis
+2026-03-30 12:49:25 [info     ] ä¸Šé£å‘ä¼ä¸šåˆ†æå·¥å…·åŠ è½½æˆåŠŸ: analyze_upwind_enterprises
+2026-03-30 12:49:25 [info     ] noaa_hysplit_api_initialized   note='No API key required - NOAA READY is publicly accessible'
+2026-03-30 12:49:25 [info     ] è½¨è¿¹æºæ¸…å•åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: analyze_trajectory_sources (æ·±åº¦æº¯æº)
+2026-03-30 12:49:25 [info     ] åœ°å›¾ç”Ÿæˆå·¥å…·åŠ è½½æˆåŠŸ: generate_map (è½¨è¿¹åˆ†æä¸“ç”¨)
+2026-03-30 12:49:25 [info     ] tool_registered                priority=10 tool=openmeteo_current total_tools=1
+2026-03-30 12:49:25 [info     ] tool_registered                priority=20 tool=weatherapi_com total_tools=2
+2026-03-30 12:49:25 [info     ] observed_weather_tools_registered tools=['openmeteo_current', 'weatherapi_com']
+2026-03-30 12:49:25 [info     ] get_react_agent_tool_registry_debug all_tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent'] has_unpack_office=True total_global_tools=71
+2026-03-30 12:49:25 [info     ] react_agent_tool_registry_created has_unpack_office=True tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent', 'get_observed_weather'] total_tools=72
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=get_current_weather
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=get_weather_forecast
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=get_satellite_data
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=meteorological_trajectory_analysis
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=analyze_upwind_enterprises
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=analyze_trajectory_sources
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=weather tool_name=generate_map
+2026-03-30 12:49:25 [info     ] registered_tools_loaded        available_count=7 expert_type=weather wrapped_count=7
+2026-03-30 12:49:25 [info     ] parameter_binder_initialized
+2026-03-30 12:49:25 [info     ] expert_executor_initialized    expert_type=weather original_count=7 tools=['get_current_weather', 'get_weather_forecast', 'get_satellite_data', 'meteorological_trajectory_analysis', 'analyze_upwind_enterprises', 'analyze_trajectory_sources', 'generate_map'] wrapped_count=7
+2026-03-30 12:49:25 [warning  ] æ°”è±¡æ•°æ®å·¥å…·åŠ è½½å¤±è´¥                     error="No module named 'asyncpg'" tool=get_weather_data
+2026-03-30 12:49:25 [info     ] æµå®å¸‚åŒºåŸŸå¯¹æ¯”å·¥å…·åŠ è½½æˆåŠŸ: get_jining_regular_stationsï¼ˆç«¯å£9096ï¼‰
+2026-03-30 12:49:25 [info     ] VOCsæ•°æ®å·¥å…·åŠ è½½æˆåŠŸ: get_vocs_dataï¼ˆç«¯å£9092ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©ç¦»å­ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_ionicï¼ˆFâ»ã€Clâ»ã€NOâ‚ƒâ»ã€SOâ‚„Â²â»ã€Naâºã€Kâºã€NHâ‚„âºã€MgÂ²âºã€CaÂ²âºç­‰ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©ç¢³ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_carbonï¼ˆOC/ECç¢³è´¨ç»„åˆ†ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©åœ°å£³å…ƒç´ å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_crustalï¼ˆé“ã€ç¡…ã€é’™ã€é“ã€é’›ã€é’¾ç­‰ï¼‰
+2026-03-30 12:49:25 [info     ] PM2.5ç»„åˆ†åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_particulate_componentsï¼ˆClâ»ã€NOâ‚ƒâ»ã€SOâ‚„Â²â»ã€Naâºã€Kâºã€NHâ‚„âºã€MgÂ²âºã€CaÂ²âºã€OCã€ECï¼‰
+2026-03-30 12:49:25 [info     ] PM2.5å®Œæ•´ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_componentï¼ˆ32ä¸ªå› å­ï¼‰
+2026-03-30 12:49:25 [info     ] PM2.5é‡æ„åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_pm25_recoveryï¼ˆ7å¤§ç»„åˆ†ï¼‰
+2026-03-30 12:49:25 [info     ] OC/ECç¢³è´¨åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_oc_ec
+2026-03-30 12:49:25 [info     ] é‡é‡‘å±åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_heavy_metal
+2026-03-30 12:49:25 [info     ] PMFå·¥å…·åŠ è½½æˆåŠŸ: calculate_pm_pmfï¼ˆé¢—ç²’ç‰©ä¸“ç”¨ï¼‰
+2026-03-30 12:49:25 [info     ] PMFå·¥å…·åŠ è½½æˆåŠŸ: calculate_vocs_pmfï¼ˆVOCs/è‡­æ°§ä¸“ç”¨ï¼‰
+2026-03-30 12:49:25 [info     ] æ–°æ ‡å‡†ç»Ÿè®¡æŠ¥è¡¨å·¥å…·åŠ è½½æˆåŠŸ: query_new_standard_reportï¼ˆHJ 633-2024ï¼‰
+2026-03-30 12:49:25 [info     ] æ–°æ ‡å‡†æŠ¥è¡¨å¯¹æ¯”åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: compare_standard_reportsï¼ˆå¯¹æ¯”ä¸¤ä¸ªæ—¶é—´æ®µçš„ç»Ÿè®¡æŒ‡æ ‡ï¼‰
+2026-03-30 12:49:25 [info     ] XcAiDbåŸå¸‚å†å²æ•°æ®æŸ¥è¯¢å·¥å…·åŠ è½½æˆåŠŸ: query_xcai_city_historyï¼ˆå…¨å›½åŸå¸‚å°æ—¶/æ—¥æ•°æ®ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: calculate_reconstructionï¼ˆ7å¤§ç»„åˆ†é‡æ„ï¼‰
+2026-03-30 12:49:25 [info     ] ç¢³ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: calculate_carbonï¼ˆç¢³ç»„åˆ†åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] åœ°å£³å…ƒç´ å·¥å…·åŠ è½½æˆåŠŸ: calculate_crustalï¼ˆåœ°å£³å…ƒç´ åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] æ°´æº¶æ€§ç¦»å­å·¥å…·åŠ è½½æˆåŠŸ: calculate_solubleï¼ˆæ°´æº¶æ€§ç¦»å­åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] å¾®é‡å…ƒç´ å·¥å…·åŠ è½½æˆåŠŸ: calculate_traceï¼ˆå¾®é‡å…ƒç´ åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] æ™ºèƒ½å›¾è¡¨ç”Ÿæˆå·¥å…·åŠ è½½æˆåŠŸ: smart_chart_generator
+2026-03-30 12:49:25 [info     ] å›¾è¡¨ç”Ÿæˆå·¥å…·åŠ è½½æˆåŠŸ: generate_chart
+2026-03-30 12:49:25 [info     ] tool_registered                priority=10 tool=openmeteo_current total_tools=2
+2026-03-30 12:49:25 [info     ] tool_registered                priority=20 tool=weatherapi_com total_tools=2
+2026-03-30 12:49:25 [info     ] observed_weather_tools_registered tools=['openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com']
+2026-03-30 12:49:25 [info     ] get_react_agent_tool_registry_debug all_tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent'] has_unpack_office=True total_global_tools=71
+2026-03-30 12:49:25 [info     ] react_agent_tool_registry_created has_unpack_office=True tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent', 'get_observed_weather'] total_tools=72
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_jining_regular_stations
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_vocs_data
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_pm25_ionic
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_pm25_carbon
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_pm25_crustal
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_particulate_components
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_pm25_component
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_pm25_recovery
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_oc_ec
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_heavy_metal
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_pm_pmf
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_vocs_pmf
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=query_new_standard_report
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=compare_standard_reports
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=query_xcai_city_history
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_reconstruction
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_carbon
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_crustal
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_soluble
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=calculate_trace
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=ml_predictor
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=smart_chart_generator
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=generate_chart
+2026-03-30 12:49:25 [info     ] registered_tools_loaded        available_count=23 expert_type=component wrapped_count=16
+2026-03-30 12:49:25 [info     ] parameter_binder_initialized
+2026-03-30 12:49:25 [info     ] expert_executor_initialized    expert_type=component original_count=23 tools=['get_jining_regular_stations', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_particulate_components', 'get_pm25_component', 'get_pm25_recovery', 'get_oc_ec', 'get_heavy_metal', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'query_new_standard_report', 'compare_standard_reports', 'query_xcai_city_history', 'calculate_reconstruction', 'calculate_carbon', 'calculate_crustal', 'calculate_soluble', 'calculate_trace', 'ml_predictor', 'smart_chart_generator', 'generate_chart'] wrapped_count=23
+2026-03-30 12:49:25 [info     ] tool_registered                priority=10 tool=openmeteo_current total_tools=2
+2026-03-30 12:49:25 [info     ] tool_registered                priority=20 tool=weatherapi_com total_tools=2
+2026-03-30 12:49:25 [info     ] observed_weather_tools_registered tools=['openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com']
+2026-03-30 12:49:25 [info     ] get_react_agent_tool_registry_debug all_tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent'] has_unpack_office=True total_global_tools=71
+2026-03-30 12:49:25 [info     ] react_agent_tool_registry_created has_unpack_office=True tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent', 'get_observed_weather'] total_tools=72
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=viz tool_name=generate_chart
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=viz tool_name=smart_chart_generator
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=viz tool_name=generate_map
+2026-03-30 12:49:25 [info     ] registered_tools_loaded        available_count=3 expert_type=viz wrapped_count=3
+2026-03-30 12:49:25 [info     ] parameter_binder_initialized
+2026-03-30 12:49:25 [info     ] expert_executor_initialized    expert_type=viz original_count=3 tools=['generate_chart', 'smart_chart_generator', 'generate_map'] wrapped_count=3
+2026-03-30 12:49:25 [info     ] expert_plan_generator_initialized
+2026-03-30 12:49:25 [info     ] tool_registered                priority=10 tool=openmeteo_current total_tools=2
+2026-03-30 12:49:25 [info     ] tool_registered                priority=20 tool=weatherapi_com total_tools=2
+2026-03-30 12:49:25 [info     ] observed_weather_tools_registered tools=['openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com']
+2026-03-30 12:49:25 [info     ] get_react_agent_tool_registry_debug all_tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent'] has_unpack_office=True total_global_tools=71
+2026-03-30 12:49:25 [info     ] react_agent_tool_registry_created has_unpack_office=True tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent', 'get_observed_weather'] total_tools=72
+2026-03-30 12:49:25 [info     ] registered_tools_loaded        available_count=0 expert_type=report wrapped_count=0
+2026-03-30 12:49:25 [info     ] parameter_binder_initialized
+2026-03-30 12:49:25 [info     ] expert_executor_initialized    expert_type=report original_count=0 tools=[] wrapped_count=0
+2026-03-30 12:49:25 [info     ] data_context_manager_initialized session_id=test_router_session
+2026-03-30 12:49:25 [debug    ] executor_context_set           expert_type=weather has_data_manager=True has_memory_manager=True
+2026-03-30 12:49:25 [debug    ] executor_context_set           expert_type=component has_data_manager=True has_memory_manager=True
+2026-03-30 12:49:25 [debug    ] executor_context_set           expert_type=viz has_data_manager=True has_memory_manager=True
+2026-03-30 12:49:25 [debug    ] executor_context_set           expert_type=report has_data_manager=True has_memory_manager=True
+2026-03-30 12:49:25 [info     ] all_executors_context_configured executor_count=4
+2026-03-30 12:49:25 [info     ] expert_router_v3_initialized   executors=['weather', 'component', 'viz', 'report'] has_callback=False has_memory_manager=True has_session_manager=True has_task_list=True
+   âœ… weather expert: _data_manager = True
+   âœ… component expert: _data_manager = True
+   âœ… viz expert: _data_manager = True
+   âœ… report expert: _data_manager = True
+âœ… æ‰€æœ‰ä¸“å®¶æ‰§è¡Œå™¨éƒ½å·²é…ç½® data_manager
 
-1. ¹¤¾ß×¢²á¼ì²é:
-   - ¹¤¾ßÃû³Æ: word_processor
-   - ¹¤¾ßÃèÊö: °üº¬ 'extract_images' ²Ù×÷
-   - Ö§³ÖµÄ²Ù×÷: read, extract_images, insert, search_and_replace, tables, stats
+============================================================
+æµ‹è¯•4: station_info.json æ–‡ä»¶è·¯å¾„
+============================================================
+   é…ç½®è·¯å¾„: /home/xckj/suyuan/backend/data/station_info.json
+âœ… station_info.json æ–‡ä»¶å­˜åœ¨
+   - æ–‡ä»¶å¤§å°: 12547 bytes
 
-2. Êä³öÄ¿Â¼¼ì²é:
-   - Êä³öÄ¿Â¼: D:\ËİÔ´\backend_data_registry\temp_images
-   - Ä¿Â¼´æÔÚ: ·ñ (½«ÔÚÊ×´ÎÊ¹ÓÃÊ±×Ô¶¯´´½¨)
+============================================================
+æµ‹è¯•5: query_xcai_city_history å·¥å…·æ³¨å†Œ
+============================================================
+2026-03-30 12:49:25 [warning  ] æ°”è±¡æ•°æ®å·¥å…·åŠ è½½å¤±è´¥                     error="No module named 'asyncpg'" tool=get_weather_data
+2026-03-30 12:49:25 [info     ] æµå®å¸‚åŒºåŸŸå¯¹æ¯”å·¥å…·åŠ è½½æˆåŠŸ: get_jining_regular_stationsï¼ˆç«¯å£9096ï¼‰
+2026-03-30 12:49:25 [info     ] VOCsæ•°æ®å·¥å…·åŠ è½½æˆåŠŸ: get_vocs_dataï¼ˆç«¯å£9092ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©ç¦»å­ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_ionicï¼ˆFâ»ã€Clâ»ã€NOâ‚ƒâ»ã€SOâ‚„Â²â»ã€Naâºã€Kâºã€NHâ‚„âºã€MgÂ²âºã€CaÂ²âºç­‰ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©ç¢³ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_carbonï¼ˆOC/ECç¢³è´¨ç»„åˆ†ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©åœ°å£³å…ƒç´ å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_crustalï¼ˆé“ã€ç¡…ã€é’™ã€é“ã€é’›ã€é’¾ç­‰ï¼‰
+2026-03-30 12:49:25 [info     ] PM2.5ç»„åˆ†åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_particulate_componentsï¼ˆClâ»ã€NOâ‚ƒâ»ã€SOâ‚„Â²â»ã€Naâºã€Kâºã€NHâ‚„âºã€MgÂ²âºã€CaÂ²âºã€OCã€ECï¼‰
+2026-03-30 12:49:25 [info     ] PM2.5å®Œæ•´ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: get_pm25_componentï¼ˆ32ä¸ªå› å­ï¼‰
+2026-03-30 12:49:25 [info     ] PM2.5é‡æ„åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_pm25_recoveryï¼ˆ7å¤§ç»„åˆ†ï¼‰
+2026-03-30 12:49:25 [info     ] OC/ECç¢³è´¨åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_oc_ec
+2026-03-30 12:49:25 [info     ] é‡é‡‘å±åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: get_heavy_metal
+2026-03-30 12:49:25 [info     ] PMFå·¥å…·åŠ è½½æˆåŠŸ: calculate_pm_pmfï¼ˆé¢—ç²’ç‰©ä¸“ç”¨ï¼‰
+2026-03-30 12:49:25 [info     ] PMFå·¥å…·åŠ è½½æˆåŠŸ: calculate_vocs_pmfï¼ˆVOCs/è‡­æ°§ä¸“ç”¨ï¼‰
+2026-03-30 12:49:25 [info     ] æ–°æ ‡å‡†ç»Ÿè®¡æŠ¥è¡¨å·¥å…·åŠ è½½æˆåŠŸ: query_new_standard_reportï¼ˆHJ 633-2024ï¼‰
+2026-03-30 12:49:25 [info     ] æ–°æ ‡å‡†æŠ¥è¡¨å¯¹æ¯”åˆ†æå·¥å…·åŠ è½½æˆåŠŸ: compare_standard_reportsï¼ˆå¯¹æ¯”ä¸¤ä¸ªæ—¶é—´æ®µçš„ç»Ÿè®¡æŒ‡æ ‡ï¼‰
+2026-03-30 12:49:25 [info     ] XcAiDbåŸå¸‚å†å²æ•°æ®æŸ¥è¯¢å·¥å…·åŠ è½½æˆåŠŸ: query_xcai_city_historyï¼ˆå…¨å›½åŸå¸‚å°æ—¶/æ—¥æ•°æ®ï¼‰
+2026-03-30 12:49:25 [info     ] é¢—ç²’ç‰©ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: calculate_reconstructionï¼ˆ7å¤§ç»„åˆ†é‡æ„ï¼‰
+2026-03-30 12:49:25 [info     ] ç¢³ç»„åˆ†å·¥å…·åŠ è½½æˆåŠŸ: calculate_carbonï¼ˆç¢³ç»„åˆ†åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] åœ°å£³å…ƒç´ å·¥å…·åŠ è½½æˆåŠŸ: calculate_crustalï¼ˆåœ°å£³å…ƒç´ åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] æ°´æº¶æ€§ç¦»å­å·¥å…·åŠ è½½æˆåŠŸ: calculate_solubleï¼ˆæ°´æº¶æ€§ç¦»å­åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] å¾®é‡å…ƒç´ å·¥å…·åŠ è½½æˆåŠŸ: calculate_traceï¼ˆå¾®é‡å…ƒç´ åˆ†æï¼‰
+2026-03-30 12:49:25 [info     ] æ™ºèƒ½å›¾è¡¨ç”Ÿæˆå·¥å…·åŠ è½½æˆåŠŸ: smart_chart_generator
+2026-03-30 12:49:25 [info     ] å›¾è¡¨ç”Ÿæˆå·¥å…·åŠ è½½æˆåŠŸ: generate_chart
+2026-03-30 12:49:25 [info     ] tool_registered                priority=10 tool=openmeteo_current total_tools=2
+2026-03-30 12:49:25 [info     ] tool_registered                priority=20 tool=weatherapi_com total_tools=2
+2026-03-30 12:49:25 [info     ] observed_weather_tools_registered tools=['openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com', 'openmeteo_current', 'weatherapi_com']
+2026-03-30 12:49:25 [info     ] get_react_agent_tool_registry_debug all_tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent'] has_unpack_office=True total_global_tools=71
+2026-03-30 12:49:25 [info     ] react_agent_tool_registry_created has_unpack_office=True tools=['read_data_registry', 'get_air_quality', 'get_current_weather', 'get_weather_situation_map', 'search_knowledge_base', 'get_weather_forecast', 'get_jining_regular_stations', 'query_gd_suncere_city_hour', 'query_gd_suncere_regional_comparison', 'query_gd_suncere_city_day', 'query_gd_suncere_report', 'query_gd_suncere_report_compare', 'query_standard_comparison', 'query_gd_suncere_city_day_new', 'query_gd_suncere_city_day_old_standard', 'query_new_standard_report', 'compare_standard_reports', 'query_old_standard_report', 'get_satellite_data', 'query_xcai_city_history', 'quick_trace_workflow', 'deep_trace_workflow', 'knowledge_qa_workflow', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_nearby_stations', 'download_gfs_data', 'process_gfs_data', 'analyze_upwind_enterprises', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'meteorological_trajectory_analysis', 'analyze_trajectory_sources', 'predict_air_quality', 'calculate_reconstruction', 'calculate_carbon', 'calculate_soluble', 'calculate_crustal', 'generate_chart', 'revise_chart', 'generate_map', 'smart_chart_generator', 'generate_aqi_calendar', 'read_docx', 'bash', 'execute_python', 'read_file', 'analyze_image', 'edit_file', 'grep', 'write_file', 'search_files', 'list_directory', 'add_ppt_slide', 'recalc_excel', 'accept_word_changes', 'find_replace_word', 'unpack_office', 'pack_office', 'schedule_task', 'send_notification', 'remember_fact', 'search_history', 'web_search', 'web_fetch', 'spawn', 'TodoWrite', 'validate_tool', 'call_sub_agent', 'get_observed_weather'] total_tools=72
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_jining_regular_stations
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_vocs_data
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_pm25_ionic
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_pm25_carbon
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=get_pm25_crustal
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_particulate_components
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_pm25_component
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_pm25_recovery
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_oc_ec
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=get_heavy_metal
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_pm_pmf
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_vocs_pmf
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=query_new_standard_report
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=compare_standard_reports
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=query_xcai_city_history
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_reconstruction
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_carbon
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_crustal
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=calculate_soluble
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=calculate_trace
+2026-03-30 12:49:25 [warning  ] tool_not_in_registry           expert_type=component message='Created wrapper for original tool (fallback mode)' tool_name=ml_predictor
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=smart_chart_generator
+2026-03-30 12:49:25 [debug    ] tool_wrapped_successfully      expert_type=component tool_name=generate_chart
+2026-03-30 12:49:25 [info     ] registered_tools_loaded        available_count=23 expert_type=component wrapped_count=16
+2026-03-30 12:49:25 [info     ] parameter_binder_initialized
+2026-03-30 12:49:25 [info     ] expert_executor_initialized    expert_type=component original_count=23 tools=['get_jining_regular_stations', 'get_vocs_data', 'get_pm25_ionic', 'get_pm25_carbon', 'get_pm25_crustal', 'get_particulate_components', 'get_pm25_component', 'get_pm25_recovery', 'get_oc_ec', 'get_heavy_metal', 'calculate_pm_pmf', 'calculate_vocs_pmf', 'query_new_standard_report', 'compare_standard_reports', 'query_xcai_city_history', 'calculate_reconstruction', 'calculate_carbon', 'calculate_crustal', 'calculate_soluble', 'calculate_trace', 'ml_predictor', 'smart_chart_generator', 'generate_chart'] wrapped_count=23
+âœ… query_xcai_city_history å·¥å…·å·²æ³¨å†Œ
+âŒ å·¥å…·æ³¨å†Œæ£€æŸ¥å¤±è´¥: 'function' object has no attribute 'name'
 
-================================================================================
-²âÊÔÍê³É!
-================================================================================
+============================================================
+æµ‹è¯•6: ExpertPlanGenerator å·¥å…·é…ç½®
+============================================================
+2026-03-30 12:49:25 [info     ] expert_plan_generator_initialized
+âœ… query_xcai_city_history åœ¨ TOOL_SPECS ä¸­
+   - param_type: structured
+   - required_params: ['cities', 'data_type', 'start_time', 'end_time']
+âœ… get_air_quality å·²ä» TOOL_SPECS ä¸­ç§»é™¤
 
-Ô¤ÆÚĞĞÎª:
-1. ´ò¿ª Word ÎÄµµ³É¹¦
-2. ÌáÈ¡ËùÓĞÄÚÇ¶Í¼Æ¬ (InlineShapes)
-3. ±£´æÎª PNG ¸ñÊ½µ½ backend_data_registry/temp_images
-4. ·µ»ØÍ¼Æ¬ÁĞ±í (°üº¬ index, path, width, height)
-5. ÅäºÏ analyze_image ¹¤¾ß½øĞĞÍ¼Æ¬·ÖÎö
+============================================================
+æµ‹è¯•æ€»ç»“
+============================================================
+âœ… PASS: MemoryManager åˆå§‹åŒ–
+âœ… PASS: DataContextManager åˆ›å»º
+âœ… PASS: ExpertRouterV3 åˆå§‹åŒ–
+âœ… PASS: station_info.json æ–‡ä»¶
+âŒ FAIL: query_xcai_city_history å·¥å…·
+âœ… PASS: ExpertPlanGenerator é…ç½®
 
-Ê¹ÓÃÊ¾Àı:
-  word_processor(path="doc.docx", operation="extract_images")
-  ¡ú ·µ»ØÍ¼Æ¬ÁĞ±í
-  analyze_image(path="doc_image_0.png", operation="analyze")
-  ¡ú ·ÖÎöÑ¡ÖĞµÄÍ¼Æ¬
+æ€»è®¡: 5/6 é€šè¿‡
+
+âš ï¸  1 ä¸ªæµ‹è¯•å¤±è´¥ï¼Œéœ€è¦è¿›ä¸€æ­¥æ£€æŸ¥

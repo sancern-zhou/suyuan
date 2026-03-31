@@ -77,12 +77,6 @@ except ImportError as e:
     print(f"Failed to import QuickTraceWorkflow: {e}")
 
 try:
-    from .standard_analysis_workflow import StandardAnalysisWorkflow
-    register_workflow_tool(StandardAnalysisWorkflow)
-except ImportError as e:
-    print(f"Failed to import StandardAnalysisWorkflow: {e}")
-
-try:
     from .deep_trace_workflow import DeepTraceWorkflow
     register_workflow_tool(DeepTraceWorkflow)
 except ImportError as e:

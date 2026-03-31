@@ -232,10 +232,10 @@ class GetPM25IonicTool(LLMTool):
             logger.info("pm25_ionic_filtered", original_count=len(records), filtered_count=len(records))
 
             # 保存数据到上下文
-            data_ref = None
+            data_id = None
             file_path = None
             try:
-                data_ref = context.save_data(
+                data_id = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -249,8 +249,6 @@ class GetPM25IonicTool(LLMTool):
                         "time_type": time_type
                     }
                 )
-                data_id = data_ref["data_id"]
-                file_path = data_ref["file_path"]
             except Exception as save_error:
                 logger.warning("pm25_ionic_save_failed", error=str(save_error))
 

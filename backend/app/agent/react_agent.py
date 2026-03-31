@@ -68,9 +68,9 @@ class ReActAgent:
         self._session_store: Dict[str, Dict[str, Any]] = {}
         self._session_lock = asyncio.Lock()
 
-        # 初始化任务列表（用于任务管理工具）
-        from .task.task_list import TaskList
-        self.task_list = TaskList()
+        # 初始化任务列表（用于 TodoWrite 工具）
+        from .task.todo_models import TodoList
+        self.task_list = TodoList()
 
         # 初始化工具执行器
         self.executor = ToolExecutor(tool_registry=tool_registry)
@@ -96,39 +96,13 @@ class ReActAgent:
         """
         注册工作流工具到工具注册表
 
-        标准分析工作流需要依赖注入（memory_manager和event_callback），
-        因此在ReActAgent初始化时延迟注册。
+        工作流工具已通过 workflow_tool 模块自动注册，
+        此方法保留用于未来需要依赖注入的工作流工具。
         """
-        try:
-            from app.tools.workflow.standard_analysis_workflow import StandardAnalysisWorkflow
-
-            # 创建一个异步函数来延迟创建StandardAnalysisWorkflow实例
-            # 这样每次调用时会获取当前的memory_manager和event_callback
-            async def standard_analysis_workflow_wrapper(**kwargs):
-                """延迟创建实例并执行"""
-                # 从当前会话获取memory_manager和event_callback
-                session_id = kwargs.get('session_id')
-                memory_manager = None
-                event_callback = None
-
-                # 尝试从session_store获取memory_manager
-                if session_id and session_id in self._session_store:
-                    memory_manager = self._session_store[session_id].get('memory')
-
-                # 创建StandardAnalysisWorkflow实例
-                workflow = StandardAnalysisWorkflow(
-                    memory_manager=memory_manager,
-                    event_callback=event_callback
-                )
-                return await workflow.execute(**kwargs)
-
-            # 注册工作流工具
-            self.executor.register_tool("standard_analysis_workflow", standard_analysis_workflow_wrapper)
-
-            logger.info("workflow_tool_registered", tool="standard_analysis_workflow")
-
-        except ImportError as e:
-            logger.warning("workflow_tool_import_failed", tool="standard_analysis_workflow", error=str(e))
+        # 工作流工具现在通过 app.tools.workflow 模块自动注册
+        # 复杂的工作流（standard_analysis_workflow、quick_tracing_workflow）已删除
+        # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + TodoWrite）
+        pass
 
     async def analyze(
         self,
@@ -233,7 +207,7 @@ class ReActAgent:
             # 工具池包括：
             # - 原子工具（基础能力）
             # - 工作流工具（高级能力）
-            # - 多专家系统（通过 call_llm_tool 调用 ExpertRouterV3）
+            # - 任务清单驱动流程（Agent 读取 md 模板 + TodoWrite）
             react_loop = ReActLoop(
                 memory_manager=memory_manager,
                 llm_planner=self.planner,
@@ -301,6 +275,25 @@ class ReActAgent:
                 }
             }
         finally:
+            # 同步 office_documents 到会话对象
+            if actual_session_id and actual_session_id in self._session_store:
+                office_docs = self._session_store[actual_session_id].get("office_documents", [])
+                if office_docs:
+                    try:
+                        from app.agent.session import get_session_manager
+                        session_manager = get_session_manager()
+                        session = session_manager.load_session(actual_session_id)
+                        if session:
+                            session.office_documents = office_docs
+                            session_manager.save_session(session)
+                            logger.info("office_documents_synced_to_session",
+                                       session_id=actual_session_id,
+                                       count=len(office_docs))
+                    except Exception as e:
+                        logger.warning("failed_to_sync_office_documents",
+                                      session_id=actual_session_id,
+                                      error=str(e))
+
             await self._mark_session_used(actual_session_id)
 
     def register_tool(self, name: str, func):

@@ -416,12 +416,12 @@ async def execute_query_city_day_new_standard(
         return {
             "status": "success",
             "success": True,
-            "data": standardized_records[:50],  # 返回前50条供预览
+            "data": standardized_records[:24],  # 返回前24条供预览
             "metadata": {
                 "tool_name": "query_gd_suncere_city_day_new",
                 "data_id": data_id,
                 "total_records": len(standardized_records),
-                "returned_records": min(50, len(standardized_records)),
+                "returned_records": min(24, len(standardized_records)),
                 "cities": cities,
                 "date_range": f"{start_date} to {end_date}",
                 "standard": "HJ 633-2024",  # 标记为新标准

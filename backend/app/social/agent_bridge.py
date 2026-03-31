@@ -469,19 +469,37 @@ class AgentBridge:
         """
         import re
         from pathlib import Path
+        from app.services.image_cache import get_image_cache
 
         media_files = []
+
+        logger.debug("extracting_media_files_start",
+                    content_length=len(content),
+                    content_preview=content[:200])
 
         # 1. 提取图片URL（/api/image/{image_id}）
         # 支持 Markdown 图片语法：![描述](/api/image/xxx) 和普通链接：[描述](/api/image/xxx)
         image_pattern = r'!?\[.*?\]\(/api/image/([a-zA-Z0-9_-]+)\)'
-        for match in re.finditer(image_pattern, content):
+        matches = list(re.finditer(image_pattern, content))
+        logger.debug("image_pattern_matches", count=len(matches))
+
+        for match in matches:
             image_id = match.group(1)
-            # 转换为实际文件路径
-            image_path = f"backend_data_registry/images/{image_id}.png"
+            # 使用 ImageCache 获取正确的缓存目录（绝对路径）
+            cache = get_image_cache()
+            image_path = f"{cache.cache_dir}/{image_id}.png"
+            logger.debug("checking_image_file",
+                        image_id=image_id,
+                        image_path=image_path,
+                        exists=Path(image_path).exists())
             if Path(image_path).exists():
                 media_files.append(image_path)
-                logger.debug("image_extracted", image_id=image_id, path=image_path)
+                logger.info("image_extracted", image_id=image_id, path=image_path)
+            else:
+                logger.warning("image_file_not_found",
+                             image_id=image_id,
+                             expected_path=image_path,
+                             cache_dir=cache.cache_dir)
 
         # 2. 提取本地文档路径
         # 匹配常见文档格式：.docx, .xlsx, .pptx, .pdf, .md（支持 Office 文档和 Markdown）

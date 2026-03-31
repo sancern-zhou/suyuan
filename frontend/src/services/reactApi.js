@@ -17,7 +17,7 @@ class ReactAgentAPI {
       .replace(/\b-Infinity\b/g, 'null')
   }
 
-  // 流式分析
+  // 流式分析（新架构）
   async analyze(query, options = {}) {
     const {
       sessionId = null,
@@ -50,6 +50,37 @@ class ReactAgentAPI {
       attachments: attachments  // ✅ 传递附件列表
     }
 
+    return this._streamRequest(url, body, onEvent)
+  }
+
+  // ✅ 新增：ExpertRouterV3 多专家并行快速溯源（旧架构）
+  async analyzeV3(query, options = {}) {
+    const {
+      sessionId = null,
+      precision = 'standard',  // fast/standard/full
+      enableCheckpoint = false,
+      onEvent
+    } = options
+
+    // 取消之前的请求
+    if (this.controller) {
+      this.controller.abort()
+    }
+    this.controller = new AbortController()
+
+    const url = `${API_BASE_URL}/agent/analyze-v3`
+    const body = {
+      query,
+      session_id: sessionId,
+      precision: precision,
+      enable_checkpoint: enableCheckpoint
+    }
+
+    return this._streamRequest(url, body, onEvent)
+  }
+
+  // ✅ 新增：内部方法 - 统一的SSE流处理
+  async _streamRequest(url, body, onEvent) {
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -151,33 +182,19 @@ class ReactAgentAPI {
 
     try {
       const response = await fetch(url)
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
+
       return await response.json()
     } catch (error) {
-      console.error('Get tools failed:', error)
+      console.error('Failed to get tools:', error)
       throw error
     }
   }
 
-  // 健康检查
-  async healthCheck() {
-    const url = `${API_BASE_URL}/agent/health`
-
-    try {
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      return await response.json()
-    } catch (error) {
-      console.error('Health check failed:', error)
-      throw error
-    }
-  }
-
-  // 取消当前请求
+  // 取消请求
   cancel() {
     if (this.controller) {
       this.controller.abort()
@@ -186,14 +203,5 @@ class ReactAgentAPI {
   }
 }
 
-// 创建实例
-export const reactAgentApi = new ReactAgentAPI()
-
-// 导出便捷方法
-export const agentAPI = {
-  analyze: (query, options) => reactAgentApi.analyze(query, options),
-  simpleQuery: (query, maxIterations) => reactAgentApi.simpleQuery(query, maxIterations),
-  getTools: () => reactAgentApi.getTools(),
-  healthCheck: () => reactAgentApi.healthCheck(),
-  cancel: () => reactAgentApi.cancel()
-}
+// 导出单例
+export const agentAPI = new ReactAgentAPI()

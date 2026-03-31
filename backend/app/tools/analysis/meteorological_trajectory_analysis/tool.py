@@ -21,7 +21,6 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import structlog
-import os
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.external_apis.noaa_hysplit_api import NOAAHysplitAPI
@@ -30,9 +29,6 @@ if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
-
-# 从环境变量获取后端服务器地址
-BACKEND_HOST = os.getenv("BACKEND_HOST", "http://localhost:8000")
 
 
 class MeteorologicalTrajectoryAnalysisTool(LLMTool):
@@ -334,7 +330,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
             except Exception as pblh_error:
                 logger.debug("pblh_extraction_failed", error=str(pblh_error))
 
-            # 提取本地轨迹图片URL（从visuals中，拼接完整URL）
+            # 提取本地轨迹图片URL（从visuals中）
             trajectory_image_url = "N/A"
             if visuals and len(visuals) > 0:
                 # 从visual的payload或meta中提取相对路径
@@ -347,20 +343,15 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                     None
                 )
 
-                # 拼接完整URL
+                # 【修复】直接使用相对路径，不拼接BACKEND_HOST
+                # 让前端通过vite代理或同域访问
                 if image_relative_path:
-                    if image_relative_path.startswith("/api/image/"):
-                        # 本地ImageCache路径，拼接backend_host
-                        trajectory_image_url = f"{BACKEND_HOST}{image_relative_path}"
-                    else:
-                        # 其他路径（如完整URL），直接使用
-                        trajectory_image_url = image_relative_path
+                    trajectory_image_url = image_relative_path
 
                 logger.info("local_trajectory_image_url_extracted",
                            relative_path=image_relative_path,
-                           full_url=trajectory_image_url,
-                           visual_id=first_visual.get("id"),
-                           backend_host=BACKEND_HOST)
+                           final_url=trajectory_image_url,
+                           visual_id=first_visual.get("id"))
 
             detailed_summary = self._format_trajectory_for_llm(
                 endpoints=endpoints,

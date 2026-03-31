@@ -44,36 +44,46 @@ ASSISTANT_TOOLS = {
 # ===== 专家模式工具 =====
 EXPERT_TOOLS = {
     # 数据查询工具（自然语言查询）
-    "get_air_quality": "查询全国空气质量（自然语言查询）。参数: question(str)",
-    "get_vocs_data": "查询VOCs组分数据（自然语言查询）。参数: question(str)",
-    "get_pm25_ionic": "查询PM2.5水溶性离子。参数: start_time(str), end_time(str)",
-    "get_pm25_carbon": "查询PM2.5碳组分。参数: start_time(str), end_time(str)",
-    "get_pm25_crustal": "查询PM2.5地壳元素。参数: start_time(str), end_time(str)",
-    "get_weather_data": "查询气象数据。参数: data_type(str), start_time(str), end_time(str)",
+    "get_vocs_data": "查询VOCs组分数据（自然语言查询，支持时间、站点、物种等过滤）。⚠️ 必需参数: question(str, 自然语言查询问题)",
+    "get_pm25_ionic": "查询PM2.5水溶性离子（F⁻、Cl⁻、NO₂⁻、NO₃⁻、SO₄²⁻、PO₄³⁻、Li⁺、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、Al³⁺等）。⚠️ 必需参数: locations(list, 城市名/站点名, 自动映射), start_time(str), end_time(str)。可选: data_type(int, 0=原始/1=审核), time_granularity(int, 1=小时/2=日/3=月/5=年)",
+    "get_pm25_carbon": "查询PM2.5碳组分（有机碳OC、元素碳EC）。⚠️ 必需参数: locations(list, 城市名/站点名, 自动映射), start_time(str), end_time(str)。可选: data_type(int, 0=原始/1=审核), time_granularity(int, 1=小时/2=日/3=月/5=年)",
+    "get_pm25_crustal": "查询PM2.5地壳元素（铝Al、硅Si、钙Ca、铁Fe、钛Ti、钾K等）。⚠️ 必需参数: locations(list, 城市名/站点名, 自动映射), start_time(str), end_time(str)。可选: data_type(int, 默认1=审核), time_granularity(int, 默认0=小时), elements(list, 元素列表, 默认['Al','Si','Fe','Ca','Ti','Mn'])",
+    "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
+
+    # 全国城市历史数据查询工具
+    "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
+    "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
+    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
+    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "query_standard_comparison": "新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str)",
+    "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
 
     # 分析工具（需先获取数据）
     "calculate_pm_pmf": "PM2.5 PMF源解析（需先调用get_pm25_ionic和get_pm25_carbon获取数据）。参数: data_ids(list), n_factors(int, 可选, 默认5)",
     "calculate_vocs_pmf": "VOCs PMF源解析（需先调用get_vocs_data获取数据）。参数: data_id(str), n_factors(int, 可选, 默认5)",
     "calculate_pmf": "PMF源解析（需先调用get_pm25_ionic和get_pm25_carbon获取数据）。参数: data_id(str), n_factors(int, 可选, 默认5)",
-    "calculate_obm_ofp": "OBM/OFP分析（需先调用get_vocs_data、get_air_quality获取数据）。参数: vocs_data_id(str), air_quality_data_id(str)",
-    "analyze_upwind_enterprises": "上风向企业分析（需先调用get_weather_data获取气象数据）。参数: lat(float), lon(float), start_time(str) [其他参数详见工具文档]",
-    "meteorological_trajectory_analysis": "后向轨迹分析（独立工具，直接输入参数）。参数: lat(float), lon(float), start_time(str), hours(int, 可选, 默认72)",
-    "analyze_trajectory_sources": "轨迹+源清单深度溯源（独立工具，直接输入参数）。参数: lat(float), lon(float), start_time(str) [其他参数详见工具文档]",
+    "calculate_obm_ofp": "OBM/OFP分析（需先调用get_vocs_data获取数据）。⚠️ 必需参数: vocs_data_id(str)。可选: air_quality_data_id(str, 空气质量数据ID)",
+    "analyze_upwind_enterprises": "上风向企业分析（独立工具，直接输入参数）。⚠️ 必需参数: lat(float), lon(float), start_time(str)。可选: city_name(str, 城市名称), station_name(str, 站点名称), search_range_km(float, 搜索半径km, 默认5), max_enterprises(int, 最大企业数, 默认10), top_n(int, 显示前N个, 默认8), map_type(str, 地图类型, 默认normal), mode(str, 分析模式, 默认topn_mixed)",
+    "meteorological_trajectory_analysis": "后向轨迹分析（独立工具，直接输入参数，基于NOAA HYSPLIT模型）。⚠️ 必需参数: lat(float), lon(float), start_time(str)。可选: hours(int, 后向小时数, 默认72), height(float, 起始高度m, 默认500), meteorological_data(str, 气象数据类型, 默认era5)",
+    "analyze_trajectory_sources": "轨迹+源清单深度溯源（独立工具，结合后向轨迹和排放源清单）。⚠️ 必需参数: lat(float), lon(float), start_time(str)。可选: city_name(str), station_name(str), hours(int, 默认72), height(float, 默认500), meteorological_data(str, 默认era5), pollutant(str, 默认PM2_5)",
     "calculate_reconstruction": "PM2.5七大组分重构（需先调用get_pm25_ionic、get_pm25_carbon、get_pm25_crustal获取数据）。参数: ionic_data_id(str), carbon_data_id(str), crustal_data_id(str)",
     "calculate_carbon": "碳组分分析POC/SOC/EC（需先调用get_pm25_carbon获取数据）。参数: data_id(str)",
     "calculate_soluble": "水溶性离子分析（需先调用get_pm25_ionic获取数据）。参数: data_id(str)",
     "calculate_crustal": "地壳元素分析（需先调用get_pm25_crustal获取数据）。参数: data_id(str)",
     "calculate_trace": "微量元素分析（需先调用get_pm25_crustal获取数据）。参数: data_id(str)",
-    "predict_air_quality": "空气质量预测（需先调用get_air_quality获取至少7天数据）。参数: city(str), days(int, 可选, 默认7)",
+    "predict_air_quality": "空气质量预测（需先获取历史空气质量数据）。参数: city(str), days(int, 可选, 默认7)",
 
     # 可视化工具
-    "generate_chart": "生成标准图表（15种类型）。参数: chart_type(str), data(list) [其他参数详见工具文档]",
-    "smart_chart_generator": "智能图表生成（需data_id）。参数: data_id(str)",
-    "revise_chart": "修订已生成图表（需chart_id）。参数: chart_id(str), revision_instruction(str)",
-    "generate_map": "生成地图可视化（需站点坐标）。参数: locations(list), map_type(str, 可选, 默认scatter)",
+    "generate_chart": "生成标准图表（15种类型：pie/bar/line/timeseries/wind_rose/profile/scatter3d/surface3d/heatmap/radar/map等）。⚠️ 必需参数: chart_type(str), data(list或dict)。可选: title(str), x_field(str), y_field(str), meta(dict)",
+    "smart_chart_generator": "智能图表生成（自动选择图表类型和数据可视化）。⚠️ 必需参数: data_id(str, 数据ID)",
+    "revise_chart": "修订已生成图表（基于用户反馈调整图表）。⚠️ 必需参数: chart_id(str), revision_instruction(str, 修订说明)",
+    "generate_map": "生成地图可视化（高德地图，展示站点位置和污染分布）。⚠️ 必需参数: locations(list, 站点列表, 每个站点包含lat/lon)。可选: map_type(str, 地图类型: scatter/heatmap/bubble, 默认scatter), center_lat/center_lon(float, 地图中心), zoom(int, 缩放级别, 默认10)",
 
     # 任务管理
-    "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
+    "TodoWrite": "更新任务清单（完整替换）。⚠️ 溯源分析任务必须使用: TodoWrite(task_list_file='backend/config/task_lists/quick_trace_standard_multi_agent.md')，不要手动输入items（会丢失详细信息）",
 
     # 其他
     "call_sub_agent": "调用助手Agent。参数: target_mode(str), task_description(str)",
@@ -90,8 +100,10 @@ QUERY_TOOLS = {
     "get_pm25_ionic": "查询PM2.5水溶性离子。参数: start_time(str), end_time(str), locations(可选)",
     "get_pm25_carbon": "查询PM2.5碳组分。参数: start_time(str), end_time(str), locations(可选)",
     "get_pm25_crustal": "查询PM2.5地壳元素。参数: start_time(str), end_time(str), locations(可选)",
-    "get_weather_data": "查询气象数据。参数: data_type(str), start_time(str), end_time(str), lat/lon(可选)",
-    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
+    "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
+    "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
+    "get_quality_control_records": "查询质控例行检查记录（结构化查询）。参数: city(str, 可选), station(str, 可选), qc_item(str, 可选), qc_result(str, 可选), start_date(str, 可选), end_date(str, 可选), only_abnormal(bool, 可选), aggregate_by(str, 可选), limit(int, 可选, 默认50)",
+    "get_quality_control_records_nl": "查询质控例行检查记录（自然语言查询，支持复杂条件、极值查询、多字段筛选）。⚠️ 必需参数: question(str, 自然语言问题)。可选: limit(int, 默认50)",
     "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
@@ -105,8 +117,13 @@ QUERY_TOOLS = {
     # === 数据分析工具 ===
     "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
 
+    # === 知识库检索（预报会商场景） ===
+    "search_knowledge_base": "检索会商记录、模型参数、历史案例等知识库内容。参数: query(str), knowledge_base_ids(list, 可选, 指定会商知识库ID), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5), filters(dict, 可选, 元数据过滤), use_reranker(bool, 可选, 默认true)",
+
     # === 可视化工具 ===
     "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_new_standard_report等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
+    "generate_chart": "生成标准图表（15种类型：pie/bar/line/timeseries/wind_rose/profile/scatter3d/surface3d/heatmap/radar/map等）。参数: chart_type(str), data(list或dict) [其他参数详见工具文档]",
+    "smart_chart_generator": "智能图表生成（需data_id，自动选择图表类型）。参数: data_id(str)",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -121,7 +138,7 @@ REPORT_TOOLS = {
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
 
     # 数据查询工具（直接调用，支持并发）
-    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
+    "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
     "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
@@ -141,6 +158,33 @@ REPORT_TOOLS = {
 
     # 代码执行
     "execute_python": "执行 Python 代码（用于生成文档、数据处理、可视化）。参数: code(str), timeout(int, 可选, 默认30)",
+
+    # 模式互调
+    "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
+}
+
+# ===== 图表模式工具（基于已保存数据生成图表） =====
+CHART_TOOLS = {
+    # 数据查询工具（广东省数据）
+    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
+    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
+    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
+    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
+    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+
+    # 数据读取
+    "read_data_registry": "读取已保存的数据。⚠️ **图表模式应该只使用 list_fields=true 获取数据结构**，然后在 execute_python 代码中自己读取 JSON 文件（禁止硬编码数据）。参数: data_id(str), list_fields(bool, **图表模式下设为 true**)",
+
+    # 文件操作
+    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "write_file": "写入文件内容。参数: path(str), content(str)",
+    "list_directory": "列出目录内容。参数: path(str)",
+
+    # 代码执行
+    "execute_python": "执行 Python 代码（用于生成 Matplotlib 图表）。参数: code(str), timeout(int, 可选, 默认30)",
+
+    # 任务管理
+    "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 
     # 模式互调
     "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
@@ -170,7 +214,10 @@ SOCIAL_TOOLS = {
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str)",
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
     "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
-    "get_weather_data": "查询气象数据。参数: data_type(str), start_time(str), end_time(str)",
+    "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
+
+    # === 可视化 ===
+    "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_new_standard_report等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
 
     # === 模式互调 ===
     "call_sub_agent": "调用子Agent（code=编程任务, expert=数据分析）。参数: target_mode(str), task_description(str), context_data(dict, 可选)",
@@ -226,9 +273,17 @@ ASSISTANT_TOOL_ORDER = [
 
 EXPERT_TOOL_ORDER = [
     # 查询工具
-    "get_air_quality",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_data",
+    "get_weather_forecast",
+
+    # 广东省结构化查询工具
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day", "query_gd_suncere_city_day_new",
+    "query_new_standard_report", "query_old_standard_report",
+    "query_standard_comparison", "compare_standard_reports",
+    "query_xcai_city_history",  # 全国城市历史数据（XcAiDb SQL Server）
+    "read_data_registry",
+    "aggregate_data",
 
     # 分析工具
     "calculate_pm_pmf", "calculate_vocs_pmf", "calculate_pmf",
@@ -273,7 +328,10 @@ QUERY_TOOL_ORDER = [
 
     # 参数化查询工具
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_data",
+    "get_weather_forecast",
+    "query_xcai_city_history",
+    "get_quality_control_records",
+    "get_quality_control_records_nl",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day", "query_gd_suncere_city_day_new", "query_gd_suncere_regional_comparison",
     "query_gd_suncere_report", "query_gd_suncere_report_compare",
     "query_new_standard_report",  # 新标准统计报表
@@ -284,8 +342,13 @@ QUERY_TOOL_ORDER = [
     # 数据分析工具
     "aggregate_data",
 
+    # 知识库检索（预报会商场景）
+    "search_knowledge_base",
+
     # 可视化工具
     "generate_aqi_calendar",
+    "generate_chart",
+    "smart_chart_generator",
 
     # 数据注册表
     "read_data_registry",
@@ -326,6 +389,33 @@ REPORT_TOOL_ORDER = [
     "call_sub_agent",
 ]
 
+# ===== 图表模式工具排序 =====
+CHART_TOOL_ORDER = [
+    # 数据查询工具（广东省数据）
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day_new",
+    "query_new_standard_report",
+    "query_old_standard_report",
+    "compare_standard_reports",
+
+    # 数据读取
+    "read_data_registry",
+
+    # 文件操作
+    "read_file",
+    "write_file",
+    "list_directory",
+
+    # 代码执行
+    "execute_python",
+
+    # 任务管理
+    "TodoWrite",
+
+    # 模式互调
+    "call_sub_agent",
+]
+
 # ===== 社交模式工具排序 =====
 SOCIAL_TOOL_ORDER = [
     # 系统操作
@@ -347,7 +437,10 @@ SOCIAL_TOOL_ORDER = [
     "query_gd_suncere_city_day_new",
     "query_new_standard_report",
     "compare_standard_reports",
-    "get_weather_data",
+    "get_weather_forecast",
+
+    # 可视化
+    "generate_aqi_calendar",  # AQI日历热力图
 
     # 知识库检索
     "search_knowledge_base",
@@ -378,7 +471,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具列表
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report" | "social"
+        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart"
 
     Returns:
         工具字典 {tool_name: description}
@@ -395,6 +488,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return REPORT_TOOLS
     elif mode == "social":
         return SOCIAL_TOOLS
+    elif mode == "chart":
+        return CHART_TOOLS
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -404,7 +499,7 @@ def get_tool_order(mode: str) -> List[str]:
     根据模式获取工具排序
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report" | "social"
+        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart"
 
     Returns:
         工具名称列表（按展示顺序）
@@ -421,5 +516,7 @@ def get_tool_order(mode: str) -> List[str]:
         return REPORT_TOOL_ORDER
     elif mode == "social":
         return SOCIAL_TOOL_ORDER
+    elif mode == "chart":
+        return CHART_TOOL_ORDER
     else:
         raise ValueError(f"Unknown mode: {mode}")

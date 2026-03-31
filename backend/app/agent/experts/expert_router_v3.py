@@ -21,7 +21,7 @@ from datetime import datetime
 from app.agent.core.structured_query_parser import StructuredQuery, StructuredQueryParser
 from app.agent.core.expert_plan_generator import ExpertPlanGenerator, ExpertTask
 from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
-from app.agent.task import TaskList, TaskStatus
+from app.agent.task import OldTaskList as TaskList, TaskStatus
 from app.agent.session import SessionManager, Session, SessionState, get_session_manager
 from .expert_executor import ExpertResult
 from .weather_executor import WeatherExecutor
@@ -208,7 +208,15 @@ class ExpertRouterV3:
             session = self.session_manager.load_session(session_id)
             if not session:
                 logger.warning(f"Session {session_id} not found, creating new session")
-                session_id = f"session_{uuid.uuid4().hex[:8]}"
+                # ✅ 保留原有模式前缀（如 tracing_session_xxx -> tracing_session_yyy）
+                mode_prefix = ""
+                if "_" in session_id:
+                    # 提取模式前缀（如 tracing_session, expert_session, assistant_session）
+                    parts = session_id.split("_")
+                    if len(parts) >= 2 and parts[1] == "session":
+                        mode_prefix = f"{parts[0]}_"
+
+                session_id = f"{mode_prefix}session_{uuid.uuid4().hex[:8]}"
                 session = Session(session_id=session_id, query=user_query)
         else:
             session_id = f"session_{uuid.uuid4().hex[:8]}"
@@ -285,6 +293,10 @@ class ExpertRouterV3:
             session.task_list_file = f"{session_id}_tasks.json"
             session.metadata["selected_experts"] = result.selected_experts
             session.metadata["parsed_query"] = parsed_query.dict()
+            # ✅ 保存模式信息（从session_id提取，如 tracing_session_xxx -> tracing）
+            if "_" in session_id:
+                mode = session_id.split("_")[0]
+                session.metadata["mode"] = mode
             self.session_manager.save_session(session)
 
             logger.info(
@@ -295,12 +307,12 @@ class ExpertRouterV3:
 
             # 发送任务列表创建事件
             if self.event_callback:
-                task_summaries = self.task_list.get_task_summaries(session_id)
+                task_summaries = self.task_list.get_all_tasks()
                 self.event_callback({
                     "type": "task_list_created",
                     "data": {
                         "session_id": session_id,
-                        "tasks": [t.model_dump() for t in task_summaries]
+                        "tasks": [t.dict() for t in task_summaries]
                     }
                 })
 
@@ -437,9 +449,60 @@ class ExpertRouterV3:
             session.state = SessionState.COMPLETED
             session.completed_at = datetime.now()
             session.data_ids = result.data_ids
-            session.visual_ids = [v.get("id") for v in result.visuals if v.get("id")]
+
+            # ✅ 修复：确保visual_ids只存储字符串ID（不存储字典对象）
+            visual_ids = []
+            for v in result.visuals:
+                visual_id = v.get("id", "")
+                # 处理字典类型的id
+                if isinstance(visual_id, dict):
+                    # 提取image_id或id字段（字符串）
+                    if "image_id" in visual_id:
+                        visual_id = visual_id["image_id"]
+                    elif "id" in visual_id and isinstance(visual_id["id"], str):
+                        visual_id = visual_id["id"]
+                    else:
+                        # 无法提取有效ID，跳过
+                        logger.warning(
+                            "visual_id_is_dict_without_valid_id",
+                            visual_id_keys=list(visual_id.keys())
+                        )
+                        continue
+                # 只添加字符串ID
+                if visual_id and isinstance(visual_id, str):
+                    visual_ids.append(visual_id)
+
+            session.visual_ids = visual_ids
+
+            # ✅ 保存完整的可视化数据（用于前端恢复）
+            # 按专家类型分组，方便前端展示
+            session.metadata["visualizations"] = result.visuals  # 保存完整的visuals数据
+            session.metadata["visuals_count"] = len(result.visuals)
+
             session.metadata["final_status"] = result.status
             session.metadata["confidence"] = result.confidence
+
+            # ✅ 保存对话历史（用于前端恢复）
+            session.conversation_history = [
+                {
+                    "role": "user",
+                    "content": result.query,
+                    "timestamp": session.created_at.isoformat()
+                },
+                {
+                    "role": "assistant",
+                    "content": result.final_answer,
+                    "timestamp": datetime.now().isoformat(),
+                    "metadata": {
+                        "status": result.status,
+                        "confidence": result.confidence,
+                        "experts": result.selected_experts,
+                        "data_ids": result.data_ids,
+                        "visual_ids": visual_ids
+                    }
+                }
+            ]
+
             self.session_manager.save_session(session)
 
             logger.info(
@@ -507,9 +570,9 @@ class ExpertRouterV3:
             if expert_type not in expert_tasks:
                 # 标记任务失败
                 if self.task_list.get_task(task_id):
-                    self.task_list.update_task(
+                    self.task_list.update_task_status(
                         task_id,
-                        status=TaskStatus.FAILED,
+                        TaskStatus.FAILED,
                         error_message="No task generated"
                     )
 
@@ -525,9 +588,9 @@ class ExpertRouterV3:
             if not executor:
                 # 标记任务失败
                 if self.task_list.get_task(task_id):
-                    self.task_list.update_task(
+                    self.task_list.update_task_status(
                         task_id,
-                        status=TaskStatus.FAILED,
+                        TaskStatus.FAILED,
                         error_message=f"Executor not found: {expert_type}"
                     )
 
@@ -539,7 +602,7 @@ class ExpertRouterV3:
 
             # 标记任务开始
             if self.task_list.get_task(task_id):
-                self.task_list.update_task(task_id, status=TaskStatus.IN_PROGRESS, progress=0)
+                self.task_list.update_task_status(task_id, TaskStatus.IN_PROGRESS)
 
             # 发送单个专家开始事件
             if self.event_callback:
@@ -564,13 +627,7 @@ class ExpertRouterV3:
 
                 # 标记任务完成
                 if self.task_list.get_task(task_id):
-                    result_data_id = result.data_ids[0] if result.data_ids else None
-                    self.task_list.update_task(
-                        task_id,
-                        status=TaskStatus.COMPLETED,
-                        progress=100,
-                        result_data_id=result_data_id
-                    )
+                    self.task_list.update_task_status(task_id, TaskStatus.COMPLETED)
 
                 # 发送专家完成事件
                 if self.event_callback:
@@ -596,9 +653,9 @@ class ExpertRouterV3:
 
                 # 标记任务失败
                 if self.task_list.get_task(task_id):
-                    self.task_list.update_task(
+                    self.task_list.update_task_status(
                         task_id,
-                        status=TaskStatus.FAILED,
+                        TaskStatus.FAILED,
                         error_message=str(e)
                     )
 
@@ -669,11 +726,20 @@ class ExpertRouterV3:
                     if not isinstance(visual, dict):
                         continue
                     visual_id = visual.get("id")
+
+                    # 提取字符串 ID 用于去重
+                    visual_id_key = None
+                    if isinstance(visual_id, dict):
+                        visual_id_key = visual_id.get("image_id") or visual_id.get("id")
+                    elif isinstance(visual_id, str):
+                        visual_id_key = visual_id
+
                     # 去重
-                    if visual_id and visual_id in seen_ids:
+                    if visual_id_key and visual_id_key in seen_ids:
                         continue
-                    if visual_id:
-                        seen_ids.add(visual_id)
+                    if visual_id_key:
+                        seen_ids.add(visual_id_key)
+
                     # 添加来源专家信息
                     visual["expert"] = expert_type
                     all_visuals.append(visual)
@@ -687,16 +753,48 @@ class ExpertRouterV3:
 
         # 生成最终答案
         if "report" in result.expert_results and result.expert_results["report"].status == "success":
-            # 使用报告专家的总结
+            # 使用报告专家的完整Markdown内容（而不是只用summary）
             report_result = result.expert_results["report"]
-            result.final_answer = report_result.analysis.summary
             result.confidence = report_result.analysis.confidence
-            
-            # 从报告中提取结论和建议
+
+            # ✅ 优先提取完整的Markdown报告内容
             if report_result.tool_results:
                 report_content = report_result.tool_results[0].get("result", {})
+
+                # 从sections中提取完整的Markdown内容
+                sections = report_content.get("sections", [])
+                if sections and all(isinstance(s, dict) and "markdown_content" in s for s in sections):
+                    # 合并所有sections的markdown_content
+                    full_markdown = []
+                    for section in sections:
+                        if section.get("markdown_content"):
+                            # 清理章节标识标记（WEATHER_SECTION_START等）
+                            content = section["markdown_content"]
+                            content = content.replace("[WEATHER_SECTION_START]", "")
+                            content = content.replace("[WEATHER_SECTION_END]", "")
+                            content = content.replace("[COMPONENT_SECTION_START]", "")
+                            content = content.replace("[COMPONENT_SECTION_END]", "")
+                            content = content.replace("[CONCLUSION_SECTION_START]", "")
+                            content = content.replace("[CONCLUSION_SECTION_END]", "")
+                            full_markdown.append(content)
+
+                    result.final_answer = "\n\n".join(full_markdown) if full_markdown else report_result.analysis.summary
+
+                    logger.info(
+                        "full_markdown_report_extracted",
+                        sections_count=len(sections),
+                        total_length=len(result.final_answer)
+                    )
+                else:
+                    # 降级：使用summary
+                    result.final_answer = report_result.analysis.summary
+
+                # 从报告中提取结论和建议
                 result.conclusions = report_content.get("conclusions", [])
                 result.recommendations = report_content.get("recommendations", [])
+            else:
+                # 没有tool_results，使用summary
+                result.final_answer = report_result.analysis.summary
         
         else:
             # 单专家或无报告专家，使用各专家的总结
@@ -843,21 +941,27 @@ class ExpertRouterV3:
 
             # 为组内每个专家创建任务
             for expert_type in group:
-                task_id = f"{session_id}_{expert_type}"
-                task_id_map[expert_type] = task_id
+                # 使用 add_task 创建任务
+                content = f"{expert_names.get(expert_type, expert_type)}: {expert_descriptions.get(expert_type, f'执行{expert_type}专家分析')}"
 
-                self.task_list.create_task(
-                    session_id=session_id,
-                    task_id=task_id,
-                    subject=expert_names.get(expert_type, expert_type),
-                    description=expert_descriptions.get(expert_type, f"执行{expert_type}专家分析"),
-                    depends_on=depends_on,
-                    expert_type=expert_type,
-                    metadata={
-                        "location": parsed_query.location,
-                        "group_index": group_idx
-                    }
+                # 确定父任务ID（使用第一个依赖作为父任务）
+                parent_id = depends_on[0] if depends_on else None
+
+                # 存储所有依赖和元数据
+                metadata = {
+                    "expert_type": expert_type,
+                    "location": parsed_query.location,
+                    "group_index": group_idx,
+                    "depends_on": depends_on  # 存储所有依赖
+                }
+
+                task_id = self.task_list.add_task(
+                    content=content,
+                    parent_id=parent_id,
+                    metadata=metadata
                 )
+
+                task_id_map[expert_type] = task_id
 
         logger.info(
             "task_list_created",

@@ -273,10 +273,10 @@ class GetPM25CarbonTool(LLMTool):
             logger.info("carbon_filtered", original_count=len(records), filtered_count=len(records))
 
             # 保存数据
-            data_ref = None
+            data_id = None
             file_path = None
             try:
-                data_ref = context.save_data(
+                data_id = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -290,8 +290,6 @@ class GetPM25CarbonTool(LLMTool):
                         "time_granularity": time_granularity
                     }
                 )
-                data_id = data_ref["data_id"]
-                file_path = data_ref["file_path"]
             except Exception as save_error:
                 logger.warning("pm25_carbon_save_failed", error=str(save_error))
 

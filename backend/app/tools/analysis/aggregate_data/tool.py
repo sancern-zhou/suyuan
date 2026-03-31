@@ -253,7 +253,11 @@ class AggregateDataTool(LLMTool):
                             "properties": {
                                 "column": {
                                     "type": "string",
-                                    "description": "要聚合的列名"
+                                    "description": "要聚合的列名（支持点号语法访问嵌套字段，如 components.Al、components.Fe）"
+                                },
+                                "field": {
+                                    "type": "string",
+                                    "description": "列名的别名（与 column 二选一，功能相同）"
                                 },
                                 "function": {
                                     "type": "string",
@@ -273,7 +277,7 @@ class AggregateDataTool(LLMTool):
                                     "description": "百分位数（PERCENTILE函数必需，取值0-100，如98、95、90）"
                                 }
                             },
-                            "required": ["column", "function"]
+                            "required": ["function"]
                         },
                         "description": "聚合配置列表"
                     },
@@ -636,7 +640,12 @@ class AggregateDataTool(LLMTool):
         statistics = {}
 
         for agg_config in aggregations:
-            column = agg_config["column"]
+            # 支持两种字段名：field 和 column（兼容 LLM 不同输出）
+            column = agg_config.get("column") or agg_config.get("field")
+            if not column:
+                logger.warning("aggregation_missing_column_field", agg_config=agg_config)
+                continue
+
             func = agg_config["function"].upper()
             alias = agg_config.get("alias", f"{func}_{column}")
             pollutant = agg_config.get("pollutant")

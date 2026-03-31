@@ -346,26 +346,19 @@ class GetWeatherDataTool(LLMTool):
 
         summary = summary + quality_suffix
 
-        # 添加 data_id 到 summary
-        if final_data_id:
-            summary = f"{summary}，已保存为 {final_data_id}。"
-
         # 【Context-Aware V2】使用 context.save_data() 保存数据
-        saved_data_ref = None
+        saved_data_id = None  # 初始化变量
         file_path = None
         if standardized_records and context is not None:
             try:
-                # save_data() 返回 {"data_id": str, "file_path": str}
-                saved_data_ref = await context.save_data(
+                # save_data() 返回字符串 ID
+                saved_data_id = await context.save_data(
                     data=standardized_records,
                     schema="weather"
                 )
-                saved_data_id = saved_data_ref["data_id"]
-                file_path = saved_data_ref["file_path"]
                 logger.info(
                     "era5_data_saved_to_context",
                     data_id=saved_data_id,
-                    file_path=file_path,
                     record_count=len(standardized_records)
                 )
             except Exception as e:
@@ -377,6 +370,10 @@ class GetWeatherDataTool(LLMTool):
 
         # 使用保存的 data_id 或本地生成的 ID
         final_data_id = saved_data_id if saved_data_id else standard_data_id
+
+        # 添加 data_id 到 summary（修复：确保 final_data_id 已定义）
+        if final_data_id:
+            summary = f"{summary}，已保存为 {final_data_id}。"
 
         # 生成数据样本（第一条记录，用于LLM快速了解数据结构）
         sample_record = None
@@ -589,21 +586,18 @@ class GetWeatherDataTool(LLMTool):
             summary = f"{summary}，已保存为 {final_data_id}。"
 
         # 【Context-Aware V2】使用 context.save_data() 保存数据
-        saved_data_ref = None
+        saved_data_id = None  # 初始化变量
         file_path = None
         if standardized_records and context is not None:
             try:
-                # save_data() 返回 {"data_id": str, "file_path": str}
-                saved_data_ref = await context.save_data(
+                # save_data() 返回字符串 ID
+                saved_data_id = await context.save_data(
                     data=standardized_records,
                     schema="weather"
                 )
-                saved_data_id = saved_data_ref["data_id"]
-                file_path = saved_data_ref["file_path"]
                 logger.info(
                     "observed_data_saved_to_context",
                     data_id=saved_data_id,
-                    file_path=file_path,
                     record_count=len(standardized_records)
                 )
             except Exception as e:

@@ -40,7 +40,7 @@ const md = new MarkdownIt({
   errorColor: '#cc0000'
 })
 
-// 自定义图片渲染规则，支持base64图片
+// 自定义图片渲染规则，支持base64图片和相对路径图片
 const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
   return self.renderToken(tokens, idx, options)
 }
@@ -63,6 +63,16 @@ md.renderer.rules.image = function (tokens, idx, options, env, self) {
 
     // 处理外部URL图片（http/https）
     if (src && (src.startsWith('http://') || src.startsWith('https://'))) {
+      return `<div class="md-image-wrapper">
+        <img src="${src}" alt="${alt}" class="md-external-image" />
+        <p class="md-image-caption">${alt}</p>
+      </div>`
+    }
+
+    // 处理相对路径图片（/api/image/xxx）
+    // 注意：后端现在返回完整URL，所以这个分支可能不会执行
+    if (src && src.startsWith('/api/image/')) {
+      // 使用相对路径，让浏览器自动处理（通过vite代理或同域访问）
       return `<div class="md-image-wrapper">
         <img src="${src}" alt="${alt}" class="md-external-image" />
         <p class="md-image-caption">${alt}</p>

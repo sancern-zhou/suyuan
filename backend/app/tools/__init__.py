@@ -267,6 +267,29 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
 
+    # XcAiDb SQL Server 城市历史数据查询工具
+    try:
+        from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool
+        registry.register(QueryXcAiCityHistoryTool(), priority=43)
+        logger.info("tool_loaded", tool="query_xcai_city_history")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))
+
+    # 质控例行检查记录查询工具
+    try:
+        from app.tools.query.get_quality_control_records.tool import GetQualityControlRecordsTool
+        registry.register(GetQualityControlRecordsTool(), priority=44)
+        logger.info("tool_loaded", tool="get_quality_control_records")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_quality_control_records", error=str(e))
+
+    try:
+        from app.tools.query.get_quality_control_records.nl_query_tool import GetQualityControlRecordsNLTool
+        registry.register(GetQualityControlRecordsNLTool(), priority=45)
+        logger.info("tool_loaded", tool="get_quality_control_records_nl")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_quality_control_records_nl", error=str(e))
+
     # ========================================
     # External Data Tools（外部数据工具）
     # ========================================
@@ -680,8 +703,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="quick_trace_workflow")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="quick_trace_workflow", error=str(e))
-
-    # standard_analysis_workflow 在 ReActAgent 中延迟注册（需要依赖注入）
 
     try:
         from app.tools.workflow.deep_trace_workflow import DeepTraceWorkflow

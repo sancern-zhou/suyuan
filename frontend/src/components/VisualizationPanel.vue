@@ -159,7 +159,7 @@
 
           <!-- 图表 -->
           <ChartPanel
-            v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(viz.type)"
+            v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries', 'facet_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(viz.type)"
             :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
             :key="viz.id || viz.title || `chart_${index}`"
             :data="viz"
@@ -547,7 +547,14 @@ const isChartType = (type) => {
 
 // 判断是否为多专家模式
 const isQuickTracingMode = computed(() => {
-  return props.expertResults?.expert_results && Object.keys(props.expertResults.expert_results).length > 0
+  const hasExpertResults = props.expertResults?.expert_results && Object.keys(props.expertResults.expert_results).length > 0
+  const hasGroupedViz = store.groupedVisualizations && (
+    (store.groupedVisualizations.weather?.length > 0) ||
+    (store.groupedVisualizations.component?.length > 0) ||
+    (store.groupedVisualizations.viz?.length > 0)
+  )
+  console.log('[VisualizationPanel] isQuickTracingMode检查:', {hasExpertResults, hasGroupedViz, result: hasExpertResults || hasGroupedViz})
+  return hasExpertResults || hasGroupedViz
 })
 
 // 直接使用 store 中已分组的数据（优化：避免重复处理）
@@ -675,7 +682,21 @@ const visualizations = computed(() => {
   // 多专家模式：从 store.groupedVisualizations 获取所有图表
   if (isQuickTracingMode.value) {
     const groups = store.groupedVisualizations
-    allVisualizations = [...(groups.weather || []), ...(groups.component || [])]
+    const rawVisuals = [...(groups.weather || []), ...(groups.component || []), ...(groups.viz || [])]
+    console.log('[VisualizationPanel] 快速溯源模式 - 原始可视化数量:', rawVisuals.length)
+    console.log('[VisualizationPanel] 原始可视化类型:', rawVisuals.map(v => ({id: v.id, type: v.type, hasPayload: !!v.payload})))
+
+    // 转换payload格式：如果viz.type是通用类型（chart/image），则使用payload中的具体类型
+    allVisualizations = rawVisuals.map(v => {
+      if (v.payload && v.type === 'chart') {
+        // 将payload数据提升到顶层，保留meta
+        const transformed = { ...v.payload, meta: v.meta || v.payload.meta }
+        console.log('[VisualizationPanel] 转换chart payload:', {id: v.id, oldType: v.type, newType: transformed.type})
+        return transformed
+      }
+      return v
+    })
+    console.log('[VisualizationPanel] 转换后可视化类型:', allVisualizations.map(v => ({id: v.id, type: v.type})))
   }
   // 普通模式：从 props.content 获取可视化对象
   else {

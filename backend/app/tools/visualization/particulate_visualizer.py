@@ -26,9 +26,6 @@ from matplotlib.ticker import MultipleLocator
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.font_manager as fm
 
-# 获取后端服务器地址
-BACKEND_HOST = os.getenv("BACKEND_HOST", "http://localhost:8000")
-
 # 显式指定中文字体路径（Linux服务器）
 font_path = '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'
 if os.path.exists(font_path):
@@ -129,11 +126,11 @@ class ParticulateVisualizer:
 
         # 保存图片并获取image_id
         cache = get_image_cache()
-        saved_image_id = cache.save(img_base64, chart_id)
+        saved_info = cache.save(img_base64, chart_id)
+        saved_image_id = saved_info["image_id"]  # 提取image_id字符串
 
-        # 拼接完整URL（参考 meteorological_trajectory_analysis 的实现）
-        image_relative_path = f"/api/image/{saved_image_id}"
-        image_url = f"{BACKEND_HOST}{image_relative_path}"  # 完整URL
+        # 【修复】使用相对路径，让前端通过vite代理或同域访问
+        image_url = f"/api/image/{saved_image_id}"
 
         meta = {
             "schema_version": "3.1",
@@ -154,8 +151,8 @@ class ParticulateVisualizer:
                 "type": "image",
                 "data": f"[IMAGE:{saved_image_id}]",
                 "image_id": saved_image_id,
-                "image_url": image_url,  # 完整URL，供LLM生成Markdown链接
-                "markdown_image": f"![{title}]({image_url})",  # 预生成的Markdown格式（完整URL）
+                "image_url": image_url,  # 相对路径，供前端访问
+                "markdown_image": f"![{title}]({image_url})",  # 预生成的Markdown格式（相对路径）
                 "title": title,
                 "meta": meta
             },
@@ -164,8 +161,8 @@ class ParticulateVisualizer:
                 "scenario": scenario,
                 "source_data_ids": source_data_ids,
                 "layout_hint": "wide",
-                "image_url": image_url,  # 完整URL
-                "markdown_image": f"![{title}]({image_url})"  # 完整URL
+                "image_url": image_url,  # 相对路径
+                "markdown_image": f"![{title}]({image_url})"  # 相对路径
             }
         }
 

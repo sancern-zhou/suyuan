@@ -21,7 +21,7 @@ from datetime import datetime
 from app.agent.core.structured_query_parser import StructuredQuery, StructuredQueryParser
 from app.agent.core.expert_plan_generator import ExpertPlanGenerator, ExpertTask
 from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
-from app.agent.task import TaskList, TaskStatus
+from app.agent.task import OldTaskList as TaskList, TaskStatus
 from app.agent.session import SessionManager, Session, SessionState
 from .expert_executor import ExpertResult
 from .weather_executor import WeatherExecutor

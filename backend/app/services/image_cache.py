@@ -32,11 +32,40 @@ class ImageCache:
         if cache_dir:
             self.cache_dir = cache_dir
         else:
-            # 相对于当前工作目录
-            self.cache_dir = os.path.join(os.getcwd(), IMAGE_CACHE_DIR)
+            # 使用绝对路径，避免工作目录变化导致的问题
+            # 尝试多个可能的基准目录
+            possible_bases = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "backend_data_registry"),  # 相对于 app/services/
+                os.path.join(os.getcwd(), "backend_data_registry"),  # 相对于当前工作目录
+                "backend_data_registry",  # 相对路径
+            ]
 
-        os.makedirs(self.cache_dir, exist_ok=True)
-        logger.info("image_cache_initialized", cache_dir=self.cache_dir)
+            for base in possible_bases:
+                test_path = os.path.abspath(os.path.join(base, "images"))
+                # 尝试创建目录来测试路径是否有效
+                try:
+                    os.makedirs(test_path, exist_ok=True)
+                    # 验证可以写入
+                    test_file = os.path.join(test_path, ".write_test")
+                    with open(test_file, 'w') as f:
+                        f.write("test")
+                    os.remove(test_file)
+                    # 如果成功，使用这个路径
+                    self.cache_dir = test_path
+                    break
+                except (OSError, IOError) as e:
+                    continue
+            else:
+                # 如果所有路径都失败，使用最后一个路径
+                self.cache_dir = os.path.abspath(os.path.join(possible_bases[0], "images"))
+
+        logger.info(
+            "image_cache_initialized",
+            cache_dir=self.cache_dir,
+            absolute_path=os.path.abspath(self.cache_dir),
+            exists=os.path.exists(self.cache_dir),
+            writable=os.access(self.cache_dir, os.W_OK) if os.path.exists(self.cache_dir) else False
+        )
 
     def save(self, base64_data: str, chart_id: Optional[str] = None) -> dict:
         """保存base64图片，返回图片信息

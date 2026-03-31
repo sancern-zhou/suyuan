@@ -56,11 +56,11 @@ const emit = defineEmits(['select', 'close'])
 
 const workflowTools = [
   {
-    id: 'quick_trace_workflow',
+    id: 'quick_tracing_workflow',
     name: '快速溯源',
-    description: '污染高值告警快速溯源分析',
+    description: '多专家快速溯源分析（支持自然语言）',
     icon: 'icon-zippy',
-    params: ['城市', '告警时间', '污染物']
+    params: ['查询文本']
   },
   {
     id: 'standard_analysis_workflow',

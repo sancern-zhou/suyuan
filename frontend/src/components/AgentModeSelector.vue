@@ -46,6 +46,24 @@
       <span v-if="isModeRunning('report')" class="running-indicator">●</span>
       📄 报告
     </button>
+    <button
+      class="mode-button"
+      :class="{ active: store.currentMode === 'chart', running: isModeRunning('chart') }"
+      @click="selectMode('chart')"
+      title="图表模式 - 数据可视化：基于已保存数据生成Matplotlib图表"
+    >
+      <span v-if="isModeRunning('chart')" class="running-indicator">●</span>
+      📊 图表
+    </button>
+    <button
+      class="mode-button"
+      :class="{ active: store.currentMode === 'tracing', running: isModeRunning('tracing') }"
+      @click="selectMode('tracing')"
+      title="溯源模式 - 多专家并行快速溯源：气象+组分+可视化+报告（旧架构稳定版）"
+    >
+      <span v-if="isModeRunning('tracing')" class="running-indicator">●</span>
+      🔍 溯源
+    </button>
 
     <!-- 后台运行提示 -->
     <div v-if="backgroundRunningModes.length > 0" class="background-hint">
@@ -62,7 +80,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'expert', 'code', 'query', 'report'].includes(value)
+    validator: (value) => ['assistant', 'expert', 'code', 'query', 'report', 'chart', 'tracing'].includes(value)
   }
 })
 
@@ -86,7 +104,9 @@ const getModeLabel = (mode) => {
     'expert': '专家',
     'query': '问数',
     'code': '编程',
-    'report': '报告'
+    'report': '报告',
+    'chart': '图表',
+    'tracing': '溯源'
   }
   return labelMap[mode] || mode
 }

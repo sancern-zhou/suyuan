@@ -119,10 +119,7 @@ class WeatherExecutor(ExpertExecutor):
         """生成带标识的气象分析章节内容"""
         from .expert_executor import ExpertAnalysis
         import json
-        import os
         import re
-
-        backend_host = os.getenv("BACKEND_HOST", "http://localhost:8000")
 
         logger.info("weather_section_generation_start", expert_type="weather")
 
@@ -237,7 +234,8 @@ class WeatherExecutor(ExpertExecutor):
                 continue
 
             url_id = chart.get("image_id") or chart.get("original_id") or chart.get("data_id") or f"chart_{chart['index']}"
-            url = f"{backend_host}/api/image/{url_id}"
+            # 【修复】使用相对路径，让前端通过vite代理或同域访问
+            url = f"/api/image/{url_id}"
 
             chart_urls.append((chart['index'], chart['title'], url))
 

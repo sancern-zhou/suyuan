@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     debug: bool = Field(default=True, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
 
+    # Backend URL Configuration (用于生成图片等资源的完整URL)
+    backend_host: str = Field(
+        default="http://localhost:8000",
+        description="Backend server host URL (for generating image URLs)"
+    )
+    api_base_url: Optional[str] = Field(
+        default=None,
+        description="Frontend API base URL (for callback URLs, overrides auto-detection)"
+    )
+
     # CORS Configuration
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177",

@@ -111,9 +111,14 @@ const isApiImageUrl = (src) => {
 
 // 获取完整的后端API基础URL
 const getBaseUrl = () => {
-  return import.meta.env.PROD
-    ? window.location.origin
-    : 'http://localhost:8000'
+  // 开发环境：使用当前页面的协议和主机名，端口改为8000
+  if (!import.meta.env.PROD) {
+    const url = new URL(window.location.origin)
+    url.port = '8000'
+    return url.toString()
+  }
+  // 生产环境：直接使用当前页面origin（前后端同域）
+  return window.location.origin
 }
 
 // 补充URL基础地址（处理相对路径）
@@ -122,7 +127,9 @@ const resolveImageUrl = (src) => {
     return src  // 已是完整URL
   }
   if (src.startsWith('/api/image/')) {
-    return `${getBaseUrl()}${src}`  // 补充后端基础URL
+    // 移除baseUrl末尾的斜杠，避免双斜杠
+    const baseUrl = getBaseUrl().replace(/\/$/, '')
+    return `${baseUrl}${src}`  // 补充后端基础URL
   }
   return src  // 其他情况（如data URL）
 }

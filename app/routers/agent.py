@@ -819,6 +819,142 @@ async def agent_health():
 
 
 # ========================================
+# 旧架构多专家并行快速溯源接口（ExpertRouterV3）
+# ========================================
+
+# 全局ExpertRouterV3实例
+expert_router_v3_instance = None
+
+def get_expert_router_v3():
+    """获取ExpertRouterV3实例（延迟初始化）"""
+    global expert_router_v3_instance
+    if expert_router_v3_instance is None:
+        try:
+            expert_router_v3_instance = ExpertRouterV3()
+            logger.info("expert_router_v3_initialized")
+        except Exception as e:
+            logger.error("failed_to_initialize_expert_router_v3", error=str(e), exc_info=True)
+            raise
+    return expert_router_v3_instance
+
+
+class ExpertV3AnalyzeRequest(BaseModel):
+    """ExpertRouterV3 分析请求"""
+    query: str = Field(..., description="用户自然语言查询")
+    session_id: Optional[str] = Field(None, description="会话ID（可选）")
+    precision: str = Field("standard", description="精度模式: fast/standard/full")
+    enable_checkpoint: bool = Field(False, description="是否启用检查点（失败后可恢复）")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query": "分析广州天河站2026-03-28的PM2.5污染",
+                "precision": "standard",
+                "enable_checkpoint": False
+            }
+        }
+
+
+@router.post("/analyze-v3")
+async def analyze_with_expert_router_v3(request: ExpertV3AnalyzeRequest):
+    """
+    多专家并行快速溯源（旧架构 ExpertRouterV3）
+
+    **功能**:
+    - 气象专家：天气条件、后向轨迹、上风向企业分析
+    - 组分专家：PMF/OBP源解析、组分重构
+    - 可视化专家：自动生成图表
+    - 报告专家：综合分析报告
+
+    **特点**:
+    - 并行执行无依赖的专家任务
+    - 自动任务调度和依赖管理
+    - 支持检查点恢复
+
+    **事件类型**（SSE流式）:
+    - `pipeline_started`: 流水线开始
+    - `expert_selected`: 专家选择完成
+    - `expert_started`: 专家开始执行
+    - `expert_completed`: 专家执行完成
+    - `expert_failed`: 专家执行失败
+    - `pipeline_completed`: 流水线完成
+    - `pipeline_failed`: 流水线失败
+    """
+    logger.info(
+        "expert_v3_analyze_request",
+        query=request.query[:100],
+        precision=request.precision,
+        session_id=request.session_id
+    )
+
+    try:
+        router = get_expert_router_v3()
+
+        async def event_generator():
+            """SSE事件生成器"""
+            try:
+                # ✅ 修复：使用正确的方法名 execute_pipeline
+                result = await router.execute_pipeline(
+                    user_query=request.query,
+                    precision=request.precision,
+                    session_id=request.session_id
+                )
+
+                # 将结果转换为事件流
+                # 发送完成事件
+                event_data = json.dumps({
+                    "type": "pipeline_completed",
+                    "data": {
+                        "query": request.query,
+                        "final_answer": result.final_answer,
+                        "conclusions": result.conclusions,
+                        "recommendations": result.recommendations,
+                        "data_ids": result.data_ids,
+                        "visuals": result.visuals,
+                        "confidence": result.confidence,
+                        "session_id": request.session_id
+                    }
+                }, ensure_ascii=False, default=str)
+                yield f"data: {event_data}\n\n"
+
+            except Exception as e:
+                logger.error(
+                    "expert_v3_stream_generation_error",
+                    error=str(e),
+                    exc_info=True
+                )
+                error_event = {
+                    "type": "pipeline_failed",
+                    "data": {
+                        "error": str(e),
+                        "query": request.query
+                    }
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+
+    except Exception as e:
+        logger.error(
+            "expert_v3_analyze_failed",
+            error=str(e),
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"多专家分析失败: {str(e)}"
+        )
+
+
+# ========================================
 # TODO: 会话管理接口（可选）
 # ========================================
 
