@@ -224,6 +224,16 @@ class ComponentExecutor(ExpertExecutor):
             logger.warning("新标准报表对比分析工具加载失败", tool="compare_standard_reports", error=str(e))
 
         # ========================================
+        # XcAiDb SQL Server 城市历史数据查询工具
+        # ========================================
+        try:
+            from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool
+            tools["query_xcai_city_history"] = QueryXcAiCityHistoryTool()
+            logger.info("XcAiDb城市历史数据查询工具加载成功: query_xcai_city_history（全国城市小时/日数据）")
+        except ImportError as e:
+            logger.warning("XcAiDb城市历史数据查询工具加载失败", tool="query_xcai_city_history", error=str(e))
+
+        # ========================================
         # 颗粒物组分分析工具（新增）
         # 7大组分重构、碳组分、地壳元素、水溶性离子、微量元素
         # ========================================
@@ -298,12 +308,9 @@ class ComponentExecutor(ExpertExecutor):
         from .expert_executor import ExpertAnalysis
         import json
         from structlog import get_logger
-        import os
         import re
 
         logger = get_logger()
-        backend_host = os.getenv("BACKEND_HOST", "http://localhost:8000")
-
         logger.info("component_section_generation_start", expert_type="component")
 
         # 收集图表信息
@@ -429,7 +436,8 @@ class ComponentExecutor(ExpertExecutor):
                 image_url = chart.get("image_url", "")
                 if not image_url:
                     url_id = image_id or visual_id or data_id or f"chart_{chart['index']}"
-                    image_url = f"{backend_host}/api/image/{url_id}"
+                    # 【修复】使用相对路径，让前端通过vite代理或同域访问
+                    image_url = f"/api/image/{url_id}"
 
                 markdown_link = chart.get("markdown_image") or f"![{title}]({image_url})"
 
@@ -468,7 +476,8 @@ class ComponentExecutor(ExpertExecutor):
             image_url = chart.get("image_url", "")
             if not image_url:
                 url_id = chart.get("image_id") or chart.get("original_id") or chart.get("data_id") or f"chart_{chart['index']}"
-                image_url = f"{backend_host}/api/image/{url_id}"
+                # 【修复】使用相对路径，让前端通过vite代理或同域访问
+                image_url = f"/api/image/{url_id}"
             chart_urls.append((chart['index'], chart['title'], image_url))
 
         # 生成图表解析模板（参考气象专家方式）
@@ -688,48 +697,6 @@ class ComponentExecutor(ExpertExecutor):
    - 微量元素分析：Pb、Cd、As等指示工业排放和燃煤来源
    - 阴阳离子平衡：评估颗粒物酸碱度和中和状态
 
-【颗粒物数据查询工具】
-
-系统提供4个独立的颗粒物组分查询工具，分别对应不同类型的化学组分：
-
-**参数说明（重要）**：
-- 所有工具支持 `locations` 参数（推荐）：自动将城市/站点名称映射到站点编码
-  - 示例：`{"locations": ["东莞"], "start_time": "...", "end_time": "..."}`
-  - 支持站点名称：["东城", "新兴", "从化天湖"]
-  - 支持城市名称：["广州", "深圳", "东莞"]（会自动映射到该城市的监测站点）
-- 备选参数：`station` + `code`（直接指定站点名称和编码）
-
-1. **get_particulate_components** - PM2.5综合组分分析（推荐用于PMF源解析）
-   - 组分列表：Cl⁻、NO₃⁻、SO₄²⁻、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、OC、EC
-   - 参数：
-     * locations: 站点/城市名称数组（推荐）
-     * start_time/end_time: 时间范围（格式："YYYY-MM-DD HH:MM:SS"）
-     * data_type: 数据类型（0=原始, 1=审计，默认0）
-     * time_granularity: 时间粒度（1=小时, 2=日, 3=月, 5=年，默认1）
-   - 特点：使用固定DetectionitemCodes清单，一次查询获取PMF所需的核心组分
-   - 用于：PMF源解析（包含SO4、NO3、NH4、OC、EC等核心组分）
-
-2. **get_pm25_ionic** - 水溶性离子组分（更全面的离子列表）
-   - 组分列表：F⁻、Cl⁻、NO₂⁻、NO₃⁻、SO₄²⁻、PO₄³⁻、Li⁺、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、Al³⁺等
-   - 参数格式同上
-   - 用于：详细离子分析、二次气溶胶研究、阴阳离子平衡
-
-3. **get_pm25_carbon** - 碳质组分（有机碳OC、元素碳EC）
-   - 参数格式同上
-   - 用于：碳组分分析、一次/二次有机碳分析
-
-4. **get_pm25_crustal** - 地壳元素（铝Al、硅Si、钙Ca、铁Fe、钛Ti、钾K等）
-   - 参数：elements（元素列表，可选，默认["Al", "Si", "Fe", "Ca", "Ti", "Mn"]）
-   - 用于：扬尘源分析、土壤源识别
-
-**PMF源解析建议**：
-- **首选**：使用 get_particulate_components 一次获取所有核心组分（离子+碳组分）
-- **备选**：同时调用 get_pm25_ionic 和 get_pm25_carbon 分别获取离子和碳组分
-- 确保获取至少20个样本（time_granularity=1，且时间范围覆盖至少20个小时）
-- **使用 locations 参数**：优先使用城市/站点名称，系统自动映射到正确的站点编码
-  - 例如：`locations: ["广州"]` 会自动映射到广州的监测站点
-  - 例如：`locations: ["东城"]` 会自动映射到站点编码 "1037b"
-
 3. **PMF源解析深度分析**
    - 源因子识别：机动车尾气、工业排放、燃煤源、扬尘、生物质燃烧、二次硫酸盐、二次硝酸盐
    - 贡献率量化：各源类的浓度分担率和不确定性评估
@@ -937,40 +904,6 @@ class ComponentExecutor(ExpertExecutor):
    - 颗粒物组分：硫酸盐、硝酸盐、铵盐、EC/OC的二次生成指示
    - 二次污染物识别：O3、NO3-、SO4^2-的形成机制
    - 化学转化过程：SO2→硫酸盐、NOx→硝酸盐的光化学和液相反应
-
-【颗粒物数据查询工具】
-
-系统提供4个独立的颗粒物组分查询工具：
-
-**参数说明（重要）**：
-- 推荐使用 `locations` 参数：`{"locations": ["城市/站点名"], "start_time": "...", "end_time": "..."}`
-- 支持站点名称：["东城", "新兴", "从化天湖"]
-- 支持城市名称：["广州", "深圳", "东莞"]（自动映射到监测站点）
-- 备选参数：`station` + `code`
-
-1. **get_particulate_components** - PM2.5综合组分分析（PMF推荐）
-   - 查询：Cl⁻、NO₃⁻、SO₄²⁻、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、OC、EC
-   - 参数：locations, start_time, end_time, data_type, time_granularity
-   - time_granularity: 1=小时, 2=日, 3=月, 5=年
-   - 特点：一次获取PMF所需的核心组分（离子+碳组分）
-
-2. **get_pm25_ionic** - 水溶性离子组分（更全面）
-   - 查询：F⁻、Cl⁻、NO₂⁻、NO₃⁻、SO₄²⁻、PO₄³⁻、Li⁺、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、Al³⁺等
-   - 参数格式同上
-
-3. **get_pm25_carbon** - 碳质组分（OC/EC）
-   - 查询：有机碳(OC)、元素碳(EC)
-   - 参数格式同上
-
-4. **get_pm25_crustal** - 地壳元素
-   - 查询：铝Al、硅Si、钙Ca、铁Fe、钛Ti、钾K等
-   - 参数：elements（可选，默认["Al", "Si", "Fe", "Ca", "Ti", "Mn"]）
-
-**使用建议**：
-- PMF分析（首选）：get_particulate_components 一次获取所有核心组分
-- PMF分析（备选）：get_pm25_ionic + get_pm25_carbon 分别获取
-- 扬尘分析：get_pm25_crustal
-- **优先使用 locations 参数**，系统自动映射到正确的站点编码
 
 3. **PMF源解析深度分析**
    - 源因子识别：工业排放、机动车尾气、燃烧源、二次形成等

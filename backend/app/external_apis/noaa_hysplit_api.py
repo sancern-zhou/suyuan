@@ -281,8 +281,8 @@ class NOAAHysplitAPI:
                 # 获取端点数据
                 endpoints = await self._get_endpoints(client, job_id)
 
-                # 对轨迹数据进行抽稀（每12小时保留一个点）
-                endpoints_downsampled = self._downsample_trajectory(endpoints, interval_hours=12)
+                # 对轨迹数据进行抽稀（每1小时保留一个点，保证轨迹圆滑）
+                endpoints_downsampled = self._downsample_trajectory(endpoints, interval_hours=1)
 
                 # 【修改】只要有端点数据，就使用本地matplotlib绘制轨迹图
                 if model_complete and endpoints_downsampled:
@@ -342,7 +342,7 @@ class NOAAHysplitAPI:
                     "model_complete": model_complete,
                     "plot_success": local_plot,  # 本地绘图是否成功
                     "local_plot": local_plot,
-                    "note": "本地matplotlib绘制（带地图背景和高度剖面），轨迹数据已抽稀（每12小时一个点）" if local_plot else None,
+                    "note": "本地matplotlib绘制（带地图背景和高度剖面），轨迹数据已抽稀（每1小时一个点，保证圆滑）" if local_plot else None,
                     "metadata": {
                         "lat": lat,
                         "lon": lon,
@@ -354,7 +354,7 @@ class NOAAHysplitAPI:
                         "source": "NOAA HYSPLIT 数据计算 + matplotlib 本地绘图",
                         "original_endpoints_count": len(endpoints),
                         "downsampled_endpoints_count": len(endpoints_downsampled),
-                        "downsample_interval_hours": 12
+                        "downsample_interval_hours": 1
                     }
                 }
                 
@@ -550,11 +550,12 @@ class NOAAHysplitAPI:
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             chart_id = f"trajectory_local_{timestamp}_{job_id}" if job_id else f"trajectory_local_{timestamp}"
 
-            # 保存图片到缓存
-            image_id = self._save_image_to_cache(image_base64, chart_id)
-            image_url = self._get_image_url(image_id)
+            # 保存图片到缓存，返回字典
+            image_info = self._save_image_to_cache(image_base64, chart_id)
+            image_id = image_info["image_id"]  # 提取image_id字符串
+            image_url = image_info["url"]  # 提取URL字符串
 
-            logger.info("trajectory_image_saved_to_cache", image_id=image_id, chart_id=chart_id)
+            logger.info("trajectory_image_saved_to_cache", image_id=image_id, chart_id=chart_id, image_url=image_url)
 
             # 确定MIME类型（现在总是PNG）
             mime_type = "image/png"
@@ -690,25 +691,7 @@ class NOAAHysplitAPI:
             lat_min_padded = lat_min - lat_range * margin
             lat_max_padded = lat_max + lat_range * margin
 
-            # 固定地图长宽比为 16:9（适合显示）
-            # 计算当前范围的长宽比
-            current_aspect = lon_range / lat_range
-            target_aspect = 16.0 / 9.0
-
-            # 调整范围以匹配目标长宽比
-            if current_aspect > target_aspect:
-                # 当前太宽，需要增加纬度范围
-                target_lat_range = lon_range / target_aspect
-                lat_center = (lat_min_padded + lat_max_padded) / 2
-                lat_min_padded = lat_center - target_lat_range / 2
-                lat_max_padded = lat_center + target_lat_range / 2
-            else:
-                # 当前太窄，需要增加经度范围
-                target_lon_range = lat_range * target_aspect
-                lon_center = (lon_min_padded + lon_max_padded) / 2
-                lon_min_padded = lon_center - target_lon_range / 2
-                lon_max_padded = lon_center + target_lon_range / 2
-
+            # 使用自然地理范围，不强制调整比例（让Cartopy自适应GridSpec宽度）
             extent = [lon_min_padded, lon_max_padded, lat_min_padded, lat_max_padded]
 
             logger.info("adaptive_map_extent_calculated",
@@ -731,6 +714,8 @@ class NOAAHysplitAPI:
                 # 创建 cartopy map axes
                 ax_map = fig.add_subplot(gs[0], projection=ccrs.PlateCarree())
                 ax_map.set_extent(extent, crs=ccrs.PlateCarree())
+                # 关键：设置aspect为auto，让地图适应GridSpec宽度（不强制地理比例）
+                ax_map.set_aspect('auto', adjustable='box')
 
                 # 添加地图要素（NOAA风格）
                 ax_map.add_feature(cfeature.LAND, facecolor='#f5f5f5', edgecolor='none')

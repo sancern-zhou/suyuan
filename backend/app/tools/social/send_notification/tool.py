@@ -150,10 +150,40 @@ class SendNotificationTool(LLMTool):
                 if media_path.startswith(('http://', 'https://')):
                     normalized_media.append(media_path)
                     logger.debug("media_url_kept", path=media_path)
+
+                # ✅ 转换 /api/image/{image_id} 为本地文件路径
+                elif media_path.startswith('/api/image/'):
+                    import re
+                    from app.services.image_cache import get_image_cache
+
+                    # 提取 image_id
+                    match = re.match(r'/api/image/([a-zA-Z0-9_-]+)', media_path)
+                    if match:
+                        image_id = match.group(1)
+                        cache = get_image_cache()
+                        local_path = f"{cache.cache_dir}/{image_id}.png"
+
+                        if Path(local_path).exists():
+                            normalized_media.append(local_path)
+                            logger.info(
+                                "api_image_converted_to_local_path",
+                                api_url=media_path,
+                                local_path=local_path
+                            )
+                        else:
+                            logger.warning(
+                                "api_image_file_not_found",
+                                api_url=media_path,
+                                expected_local_path=local_path
+                            )
+                    else:
+                        logger.warning("invalid_api_image_format", path=media_path)
+
                 # 保留已经是绝对路径的路径
                 elif os.path.isabs(media_path):
                     normalized_media.append(media_path)
                     logger.debug("media_absolute_path_kept", path=media_path)
+
                 # 转换相对路径为绝对路径
                 else:
                     # 获取项目根目录（假设是当前工作目录的父目录）

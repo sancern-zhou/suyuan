@@ -122,16 +122,49 @@ def calculate_trace(
     # 保存原始数据ID
     original_data_id = data_id
 
+    # 【调试日志】记录 data_id 的完整值
+    logger.info(
+        "calculate_trace_data_id_received",
+        data_id=data_id,
+        data_id_length=len(data_id) if data_id else 0,
+        data_id_hash=data_id.split(":")[-1] if data_id and ":" in data_id else None,
+        data_context_manager_type=type(data_context_manager).__name__ if data_context_manager else None,
+        session_id=data_context_manager.memory.session_id if data_context_manager else None,
+        data_files_keys_count=len(data_context_manager.memory.session.data_files) if data_context_manager else 0,
+        data_files_sample_keys=list(data_context_manager.memory.session.data_files.keys())[:3] if data_context_manager else []
+    )
+
     # 使用默认 Taylor 丰度字典
     effective_taylor = taylor_dict or DEFAULT_TAYLOR_ABUNDANCE
 
     if data is None:
         if data_id and data_context_manager:
-            raw = data_context_manager.get_raw_data(data_id)
-            if isinstance(raw, list):
-                data = pd.DataFrame(raw)
+            try:
+                # 使用 get_data() 获取类型化数据
+                typed_data = data_context_manager.get_data(data_id)
+                if isinstance(typed_data, list):
+                    data = typed_data
+            except Exception as e1:
+                logger.warning(
+                    "calculate_trace_get_data_failed",
+                    data_id=data_id,
+                    error=str(e1),
+                    error_type=type(e1).__name__
+                )
+                # 降级到 get_raw_data()
+                try:
+                    raw = data_context_manager.get_raw_data(data_id)
+                    if isinstance(raw, list):
+                        data = pd.DataFrame(raw)
+                except Exception as e2:
+                    logger.error(
+                        "calculate_trace_get_raw_data_failed",
+                        data_id=data_id,
+                        error=str(e2),
+                        error_type=type(e2).__name__
+                    )
         if data is None:
-            raise NotImplementedError("data_id -> data 的读取在集成层实现（需传入 DataContextManager 实例）")
+            raise ValueError(f"无法加载数据: data_id={data_id}")
 
     # 处理 UnifiedParticulateData 格式（字典列表）
     if isinstance(data, list) and len(data) > 0:
@@ -351,7 +384,7 @@ class CalculateTraceTool(LLMTool):
     description = "计算微量元素分析（铝归一化、Taylor丰度对比、富集度），自动生成富集因子图（ParticulateVisualizer）。数据字段需通过DataStandardizer标准化为英文字段名。"
     category = ToolCategory.ANALYSIS
     version = "1.2.0"
-    requires_context = False
+    requires_context = True  # 需要ExecutionContext来获取data_context_manager
 
     def __init__(self):
         super().__init__(
@@ -362,15 +395,15 @@ class CalculateTraceTool(LLMTool):
             requires_context=self.requires_context
         )
 
-    async def execute(self, data=None, al_column="Al", taylor_dict=None, context=None, **kwargs):
+    async def execute(self, context=None, data=None, al_column="Al", taylor_dict=None, **kwargs):
         """
         执行微量元素分析
 
         Args:
+            context: ExecutionContext
             data: 原始数据（已通过DataStandardizer标准化）
             al_column: 铝列名（默认"Al"，英文字段名）
             taylor_dict: Taylor丰度字典（可选，默认使用内置字典）
-            context: ExecutionContext
             **kwargs: 其他参数（包括data_context_manager, data_id）
         """
         data_context_manager = kwargs.get('data_context_manager')

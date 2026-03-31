@@ -169,15 +169,15 @@ const showWorkflowTools = ref(false)
 const atSymbolIndex = ref(-1)  // 记录@符号的位置
 const highlightedTool = ref(null)  // 高亮的工具
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
-// ✅ 从localStorage读取上次选择的模式，默认assistant
-const agentMode = ref(localStorage.getItem('agent-mode') || 'assistant')
+// ✅ 使用统一的模式键名，与 store.currentMode 保持一致
+const agentMode = ref(localStorage.getItem('current-mode') || 'assistant')
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
 
 // 工作流工具列表
 const workflowTools = [
-  { id: 'quick_trace_workflow', name: '快速溯源' },
+  { id: 'quick_tracing_workflow', name: '快速溯源' },
   { id: 'standard_analysis_workflow', name: '标准分析' },
   { id: 'deep_trace_workflow', name: '深度溯源' },
   { id: 'knowledge_qa_workflow', name: '知识问答' }

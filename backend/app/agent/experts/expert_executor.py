@@ -1391,7 +1391,10 @@ class ExpertExecutor(ABC):
         )
     
     def _extract_data_ids(self, tool_results: List[Dict]) -> List[str]:
-        """提取所有成功工具的data_id（支持多种存储位置）- 扁平化结构"""
+        """提取所有成功工具的data_id（支持多种存储位置）- 扁平化结构
+
+        确保只返回字符串类型的 data_id，过滤掉字典和其他类型
+        """
 
         data_ids = []
         for r in tool_results:
@@ -1403,17 +1406,43 @@ class ExpertExecutor(ABC):
             if r.get("status") == "success":
                 # 扁平化结构：data_id, metadata 在顶层
                 if r.get("data_id"):
-                    data_ids.append(r["data_id"])
+                    data_id = r["data_id"]
+                    # 兼容性处理：如果是字典，提取 data_id 字段
+                    if isinstance(data_id, dict):
+                        data_id = data_id.get("data_id")
+                    # 只添加字符串类型的 data_id
+                    if data_id and isinstance(data_id, str):
+                        data_ids.append(data_id)
+                    else:
+                        logger.warning(
+                            "invalid_data_id_type_skipped",
+                            data_id_type=type(data_id).__name__,
+                            data_id=data_id,
+                            tool=r.get("tool")
+                        )
                 else:
                     # 从顶层metadata获取（UDF v2.0格式）
                     metadata = r.get("metadata") or {}
                     if not isinstance(metadata, dict):
                         metadata = {}
                     if metadata.get("data_id"):
-                        data_ids.append(metadata["data_id"])
+                        data_id = metadata["data_id"]
+                        # 兼容性处理
+                        if isinstance(data_id, dict):
+                            data_id = data_id.get("data_id")
+                        if data_id and isinstance(data_id, str):
+                            data_ids.append(data_id)
                     # 从顶层metadata.source_data_ids获取（多data_id场景）
                     elif metadata.get("source_data_ids"):
-                        data_ids.extend(metadata["source_data_ids"])
+                        source_ids = metadata["source_data_ids"]
+                        # 过滤确保都是字符串
+                        for sid in source_ids:
+                            if isinstance(sid, str):
+                                data_ids.append(sid)
+                            elif isinstance(sid, dict):
+                                string_id = sid.get("data_id")
+                                if string_id and isinstance(string_id, str):
+                                    data_ids.append(string_id)
 
         return data_ids
 
@@ -1765,11 +1794,20 @@ class ExpertExecutor(ABC):
                     has_data=has_data
                 )
 
-                # 去重
-                if visual_id and visual_id in seen_ids:
+                # 去重（兼容性处理：visual_id 可能是字典）
+                visual_id_key = visual_id
+                if isinstance(visual_id, dict):
+                    # 如果 visual_id 是字典，使用 id 或 image_id 作为唯一键
+                    visual_id_key = visual_id.get("id") or visual_id.get("image_id")
+                    if not visual_id_key:
+                        # 如果都没有，使用字符串表示作为键（不推荐但兼容）
+                        visual_id_key = str(visual_id)
+
+                if visual_id_key and visual_id_key in seen_ids:
                     logger.info(
                         "[DEBUG_AGGREGATE_VISUALS] SKIP - duplicate visual_id",
-                        visual_id=visual_id
+                        visual_id=visual_id,
+                        visual_id_key=visual_id_key
                     )
                     continue
 
@@ -1777,8 +1815,20 @@ class ExpertExecutor(ABC):
                 # 优先使用 payload 中的数据（包含 base64 图片等完整信息）
                 payload = visual.get("payload", {})
 
+                # ✅ 提取字符串ID（处理字典类型的id字段）
+                visual_id_for_aggregation = visual.get("id") or payload.get("id")
+                if isinstance(visual_id_for_aggregation, dict):
+                    # 如果id是字典，提取真正的字符串ID
+                    if "image_id" in visual_id_for_aggregation:
+                        visual_id_for_aggregation = visual_id_for_aggregation["image_id"]
+                    elif "id" in visual_id_for_aggregation and isinstance(visual_id_for_aggregation["id"], str):
+                        visual_id_for_aggregation = visual_id_for_aggregation["id"]
+                    else:
+                        # 无法提取，使用fallback
+                        visual_id_for_aggregation = f"visual_{idx}_{visual_idx}"
+
                 aggregated_visual = {
-                    "id": visual.get("id") or payload.get("id"),
+                    "id": visual_id_for_aggregation,  # ✅ 使用提取的字符串ID
                     "type": visual.get("type") or payload.get("type"),
                     "title": visual.get("title") or payload.get("title"),
                     "data": payload.get("data"),  # 优先使用 payload 中的 data（base64 图片）
@@ -1787,6 +1837,9 @@ class ExpertExecutor(ABC):
                     "expert": tool_name,  # 记录来源工具
                 }
 
+                # 使用 visual_id_key 而不是 visual_id 进行去重
+                seen_ids.add(visual_id_key)
+
                 # 如果 payload 中没有 data，尝试从 visual 中获取
                 if not aggregated_visual["data"] and visual.get("data"):
                     aggregated_visual["data"] = visual.get("data")
@@ -1794,8 +1847,7 @@ class ExpertExecutor(ABC):
                 # 【关键修复】保留有有效数据的 visual（包括交互式图表的 config 字典）
                 # 条件：有 id 且有 data（data 可以是 base64 字符串或 ECharts 配置字典）
                 if aggregated_visual["id"] and aggregated_visual["data"] is not None:
-                    if visual_id:
-                        seen_ids.add(visual_id)
+                    # visual_id_key 已经在前面添加到 seen_ids 了，这里不再添加 visual_id
                     aggregated_visuals.append(aggregated_visual)
                     logger.info(
                         "[DEBUG_AGGREGATE_VISUALS] ADDED visual",

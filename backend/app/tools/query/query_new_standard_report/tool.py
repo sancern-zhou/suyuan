@@ -1398,15 +1398,14 @@ async def execute_query_new_standard_report(
             )
 
     # 可选：保存完整日报数据到数据注册表
-    saved_data = None
     data_id_str = None
     if context:
         try:
-            saved_data = context.save_data(
+            # context.save_data() 直接返回字符串ID
+            data_id_str = context.save_data(
                 data=standardized_data,  # 保存清洗和标准化后的数据
                 schema="air_quality_unified"
             )
-            data_id_str = saved_data["data_id"]
             logger.info("daily_data_saved", data_id=data_id_str)
         except Exception as e:
             logger.warning("failed_to_save_daily_data", error=str(e))

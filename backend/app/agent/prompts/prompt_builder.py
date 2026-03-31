@@ -1,7 +1,7 @@
 """
-ReAct系统提示词构建器（六模式架构）
+ReAct系统提示词构建器（七模式架构）
 
-⚠️ 注意：保留现有的query模式（WEB端问数模式），新增social模式（移动端呼吸式Agent）
+⚠️ 注意：保留现有的query模式（WEB端问数模式），新增social模式（移动端呼吸式Agent）和chart模式（图表生成模式）
 """
 
 from typing import Literal, List, Optional
@@ -11,12 +11,13 @@ from .code_prompt import build_code_prompt
 from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
+from .chart_prompt import build_chart_prompt
 from .tool_registry import get_tools_by_mode, get_tool_order
 import structlog
 
 logger = structlog.get_logger()
 
-AgentMode = Literal["assistant", "expert", "code", "query", "report", "social"]
+AgentMode = Literal["assistant", "expert", "code", "query", "report", "social", "chart"]
 
 
 def build_react_system_prompt(
@@ -24,10 +25,10 @@ def build_react_system_prompt(
     available_tools: Optional[List[str]] = None
 ) -> str:
     """
-    构建ReAct系统提示词（六模式架构）
+    构建ReAct系统提示词（七模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social")
+        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social" | "chart")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
 
     Returns:
@@ -65,6 +66,8 @@ def build_react_system_prompt(
         return build_report_prompt(filtered_tools)
     elif mode == "social":
         return build_social_prompt(filtered_tools)
+    elif mode == "chart":
+        return build_chart_prompt(filtered_tools)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 

@@ -1,0 +1,12 @@
+# Task List Templates Directory
+
+This directory contains standard task list templates for the agent.
+
+## Templates
+
+- `quick_trace_standard.md` - Standard quick trace analysis workflow
+- `quick_trace_fast.md` - Fast version with essential tasks only
+
+## Usage
+
+The agent reads these templates using `read_file` tool and executes tasks according to the definitions.

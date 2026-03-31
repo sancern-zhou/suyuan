@@ -1,6 +1,5 @@
 """Browser Tool Configuration"""
 from typing import List
-import os
 
 class BrowserConfig:
     """Browser configuration settings"""
@@ -27,9 +26,6 @@ class BrowserConfig:
     # Content limits
     MAX_SNAPSHOT_LENGTH = 10000  # Max characters for text snapshot
     MAX_LINKS = 100  # Max links/images to extract
-
-    # Backend URL for image access
-    BACKEND_HOST = os.getenv("BACKEND_HOST", "http://localhost:8000")
 
     # Wait conditions configuration
     WAIT_DEFAULT_TIMEOUT = 10000  # 10 seconds

@@ -493,12 +493,12 @@ class QueryGDSuncereDataTool:
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:50],  # 返回前50条供预览
+                "data": standardized_records[:24],  # 返回前24条供预览
                 "metadata": {
                     "tool_name": "query_gd_suncere_city_day",
                     "data_id": data_id,
                     "total_records": len(standardized_records),
-                    "returned_records": min(50, len(standardized_records)),
+                    "returned_records": min(24, len(standardized_records)),
                     "cities": cities,
                     "date_range": f"{start_date} to {end_date}",
                     "schema_version": "v2.0",  # UDF v2.0 标记
@@ -705,12 +705,12 @@ class QueryGDSuncereDataTool:
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:100],  # 返回前100条供预览
+                "data": standardized_records[:24],  # 返回前24条供预览
                 "metadata": {
                     "tool_name": "query_gd_suncere_city_hour",
                     "data_id": data_id,
                     "total_records": len(standardized_records),
-                    "returned_records": min(100, len(standardized_records)),
+                    "returned_records": min(24, len(standardized_records)),
                     "cities": cities,
                     "time_range": f"{start_time} - {end_time}",
                     "schema_version": "v2.0",  # UDF v2.0 标记
@@ -1122,12 +1122,12 @@ def execute_query_gd_suncere_report(
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:50],  # 返回前50条供预览
+                "data": standardized_records[:24],  # 返回前24条供预览
                 "metadata": {
                     "tool_name": "query_gd_suncere_report",
                     "data_id": data_id,
                     "total_records": len(standardized_records),
-                    "returned_records": min(50, len(standardized_records)),
+                    "returned_records": min(24, len(standardized_records)),
                     "cities": cities,
                     "time_range": f"{start_time} to {end_time}",
                     "time_type": time_type,
@@ -1142,11 +1142,11 @@ def execute_query_gd_suncere_report(
         return {
             "status": "success",
             "success": True,
-            "data": raw_records[:100],
+            "data": raw_records[:24],
             "metadata": {
                 "tool_name": "query_gd_suncere_report",
                 "total_records": len(raw_records),
-                "returned_records": min(100, len(raw_records)),
+                "returned_records": min(24, len(raw_records)),
                 "cities": cities,
                 "time_range": f"{start_time} to {end_time}",
                 "time_type": time_type,
@@ -1346,12 +1346,12 @@ def execute_query_gd_suncere_report_compare(
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:50],  # 返回前50条供预览
+                "data": standardized_records[:24],  # 返回前24条供预览
                 "metadata": {
                     "tool_name": "query_gd_suncere_report_compare",
                     "data_id": data_id,
                     "total_records": len(standardized_records),
-                    "returned_records": min(50, len(standardized_records)),
+                    "returned_records": min(24, len(standardized_records)),
                     "cities": cities,
                     "time_point": time_point,
                     "contrast_time": contrast_time,
@@ -1367,11 +1367,11 @@ def execute_query_gd_suncere_report_compare(
         return {
             "status": "success",
             "success": True,
-            "data": raw_records[:100],
+            "data": raw_records[:24],
             "metadata": {
                 "tool_name": "query_gd_suncere_report_compare",
                 "total_records": len(raw_records),
-                "returned_records": min(100, len(raw_records)),
+                "returned_records": min(24, len(raw_records)),
                 "cities": cities,
                 "time_point": time_point,
                 "contrast_time": contrast_time,

@@ -177,13 +177,19 @@ class ExecutionContext:
             session_id=self.session_id
         )
 
-        # ✅ save_data() 现在直接返回字符串ID（非Handle对象）
-        data_id = self.data_manager.save_data(
+        # ✅ save_data() 返回字典 {"data_id": str, "file_path": str}
+        saved_ref = self.data_manager.save_data(
             data=data,
             schema=schema,
             field_stats=field_stats,
             metadata=metadata
         )
+
+        # ✅ 提取字符串 ID
+        if isinstance(saved_ref, dict):
+            data_id = saved_ref.get("data_id")
+        else:
+            data_id = saved_ref
 
         # ✅ 直接使用字符串ID进行跟踪
         self.current_data_id = data_id
@@ -287,3 +293,34 @@ class ExecutionContext:
             f"<ExecutionContext session={self.session_id} "
             f"iteration={self.iteration}>"
         )
+
+    def copy(self, **updates) -> "ExecutionContext":
+        """
+        Create a copy of the execution context with optional updates.
+
+        This is useful for tools that need to modify the context temporarily
+        without affecting the original context.
+
+        Args:
+            **updates: Optional fields to update in the copied context
+
+        Returns:
+            A new ExecutionContext instance
+
+        Example:
+            # Create a copy with a different iteration
+            new_context = context.copy(iteration=5)
+        """
+        # Create a new instance with the same attributes
+        copied = ExecutionContext(
+            session_id=updates.get("session_id", self.session_id),
+            iteration=updates.get("iteration", self.iteration),
+            data_manager=updates.get("data_manager", self.data_manager),
+            task_list=updates.get("task_list", self.task_list),
+        )
+
+        # Copy over the tracking attributes
+        copied.current_data_id = updates.get("current_data_id", self.current_data_id)
+        copied.available_data_ids = list(updates.get("available_data_ids", self.available_data_ids))
+
+        return copied

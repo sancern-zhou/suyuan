@@ -807,7 +807,8 @@ result = calculate_soluble(
                         for v in result.get("visuals", [])
                     ]
                 }
-                result_data_ref = context.save_data(
+                # context.save_data() 直接返回字符串ID
+                result_data_id = context.save_data(
                     data=[summary],
                     schema="particulate_analysis",
                     metadata={
@@ -820,10 +821,7 @@ result = calculate_soluble(
                         "nor_mean": statistics.get("sor_nor", {}).get("nor_mean")
                     }
                 )
-                result_data_id = result_data_ref["data_id"]
-                result_file_path = result_data_ref["file_path"]
                 result["data_id"] = result_data_id
-                result["file_path"] = result_file_path
             except Exception as save_err:
                 logger.warning(f"[calculate_soluble] 保存失败: {save_err}")
 

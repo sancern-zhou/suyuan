@@ -294,16 +294,22 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
     """
     try:
         # 提取基本信息
-        status = result.get("status", "success")
-        # ✅ 修复：根据 status 字段推断 success 值，而不是默认为 True
-        # 如果工具没有返回 success 字段，通过 status 推断
+        # ✅ 修复：更安全的默认值策略
+        # 如果工具返回了 success 字段，优先使用它来推断 status
         if "success" in result:
             success = result["success"]
+            # 如果 success 为 False，默认 status 为 "failed"
+            if result.get("status"):
+                status = result["status"]
+            else:
+                status = "failed" if not success else "success"
         else:
+            # 如果工具没有返回 success 字段，根据 status 推断
+            status = result.get("status", "success")
             # 如果有 error 字段，标记为失败
             if "error" in result:
                 success = False
-                status = result.get("status", "failed")
+                status = "failed"
             else:
                 # 根据 status 推断
                 success = (status == "success")

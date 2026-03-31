@@ -28,7 +28,10 @@
       "Bash(find /home/xckj/suyuan -name *.xls* -type f)",
       "Bash(/root/miniconda3/envs/backend_py311/bin/python3 -c \"from app.tools.utility.grep_tool import _RIPGREP_PATH, tool; print\\(''''ripgrep:'''', _RIPGREP_PATH\\); print\\(''''available:'''', tool.is_available\\(\\)\\)\")",
       "Bash(npm run:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(git push:*)",
+      "Bash(sudo kill:*)",
+      "Bash(bash /home/xckj/suyuan/backend/restart_server.sh)"
     ]
   }
 }

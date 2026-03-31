@@ -752,7 +752,7 @@ class CalculateReconstructionTool(LLMTool):
             function_schema=function_schema
         )
 
-    async def execute(self, data_id=None, data_id_carbon=None, data_id_crustal=None, data_id_trace=None, data=None, reconstruction_type="full", oc_to_om=1.4, negative_handling="clip", oxide_coeff_dict=None, context=None, **kwargs):
+    async def execute(self, context=None, data_id=None, data_id_carbon=None, data_id_crustal=None, data_id_trace=None, data=None, reconstruction_type="full", oc_to_om=1.4, negative_handling="clip", oxide_coeff_dict=None, **kwargs):
         """执行7大组分重构计算"""
         data_context_manager = kwargs.get('data_context_manager')
 

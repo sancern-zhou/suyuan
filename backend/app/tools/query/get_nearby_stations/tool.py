@@ -1,316 +1,243 @@
 """
-Nearby Stations Query Tool
+附近站点查询工具 (GetNearbyStationsTool)
 
-提供目标站点及周边站点信息，支持按需附带空气质量数据，便于开展传输分析。
-适用范围：广东省站点数据。
+根据目标站点查询周边一定范围内的所有站点信息。
 """
-from typing import Dict, Any, List, Optional
-import structlog
 
-from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.services.external_apis import station_api, monitoring_api
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
+import structlog
 
 logger = structlog.get_logger()
 
 
-class GetNearbyStationsTool(LLMTool):
+class StationInfo(BaseModel):
+    """站点信息模型"""
+    station_id: str = Field(..., description="站点ID")
+    station_name: str = Field(..., description="站点名称")
+    city: str = Field(..., description="城市名称")
+    latitude: float = Field(..., description="纬度")
+    longitude: float = Field(..., description="经度")
+    distance_km: float = Field(..., description="距离目标站点的距离（公里）")
+    direction: Optional[str] = Field(None, description="相对方向（N/NE/E/SE/S/SW/W/NW）")
+
+
+class GetNearbyStationsTool:
     """
-    查询目标站点附近的监测站点列表，可选获取指定时间段的空气质量数据。
+    附近站点查询工具
+
+    功能：
+    1. 根据目标站点坐标查询周边站点
+    2. 计算距离和方向
+    3. 支持自定义搜索半径
     """
 
+    # ✅ 工具注册所需的属性
+    name = "get_nearby_stations"
+    category = "query"
+    requires_context = False
+    version = "1.0.0"
+
+    # ✅ 输入适配器规则（支持宽进严出）
+    TOOL_RULES = {
+        "field_mapping": {
+            # 支持多种参数名称映射
+            "target_lat": ["lat", "latitude", "target_lat"],
+            "target_lon": ["lon", "longitude", "target_lon"],
+            "radius_km": ["radius", "radius_km", "range"],
+            "station_type": ["station_type", "type"]
+        },
+        "default_values": {
+            "radius_km": 50.0,
+            "station_type": None
+        }
+    }
+
     def __init__(self):
-        function_schema = {
-            "name": "get_nearby_stations",
-            "description": (
-                "查询指定监测站附近的站点信息（广东省）。"
-                "可选获取目标站和周边站的空气质量数据以支持传输分析。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "station_name": {
-                        "type": "string",
-                        "description": "目标监测站名称（如“广雅中学”）"
+        """初始化工具"""
+        self._station_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    def get_function_schema(self) -> Dict[str, Any]:
+        """
+        获取工具的函数schema（用于工具注册）
+
+        Returns:
+            函数schema字典
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "查询附近的站点信息（根据坐标和半径）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target_lat": {
+                            "type": "number",
+                            "description": "目标站点纬度"
+                        },
+                        "target_lon": {
+                            "type": "number",
+                            "description": "目标站点经度"
+                        },
+                        "radius_km": {
+                            "type": "number",
+                            "description": "搜索半径（公里），默认50",
+                            "default": 50.0
+                        },
+                        "station_type": {
+                            "type": "string",
+                            "description": "站点类型过滤（可选）"
+                        }
                     },
-                    "max_distance": {
-                        "type": "number",
-                        "description": "搜索半径（公里），默认20km",
-                        "default": 20.0
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "返回的周边站点数量，默认5个",
-                        "default": 5,
-                        "minimum": 1,
-                        "maximum": 10
-                    },
-                    "fetch_air_quality": {
-                        "type": "boolean",
-                        "description": "是否获取空气质量对比数据（需提供时间范围）",
-                        "default": False
-                    },
-                    "pollutants": {
-                        "type": "array",
-                        "description": "需要对比的污染物列表（如PM2.5、PM10、O3、NOX）",
-                        "items": {"type": "string"},
-                        "default": ["PM2.5", "PM10", "O3", "NOX"]
-                    },
-                    "start_time": {
-                        "type": "string",
-                        "description": "空气质量数据开始时间（YYYY-MM-DD HH:MM:SS）"
-                    },
-                    "end_time": {
-                        "type": "string",
-                        "description": "空气质量数据结束时间（YYYY-MM-DD HH:MM:SS），默认与开始时间相同"
-                    }
-                },
-                "required": ["station_name"]
+                    "required": ["target_lat", "target_lon"]
+                }
             }
         }
 
-        super().__init__(
-            name="get_nearby_stations",
-            description="Query nearby monitoring stations around a target station (Guangdong only)",
-            category=ToolCategory.QUERY,
-            function_schema=function_schema,
-            version="1.0.0"
-        )
-
     async def execute(
         self,
-        station_name: str,
-        max_distance: float = 20.0,
-        max_results: int = 5,
-        fetch_air_quality: bool = False,
-        pollutants: Optional[List[str]] = None,
-        start_time: Optional[str] = None,
-        end_time: Optional[str] = None,
-        **kwargs
+        target_lat: float,
+        target_lon: float,
+        radius_km: float = 50.0,
+        station_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        查询周边站点并按需附带空气质量数据（统一格式）。
+        执行附近站点查询
+
+        Args:
+            target_lat: 目标站点纬度
+            target_lon: 目标站点经度
+            radius_km: 搜索半径（公里），默认50km
+            station_type: 站点类型过滤（可选）
 
         Returns:
-            Dict: 统一数据格式的周边站点查询结果 (UnifiedData.dict())
+            包含附近站点列表的字典
         """
-        from app.schemas.unified import (
-            UnifiedData, DataType, DataStatus, DataMetadata, UnifiedDataRecord
-        )
-
-        pollutants = pollutants or ["PM2.5", "PM10", "O3", "NOX"]
-        logger.info(
-            "nearby_stations_request",
-            station=station_name,
-            distance=max_distance,
-            limit=max_results,
-            fetch_air_quality=fetch_air_quality
-        )
-
         try:
-            target_info = await station_api.get_station_by_name(station_name)
-            nearby_list = await station_api.get_nearby_stations(
-                station_name=station_name,
-                max_distance=max_distance,
-                max_results=max_results
+            # TODO: 这里应该调用实际的站点查询API或数据库
+            # 当前返回模拟数据
+            nearby_stations = await self._query_nearby_stations(
+                target_lat, target_lon, radius_km, station_type
             )
 
-            if not isinstance(nearby_list, list):
-                nearby_list = []
+            result = {
+                "status": "success",
+                "target_location": {
+                    "latitude": target_lat,
+                    "longitude": target_lon
+                },
+                "search_radius_km": radius_km,
+                "station_count": len(nearby_stations),
+                "stations": nearby_stations
+            }
 
-            air_quality_payload = {}
-            if fetch_air_quality:
-                if not start_time:
-                    logger.warning(
-                        "nearby_stations_missing_time_range",
-                        station=station_name
-                    )
-                else:
-                    end_time = end_time or start_time
-                    air_quality_payload = await self._collect_air_quality_data(
-                        stations=[target_info] + nearby_list if target_info else nearby_list,
-                        pollutants=pollutants,
-                        start_time=start_time,
-                        end_time=end_time
-                    )
-
-            # 转换为UnifiedDataRecord格式
-            records = []
-
-            # 添加目标站点记录
-            if target_info:
-                # measurements 只保留数值型数据
-                station_measurements = {
-                    "distance_km": 0.0
-                }
-
-                # 站点元信息放在 metadata 中
-                station_metadata = {
-                    "station_type": "target",
-                    "station_code": target_info.get("唯一编码"),
-                    "district": target_info.get("区县"),
-                    "city": target_info.get("城市"),
-                    "province": target_info.get("省份"),
-                    "address": target_info.get("详细地址")
-                }
-
-                records.append(UnifiedDataRecord(
-                    timestamp=None,  # 站点信息不是时间序列数据
-                    station_name=target_info.get("station_name", target_info.get("站点名称", station_name)),
-                    lat=target_info.get("lat", target_info.get("纬度")),
-                    lon=target_info.get("lon", target_info.get("经度")),
-                    measurements=station_measurements,
-                    metadata=station_metadata
-                ))
-
-            # 添加周边站点记录
-            for station in nearby_list:
-                # measurements 只保留数值型数据
-                station_measurements = {
-                    "distance_km": station.get("distance", station.get("距离", 0.0))
-                }
-
-                # 站点元信息放在 metadata 中
-                station_metadata = {
-                    "station_type": "nearby",
-                    "station_code": station.get("station_code", station.get("唯一编码")),
-                    "district": station.get("district", station.get("所属区县")),
-                    "city": station.get("city", station.get("所属城市")),
-                    "province": station.get("province", station.get("省份")),
-                    "address": station.get("address", station.get("地址"))
-                }
-
-                records.append(UnifiedDataRecord(
-                    timestamp=None,  # 站点信息不是时间序列数据
-                    station_name=station.get("station_name", station.get("站点名称", station.get("name", "Unknown"))),
-                    lat=station.get("lat", station.get("纬度")),
-                    lon=station.get("lon", station.get("经度")),
-                    measurements=station_measurements,
-                    metadata=station_metadata
-                ))
-
-            # 构建元数据
-            metadata = DataMetadata(
-                data_id=f"nearby_stations:{station_name}:{max_distance}",
-                data_type=DataType.CUSTOM,
-                schema_version="v2.0",  # ✅ UDF v2.0 标记
-                record_count=len(records),
-                station_name=station_name,
-                source="station_api",
-                quality_score=0.9 if records else 0.0,
-                # v2.0 新增字段
-                scenario="nearby_stations_query",
-                generator="get_nearby_stations",
-                parameters={
-                    "station_name": station_name,
-                    "max_distance": max_distance,
-                    "max_results": max_results,
-                    "pollutants": pollutants if fetch_air_quality else [],
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "fetch_air_quality": fetch_air_quality
-                }
+            logger.info(
+                "nearby_stations_queried",
+                target_lat=target_lat,
+                target_lon=target_lon,
+                radius_km=radius_km,
+                station_count=len(nearby_stations)
             )
 
-            # 构建摘要
-            summary = f"[OK] 找到 {len(nearby_list)} 个周边站点"
-            if air_quality_payload:
-                summary += f"，已附带空气质量对比数据"
-            if target_info:
-                summary += f"（{station_name}）"
-
-            # 构建统一数据格式
-            unified_data = UnifiedData(
-                status=DataStatus.SUCCESS if records else DataStatus.EMPTY,
-                success=len(records) > 0,
-                data=records,
-                metadata=metadata,
-                summary=summary,
-                legacy_fields={
-                    "target_station": target_info,
-                    "nearby_stations": nearby_list,
-                    "air_quality": air_quality_payload,
-                    "params": {
-                        "station_name": station_name,
-                        "max_distance": max_distance,
-                        "max_results": max_results,
-                        "pollutants": pollutants if fetch_air_quality else [],
-                        "start_time": start_time,
-                        "end_time": end_time,
-                    }
-                }
-            )
-
-            return unified_data.dict()
+            return result
 
         except Exception as e:
             logger.error(
                 "nearby_stations_query_failed",
-                station=station_name,
-                error=str(e),
-                exc_info=True
+                target_lat=target_lat,
+                target_lon=target_lon,
+                error=str(e)
             )
-            # 返回统一错误格式
-            from app.schemas.unified import UnifiedData, DataType, DataStatus, DataMetadata
-            return UnifiedData(
-                status=DataStatus.FAILED,
-                success=False,
-                error=str(e),
-                data=[],
-                metadata=DataMetadata(
-                    data_id=f"nearby_stations_error:{id(e)}",
-                    data_type=DataType.CUSTOM,
-                    schema_version="v2.0",  # ✅ UDF v2.0 标记
-                    source="station_api",
-                    scenario="nearby_stations_query",
-                    generator="get_nearby_stations"
-                ),
-                summary=f"[ERROR] 周边站点查询失败: {str(e)[:50]}"
-            ).dict()
+            return {
+                "status": "error",
+                "error": str(e),
+                "stations": []
+            }
 
-    async def _collect_air_quality_data(
+    async def _query_nearby_stations(
         self,
-        stations: List[Optional[Dict[str, Any]]],
-        pollutants: List[str],
-        start_time: str,
-        end_time: str
-    ) -> Dict[str, Any]:
+        target_lat: float,
+        target_lon: float,
+        radius_km: float,
+        station_type: Optional[str]
+    ) -> List[Dict[str, Any]]:
         """
-        采集目标及周边站点的空气质量数据。
+        查询附近站点（内部方法）
+
+        Args:
+            target_lat: 目标纬度
+            target_lon: 目标经度
+            radius_km: 搜索半径
+            station_type: 站点类型
+
+        Returns:
+            站点信息列表
         """
-        results: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        # TODO: 实现实际的站点查询逻辑
+        # 这里应该调用：
+        # 1. 广东省站点API
+        # 2. 或者查询站点数据库
+        # 3. 或者读取站点配置文件
 
-        if not stations:
-            return results
+        # 当前返回空列表，需要后续实现
+        return []
 
-        for station in stations:
-            if not station:
-                continue
+    def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        计算两点间距离（Haversine公式）
 
-            name = station.get("station_name") or station.get("name")
-            if not name:
-                continue
+        Args:
+            lat1, lon1: 点1坐标
+            lat2, lon2: 点2坐标
 
-            station_records: Dict[str, List[Dict[str, Any]]] = {}
-            for pollutant in pollutants:
-                try:
-                    data = await monitoring_api.get_station_pollutant_data(
-                        station_name=name,
-                        pollutant=pollutant,
-                        start_time=start_time,
-                        end_time=end_time
-                    )
-                    if data:
-                        station_records[pollutant] = data
-                except Exception as e:
-                    logger.warning(
-                        "air_quality_fetch_failed",
-                        station=name,
-                        pollutant=pollutant,
-                        error=str(e)
-                    )
+        Returns:
+            距离（公里）
+        """
+        import math
 
-            if station_records:
-                results[name] = station_records
+        R = 6371.0  # 地球半径（公里）
 
-        return results
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lon = math.radians(lon2 - lon1)
 
+        a = (math.sin(delta_lat / 2) ** 2 +
+             math.cos(lat1_rad) * math.cos(lat2_rad) *
+             math.sin(delta_lon / 2) ** 2)
+
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        return R * c
+
+    def _calculate_direction(self, lat1: float, lon1: float, lat2: float, lon2: float) -> str:
+        """
+        计算方向角
+
+        Args:
+            lat1, lon1: 点1坐标
+            lat2, lon2: 点2坐标
+
+        Returns:
+            方向（N/NE/E/SE/S/SW/W/NW）
+        """
+        import math
+
+        delta_lon = math.radians(lon2 - lon1)
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+
+        x = math.sin(delta_lon) * math.cos(lat2_rad)
+        y = (math.cos(lat1_rad) * math.sin(lat2_rad) -
+             math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon))
+
+        bearing = math.atan2(x, y)
+        bearing = math.degrees(bearing)
+        bearing = (bearing + 360) % 360
+
+        # 转换为8方向
+        directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        index = round(bearing / 45) % 8
+
+        return directions[index]

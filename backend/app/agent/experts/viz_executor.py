@@ -77,10 +77,6 @@ class VizExecutor(ExpertExecutor):
                     upstream_results = {}
 
                 # 使用过滤后的upstream_data_ids重新生成工具计划
-                from .expert_router_v3 import ExpertRouterV3
-                # 创建临时路由器来获取上游结果字典格式
-                # 由于无法直接获取，我们使用task.context中的信息
-
                 # 直接修改task的upstream_data_ids
                 task = task.copy(update={"upstream_data_ids": filtered_upstream_data_ids})
 

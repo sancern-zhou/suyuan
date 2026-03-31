@@ -278,8 +278,8 @@ class GetWeatherForecastTool(LLMTool):
                         schema="weather"
                     )
 
-                    # ✅ 修复：save_data() 是同步方法，不需要 await
-                    saved_data_ref = context.save_data(
+                    # ✅ 修复：save_data() 返回字符串 ID
+                    saved_data_id = context.save_data(
                         data=records_dicts,
                         schema="weather",
                         metadata={
@@ -291,13 +291,11 @@ class GetWeatherForecastTool(LLMTool):
                             "source": "Open-Meteo Forecast API"
                         }
                     )
-                    saved_data_id = saved_data_ref["data_id"]
-                    saved_file_path = saved_data_ref["file_path"]
+                    # context.save_data() 返回字符串 data_id
                     logger.info(
                         "weather_forecast_data_saved",
                         original_id=data_id,
                         saved_id=saved_data_id,
-                        saved_file_path=saved_file_path,
                         records_count=len(records_dicts)
                     )
                     # 更新摘要，包含保存的data_id

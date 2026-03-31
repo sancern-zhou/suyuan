@@ -57,9 +57,8 @@ def handle_screenshot(
     # Generate description from page content
     description = _generate_page_description(page)
 
-    # Build full URL (like particulate_visualizer.py)
-    image_relative_path = f"/api/image/{image_id}"
-    image_url = f"{config.BACKEND_HOST}{image_relative_path}"
+    # 【修复】使用相对路径，让前端通过vite代理或同域访问
+    image_url = f"/api/image/{image_id}"
 
     # Generate markdown image format (for LLM output)
     markdown_image = f"![{title}]({image_url})"

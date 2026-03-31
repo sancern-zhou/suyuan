@@ -904,9 +904,9 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                                 "chart_index": i
                             }
                         )
-                        
+
                         try:
-                            chart_data_ref = context.save_data(
+                            chart_data_id = context.save_data(
                                 data=[chart_config_model],
                                 schema="chart_config",
                                 metadata={
@@ -917,13 +917,13 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                                     "chart_index": i
                                 }
                             )
-                            chart_data_id = chart_data_ref["data_id"]
-                            chart_file_path = chart_data_ref["file_path"]
+                            # ✅ chart_data_id 已经是字符串（ExecutionContext.save_data 的返回值）
+                            # ❌ 旧代码：chart_data_id = chart_data_ref["data_id"]（已废弃）
+                            # chart_file_path 已不再返回
                             saved_chart_ids.append(chart_data_id)
                             logger.info(
                                 "smart_chart_multi_saved",
                                 chart_data_id=chart_data_id,
-                                chart_file_path=chart_file_path,
                                 chart_type=chart_cfg.get("type"),
                                 chart_index=i,
                                 source_data_id=data_id
@@ -966,7 +966,6 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                         "metadata": {
                             "tool_name": "smart_chart_generator",
                             "data_id": data_id,
-            "file_path": file_path,
                             "source_data_id": data_id,
                             "chart_type": "multi_chart",
                             "schema_type": schema_type,
@@ -1039,7 +1038,7 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
             )
 
             try:
-                chart_data_ref = context.save_data(
+                chart_data_id = context.save_data(
                     data=[chart_config_model],
                     schema="chart_config",
                     metadata={
@@ -1049,12 +1048,12 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                         "generated_by": "smart_chart_generator"
                     }
                 )
-                chart_data_id = chart_data_ref["data_id"]
-                chart_file_path = chart_data_ref["file_path"]
+                # ✅ chart_data_id 已经是字符串（ExecutionContext.save_data 的返回值）
+                # ❌ 旧代码：chart_data_id = chart_data_ref["data_id"]（已废弃）
+                # chart_file_path 已不再返回，如需要可通过 data_manager.get_file_path(data_id) 获取
                 logger.info(
                     "smart_chart_saved",
                     chart_data_id=chart_data_id,
-                    chart_file_path=chart_file_path,
                     source_data_id=data_id
                 )
             except Exception as exc:

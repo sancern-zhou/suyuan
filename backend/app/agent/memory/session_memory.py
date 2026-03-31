@@ -415,26 +415,45 @@ class SessionMemory:
 
         file_path = self.data_files.get(data_id)
         if not file_path:
-            # ✅ 增强：尝试用不同的方法查找文件
-            logger.warning(
-                "session_memory_file_not_registered",
+            # ✅ 增强：尝试从 DataRegistry 查找文件
+            safe_filename = data_id.replace(":", "_")
+            registry_path = self.data_registry.base_dir / "datasets" / f"{safe_filename}.json"
+
+            logger.info(
+                "session_memory_trying_registry_path",
                 data_id=data_id,
-                available_ids=list(self.data_files.keys())[:5]  # 只显示前5个
+                safe_filename=safe_filename,
+                registry_path=str(registry_path),
+                registry_exists=registry_path.exists()
             )
 
-            # 尝试基于文件名模式匹配
-            safe_filename = data_id.replace(":", "_")
-            alternative_path = self.session_dir / f"{safe_filename}.json"
-
-            if alternative_path.exists():
+            if registry_path.exists():
                 logger.info(
-                    "session_memory_file_found_by_pattern",
+                    "session_memory_file_found_in_registry",
                     data_id=data_id,
-                    alternative_path=str(alternative_path)
+                    registry_path=str(registry_path)
                 )
-                file_path = str(alternative_path)
+                file_path = str(registry_path)
             else:
-                return None
+                # 尝试从 session_dir 查找（备用）
+                logger.warning(
+                    "session_memory_file_not_registered",
+                    data_id=data_id,
+                    available_ids=list(self.data_files.keys())[:5],  # 只显示前5个
+                    registry_path=str(registry_path)
+                )
+
+                alternative_path = self.session_dir / f"{safe_filename}.json"
+
+                if alternative_path.exists():
+                    logger.info(
+                        "session_memory_file_found_by_pattern",
+                        data_id=data_id,
+                        alternative_path=str(alternative_path)
+                    )
+                    file_path = str(alternative_path)
+                else:
+                    return None
 
         path = Path(file_path)
         if not path.exists():
