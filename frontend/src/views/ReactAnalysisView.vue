@@ -2260,6 +2260,9 @@ const quickLoadSession = async (session) => {
     if (hasVisuals || hasOfficeDocs) {
       rightPanelVisible.value = true
       console.log('[会话恢复] 设置右侧面板可见')
+      // 等待 DOM 更新，确保容器有尺寸
+      await nextTick()
+      await new Promise(resolve => setTimeout(resolve, 100))
     }
 
     // 关闭管理面板并显示成功提示
@@ -2613,6 +2616,9 @@ const handleLoadSession = async (sessionId) => {
     if (hasVisuals || hasOfficeDocs) {
       rightPanelVisible.value = true
       console.log('[快速加载会话] 设置右侧面板可见')
+      // 等待 DOM 更新，确保容器有尺寸
+      await nextTick()
+      await new Promise(resolve => setTimeout(resolve, 100))
     }
 
     // 【新增】恢复Office文档预览（用于历史对话PDF预览）
@@ -2955,6 +2961,9 @@ const handleSessionRestore = async (sessionId) => {
     if (hasVisuals || hasOfficeDocs) {
       rightPanelVisible.value = true
       console.log('[会话恢复] 设置右侧面板可见')
+      // 等待 DOM 更新，确保容器有尺寸
+      await nextTick()
+      await new Promise(resolve => setTimeout(resolve, 100))
     }
 
     // 显示成功提示
