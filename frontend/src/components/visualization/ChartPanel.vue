@@ -2066,6 +2066,38 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
 const MAX_INIT_RETRY = 20
 const INIT_RETRY_DELAY = 80 // ms
 
+let deferredInitTimer = null
+
+// 清除延迟初始化定时器
+const clearDeferredInitTimer = () => {
+  if (deferredInitTimer) {
+    clearTimeout(deferredInitTimer)
+    deferredInitTimer = null
+  }
+}
+
+// 延迟初始化：在放弃初始化后，仍然定期检查容器是否变为可见
+const scheduleDeferredInit = () => {
+  clearDeferredInitTimer()
+  deferredInitTimer = setTimeout(() => {
+    if (waitingForVisible && chartContainer.value && !chartInstance) {
+      const { clientWidth, clientHeight } = chartContainer.value
+      if (clientWidth > 0 && clientHeight > 0) {
+        console.log('[ChartPanel] 延迟检查发现容器已可见，重新初始化', {
+          clientWidth,
+          clientHeight,
+          chartId: getChartIdForLog()
+        })
+        waitingForVisible = false
+        initChart(0) // 从0开始重试
+      } else {
+        // 继续等待
+        scheduleDeferredInit()
+      }
+    }
+  }, 500) // 每500ms检查一次
+}
+
 // 等待容器具备尺寸后再初始化，避免 clientWidth/clientHeight 为 0
 const initChart = (retry = 0) => {
   const el = chartContainer.value
@@ -2082,7 +2114,7 @@ const initChart = (retry = 0) => {
   if (!clientWidth || !clientHeight) {
     // 父容器可能处于折叠或未渲染完成，稍后重试
     if (retry >= MAX_INIT_RETRY) {
-      console.warn('[ChartPanel] 容器尺寸始终为0，放弃初始化', {
+      console.warn('[ChartPanel] 容器尺寸始终为0，放弃初始化，等待容器变为可见', {
         retry,
         clientWidth,
         clientHeight,
@@ -2091,6 +2123,7 @@ const initChart = (retry = 0) => {
       })
       logContainerMetrics(el, 'init_fail')
       waitingForVisible = true
+      scheduleDeferredInit() // 启动延迟检查
       return
     }
     console.log('[ChartPanel] 容器尺寸为0，等待可见后重试', {
@@ -2122,6 +2155,9 @@ const initChart = (retry = 0) => {
   }
 
   try {
+    // 清除延迟初始化定时器（如果存在）
+    clearDeferredInitTimer()
+
     // 如果已存在实例，先销毁再重建，避免 "already initialized" 警告
     if (chartInstance) {
       // 注销旧实例
@@ -2176,6 +2212,12 @@ onMounted(() => {
       if (waitingForVisible && chartContainer.value) {
         const { clientWidth, clientHeight } = chartContainer.value
         if (clientWidth > 0 && clientHeight > 0) {
+          console.log('[ChartPanel] 容器尺寸变化，重新初始化', {
+            clientWidth,
+            clientHeight,
+            chartId: getChartIdForLog()
+          })
+          clearDeferredInitTimer() // 清除延迟检查，因为已经手动触发了
           waitingForVisible = false
           initChart()
         }
@@ -2183,6 +2225,10 @@ onMounted(() => {
     })
     if (scrollContainer.value) {
       resizeObserver.observe(scrollContainer.value)
+    }
+    // 也观察 chartContainer，确保能检测到尺寸变化
+    if (chartContainer.value) {
+      resizeObserver.observe(chartContainer.value)
     }
   }
 
@@ -2202,6 +2248,7 @@ onBeforeUnmount(() => {
     chartInstance.dispose()
     chartInstance = null
   }
+  clearDeferredInitTimer() // 清除延迟初始化定时器
   window.removeEventListener('resize', handleWindowResize)
 })
 
