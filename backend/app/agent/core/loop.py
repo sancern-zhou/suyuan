@@ -1852,6 +1852,19 @@ class ReActLoop:
                             lines.append(f"  - {file_name}")
                             lines.append(f"    路径: `{file_path}`")
 
+                    # ✅ 从 visuals 生成图表 markdown（用于 LLM 阅读）
+                    if "visuals" in observation:
+                        chart_visuals = [v for v in observation["visuals"] if v.get("type") == "image"]
+                        if chart_visuals:
+                            lines.append(f"\n**生成的图表**:")
+                            for viz in chart_visuals:
+                                url = viz["data"].get("url")
+                                title = viz.get("title", "图表")
+                                if url:
+                                    lines.append(f"- {title}: ![Chart]({url})")
+                                elif viz["data"].get("file_path"):
+                                    lines.append(f"- {title}: `{viz['data']['file_path']}` (缓存失败)")
+
                 # 对于 bash 工具，包含完整的 stdout/stderr
                 elif "stdout" in data or "stderr" in data:
                     if "stdout" in data and data["stdout"]:
@@ -2012,6 +2025,19 @@ class ReActLoop:
                         file_name = os.path.basename(file_path)
                         lines.append(f"  - {file_name}")
                         lines.append(f"    路径: `{file_path}`")
+
+                # ✅ 从 visuals 生成图表 markdown（用于 LLM 阅读）
+                if "visuals" in observation:
+                    chart_visuals = [v for v in observation["visuals"] if v.get("type") == "image"]
+                    if chart_visuals:
+                        lines.append(f"\n**生成的图表**:")
+                        for viz in chart_visuals:
+                            url = viz["data"].get("url")
+                            title = viz.get("title", "图表")
+                            if url:
+                                lines.append(f"- {title}: ![Chart]({url})")
+                            elif viz["data"].get("file_path"):
+                                lines.append(f"- {title}: `{viz['data']['file_path']}` (缓存失败)")
 
             elif is_image_tool and "analysis" in data:
                 # analyze_image 工具：显示完整的图片分析结果

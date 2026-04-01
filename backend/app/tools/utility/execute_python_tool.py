@@ -222,8 +222,30 @@ doc.save('/root/report.docx')
             result["data"]["files"] = final_files
             result["data"]["engine"] = "ipython" if self.use_ipython else "subprocess"
 
-            # 如果有文件，添加到摘要
-            if final_files:
+            # ✅ 处理办公文件：生成 PDF 预览（与 Office 工具统一格式）
+            office_extensions = {'.docx', '.xlsx', '.pptx', '.pdf', '.doc', '.xls', '.ppt'}
+            office_files = [f for f in final_files if Path(f).suffix.lower() in office_extensions]
+
+            if office_files:
+                # 只处理第一个 office 文件（与 Office 工具行为一致）
+                office_file = office_files[0]
+                try:
+                    from app.services.pdf_converter import pdf_converter
+                    pdf_preview = await pdf_converter.convert_to_pdf(office_file)
+                    result["data"]["pdf_preview"] = pdf_preview
+                    result["data"]["file_path"] = office_file
+                    result["summary"] = f"执行成功，生成文档：{Path(office_file).name}"
+                    logger.info(
+                        "execute_python_pdf_generated",
+                        pdf_id=pdf_preview["pdf_id"],
+                        office_file=office_file
+                    )
+                except Exception as pdf_error:
+                    logger.warning("execute_python_pdf_conversion_failed", error=str(pdf_error))
+                    # PDF 转换失败时，仍然返回文件信息
+                    result["data"]["file_path"] = office_file
+                    result["summary"] = f"执行成功，生成文件：{Path(office_file).name}"
+            elif final_files:
                 file_names = [Path(f).name for f in final_files]
                 result["summary"] = f"执行成功，生成文件: {', '.join(file_names)}"
             else:
@@ -293,12 +315,20 @@ doc.save('/root/report.docx')
                                 local_path=image_info["local_path"]
                             )
 
-                            # 添加到返回结果（使用绝对路径）
-                            result["data"]["images"] = result["data"].get("images", [])
-                            result["data"]["images"].append({
-                                "path": abs_chart_path,  # ✅ 使用绝对路径
-                                "url": image_info["url"],
-                                "markdown": f"![Chart]({image_info['url']})"
+                            # ✅ 添加到 visuals 字段（顶层，前端渲染使用）
+                            result.setdefault("visuals", []).append({
+                                "id": chart_id,
+                                "type": "image",
+                                "title": f"图表 {Path(chart_path).stem}",
+                                "data": {
+                                    "url": image_info["url"],
+                                    "image_id": image_info["image_id"]
+                                },
+                                "meta": {
+                                    "generator": "execute_python",
+                                    "schema_version": "3.1",
+                                    "file_path": abs_chart_path
+                                }
                             })
 
                             # 更新摘要
@@ -313,13 +343,21 @@ doc.save('/root/report.docx')
                                 error_type=type(e).__name__,
                                 exc_info=True
                             )
-                            # ⚠️ 缓存失败时，仍返回原始文件路径供调试
-                            result["data"]["images"] = result["data"].get("images", [])
-                            result["data"]["images"].append({
-                                "path": abs_chart_path,  # ✅ 使用绝对路径
-                                "url": None,
-                                "error": str(e),
-                                "markdown": f"![Chart](file://{abs_chart_path}) (缓存失败)"
+                            # ⚠️ 缓存失败时，仍返回文件路径供调试
+                            result.setdefault("visuals", []).append({
+                                "id": chart_id,
+                                "type": "image",
+                                "title": f"图表 {Path(chart_path).stem}",
+                                "data": {
+                                    "url": None,
+                                    "file_path": abs_chart_path,
+                                    "error": str(e)
+                                },
+                                "meta": {
+                                    "generator": "execute_python",
+                                    "schema_version": "3.1",
+                                    "cache_failed": True
+                                }
                             })
                             result["summary"] = f"图表生成成功（缓存失败）：{abs_chart_path}"
 

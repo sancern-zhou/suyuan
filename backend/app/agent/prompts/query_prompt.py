@@ -144,7 +144,16 @@ def build_query_prompt(available_tools: List[str]) -> str:
         "  - daily: 是否返回每日预报（默认true）\n",
         "  - 特点：实时调用Open-Meteo Forecast API，支持获取今天完整数据（含边界层高度）\n",
         "\n",
-        "**广东省城市数据查询工具**（公共参数：cities, start_date, end_date, enable_sand_deduction）：\n",
+        "**SQL Server历史数据库查询工具**（质控/工单数据）：
+- **通用SQL执行** → `execute_sql_query(sql, limit)`
+  - sql: SQL查询语句（必需，支持直接执行SELECT查询）
+  - limit: 返回记录数限制（可选，默认1000，最大10000）
+  - 支持表：quality_control_records（质控记录）、working_orders（运维工单）
+  - 特点：直接执行SQL，支持复杂查询、JOIN、聚合等操作
+  - 示例：execute_sql_query(sql=\"SELECT TOP 10 * FROM working_orders WHERE DDWORKINGORDERSTATUS = N'Doing'\")
+  - 安全限制：只允许SELECT查询，表名白名单验证，自动LIMIT限制
+
+**广东省城市数据查询工具**（公共参数：cities, start_date, end_date, enable_sand_deduction）：\n",
         "- **城市小时数据** → `query_gd_suncere_city_hour(cities, start_time, end_time)`\n",
         "  - 返回：小时数据（PM2.5、PM10、O3、NO2、SO2、CO、AQI等），支持多城市并发查询\n",
         "- **城市日数据（旧标准）** → `query_gd_suncere_city_day(cities, start_date, end_date)`\n",

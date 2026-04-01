@@ -74,15 +74,15 @@ async def trigger_pollution_alert_analysis(request: AlertRequest):
         # 计算执行时间
         execution_time = time.time() - start_time
 
-        # 确保执行时间大于0 (避免立即失败的情况)
-        if execution_time <= 0:
-            execution_time = 0.01  # 最小10毫秒
+        # 构建响应 (round后可能变成0.0，需要确保>0)
+        rounded_time = round(execution_time, 2)
+        if rounded_time <= 0:
+            rounded_time = 0.01  # 最小10毫秒
 
-        # 构建响应
         response = AlertResponse(
             summary_text=result["summary_text"],
             visuals=result.get("visuals", []),
-            execution_time_seconds=round(execution_time, 2),
+            execution_time_seconds=rounded_time,
             data_ids=[],  # 快速溯源不需要data_ids
             has_trajectory=result.get("has_trajectory", False),
             warning_message=result.get("warning_message"),
