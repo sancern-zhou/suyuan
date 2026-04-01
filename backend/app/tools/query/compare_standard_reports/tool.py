@@ -494,7 +494,7 @@ class CompareStandardReportsTool(LLMTool):
         # 生成摘要
         summary_parts = [
             f"对比分析完成 ({query_label} vs {comparison_label})",
-            f"共 {len(comparison_result)} 个城市"
+            f"共 {len(comparison_result)} 个城市（数据为审核实况，最近的3天自动使用原始数据）"
         ]
 
         if max_change_city and max_change_value is not None:

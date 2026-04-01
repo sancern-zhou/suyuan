@@ -12,6 +12,7 @@ from typing import Dict, Any, AsyncGenerator, Tuple, List, Optional
 from datetime import datetime
 import structlog
 import json
+import os
 
 from ..memory.hybrid_manager import HybridMemoryManager
 from .memory_tools_handler import MemoryToolsHandler
@@ -986,11 +987,11 @@ class ReActLoop:
                         action_info = self._format_action_info(action)
                         full_message = f"{action_info}\n\n{full_message}"
 
-                        # 🔍 详细日志：验证完整数据传递
+                        # 🔍 详细日志：验证完整数据传递（debug 级别）
                         metadata = observation.get("metadata", {})
                         generator = metadata.get("generator", "")
                         data = observation.get("data")
-                        logger.info(
+                        logger.debug(
                             "format_observation_debug",
                             generator=generator,
                             full_message_length=len(full_message),

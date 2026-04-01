@@ -144,6 +144,7 @@ class GeoMappingResolver:
         "粤北": "440005",
         "珠三角": "440002",
         "非珠三角": "440006",
+        "粤东西北": "440006",
         # 别名
         "广东": "440001",
         "广东省全省": "440001",
@@ -152,6 +153,7 @@ class GeoMappingResolver:
         "粤北地区": "440005",
         "珠三角地区": "440002",
         "非珠三角地区": "440006",
+        "粤东西北地区": "440006",
     }
 
     @classmethod
@@ -1493,7 +1495,7 @@ ROUNDING_PRECISION = {
     },
     # 其他指标（中间计算值）
     'other': {
-        'composite_index': 2,      # 综合指数，保留2位
+        'composite_index': 3,      # 综合指数，保留3位
         'single_index': 3,         # 单项质量指数，保留3位（中间计算值）
     }
 }
@@ -2234,6 +2236,10 @@ def calculate_old_standard_stats_from_daily(
             }
             exceed_details.append(exceed_detail)
 
+        # 统计有效天数（只要有一项污染物有数据就算有效天）
+        if pm25 > 0 or pm10 > 0 or so2 > 0 or no2 > 0 or co > 0 or o3_8h > 0:
+            valid_days += 1
+
             # 【调试日志】输出旧标准超标详情
             date_only = record.get("timestamp", "unknown")[:10] if len(record.get("timestamp", "")) >= 10 else record.get("timestamp", "unknown")
             if date_only in ['2026-01-17', '2026-01-20', '2026-01-01', '2026-01-24']:
@@ -2301,12 +2307,12 @@ def calculate_old_standard_stats_from_daily(
     # 计算综合指数
     avg_composite_index = safe_round(
         pm25_weighted_index + pm10_weighted_index + so2_weighted_index +
-        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 2
+        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 3
     )
 
-    # 计算达标率和超标率
-    valid_days = total_days
-    compliance_rate = safe_round((total_days - exceed_days) / total_days, 1) if total_days > 0 else 0
+    # 计算达标率和超标率（百分比形式，保留1位小数）
+    # valid_days 在循环中已经统计（只要有一项污染物有数据就算有效天）
+    compliance_rate = safe_round((total_days - exceed_days) / total_days * 100, 1) if total_days > 0 else 0
     exceed_rate = safe_round(exceed_days / valid_days * 100, 1) if valid_days > 0 else 0
 
     # 计算首要污染物比例
@@ -2590,11 +2596,11 @@ async def execute_query_standard_comparison(
         # 构建摘要
         if len(cities) == 1:
             city = list(city_comparison.keys())[0] if city_comparison else cities[0]
-            summary_text = f"{city} 新旧标准对比查询完成"
+            summary_text = f"{city} 新旧标准对比查询完成（数据为审核实况，最近的3天自动使用原始数据）"
             if day_data_id:
                 summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
         else:
-            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市"
+            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市（数据为审核实况，最近的3天自动使用原始数据）"
             if day_data_id:
                 summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
 

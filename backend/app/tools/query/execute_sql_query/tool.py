@@ -35,65 +35,6 @@ class ExecuteSQLQueryTool(LLMTool):
     # 默认返回记录数限制
     DEFAULT_LIMIT = 1000
 
-    # 表结构定义（无需维护文档，集中在此管理）
-    TABLE_SCHEMAS = {
-        "quality_control_records": {
-            "description": "质控例行检查记录表",
-            "fields": [
-                {"name": "id", "type": "int", "description": "记录ID"},
-                {"name": "province", "type": "nvarchar", "description": "省份"},
-                {"name": "city", "type": "nvarchar", "description": "城市"},
-                {"name": "operation_unit", "type": "nvarchar", "description": "运维单位"},
-                {"name": "station", "type": "nvarchar", "description": "站点名称"},
-                {"name": "start_time", "type": "datetime", "description": "开始时间"},
-                {"name": "end_time", "type": "datetime", "description": "结束时间"},
-                {"name": "task_group", "type": "nvarchar", "description": "任务组"},
-                {"name": "qc_item", "type": "nvarchar", "description": "质控项目（如：NO_零点检查、O3_跨度检查）"},
-                {"name": "qc_result", "type": "nvarchar", "description": "质控结果（合格、超控制限、超警告限、钼转换效率偏低）"},
-                {"name": "response_value", "type": "float", "description": "响应值"},
-                {"name": "target_value", "type": "float", "description": "目标值"},
-                {"name": "error_value", "type": "float", "description": "误差值"},
-                {"name": "molybdenum_efficiency", "type": "float", "description": "钼转换效率（%）"},
-                {"name": "warning_limit", "type": "float", "description": "警告限"},
-                {"name": "control_limit", "type": "float", "description": "控制限"},
-            ],
-            "sample_queries": [
-                "SELECT * FROM quality_control_records WHERE city = N'广州市'",
-                "SELECT station, qc_result, COUNT(*) as cnt FROM quality_control_records GROUP BY station, qc_result",
-                "SELECT * FROM quality_control_records WHERE molybdenum_efficiency < 95 ORDER BY molybdenum_efficiency"
-            ]
-        },
-        "working_orders": {
-            "description": "运维工单记录表",
-            "fields": [
-                {"name": "WORKINGORDERID", "type": "int", "description": "工单ID"},
-                {"name": "STATIONID", "type": "nvarchar", "description": "站点ID"},
-                {"name": "DEVICEID", "type": "nvarchar", "description": "设备ID"},
-                {"name": "WORKINGORDERCODE", "type": "nvarchar", "description": "工单编号"},
-                {"name": "CREATETIME", "type": "datetime", "description": "创建时间"},
-                {"name": "UPDATETIME", "type": "datetime", "description": "更新时间"},
-                {"name": "FINISHTIME", "type": "datetime", "description": "完成时间"},
-                {"name": "DDORDERCREATETYPE", "type": "nvarchar", "description": "工单创建类型"},
-                {"name": "DDWORKINGORDERTYPE", "type": "nvarchar", "description": "工单类型（SupCheck巡检/Check检查/Fault故障/QCBlackOut质控）"},
-                {"name": "DDURGENCYTYPE", "type": "nvarchar", "description": "紧急程度（Urgent紧急/Middle中等/Normal普通）"},
-                {"name": "DDWORKINGORDERSTATUS", "type": "nvarchar", "description": "工单状态（Finish完成/Doing进行中/Wait待办/ToAssign待分配）"},
-                {"name": "ORDERTITLE", "type": "nvarchar", "description": "工单标题"},
-                {"name": "ORDERCONTENT", "type": "nvarchar", "description": "工单内容"},
-                {"name": "CURRENTWORKFLOWSTATUS", "type": "nvarchar", "description": "当前工作流状态"},
-                {"name": "CURRENTWORKFLOWPOINT", "type": "nvarchar", "description": "当前工作流节点"},
-                {"name": "MAINTENANCETYPE", "type": "nvarchar", "description": "维护周期（Day/Week/Month/Quarter/HalfYear）"},
-                {"name": "PLANFINISHTIME", "type": "datetime", "description": "计划完成时间"},
-                {"name": "TOTALOVERTIME", "type": "int", "description": "总超时时间（分钟）"},
-                {"name": "TOTALEXPENSE", "type": "decimal", "description": "总费用"},
-            ],
-            "sample_queries": [
-                "SELECT * FROM working_orders WHERE DDWORKINGORDERSTATUS = N'Doing'",
-                "SELECT DDWORKINGORDERTYPE, COUNT(*) as cnt FROM working_orders GROUP BY DDWORKINGORDERTYPE",
-                "SELECT * FROM working_orders WHERE DDURGENCYTYPE = N'Urgent' ORDER BY CREATETIME DESC"
-            ]
-        }
-    }
-
     def __init__(self):
         """初始化工具"""
 
@@ -101,8 +42,11 @@ class ExecuteSQLQueryTool(LLMTool):
         self.sql_validator = SQLValidator(max_limit=10000)
         # 添加业务表到白名单
         self.sql_validator.ALLOWED_TABLES.extend([
-            'quality_control_records',
-            'working_orders'
+            'working_orders',
+            'qc_history',  # 自动质控历史数据表
+            # 系统视图（用于动态查询表结构）
+            'information_schema.columns',
+            'information_schema.tables',
         ])
 
         function_schema = {
@@ -110,22 +54,34 @@ class ExecuteSQLQueryTool(LLMTool):
             "description": """
 通用SQL执行工具，直接执行SQL查询语句访问SQL Server历史数据库。
 
-**【重要】使用前请先查看表结构**：
-在执行SQL查询前，请先使用 describe_table 参数查看表结构，了解字段名称和数据类型。
+**两种使用方式（二选一）**：
+1. 查看表结构：execute_sql_query(describe_table='表名')
+   - 动态从数据库获取表结构信息
+   - 返回字段名、数据类型、长度、是否可空等信息
 
-**当前可用数据表**：
-- quality_control_records: 质控例行检查记录
-- working_orders: 运维工单记录
-
-**两种使用方式**：
-1. 查看表结构：execute_sql_query(describe_table='表名') 或 describe_table='all'
 2. 执行SQL查询：execute_sql_query(sql='SQL语句')
+   - 执行SELECT查询获取数据
+   - 支持复杂查询、JOIN、聚合等操作
 
 **describe_table 参数说明**：
-- describe_table='all' 或 describe_table=True：返回所有可用表的列表
-- describe_table='quality_control_records'：返回该表的详细结构（字段列表、类型、示例查询）
-- describe_table='working_orders'：返回该表的详细结构
-- 当表数量很多时，建议先使用 describe_table='all' 查看所有表，再选择具体表查看详细结构
+- 输入目标表名（如 'qc_history', 'working_orders'）
+- 工具会动态查询数据库获取该表的结构信息
+- 不需要提供 sql 参数
+
+**sql 参数说明**：
+- 输入完整的SQL查询语句
+- 不需要提供 describe_table 参数
+
+**⚠️ 重要：中文查询注意事项**
+SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）：
+- ❌ 错误：WHERE StationName LIKE '%增城派潭%'
+- ✅ 正确：WHERE StationName LIKE N'%增城派潭%'
+- ✅ 正确：WHERE StationCode = '1428A'（英文和数字不需要 N 前缀）
+- 建议：优先使用 StationCode（站点编码）进行查询，避免中文编码问题
+
+**可用数据表**：
+- qc_history: 自动质控历史数据表（包含 StationCode、StationName 等字段）
+- working_orders: 运维工单记录表
 
 **安全限制**：
 - 只允许SELECT查询
@@ -134,25 +90,20 @@ class ExecuteSQLQueryTool(LLMTool):
 - 最大返回10000条记录
 
 **使用流程**：
-1. 先查看表结构：execute_sql_query(describe_table='quality_control_records')
-2. 根据表结构编写SQL
+1. 先查看表结构：execute_sql_query(describe_table='qc_history')
+2. 根据表结构编写SQL（注意中文字符串使用 N 前缀）
 3. 执行查询：execute_sql_query(sql='SELECT ...')
-
-**返回格式**：
-- 查看表列表：返回所有可用表的名称和描述
-- 查看表结构：返回表的字段列表、类型、说明和示例查询
-- 执行查询：返回查询结果数据
             """.strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "description": "查看表结构。可选值：'all'（返回所有可用表列表）、'quality_control_records'（质控记录表结构）、'working_orders'（运维工单表结构）。查看表结构时使用此参数，不需要提供sql参数。"
+                        "description": "查看表结构（与sql参数二选一）。输入目标表名，如 'qc_history' 或 'working_orders'。工具会动态从数据库获取该表的结构信息，包括字段名、数据类型、长度、是否可空等。"
                     },
                     "sql": {
                         "type": "string",
-                        "description": "SQL查询语句。执行查询时使用此参数，不需要提供describe_table参数。"
+                        "description": "SQL查询语句（与describe_table参数二选一）。输入完整的SQL SELECT查询语句。"
                     },
                     "limit": {
                         "type": "integer",
@@ -168,7 +119,7 @@ class ExecuteSQLQueryTool(LLMTool):
             description="Execute SQL queries on SQL Server database or get table structure",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="2.1.0",
+            version="2.2.0",
             requires_context=False
         )
 
@@ -177,118 +128,129 @@ class ExecuteSQLQueryTool(LLMTool):
         执行工具
 
         Args:
-            describe_table: 查看表结构（'all'或具体表名）
-            sql: SQL查询语句
+            describe_table: 查看表结构（与sql二选一，不能为空）
+            sql: SQL查询语句（与describe_table二选一）
             limit: 返回记录数限制
 
         Returns:
             查询结果或表结构信息
         """
 
-        # 判断是查看表结构还是执行SQL
-        if describe_table:
-            return self._describe_table(describe_table)
-        elif sql:
-            return await self._execute_sql_query(sql, limit)
-        else:
+        # 参数验证：describe_table 和 sql 二选一
+        if describe_table and sql:
             return {
                 "success": False,
                 "data": None,
-                "summary": "请提供 describe_table（查看表结构）或 sql（执行查询）参数"
+                "summary": "describe_table 和 sql 参数不能同时使用，请只提供其中一个"
             }
+
+        if not describe_table and not sql:
+            return {
+                "success": False,
+                "data": None,
+                "summary": "请提供 describe_table（查看表结构）或 sql（执行查询）参数，二者必选其一"
+            }
+
+        # describe_table 不能为空字符串
+        if describe_table is not None and not describe_table.strip():
+            return {
+                "success": False,
+                "data": None,
+                "summary": "describe_table 参数不能为空，请输入有效的表名"
+            }
+
+        # 判断是查看表结构还是执行SQL
+        if describe_table:
+            return self._describe_table(describe_table)
+        else:
+            return await self._execute_sql_query(sql, limit)
 
     def _describe_table(self, table_name: str) -> Dict[str, Any]:
         """
-        查看表结构
+        查看表结构（动态从数据库获取）
 
         Args:
-            table_name: 表名或'all'
+            table_name: 表名
 
         Returns:
-            表结构信息或所有表列表
+            表结构信息
         """
-        # 处理 'all' 或 'true' 情况，返回所有表列表
-        if table_name.lower() in ['all', 'true', '1']:
-            tables_list = []
-            for name, schema in self.TABLE_SCHEMAS.items():
-                tables_list.append({
-                    "table_name": name,
-                    "description": schema['description'],
-                    "field_count": len(schema['fields'])
-                })
+        # 验证表名是否在白名单中
+        if table_name not in self.sql_validator.ALLOWED_TABLES:
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(self.sql_validator.ALLOWED_TABLES)}"
+            }
 
-            # 格式化表列表
-            tables_text = "\n".join([
-                f"  {i+1}. {t['table_name']}: {t['description']} ({t['field_count']}个字段)"
-                for i, t in enumerate(tables_list)
+        # 过滤掉系统视图
+        if table_name.startswith('information_schema'):
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"不能查询系统视图 '{table_name}' 的结构"
+            }
+
+        try:
+            # 动态查询表结构
+            sql = f"""
+                SELECT
+                    COLUMN_NAME,
+                    DATA_TYPE,
+                    CHARACTER_MAXIMUM_LENGTH,
+                    IS_NULLABLE,
+                    COLUMN_DEFAULT
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = '{table_name}'
+                ORDER BY ORDINAL_POSITION
+            """
+
+            columns = self._execute_query(sql)
+
+            if not columns:
+                return {
+                    "success": False,
+                    "data": None,
+                    "summary": f"未找到表 '{table_name}' 的结构信息"
+                }
+
+            # 格式化字段列表
+            fields_text = "\n".join([
+                f"  - {col['COLUMN_NAME']} ({col['DATA_TYPE']}{'(' + str(col['CHARACTER_MAXIMUM_LENGTH']) + ')' if col['CHARACTER_MAXIMUM_LENGTH'] else ''}, {'可空' if col['IS_NULLABLE'] == 'YES' else '非空'})"
+                for col in columns
             ])
 
             result = {
                 "success": True,
                 "data": {
-                    "tables": tables_list,
-                    "total_count": len(tables_list)
+                    "table_name": table_name,
+                    "columns": columns
                 },
-                "summary": f"""可用数据表列表（共{len(tables_list)}个）：
-{tables_text}
-
-查看具体表结构：execute_sql_query(describe_table='表名')"""
-            }
-
-            logger.info(
-                "all_tables_listed",
-                table_count=len(tables_list)
-            )
-
-            return result
-
-        # 处理具体表名情况
-        if table_name not in self.TABLE_SCHEMAS:
-            available_tables = ", ".join(self.TABLE_SCHEMAS.keys())
-            return {
-                "success": False,
-                "data": None,
-                "summary": f"表 '{table_name}' 不存在。可用表: {available_tables}。提示：使用 describe_table='all' 查看所有可用表。"
-            }
-
-        schema = self.TABLE_SCHEMAS[table_name]
-
-        # 格式化字段列表
-        fields_text = "\n".join([
-            f"  - {f['name']} ({f['type']}): {f['description']}"
-            for f in schema['fields']
-        ])
-
-        # 格式化示例查询
-        sample_queries_text = "\n".join([
-            f"  {i+1}. {q}"
-            for i, q in enumerate(schema['sample_queries'])
-        ])
-
-        result = {
-            "success": True,
-            "data": {
-                "table_name": table_name,
-                "description": schema['description'],
-                "fields": schema['fields']
-            },
-            "summary": f"""表名: {table_name}
-描述: {schema['description']}
+                "summary": f"""表名: {table_name}
 
 字段列表:
 {fields_text}
 
-示例查询:
-{sample_queries_text}"""
-        }
+字段总数: {len(columns)}
 
-        logger.info(
-            "table_schema_described",
-            table_name=table_name,
-            field_count=len(schema['fields'])
-        )
+提示：使用 execute_sql_query(sql='SELECT TOP 100 * FROM {table_name}') 查看数据示例"""
+            }
 
-        return result
+            logger.info(
+                "table_schema_described",
+                table_name=table_name,
+                field_count=len(columns)
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error("describe_table_failed", table_name=table_name, error=str(e))
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"查询表结构失败: {str(e)}"
+            }
 
     async def _execute_sql_query(self, sql: str, limit: Optional[int] = None) -> Dict[str, Any]:
         """
@@ -330,8 +292,8 @@ class ExecuteSQLQueryTool(LLMTool):
                     "summary": f"SQL验证失败: {error_msg}。请使用 execute_sql_query(describe_table='表名') 查看正确的表结构信息。"
                 }
 
-            # 2. 添加LIMIT
-            safe_sql = self.sql_validator.sanitize_limit(sql, limit)
+            # 2. 添加TOP子句（SQL Server使用TOP而非LIMIT）
+            safe_sql = self._sanitize_limit_for_sqlserver(sql, limit)
 
             # 3. 执行查询
             results = self._execute_query(safe_sql)
@@ -360,7 +322,7 @@ class ExecuteSQLQueryTool(LLMTool):
             # 提取表名
             table_name = self._extract_table_name(sql)
             hint = ""
-            if table_name and table_name in self.TABLE_SCHEMAS:
+            if table_name:
                 hint = f" 请使用 execute_sql_query(describe_table='{table_name}') 查看正确的字段名。"
 
             return {
@@ -382,6 +344,51 @@ class ExecuteSQLQueryTool(LLMTool):
                 "summary": f"查询失败: {str(e)}。请使用 execute_sql_query(describe_table='表名') 查看正确的表结构信息。"
             }
 
+    def _sanitize_limit_for_sqlserver(self, sql: str, limit: int) -> str:
+        """
+        为SQL Server添加TOP子句（SQL Server不支持LIMIT）
+
+        Args:
+            sql: SQL查询语句
+            limit: 限制行数
+
+        Returns:
+            添加了TOP的SQL语句
+        """
+        import re
+
+        # 检查是否已有TOP
+        top_match = re.search(r'\bTOP\s+(\d+)', sql, re.IGNORECASE)
+        if top_match:
+            # 已有TOP，检查是否超过最大值
+            top_value = int(top_match.group(1))
+            if top_value > self.sql_validator.max_limit:
+                # 替换为最大值
+                sql = re.sub(
+                    r'\bTOP\s+\d+',
+                    f'TOP {self.sql_validator.max_limit}',
+                    sql,
+                    flags=re.IGNORECASE
+                )
+            return sql
+        else:
+            # 添加TOP子句
+            # 匹配 SELECT 后面的内容，在 SELECT 和第一个字段之间插入 TOP
+            select_match = re.search(r'\bSELECT\s+', sql, re.IGNORECASE)
+            if select_match:
+                select_end = select_match.end()
+                # 检查是否已经有 DISTINCT 等关键字
+                distinct_match = re.search(r'\bSELECT\s+(DISTINCT|ALL)\s+', sql, re.IGNORECASE)
+                if distinct_match:
+                    # 在 DISTINCT 之后插入 TOP
+                    insert_pos = distinct_match.end()
+                    return sql[:insert_pos] + f' TOP {limit} ' + sql[insert_pos:]
+                else:
+                    # 在 SELECT 之后直接插入 TOP
+                    return sql[:select_end] + f'TOP {limit} ' + sql[select_end:]
+
+            return sql
+
     def _extract_table_name(self, sql: str) -> Optional[str]:
         """从SQL中提取表名"""
         import re
@@ -391,7 +398,8 @@ class ExecuteSQLQueryTool(LLMTool):
         from_match = re.search(r'\bfrom\s+(\w+)', sql_lower)
         if from_match:
             table = from_match.group(1)
-            if table in self.TABLE_SCHEMAS:
+            # 检查是否在白名单中（排除系统视图）
+            if table in self.sql_validator.ALLOWED_TABLES and not table.startswith('information_schema'):
                 return table
 
         return None
