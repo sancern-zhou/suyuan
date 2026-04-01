@@ -287,8 +287,24 @@ def create_global_tool_registry() -> ToolRegistry:
         from app.tools.query.get_quality_control_records.nl_query_tool import GetQualityControlRecordsNLTool
         registry.register(GetQualityControlRecordsNLTool(), priority=45)
         logger.info("tool_loaded", tool="get_quality_control_records_nl")
-    except ImportError as e:
+    except (ImportError, TypeError) as e:
         logger.warning("tool_import_failed", tool="get_quality_control_records_nl", error=str(e))
+
+    # 运维工单查询工具
+    try:
+        from app.tools.query.get_working_orders.tool import GetWorkingOrdersTool
+        registry.register(GetWorkingOrdersTool(), priority=46)
+        logger.info("tool_loaded", tool="get_working_orders")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_working_orders", error=str(e))
+
+    # 通用SQL执行工具
+    try:
+        from app.tools.query.execute_sql_query.tool import ExecuteSQLQueryTool
+        registry.register(ExecuteSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_sql_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 
     # ========================================
     # External Data Tools（外部数据工具）

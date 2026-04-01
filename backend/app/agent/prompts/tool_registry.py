@@ -104,6 +104,7 @@ QUERY_TOOLS = {
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
     "get_quality_control_records": "查询质控例行检查记录（结构化查询）。参数: city(str, 可选), station(str, 可选), qc_item(str, 可选), qc_result(str, 可选), start_date(str, 可选), end_date(str, 可选), only_abnormal(bool, 可选), aggregate_by(str, 可选), limit(int, 可选, 默认50)",
     "get_quality_control_records_nl": "查询质控例行检查记录（自然语言查询，支持复杂条件、极值查询、多字段筛选）。⚠️ 必需参数: question(str, 自然语言问题)。可选: limit(int, 默认50)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询。可用表：quality_control_records(质控记录)、working_orders(运维工单)。⚠️ 查看表结构：describe_table(str, 'all'返回所有表列表，或指定表名查看详细结构)。执行查询：sql(str, SQL查询语句)。可选：limit(int, 返回记录数限制, 默认1000, 最大10000)。使用前建议先查看表结构",
     "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
@@ -332,6 +333,7 @@ QUERY_TOOL_ORDER = [
     "query_xcai_city_history",
     "get_quality_control_records",
     "get_quality_control_records_nl",
+    "execute_sql_query",  # 通用SQL执行工具
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day", "query_gd_suncere_city_day_new", "query_gd_suncere_regional_comparison",
     "query_gd_suncere_report", "query_gd_suncere_report_compare",
     "query_new_standard_report",  # 新标准统计报表

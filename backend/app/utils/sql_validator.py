@@ -38,6 +38,8 @@ class SQLValidator:
         'dust_events',
         'air_quality_forecast',
         'city_aqi_publish_history',
+        'quality_control_records',
+        'working_orders',
     ]
 
     def __init__(self, max_limit: int = 10000):
