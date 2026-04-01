@@ -277,17 +277,24 @@ async def execute_query_old_standard_report(
                 record["aqi"] = aqi_old
 
             # 计算旧标准首要污染物
-            pollutants_with_iaqi_old = {
-                'PM2_5': pm25_iaqi_old, 'PM10': pm10_iaqi_old, 'SO2': so2_iaqi_old,
-                'NO2': no2_iaqi_old, 'CO': co_iaqi_old, 'O3_8h': o3_8h_iaqi_old
-            }
+            # 【扣沙日特殊处理】直接使用扣沙表中的首要污染物
+            primary_from_sand = record.get("primary_pollutant_from_sand")
+            if is_sand_day and primary_from_sand:
+                # 扣沙日直接使用扣沙表中的首要污染物
+                primary_pollutants_this_day = [primary_from_sand]
+            else:
+                # 非扣沙日：重新计算首要污染物
+                pollutants_with_iaqi_old = {
+                    'PM2_5': pm25_iaqi_old, 'PM10': pm10_iaqi_old, 'SO2': so2_iaqi_old,
+                    'NO2': no2_iaqi_old, 'CO': co_iaqi_old, 'O3_8h': o3_8h_iaqi_old
+                }
 
-            primary_pollutants_this_day = []
-            if aqi_old > 50:
-                for pollutant, iaqi in pollutants_with_iaqi_old.items():
-                    # 使用向上取整后的IAQI进行比较
-                    if iaqi == aqi_old:
-                        primary_pollutants_this_day.append(pollutant)
+                primary_pollutants_this_day = []
+                if aqi_old > 50:
+                    for pollutant, iaqi in pollutants_with_iaqi_old.items():
+                        # 使用向上取整后的IAQI进行比较
+                        if iaqi == aqi_old:
+                            primary_pollutants_this_day.append(pollutant)
 
             if primary_pollutants_this_day:
                 record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
@@ -342,11 +349,10 @@ async def execute_query_old_standard_report(
         data_id_str = None
         if context:
             try:
-                saved_data = context.save_data(
+                data_id_str = context.save_data(
                     data=standardized_data,  # 保存清洗、标准化和旧标准计算后的数据
                     schema="air_quality_unified"
                 )
-                data_id_str = saved_data["data_id"]
                 logger.info("old_standard_daily_data_saved", data_id=data_id_str)
             except Exception as e:
                 logger.warning("failed_to_save_old_standard_daily_data", error=str(e))
@@ -358,10 +364,10 @@ async def execute_query_old_standard_report(
         if len(cities) == 1 and city_stats:
             city_name = list(city_stats.keys())[0]
             result_summary_data = city_stats[city_name]
-            result_summary = f"旧标准统计报表查询完成，{city_name} {start_date} 至 {end_date}"
+            result_summary = f"旧标准统计报表查询完成，{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据）"
         else:
             result_summary_data = city_stats
-            result_summary = f"旧标准统计报表查询完成，共{len(city_stats)}个城市"
+            result_summary = f"旧标准统计报表查询完成，共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据）"
 
         # 添加数据存储信息到摘要
         if data_id_str:
@@ -448,6 +454,9 @@ def calculate_old_standard_city_stats(
     exceed_days_by_pollutant = {
         'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
     }
+
+    # 有效天数统计（只要有一项污染物有数据就算有效天）
+    valid_days = 0
 
     for record in daily_records:
         measurements = record.get("measurements", {})
@@ -564,6 +573,10 @@ def calculate_old_standard_city_stats(
             }
             exceed_details.append(exceed_detail)
 
+        # 统计有效天数（只要有一项污染物有数据就算有效天）
+        if pm25 > 0 or pm10 > 0 or so2 > 0 or no2 > 0 or co > 0 or o3_8h > 0:
+            valid_days += 1
+
     # 计算平均浓度（按国家标准修约）
     avg_pm25 = apply_rounding(pm25_sum / pm25_valid_count if pm25_valid_count > 0 else 0, 'PM2_5', 'statistical_data')
     avg_pm10 = apply_rounding(pm10_sum / pm10_valid_count if pm10_valid_count > 0 else 0, 'PM10', 'statistical_data')
@@ -620,12 +633,12 @@ def calculate_old_standard_city_stats(
     # 计算综合指数
     avg_composite_index = safe_round(
         pm25_weighted_index + pm10_weighted_index + so2_weighted_index +
-        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 2
+        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 3
     )
 
-    # 计算达标率和超标率
-    valid_days = total_days
-    compliance_rate = safe_round((total_days - exceed_days) / total_days, 1) if total_days > 0 else 0
+    # 计算达标率和超标率（百分比形式，保留1位小数）
+    # valid_days 在循环中已经统计（只要有一项污染物有数据就算有效天）
+    compliance_rate = safe_round((total_days - exceed_days) / total_days * 100, 1) if total_days > 0 else 0
     exceed_rate = safe_round(exceed_days / valid_days * 100, 1) if valid_days > 0 else 0
 
     # 计算首要污染物比例

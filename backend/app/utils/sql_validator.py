@@ -38,8 +38,11 @@ class SQLValidator:
         'dust_events',
         'air_quality_forecast',
         'city_aqi_publish_history',
-        'quality_control_records',
         'working_orders',
+        'qc_history',  # 自动质控历史数据表
+        # 系统视图（用于动态查询表结构）
+        'information_schema.columns',
+        'information_schema.tables',
     ]
 
     def __init__(self, max_limit: int = 10000):
@@ -70,9 +73,10 @@ class SQLValidator:
         if not sql_upper.startswith('SELECT'):
             return False, "只允许SELECT查询"
 
-        # 检查2：危险关键词
+        # 检查2：危险关键词（使用词边界避免误判，如CREATETIME不匹配CREATE）
         for keyword in self.DANGEROUS_KEYWORDS:
-            if keyword in sql_upper:
+            pattern = r'\b' + keyword + r'\b'
+            if re.search(pattern, sql_upper):
                 return False, f"包含危险关键词: {keyword}"
 
         # 检查3：SQL注入模式

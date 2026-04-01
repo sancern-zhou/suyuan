@@ -275,21 +275,6 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))
 
-    # 质控例行检查记录查询工具
-    try:
-        from app.tools.query.get_quality_control_records.tool import GetQualityControlRecordsTool
-        registry.register(GetQualityControlRecordsTool(), priority=44)
-        logger.info("tool_loaded", tool="get_quality_control_records")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_quality_control_records", error=str(e))
-
-    try:
-        from app.tools.query.get_quality_control_records.nl_query_tool import GetQualityControlRecordsNLTool
-        registry.register(GetQualityControlRecordsNLTool(), priority=45)
-        logger.info("tool_loaded", tool="get_quality_control_records_nl")
-    except (ImportError, TypeError) as e:
-        logger.warning("tool_import_failed", tool="get_quality_control_records_nl", error=str(e))
-
     # 运维工单查询工具
     try:
         from app.tools.query.get_working_orders.tool import GetWorkingOrdersTool

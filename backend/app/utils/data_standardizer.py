@@ -1235,6 +1235,17 @@ class DataStandardizer:
                 standardized_record["species_data"] = field_value
                 continue
 
+            # 【新增】特殊处理扣沙相关字段：直接保留在顶层
+            SAND_DEDUCTION_FIELDS = {
+                'is_sand_deduction_day', 'primary_pollutant_from_sand',
+                'PM2_5_original', 'PM10_original'
+            }
+            if field_name in SAND_DEDUCTION_FIELDS:
+                normalized_value = self._normalize_value(field_value)
+                if normalized_value is not None:
+                    standardized_record[field_name] = normalized_value
+                continue
+
             # 【修复】特殊处理VOCs物种字段：收集到species字典中
             # VOCs物种字段（乙烷、丙烷、苯、甲苯等）需要聚合到species字典
             # vocs_field_mapping 的 key 是中文或英文名，value 是标准英文名
@@ -1509,7 +1520,10 @@ class DataStandardizer:
             'lat', 'lon', 'latitude', 'longitude',
             'data_type', 'record_id', 'created_time', 'modified_time',
             'species_data', 'components', 'metadata', 'dimensions',
-            'station_type', 'district', 'province', 'country'
+            'station_type', 'district', 'province', 'country',
+            # 扣沙相关字段（必须保留在顶层）
+            'is_sand_deduction_day', 'primary_pollutant_from_sand',
+            'PM2_5_original', 'PM10_original'
         }
 
         # 定义污染物字段（应该放入measurements）

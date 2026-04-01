@@ -28,7 +28,7 @@ import threading
 import time
 import base64
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -213,11 +213,25 @@ doc.save('/root/report.docx')
 
                 result = await self._execute_with_subprocess(code, timeout or self.default_timeout)
 
-            # 查找生成的文件
-            generated_files = self._find_generated_files(temp_dir)
+            # ✅ 从 output 中提取用户保存的文件路径（绝对路径保存的文件）
+            output = result["data"].get("output", "")
+            user_saved_files = self._extract_file_paths_from_output(output)
 
-            # 移动文件到永久目录
-            final_files = self._move_to_permanent_dir(generated_files)
+            # ✅ 查找临时目录生成的文件（相对路径保存的文件）
+            temp_files = self._find_generated_files(temp_dir)
+
+            logger.info(
+                "execute_python_file_detection",
+                temp_files_count=len(temp_files),
+                user_saved_files_count=len(user_saved_files),
+                user_saved_files=user_saved_files
+            )
+
+            # 移动临时文件到永久目录
+            moved_temp_files = self._move_to_permanent_dir(temp_files)
+
+            # 合并文件列表（移动的临时文件 + 用户保存的文件）
+            final_files = moved_temp_files + user_saved_files
 
             result["data"]["files"] = final_files
             result["data"]["engine"] = "ipython" if self.use_ipython else "subprocess"
@@ -234,22 +248,31 @@ doc.save('/root/report.docx')
                     pdf_preview = await pdf_converter.convert_to_pdf(office_file)
                     result["data"]["pdf_preview"] = pdf_preview
                     result["data"]["file_path"] = office_file
-                    result["summary"] = f"执行成功，生成文档：{Path(office_file).name}"
+                    # ✅ 只在执行成功时覆盖 summary
+                    if result.get("success", False):
+                        result["summary"] = f"执行成功，生成文档：{Path(office_file).name}"
                     logger.info(
                         "execute_python_pdf_generated",
                         pdf_id=pdf_preview["pdf_id"],
-                        office_file=office_file
+                        office_file=office_file,
+                        execution_success=result.get("success", False)
                     )
                 except Exception as pdf_error:
                     logger.warning("execute_python_pdf_conversion_failed", error=str(pdf_error))
                     # PDF 转换失败时，仍然返回文件信息
                     result["data"]["file_path"] = office_file
-                    result["summary"] = f"执行成功，生成文件：{Path(office_file).name}"
+                    # ✅ 只在执行成功时覆盖 summary
+                    if result.get("success", False):
+                        result["summary"] = f"执行成功，生成文件：{Path(office_file).name}"
             elif final_files:
-                file_names = [Path(f).name for f in final_files]
-                result["summary"] = f"执行成功，生成文件: {', '.join(file_names)}"
+                # ✅ 只在执行成功时覆盖 summary
+                if result.get("success", False):
+                    file_names = [Path(f).name for f in final_files]
+                    result["summary"] = f"执行成功，生成文件: {', '.join(file_names)}"
             else:
-                result["summary"] = "执行成功"
+                # ✅ 只在执行成功时覆盖 summary
+                if result.get("success", False):
+                    result["summary"] = "执行成功"
 
             # ✅ 检测图表输出（CHART_SAVED:xxx.png）
             chart_paths = self._extract_chart_paths(result["data"].get("output", ""))
@@ -647,6 +670,50 @@ if os.path.exists(_font_path):
 
         return injected_code
 
+    def _extract_file_paths_from_output(self, output: str) -> List[str]:
+        """
+        从 Python 代码输出中提取文件路径
+
+        检测常见的文件保存输出格式：
+        - "报告已生成：/path/to/file.docx"
+        - "文件已保存：/path/to/file.xlsx"
+        - "File saved: /path/to/file.pdf"
+        - "/path/to/file.docx"
+
+        Args:
+            output: Python 代码输出
+
+        Returns:
+            文件路径列表
+        """
+        import re
+        file_paths = []
+
+        if not output:
+            return file_paths
+
+        # 常见的文件保存模式
+        patterns = [
+            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
+            r'([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, output)
+            file_paths.extend(matches)
+
+        # 去重并验证文件存在
+        unique_paths = []
+        seen = set()
+        for path in file_paths:
+            # 规范化路径
+            path = os.path.abspath(path) if not os.path.isabs(path) else path
+            if path not in seen and os.path.exists(path):
+                unique_paths.append(path)
+                seen.add(path)
+
+        return unique_paths
+
     def get_function_schema(self) -> Dict[str, Any]:
         """获取 Function Calling Schema"""
         return {
@@ -681,7 +748,7 @@ if os.path.exists(_font_path):
                 "• 所有生成的文件应保存到项目目录下的绝对路径\n"
                 "• 报告文件：/home/xckj/suyuan/backend_data_registry/report.docx\n"
                 "• 例如：doc.save('/home/xckj/suyuan/backend_data_registry/report.docx')\n"
-                "• 注意：使用实际路径保存文件时，工具返回的 files 列表可能为空，但文件确实会生成\n"
+                "• 工具会自动检测 backend_data_registry 目录中新增的文件\n"
                 "• 建议在代码中打印文件保存路径，以便确认文件生成位置\n\n"
                 "安全限制：\n"
                 "• 临时目录隔离执行\n"
