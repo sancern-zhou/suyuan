@@ -27,14 +27,14 @@ class ContextCompressor:
 5. 关键的数值和统计结果
 
 **可以移除**：
-1. 冗长的工具返回详情（保留 data_id 和关键统计即可）
+1. data字段的详细数据（保留 data_id 和关键统计即可）✅ 注意：只压缩data字段，不压缩result字段
 2. 重复的思考过程
 3. 详细的中间步骤（保留结论）
 4. 已完成任务的详细执行日志（保留结果）
-5. 大段的数据展示（用摘要替代）
 
 **压缩策略**：
-- 数据查询工具（get_*/calculate_*/download_*等）：压缩为 "调用 get_weather_data → data_id: weather_001 (30条记录, 温度25°C)"
+- 数据查询工具（get_*/calculate_*/download_*等）的data字段：压缩为 "调用 get_weather_data → data_id: weather_001 (30条记录, 温度25°C)"
+- 数据查询工具的result字段：✅ 完整保留，不压缩（包含详细的结构化数据，如对比结果、统计分析等）
 - 思考过程：提炼为关键决策点 "决定先分析气象条件"
 - 分析结果：保留核心结论 "发现15天高温天气导致O3浓度升高"
 - 办公助理工具（bash/read_file/analyze_image/Office工具/read_docx/grep/glob/list_directory/execute_python/web_search/search_history）：完整保留工具返回的 data/results 字段内容

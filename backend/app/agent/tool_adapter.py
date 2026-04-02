@@ -320,8 +320,12 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         metadata = result.get("metadata", {})
 
         # ✅ 修复：根据 success 状态生成默认 summary
+        # 对于返回 result 字段的工具（详细结果已传递给LLM），不需要 summary
         if "summary" in result:
             summary = result["summary"]
+        elif "result" in result:
+            # 有 result 字段，不生成 summary（不添加到返回结果中）
+            summary = None
         else:
             if success:
                 summary = f"✅ {tool_name} 执行完成"
@@ -350,9 +354,12 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         standard_result = {
             "status": status,
             "success": success,
-            "metadata": metadata,
-            "summary": summary
+            "metadata": metadata
         }
+
+        # 只在 summary 非空时才添加（对于返回 result 字段的工具，summary 为 None）
+        if summary is not None:
+            standard_result["summary"] = summary
 
         # 【修复】保留 data_id 到顶层（供 parameter_binder 使用）
         if data_id:
@@ -365,6 +372,11 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         elif data is not None:
             standard_result["data"] = data
             standard_result["visuals"] = []  # v1.0格式不包含visuals
+
+        # 保留 result 字段（包含详细的结构化数据，如对比结果）
+        # 例如：compare_standard_reports 工具返回的详细对比数据
+        if "result" in result:
+            standard_result["result"] = result["result"]
 
         logger.info(
             "tool_result_converted_to_standard_format",

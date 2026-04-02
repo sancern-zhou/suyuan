@@ -76,6 +76,10 @@ export const useReactStore = defineStore('react', {
       // 当前激活的模式
       currentMode: savedMode,
 
+      // 用户标识（跨会话持久化，用于记忆共享）
+      // 默认为 null，使用模式内共享记忆（不跨模式共享）
+      userIdentifier: null,
+
       // 所有模式的状态（按模式隔离）
       modeStates: {
         assistant: createEmptyModeState(),
@@ -1508,6 +1512,7 @@ export const useReactStore = defineStore('react', {
           // 调用新架构 ReAct Agent
           await agentAPI.analyze(query, {
             sessionId: this.currentState.sessionId,
+            userIdentifier: this.userIdentifier,  // ✅ 传递用户标识（跨会话持久化）
             enhanceWithHistory: true,
             maxIterations: this.maxIterations,
             assistantMode: assistantMode,  // 传递助手模式

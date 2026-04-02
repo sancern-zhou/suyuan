@@ -468,7 +468,8 @@ class ToolExecutor:
             result = self._apply_smart_sampling_for_query_tools(tool_name, result)
 
             # 添加摘要（如果没有）
-            if "summary" not in result:
+            # 对于返回 result 字段的工具（详细结果已传递给LLM），不需要添加 summary
+            if "summary" not in result and "result" not in result:
                 result["summary"] = self._generate_summary(tool_name, result)
 
             # ✅ 增强：处理v3.0图表格式数据

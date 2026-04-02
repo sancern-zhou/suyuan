@@ -162,28 +162,33 @@ class ReActAgent:
 
         if self.enable_memory and manual_mode:
             if user_identifier:
-                # 有user_identifier：同一用户共享记忆
-                unified_user_id = f"{manual_mode}:{user_identifier}:shared"
-            elif session_id:
-                # 无user_identifier：每个session独立记忆
-                unified_user_id = f"{manual_mode}:{session_id}:unique"
+                # 有user_identifier：跨模式共享记忆（同一用户在所有模式下共享同一个记忆文件）
+                unified_user_id = f"{user_identifier}:shared"
+                memory_mode = "shared"  # ✅ 使用特殊的 shared 模式，实现跨模式共享
+            else:
+                # 无user_identifier：模式内共享记忆（每个模式独立记忆，模式之间隔离）
+                unified_user_id = f"{manual_mode}:global:shared"
+                memory_mode = manual_mode or "expert"  # ✅ 使用当前模式，实现模式内共享
 
             # 加载记忆上下文
             if unified_user_id:
                 memory_store = await self.memory_manager.get_user_memory(
                     user_id=unified_user_id,
-                    mode=manual_mode or "expert"
+                    mode=memory_mode
                 )
                 memory_context = memory_store.get_memory_context()
+                memory_file_path = str(memory_store.memory_file.resolve())  # ✅ 转换为绝对路径
 
                 # 增强查询
                 if memory_context:
-                    user_query = f"{memory_context}\n\n用户问题：{user_query}"
+                    memory_info = f"{memory_context}\n\n**记忆文件路径**：{memory_file_path}"
+                    user_query = f"{memory_info}\n\n用户问题：{user_query}"
                     logger.info(
                         "memory_context_loaded",
                         user_id=unified_user_id,
                         mode=manual_mode,
-                        context_length=len(memory_context)
+                        context_length=len(memory_context),
+                        memory_file_path=memory_file_path
                     )
 
         # ✅ 如果有附件，添加到查询中告知LLM

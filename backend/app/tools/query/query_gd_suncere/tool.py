@@ -1639,14 +1639,14 @@ ANNUAL_STANDARD_LIMITS_OLD = {
     'O3_8h': 160   # 日最大8小时平均二级标准
 }
 
-# 权重配置（所有污染物权重均为1）
+# 权重配置（PM2.5取3，O3、NO2取2）
 WEIGHTS = {
-    'PM2_5': 1,
+    'PM2_5': 3,
     'PM10': 1,
     'SO2': 1,
-    'NO2': 1,
+    'NO2': 2,
     'CO': 1,
-    'O3_8h': 1
+    'O3_8h': 2
 }
 
 # -----------------------------------------------------------------------------
@@ -2565,6 +2565,49 @@ async def execute_query_standard_comparison(
                 "new_standard": new_standard_stats,
                 "old_standard": old_standard_stats,
                 "comparison": comparison
+            }
+
+        # 计算全省汇总对比（多城市查询时）
+        if len(cities) > 1:
+            # 导入全省汇总计算函数
+            from app.tools.query.query_new_standard_report.tool import calculate_province_wide_stats
+
+            # 提取新旧标准的全省数据
+            new_standard_province_data = {
+                city: city_comparison[city]["new_standard"]
+                for city in city_comparison.keys()
+                if city_comparison[city].get("new_standard")
+            }
+
+            old_standard_province_data = {
+                city: city_comparison[city]["old_standard"]
+                for city in city_comparison.keys()
+                if city_comparison[city].get("old_standard")
+            }
+
+            # 计算全省汇总
+            new_standard_province_wide = calculate_province_wide_stats(new_standard_province_data)
+            old_standard_province_wide = calculate_province_wide_stats(old_standard_province_data)
+
+            # 计算全省汇总对比
+            province_wide_comparison = {}
+            if new_standard_province_wide and old_standard_province_wide:
+                new_index = new_standard_province_wide.get("composite_index", 0)
+                old_index = old_standard_province_wide.get("composite_index", 0)
+                new_exceed = new_standard_province_wide.get("exceed_days", 0)
+                old_exceed = old_standard_province_wide.get("exceed_days", 0)
+
+                province_wide_comparison = {
+                    "composite_index_change": safe_round(new_index - old_index, 2),
+                    "composite_index_change_rate": safe_round(((new_index - old_index) / old_index * 100) if old_index > 0 else 0, 2),
+                    "exceed_days_change": new_exceed - old_exceed
+                }
+
+            # 添加到结果
+            city_comparison["province_wide"] = {
+                "new_standard": new_standard_province_wide,
+                "old_standard": old_standard_province_wide,
+                "comparison": province_wide_comparison
             }
 
         # 步骤4：构建返回结果

@@ -326,66 +326,6 @@ class MemoryStore:
                 exc_info=True
             )
 
-    def remember_fact(
-        self,
-        fact: str,
-        category: str = "general"
-    ) -> bool:
-        """
-        记住重要事实到MEMORY.md
-
-        Args:
-            fact: 事实内容
-            category: 分类（如 "user_preference", "conclusion", "data"）
-
-        Returns:
-            是否成功
-        """
-        try:
-            current_content = self.memory_file.read_text(encoding="utf-8")
-
-            # 构建新条目
-            timestamp = datetime.now().strftime("%Y-%m-%d")
-            new_entry = f"\n- {timestamp}: {fact}\n"
-
-            # 根据分类插入到对应位置
-            if f"## {category}" in current_content:
-                # 插入到对应分类下
-                section_pattern = rf"(## {category}.*?\n)"
-                new_content = re.sub(
-                    section_pattern,
-                    r"\1" + new_entry,
-                    current_content,
-                    count=1
-                )
-            else:
-                # 添加到文件末尾
-                new_content = current_content + f"\n## {category}\n" + new_entry
-
-            # 限制大小
-            if len(new_content) > self.max_memory_size:
-                # 保留最新的80%
-                keep_size = int(self.max_memory_size * 0.8)
-                new_content = new_content[-keep_size:]
-
-            self.memory_file.write_text(new_content, encoding="utf-8")
-
-            logger.info(
-                "fact_remembered",
-                mode=self.mode,
-                category=category,
-                fact_length=len(fact)
-            )
-            return True
-
-        except Exception as e:
-            logger.error(
-                "failed_to_remember_fact",
-                error=str(e),
-                exc_info=True
-            )
-            return False
-
     def search_history(
         self,
         query: str,

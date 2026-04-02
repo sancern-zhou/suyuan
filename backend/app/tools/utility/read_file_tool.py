@@ -1,11 +1,12 @@
 """
-ReadFile 工具 - 智能文件读取（支持分页、大小限制、多种格式）
+ReadFile 工具 - 统一文件读取入口（支持分页、大小限制、多种格式）
 
 让 LLM 能够读取本地文件系统中的文件：
 - 文本文件：支持分页读取，智能大小限制
 - 图片文件：自动调用 Vision API 进行内容分析
 - Word XML：智能分层读取（自动推断最优模式）
-- PDF 文件：提取文本内容，支持指定页面范围
+- PDF 文件：委托给 parse_pdf 工具（支持OCR、表格、图片提取）
+- DOCX 文件：委托给 read_docx 工具（支持PDF预览）
 - 目录列表：查看目录中的文件和子目录
 
 智能分页策略：
@@ -17,8 +18,13 @@ Word XML 三种模式：
 1. text（纯文本）：只提取文字内容，最节省 tokens
 2. structured（结构化）：保留标题、表格等结构，~80% 压缩
 3. raw（原始）：完整 XML，用于精确编辑
+
+委托模式：
+- PDF/DOCX 内部委托给专业工具，保持代码不变
+- 自动降级策略确保鲁棒性
 """
 import os
+import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -29,12 +35,13 @@ logger = structlog.get_logger()
 
 class ReadFileTool(LLMTool):
     """
-    文件读取工具（支持分页和大小限制）
+    文件读取工具（统一入口，支持分页和大小限制）
 
     功能：
     - 读取文本文件内容（支持分页）
     - 读取图片文件并自动分析
-    - 读取 PDF 文件（支持页面范围）
+    - 读取 PDF 文件（委托给 parse_pdf，支持OCR、表格、图片提取）
+    - 读取 DOCX 文件（委托给 read_docx，支持PDF预览）
     - 读取 Word XML（支持多种模式）
     - 自动检测文件类型和大小
     """
@@ -47,6 +54,9 @@ class ReadFileTool(LLMTool):
     # 支持的 PDF 格式
     PDF_EXTENSIONS = {'.pdf'}
 
+    # 支持的 DOCX 格式
+    DOCX_EXTENSIONS = {'.docx'}
+
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
 
@@ -56,7 +66,7 @@ class ReadFileTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="read_file",
-            description="""读取文件内容（支持分页、智能大小限制、多格式）
+            description="""读取文件内容（统一入口，支持分页、智能大小限制、多格式）
 
 文本文件特性：
 - 支持分页读取：offset（起始行号）、limit（读取行数）
@@ -65,7 +75,8 @@ class ReadFileTool(LLMTool):
 
 其他格式支持：
 - 图片文件：自动调用 Vision API 分析图片内容（可关闭）
-- PDF 文件：提取文本内容，支持指定页面范围
+- PDF 文件：智能PDF解析（自动检测文本型/扫描型，支持OCR、表格、图片提取）
+- DOCX 文件：读取Word文档（支持PDF预览、表格、图片提取）
 - Word XML：智能分层读取（根据文件大小自动选择模式）
 - 目录列表：查看目录中的文件和子目录
 
@@ -81,22 +92,26 @@ class ReadFileTool(LLMTool):
 3. 建议使用 offset/limit 分页读取
 4. 或先用 grep 搜索定位目标行号
 
-Word XML 读取模式：
-- 小文档（<100KB）：structured 模式（保留标题、表格等结构）
-- 大文档（>=100KB）：text 模式（只提取文字）
-- raw_mode=True：返回完整原始 XML（用于精确编辑）
+PDF/DOCX 预览功能：
+- PDF/DOCX 文件自动生成 PDF 预览（可在前端查看）
+- PDF：直接使用原文件（性能最优）
+- DOCX：通过 LibreOffice 转换为 PDF
+- 预览失败不影响文件内容读取
 
-⚠️ Word XML 编辑注意事项：
-- 读取 Word XML 默认返回 markdown 格式（便于阅读）
-- 如需编辑 Word 文档，应使用 find_replace_word 或 word_edit 工具
-- 如需查看原始 XML，设置 raw_mode=True
-- 不要使用 edit_file 编辑 Word XML（格式不匹配）
+PDF 智能解析：
+- 自动检测PDF类型（文本型/扫描型）
+- 文本型PDF：直接提取文本和表格
+- 扫描型PDF：自动使用OCR识别
+- 默认提取表格（可通过参数控制）
 
 示例：
 - read_file(path="data.txt")                              # 读取文本（<100KB全量，>100KB前1000行）
 - read_file(path="large.log", offset=2000, limit=500)     # 分页读取：从第2000行开始读500行
 - read_file(path="chart.png")                             # 图片文件（自动分析）
-- read_file(path="report.pdf", pages="1-5")               # PDF 文件（第 1-5 页）
+- read_file(path="report.pdf")                            # PDF文件（自动检测模式，提取表格）
+- read_file(path="report.pdf", pages="1-5")               # PDF文件（指定页面）
+- read_file(path="report.pdf", extract_images=True)      # PDF文件（提取图片）
+- read_file(path="document.docx")                         # DOCX文件（自动生成预览）
 - read_file(path="doc.xml", raw_mode=True)                # Word XML（完整 XML）
 - read_file(path="D:/work_dir")                           # 查看目录内容
 
@@ -106,15 +121,20 @@ Word XML 读取模式：
 - limit: 读取行数（默认1000，设置为None则不限制）
 - max_size: 最大文件大小（字节，默认100KB=102400）
 - encoding: 文本文件编码（默认 utf-8）
-- pages: PDF 页面范围（如 "1-5", "3"）
+- pages: PDF/DOCX 页面范围（如 "1-5", "3"）
 - auto_analyze: 是否自动分析图片（默认 True）
 - analysis_type: 图片分析类型（ocr/describe/chart/analyze）
+- extract_tables: PDF是否提取表格（默认 True）
+- extract_images: PDF是否提取图片（默认 False）
+- enable_preview: PDF/DOCX是否生成预览（默认 True）
 - raw_mode: 是否返回原始内容（Word XML 专用）
 - include_formatting: 是否保留格式信息（Word XML 专用）
-- max_paragraphs: 最大段落数（Word XML 专用）
+- max_paragraphs: 最大段落数（Word XML/DOCX 专用）
 
 限制：
 - 图片大小限制：5MB
+- PDF 大小限制：50MB
+- DOCX 大小限制：20MB
 - PDF 页面限制：最多 20 页
 - 工作目录限制：D:/溯源/ 及其子目录
 - 文本文件默认大小限制：100KB
@@ -123,16 +143,22 @@ Word XML 读取模式：
 - 文件超过100KB时会自动截断并提示分页读取
 - 建议先用 grep 搜索定位行号，再用 offset/limit 精确读取
 - 图片文件会自动进行内容分析
+- PDF/DOCX 自动生成预览，可在前端查看
 - 不返回 base64 数据（避免 token 浪费）
 """,
             category=ToolCategory.QUERY,
-            version="3.0.0",
+            version="4.0.0",
             requires_context=False
         )
 
         # 工作目录限制
         self.working_dir = Path.cwd().parent
         self.max_image_size = 5 * 1024 * 1024  # 5MB
+        self.max_pdf_size = 50 * 1024 * 1024  # 50MB
+        self.max_docx_size = 20 * 1024 * 1024  # 20MB
+
+        # 工具实例缓存
+        self._tool_cache = {}
 
     async def execute(
         self,
@@ -147,6 +173,9 @@ Word XML 读取模式：
         raw_mode: bool = False,
         include_formatting: bool = False,
         max_paragraphs: Optional[int] = None,
+        extract_tables: bool = True,
+        extract_images: bool = False,
+        enable_preview: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -160,10 +189,13 @@ Word XML 读取模式：
             encoding: 文本文件编码（默认 utf-8）
             auto_analyze: 是否自动分析图片（默认 True）
             analysis_type: 图片分析类型（ocr/describe/chart/analyze，默认 analyze）
-            pages: PDF 页面范围（如 "1-5", "3", "10-20"），仅对 PDF 文件有效
+            pages: PDF/DOCX 页面范围（如 "1-5", "3", "10-20"）
             raw_mode: 是否返回原始内容（Word XML 专用，默认 False）
             include_formatting: 是否保留格式信息（Word XML 专用，默认 False）
-            max_paragraphs: 最大段落数（Word XML 专用，默认不限制）
+            max_paragraphs: 最大段落数（Word XML/DOCX 专用，默认不限制）
+            extract_tables: PDF是否提取表格（默认 True）
+            extract_images: PDF是否提取图片（默认 False）
+            enable_preview: PDF/DOCX是否生成预览（默认 True）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}
@@ -197,6 +229,7 @@ Word XML 读取模式：
             # 4. 判断文件类型并读取
             is_image = file_ext in self.IMAGE_EXTENSIONS
             is_pdf = file_ext in self.PDF_EXTENSIONS
+            is_docx = file_ext in self.DOCX_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
 
             if is_image:
@@ -204,7 +237,13 @@ Word XML 读取模式：
                     resolved_path, file_size, auto_analyze, analysis_type
                 )
             elif is_pdf:
-                return await self._read_pdf(resolved_path, file_size, pages)
+                return await self._read_pdf_delegated(
+                    resolved_path, file_size, pages, extract_tables, extract_images, enable_preview
+                )
+            elif is_docx:
+                return await self._read_docx_delegated(
+                    resolved_path, file_size, pages, max_paragraphs, enable_preview
+                )
             elif is_word_xml:
                 return await self._read_word_xml(
                     resolved_path, file_size, raw_mode, include_formatting, max_paragraphs
@@ -490,6 +529,323 @@ Word XML 读取模式：
                 "data": {"error": str(e)},
                 "summary": f"读取 PDF 失败: {str(e)[:50]}"
             }
+
+    async def _read_pdf_delegated(
+        self,
+        file_path: Path,
+        file_size: int,
+        pages: Optional[str] = None,
+        extract_tables: bool = True,
+        extract_images: bool = False,
+        enable_preview: bool = True
+    ) -> Dict[str, Any]:
+        """委托 parse_pdf 工具读取 PDF（带降级策略）"""
+        try:
+            # 检查文件大小
+            if file_size > self.max_pdf_size:
+                return {
+                    "success": False,
+                    "data": {"error": f"PDF文件过大: {file_size} bytes (最大 {self.max_pdf_size} bytes)"},
+                    "summary": f"PDF过大，超过50MB限制"
+                }
+        except Exception as e:
+            logger.error("read_pdf_delegated_failed", path=str(file_path), error=str(e))
+            return {
+                "success": False,
+                "data": {"error": str(e)},
+                "summary": f"读取PDF失败: {str(e)[:50]}"
+            }
+
+        try:
+            # 1. 尝试调用 parse_pdf 工具
+            from app.tools.utility.parse_pdf_tool import ParsePDFTool
+
+            tool = self._get_cached_tool(ParsePDFTool, "parse_pdf")
+
+            # 构造参数：使用 auto 模式自动检测
+            parse_pdf_args = {
+                "path": str(file_path),
+                "mode": "auto",  # 自动检测文本型/扫描型
+                "ocr_engine": "auto"  # 自动选择最佳OCR引擎
+            }
+
+            # 添加可选参数
+            if pages:
+                parse_pdf_args["pages"] = pages
+
+            if extract_tables:
+                parse_pdf_args["extract_tables"] = True
+
+            if extract_images:
+                parse_pdf_args["extract_images"] = True
+
+            result = await tool.execute(**parse_pdf_args)
+
+            if result.get("success"):
+                normalized = self._normalize_pdf_result(result, file_path, file_size)
+                # 生成PDF预览（PDF直接使用原文件）
+                if enable_preview:
+                    await self._ensure_pdf_preview(file_path, normalized["data"], is_pdf=True)
+                return normalized
+
+            # 2. parse_pdf 失败，降级到原生 PyPDF2
+            logger.warning("parse_pdf_failed_fallback_to_pypdf2", path=str(file_path))
+            return await self._read_pdf_fallback(file_path, file_size, pages, enable_preview)
+
+        except ImportError:
+            # 3. parse_pdf 不可用，使用原生 PyPDF2
+            logger.warning("parse_pdf_not_available_fallback_to_pypdf2", path=str(file_path))
+            return await self._read_pdf_fallback(file_path, file_size, pages, enable_preview)
+
+        except Exception as e:
+            logger.error("read_pdf_delegated_failed", path=str(file_path), error=str(e))
+            return {
+                "success": False,
+                "data": {"error": str(e)},
+                "summary": f"读取PDF失败: {str(e)[:50]}"
+            }
+
+    def _normalize_pdf_result(self, result: Dict[str, Any], file_path: Path, file_size: int) -> Dict[str, Any]:
+        """标准化 parse_pdf 工具的返回格式"""
+        try:
+            data = result.get("data", {})
+            content_parts = []
+
+            # 添加文本内容
+            if "text" in data:
+                content_parts.append(data["text"])
+
+            # 添加表格内容
+            if "tables" in data and data["tables"]:
+                content_parts.append("\n\n[提取的表格]")
+                for i, table in enumerate(data["tables"], 1):
+                    content_parts.append(f"\n表格 {i}:\n{table}")
+
+            # 添加图片信息
+            if "images" in data and data["images"]:
+                content_parts.append(f"\n\n[检测到 {len(data['images'])} 张图片]")
+
+            content = "\n".join(content_parts)
+
+            normalized_data = {
+                "type": "pdf",
+                "content": content,
+                "path": str(file_path),
+                "size": file_size,
+                "total_pages": data.get("total_pages", 0),
+                "pages_read": data.get("pages_read", 0),
+            }
+
+            # 添加提取的表格和图片信息
+            if "tables" in data:
+                normalized_data["extracted_tables"] = data["tables"]
+            if "images" in data:
+                normalized_data["extracted_images"] = data["images"]
+
+            return {
+                "success": True,
+                "data": normalized_data,
+                "summary": result.get("summary", f"读取PDF成功: {file_path.name}"),
+                "metadata": {
+                    "generator": "read_file",
+                    "delegated_to": "parse_pdf"
+                }
+            }
+
+        except Exception as e:
+            logger.error("normalize_pdf_result_failed", error=str(e))
+            return {
+                "success": False,
+                "data": {"error": f"结果标准化失败: {str(e)}"},
+                "summary": "PDF结果格式错误"
+            }
+
+    async def _read_pdf_fallback(
+        self,
+        file_path: Path,
+        file_size: int,
+        pages: Optional[str] = None,
+        enable_preview: bool = True
+    ) -> Dict[str, Any]:
+        """使用原生 PyPDF2 降级读取 PDF"""
+        try:
+            import PyPDF2
+        except ImportError:
+            return {
+                "success": False,
+                "data": {"error": "PyPDF2 未安装，请运行: pip install PyPDF2"},
+                "summary": "缺少 PDF 支持库"
+            }
+
+        try:
+            with open(file_path, 'rb') as f:
+                pdf_reader = PyPDF2.PdfReader(f)
+                total_pages = len(pdf_reader.pages)
+
+                page_numbers = self._parse_page_range(pages, total_pages)
+
+                if page_numbers is None:
+                    return {
+                        "success": False,
+                        "data": {"error": f"无效的页面范围: {pages}"},
+                        "summary": "页面范围格式错误"
+                    }
+
+                if len(page_numbers) > 20:
+                    return {
+                        "success": False,
+                        "data": {
+                            "error": f"页面数量超过限制（{len(page_numbers)} 页），最多支持 20 页。"
+                                    f"请使用 pages 参数指定范围，如 pages='1-20'"
+                        },
+                        "summary": f"PDF 页面过多（{len(page_numbers)} 页，限制 20 页）"
+                    }
+
+                # 提取文本
+                text_content = []
+                for page_num in page_numbers:
+                    try:
+                        page = pdf_reader.pages[page_num - 1]
+                        text = page.extract_text()
+                        text_content.append(f"--- Page {page_num} ---\n{text}")
+                    except Exception as e:
+                        logger.warning("pdf_page_extract_failed", page=page_num, error=str(e))
+                        text_content.append(f"--- Page {page_num} ---\n(提取失败: {str(e)})")
+
+                content = "\n\n".join(text_content)
+
+                result_data = {
+                    "type": "pdf",
+                    "content": content,
+                    "size": file_size,
+                    "path": str(file_path),
+                    "total_pages": total_pages,
+                    "pages_read": len(page_numbers),
+                    "page_range": pages or f"1-{total_pages}"
+                }
+
+                # 生成PDF预览（PDF直接使用原文件）
+                if enable_preview:
+                    await self._ensure_pdf_preview(file_path, result_data, is_pdf=True)
+
+                return {
+                    "success": True,
+                    "data": result_data,
+                    "summary": f"读取 PDF 成功: {file_path.name} (第 {page_numbers[0]}-{page_numbers[-1]} 页，共 {len(page_numbers)} 页)",
+                    "metadata": {
+                        "generator": "read_file",
+                        "delegated_to": "pypdf2_fallback"
+                    }
+                }
+
+        except Exception as e:
+            logger.error("read_pdf_fallback_failed", path=str(file_path), error=str(e))
+            return {
+                "success": False,
+                "data": {"error": str(e)},
+                "summary": f"读取 PDF 失败: {str(e)[:50]}"
+            }
+
+    async def _read_docx_delegated(
+        self,
+        file_path: Path,
+        file_size: int,
+        pages: Optional[str] = None,
+        max_paragraphs: Optional[int] = None,
+        enable_preview: bool = True
+    ) -> Dict[str, Any]:
+        """委托 read_docx 工具读取 DOCX"""
+        try:
+            # 检查文件大小
+            if file_size > self.max_docx_size:
+                return {
+                    "success": False,
+                    "data": {"error": f"DOCX文件过大: {file_size} bytes (最大 {self.max_docx_size} bytes)"},
+                    "summary": f"DOCX过大，超过20MB限制"
+                }
+
+            # 导入 read_docx 工具
+            from app.tools.report.read_docx.tool import ReadDocxTool
+
+            tool = self._get_cached_tool(ReadDocxTool, "read_docx")
+
+            # 构造参数
+            read_docx_args = {
+                "path": str(file_path),
+                "max_paragraphs": max_paragraphs or 100,
+                "include_tables": True
+            }
+
+            result = await tool.execute(**read_docx_args)
+
+            if result.get("success"):
+                # 标准化返回格式
+                normalized = {
+                    "success": True,
+                    "data": result["data"],
+                    "summary": result["summary"],
+                    "metadata": {
+                        "generator": "read_file",
+                        "delegated_to": "read_docx"
+                    }
+                }
+                return normalized
+            else:
+                return result
+
+        except ImportError:
+            logger.error("read_docx_not_available", path=str(file_path))
+            return {
+                "success": False,
+                "data": {"error": "read_docx 工具不可用"},
+                "summary": "DOCX读取工具不可用"
+            }
+        except Exception as e:
+            logger.error("read_docx_delegated_failed", path=str(file_path), error=str(e))
+            return {
+                "success": False,
+                "data": {"error": str(e)},
+                "summary": f"读取DOCX失败: {str(e)[:50]}"
+            }
+
+    async def _ensure_pdf_preview(self, file_path: Path, result_data: dict, is_pdf: bool = False):
+        """确保PDF预览已生成（PDF和DOCX）"""
+        if "pdf_preview" in result_data:
+            return  # 已有预览
+
+        try:
+            if is_pdf:
+                # PDF：直接使用原文件，生成预览元数据
+                import pypdf
+                pages = 0
+                try:
+                    with open(file_path, 'rb') as f:
+                        reader = pypdf.PdfReader(f)
+                        pages = len(reader.pages)
+                except Exception:
+                    pages = result_data.get("total_pages", 0)
+
+                result_data["pdf_preview"] = {
+                    "pdf_id": f"{uuid.uuid4()}",
+                    "pdf_url": f"/api/file/{str(file_path)}",
+                    "pages": pages,
+                    "size": file_path.stat().st_size
+                }
+            else:
+                # DOCX：通过 LibreOffice 转换
+                from app.services.pdf_converter import pdf_converter
+                pdf_preview = await pdf_converter.convert_to_pdf(str(file_path))
+                result_data["pdf_preview"] = pdf_preview
+
+        except Exception as e:
+            logger.warning("pdf_preview_generation_failed", path=str(file_path), error=str(e))
+            # 预览失败不影响主流程
+
+    def _get_cached_tool(self, tool_class, tool_name: str):
+        """获取缓存的工具实例"""
+        if tool_name not in self._tool_cache:
+            self._tool_cache[tool_name] = tool_class()
+        return self._tool_cache[tool_name]
 
     def _parse_page_range(self, pages: Optional[str], total_pages: int) -> Optional[list]:
         """解析页面范围字符串"""
@@ -818,7 +1174,7 @@ Word XML 读取模式：
         """获取 Function Calling Schema"""
         return {
             "name": "read_file",
-            "description": """读取文件内容（支持分页、智能大小限制、多格式）
+            "description": """读取文件内容（统一入口，支持分页、智能大小限制、多格式）
 
 文本文件特性：
 - 支持分页读取：offset（起始行号）、limit（读取行数）
@@ -827,7 +1183,8 @@ Word XML 读取模式：
 
 其他格式支持：
 - 图片文件：自动调用 Vision API 分析图片内容（可关闭）
-- PDF 文件：提取文本内容，支持指定页面范围
+- PDF 文件：智能PDF解析（自动检测文本型/扫描型，支持OCR、表格、图片提取）
+- DOCX 文件：读取Word文档（支持PDF预览、表格、图片提取）
 - Word XML：智能分层读取（根据文件大小自动选择模式）
 - 目录列表：查看目录中的文件和子目录
 
@@ -843,22 +1200,26 @@ Word XML 读取模式：
 3. 建议使用 offset/limit 分页读取
 4. 或先用 grep 搜索定位目标行号
 
-Word XML 读取模式：
-- 小文档（<100KB）：structured 模式（保留标题、表格等结构）
-- 大文档（>=100KB）：text 模式（只提取文字）
-- raw_mode=True：返回完整原始 XML（用于精确编辑）
+PDF/DOCX 预览功能：
+- PDF/DOCX 文件自动生成 PDF 预览（可在前端查看）
+- PDF：直接使用原文件（性能最优）
+- DOCX：通过 LibreOffice 转换为 PDF
+- 预览失败不影响文件内容读取
 
-⚠️ Word XML 编辑注意事项：
-- 读取 Word XML 默认返回 markdown 格式（便于阅读）
-- 如需编辑 Word 文档，应使用 find_replace_word 或 word_edit 工具
-- 如需查看原始 XML，设置 raw_mode=True
-- 不要使用 edit_file 编辑 Word XML（格式不匹配）
+PDF 智能解析：
+- 自动检测PDF类型（文本型/扫描型）
+- 文本型PDF：直接提取文本和表格
+- 扫描型PDF：自动使用OCR识别
+- 默认提取表格（可通过参数控制）
 
 示例：
 - read_file(path="data.txt")                              # 读取文本（<100KB全量，>100KB前1000行）
 - read_file(path="large.log", offset=2000, limit=500)     # 分页读取：从第2000行开始读500行
 - read_file(path="chart.png")                             # 图片文件（自动分析）
-- read_file(path="report.pdf", pages="1-5")               # PDF 文件（第 1-5 页）
+- read_file(path="report.pdf")                            # PDF文件（自动检测模式，提取表格）
+- read_file(path="report.pdf", pages="1-5")               # PDF文件（指定页面）
+- read_file(path="report.pdf", extract_images=True)      # PDF文件（提取图片）
+- read_file(path="document.docx")                         # DOCX文件（自动生成预览）
 - read_file(path="doc.xml", raw_mode=True)                # Word XML（完整 XML）
 - read_file(path="D:/work_dir")                           # 查看目录内容
 
@@ -868,15 +1229,20 @@ Word XML 读取模式：
 - limit: 读取行数（默认1000，设置为None则不限制）
 - max_size: 最大文件大小（字节，默认100KB=102400）
 - encoding: 文本文件编码（默认 utf-8）
-- pages: PDF 页面范围（如 "1-5", "3"）
+- pages: PDF/DOCX 页面范围（如 "1-5", "3"）
 - auto_analyze: 是否自动分析图片（默认 True）
 - analysis_type: 图片分析类型（ocr/describe/chart/analyze）
+- extract_tables: PDF是否提取表格（默认 True）
+- extract_images: PDF是否提取图片（默认 False）
+- enable_preview: PDF/DOCX是否生成预览（默认 True）
 - raw_mode: 是否返回原始内容（Word XML 专用）
 - include_formatting: 是否保留格式信息（Word XML 专用）
-- max_paragraphs: 最大段落数（Word XML 专用）
+- max_paragraphs: 最大段落数（Word XML/DOCX 专用）
 
 限制：
 - 图片大小限制：5MB
+- PDF 大小限制：50MB
+- DOCX 大小限制：20MB
 - PDF 页面限制：最多 20 页
 - 工作目录限制：D:/溯源/ 及其子目录
 - 文本文件默认大小限制：100KB
@@ -885,6 +1251,7 @@ Word XML 读取模式：
 - 文件超过100KB时会自动截断并提示分页读取
 - 建议先用 grep 搜索定位行号，再用 offset/limit 精确读取
 - 图片文件会自动进行内容分析
+- PDF/DOCX 自动生成预览，可在前端查看
 - 不返回 base64 数据（避免 token 浪费）
 """,
             "parameters": {
@@ -927,7 +1294,22 @@ Word XML 读取模式：
                     },
                     "pages": {
                         "type": "string",
-                        "description": "PDF 页面范围（仅对 PDF 文件有效）。格式：'1-5'（范围）或 '3'（单页）。最多支持 20 页。"
+                        "description": "PDF/DOCX 页面范围。格式：'1-5'（范围）或 '3'（单页）。最多支持 20 页。"
+                    },
+                    "extract_tables": {
+                        "type": "boolean",
+                        "description": "PDF是否提取表格（默认 True）。设置为 False 则只提取文本内容。",
+                        "default": True
+                    },
+                    "extract_images": {
+                        "type": "boolean",
+                        "description": "PDF是否提取图片（默认 False）。设置为 True 则提取PDF中的图片信息。",
+                        "default": False
+                    },
+                    "enable_preview": {
+                        "type": "boolean",
+                        "description": "PDF/DOCX是否生成预览（默认 True）。设置为 False 则不生成PDF预览。",
+                        "default": True
                     },
                     "raw_mode": {
                         "type": "boolean",
@@ -941,7 +1323,7 @@ Word XML 读取模式：
                     },
                     "max_paragraphs": {
                         "type": "integer",
-                        "description": "最大段落数（Word XML 专用，默认不限制）。用于进一步控制 token 消耗，例如设置为 50 只读取前 50 个段落。"
+                        "description": "最大段落数（Word XML/DOCX 专用，默认不限制）。用于进一步控制 token 消耗，例如设置为 50 只读取前 50 个段落。"
                     }
                 },
                 "required": ["path"]
