@@ -47,7 +47,9 @@ class ReActAgent:
         working_context_limit: int = 50000,
         large_data_threshold: int = 1000,
         tool_registry: Optional[Dict] = None,
-        session_ttl_hours: int = 12
+        session_ttl_hours: int = 12,
+        enable_memory: bool = True,  # ✅ 新增：默认启用记忆
+        memory_manager: Optional["UnifiedMemoryManager"] = None  # ✅ 新增
     ):
         """
         初始化 ReAct Agent
@@ -59,6 +61,8 @@ class ReActAgent:
             large_data_threshold: 大数据阈值（字符数）
             tool_registry: 工具注册表（可选）
             session_ttl_hours: 会话空闲时间，超时将自动清理（小时）
+            enable_memory: 是否启用长期记忆（默认True）
+            memory_manager: 统一记忆管理器（可选，如果不提供则自动创建）
         """
         self.max_iterations = max_iterations
         self.max_working_memory = max_working_memory
@@ -67,6 +71,15 @@ class ReActAgent:
         self._session_ttl = timedelta(hours=session_ttl_hours) if session_ttl_hours > 0 else None
         self._session_store: Dict[str, Dict[str, Any]] = {}
         self._session_lock = asyncio.Lock()
+
+        # ✅ 新增：记忆管理器
+        self.enable_memory = enable_memory
+        self.memory_manager = memory_manager
+
+        if enable_memory and not memory_manager:
+            from .memory.unified_memory_manager import UnifiedMemoryManager
+            self.memory_manager = UnifiedMemoryManager()
+            logger.info("unified_memory_manager_created")
 
         # 初始化任务列表（用于 TodoWrite 工具）
         from .task.todo_models import TodoList
@@ -89,7 +102,8 @@ class ReActAgent:
             max_iterations=max_iterations,
             max_working_memory=max_working_memory,
             working_context_limit=working_context_limit,
-            tool_count=len(self.executor.tool_registry)
+            tool_count=len(self.executor.tool_registry),
+            enable_memory=enable_memory
         )
 
     def _register_workflow_tools(self):
@@ -116,7 +130,8 @@ class ReActAgent:
         is_interruption: bool = False,
         initial_messages: Optional[List[Dict[str, Any]]] = None,
         manual_mode: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        user_identifier: Optional[str] = None  # ✅ 新增：用户标识（可选）
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -133,12 +148,44 @@ class ReActAgent:
             initial_messages: 历史消息列表（用于会话恢复，继续之前的对话）
             manual_mode: 双模式架构（assistant | expert，None则使用默认expert模式）
             attachments: 附件列表 [{file_id, name, type, url}]
+            user_identifier: 用户标识（用于跨会话记忆，可选）
 
         Yields:
             流式事件：
             - type: "start" | "thought" | "action" | "observation" | "complete" | "error"
             - data: 事件数据
         """
+        # ✅ 新增：构建user_id（根据用户反馈）
+        memory_store = None
+        memory_context = ""
+        unified_user_id = None
+
+        if self.enable_memory and manual_mode:
+            if user_identifier:
+                # 有user_identifier：同一用户共享记忆
+                unified_user_id = f"{manual_mode}:{user_identifier}:shared"
+            elif session_id:
+                # 无user_identifier：每个session独立记忆
+                unified_user_id = f"{manual_mode}:{session_id}:unique"
+
+            # 加载记忆上下文
+            if unified_user_id:
+                memory_store = await self.memory_manager.get_user_memory(
+                    user_id=unified_user_id,
+                    mode=manual_mode or "expert"
+                )
+                memory_context = memory_store.get_memory_context()
+
+                # 增强查询
+                if memory_context:
+                    user_query = f"{memory_context}\n\n用户问题：{user_query}"
+                    logger.info(
+                        "memory_context_loaded",
+                        user_id=unified_user_id,
+                        mode=manual_mode,
+                        context_length=len(memory_context)
+                    )
+
         # ✅ 如果有附件，添加到查询中告知LLM
         if attachments and len(attachments) > 0:
             attachment_info = "\n\n**用户上传的附件**：\n"
@@ -275,6 +322,23 @@ class ReActAgent:
                 }
             }
         finally:
+            # ✅ 新增：检查并整合记忆（所有模式通用）
+            if unified_user_id and manual_mode:
+                try:
+                    await self._check_and_consolidate_memory(
+                        actual_session_id,
+                        unified_user_id,
+                        manual_mode
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "memory_consolidation_failed",
+                        session_id=actual_session_id,
+                        user_id=unified_user_id,
+                        mode=manual_mode,
+                        error=str(e)
+                    )
+
             # 同步 office_documents 到会话对象
             if actual_session_id and actual_session_id in self._session_store:
                 office_docs = self._session_store[actual_session_id].get("office_documents", [])
@@ -347,6 +411,128 @@ class ReActAgent:
             工具信息字典，如果不存在返回 None
         """
         return self.executor.get_tool_info(tool_name)
+
+    # ========================================================================
+    # 记忆整合方法（统一记忆系统）
+    # ========================================================================
+
+    async def _check_and_consolidate_memory(
+        self,
+        session_id: str,
+        unified_user_id: str,
+        manual_mode: str
+    ) -> bool:
+        """
+        检查并执行记忆整合（所有模式通用）
+
+        Args:
+            session_id: 会话ID
+            unified_user_id: 统一用户ID（格式：{mode}:{user_identifier}:{shared|unique}）
+            manual_mode: 模式标识
+
+        Returns:
+            是否执行了整合
+        """
+        # 1. 获取session历史
+        if session_id not in self._session_store:
+            return False
+
+        session_data = self._session_store[session_id]
+        memory_manager = session_data.get("memory")
+        if not memory_manager:
+            return False
+
+        messages = memory_manager.session.get_messages_for_llm()
+        if not messages:
+            return False
+
+        # 2. 计算token数
+        from app.utils.token_budget import token_budget_manager
+
+        total_tokens = sum(
+            token_budget_manager.count_tokens(msg.get("content", ""))
+            for msg in messages
+        )
+
+        # 3. 获取偏移量
+        offset = await self.memory_manager.get_consolidation_offset(unified_user_id)
+        new_message_count = len(messages) - offset
+
+        # 4. 触发条件检查
+        max_tokens = int(token_budget_manager.max_context_tokens * 0.8)
+        should_consolidate = (
+            total_tokens > max_tokens or
+            new_message_count >= 10
+        )
+
+        if should_consolidate and new_message_count > 0:
+            await self._consolidate_memory(
+                unified_user_id,
+                messages,
+                offset,
+                manual_mode
+            )
+            return True
+
+        return False
+
+    async def _consolidate_memory(
+        self,
+        unified_user_id: str,
+        messages: List[Dict[str, Any]],
+        offset: int,
+        mode: str
+    ) -> None:
+        """
+        执行记忆整合
+
+        Args:
+            unified_user_id: 统一用户ID
+            messages: 消息列表
+            offset: 起始偏移量
+            mode: 模式标识
+        """
+        # 获取记忆存储
+        memory_store = await self.memory_manager.get_user_memory(
+            user_id=unified_user_id,
+            mode=mode
+        )
+
+        # 只整合从 offset 之后的新消息
+        new_messages = messages[offset:] if offset > 0 else messages
+
+        if not new_messages:
+            return
+
+        # 调用记忆整合（使用改进版）
+        success = await memory_store.consolidate_improved(
+            messages=new_messages,
+            model="mimo-v2-flash"
+        )
+
+        if success:
+            # 更新偏移量
+            await self.memory_manager.set_consolidation_offset(
+                unified_user_id,
+                len(messages)
+            )
+            logger.info(
+                "memory_consolidation_completed",
+                user_id=unified_user_id,
+                mode=mode,
+                messages_consolidated=len(new_messages),
+                total_messages=len(messages)
+            )
+        else:
+            logger.warning(
+                "memory_consolidation_failed",
+                user_id=unified_user_id,
+                mode=mode
+            )
+
+    # ========================================================================
+    # 简单查询方法
+    # ========================================================================
 
     async def simple_query(
         self,

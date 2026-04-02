@@ -1626,7 +1626,7 @@ class ReActLoop:
             generator = metadata.get("generator", "")
 
             # ✅ 特殊处理：办公助理工具始终显示完整内容
-            # 包括：Office 工具、analyze_image、read_file、grep、glob、list_directory、任务管理工具、read_data_registry、web_search、search_history
+            # 包括：Office 工具、analyze_image、read_file、grep、glob、list_directory、任务管理工具、read_data_registry、web_search、search_history、parse_pdf
             is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide", "read_docx", "read_xlsx", "read_pptx"]
             is_image_tool = generator == "analyze_image"
             is_file_tool = generator == "read_file"
@@ -1640,13 +1640,15 @@ class ReActLoop:
             is_web_search_tool = generator == "web_search"
             is_search_history_tool = generator == "search_history"
             is_web_fetch_tool = generator == "web_fetch"
+            is_parse_pdf_tool = generator == "parse_pdf"  # PDF解析工具
 
             # 检查是否是办公助理工具
             is_any_office_tool = (
                 is_image_tool or is_file_tool or is_office_tool or is_grep_tool or
                 is_glob_tool or is_list_dir_tool or is_browser_tool or is_todo_write_tool or
                 is_read_data_registry_tool or is_execute_python_tool or is_web_search_tool or
-                is_search_history_tool or is_web_fetch_tool or "stdout" in data or "stderr" in data
+                is_search_history_tool or is_web_fetch_tool or is_parse_pdf_tool or
+                "stdout" in data or "stderr" in data
             )
 
             if is_any_office_tool:
@@ -1842,6 +1844,136 @@ class ReActLoop:
                     lines.append(f"**完整结果**:")
                     lines.append(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}\n```")
 
+                # parse_pdf 工具：显示PDF解析结果（智能截断）
+                elif is_parse_pdf_tool:
+                    pdf_type = data.get("type", "")
+                    file_name = data.get("file_name", "")
+
+                    if pdf_type == "pdf_text":
+                        # 文本提取结果
+                        lines.append(f"**文件**: {file_name}")
+                        if "total_pages" in data:
+                            lines.append(f"**总页数**: {data['total_pages']}")
+                        if "pages_processed" in data:
+                            lines.append(f"**处理页数**: {data['pages_processed']}")
+                        if "content_length" in data:
+                            lines.append(f"**内容长度**: {data['content_length']} 字符")
+
+                        # 显示内容预览
+                        if "preview" in data:
+                            lines.append(f"\n**内容预览**:")
+                            lines.append(data["preview"])
+                        elif "content" in data:
+                            # 如果没有preview，截断显示
+                            content = data["content"]
+                            preview_length = 5000
+                            if len(content) > preview_length:
+                                lines.append(f"\n**内容预览** (前{preview_length}字符):")
+                                lines.append(content[:preview_length])
+                                lines.append(f"\n... (还有 {len(content) - preview_length} 字符)")
+                            else:
+                                lines.append(f"\n**内容**:")
+                                lines.append(content)
+
+                        # 显示表格信息
+                        if "table_count" in data and data["table_count"] > 0:
+                            lines.append(f"\n**表格数量**: {data['table_count']}")
+
+                        # 显示图片信息
+                        if "image_count" in data and data["image_count"] > 0:
+                            lines.append(f"**图片数量**: {data['image_count']}")
+
+                        # 显示保存的文件路径
+                        if "result_file_path" in data:
+                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
+
+                    elif pdf_type == "pdf_ocr":
+                        # OCR识别结果
+                        lines.append(f"**文件**: {file_name}")
+                        lines.append(f"**OCR引擎**: {data.get('ocr_engine', 'unknown')}")
+                        if "pages_processed" in data:
+                            lines.append(f"**处理页数**: {data['pages_processed']}")
+                        if "content_length" in data:
+                            lines.append(f"**内容长度**: {data['content_length']} 字符")
+
+                        # 显示内容预览
+                        if "preview" in data:
+                            lines.append(f"\n**OCR识别结果预览**:")
+                            lines.append(data["preview"])
+                        elif "content" in data:
+                            # 如果没有preview，截断显示
+                            content = data["content"]
+                            preview_length = 5000
+                            if len(content) > preview_length:
+                                lines.append(f"\n**OCR识别结果预览** (前{preview_length}字符):")
+                                lines.append(content[:preview_length])
+                                lines.append(f"\n... (还有 {len(content) - preview_length} 字符)")
+                            else:
+                                lines.append(f"\n**OCR识别结果**:")
+                                lines.append(content)
+
+                        # 显示保存的文件路径
+                        if "result_file_path" in data:
+                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
+
+                    elif pdf_type == "pdf_tables":
+                        # 表格提取结果
+                        lines.append(f"**文件**: {file_name}")
+                        table_count = data.get("table_count", 0)
+                        lines.append(f"**表格数量**: {table_count}")
+
+                        if table_count > 0 and "tables" in data:
+                            lines.append(f"\n**表格详情**:")
+                            for idx, table in enumerate(data["tables"][:5]):  # 最多显示5个表格
+                                lines.append(f"\n表格 {idx + 1}: {table['rows']}行 × {table['cols']}列")
+                                # 显示前3行数据作为预览
+                                if "data" in table and len(table["data"]) > 0:
+                                    preview_rows = table["data"][:3]
+                                    lines.append(f"```json\n{json.dumps(preview_rows, ensure_ascii=False, indent=2)}\n```")
+                            if table_count > 5:
+                                lines.append(f"\n... 还有 {table_count - 5} 个表格")
+
+                        # 显示保存的文件路径
+                        if "result_file_path" in data:
+                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
+
+                    elif pdf_type == "pdf_images":
+                        # 图片信息提取结果
+                        lines.append(f"**文件**: {file_name}")
+                        image_count = data.get("image_count", 0)
+                        lines.append(f"**图片数量**: {image_count}")
+
+                        if image_count > 0 and "images" in data:
+                            lines.append(f"\n**图片列表** (前10个):")
+                            for idx, img in enumerate(data["images"][:10]):
+                                lines.append(f"{idx + 1}. 页码{img['page']}: {img.get('width', 0)}×{img.get('height', 0)}")
+                            if image_count > 10:
+                                lines.append(f"\n... 还有 {image_count - 10} 个图片")
+
+                        # 显示保存的文件路径
+                        if "result_file_path" in data:
+                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
+
+                    elif pdf_type == "pdf_metadata":
+                        # 元数据提取结果
+                        lines.append(f"**文件**: {file_name}")
+                        lines.append(f"**页数**: {data.get('page_count', 'N/A')}")
+                        lines.append(f"**是否加密**: {'是' if data.get('is_encrypted') else '否'}")
+
+                        # 显示PDF元数据
+                        if "title" in data and data["title"]:
+                            lines.append(f"**标题**: {data['title']}")
+                        if "author" in data and data["author"]:
+                            lines.append(f"**作者**: {data['author']}")
+                        if "creator" in data and data["creator"]:
+                            lines.append(f"**创建工具**: {data['creator']}")
+                        if "creation_date" in data and data["creation_date"]:
+                            lines.append(f"**创建日期**: {data['creation_date']}")
+
+                        # 显示保存的文件路径
+                        if "result_file_path" in data:
+                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
+
                 # execute_python 工具：显示完整的代码输出和生成的文件
                 elif is_execute_python_tool:
                     if "output" in data and data["output"]:
@@ -1854,17 +1986,29 @@ class ReActLoop:
                             lines.append(f"    路径: `{file_path}`")
 
                     # ✅ 从 visuals 生成图表 markdown（用于 LLM 阅读）
-                    if "visuals" in observation:
-                        chart_visuals = [v for v in observation["visuals"] if v.get("type") == "image"]
-                        if chart_visuals:
-                            lines.append(f"\n**生成的图表**:")
-                            for viz in chart_visuals:
+                    if "visuals" in observation and observation["visuals"]:
+                        lines.append(f"\n**✅ 图表生成成功** (共 {len(observation['visuals'])} 个):")
+                        for viz in observation["visuals"]:
+                            viz_type = viz.get("type", "unknown")
+                            title = viz.get("title", "图表")
+
+                            if viz_type == "image":
+                                # matplotlib 图片
                                 url = viz["data"].get("url")
-                                title = viz.get("title", "图表")
                                 if url:
                                     lines.append(f"- {title}: ![Chart]({url})")
                                 elif viz["data"].get("file_path"):
                                     lines.append(f"- {title}: `{viz['data']['file_path']}` (缓存失败)")
+                            elif viz_type in ["line", "bar", "pie", "scatter", "heatmap", "map", "wind_rose", "profile"]:
+                                # Chart v3.1 ECharts 配置
+                                lines.append(f"- {title} (Chart v3.1 - {viz_type})")
+                                lines.append(f"  图表ID: {viz.get('id')}")
+                                lines.append(f"  数据字段: {list(viz.get('data', {}).keys())}")
+                            else:
+                                lines.append(f"- {title} ({viz_type})")
+
+                        # 明确告诉 LLM 任务已完成
+                        lines.append(f"\n⚠️ **图表已成功生成，请使用 FINAL_ANSWER 向用户展示结果，不要再次执行 execute_python**")
 
                 # 对于 bash 工具，包含完整的 stdout/stderr
                 elif "stdout" in data or "stderr" in data:

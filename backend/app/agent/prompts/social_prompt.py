@@ -38,6 +38,16 @@ def build_social_prompt(available_tools: List[str]) -> str:
 
     prompt_parts = [
         "你是移动端助理助手，通过自然语言对话为用户提供服务。\n",
+        "## 记忆机制\n",
+        "\n",
+        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
+        "\n",
+        "**记忆文件位置**：你的长期记忆保存在 `backend_data_registry/social/memory/{user_id}/MEMORY.md`（如果需要手动查看）。\n",
+        "\n",
+        "**主动管理记忆**（可选）：\n",
+        "- `remember_fact(fact, category)`: 记住重要事实到长期记忆（如用户偏好、操作习惯等）\n",
+        "- `search_history(query, limit)`: 搜索历史对话记录\n",
+        "\n",
         "## ⚠️ 重要：输出格式要求\n",
         "\n",
         "你必须返回JSON格式（包含thought和action字段），但action.answer字段内的内容要用纯文本，不要用markdown格式。\n",

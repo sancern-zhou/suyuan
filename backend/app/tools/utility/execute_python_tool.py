@@ -277,9 +277,13 @@ doc.save('/root/report.docx')
             # ✅ 检测图表输出（CHART_SAVED:xxx.png）
             chart_paths = self._extract_chart_paths(result["data"].get("output", ""))
 
+            # ✅ 新增：检测 Chart v3.1 JSON 输出
+            chart_v31_data = self._extract_chart_v31(result["data"].get("output", ""))
+
             logger.info(
                 "chart_paths_extracted",
                 chart_paths=chart_paths,
+                chart_v31_found=chart_v31_data is not None,
                 output_preview=result["data"].get("output", "")[:200]
             )
 
@@ -383,6 +387,34 @@ doc.save('/root/report.docx')
                                 }
                             })
                             result["summary"] = f"图表生成成功（缓存失败）：{abs_chart_path}"
+
+            # ✅ 新增：处理 Chart v3.1 JSON 数据
+            if chart_v31_data:
+                try:
+                    result.setdefault("visuals", []).append({
+                        "id": chart_v31_data.get("id", "chart_v31"),
+                        "type": chart_v31_data.get("type", "chart"),
+                        "title": chart_v31_data.get("title", "Chart v3.1"),
+                        "data": chart_v31_data.get("data", {}),
+                        "meta": {
+                            "generator": "execute_python",
+                            "schema_version": chart_v31_data.get("meta", {}).get("schema_version", "3.1")
+                        }
+                    })
+                    logger.info(
+                        "chart_v31_added",
+                        chart_id=chart_v31_data.get("id"),
+                        chart_type=chart_v31_data.get("type")
+                    )
+                    # 更新摘要
+                    if not chart_paths:  # 如果没有matplotlib图表，使用v3.1摘要
+                        result["summary"] = f"Chart v3.1图表生成成功：{chart_v31_data.get('title', '')}"
+                except Exception as e:
+                    logger.warning(
+                        "chart_v31_processing_failed",
+                        error=str(e),
+                        chart_data=chart_v31_data
+                    )
 
             return result
 
@@ -608,6 +640,49 @@ doc.save('/root/report.docx')
                 chart_paths.append(chart_path)
 
         return chart_paths
+
+    def _extract_chart_v31(self, output: str) -> dict:
+        """
+        从 Python 代码输出中提取 Chart v3.1 JSON 数据
+
+        检测格式：JSON字符串包含 id, type, title, data, meta 字段
+
+        Args:
+            output: Python 代码输出
+
+        Returns:
+            Chart v3.1 数据字典，如果未找到则返回 None
+        """
+        import json
+        import re
+
+        output_lines = output.split('\n')
+
+        for line in output_lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                # 尝试解析 JSON
+                chart_data = json.loads(line)
+
+                # 验证是否为 Chart v3.1 格式（必须是字典类型）
+                if isinstance(chart_data, dict) and all(key in chart_data for key in ["id", "type", "title", "data"]):
+                    # 检查 meta.schema_version
+                    if "meta" in chart_data and chart_data["meta"].get("schema_version") == "3.1":
+                        logger.info(
+                            "chart_v31_detected",
+                            chart_id=chart_data.get("id"),
+                            chart_type=chart_data.get("type"),
+                            title=chart_data.get("title")
+                        )
+                        return chart_data
+            except (json.JSONDecodeError, ValueError):
+                # 不是有效的 JSON，继续下一行
+                continue
+
+        return None
 
     def _inject_chinese_font_support(self, code: str) -> str:
         """

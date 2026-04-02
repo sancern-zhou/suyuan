@@ -238,6 +238,11 @@ class AgentBridge:
             set_current_channel(msg.channel)
             logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel)
 
+            # ✅ 启动用户心跳服务（social模式）
+            if self.user_heartbeat_manager and self.mode == "social":
+                heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(social_user_id)
+                logger.debug("user_heartbeat_started", user_id=social_user_id)
+
             # ✅ 加载用户专属记忆上下文（social模式）
             memory_context = ""
             if self.user_memory_manager and self.mode == "social":

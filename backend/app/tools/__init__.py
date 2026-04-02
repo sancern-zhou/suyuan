@@ -521,6 +521,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="list_directory", error=str(e))
 
+    try:
+        from app.tools.utility.parse_pdf_tool import create_parse_pdf_tool
+        registry.register(create_parse_pdf_tool(), priority=508)
+        logger.info("tool_loaded", tool="parse_pdf")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
+
     # ========================================
     # Office Automation Tools（Cross-Platform - Phase 1-4）
     # ========================================
