@@ -14,7 +14,7 @@ ASSISTANT_TOOLS = {
     "bash": "执行Shell命令。参数: command(str)",
 
     # 文件操作
-    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
     "grep": "搜索文件内容。参数: pattern(str), path(str)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
@@ -58,12 +58,12 @@ EXPERT_TOOLS = {
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
     "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
-    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
-    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
-    "query_standard_comparison": "新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
-    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+    "query_new_standard_report": "【第一优先级】查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "query_old_standard_report": "【第一优先级】查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "query_standard_comparison": "【第一优先级】新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
+    "compare_standard_reports": "【第一优先级】新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 同比环比查询必须使用此工具，禁止手动计算。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
-    "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
+    "aggregate_data": "【第二优先级】数据聚合分析工具（⚠️ 仅当统计查询工具无法满足需求时使用。前置条件：必须先使用查询工具获取data_id。使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
 
     # 分析工具（需先获取数据）
     "calculate_pm_pmf": "PM2.5 PMF源解析（需先调用get_pm25_ionic和get_pm25_carbon获取数据）。参数: data_ids(list), n_factors(int, 可选, 默认5)",
@@ -92,6 +92,14 @@ EXPERT_TOOLS = {
     # 代码执行
     "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析）。参数: code(str), timeout(int, 可选, 默认30)",
 
+    # 文件操作（保存分析结果、读取配置文件）
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "write_file": "写入文件内容。参数: path(str), content(str)",
+    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "list_directory": "列出目录内容。参数: path(str)",
+    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+
     # 其他
     "call_sub_agent": "调用助手Agent。参数: target_mode(str), task_description(str)",
     "FINISH_SUMMARY": "生成分析报告。参数: answer(str)",
@@ -101,7 +109,11 @@ EXPERT_TOOLS = {
 QUERY_TOOLS = {
     # === 源码查看工具（了解工具实现细节） ===
     "grep": "搜索文件内容。参数: pattern(str), path(str)",
-    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "write_file": "写入文件内容。参数: path(str), content(str)",
+    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "list_directory": "列出目录内容。参数: path(str)",
+    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
 
     # === 现有参数化查询工具（复用） ===
     "get_pm25_ionic": "查询PM2.5水溶性离子。参数: start_time(str), end_time(str), locations(可选)",
@@ -132,7 +144,7 @@ QUERY_TOOLS = {
     "smart_chart_generator": "智能图表生成（需data_id，自动选择图表类型）。参数: data_id(str)",
 
     # === 数值计算工具 ===
-    "execute_python": "执行 Python 代码进行数值计算（均值、中位数、百分比、单位换算等）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "【第三优先级】执行 Python 代码进行数值计算（均值、中位数、百分比、单位换算等）。⚠️ **最后手段：仅当统计查询工具和aggregate_data都无法满足需求时才使用**。禁止用于同环比、超标率等常见统计计算（应使用compare_standard_reports或query_new_standard_report）。❌ **禁止用来校验统计查询工具返回的结果，统计查询工具的结果是最准确的**。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -158,9 +170,12 @@ REPORT_TOOLS = {
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list)",
 
     # 文件操作
-    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
+    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "grep": "搜索文件内容。参数: pattern(str), path(str)",
     "list_directory": "列出目录内容。参数: path(str)",
+    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -185,9 +200,12 @@ CHART_TOOLS = {
     "read_data_registry": "读取已保存的数据。⚠️ **图表模式应该只使用 list_fields=true 获取数据结构**，然后在 execute_python 代码中自己读取 JSON 文件（禁止硬编码数据）。参数: data_id(str), list_fields(bool, **图表模式下设为 true**)",
 
     # 文件操作
-    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
+    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "grep": "搜索文件内容。参数: pattern(str), path(str)",
     "list_directory": "列出目录内容。参数: path(str)",
+    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
 
     # 代码执行
     "execute_python": "执行 Python 代码（数值计算、生成 Matplotlib 图表）。参数: code(str), timeout(int, 可选, 默认30)",
@@ -205,7 +223,7 @@ SOCIAL_TOOLS = {
     "bash": "执行Shell命令（谨慎使用）。参数: command(str), timeout(int, 可选, 默认60), working_dir(str, 可选)",
 
     # === 文件操作 ===
-    "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
     "parse_pdf": "解析PDF文件并提取内容（支持文本提取、OCR识别、表格提取、元数据提取）。⚠️ 必需参数: path(str, PDF文件路径)。可选: mode(str, 解析模式: auto=自动检测/text=文本提取/ocr=OCR识别/table=表格提取/image=图片信息/meta=元数据, 默认auto), pages(str, 页面范围如'1-5', 可选), extract_tables(bool, 是否提取表格, 默认false), extract_images(bool, 是否提取图片信息, 默认false), ocr_engine(str, OCR引擎: auto/qwen/paddleocr/tesseract, 默认auto)",
@@ -244,9 +262,6 @@ SOCIAL_TOOLS = {
     "web_search": "搜索互联网。参数: query(str), count(int, 可选, 默认5, 范围1-10)",
     "web_fetch": "抓取网页并提取可读内容。参数: url(str), maxChars(int, 可选, 默认10000)",
 
-    # === 记忆管理 ===
-    "remember_fact": "记住重要事实。参数: fact(str), category(str, 可选, 默认general)",
-    "search_history": "搜索历史对话。参数: query(str), limit(int, 可选, 默认10)",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -255,7 +270,7 @@ SOCIAL_TOOLS = {
 # ===== 编程模式工具 =====
 CODE_TOOLS = {
     # 文件操作
-    "read_file": "读取文件。参数: path(str)",
+    "read_file": "读取文件（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件。参数: path(str), content(str)",
     "edit_file": "编辑文件。参数: path(str), old_string(str), new_string(str)",
     "grep": "搜索文件内容。参数: pattern(str), path(str)",
@@ -316,6 +331,9 @@ EXPERT_TOOL_ORDER = [
     # 代码执行
     "execute_python",  # 数值计算工具
 
+    # 文件操作
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+
     # 调用助手Agent
     "call_sub_agent",
 
@@ -342,7 +360,7 @@ CODE_TOOL_ORDER = [
 
 QUERY_TOOL_ORDER = [
     # 源码查看工具
-    "grep", "read_file",
+    "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
 
     # 参数化查询工具
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
@@ -397,7 +415,7 @@ REPORT_TOOL_ORDER = [
     "read_data_registry",
 
     # 文件操作
-    "read_file", "write_file", "list_directory",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
     # 任务管理
     "TodoWrite",
@@ -422,9 +440,7 @@ CHART_TOOL_ORDER = [
     "read_data_registry",
 
     # 文件操作
-    "read_file",
-    "write_file",
-    "list_directory",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
     # 代码执行
     "execute_python",
@@ -478,9 +494,6 @@ SOCIAL_TOOL_ORDER = [
     "web_search",
     "web_fetch",
 
-    # 记忆管理
-    "remember_fact",
-    "search_history",
 
     # 任务管理
     "TodoWrite",

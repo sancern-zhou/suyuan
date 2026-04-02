@@ -83,6 +83,8 @@ class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
     query: str = Field(..., description="用户查询")
     max_iterations: int = Field(30, ge=1, le=30, description="最大迭代次数")
+    session_id: Optional[str] = Field(None, description="会话ID（可选，用于保持会话连续性和记忆）")
+    user_identifier: Optional[str] = Field(None, description="用户标识（可选，用于跨会话记忆共享）")
     assistant_mode: Optional[str] = Field(
         None,
         description="""助手模式：
@@ -306,7 +308,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             "is_interruption": request.is_interruption,
             "manual_mode": request.mode,
             "attachments": request.attachments,  # ✅ 传递附件信息
-            "user_identifier": request.user_id or request.session_id  # ✅ 新增：传递用户标识
+            "user_identifier": request.user_id  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
         }
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
@@ -405,10 +407,13 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                             frontend_message["content"] = obs_data.get("summary", "获得结果") if isinstance(obs_data, dict) else str(obs_data)
 
                         conversation_history.append(frontend_message)
+                        # 防御性代码：确保 content 不为 None
+                        content = frontend_message.get("content", "")
+                        content_preview = content[:50] if content else "empty"
                         logger.debug("conversation_history_appended",
                                     event_type=event["type"],
                                     history_length=len(conversation_history),
-                                    content_preview=frontend_message.get("content", "")[:50])
+                                    content_preview=content_preview)
 
                     # ✅ streaming_text 事件：流式输出但不保存到历史（由 complete 事件统一保存）
                     elif event["type"] == "streaming_text":
@@ -599,6 +604,8 @@ async def simple_query(request: AgentQueryRequest):
 
         async for event in agent.analyze(
             request.query,
+            session_id=request.session_id,
+            user_identifier=request.user_identifier,
             max_iterations=request.max_iterations
         ):
             if event["type"] == "start":

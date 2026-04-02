@@ -28,6 +28,7 @@ class ReactAgentAPI {
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
       attachments = null,  // ✅ 附件列表
+      userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       onEvent
     } = options
 
@@ -41,6 +42,7 @@ class ReactAgentAPI {
     const body = {
       query,
       session_id: sessionId,
+      user_id: userIdentifier,  // ✅ 传递用户标识
       enhance_with_history: enhanceWithHistory,
       max_iterations: maxIterations,
       debug_mode: debugMode,

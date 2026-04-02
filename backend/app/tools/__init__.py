@@ -616,13 +616,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="send_notification", error=str(e))
 
     try:
-        from app.tools.social.remember_fact.tool import RememberFactTool
-        registry.register(RememberFactTool(), priority=703)
-        logger.info("tool_loaded", tool="remember_fact")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="remember_fact", error=str(e))
-
-    try:
         from app.tools.social.search_history.tool import SearchHistoryTool
         registry.register(SearchHistoryTool(), priority=704)
         logger.info("tool_loaded", tool="search_history")

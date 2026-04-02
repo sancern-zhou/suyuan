@@ -980,7 +980,9 @@ class ReActLoop:
                     # 记忆更新
                     self.memory.add_iteration(thought=thought, action=action, observation=observation)
 
-                    if observation.get("summary"):
+                    # ✅ 修复：不仅检查 summary，还要检查 result 字段
+                    # 对于有 result 字段但没有 summary 的工具（如 compare_standard_reports），也需要添加到对话历史
+                    if observation.get("summary") or observation.get("result"):
                         # 使用完整格式化内容（包含完整数据）而非仅摘要
                         full_message = self._format_observation(observation)
                         # 添加工具调用信息（帮助LLM了解历史操作）
@@ -2089,7 +2091,8 @@ class ReActLoop:
                 lines.append(f"```json\n{json.dumps(data_dict, ensure_ascii=False, indent=2, default=str)}\n```")
 
         # 摘要（作为补充，不是主要信息源）
-        if "summary" in observation:
+        # 只在 summary 非空时才添加（对于返回 result 字段的工具，summary 为 None）
+        if observation.get("summary"):
             lines.append(f"**摘要**: {observation['summary']}")
 
         # ✅ 处理 results 字段（search_history 工具返回的搜索结果）
@@ -2115,12 +2118,28 @@ class ReActLoop:
                     lines.append(f"\n... 还有 {len(results) - 20} 条结果")
 
         # ✅ 处理 result 字段（包含详细的结构化数据）
-        # 例如：query_standard_comparison 工具的详细对比数据
+        # 例如：compare_standard_reports 工具的详细对比数据
+        # ⚠️ 重要：result字段必须完整保留，不能截断（数据查询工具的详细结构化数据）
         if success and "result" in observation and isinstance(observation["result"], dict):
             result = observation["result"]
             if result:  # 只有非空结果才显示
+                # 🔍 详细日志：记录result字段的处理
+                metadata = observation.get("metadata", {})
+                logger.info(
+                    "result_field_detected",
+                    generator=metadata.get("generator", ""),
+                    result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
+                    result_type=type(result).__name__,
+                    will_format_full_result=True
+                )
                 lines.append(f"**详细结果**:")
                 lines.append(f"```json\n{json.dumps(result, ensure_ascii=False, indent=2, default=str)}\n```")
+                # 🔍 详细日志：记录格式化后的result字段长度
+                logger.info(
+                    "result_field_formatted",
+                    formatted_char_count=len(f"```json\n{json.dumps(result, ensure_ascii=False, indent=2, default=str)}\n```"),
+                    result_preview=str(result)[:500] if isinstance(result, dict) else str(result)[:500]
+                )
 
         return "\n".join(lines)
 
@@ -2356,8 +2375,8 @@ class ReActLoop:
                 if data_id and sampling_applied:
                     lines.append(f"\n💡 完整数据({original_count}条)已存储在: `{data_id}`")
 
-        # 摘要
-        if "summary" in observation:
+        # 摘要（只在 summary 非空时才添加）
+        if observation.get("summary"):
             lines.append(f"**摘要**: {observation['summary']}")
 
         return lines

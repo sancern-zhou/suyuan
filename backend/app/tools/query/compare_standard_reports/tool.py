@@ -15,6 +15,7 @@
 - 单项质量指数：single_indexes.*
 - 首要污染物统计：primary_pollutant_days.*, total_primary_days
 - 超标统计：exceed_days_by_pollutant.*
+- 首要污染物超标天：primary_pollutant_exceed_days.*（某污染物既是首要污染物又超标的天数）
 """
 
 import asyncio
@@ -56,6 +57,11 @@ COMPARISON_METRICS = [
     "exceed_days_by_pollutant.PM2_5", "exceed_days_by_pollutant.PM10",
     "exceed_days_by_pollutant.SO2", "exceed_days_by_pollutant.NO2",
     "exceed_days_by_pollutant.CO", "exceed_days_by_pollutant.O3_8h",
+
+    # 首要污染物超标天（某污染物既是首要污染物又超标）
+    "primary_pollutant_exceed_days.PM2_5", "primary_pollutant_exceed_days.PM10",
+    "primary_pollutant_exceed_days.SO2", "primary_pollutant_exceed_days.NO2",
+    "primary_pollutant_exceed_days.CO", "primary_pollutant_exceed_days.O3_8h",
 ]
 
 # 百分比字段（只计算差值，不计算变化率）
@@ -86,14 +92,23 @@ class CompareStandardReportsTool(LLMTool):
 - 单项质量指数：single_indexes.*
 - 首要污染物统计：primary_pollutant_days.*, total_primary_days
 - 超标统计：exceed_days_by_pollutant.*
+- 首要污染物超标天：primary_pollutant_exceed_days.*（某污染物既是首要污染物又超标的天数）
 
 【返回数据说明】
-- result字段：对比结果（包含query_period、comparison_period、differences、change_rates）
+- result字段：⭐ 完整的对比结果（包含所有城市的详细对比数据）
   - query_period: 查询时间段的统计数据
   - comparison_period: 对比时间段的统计数据
   - differences: 两个时间段的差值（query_period - comparison_period）
   - change_rates: 变化率百分比（(query_period - comparison_period) / comparison_period * 100）
-- data_id字段：合并后的原始数据（包含period标识字段）
+  - ⚠️ 重要：result 字段包含完整的对比分析结果，**直接用于报告生成和分析，无需再读取 data_id**
+- data_id字段：系统生成的原始数据存储标识符（格式如 "air_quality_unified:v1:xxx"）
+  - 仅用于需要访问原始监测数据或进行聚合分析时使用
+  - ⚠️ 一般情况下不需要使用此字段，result 字段已包含所有对比结果
+
+【全省汇总对比】（多城市查询时）
+- 除了各城市对比外，还包含 province_wide 字段
+- province_wide 结构与单城市对比相同，但数据为全省汇总统计
+- 全省汇总统计规则同 query_new_standard_report
 
 【输入参数】
 - cities: 城市列表
@@ -271,7 +286,7 @@ class CompareStandardReportsTool(LLMTool):
             comparison_stats
         )
 
-        # 6. 返回结果
+        # 6. 返回结果（完整结果已传递给LLM，无需summary）
         result = {
             "status": "success",
             "success": True,
@@ -287,8 +302,7 @@ class CompareStandardReportsTool(LLMTool):
                 "source_data_ids": [current_data_id, comparison_data_id] if current_data_id and comparison_data_id else [],
                 "cities": cities,
                 "enable_sand_deduction": enable_sand_deduction
-            },
-            "summary": self._generate_summary(comparison_result_data, query_period, comparison_period)
+            }
         }
 
         logger.info(
@@ -448,6 +462,53 @@ class CompareStandardReportsTool(LLMTool):
 
             comparison_result[city] = city_comparison
 
+        # 计算全省汇总对比（多城市查询时）
+        if len(current_stats) > 1:
+            # 导入全省汇总计算函数
+            import sys
+            import os
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from app.tools.query.query_new_standard_report.tool import calculate_province_wide_stats
+
+            # 计算查询时段全省汇总
+            query_period_province_wide = calculate_province_wide_stats(current_stats)
+
+            # 计算对比时段全省汇总
+            comparison_period_province_wide = calculate_province_wide_stats(comparison_stats)
+
+            # 构建全省汇总对比
+            province_wide_comparison = {
+                "query_period": query_period_province_wide,
+                "comparison_period": comparison_period_province_wide,
+                "differences": {},
+                "change_rates": {}
+            }
+
+            # 计算全省汇总的差值和变化率
+            for metric in COMPARISON_METRICS:
+                query_value = self._get_nested_value(query_period_province_wide, metric)
+                comparison_value = self._get_nested_value(comparison_period_province_wide, metric)
+
+                if query_value is None or comparison_value is None:
+                    continue
+
+                # 差值：query - comparison
+                diff = query_value - comparison_value
+                province_wide_comparison["differences"][metric] = diff
+
+                # 变化率
+                if metric in PERCENTAGE_METRICS:
+                    province_wide_comparison["change_rates"][metric] = None
+                elif comparison_value != 0:
+                    change_rate = (diff / comparison_value) * 100
+                    province_wide_comparison["change_rates"][metric] = change_rate
+                elif query_value == 0:
+                    province_wide_comparison["change_rates"][metric] = 0.0
+                else:
+                    province_wide_comparison["change_rates"][metric] = float('inf')
+
+            comparison_result["province_wide"] = province_wide_comparison
+
         return comparison_result
 
     def _get_nested_value(self, data: Dict, path: str):
@@ -460,54 +521,3 @@ class CompareStandardReportsTool(LLMTool):
             else:
                 return None
         return value
-
-    def _generate_summary(
-        self,
-        comparison_result: Dict,
-        query_period: Dict,
-        comparison_period: Dict
-    ) -> str:
-        """生成对比摘要"""
-        if not comparison_result:
-            return "对比分析完成，无结果数据"
-
-        query_label = self._format_period_label(
-            query_period["start_date"],
-            query_period["end_date"]
-        )
-        comparison_label = self._format_period_label(
-            comparison_period["start_date"],
-            comparison_period["end_date"]
-        )
-
-        # 找出综合指数变化最大的城市
-        max_change_city = None
-        max_change_value = None
-
-        for city, data in comparison_result.items():
-            composite_diff = data.get("differences", {}).get("composite_index")
-            if composite_diff is not None:
-                if max_change_value is None or abs(composite_diff) > abs(max_change_value):
-                    max_change_value = composite_diff
-                    max_change_city = city
-
-        # 生成摘要
-        summary_parts = [
-            f"对比分析完成 ({query_label} vs {comparison_label})",
-            f"共 {len(comparison_result)} 个城市（数据为审核实况，最近的3天自动使用原始数据）"
-        ]
-
-        if max_change_city and max_change_value is not None:
-            city_data = comparison_result[max_change_city]
-            change_rate = city_data.get("change_rates", {}).get("composite_index", 0)
-
-            # 直接根据差值判断趋势
-            trend_text = "上升" if max_change_value > 0 else "下降"
-            if abs(max_change_value) < 0.001:
-                trend_text = "持平"
-
-            summary_parts.append(
-                f"{max_change_city}综合指数{trend_text}{abs(max_change_value):.2f}（{abs(change_rate):.1f}%）"
-            )
-
-        return "，".join(summary_parts) + "。"

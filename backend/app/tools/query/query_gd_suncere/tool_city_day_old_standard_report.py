@@ -344,6 +344,13 @@ async def execute_query_old_standard_report(
             city_stat = calculate_old_standard_city_stats(city_daily_records, city)
             city_stats[city] = city_stat
 
+        # 计算全省汇总统计（多城市查询时）
+        province_wide_stats = None
+        if len(cities) > 1:
+            # 导入全省汇总计算函数
+            from app.tools.query.query_new_standard_report.tool import calculate_province_wide_stats
+            province_wide_stats = calculate_province_wide_stats(city_stats)
+
         # 步骤7: 保存完整日报数据到数据注册表
         saved_data = None
         data_id_str = None
@@ -368,6 +375,9 @@ async def execute_query_old_standard_report(
         else:
             result_summary_data = city_stats
             result_summary = f"旧标准统计报表查询完成，共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据）"
+            # 添加全省汇总到结果
+            if province_wide_stats:
+                result_summary_data["province_wide"] = province_wide_stats
 
         # 添加数据存储信息到摘要
         if data_id_str:
@@ -452,6 +462,11 @@ def calculate_old_standard_city_stats(
 
     # 各污染物超标天数统计
     exceed_days_by_pollutant = {
+        'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+    }
+
+    # 首要污染物超标天统计（某污染物既是首要污染物又超标）
+    primary_pollutant_exceed_days = {
         'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
     }
 
@@ -554,6 +569,28 @@ def calculate_old_standard_city_stats(
         # 旧标准超标天数统计
         if max_single_index_old > 1:
             exceed_days += 1
+
+            # 统计首要污染物超标天（某污染物既是首要污染物又超标）
+            # 修复：需要检查首要污染物本身是否超标，而不是只检查当天是否有任何污染物超标
+            primary_pollutant_indexes = {
+                'PM2_5': pm25_index_old,
+                'PM10': pm10_index_old,
+                'SO2': so2_index_old,
+                'NO2': no2_index_old,
+                'CO': co_index_old,
+                'O3_8h': o3_8h_index_old
+            }
+
+            primary = record.get("primary_pollutant", "")
+            if primary:
+                pollutants = primary.split(",")
+                for p in pollutants:
+                    p_clean = p.strip()
+                    if p_clean in primary_pollutant_exceed_days:
+                        # 只有当首要污染物本身超标时才计入
+                        if primary_pollutant_indexes.get(p_clean, 0) > 1:
+                            primary_pollutant_exceed_days[p_clean] += 1
+
             # 记录超标详情
             exceed_pollutants = []
             pollutants = {
@@ -638,7 +675,7 @@ def calculate_old_standard_city_stats(
 
     # 计算达标率和超标率（百分比形式，保留1位小数）
     # valid_days 在循环中已经统计（只要有一项污染物有数据就算有效天）
-    compliance_rate = safe_round((total_days - exceed_days) / total_days * 100, 1) if total_days > 0 else 0
+    compliance_rate = safe_round((valid_days - exceed_days) / valid_days * 100, 1) if valid_days > 0 else 0
     exceed_rate = safe_round(exceed_days / valid_days * 100, 1) if valid_days > 0 else 0
 
     # 计算首要污染物比例
@@ -674,12 +711,12 @@ def calculate_old_standard_city_stats(
 
     return {
         "composite_index": avg_composite_index,
-        "exceed_days": exceed_days,
+        "exceed_days": int(exceed_days),
         "exceed_details": exceed_details,
-        "valid_days": valid_days,
+        "valid_days": int(valid_days),
         "exceed_rate": exceed_rate,
         "compliance_rate": compliance_rate,
-        "total_days": total_days,
+        "total_days": int(total_days),
         # 六参数统计指标
         "SO2": format_pollutant_value(avg_so2, 'SO2', 'statistical_data', use_final_rounding=True),
         "SO2_P98": format_pollutant_value(so2_percentile_98, 'SO2', 'statistical_data', use_final_rounding=True),
@@ -699,10 +736,12 @@ def calculate_old_standard_city_stats(
             "PM2_5": pm25_weighted_index, "O3_8h": o3_8h_weighted_index
         },
         # 首要污染物统计
-        "primary_pollutant_days": primary_pollutant_days,
+        "primary_pollutant_days": {k: int(v) for k, v in primary_pollutant_days.items()},
         "primary_pollutant_ratio": primary_pollutant_ratio,
-        "total_primary_days": total_primary_days,
+        "total_primary_days": int(total_primary_days),
         # 各污染物超标统计
-        "exceed_days_by_pollutant": exceed_days_by_pollutant,
-        "exceed_rate_by_pollutant": exceed_rate_by_pollutant
+        "exceed_days_by_pollutant": {k: int(v) for k, v in exceed_days_by_pollutant.items()},
+        "exceed_rate_by_pollutant": exceed_rate_by_pollutant,
+        # 首要污染物超标天统计（某污染物既是首要污染物又超标）
+        "primary_pollutant_exceed_days": {k: int(v) for k, v in primary_pollutant_exceed_days.items()}
     }
