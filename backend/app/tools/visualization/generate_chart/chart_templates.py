@@ -16,7 +16,7 @@ logger = structlog.get_logger()
 
 
 class ChartTemplate(Enum):
-    """预定义的图表模板（v3.1扩展）"""
+    """预定义的图表模板（v3.1扩展 + ECharts官方模板）"""
     # 现有模板
     VOCS_ANALYSIS = "vocs_analysis"
     PM_ANALYSIS = "pm_analysis"
@@ -37,6 +37,51 @@ class ChartTemplate(Enum):
 
     # v3.1 新增模板（高级）
     RADAR = "radar"                      # 雷达图
+
+    # ============================================
+    # v3.3 新增：ECharts官方模板（从echarts-examples提取）
+    # ============================================
+
+    # 柱状图模板（3个）
+    BAR_STACK_NEGATIVE = "bar_stack_negative"    # 堆叠负值柱状图
+    BAR_POLAR_RADIAL = "bar_polar_radial"        # 极坐标径向柱状图
+    BAR_WATERFALL = "bar_waterfall"              # 瀑布图
+
+    # 散点图模板（3个）
+    SCATTER_CLUSTERING = "scatter_clustering"    # 聚类散点图
+    SCATTER_MATRIX = "scatter_matrix"            # 散点矩阵图
+    SCATTER_REGRESSION = "scatter_regression"    # 回归散点图
+
+    # 折线图模板（3个）
+    LINE_AREA_GRADIENT = "line_area_gradient"    # 渐变面积折线图
+    LINE_STEP = "line_step"                      # 阶梯折线图
+    LINE_RACE = "line_race"                      # 排名竞赛图
+
+    # 饼图模板（3个）
+    PIE_ROSE_TYPE = "pie_rose_type"              # 玫瑰饼图
+    PIE_NEST = "pie_nest"                        # 嵌套饼图
+    PIE_DOUGHNUT = "pie_doughnut"                # 环形图
+
+    # 仪表盘模板（3个）
+    GAUGE_PROGRESS = "gauge_progress"            # 进度仪表盘
+    GAUGE_STAGE = "gauge_stage"                  # 分段仪表盘
+    GAUGE_RING = "gauge_ring"                    # 环形仪表盘
+
+    # 关系图模板（2个）
+    GRAPH_FORCE = "graph_force"                  # 力引导关系图
+    GRAPH_CIRCULAR = "graph_circular"            # 环形布局关系图
+
+    # 日历图模板（2个）
+    CALENDAR_HEATMAP = "calendar_heatmap"        # 日历热力图
+    CALENDAR_PIE = "calendar_pie"                # 日历饼图
+
+    # 矩形树图模板（2个）
+    TREEMAP_SIMPLE = "treemap_simple"            # 简单矩形树图
+    TREEMAP_DRILL_DOWN = "treemap_drill_down"    # 下钻矩形树图
+
+    # 桑基图模板（2个）
+    SANKEY_SIMPLE = "sankey_simple"              # 简单桑基图
+    SANKEY_VERTICAL = "sankey_vertical"          # 垂直桑基图
 
 
 class ChartTemplateRegistry:
@@ -1114,6 +1159,27 @@ class ChartTemplateRegistry:
             return chart_dict
         
         self.register(ChartTemplate.WEATHER_TIMESERIES.value, weather_timeseries_wrapper)
+
+        # ========================================
+        # 注册 ECharts 扩展模板（v3.3新增）
+        # ========================================
+        try:
+            from app.tools.visualization.generate_chart.chart_templates_extended import ECHARTS_EXTENDED_TEMPLATES
+
+            for template_id, template_func in ECHARTS_EXTENDED_TEMPLATES.items():
+                self.register(template_id, template_func)
+
+            logger.info(
+                "echarts_extended_templates_registered",
+                count=len(ECHARTS_EXTENDED_TEMPLATES),
+                templates=list(ECHARTS_EXTENDED_TEMPLATES.keys())
+            )
+        except ImportError as e:
+            logger.warning(
+                "echarts_extended_templates_import_failed",
+                error=str(e),
+                message="ECharts扩展模板将不可用"
+            )
 
         logger.info(
             "builtin_chart_templates_registered",

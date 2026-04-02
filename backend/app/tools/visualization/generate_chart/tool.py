@@ -107,7 +107,7 @@ class GenerateChartTool(LLMTool):
 - 如果是PMF/OBM分析结果 → 使用smart_chart_generator
 - 如果不确定，优先使用generate_chart（更简单）
 
-【支持的15种图表类型】
+【支持的图表类型】
 
 基础图表（适用于常规数据分析）：
 - pie: 饼图（占比/组成关系）- 数据格式：[{"name": "类别", "value": 数值}]
@@ -131,6 +131,52 @@ class GenerateChartTool(LLMTool):
 - bar3d: 3D柱状图（需要x+y+z字段）
 - volume3d: 3D体素图（需要x+y+z+values字段）
 
+【ECharts官方模板（v3.3新增）】
+基于echarts-examples官方示例，提供23个专业模板：
+
+柱状图变体（3个）：
+- bar_stack_negative: 堆叠负值柱状图（正负对比）
+- bar_polar_radial: 极坐标径向柱状图（周期性数据）
+- bar_waterfall: 瀑布图（累积效应）
+
+散点图变体（3个）：
+- scatter_clustering: 聚类散点图（多变量关系）
+- scatter_matrix: 散点矩阵图（相关性分析）
+- scatter_regression: 回归散点图（趋势分析）
+
+折线图变体（3个）：
+- line_area_gradient: 渐变面积折线图（趋势展示）
+- line_step: 阶梯折线图（离散变化）
+- line_race: 排名竞赛图（动态排名）
+
+饼图变体（3个）：
+- pie_rose_type: 玫瑰饼图（半径区分大小）
+- pie_nest: 嵌套饼图（层级占比）
+- pie_doughnut: 环形图（中心统计信息）
+
+仪表盘（3个）：
+- gauge_progress: 进度仪表盘（百分比进度）
+- gauge_stage: 分段仪表盘（等级展示）
+- gauge_ring: 环形仪表盘（多指标）
+
+关系图（2个）：
+- graph_force: 力引导关系图（网络关系）
+- graph_circular: 环形布局关系图（循环关系）
+
+日历图（2个）：
+- calendar_heatmap: 日历热力图（时间序列）
+- calendar_pie: 日历饼图（日历分类）
+
+矩形树图（2个）：
+- treemap_simple: 简单矩形树图（层级占比）
+- treemap_drill_down: 下钻矩形树图（多层级）
+
+桑基图（2个）：
+- sankey_simple: 简单桑基图（流向关系）
+- sankey_vertical: 垂直桑基图（垂直流向）
+
+使用方式：generate_chart(data=..., chart_type="bar_stack_negative")
+
 【选择建议】
 - 数据包含name+value字段 → pie
 - 数据包含category/value或x/y字段 → bar/line
@@ -144,6 +190,21 @@ class GenerateChartTool(LLMTool):
 - chart_type必须明确指定（不支持"auto"）
 - 如果数据已存储，请使用smart_chart_generator工具
 - 工具会自动处理模板和LLM回退，无需手动选择
+
+【ECharts模板检索功能】
+如需查找更多ECharts官方示例模板，可使用以下工具：
+1. search_files: 按图表类型查找示例
+   - search_files(pattern="bar-*.ts", path="/tmp/echarts-examples-gh-pages/public/examples/ts")
+   - search_files(pattern="scatter-*.ts", path="/tmp/echarts-examples-gh-pages/public/examples/ts")
+2. grep: 按元数据搜索
+   - grep(pattern="category: gauge", type="ts", path="/tmp/echarts-examples-gh-pages/public/examples/ts")
+   - grep(pattern="difficulty: 0", type="ts", path="/tmp/echarts-examples-gh-pages/public/examples/ts")  # 简单示例
+3. read_file: 读取具体示例内容
+   - read_file(file_path="/tmp/echarts-examples-gh-pages/public/examples/ts/bar-simple.ts")
+4. list_directory: 查看所有可用图表类型
+   - list_directory(path="/tmp/echarts-examples-gh-pages/public/examples/ts")
+
+检索到示例后，可参考其配置结构调整数据格式或使用对应的chart_type参数。
 
 返回格式：UDF v2.0标准格式（含visuals字段）
             """.strip(),

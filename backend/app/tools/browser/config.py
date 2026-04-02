@@ -5,7 +5,7 @@ class BrowserConfig:
     """Browser configuration settings"""
 
     # Browser launch settings
-    HEADLESS = False  # Run in headless mode
+    HEADLESS = True  # Run in headless mode (required for Linux without X Server)
 
     # 🔥 使用 Playwright 内置 Chromium（稳定可靠）
     USE_SYSTEM_CHROME = False  # 设为 False 使用内置浏览器

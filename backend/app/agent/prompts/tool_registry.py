@@ -23,6 +23,7 @@ ASSISTANT_TOOLS = {
 
     # Office工具（复杂工具，必须先阅读 office_skills_guide.md）
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
+    "parse_pdf": "解析PDF文件并提取内容（支持文本提取、OCR识别、表格提取、元数据提取）。⚠️ 必需参数: path(str, PDF文件路径)。可选: mode(str, 解析模式: auto=自动检测/text=文本提取/ocr=OCR识别/table=表格提取/image=图片信息/meta=元数据, 默认auto), pages(str, 页面范围如'1-5', 可选), extract_tables(bool, 是否提取表格, 默认false), extract_images(bool, 是否提取图片信息, 默认false), ocr_engine(str, OCR引擎: auto/qwen/paddleocr/tesseract, 默认auto)",
     "unpack_office": "解包Office文件为XML（Word/Excel/PPT）。参数: path(str), output_dir(str, 可选)",
     "pack_office": "打包XML为Office文件。参数: input_dir(str), output_path(str)",
     "word_edit": "Word高级编辑（替换文本、插入内容）。参数: docx_path(str), edits(list)",
@@ -33,6 +34,9 @@ ASSISTANT_TOOLS = {
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
+
+    # 代码执行
+    "execute_python": "执行 Python 代码（数值计算、数据处理、文件操作）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 其他工具
     "create_scheduled_task": "创建定时任务。参数: user_request(str)",
@@ -58,7 +62,7 @@ EXPERT_TOOLS = {
     "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_standard_comparison": "新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
-    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
     "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
 
     # 分析工具（需先获取数据）
@@ -84,6 +88,9 @@ EXPERT_TOOLS = {
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。⚠️ 溯源分析任务必须使用: TodoWrite(task_list_file='backend/config/task_lists/quick_trace_standard_multi_agent.md')，不要手动输入items（会丢失详细信息）",
+
+    # 代码执行
+    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 其他
     "call_sub_agent": "调用助手Agent。参数: target_mode(str), task_description(str)",
@@ -111,7 +118,7 @@ QUERY_TOOLS = {
     "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
 
      # === 新增：数据注册表工具 ===
-    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
 
     # === 数据分析工具 ===
     "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
@@ -123,6 +130,9 @@ QUERY_TOOLS = {
     "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_new_standard_report等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
     "generate_chart": "生成标准图表（15种类型：pie/bar/line/timeseries/wind_rose/profile/scatter3d/surface3d/heatmap/radar/map等）。参数: chart_type(str), data(list或dict) [其他参数详见工具文档]",
     "smart_chart_generator": "智能图表生成（需data_id，自动选择图表类型）。参数: data_id(str)",
+
+    # === 数值计算工具 ===
+    "execute_python": "执行 Python 代码进行数值计算（均值、中位数、百分比、单位换算等）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -156,7 +166,7 @@ REPORT_TOOLS = {
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 
     # 代码执行
-    "execute_python": "执行 Python 代码（用于生成文档、数据处理、可视化）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、文档生成、数据处理、可视化）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 模式互调
     "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
@@ -165,11 +175,11 @@ REPORT_TOOLS = {
 # ===== 图表模式工具（基于已保存数据生成图表） =====
 CHART_TOOLS = {
     # 数据查询工具（广东省数据）
-    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据。参数: cities(list), start_time(str), end_time(str)",
-    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
-    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
-    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
-    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据（小时级别污染物数据）。⚠️ 必需参数: cities(list, 城市名称列表, 如['广州','深圳']), start_time(str, 开始时间'YYYY-MM-DD HH:MM:SS'), end_time(str, 结束时间'YYYY-MM-DD HH:MM:SS')。返回: PM2.5、PM10、SO2、NO2、CO、O3小时数据, 支持多城市并发查询",
+    "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。⚠️ 必需参数: cities(list, 城市名称列表), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: data_type(int, 数据类型, 默认1=审核数据)。返回: 日均值、AQI、首要污染物、空气质量等级",
+    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度、首要污染物分析）。⚠️ 必需参数: cities(list, 城市名称列表), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: enable_sand_deduction(bool, 启用扣沙处理, 默认true)",
+    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。⚠️ 必需参数: cities(list, 城市名称列表), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: enable_sand_deduction(bool, 启用扣沙处理, 默认true)",
+    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 必需参数: cities(list, 城市名称列表), query_period(dict, {start_date, end_date}), comparison_period(dict, {start_date, end_date})。可选: enable_sand_deduction(bool, 启用扣沙处理, 默认true)。返回: 差值、变化率、趋势判断",
 
     # 数据读取
     "read_data_registry": "读取已保存的数据。⚠️ **图表模式应该只使用 list_fields=true 获取数据结构**，然后在 execute_python 代码中自己读取 JSON 文件（禁止硬编码数据）。参数: data_id(str), list_fields(bool, **图表模式下设为 true**)",
@@ -180,7 +190,7 @@ CHART_TOOLS = {
     "list_directory": "列出目录内容。参数: path(str)",
 
     # 代码执行
-    "execute_python": "执行 Python 代码（用于生成 Matplotlib 图表）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、生成 Matplotlib 图表）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -198,6 +208,7 @@ SOCIAL_TOOLS = {
     "read_file": "读取文件内容。参数: path(str), encoding(str, 可选, 默认utf-8)",
     "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
+    "parse_pdf": "解析PDF文件并提取内容（支持文本提取、OCR识别、表格提取、元数据提取）。⚠️ 必需参数: path(str, PDF文件路径)。可选: mode(str, 解析模式: auto=自动检测/text=文本提取/ocr=OCR识别/table=表格提取/image=图片信息/meta=元数据, 默认auto), pages(str, 页面范围如'1-5', 可选), extract_tables(bool, 是否提取表格, 默认false), extract_images(bool, 是否提取图片信息, 默认false), ocr_engine(str, OCR引擎: auto/qwen/paddleocr/tesseract, 默认auto)",
     "grep": "搜索文件内容。参数: pattern(str), path(str)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "list_directory": "列出目录内容。参数: path(str)",
@@ -217,6 +228,9 @@ SOCIAL_TOOLS = {
 
     # === 可视化 ===
     "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_new_standard_report等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
+
+    # === 代码执行 ===
+    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 模式互调 ===
     "call_sub_agent": "调用子Agent（code=编程任务, expert=数据分析）。参数: target_mode(str), task_description(str), context_data(dict, 可选)",
@@ -262,9 +276,11 @@ CODE_TOOLS = {
 ASSISTANT_TOOL_ORDER = [
     "bash", "read_file", "edit_file", "grep", "write_file", "list_directory", "search_files",
     "read_docx",  # 读取DOCX文档（优先使用）
+    "parse_pdf",  # 解析PDF文件
     "unpack_office", "pack_office", "word_edit", "accept_word_changes", "find_replace_word",
     "recalc_excel", "add_ppt_slide",
     "TodoWrite",  # 任务管理工具
+    "execute_python",  # 数值计算工具
     "create_scheduled_task", "analyze_image",
     "browser",  # 浏览器自动化工具
     "call_sub_agent",  # 调用专家Agent
@@ -296,6 +312,9 @@ EXPERT_TOOL_ORDER = [
 
     # 任务管理
     "TodoWrite",  # 任务管理工具
+
+    # 代码执行
+    "execute_python",  # 数值计算工具
 
     # 调用助手Agent
     "call_sub_agent",
@@ -347,6 +366,9 @@ QUERY_TOOL_ORDER = [
     "generate_aqi_calendar",
     "generate_chart",
     "smart_chart_generator",
+
+    # 数值计算工具
+    "execute_python",
 
     # 数据注册表
     "read_data_registry",
@@ -423,6 +445,7 @@ SOCIAL_TOOL_ORDER = [
     "read_file",
     "edit_file",  # 编辑文件
     "read_docx",
+    "parse_pdf",  # 解析PDF文件
     "grep",
     "write_file",
     "list_directory",
@@ -439,6 +462,9 @@ SOCIAL_TOOL_ORDER = [
 
     # 可视化
     "generate_aqi_calendar",  # AQI日历热力图
+
+    # 代码执行
+    "execute_python",
 
     # 知识库检索
     "search_knowledge_base",

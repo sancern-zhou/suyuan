@@ -248,13 +248,28 @@ class ReadDataRegistryTool(LLMTool):
             except Exception as e:
                 return {"success": False, "error": f"jq 执行失败: {str(e)}"}
 
+        # ✅ 修复：处理 jq_filter 返回的不同类型（聚合操作可能返回 int/str/bool）
+        # 检查 data 类型，确定返回记录数
+        if isinstance(data, (list, dict)):
+            returned_count = len(data)
+            data_type = "array" if isinstance(data, list) else "object"
+        elif isinstance(data, (int, float, str, bool, type(None))):
+            # 聚合操作返回标量值（如 length、sum、max、min 等）
+            returned_count = 1  # 标量值算作 1 条记录
+            data_type = "scalar"
+        else:
+            # 其他类型（罕见）
+            returned_count = 1
+            data_type = type(data).__name__
+
         return {
             "success": True,
             "file_path": str(file_path),
             "data": data,
             "metadata": {
-                "total_records": filter_info.get("original_count", len(data)),
-                "returned_records": len(data),
+                "total_records": filter_info.get("original_count", len(data) if isinstance(data, (list, dict)) else 1),
+                "returned_records": returned_count,
+                "data_type": data_type,  # 新增：标记数据类型
                 "filter_applied": bool(filter_info),
                 "filter_details": filter_info,
                 "source": "data_registry",
@@ -535,8 +550,27 @@ class ReadDataRegistryTool(LLMTool):
                 return f"数据内容: 原始 {total} 条 -> 过滤后 {returned} 条（{filter_str}）"
             else:
                 return f"数据内容: 共 {returned} 条记录"
+        elif isinstance(data, dict):
+            # 字典类型
+            total = filter_info.get("original_count", 1)
+            return f"数据内容: 1 个对象（字典）"
+        elif isinstance(data, (int, float)):
+            # 聚合操作返回数字（如 length、sum、max、min 等）
+            jq_used = filter_info.get("jq_filter", "")
+            if "length" in jq_used:
+                return f"聚合结果: {data} 条记录（jq: {jq_used}）"
+            else:
+                return f"聚合结果: {data}（jq: {jq_used}）"
+        elif isinstance(data, str):
+            return f"聚合结果: '{data}'"
+        elif isinstance(data, bool):
+            return f"聚合结果: {data}"
         else:
-            return f"数据内容: {json.dumps(data, ensure_ascii=False)[:200]}"
+            # 其他类型（fallback）
+            try:
+                return f"数据内容: {json.dumps(data, ensure_ascii=False)[:200]}"
+            except:
+                return f"数据内容: {str(data)[:200]}"
 
     def _auto_correct_jq_filter(self, jq_filter: str) -> str:
         """智能修正 jq 过滤表达式

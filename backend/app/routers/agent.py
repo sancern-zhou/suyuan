@@ -35,6 +35,9 @@ class AgentAnalyzeRequest(BaseModel):
         "expert",
         description="✅ Agent模式（七模式架构）：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'code' - 编程模式（工具开发），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化）"
     )
+    user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
+- 如果提供：同一用户在不同session共享记忆
+- 如果不提供：每个session独立记忆""")
     assistant_mode: Optional[str] = Field(
         None,
         description="""助手模式（旧版，已弃用，建议使用mode参数）：
@@ -67,9 +70,10 @@ class AgentAnalyzeRequest(BaseModel):
             "example": {
                 "query": "分析广州天河站2025-08-09的O3污染",
                 "session_id": None,
+                "mode": "expert",
+                "user_id": "john_doe",
                 "enhance_with_history": True,
                 "max_iterations": 10,
-                "assistant_mode": "quick-tracing-expert",
                 "knowledge_base_ids": ["kb_123", "kb_456"]
             }
         }
@@ -301,7 +305,8 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             "enable_reasoning": request.enable_reasoning,
             "is_interruption": request.is_interruption,
             "manual_mode": request.mode,
-            "attachments": request.attachments  # ✅ 传递附件信息
+            "attachments": request.attachments,  # ✅ 传递附件信息
+            "user_identifier": request.user_id or request.session_id  # ✅ 新增：传递用户标识
         }
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
