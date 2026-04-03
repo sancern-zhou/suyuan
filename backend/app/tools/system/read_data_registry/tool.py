@@ -161,6 +161,7 @@ class ReadDataRegistryTool(LLMTool):
                     # 构建返回数据
                     result_data = {
                         "data_id": data_id,
+                        "file_path": str(file_path.resolve()),
                         "total_fields": len(field_list),
                         "fields": field_list,
                         "sample_values": self._get_sample_values(first_record, field_list[:10]),

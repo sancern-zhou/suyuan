@@ -18,6 +18,11 @@
 - PM2.5/PM10/SO2/NO2/O3：保留0位小数
 - CO：保留1位小数
 - IAQI/AQI：向上进位取整数
+
+**扣沙处理**：
+- 扣沙日的PM2.5/PM10置空（不参与均值、分指数计算）
+- AQI不做重算，使用其他污染物计算
+- 首要污染物直接使用扣沙表中的值
 """
 from typing import Dict, Any, List
 import math
@@ -157,6 +162,11 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
     - record.air_quality_level → 新标准等级
     - record.primary_pollutant → 新标准首要污染物
 
+    **扣沙日特殊处理**：
+    - PM2.5/PM10已置空，不参与AQI计算（IAQI为0）
+    - AQI使用其他污染物的IAQI最大值
+    - 首要污染物直接使用扣沙表中的值
+
     Args:
         standardized_records: 标准化后的记录列表（直接修改）
     """
@@ -172,7 +182,10 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
     for record in standardized_records:
         measurements = record.get("measurements", {})
 
-        # 提取浓度值（支持多种字段名格式）
+        # 检查是否为扣沙日
+        is_sand_day = record.get("is_sand_deduction_day", False)
+
+        # 提取浓度值（扣沙日的 measurements 已在 clean_sand_deduction_data 中替换为扣沙表数据）
         pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
                              record.get("pm2_5") or record.get("PM2_5"))
         pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
@@ -187,51 +200,53 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
                               record.get("o3_8h") or record.get("O3_8h"))
 
         # 应用修约规则并更新 measurements（日数据：0位小数转为整数）
-        measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
-        measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+        # 扣沙日中值为"-"的字段保持"-"不修约
+        if pm25_raw > 0 or not is_sand_day:
+            measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+        if pm10_raw > 0 or not is_sand_day:
+            measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
         measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
         measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
         measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
         measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
 
-        # 计算新标准 IAQI（HJ 633-2024，向上进位取整）
-        pm25_iaqi = calculate_iaqi_new(pm25_raw, 'PM2_5')
-        pm10_iaqi = calculate_iaqi_new(pm10_raw, 'PM10')
-        so2_iaqi = calculate_iaqi_new(so2_raw, 'SO2')
-        no2_iaqi = calculate_iaqi_new(no2_raw, 'NO2')
-        co_iaqi = calculate_iaqi_new(co_raw, 'CO')
-        o3_8h_iaqi = calculate_iaqi_new(o3_8h_raw, 'O3_8h')
+        # 扣沙日：AQI 和首要污染物直接使用扣沙表中的值（已在 clean_sand_deduction_data 中设置）
+        if is_sand_day:
+            aqi = measurements.get("AQI", 0)
+            primary_pollutant = record.get("primary_pollutant")
+        else:
+            # 非扣沙日：计算新标准 IAQI 并重算 AQI 和首要污染物
+            pm25_iaqi = calculate_iaqi_new(pm25_raw, 'PM2_5') if pm25_raw > 0 else 0
+            pm10_iaqi = calculate_iaqi_new(pm10_raw, 'PM10') if pm10_raw > 0 else 0
+            so2_iaqi = calculate_iaqi_new(so2_raw, 'SO2')
+            no2_iaqi = calculate_iaqi_new(no2_raw, 'NO2')
+            co_iaqi = calculate_iaqi_new(co_raw, 'CO')
+            o3_8h_iaqi = calculate_iaqi_new(o3_8h_raw, 'O3_8h')
 
-        # 计算 AQI（最大 IAQI）
-        aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+            measurements['PM2_5_IAQI'] = pm25_iaqi
+            measurements['PM10_IAQI'] = pm10_iaqi
+            measurements['SO2_IAQI'] = so2_iaqi
+            measurements['NO2_IAQI'] = no2_iaqi
+            measurements['CO_IAQI'] = co_iaqi
+            measurements['O3_8h_IAQI'] = o3_8h_iaqi
 
-        # 确定首要污染物（AQI > 50 时）
-        pollutants_with_iaqi = {
-            'PM2_5': pm25_iaqi,
-            'PM10': pm10_iaqi,
-            'SO2': so2_iaqi,
-            'NO2': no2_iaqi,
-            'CO': co_iaqi,
-            'O3_8h': o3_8h_iaqi
-        }
-        primary_pollutant = None
-        if aqi > 50:
-            for pollutant, iaqi in pollutants_with_iaqi.items():
-                if iaqi == aqi:
-                    primary_pollutant = pollutant
-                    break
+            aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+            measurements['AQI'] = aqi
 
-        # 确定空气质量等级
-        air_quality_level = get_aqi_level(aqi)
+            primary_pollutant = None
+            if aqi > 50:
+                for pollutant, iaqi in [('PM2_5', pm25_iaqi), ('PM10', pm10_iaqi),
+                                        ('SO2', so2_iaqi), ('NO2', no2_iaqi),
+                                        ('CO', co_iaqi), ('O3_8h', o3_8h_iaqi)]:
+                    if iaqi == aqi:
+                        primary_pollutant = pollutant
+                        break
 
-        # 更新 measurements 中的 IAQI 字段
-        measurements['PM2_5_IAQI'] = pm25_iaqi
-        measurements['PM10_IAQI'] = pm10_iaqi
-        measurements['SO2_IAQI'] = so2_iaqi
-        measurements['NO2_IAQI'] = no2_iaqi
-        measurements['CO_IAQI'] = co_iaqi
-        measurements['O3_8h_IAQI'] = o3_8h_iaqi
-        measurements['AQI'] = aqi
+        # 确定空气质量等级（扣沙日直接使用扣沙表中的等级）
+        if is_sand_day:
+            air_quality_level = record.get("air_quality_level", get_aqi_level(aqi))
+        else:
+            air_quality_level = get_aqi_level(aqi)
 
         # 更新顶层字段
         record['air_quality_level'] = air_quality_level
@@ -243,7 +258,8 @@ async def execute_query_city_day_new_standard(
     start_date: str,
     end_date: str,
     context: ExecutionContext,
-    data_type: int = 1
+    data_type: int = 1,
+    enable_sand_deduction: bool = True
 ) -> Dict[str, Any]:
     """
     查询城市日数据（新标准 HJ 633-2024）
@@ -256,6 +272,7 @@ async def execute_query_city_day_new_standard(
         end_date: 结束日期 (YYYY-MM-DD)
         context: 执行上下文
         data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+        enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
 
     Returns:
         UDF v2.0 格式的查询结果
@@ -266,7 +283,8 @@ async def execute_query_city_day_new_standard(
         "query_city_day_new_standard_start",
         cities=cities,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        enable_sand_deduction=enable_sand_deduction
     )
 
     try:
@@ -382,6 +400,22 @@ async def execute_query_city_day_new_standard(
             standardized_count=len(standardized_records)
         )
 
+        # 扣沙处理（在更新新标准字段之前）
+        sand_dates = {}
+        if enable_sand_deduction:
+            from app.tools.query.query_new_standard_report.tool import load_sand_deduction_dates, clean_sand_deduction_data
+
+            sand_dates = load_sand_deduction_dates()
+            if sand_dates:
+                standardized_records = clean_sand_deduction_data(standardized_records, sand_dates)
+                logger.info(
+                    "sand_deduction_applied",
+                    cities_count=len(sand_dates),
+                    total_dates=sum(len(dates) for dates in sand_dates.values())
+                )
+            else:
+                logger.info("sand_deduction_skipped", reason="no_sand_data_loaded")
+
         # 更新为新标准字段（HJ 633-2024）
         update_to_new_standard(standardized_records)
 
@@ -403,7 +437,9 @@ async def execute_query_city_day_new_standard(
                 "standard": "HJ 633-2024",  # 标记为新标准
                 "schema_version": "v2.0",
                 "field_mapping_applied": True,
-                "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
+                "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {},
+                "enable_sand_deduction": enable_sand_deduction,
+                "sand_deduction_applied": bool(sand_dates)
             }
         )
 
@@ -428,7 +464,7 @@ async def execute_query_city_day_new_standard(
                 "schema_version": "v2.0",
                 "source": "gd_suncere_api"
             },
-            "summary": f"成功获取 {', '.join(cities)} 的日报数据共 {len(standardized_records)} 条（新标准 HJ 633-2024），已保存为 {data_id}"
+            "summary": f"成功获取 {', '.join(cities)} 的日报数据共 {len(standardized_records)} 条（新标准 HJ 633-2024），已保存为 {data_id}" + (f"，已应用扣沙处理" if bool(sand_dates) else "")
         }
 
     except Exception as e:

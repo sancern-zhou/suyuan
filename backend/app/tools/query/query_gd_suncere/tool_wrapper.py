@@ -289,17 +289,22 @@ class QueryGDSuncereCityDayTool(LLMTool):
   - 1: 审核实况（默认）
   - 2: 原始标况
   - 3: 审核标况
+- enable_sand_deduction: 是否启用扣沙处理（可选，默认true）
+  - true: 剔除沙尘暴天气的PM2.5/PM10数据（默认）
+  - false: 不进行扣沙处理
 
 【重要】
 - 工具会自动将城市名称转换为编码
 - 返回 UDF v2.0 标准格式数据
 - 日数据包含PM2.5、PM10、SO2、NO2、O3、CO等污染物的日均值
+- 扣沙日的PM2.5/PM10置空
 
 示例：
 cities=["广州", "深圳", "佛山"]
 start_date="2026-02-01"
 end_date="2026-02-28"
 data_type=1  # 查询审核实况数据（默认）
+enable_sand_deduction=true  # 启用扣沙处理（默认）
 
 【返回数据】
 - data_id: 数据引用ID（UDF v2.0格式）
@@ -326,6 +331,10 @@ data_type=1  # 查询审核实况数据（默认）
                         "type": "integer",
                         "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
                         "enum": [0, 1, 2, 3]
+                    },
+                    "enable_sand_deduction": {
+                        "type": "boolean",
+                        "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -358,12 +367,17 @@ data_type=1  # 查询审核实况数据（默认）
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认0
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+            **kwargs: 工具参数
+                - enable_sand_deduction: 是否启用扣沙处理（默认true）
 
         Returns:
             UDF v2.0格式的查询结果
         """
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_city_day
+
+        # 提取可选参数
+        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
 
         logger.info(
             "query_gd_suncere_city_day_tool_start",
@@ -371,6 +385,7 @@ data_type=1  # 查询审核实况数据（默认）
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
+            enable_sand_deduction=enable_sand_deduction,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -380,7 +395,8 @@ data_type=1  # 查询审核实况数据（默认）
             start_date=start_date,
             end_date=end_date,
             context=context,
-            data_type=data_type
+            data_type=data_type,
+            enable_sand_deduction=enable_sand_deduction
         )
 
         return result
@@ -851,18 +867,23 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
   - 1: 审核实况（默认）
   - 2: 原始标况
   - 3: 审核标况
+- enable_sand_deduction: 是否启用扣沙处理（可选，默认true）
+  - true: 剔除沙尘暴天气的PM2.5/PM10数据（默认）
+  - false: 不进行扣沙处理
 
 【重要】
 - 工具会自动将城市名称转换为编码
 - 返回 UDF v2.0 标准格式数据
 - IAQI/AQI 按新标准计算，向上进位取整数
 - 日数据包含PM2.5、PM10、SO2、NO2、O3、CO等污染物的日均值
+- 扣沙日的PM2.5/PM10置空，AQI使用其他污染物计算
 
 示例：
 cities=["广州", "深圳", "佛山"]
 start_date="2026-02-01"
 end_date="2026-02-28"
 data_type=1  # 查询审核实况数据（默认）
+enable_sand_deduction=true  # 启用扣沙处理（默认）
 
 【返回数据】
 - data_id: 数据引用ID（UDF v2.0格式）
@@ -890,6 +911,10 @@ data_type=1  # 查询审核实况数据（默认）
                         "type": "integer",
                         "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
                         "enum": [0, 1, 2, 3]
+                    },
+                    "enable_sand_deduction": {
+                        "type": "boolean",
+                        "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -922,11 +947,17 @@ data_type=1  # 查询审核实况数据（默认）
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认0
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+            **kwargs: 工具参数
+                - enable_sand_deduction: 是否启用扣沙处理（默认true）
 
         Returns:
             UDF v2.0 格式的查询结果
         """
+        from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
+
+        # 提取可选参数
+        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
         from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
 
         logger.info(
@@ -935,6 +966,7 @@ data_type=1  # 查询审核实况数据（默认）
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
+            enable_sand_deduction=enable_sand_deduction,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -944,7 +976,8 @@ data_type=1  # 查询审核实况数据（默认）
             start_date=start_date,
             end_date=end_date,
             context=context,
-            data_type=data_type
+            data_type=data_type,
+            enable_sand_deduction=enable_sand_deduction
         )
 
         return result

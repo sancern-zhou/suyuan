@@ -146,91 +146,7 @@ const hasValidData = computed(() => {
     return false
   }
 
-  // 适配v3.0格式：如果chartData是对象且包含type字段，说明是嵌套格式
-  let actualData = chartData
-  if (typeof chartData === 'object' && chartData.type) {
-    // v3.0格式：{ type: "pie", data: [...] }
-    actualData = chartData.data
-  }
-
-  if (!actualData) {
-    console.log('[ChartPanel] hasValidData: false, missing actual data')
-    return false
-  }
-
-  // 根据图表类型验证数据
-  if (chartType === 'timeseries') {
-    const isValid = actualData.x && actualData.series && Array.isArray(actualData.x) && Array.isArray(actualData.series)
-    console.log('[ChartPanel] hasValidData (timeseries):', isValid)
-    return isValid
-  } else if (chartType === 'pie') {
-    const isValid = Array.isArray(actualData) && actualData.length > 0
-    console.log('[ChartPanel] hasValidData (pie):', isValid)
-    return isValid
-  } else if (chartType === 'bar' || chartType === 'line') {
-    // 支持两种格式：
-    // 1. 单序列: { x: [...], y: [...] }
-    // 2. 多序列: { x: [...], series: [{name, data}, ...] }
-    const hasSingleSeries = actualData.x && actualData.y && Array.isArray(actualData.x) && Array.isArray(actualData.y)
-    const hasMultiSeries = actualData.x && actualData.series && Array.isArray(actualData.x) && Array.isArray(actualData.series)
-    const isValid = hasSingleSeries || hasMultiSeries
-    console.log('[ChartPanel] hasValidData (bar/line):', isValid, { hasSingleSeries, hasMultiSeries })
-    return isValid
-  } else if (chartType === 'radar') {
-    // 支持两种格式：
-    // 1. 旧格式（单站点）: { x: [...], y: [...] }
-    // 2. 新格式（多站点）: { indicator: [...], series: [...] }
-    const hasOldFormat = actualData.x && actualData.y && Array.isArray(actualData.x) && Array.isArray(actualData.y)
-    const hasNewFormat = actualData.indicator && actualData.series && Array.isArray(actualData.indicator) && Array.isArray(actualData.series)
-    const isValid = hasOldFormat || hasNewFormat
-    console.log('[ChartPanel] hasValidData (radar):', isValid, { hasOldFormat, hasNewFormat })
-    return isValid
-  } else if (chartType === 'heatmap') {
-    // 热力图格式: { xAxis: [...], yAxis: [...], data: [[x, y, value], ...] }
-    const isValid = actualData.xAxis && actualData.yAxis && actualData.data &&
-                    Array.isArray(actualData.xAxis) && Array.isArray(actualData.yAxis) && Array.isArray(actualData.data)
-    console.log('[ChartPanel] hasValidData (heatmap):', isValid)
-    return isValid
-  } else if (chartType === 'wind_rose') {
-    const isValid = actualData.sectors && Array.isArray(actualData.sectors)
-    console.log('[ChartPanel] hasValidData (wind_rose):', isValid)
-    return isValid
-  } else if (chartType === 'weather_timeseries') {
-    // 带风向指针的气象时序图
-    const isValid = actualData.x && actualData.series && 
-                    Array.isArray(actualData.x) && Array.isArray(actualData.series) &&
-                    actualData.series.some(s => s.type === 'wind')
-    console.log('[ChartPanel] hasValidData (weather_timeseries):', isValid)
-    return isValid
-  } else if (chartType === 'pressure_pbl_timeseries') {
-    // 气压+边界层高度双Y轴图
-    const isValid = actualData.x && actualData.series &&
-                    Array.isArray(actualData.x) && Array.isArray(actualData.series)
-    console.log('[ChartPanel] hasValidData (pressure_pbl_timeseries):', isValid)
-    return isValid
-  } else if (chartType === 'stacked_timeseries') {
-    // 堆叠时序图（颗粒物离子堆叠+PM2.5双Y轴）
-    const isValid = actualData.x && actualData.series &&
-                    Array.isArray(actualData.x) && Array.isArray(actualData.series)
-    console.log('[ChartPanel] hasValidData (stacked_timeseries):', isValid)
-    return isValid
-  } else if (chartType === 'scatter3d' || chartType === 'surface3d' || chartType === 'line3d' || chartType === 'bar3d' || chartType === 'volume3d') {
-    const isValid = actualData.data && typeof actualData === 'object'
-    console.log(`[ChartPanel] hasValidData (${chartType}):`, isValid)
-    return isValid
-  } else if (chartType === 'profile') {
-    const isValid = actualData.altitudes && actualData.elements && Array.isArray(actualData.altitudes) && Array.isArray(actualData.elements)
-    console.log('[ChartPanel] hasValidData (profile):', isValid)
-    return isValid
-  } else if (chartType === 'facet_timeseries') {
-    // 分面时序图格式: { facets: [{pollutant, pollutant_name, x, series}, ...], layout: "vertical" }
-    const isValid = actualData.facets && Array.isArray(actualData.facets) && actualData.facets.length > 0 &&
-                    actualData.facets.every(f => f.x && f.series && Array.isArray(f.x) && Array.isArray(f.series))
-    console.log('[ChartPanel] hasValidData (facet_timeseries):', isValid, { facetCount: actualData.facets?.length })
-    return isValid
-  }
-
-  console.log('[ChartPanel] hasValidData: true, unknown type but has data')
+  console.log('[ChartPanel] hasValidData: true', chartType)
   return true
 })
 
@@ -660,13 +576,37 @@ const preprocessO3DualData = (chartData) => {
 const buildLineOption = (chartData, title, meta) => {
   // v3.0格式：chartData = { x: [...], series: [{name, data}, ...] } 或 { x: [...], y: [...] }
   // 也支持原始记录列表格式（包含 O3 和 O3_8h 字段）
+  // 也支持 series[].data 为 [{time, value}] 对象数组格式（Agent生成）
 
   // 预处理：合并 O3 和 O3_8h 数据
   const processedData = preprocessO3DualData(chartData)
 
-  const xData = processedData.x || []
-  const series = processedData.series || []
+  let xData = processedData.x || []
+  let series = processedData.series || []
   const yData = processedData.y || []
+
+  // 兼容 series[].data 为 [{time, value}] 对象数组格式 或 [[time, value]] 数组格式
+  if (series.length > 0 && xData.length === 0) {
+    const firstData = series[0]?.data
+    if (firstData?.length > 0) {
+      const first = firstData[0]
+      if (Array.isArray(first) && first.length >= 2) {
+        // [[time, value], ...] 格式
+        xData = firstData.map(d => d[0])
+        series = series.map(s => ({
+          ...s,
+          data: s.data.map(d => (Array.isArray(d) ? d[1] : d) ?? null)
+        }))
+      } else if (typeof first === 'object' && first !== null && 'time' in first) {
+        // [{time, value}, ...] 格式
+        xData = firstData.map(d => d.time)
+        series = series.map(s => ({
+          ...s,
+          data: s.data.map(d => d.value ?? null)
+        }))
+      }
+    }
+  }
 
   console.log('[ChartPanel] buildLineOption: xData.length:', xData.length, 'series.length:', series.length, 'hasYData:', yData.length > 0)
 

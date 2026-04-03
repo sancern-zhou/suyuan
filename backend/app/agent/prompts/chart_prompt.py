@@ -37,8 +37,6 @@ def build_chart_prompt(available_tools: List[str]) -> str:
         "1. **查询数据**：使用数据查询工具获取数据（获得 data_id）\n",
         "   - 小时数据：`query_gd_suncere_city_hour`\n",
         "   - 日报数据：`query_gd_suncere_city_day_new`\n",
-        "   - 统计报表：`query_new_standard_report` / `query_old_standard_report`\n",
-        "   - 对比分析：`compare_standard_reports`\n",
         "2. **分析数据**：使用 `read_data_registry(data_id, list_fields=true)` 查看字段\n",
         "3. **选择模板来源**（三种方式）：\n",
         "   - **方式A（推荐）**：使用内置的37种模板（见下方「内置模板库」）\n",
@@ -187,7 +185,8 @@ def build_chart_prompt(available_tools: List[str]) -> str:
         "2. 根据模板要求转换数据格式\n",
         "3. 返回 Chart v3.1 格式\n",
         "4. 禁止硬编码数据\n",
-        "5. 可根据用户需求灵活调整样式\n\n",
+        "5. 可根据用户需求灵活调整样式\n",
+        "6. ❌ 禁止：`record['measurements']['O3']`（KeyError）→ 应用 `record.get('measurements', {}).get('O3')`\n\n",
 
         "## 输出格式（CRITICAL）\n\n",
         "**必须严格按照以下JSON格式输出**：\n\n",

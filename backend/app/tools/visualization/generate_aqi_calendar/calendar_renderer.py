@@ -82,7 +82,8 @@ def calculate_iaqi(concentration: float, pollutant: str) -> int:
             if bp_hi == bp_lo:
                 return iaqi_hi
             iaqi = (iaqi_hi - iaqi_lo) / (bp_hi - bp_lo) * (concentration - bp_lo) + iaqi_lo
-            return int(round(iaqi))
+            import math
+            return math.ceil(iaqi)
 
     return breakpoints[-1][1]
 

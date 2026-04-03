@@ -404,6 +404,10 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="calculate_trace", error=str(e))
 
+    # ========================================
+    # Analysis Tools（数据分析工具）
+    # ========================================
+
     try:
         from app.tools.analysis.aggregate_data.tool import AggregateDataTool
         registry.register(AggregateDataTool(), priority=75)
@@ -729,6 +733,17 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="knowledge_qa_workflow")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_qa_workflow", error=str(e))
+
+    # ========================================
+    # Planning Tools（规划工具）
+    # ========================================
+
+    try:
+        from app.tools.planning.complex_query_planner.tool import ComplexQueryPlannerTool
+        registry.register(ComplexQueryPlannerTool(), priority=55)
+        logger.info("tool_loaded", tool="complex_query_planner")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="complex_query_planner", error=str(e))
 
     logger.info(
         "global_tool_registry_created",
