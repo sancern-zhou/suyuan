@@ -1,5 +1,4 @@
 // API客户端 - 处理与后端的所有通信
-import { useAnalysisStore } from '@/stores/analysis'
 
 // API基础配置
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')

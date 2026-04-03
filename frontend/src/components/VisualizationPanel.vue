@@ -1,60 +1,12 @@
 ﻿<template>
   <div class="viz-panel" :class="{ 'has-content': visualizations.length || hasKnowledgeSources }">
     <!-- 知识溯源面板（优先显示） -->
-    <div v-if="hasKnowledgeSources" class="knowledge-source-section">
-      <div class="panel-header">
-        <div class="header-title">
-          <span class="panel-icon">📚</span>
-          <span class="panel-text">知识溯源</span>
-          <span class="source-count">{{ knowledgeSources.length }} 篇参考文档</span>
-        </div>
-        <button
-          @click="toggleExpand"
-          class="toggle-btn"
-        >
-          {{ expanded ? '收起' : '展开' }}
-        </button>
-      </div>
-
-      <div v-if="expanded" class="source-list">
-        <div
-          v-for="(source, index) in knowledgeSources"
-          :key="index"
-          class="source-item"
-        >
-          <div class="source-header">
-            <div class="source-title">
-              <span class="source-index">{{ index + 1 }}</span>
-              <span class="source-name">{{ source.title || source.document_name || source.knowledge_base_name || '未知标题' }}</span>
-            </div>
-            <div class="source-meta">
-              <span class="relevance-badge">
-                相关度: {{ ((source.relevance || source.score || 0) * 100).toFixed(0) }}%
-              </span>
-            </div>
-          </div>
-
-          <div class="source-info">
-            <div class="info-row">
-              <label>来源:</label>
-              <span>{{ source.source || source.knowledge_base_name || '未知来源' }}</span>
-            </div>
-            <div v-if="source.chunk_index !== undefined" class="info-row">
-              <label>段落:</label>
-              <span>第 {{ source.chunk_index + 1 }} 段</span>
-            </div>
-            <div v-if="source.document_name" class="info-row">
-              <label>文档:</label>
-              <span>{{ source.document_name }}</span>
-            </div>
-          </div>
-
-          <div v-if="source.content" class="source-content">
-            <div class="content-preview">{{ source.content }}</div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <KnowledgeSourcePanel
+      v-if="hasKnowledgeSources"
+      :sources="knowledgeSources"
+      :expanded="expanded"
+      @toggle-expand="toggleExpand"
+    />
 
     <!-- 原有可视化内容 -->
     <div v-if="visualizations.length > 0" class="viz-content-section">
@@ -78,16 +30,6 @@
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
             {{ exportMode ? '取消' : '导出' }}
-          </button>
-          <button
-            v-if="visualizations.length && !exportMode"
-            @click="$emit('fullscreen')"
-            class="fullscreen-btn"
-            title="展开大屏"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-            </svg>
           </button>
           <button
             v-if="visualizations.length && !exportMode"
@@ -220,6 +162,7 @@
 import { ref, computed } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
+import KnowledgeSourcePanel from './visualization/panels/KnowledgeSourcePanel.vue'
 import MapPanel from './visualization/MapPanel.vue'
 import TrajectoryMapPanel from './visualization/TrajectoryMapPanel.vue'
 import ChartPanel from './visualization/ChartPanel.vue'
@@ -253,7 +196,7 @@ const props = defineProps({
   }
 })
 
-defineEmits(['fullscreen', 'fullscreen-expert'])
+defineEmits([])
 
 const expanded = ref(true)
 const expandedGroups = ref(['weather', 'component'])
@@ -628,12 +571,6 @@ const toggleExpertGroup = (expertType) => {
   } else {
     expandedGroups.value.push(expertType)
   }
-}
-
-// 全屏展示某个专家组的图表
-const fullscreenExpertGroup = (expertType) => {
-  // 根据专家类型触发相应的大屏模式
-  emit('fullscreen-expert', expertType)
 }
 
 // 检查viz是否为静态图片（需要过滤）
@@ -1128,26 +1065,6 @@ const debugUnknownViz = (viz) => {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.fullscreen-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 28px;
-  border: 1px solid #e0e0e0;
-  background: white;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: #666;
-
-  &:hover {
-    border-color: #1976d2;
-    color: #1976d2;
-    background: #e3f2fd;
-  }
 }
 
 .expand-btn {
