@@ -342,6 +342,13 @@ const handleBlur = () => {
 const handleSend = () => {
   if ((!localValue.value.trim() && attachments.value.length === 0) || props.disabled || props.isAnalyzing) return
 
+  // 检查是否有附件还在上传中
+  const uploadingAttachments = attachments.value.filter(a => a.uploading)
+  if (uploadingAttachments.length > 0) {
+    alert('文件正在上传中，请稍候...')
+    return
+  }
+
   // 关闭工作流工具列表
   showWorkflowTools.value = false
   atSymbolIndex.value = -1

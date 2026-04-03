@@ -376,27 +376,6 @@ class GenerateChartTool(LLMTool):
             original_chart_type = chart_type
             chart_type = chart_type_aliases.get(chart_type.lower(), chart_type)
 
-            # 验证标准化后的chart_type是否为支持的类型
-            supported_types = [
-                "pie", "bar", "line", "timeseries", "radar",
-                "wind_rose", "profile", "map", "heatmap",
-                "scatter3d", "surface3d", "line3d", "bar3d", "volume3d"
-            ]
-            if chart_type not in supported_types:
-                return {
-                    "status": "failed",
-                    "success": False,
-                    "data": None,
-                    "metadata": {
-                        "tool_name": "generate_chart",
-                        "error_type": "invalid_chart_type",
-                        "original_input": original_chart_type,
-                        "chart_type": chart_type,
-                        "supported_types": supported_types
-                    },
-                    "summary": f"[FAIL] 不支持的图表类型: '{original_chart_type}' (标准化后: '{chart_type}')。支持的类型: {', '.join(supported_types)}"
-                }
-
             # 记录类型映射（如果有）
             if original_chart_type != chart_type:
                 logger.info(
@@ -980,35 +959,6 @@ class GenerateChartTool(LLMTool):
             # 验证v3.1格式
             if "id" not in response or "type" not in response or "data" not in response:
                 raise ValueError("LLM返回的数据不是有效的v3.1格式")
-
-            # 验证type是否在15种支持的类型中
-            supported_types = [
-                "pie", "bar", "line", "timeseries", "radar",
-                "wind_rose", "profile",
-                "map", "heatmap",
-                "scatter3d", "surface3d", "line3d", "bar3d", "volume3d"
-            ]
-
-            chart_type = response.get("type")
-            if chart_type not in supported_types:
-                logger.warning(
-                    "llm_chart_type_not_supported",
-                    chart_type=chart_type,
-                    supported_types=supported_types,
-                    falling_back_to=chart_type_hint
-                )
-                # 回退到提示类型
-                if chart_type_hint != "auto" and chart_type_hint in supported_types:
-                    response["type"] = chart_type_hint
-                else:
-                    # 使用最保险的类型
-                    response["type"] = "bar"
-
-                logger.info(
-                    "llm_chart_type_corrected",
-                    original=chart_type,
-                    corrected=response["type"]
-                )
 
             # 确保meta中包含schema_version
             if "meta" not in response:

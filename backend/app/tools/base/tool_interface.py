@@ -26,6 +26,7 @@ class ToolCategory(Enum):
     ANALYSIS = "analysis"           # 分析工具（执行计算）
     VISUALIZATION = "visualization" # 可视化工具（生成配置）
     TASK_MANAGEMENT = "task_management"  # 任务管理工具（创建、更新、查询任务）
+    PLANNING = "planning"           # 规划工具（生成执行计划）
 
 
 class ToolStatus(Enum):

@@ -114,9 +114,19 @@ class ContextCompressor:
         original_count = len(messages)
         logger.info(f"[ContextCompressor] 开始压缩，原始消息数: {original_count}")
 
+        # 预截断：LLM 无法处理超大输入，限制发送的消息量
+        # 保留头部 2 条（初始上下文）+ 尾部最近消息，总字符不超过 300,000
+        MAX_COMPRESS_CHARS = 300_000
+        messages_to_compress = self._pre_truncate_for_compression(messages, MAX_COMPRESS_CHARS)
+        if len(messages_to_compress) < original_count:
+            logger.warning(
+                f"[ContextCompressor] 预截断: {original_count} → {len(messages_to_compress)} 条消息 "
+                f"(原始内容过大，仅压缩最近部分)"
+            )
+
         try:
             # 构造压缩提示
-            conversation_json = json.dumps(messages, ensure_ascii=False, indent=2)
+            conversation_json = json.dumps(messages_to_compress, ensure_ascii=False, indent=2)
             prompt = self.COMPRESSION_PROMPT.format(conversation_json=conversation_json)
 
             # 调用 LLM 进行压缩
@@ -236,6 +246,37 @@ class ContextCompressor:
                 f"响应预览: {response[:500]}...\n"
                 f"响应长度: {len(response)} 字符"
             )
+
+    def _pre_truncate_for_compression(
+        self,
+        messages: List[Dict[str, Any]],
+        max_chars: int
+    ) -> List[Dict[str, Any]]:
+        """
+        压缩前预截断：确保发给 LLM 的内容不超过其输入上限。
+        策略：保留头部 2 条（初始上下文）+ 尽可能多的尾部最近消息。
+        """
+        total_chars = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
+        if total_chars <= max_chars:
+            return messages
+
+        # 头部保留前 2 条
+        head = messages[:2]
+        tail_candidates = messages[2:]
+
+        # 从尾部往前累积，直到接近上限
+        head_chars = sum(len(json.dumps(m, ensure_ascii=False)) for m in head)
+        budget = max_chars - head_chars
+        tail = []
+        accumulated = 0
+        for msg in reversed(tail_candidates):
+            msg_chars = len(json.dumps(msg, ensure_ascii=False))
+            if accumulated + msg_chars > budget:
+                break
+            tail.insert(0, msg)
+            accumulated += msg_chars
+
+        return head + tail
 
     def estimate_compression_benefit(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

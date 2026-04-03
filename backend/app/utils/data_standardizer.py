@@ -1591,18 +1591,7 @@ class DataStandardizer:
             #     measurement_fields=list(measurements.keys())[:15]  # 只记录前15个
             # )
 
-        # 添加原始字段备份（可选，用于调试）
-        # 为了节省空间，只在有extra字段时才备份
-        extra_fields = set(record.keys()) - TOP_LEVEL_FIELDS - POLLUTANT_FIELDS
-        if extra_fields and original_fields:
-            v2_record['original_fields'] = {
-                k: v for k, v in original_fields.items()
-                if k in extra_fields
-            }
-            logger.debug(
-                "udf_v2_original_fields_backup",
-                backup_count=len(v2_record['original_fields'])
-            )
+        # 原始字段备份已禁用（减少输出噪音）
 
         return v2_record
 

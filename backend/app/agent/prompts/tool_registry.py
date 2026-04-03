@@ -151,6 +151,9 @@ QUERY_TOOLS = {
 
     # === 模式互调 ===
     "call_sub_agent": "调用专家Agent（深度分析）或助手Agent（生成报告）。参数: target_mode(str), task_description(str)",
+
+    # === 规划工具 ===
+    "complex_query_planner": "复杂查询计划工具（多数据源查询规划）。当需要同时查询多组数据、或不确定应使用哪个广东省查询工具时调用。⚠️ 必需参数: query_description(str, 详细描述查询需求), mode(str, 固定为'query')",
 }
 
 # ===== 报告模式工具 =====
@@ -185,19 +188,16 @@ REPORT_TOOLS = {
 
     # 模式互调
     "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
-}
 
-# ===== 图表模式工具（基于已保存数据生成图表） =====
+    # 规划工具
+    "complex_query_planner": "复杂查询计划工具（报告数据准备规划）。当需要同时准备多组查询数据、或不确定应使用哪个广东省查询工具时调用。⚠️ 必需参数: query_description(str, 详细描述查询需求), mode(str, 固定为'report')",
+}
 CHART_TOOLS = {
     # 数据查询工具（广东省数据）
     "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据（小时级别污染物数据）。⚠️ 必需参数: cities(list, 城市名称列表, 如['广州','深圳']), start_time(str, 开始时间'YYYY-MM-DD HH:MM:SS'), end_time(str, 结束时间'YYYY-MM-DD HH:MM:SS')。返回: PM2.5、PM10、SO2、NO2、CO、O3小时数据, 支持多城市并发查询",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024）。⚠️ 必需参数: cities(list, 城市名称列表), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: data_type(int, 数据类型, 默认1=审核数据)。返回: 日均值、AQI、首要污染物、空气质量等级",
-    "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度、首要污染物分析）。⚠️ 必需参数: cities(list, 城市名称列表), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: enable_sand_deduction(bool, 启用扣沙处理, 默认true)",
-    "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。⚠️ 必需参数: cities(list, 城市名称列表), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: enable_sand_deduction(bool, 启用扣沙处理, 默认true)",
-    "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 必需参数: cities(list, 城市名称列表), query_period(dict, {start_date, end_date}), comparison_period(dict, {start_date, end_date})。可选: enable_sand_deduction(bool, 启用扣沙处理, 默认true)。返回: 差值、变化率、趋势判断",
-
     # 数据读取
-    "read_data_registry": "读取已保存的数据。⚠️ **图表模式应该只使用 list_fields=true 获取数据结构**，然后在 execute_python 代码中自己读取 JSON 文件（禁止硬编码数据）。参数: data_id(str), list_fields(bool, **图表模式下设为 true**)",
+    "read_data_registry": "读取已保存的数据结构。⚠️ **list_fields 必须为 true（必选）**——图表模式只需了解字段名称和类型，不需要获取具体数据内容；实际数据在 execute_python 中通过 data_id 对应的 JSON 文件路径自行读取。参数: data_id(str), list_fields(bool=true, 必选)",
 
     # 文件操作
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
@@ -359,6 +359,9 @@ CODE_TOOL_ORDER = [
 ]
 
 QUERY_TOOL_ORDER = [
+    # 规划工具（复杂查询时优先考虑）
+    "complex_query_planner",
+
     # 源码查看工具
     "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
 
@@ -400,6 +403,9 @@ QUERY_TOOL_ORDER = [
 
 # ===== 报告模式工具排序 =====
 REPORT_TOOL_ORDER = [
+    # 规划工具（复杂数据准备时优先考虑）
+    "complex_query_planner",
+
     # 核心工具
     "read_docx",
 

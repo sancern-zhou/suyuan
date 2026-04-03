@@ -24,6 +24,32 @@ from ..prompts.react_prompts import format_finish_summary_prompt
 # 简化的上下文构建器
 from ..context.simplified_context_builder import SimplifiedContextBuilder
 
+# 格式化器模块（替代硬编码的格式化逻辑）
+from .formatters import (
+    FormatterRegistry,
+    ImageFormatter,
+    FileFormatter,
+    GrepFormatter,
+    GlobFormatter,
+    ListDirectoryFormatter,
+    BrowserFormatter,
+    TodoWriteFormatter,
+    ExecutePythonFormatter,
+    WebSearchFormatter,
+    WebFetchFormatter,
+    SearchHistoryFormatter,
+    BashFormatter,
+    OfficeFormatter,
+    ReadDataRegistryFormatter,
+    ParsePDFFormatter,
+    DataQueryFormatter,
+    StatisticsFormatter,
+    DetailedResultFormatter,
+)
+
+# 守卫模块（任务完成守卫）
+from .guards import TaskCompletionGuard
+
 logger = structlog.get_logger()
 
 
@@ -95,6 +121,13 @@ class ReActLoop:
             tool_registry=tool_executor.tool_registry if hasattr(tool_executor, 'tool_registry') else None
         )
 
+        # ✅ 初始化格式化器注册表（替代硬编码的格式化逻辑）
+        self.formatter_registry = FormatterRegistry()
+        self._register_formatters()
+
+        # ✅ 初始化任务完成守卫
+        self.task_completion_guard = TaskCompletionGuard(memory_manager)
+
         # 注册内存相关工具
         self.memory_tools_handler.register_memory_tools()
 
@@ -111,6 +144,33 @@ class ReActLoop:
             agent_logging=enable_agent_logging,
             enable_reasoning=enable_reasoning,
             knowledge_base_ids=knowledge_base_ids  # ✅ 记录知识库ID
+        )
+
+    def _register_formatters(self) -> None:
+        """注册所有格式化器到注册表"""
+        # 办公工具格式化器
+        self.formatter_registry.register(ImageFormatter)
+        self.formatter_registry.register(FileFormatter)
+        self.formatter_registry.register(GrepFormatter)
+        self.formatter_registry.register(GlobFormatter)
+        self.formatter_registry.register(ListDirectoryFormatter)
+        self.formatter_registry.register(BrowserFormatter)
+        self.formatter_registry.register(TodoWriteFormatter)
+        self.formatter_registry.register(ExecutePythonFormatter)
+        self.formatter_registry.register(WebSearchFormatter)
+        self.formatter_registry.register(WebFetchFormatter)
+        self.formatter_registry.register(SearchHistoryFormatter)
+
+        # 特殊工具格式化器
+        self.formatter_registry.register(BashFormatter)
+        self.formatter_registry.register(OfficeFormatter)
+        self.formatter_registry.register(ReadDataRegistryFormatter)
+        self.formatter_registry.register(ParsePDFFormatter)
+
+        logger.info(
+            "formatters_registered",
+            count=self.formatter_registry.get_formatter_count(),
+            formatters=self.formatter_registry.list_formatters()
         )
 
     async def run(
@@ -1376,113 +1436,8 @@ class ReActLoop:
                 "warning_message": str
             }
         """
-        try:
-            # 获取任务列表（FINAL_ANSWER 模式下，使用最小化的 ExecutionContext）
-            from app.agent.context.execution_context import ExecutionContext
-            from app.agent.context.data_context_manager import DataContextManager
-
-            # 创建临时的 DataContextManager（用于访问 TaskList）
-            # ✅ 修复：使用 self.memory 而非 session_id
-            data_manager = DataContextManager(memory_manager=self.memory)
-
-            # 创建 ExecutionContext（iteration 参数在此场景下不使用，传入 0）
-            context = ExecutionContext(
-                session_id=session_id,
-                iteration=0,
-                data_manager=data_manager
-            )
-            task_list = context.get_task_list()
-
-            if not task_list:
-                return {
-                    "has_incomplete": False,
-                    "incomplete_count": 0,
-                    "incomplete_tasks": [],
-                    "warning_message": ""
-                }
-
-            # 检查未完成任务
-            incomplete_tasks = []
-            for task in task_list.get_tasks().values():
-                if task.status.value in ["pending", "in_progress"]:
-                    incomplete_tasks.append({
-                        "id": task.id,
-                        "subject": task.subject,
-                        "status": task.status.value,
-                        "progress": task.progress
-                    })
-
-            # 按状态排序（in_progress 优先）
-            incomplete_tasks.sort(key=lambda t: 0 if t["status"] == "in_progress" else 1)
-
-            has_incomplete = len(incomplete_tasks) > 0
-
-            if has_incomplete:
-                # 生成警告消息
-                task_list_str = "\n".join(
-                    f"- [{t['status']}] {t['subject']} (ID: {t['id']})"
-                    for t in incomplete_tasks
-                )
-
-                warning_message = f"""
-## ⚠️ 任务未完成警告
-
-检测到你有 {len(incomplete_tasks)} 个任务尚未完成：
-
-{task_list_str}
-
-## 必须执行的操作
-
-根据任务清单管理规范，你必须：
-
-1. **标记任务完成**：对每个 in_progress 任务调用
-   ```json
-   {{"tool": "update_task", "args": {{"task_id": "任务ID", "status": "completed"}}}}
-   ```
-
-2. **确认所有任务**：调用 list_tasks 查看任务状态
-   ```json
-   {{"tool": "list_tasks", "args": {{}}}}
-   ```
-
-3. **然后才能结束**：所有任务完成后才能调用 FINISH
-
-禁止创建任务后就不再管理状态！
-"""
-                logger.warning(
-                    "task_guard_incomplete_found",
-                    session_id=session_id,
-                    incomplete_count=len(incomplete_tasks),
-                    task_ids=[t["id"] for t in incomplete_tasks]
-                )
-            else:
-                warning_message = ""
-                logger.info(
-                    "task_guard_all_completed",
-                    session_id=session_id
-                )
-
-            return {
-                "has_incomplete": has_incomplete,
-                "incomplete_count": len(incomplete_tasks),
-                "incomplete_tasks": incomplete_tasks,
-                "warning_message": warning_message
-            }
-
-        except Exception as e:
-            logger.error(
-                "task_guard_check_failed",
-                session_id=session_id,
-                error=str(e),
-                exc_info=True
-            )
-            # 守卫检查失败不影响主流程
-            return {
-                "has_incomplete": False,
-                "incomplete_count": 0,
-                "incomplete_tasks": [],
-                "warning_message": ""
-            }
+        # 使用守卫模块进行检查
+        return await self.task_completion_guard.check(session_id)
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """
@@ -1566,7 +1521,7 @@ class ReActLoop:
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         """
-        格式化观察结果为字符串
+        格式化观察结果为字符串（使用格式化器注册表）
 
         Args:
             observation: 观察结果字典
@@ -1606,9 +1561,9 @@ class ReActLoop:
                 result_data = tool_res.get("result", {})
 
                 if result_data.get("success"):
-                    # 递归调用 _format_observation 格式化单个工具结果
+                    # 使用格式化器注册表格式化单个工具结果
                     sub_observation = result_data
-                    sub_lines = self._format_observation_sub(sub_observation, tool_name)
+                    sub_lines = self._format_observation_with_formatter(sub_observation)
                     lines.append(f"\n### 工具 {idx}: {tool_name}")
                     lines.extend(sub_lines)
                 else:
@@ -1620,475 +1575,35 @@ class ReActLoop:
 
             return "\n".join(lines)
 
-        # ✅ 优先展示完整数据（适用于 bash 工具和 Office 工具）
-        # 完全不截断，依赖上下文压缩策略
+        # ✅ 使用格式化器注册表处理办公助理工具
         if success and "data" in observation and isinstance(observation["data"], dict):
             data = observation["data"]
             metadata = observation.get("metadata", {})
             generator = metadata.get("generator", "")
 
-            # ✅ 特殊处理：办公助理工具始终显示完整内容
-            # 包括：Office 工具、analyze_image、read_file、grep、glob、list_directory、任务管理工具、read_data_registry、web_search、search_history、parse_pdf
-            is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide", "read_docx", "read_xlsx", "read_pptx"]
-            is_image_tool = generator == "analyze_image"
-            is_file_tool = generator == "read_file"
-            is_grep_tool = generator == "grep"
-            is_glob_tool = generator in ["glob", "search_files"]
-            is_list_dir_tool = generator == "list_directory"
-            is_browser_tool = generator == "browser"
-            is_todo_write_tool = generator == "TodoWrite"
-            is_read_data_registry_tool = generator == "read_data_registry"
-            is_execute_python_tool = generator == "execute_python"
-            is_web_search_tool = generator == "web_search"
-            is_search_history_tool = generator == "search_history"
-            is_web_fetch_tool = generator == "web_fetch"
-            is_parse_pdf_tool = generator == "parse_pdf"  # PDF解析工具
+            # ✅ 特殊处理：execute_python 工具需要 visuals 信息
+            # 将 visuals 信息添加到 metadata 中传递给格式化器
+            if generator == "execute_python" and "visuals" in observation:
+                metadata = metadata.copy()  # 避免修改原始 metadata
+                metadata["visuals"] = observation["visuals"]
 
-            # 检查是否是办公助理工具
-            is_any_office_tool = (
-                is_image_tool or is_file_tool or is_office_tool or is_grep_tool or
-                is_glob_tool or is_list_dir_tool or is_browser_tool or is_todo_write_tool or
-                is_read_data_registry_tool or is_execute_python_tool or is_web_search_tool or
-                is_search_history_tool or is_web_fetch_tool or is_parse_pdf_tool or
-                "stdout" in data or "stderr" in data
-            )
-
-            if is_any_office_tool:
-                # 🔍 详细日志：验证工具识别
-                logger.info(
-                    "office_tool_detected",
-                    generator=generator,
-                    is_image_tool=is_image_tool,
-                    is_file_tool=is_file_tool,
-                    is_office_tool=is_office_tool,
-                    is_grep_tool=is_grep_tool,
-                    is_glob_tool=is_glob_tool,
-                    is_list_dir_tool=is_list_dir_tool,
-                    is_todo_write_tool=is_todo_write_tool,
-                    is_execute_python_tool=is_execute_python_tool,
-                    has_analysis="analysis" in data,
-                    has_content="content" in data,
-                    has_results="results" in data,
-                    has_files="files" in data,
-                    has_entries="entries" in data,
-                    has_rendered="rendered" in data,
-                    has_output="output" in data,
-                    data_type=data.get("type", "unknown")
-                )
-
-                if is_image_tool and "analysis" in data:
-                    # analyze_image 工具：显示完整的图片分析结果
-                    lines.append(f"**完整分析结果**:\n{data['analysis']}")
-                    # 🔍 详细日志：记录完整分析结果
-                    logger.info(
-                        "analyze_image_full_result_added",
-                        analysis_length=len(data['analysis']),
-                        analysis_preview=data['analysis'][:200] if len(data['analysis']) > 200 else data['analysis']
-                    )
-                elif is_file_tool:
-                    # read_file 工具：根据文件类型显示不同内容
-                    file_type = data.get("type", "")
-                    if file_type == "image":
-                        # 图片文件：显示分析结果（不显示 base64）
-                        if "analysis" in data:
-                            lines.append(f"**图片分析结果**:\n{data['analysis']}")
-                            # 🔍 详细日志：记录完整分析结果
-                            logger.info(
-                                "read_file_image_analysis_added",
-                                analysis_length=len(data['analysis']),
-                                analysis_preview=data['analysis'][:200] if len(data['analysis']) > 200 else data['analysis']
-                            )
-                        elif "analysis_error" in data:
-                            lines.append(f"**分析失败**: {data['analysis_error']}")
-                        # 显示图片信息
-                        lines.append(f"\n**图片信息**:")
-                        lines.append(f"  路径: `{data.get('path', 'N/A')}`")
-                        lines.append(f"  格式: {data.get('format', 'N/A')}")
-                        lines.append(f"  大小: {data.get('size', 0)} bytes")
-                    elif "content" in data:
-                        # 文本文件：显示完整的文件内容
-                        lines.append(f"**文件内容**:\n{data['content']}")
-                elif is_office_tool:
-                    # Word/Excel/PPT 工具：显示完整文档内容
-                    if "content" in data:
-                        lines.append(f"**文档内容**:\n```\n{data['content']}\n```")
-                    elif "images" in data:
-                        # extract_images 操作：显示完整图片列表
-                        images = data["images"]
-                        if isinstance(images, list):
-                            # extract_images 返回的图片列表
-                            lines.append(f"**提取的图片数量**: {len(images)}")
-                            for img in images:
-                                lines.append(f"\n**图片 {img['index']}**:")
-                                lines.append(f"  路径: `{img['path']}`")
-                                lines.append(f"  尺寸: {img['width']} x {img['height']}")
-                        elif isinstance(images, int):
-                            # stats 操作返回的图片数量
-                            lines.append(f"**图片数量**: {images}")
-                    elif "tables" in data:
-                        # 表格数据（完整显示）
-                        tables = data["tables"]
-                        lines.append(f"**表格数量**: {data.get('table_count', len(tables))}")
-                        for idx, table in enumerate(tables):
-                            lines.append(f"\n**表格 {idx + 1}**: {table['rows']}行 × {table['cols']}列")
-                            lines.append(f"```json\n{json.dumps(table['data'], ensure_ascii=False, indent=2)}\n```")
-                    elif "data" in data and isinstance(data.get("data"), list):
-                        # Excel 数据（二维数组）
-                        lines.append(f"**数据内容**:\n```json\n{json.dumps(data['data'], ensure_ascii=False, indent=2)}\n```")
-
-                    # 显示统计信息
-                    if "stats" in data:
-                        lines.append(f"**统计信息**: {data['stats']}")
-
-                    # 显示范围信息（如果有）
-                    if "range" in data:
-                        lines.append(f"**读取范围**: 第{data['range']['start']+1}-{data['range']['end']}段（共{data['range']['total']}段）")
-                        if data.get("has_more"):
-                            lines.append(f"⚠️ 还有{data['range']['total']-data['range']['end']}段未读取，可继续分页读取")
-
-                    # 显示图片提示（read_docx 工具）
-                    if "has_images" in data and data["has_images"]:
-                        if "image_note" in data:
-                            lines.append(f"\n**图片信息**: {data['image_note']}")
-                        if "image_suggestion" in data:
-                            lines.append(f"**提取建议**: {data['image_suggestion']}")
-
-                elif is_grep_tool:
-                    # grep 工具：显示完整搜索结果
-                    if "results" in data:
-                        results = data["results"]
-                        total_matches = data.get("total_matches", 0)
-                        lines.append(f"**搜索结果** (共 {total_matches} 处匹配):")
-                        if isinstance(results, list):
-                            for result in results[:50]:  # 最多显示前50个结果
-                                if isinstance(result, dict):
-                                    file_path = result.get("file", "")
-                                    line_num = result.get("line", "")
-                                    content = result.get("content", "")
-                                    lines.append(f"\n`{file_path}:{line_num}`: {content}")
-                                else:
-                                    lines.append(f"  {result}")
-                            if len(results) > 50:
-                                lines.append(f"\n... 还有 {len(results) - 50} 个结果")
-                    elif "output_text" in data:
-                        # 文本输出模式
-                        lines.append(f"**搜索结果**:\n{data['output_text']}")
-
-                elif is_glob_tool:
-                    # glob/search_files 工具：显示完整文件列表
-                    if "files" in data:
-                        files = data["files"]
-                        count = data.get("count", len(files))
-                        lines.append(f"**找到的文件** (共 {count} 个):")
-                        if isinstance(files, list):
-                            for file in files[:100]:  # 最多显示前100个文件
-                                lines.append(f"  - {file}")
-                            if len(files) > 100:
-                                lines.append(f"\n... 还有 {len(files) - 100} 个文件")
-
-                elif is_list_dir_tool:
-                    # list_directory 工具：显示完整目录列表
-                    if "entries" in data:
-                        entries = data["entries"]
-                        count = data.get("count", len(entries))
-                        lines.append(f"**目录内容** (共 {count} 项):")
-                        if isinstance(entries, list):
-                            for entry in entries[:100]:  # 最多显示前100项
-                                if isinstance(entry, dict):
-                                    name = entry.get("name", "")
-                                    entry_type = entry.get("type", "")
-                                    size = entry.get("size", "")
-                                    type_icon = "📁" if entry_type == "directory" else "📄"
-                                    size_str = f" ({size} bytes)" if size else ""
-                                    lines.append(f"  {type_icon} {name}{size_str}")
-                                else:
-                                    lines.append(f"  {entry}")
-                            if len(entries) > 100:
-                                lines.append(f"\n... 还有 {len(entries) - 100} 项")
-
-                elif is_browser_tool:
-                    # browser 工具：显示完整的执行结果（办公工具原则）
-                    # 使用统一的格式化函数处理所有浏览器操作
-                    from app.agent.core.browser_result_formatter import format_browser_result
-
-                    browser_lines = format_browser_result(data)
-                    lines.extend(browser_lines)
-
-                # 任务管理工具：显示完整的任务列表信息
-                elif is_todo_write_tool:
-                    # TodoWrite tool: display rendered todo list
-                    if "rendered" in data:
-                        # Display the formatted todo list
-                        lines.append(f"**任务清单**:")
-                        lines.append(data["rendered"])
-                    elif "task_id" in data:
-                        # get_task/update_task/create_task 工具：显示单个任务
-                        task_id = data.get("task_id", "N/A")
-                        subject = data.get("subject", "无标题")
-                        status = data.get("status", "unknown")
-                        description = data.get("description", "")
-                        progress = data.get("progress", 0)
-                        depends_on = data.get("depends_on", [])
-
-                        lines.append(f"**任务ID**: {task_id}")
-                        lines.append(f"**标题**: {subject}")
-                        lines.append(f"**状态**: {status}")
-                        if progress > 0:
-                            lines.append(f"**进度**: {progress}%")
-                        if description:
-                            lines.append(f"**描述**: {description}")
-                        if depends_on:
-                            lines.append(f"**依赖**: {', '.join(depends_on)}")
-
-                # read_data_registry 工具：显示完整的 data 字段内容
-                elif is_read_data_registry_tool:
-                    # 显示完整的 data 字段内容（JSON 格式）
-                    lines.append(f"**完整结果**:")
-                    lines.append(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}\n```")
-
-                # parse_pdf 工具：显示PDF解析结果（智能截断）
-                elif is_parse_pdf_tool:
-                    pdf_type = data.get("type", "")
-                    file_name = data.get("file_name", "")
-
-                    if pdf_type == "pdf_text":
-                        # 文本提取结果
-                        lines.append(f"**文件**: {file_name}")
-                        if "total_pages" in data:
-                            lines.append(f"**总页数**: {data['total_pages']}")
-                        if "pages_processed" in data:
-                            lines.append(f"**处理页数**: {data['pages_processed']}")
-                        if "content_length" in data:
-                            lines.append(f"**内容长度**: {data['content_length']} 字符")
-
-                        # 显示内容预览
-                        if "preview" in data:
-                            lines.append(f"\n**内容预览**:")
-                            lines.append(data["preview"])
-                        elif "content" in data:
-                            # 如果没有preview，截断显示
-                            content = data["content"]
-                            preview_length = 5000
-                            if len(content) > preview_length:
-                                lines.append(f"\n**内容预览** (前{preview_length}字符):")
-                                lines.append(content[:preview_length])
-                                lines.append(f"\n... (还有 {len(content) - preview_length} 字符)")
-                            else:
-                                lines.append(f"\n**内容**:")
-                                lines.append(content)
-
-                        # 显示表格信息
-                        if "table_count" in data and data["table_count"] > 0:
-                            lines.append(f"\n**表格数量**: {data['table_count']}")
-
-                        # 显示图片信息
-                        if "image_count" in data and data["image_count"] > 0:
-                            lines.append(f"**图片数量**: {data['image_count']}")
-
-                        # 显示保存的文件路径
-                        if "result_file_path" in data:
-                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
-
-                    elif pdf_type == "pdf_ocr":
-                        # OCR识别结果
-                        lines.append(f"**文件**: {file_name}")
-                        lines.append(f"**OCR引擎**: {data.get('ocr_engine', 'unknown')}")
-                        if "pages_processed" in data:
-                            lines.append(f"**处理页数**: {data['pages_processed']}")
-                        if "content_length" in data:
-                            lines.append(f"**内容长度**: {data['content_length']} 字符")
-
-                        # 显示内容预览
-                        if "preview" in data:
-                            lines.append(f"\n**OCR识别结果预览**:")
-                            lines.append(data["preview"])
-                        elif "content" in data:
-                            # 如果没有preview，截断显示
-                            content = data["content"]
-                            preview_length = 5000
-                            if len(content) > preview_length:
-                                lines.append(f"\n**OCR识别结果预览** (前{preview_length}字符):")
-                                lines.append(content[:preview_length])
-                                lines.append(f"\n... (还有 {len(content) - preview_length} 字符)")
-                            else:
-                                lines.append(f"\n**OCR识别结果**:")
-                                lines.append(content)
-
-                        # 显示保存的文件路径
-                        if "result_file_path" in data:
-                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
-
-                    elif pdf_type == "pdf_tables":
-                        # 表格提取结果
-                        lines.append(f"**文件**: {file_name}")
-                        table_count = data.get("table_count", 0)
-                        lines.append(f"**表格数量**: {table_count}")
-
-                        if table_count > 0 and "tables" in data:
-                            lines.append(f"\n**表格详情**:")
-                            for idx, table in enumerate(data["tables"][:5]):  # 最多显示5个表格
-                                lines.append(f"\n表格 {idx + 1}: {table['rows']}行 × {table['cols']}列")
-                                # 显示前3行数据作为预览
-                                if "data" in table and len(table["data"]) > 0:
-                                    preview_rows = table["data"][:3]
-                                    lines.append(f"```json\n{json.dumps(preview_rows, ensure_ascii=False, indent=2)}\n```")
-                            if table_count > 5:
-                                lines.append(f"\n... 还有 {table_count - 5} 个表格")
-
-                        # 显示保存的文件路径
-                        if "result_file_path" in data:
-                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
-
-                    elif pdf_type == "pdf_images":
-                        # 图片信息提取结果
-                        lines.append(f"**文件**: {file_name}")
-                        image_count = data.get("image_count", 0)
-                        lines.append(f"**图片数量**: {image_count}")
-
-                        if image_count > 0 and "images" in data:
-                            lines.append(f"\n**图片列表** (前10个):")
-                            for idx, img in enumerate(data["images"][:10]):
-                                lines.append(f"{idx + 1}. 页码{img['page']}: {img.get('width', 0)}×{img.get('height', 0)}")
-                            if image_count > 10:
-                                lines.append(f"\n... 还有 {image_count - 10} 个图片")
-
-                        # 显示保存的文件路径
-                        if "result_file_path" in data:
-                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
-
-                    elif pdf_type == "pdf_metadata":
-                        # 元数据提取结果
-                        lines.append(f"**文件**: {file_name}")
-                        lines.append(f"**页数**: {data.get('page_count', 'N/A')}")
-                        lines.append(f"**是否加密**: {'是' if data.get('is_encrypted') else '否'}")
-
-                        # 显示PDF元数据
-                        if "title" in data and data["title"]:
-                            lines.append(f"**标题**: {data['title']}")
-                        if "author" in data and data["author"]:
-                            lines.append(f"**作者**: {data['author']}")
-                        if "creator" in data and data["creator"]:
-                            lines.append(f"**创建工具**: {data['creator']}")
-                        if "creation_date" in data and data["creation_date"]:
-                            lines.append(f"**创建日期**: {data['creation_date']}")
-
-                        # 显示保存的文件路径
-                        if "result_file_path" in data:
-                            lines.append(f"\n**结果已保存**: `{data['result_file_path']}`")
-
-                # execute_python 工具：显示完整的代码输出和生成的文件
-                elif is_execute_python_tool:
-                    if "output" in data and data["output"]:
-                        lines.append(f"**代码输出**:\n{data['output']}")
-                    if "files" in data and data["files"]:
-                        lines.append(f"\n**生成的文件**:")
-                        for file_path in data["files"]:
-                            file_name = os.path.basename(file_path)
-                            lines.append(f"  - {file_name}")
-                            lines.append(f"    路径: `{file_path}`")
-
-                    # ✅ 从 visuals 生成图表 markdown（用于 LLM 阅读）
-                    if "visuals" in observation and observation["visuals"]:
-                        lines.append(f"\n**✅ 图表生成成功** (共 {len(observation['visuals'])} 个):")
-                        for viz in observation["visuals"]:
-                            viz_type = viz.get("type", "unknown")
-                            title = viz.get("title", "图表")
-
-                            if viz_type == "image":
-                                # matplotlib 图片
-                                url = viz["data"].get("url")
-                                if url:
-                                    lines.append(f"- {title}: ![Chart]({url})")
-                                elif viz["data"].get("file_path"):
-                                    lines.append(f"- {title}: `{viz['data']['file_path']}` (缓存失败)")
-                            elif viz_type in ["line", "bar", "pie", "scatter", "heatmap", "map", "wind_rose", "profile"]:
-                                # Chart v3.1 ECharts 配置
-                                lines.append(f"- {title} (Chart v3.1 - {viz_type})")
-                                lines.append(f"  图表ID: {viz.get('id')}")
-                                lines.append(f"  数据字段: {list(viz.get('data', {}).keys())}")
-                            else:
-                                lines.append(f"- {title} ({viz_type})")
-
-                        # 明确告诉 LLM 任务已完成
-                        lines.append(f"\n⚠️ **图表已成功生成，请使用 FINAL_ANSWER 向用户展示结果，不要再次执行 execute_python**")
-
-                # 对于 bash 工具，包含完整的 stdout/stderr
-                elif "stdout" in data or "stderr" in data:
-                    if "stdout" in data and data["stdout"]:
-                        # 完整输出，不截断
-                        lines.append(f"**命令输出**:\n{data['stdout']}")
-
-                    if "stderr" in data and data["stderr"]:
-                        lines.append(f"**错误输出**:\n{data['stderr']}")
-
-                    if "exit_code" in data:
-                        lines.append(f"**退出码**: {data['exit_code']}")
-
-                    if "command" in data:
-                        lines.append(f"**执行命令**: {data['command']}")
-
-                # ✅ web_search 工具：显示完整的搜索结果
-                elif is_web_search_tool:
-                    if "results_text" in data:
-                        lines.append(f"**搜索结果**:\n{data['results_text']}")
-                    # 显示其他元数据
-                    if "provider" in data:
-                        lines.append(f"\n**搜索来源**: {data['provider']}")
-                    if "count" in data:
-                        lines.append(f"**结果数量**: {data['count']}")
-
-                # ✅ web_fetch 工具：显示完整的网页抓取内容
-                elif is_web_fetch_tool:
-                    if "text" in data:
-                        lines.append(f"**网页内容**:\n{data['text']}")
-                    # 显示其他元数据
-                    if "final_url" in data:
-                        lines.append(f"\n**最终URL**: {data['final_url']}")
-                    if "status" in data:
-                        lines.append(f"**HTTP状态码**: {data['status']}")
-                    if "length" in data:
-                        lines.append(f"**内容长度**: {data['length']} 字符")
-                    if "extractor" in data:
-                        lines.append(f"**抓取方式**: {data['extractor']}")
+            # 尝试从注册表获取合适的格式化器
+            formatter = self.formatter_registry.get_formatter(generator, data)
+            if formatter:
+                # 使用格式化器处理工具结果
+                formatter_lines = formatter.format(data, metadata)
+                lines.extend(formatter_lines)
 
         # ✅ 数据查询工具：显示采样后的数据列表
         elif success and "data" in observation and isinstance(observation["data"], list):
-            data_list = observation["data"]
-            metadata = observation.get("metadata", {})
-
-            # 检查是否应用了采样
-            sampling_applied = metadata.get("sampling_applied", False)
-            original_count = metadata.get("original_record_count", len(data_list))
-            sampled_count = len(data_list)
-
-            if data_list:
-                # 显示数据预览信息
-                if sampling_applied:
-                    lines.append(f"**数据预览** (采样{sampled_count}条/共{original_count}条):")
-                    sampling_info = metadata.get("sampling_info", {})
-                    strategy = sampling_info.get("strategy", "unknown")
-                    if strategy == "head_tail_middle_sampling":
-                        head = sampling_info.get("head_samples", 0)
-                        middle = sampling_info.get("middle_samples", 0)
-                        tail = sampling_info.get("tail_samples", 0)
-                        lines.append(f"  采样策略: 头部{head}条 + 中间{middle}条 + 尾部{tail}条")
-                else:
-                    lines.append(f"**完整数据** ({sampled_count}条):")
-
-                # 显示数据内容（JSON格式）
-                lines.append(f"```json\n{json.dumps(data_list, ensure_ascii=False, indent=2, default=str)}\n```")
-
-                # 如果有data_id，提示可以加载完整数据
-                data_id = observation.get("data_id")
-                if data_id and sampling_applied:
-                    lines.append(f"\n💡 完整数据({original_count}条)已存储在: `{data_id}`")
+            formatter_lines = DataQueryFormatter.format(observation)
+            lines.extend(formatter_lines)
 
         # ✅ 数据分析工具：data 是字典（统计结果），完整显示JSON
         elif success and "data" in observation and isinstance(observation["data"], dict):
             data_dict = observation["data"]
-            if data_dict:  # 只有非空结果才显示
-                lines.append(f"**统计结果**:")
-                lines.append(f"```json\n{json.dumps(data_dict, ensure_ascii=False, indent=2, default=str)}\n```")
+            formatter_lines = StatisticsFormatter.format(data_dict)
+            lines.extend(formatter_lines)
 
         # 摘要（作为补充，不是主要信息源）
         # 只在 summary 非空时才添加（对于返回 result 字段的工具，summary 为 None）
@@ -2101,21 +1616,12 @@ class ReActLoop:
             metadata = observation.get("metadata", {})
             generator = metadata.get("generator", "")
 
-            # search_history 工具：完整显示搜索结果
-            if generator == "search_history" and results:
-                lines.append(f"**搜索结果** (共 {len(results)} 条):")
-                for idx, result in enumerate(results[:20], 1):  # 最多显示前20条
-                    if isinstance(result, dict):
-                        match = result.get("match", "")
-                        context = result.get("context", "")
-                        line_number = result.get("line_number", 0)
-                        lines.append(f"\n{idx}. **匹配内容**: {match}")
-                        if context:
-                            lines.append(f"   **上下文**: {context[:200]}...")  # 限制上下文长度
-                        if line_number:
-                            lines.append(f"   **行号**: {line_number}")
-                if len(results) > 20:
-                    lines.append(f"\n... 还有 {len(results) - 20} 条结果")
+            # search_history 工具：使用格式化器处理
+            if generator == "search_history":
+                formatter = self.formatter_registry.get_formatter(generator, {"results": results})
+                if formatter:
+                    formatter_lines = formatter.format({"results": results}, metadata)
+                    lines.extend(formatter_lines)
 
         # ✅ 处理 result 字段（包含详细的结构化数据）
         # 例如：compare_standard_reports 工具的详细对比数据
@@ -2132,8 +1638,8 @@ class ReActLoop:
                     result_type=type(result).__name__,
                     will_format_full_result=True
                 )
-                lines.append(f"**详细结果**:")
-                lines.append(f"```json\n{json.dumps(result, ensure_ascii=False, indent=2, default=str)}\n```")
+                formatter_lines = DetailedResultFormatter.format(result)
+                lines.extend(formatter_lines)
                 # 🔍 详细日志：记录格式化后的result字段长度
                 logger.info(
                     "result_field_formatted",
@@ -2143,13 +1649,12 @@ class ReActLoop:
 
         return "\n".join(lines)
 
-    def _format_observation_sub(self, observation: Dict[str, Any], tool_name: str = "") -> List[str]:
+    def _format_observation_with_formatter(self, observation: Dict[str, Any]) -> List[str]:
         """
-        格式化子观察结果为字符串列表（用于并行工具执行）
+        使用格式化器注册表格式化观察结果（用于并行工具执行）
 
         Args:
             observation: 观察结果字典
-            tool_name: 工具名称（可选）
 
         Returns:
             格式化的字符串列表
@@ -2160,220 +1665,29 @@ class ReActLoop:
         success = observation.get("success", False)
         lines.append(f"**状态**: {'成功' if success else '失败'}")
 
-        # 数据处理
+        # ✅ 使用格式化器注册表处理办公助理工具
         if success and "data" in observation and isinstance(observation["data"], dict):
             data = observation["data"]
             metadata = observation.get("metadata", {})
             generator = metadata.get("generator", "")
 
-            # 特殊处理：办公助理工具
-            is_image_tool = generator == "analyze_image"
-            is_file_tool = generator == "read_file"
-            is_docx_tool = generator == "read_docx"
-            is_office_tool = generator in ["word_edit", "find_replace_word", "accept_word_changes", "unpack_office", "pack_office", "recalc_excel", "add_ppt_slide"]
-            is_grep_tool = generator == "grep"
-            is_glob_tool = generator in ["glob", "search_files"]
-            is_list_dir_tool = generator == "list_directory"
-            is_browser_tool = generator == "browser"
-            is_todo_write_tool = generator == "TodoWrite"
-            is_read_data_registry_tool = generator == "read_data_registry"
-            is_execute_python_tool = generator == "execute_python"
-
-            if is_execute_python_tool:
-                # execute_python 工具：显示完整的代码输出
-                if "output" in data and data["output"]:
-                    lines.append(f"**代码输出**:\n{data['output']}")
-                if "files" in data and data["files"]:
-                    lines.append(f"\n**生成的文件**:")
-                    for file_path in data["files"]:
-                        file_name = os.path.basename(file_path)
-                        lines.append(f"  - {file_name}")
-                        lines.append(f"    路径: `{file_path}`")
-
-                # ✅ 从 visuals 生成图表 markdown（用于 LLM 阅读）
-                if "visuals" in observation:
-                    chart_visuals = [v for v in observation["visuals"] if v.get("type") == "image"]
-                    if chart_visuals:
-                        lines.append(f"\n**生成的图表**:")
-                        for viz in chart_visuals:
-                            url = viz["data"].get("url")
-                            title = viz.get("title", "图表")
-                            if url:
-                                lines.append(f"- {title}: ![Chart]({url})")
-                            elif viz["data"].get("file_path"):
-                                lines.append(f"- {title}: `{viz['data']['file_path']}` (缓存失败)")
-
-            elif is_image_tool and "analysis" in data:
-                # analyze_image 工具：显示完整的图片分析结果
-                lines.append(f"**完整分析结果**:\n{data['analysis']}")
-
-            elif is_file_tool:
-                # read_file 工具：根据文件类型显示不同内容
-                file_type = data.get("type", "")
-                if file_type == "image":
-                    # 图片文件：显示分析结果
-                    if "analysis" in data:
-                        lines.append(f"**图片分析结果**:\n{data['analysis']}")
-                    elif "analysis_error" in data:
-                        lines.append(f"**分析失败**: {data['analysis_error']}")
-                    # 显示图片信息
-                    lines.append(f"\n**图片信息**:")
-                    lines.append(f"  路径: `{data.get('path', 'N/A')}`")
-                    lines.append(f"  格式: {data.get('format', 'N/A')}")
-                    lines.append(f"  大小: {data.get('size', 0)} bytes")
-                elif "content" in data:
-                    # 文本文件：显示完整的文件内容
-                    lines.append(f"**文件内容**:\n{data['content']}")
-
-            elif is_docx_tool:
-                # read_docx 工具：显示完整的文档内容
-                if "content" in data:
-                    content = data["content"]
-                    # 显示完整内容（不截断）
-                    lines.append(f"**文档内容**:")
-                    lines.append(f"```\n{content}\n```")
-                    # 显示文档统计信息
-                    lines.append(f"\n**文档信息**:")
-                    lines.append(f"  文件名: {data.get('file_name', 'N/A')}")
-                    lines.append(f"  段落数: {data.get('paragraph_count', 0)}")
-                    lines.append(f"  表格数: {data.get('table_count', 0)}")
-                    lines.append(f"  文件大小: {data.get('file_size', 0)} bytes")
-
-            elif is_office_tool:
-                # Word/Excel/PPT 工具：显示完整文档内容
-                if "content" in data:
-                    lines.append(f"**文档内容**:\n```\n{data['content']}\n```")
-                elif "images" in data:
-                    # extract_images 操作：显示完整图片列表
-                    images = data["images"]
-                    if isinstance(images, list):
-                        lines.append(f"**提取的图片数量**: {len(images)}")
-                        for img in images:
-                            lines.append(f"\n**图片 {img['index']}**:")
-                            lines.append(f"  路径: `{img['path']}`")
-                            lines.append(f"  尺寸: {img['width']} x {img['height']}")
-
-            elif is_grep_tool:
-                # grep 工具：显示完整搜索结果
-                if "results" in data:
-                    results = data["results"]
-                    total_matches = data.get("total_matches", 0)
-                    lines.append(f"**搜索结果** (共 {total_matches} 处匹配):")
-                    if isinstance(results, list):
-                        for result in results[:50]:
-                            if isinstance(result, dict):
-                                file_path = result.get("file", "")
-                                line_num = result.get("line", "")
-                                content = result.get("content", "")
-                                lines.append(f"\n`{file_path}:{line_num}`: {content}")
-                            else:
-                                lines.append(f"  {result}")
-                        if len(results) > 50:
-                            lines.append(f"\n... 还有 {len(results) - 50} 个结果")
-                elif "output_text" in data:
-                    lines.append(f"**搜索结果**:\n{data['output_text']}")
-
-            elif is_glob_tool:
-                # glob/search_files 工具：显示完整文件列表
-                if "files" in data:
-                    files = data["files"]
-                    count = data.get("count", len(files))
-                    lines.append(f"**找到的文件** (共 {count} 个):")
-                    if isinstance(files, list):
-                        for file in files[:100]:
-                            lines.append(f"  - {file}")
-                        if len(files) > 100:
-                            lines.append(f"\n... 还有 {len(files) - 100} 个文件")
-
-            elif is_list_dir_tool:
-                # list_directory 工具：显示完整目录列表
-                if "entries" in data:
-                    entries = data["entries"]
-                    count = data.get("count", len(entries))
-                    lines.append(f"**目录内容** (共 {count} 项):")
-                    if isinstance(entries, list):
-                        for entry in entries[:100]:
-                            if isinstance(entry, dict):
-                                name = entry.get("name", "")
-                                entry_type = entry.get("type", "")
-                                size = entry.get("size", "")
-                                type_icon = "📁" if entry_type == "directory" else "📄"
-                                size_str = f" ({size} bytes)" if size else ""
-                                lines.append(f"  {type_icon} {name}{size_str}")
-                            else:
-                                lines.append(f"  {entry}")
-                        if len(entries) > 100:
-                            lines.append(f"\n... 还有 {len(entries) - 100} 项")
-
-            elif is_browser_tool:
-                # browser 工具：使用统一的格式化函数处理所有浏览器操作（办公工具原则）
-                # 确保完整数据传递给 LLM，包括 snapshot、refs、stats、execute_js 结果等
-                from app.agent.core.browser_result_formatter import format_browser_result
-
-                browser_lines = format_browser_result(data)
-                lines.extend(browser_lines)
-
-            elif is_todo_write_tool:
-                # TodoWrite tool: display rendered todo list
-                if "rendered" in data:
-                    # Display the formatted todo list
-                    lines.append(f"**任务清单**:")
-                    lines.append(data["rendered"])
-                elif "task_id" in data:
-                    # get_task/update_task/create_task 工具：显示单个任务
-                    task_id = data.get("task_id", "N/A")
-                    subject = data.get("subject", "无标题")
-                    status = data.get("status", "unknown")
-                    description = data.get("description", "")
-                    progress = data.get("progress", 0)
-                    depends_on = data.get("depends_on", [])
-
-                    lines.append(f"**任务ID**: {task_id}")
-                    lines.append(f"**标题**: {subject}")
-                    lines.append(f"**状态**: {status}")
-                    if progress > 0:
-                        lines.append(f"**进度**: {progress}%")
-                    if description:
-                        lines.append(f"**描述**: {description}")
-                    if depends_on:
-                        lines.append(f"**依赖**: {', '.join(depends_on)}")
-
-            elif is_read_data_registry_tool:
-                # read_data_registry 工具：显示完整的 data 字段内容
-                lines.append(f"**完整结果**:")
-                lines.append(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}\n```")
-
-            elif "stdout" in data or "stderr" in data:
-                # bash 工具
-                if "stdout" in data and data["stdout"]:
-                    lines.append(f"**命令输出**:\n{data['stdout']}")
-                if "stderr" in data and data["stderr"]:
-                    lines.append(f"**错误输出**:\n{data['stderr']}")
-
-        # ✅ 数据查询工具：显示采样后的数据列表
-        elif success and "data" in observation and isinstance(observation["data"], list):
-            data_list = observation["data"]
-            metadata = observation.get("metadata", {})
-
-            # 检查是否应用了采样
-            sampling_applied = metadata.get("sampling_applied", False)
-            original_count = metadata.get("original_record_count", len(data_list))
-            sampled_count = len(data_list)
-
-            if data_list:
-                # 显示数据预览信息
-                if sampling_applied:
-                    lines.append(f"**数据预览** (采样{sampled_count}条/共{original_count}条):")
-                else:
-                    lines.append(f"**完整数据** ({sampled_count}条):")
-
-                # 显示数据内容（JSON格式）
-                lines.append(f"```json\n{json.dumps(data_list, ensure_ascii=False, indent=2, default=str)}\n```")
-
-                # 如果有data_id，提示可以加载完整数据
-                data_id = observation.get("data_id")
-                if data_id and sampling_applied:
-                    lines.append(f"\n💡 完整数据({original_count}条)已存储在: `{data_id}`")
+            # 尝试从注册表获取合适的格式化器
+            formatter = self.formatter_registry.get_formatter(generator, data)
+            if formatter:
+                # 使用格式化器处理工具结果
+                formatter_lines = formatter.format(data, metadata)
+                lines.extend(formatter_lines)
+            else:
+                # 没有找到合适的格式化器，使用默认处理
+                # 数据查询工具：显示采样后的数据列表
+                if "data" in observation and isinstance(observation["data"], list):
+                    formatter_lines = DataQueryFormatter.format(observation)
+                    lines.extend(formatter_lines)
+                # 数据分析工具：data 是字典（统计结果），完整显示JSON
+                elif "data" in observation and isinstance(observation["data"], dict):
+                    data_dict = observation["data"]
+                    formatter_lines = StatisticsFormatter.format(data_dict)
+                    lines.extend(formatter_lines)
 
         # 摘要（只在 summary 非空时才添加）
         if observation.get("summary"):
