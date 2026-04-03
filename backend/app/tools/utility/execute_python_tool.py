@@ -250,7 +250,7 @@ doc.save('/root/report.docx')
                     result["data"]["file_path"] = office_file
                     # ✅ 只在执行成功时覆盖 summary
                     if result.get("success", False):
-                        result["summary"] = f"执行成功，生成文档：{Path(office_file).name}"
+                        result["summary"] = f"✅ 工具已执行完成，生成文档：{Path(office_file).name}"
                     logger.info(
                         "execute_python_pdf_generated",
                         pdf_id=pdf_preview["pdf_id"],
@@ -263,16 +263,16 @@ doc.save('/root/report.docx')
                     result["data"]["file_path"] = office_file
                     # ✅ 只在执行成功时覆盖 summary
                     if result.get("success", False):
-                        result["summary"] = f"执行成功，生成文件：{Path(office_file).name}"
+                        result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
             elif final_files:
                 # ✅ 只在执行成功时覆盖 summary
                 if result.get("success", False):
                     file_names = [Path(f).name for f in final_files]
-                    result["summary"] = f"执行成功，生成文件: {', '.join(file_names)}"
+                    result["summary"] = f"✅ 工具已执行完成，生成文件: {', '.join(file_names)}"
             else:
                 # ✅ 只在执行成功时覆盖 summary
                 if result.get("success", False):
-                    result["summary"] = "执行成功"
+                    result["summary"] = "✅ 工具已执行完成，计算任务已完成"
 
             # ✅ 检测图表输出（CHART_SAVED:xxx.png）
             chart_paths = self._extract_chart_paths(result["data"].get("output", ""))
@@ -359,7 +359,7 @@ doc.save('/root/report.docx')
                             })
 
                             # 更新摘要
-                            result["summary"] = f"图表生成成功：![Chart]({image_info['url']})"
+                            result["summary"] = f"✅ 工具已执行完成，图表生成成功：![Chart]({image_info['url']})"
 
                         except Exception as e:
                             logger.error(
@@ -386,7 +386,7 @@ doc.save('/root/report.docx')
                                     "cache_failed": True
                                 }
                             })
-                            result["summary"] = f"图表生成成功（缓存失败）：{abs_chart_path}"
+                            result["summary"] = f"✅ 工具已执行完成，图表生成成功（缓存失败）：{abs_chart_path}"
 
             # ✅ 新增：处理 Chart v3.1 JSON 数据
             if chart_v31_data:
@@ -408,7 +408,7 @@ doc.save('/root/report.docx')
                     )
                     # 更新摘要
                     if not chart_paths:  # 如果没有matplotlib图表，使用v3.1摘要
-                        result["summary"] = f"Chart v3.1图表生成成功：{chart_v31_data.get('title', '')}"
+                        result["summary"] = f"✅ 工具已执行完成，Chart v3.1图表生成成功：{chart_v31_data.get('title', '')}"
                 except Exception as e:
                     logger.warning(
                         "chart_v31_processing_failed",
@@ -537,7 +537,7 @@ doc.save('/root/report.docx')
             "status": "success",  # ✅ 添加 status 字段
             "success": True,
             "data": {"output": output},
-            "summary": "执行成功"
+            "summary": "✅ 工具已执行完成，计算任务已完成"
         }
 
     async def _execute_with_subprocess(self, code: str, timeout: int) -> Dict[str, Any]:
@@ -569,7 +569,7 @@ doc.save('/root/report.docx')
                 "status": "success" if result.returncode == 0 else "failed",  # ✅ 添加 status 字段
                 "success": result.returncode == 0,
                 "data": {"output": output},
-                "summary": "执行成功" if result.returncode == 0 else "执行失败"
+                "summary": "✅ 工具已执行完成，计算任务已完成" if result.returncode == 0 else "执行失败"
             }
 
         except subprocess.TimeoutExpired:

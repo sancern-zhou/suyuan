@@ -13,14 +13,14 @@
     <!-- 消息列表 -->
     <div v-for="(message, index) in filteredMessages" :key="message.id" class="message-wrapper"
       :class="{
-        'has-sources': message.type === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
-        'clickable': message.type === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
+        'has-sources': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
+        'clickable': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
         'selected': selectedMessageId === message.id
       }"
       @click="handleMessageClick(message, index)"
     >
       <!-- 用户消息 -->
-      <div v-if="message.type === 'user'" class="message user-message">
+      <div v-if="getMessageType(message) === 'user'" class="message user-message">
         <!-- 附件显示 -->
         <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
           <div v-for="(attachment, idx) in message.attachments" :key="idx" class="message-attachment">
@@ -63,7 +63,7 @@
 
       <!-- Agent消息（最终答案） -->
       <!-- 移除 v-once 以支持流式更新 -->
-      <div v-else-if="message.type === 'final'" class="message agent-message final">
+      <div v-else-if="getMessageType(message) === 'final'" class="message agent-message final">
         <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
         <details
           v-if="getUnifiedProcessMessages(message, messages).length > 0"
@@ -139,13 +139,13 @@
       </div>
 
       <!-- 错误事件 -->
-      <div v-else-if="message.type === 'error'" class="event-content error">
+      <div v-else-if="getMessageType(message) === 'error'" class="event-content error">
         <div class="event-icon">⚠️</div>
         <div class="event-text">{{ message.content }}</div>
       </div>
 
       <!-- 思考事件（未被折叠时实时显示） -->
-      <div v-else-if="message.type === 'thought' && !isMessageHidden(message)" class="react-event event-thought">
+      <div v-else-if="getMessageType(message) === 'thought' && !isMessageHidden(message)" class="react-event event-thought">
         <div class="event-content">
           <div class="event-icon">💭</div>
           <div class="event-text">{{ message.content }}</div>
@@ -153,7 +153,7 @@
       </div>
 
       <!-- 行动事件（未被折叠时实时显示） -->
-      <div v-else-if="message.type === 'action' && !isMessageHidden(message)" class="react-event event-action">
+      <div v-else-if="getMessageType(message) === 'action' && !isMessageHidden(message)" class="react-event event-action">
         <div class="event-content">
           <div class="event-icon">⚙️</div>
           <div class="event-text">
@@ -163,7 +163,7 @@
       </div>
 
       <!-- 观察事件（未被折叠时实时显示） -->
-      <div v-else-if="message.type === 'observation' && !isMessageHidden(message) && !isOfficeToolWithPdf(message)" class="react-event event-observation">
+      <div v-else-if="getMessageType(message) === 'observation' && !isMessageHidden(message) && !isOfficeToolWithPdf(message)" class="react-event event-observation">
         <div class="event-content">
           <div class="event-icon">👁️</div>
           <div class="event-text">
@@ -201,6 +201,15 @@ import MarkdownRenderer from './MarkdownRenderer.vue'
 import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
 
 const reactStore = useReactStore()
+
+// 【修复】辅助函数：获取消息类型（兼容 type 和 role 字段）
+const getMessageType = (message) => {
+  // 优先使用 type 字段（后端返回的格式），如果没有则使用 role 字段（旧格式）
+  const type = message.type || message.role
+  // 将后端的 assistant 映射为 final
+  if (type === 'assistant') return 'final'
+  return type
+}
 
 const props = defineProps({
   messages: {
@@ -245,7 +254,7 @@ const messagesContainer = ref(null)
 // 【新增】处理消息点击（支持所有模式的final消息）
 const handleMessageClick = (message, index) => {
   // 检查是否是final消息且有sources字段（兼容新旧两种位置）
-  const hasSources = message.type === 'final' &&
+  const hasSources = getMessageType(message) === 'final' &&
     ((message.data?.sources && Array.isArray(message.data.sources) && message.data.sources.length > 0) ||
      (message.sources && Array.isArray(message.sources) && message.sources.length > 0))
 
@@ -540,20 +549,25 @@ watch(() => props.messages, (newMessages) => {
 // 过滤掉系统消息，保留所有其他消息（实时显示过程消息）
 const filteredMessages = computed(() => {
   const filtered = props.messages.filter(msg => {
+    // 【修复】兼容 role 和 type 字段
+    const msgType = msg.role || msg.type
     // 过滤掉系统消息
-    if (msg.type === 'start' || msg.type === 'agent') return false
+    if (msgType === 'start' || msgType === 'agent') return false
     return true
   })
+
+  // 【修复】兼容 role 和 type 字段统计
+  const getType = (m) => m.role || m.type
 
   console.log('[ReActMessageList] filteredMessages计算:', {
     原始消息数: props.messages.length,
     过滤后消息数: filtered.length,
     过滤后类型分布: {
-      user: filtered.filter(m => m.type === 'user').length,
-      thought: filtered.filter(m => m.type === 'thought').length,
-      action: filtered.filter(m => m.type === 'action').length,
-      observation: filtered.filter(m => m.type === 'observation').length,
-      final: filtered.filter(m => m.type === 'final').length
+      user: filtered.filter(m => getType(m) === 'user').length,
+      thought: filtered.filter(m => getType(m) === 'thought').length,
+      action: filtered.filter(m => getType(m) === 'action').length,
+      observation: filtered.filter(m => getType(m) === 'observation').length,
+      final: filtered.filter(m => getType(m) === 'final' || getType(m) === 'assistant').length
     }
   })
 
@@ -620,7 +634,8 @@ const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
   const newCollapsedIds = new Set(collapsedProcessIds.value)
   let processCount = 0
   for (const msg of beforeMessages) {
-    if (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation') {
+    const msgType = getMessageType(msg)
+    if (msgType === 'thought' || msgType === 'action' || msgType === 'observation') {
       newCollapsedIds.add(msg.id)
       processCount++
     }
@@ -639,7 +654,7 @@ const isMessageHidden = (message) => {
 
 // 【新增】判断是否是带PDF预览的Office工具消息（这些消息在OfficeDocumentPanel中显示，不需要在聊天列表重复显示）
 const isOfficeToolWithPdf = (message) => {
-  if (message.type !== 'observation') return false
+  if (getMessageType(message) !== 'observation') return false
 
   const obs = message.data?.observation || message.observation
   if (!obs) return false
@@ -675,6 +690,8 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
     hasId: !!finalMessage.id,
     id: finalMessage.id,
     type: finalMessage.type,
+    role: finalMessage.role,
+    effectiveType: getMessageType(finalMessage),
     allMessagesCount: allMessages.length
   })
 
@@ -698,20 +715,21 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
       // 找到上一个final的位置
       let lastFinalIndex = -1
       for (let i = finalIndex - 1; i >= 0; i--) {
-        if (allMessages[i].type === 'final') {
+        if (getMessageType(allMessages[i]) === 'final') {
           lastFinalIndex = i
           break
         }
       }
 
       const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
-      processMessages = currentRoundMessages.filter(msg =>
-        (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation')
-      )
+      processMessages = currentRoundMessages.filter(msg => {
+        const msgType = getMessageType(msg)
+        return msgType === 'thought' || msgType === 'action' || msgType === 'observation'
+      })
 
       console.log('[getUnifiedProcessMessages] 通过引用找到过程消息:', {
         processMessageCount: processMessages.length,
-        types: processMessages.map(m => m.type)
+        types: processMessages.map(m => getMessageType(m))
       })
     }
   } else {
@@ -733,7 +751,7 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
       // 找到上一个final的位置，只获取两轮final之间的过程消息
       let lastFinalIndex = -1
       for (let i = finalIndex - 1; i >= 0; i--) {
-        if (allMessages[i].type === 'final') {
+        if (getMessageType(allMessages[i]) === 'final') {
           lastFinalIndex = i
           break
         }
@@ -742,9 +760,10 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
       // 只获取上一轮final之后、当前final之前的过程消息
       const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
 
-      processMessages = currentRoundMessages.filter(msg =>
-        (msg.type === 'thought' || msg.type === 'action' || msg.type === 'observation')
-      )
+      processMessages = currentRoundMessages.filter(msg => {
+        const msgType = getMessageType(msg)
+        return msgType === 'thought' || msgType === 'action' || msgType === 'observation'
+      })
 
       console.log('[getUnifiedProcessMessages] 找到过程消息:', {
         processMessageCount: processMessages.length,
@@ -838,12 +857,27 @@ watch(
   (newMessages, oldMessages) => {
     if (!newMessages || newMessages.length === 0) return
 
-    // 【新增】检测是否是初次加载历史对话（从空数组变为有数据）
+    // 【增强】检测是否需要批量折叠（初次加载或消息数量大幅变化）
     const isFirstLoad = !oldMessages || oldMessages.length === 0
-    if (isFirstLoad) {
-      // 初次加载时，清空展开状态，确保所有 details 默认折叠
+    const isBulkLoad = oldMessages && Math.abs(newMessages.length - oldMessages.length) > 5 // 超过5条消息变化视为批量加载
+
+    console.log('[ReActMessageList] watch触发，消息变化:', {
+      newCount: newMessages?.length,
+      oldCount: oldMessages?.length,
+      isFirstLoad,
+      isBulkLoad
+    })
+
+    if (isFirstLoad || isBulkLoad) {
+      // 批量加载时，清空展开状态，确保所有 details 默认折叠
       expandedProcessIds.value.clear()
-      console.log('[ReActMessageList] 初次加载历史对话，默认折叠所有过程消息')
+      collapsedProcessIds.value.clear() // 【修复】清空折叠集合，重新计算
+      isInitialLoad.value = true // 【修复】重置初始加载标志
+      console.log('[ReActMessageList] 批量加载历史对话，默认折叠所有过程消息', {
+        isFirstLoad,
+        isBulkLoad,
+        messageCount: newMessages.length
+      })
 
       // 【修复】遍历所有final消息，折叠它们之前的过程消息
       nextTick(() => {
@@ -853,15 +887,24 @@ watch(
         // 找到所有的final消息
         for (let i = 0; i < newMessages.length; i++) {
           const msg = newMessages[i]
-          if (msg.type === 'final') {
+          const msgType = getMessageType(msg)
+          if (msgType === 'final') {
             // 获取上一个final之后、当前final之前的所有消息
             const messagesBetween = newMessages.slice(lastFinalIndex + 1, i)
 
             // 折叠这些消息中的过程消息
             for (const procMsg of messagesBetween) {
-              if (procMsg.type === 'thought' || procMsg.type === 'action' || procMsg.type === 'observation') {
-                collapsedProcessIds.value.add(procMsg.id)
-                totalCollapsedCount++
+              const procMsgType = getMessageType(procMsg)
+              if (procMsgType === 'thought' || procMsgType === 'action' || procMsgType === 'observation') {
+                if (procMsg.id) { // 【修复】确保有id才折叠
+                  collapsedProcessIds.value.add(procMsg.id)
+                  totalCollapsedCount++
+                  console.log('[ReActMessageList] 折叠过程消息:', {
+                    type: procMsgType,
+                    id: procMsg.id,
+                    hasContent: !!procMsg.content
+                  })
+                }
               }
             }
 
@@ -869,7 +912,8 @@ watch(
           }
         }
 
-        console.log(`[ReActMessageList] 初次加载：已折叠 ${totalCollapsedCount} 个过程消息`)
+        console.log(`[ReActMessageList] 批量加载：已折叠 ${totalCollapsedCount} 个过程消息`)
+        console.log('[ReActMessageList] collapsedProcessIds数量:', collapsedProcessIds.value.size)
       })
 
       // 【新增】延迟一段时间后允许用户手动展开 details
@@ -881,7 +925,7 @@ watch(
       // 非初次加载：只处理新添加的final消息
       const lastMessage = newMessages[newMessages.length - 1]
       // 如果最后一条消息是final消息，自动折叠之前的过程消息
-      if (lastMessage?.type === 'final') {
+      if (lastMessage && getMessageType(lastMessage) === 'final') {
         nextTick(() => {
           collapsePreviousProcessMessages(lastMessage, newMessages)
         })

@@ -1,8 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import AnalysisView from '@/views/AnalysisView.vue'
 import ReactAnalysisView from '@/views/ReactAnalysisView.vue'
 import FetchersView from '@/views/FetchersView.vue'
-import MapTestView from '@/views/MapTestView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import ToolsManagementView from '@/views/ToolsManagementView.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
@@ -16,11 +14,6 @@ const router = createRouter({
       component: ReactAnalysisView
     },
     {
-      path: '/classic',
-      name: 'analysis-classic',
-      component: AnalysisView
-    },
-    {
       path: '/session/:id',
       name: 'session',
       component: ReactAnalysisView,
@@ -30,11 +23,6 @@ const router = createRouter({
       path: '/fetchers',
       name: 'fetchers',
       component: FetchersView
-    },
-    {
-      path: '/map-test',
-      name: 'map-test',
-      component: MapTestView
     },
     {
       path: '/knowledge-base',

@@ -465,6 +465,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
 
                         session.state = SessionState.COMPLETED
                         session.completed_at = datetime.now()
+                        # ✅ 完整保存所有消息（使用数据库存储，不需要压缩）
                         session.conversation_history = conversation_history
                         session.data_ids = list(set(collected_data_ids))  # 去重
                         session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
@@ -472,7 +473,18 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids))
                     elif event["type"] in ["incomplete", "fatal_error"]:
                         session.state = SessionState.FAILED if event["type"] == "fatal_error" else SessionState.COMPLETED
-                        session.conversation_history = conversation_history
+                        # ✅ 优化：压缩中间过程，只保留必要信息
+                        compressed_history = []
+                        for msg in conversation_history:
+                            if msg.get("type") in ["user", "final"]:
+                                compressed_history.append(msg)
+                            elif msg.get("type") in ["thought", "action", "observation"]:
+                                compressed_history.append({
+                                    "type": msg.get("type"),
+                                    "content": msg.get("content", "")[:200],
+                                    "timestamp": msg.get("timestamp")
+                                })
+                        session.conversation_history = compressed_history
                         session.data_ids = list(set(collected_data_ids))
                         session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
                         if "data" in event and "error" in event["data"]:

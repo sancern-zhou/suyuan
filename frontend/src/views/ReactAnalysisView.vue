@@ -30,627 +30,79 @@
             <span class="toggle-icon">{{ rightPanelVisible ? '»' : '«' }}</span>
           </button>
           <!-- 知识库管理面板 -->
-          <div v-if="managementPanel === 'knowledge-base'" class="management-panel kb-panel">
-            <div class="panel-header">
-              <h3>知识库管理</h3>
-              <div class="panel-actions">
-                <button class="panel-btn" @click="showKbCreateDialog = true">+ 新建知识库</button>
-                <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
-              </div>
-            </div>
-
-            <div v-if="!kbStore.currentKb" class="kb-content">
-              <!-- 公共知识库 -->
-              <div v-if="kbStore.publicKbs.length > 0" class="kb-section">
-                <div class="kb-section-title">公共知识库</div>
-                <div
-                  v-for="kb in kbStore.publicKbs"
-                  :key="kb.id"
-                  class="kb-item"
-                  @click="selectKb(kb)"
-                >
-                  <div class="kb-item-header">
-                    <span class="kb-name">{{ kb.name }}</span>
-                    <span class="kb-badge public">公共</span>
-                  </div>
-                  <div class="kb-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
-                </div>
-              </div>
-
-              <!-- 个人知识库 -->
-              <div v-if="kbStore.privateKbs.length > 0" class="kb-section">
-                <div class="kb-section-title">我的知识库</div>
-                <div
-                  v-for="kb in kbStore.privateKbs"
-                  :key="kb.id"
-                  class="kb-item"
-                  @click="selectKb(kb)"
-                >
-                  <div class="kb-item-header">
-                    <span class="kb-name">{{ kb.name }}</span>
-                    <span class="kb-badge private">个人</span>
-                  </div>
-                  <div class="kb-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
-                </div>
-              </div>
-
-              <div v-if="kbStore.publicKbs.length === 0 && kbStore.privateKbs.length === 0" class="kb-empty">
-                暂无知识库，点击上方按钮创建
-              </div>
-            </div>
-
-            <!-- 知识库详情 -->
-            <div v-else class="kb-detail-full">
-              <div class="kb-detail-header">
-                <div class="kb-detail-title">
-                  <h4>{{ kbStore.currentKb.name }}</h4>
-                  <span class="kb-badge" :class="kbStore.currentKb.kb_type">
-                    {{ kbStore.currentKb.kb_type === 'public' ? '公共' : '个人' }}
-                  </span>
-                </div>
-                <div class="kb-detail-actions">
-                  <button class="panel-btn small" @click="showKbEditDialog = true">编辑</button>
-                  <button class="panel-btn small" @click="handleKbBack">返回</button>
-                </div>
-              </div>
-
-              <div v-if="kbStore.currentKb.description" class="kb-detail-desc">{{ kbStore.currentKb.description }}</div>
-
-              <div class="kb-detail-info">
-                <span>分块策略: {{ getKbStrategyName(kbStore.currentKb.chunking_strategy) }}</span>
-                <span>分块大小: {{ kbStore.currentKb.chunk_size }} 字符</span>
-                <span>文档数: {{ kbStore.currentKb.document_count }}</span>
-                <span>分块数: {{ kbStore.currentKb.chunk_count }}</span>
-              </div>
-
-              <!-- 文档上传 -->
-              <div class="kb-upload-section">
-                <div class="kb-section-title">上传文档</div>
-
-                <!-- 分块策略选择 -->
-                <div class="chunking-options">
-                  <div class="option-row">
-                    <div class="option-group">
-                      <label>分块策略</label>
-                      <select v-model="kbUploadOptions.chunking_strategy">
-                        <option value="llm">LLM智能分块（默认，质量最高）</option>
-                        <option value="sentence">句子分块（速度快）</option>
-                        <option value="semantic">语义分块（基于Embedding）</option>
-                        <option value="markdown">Markdown分块</option>
-                        <option value="hybrid">混合分块</option>
-                      </select>
-                    </div>
-                    <div class="option-group" v-if="kbUploadOptions.chunking_strategy === 'llm'">
-                      <label>LLM模式</label>
-                      <select v-model="kbUploadOptions.llm_mode">
-                        <option value="local">本地千问3（快速，25K字符阈值）</option>
-                        <option value="online">线上API（长文档，60K字符阈值）</option>
-                      </select>
-                    </div>
-                    <div class="option-group" v-if="kbUploadOptions.chunking_strategy !== 'llm'">
-                      <label>分块大小</label>
-                      <input type="number" v-model.number="kbUploadOptions.chunk_size" min="64" max="2048" />
-                    </div>
-                    <div class="option-group" v-if="kbUploadOptions.chunking_strategy !== 'llm' && kbUploadOptions.chunking_strategy !== 'markdown'">
-                      <label>分块重叠</label>
-                      <input type="number" v-model.number="kbUploadOptions.chunk_overlap" min="0" max="512" />
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  class="upload-area"
-                  :class="{ dragging: kbIsDragging, uploading: kbIsUploading }"
-                  @dragover.prevent="kbIsDragging = true"
-                  @dragleave="kbIsDragging = false"
-                  @drop.prevent="handleKbFileDrop"
-                  @click="triggerKbFileInput"
-                >
-                  <input
-                    ref="kbFileInput"
-                    type="file"
-                    multiple
-                    accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.html,.htm,.txt,.md,.csv,.json"
-                    @change="handleKbFileSelect"
-                    style="display: none"
-                  />
-                  <div v-if="kbIsUploading" class="upload-progress">
-                    <div class="spinner"></div>
-                    <p>正在上传 {{ kbUploadProgress.current }}/{{ kbUploadProgress.total }}...</p>
-                    <p v-if="kbUploadOptions.chunking_strategy === 'llm'" class="upload-note">LLM分块处理中，请耐心等待...</p>
-                  </div>
-                  <div v-else>
-                    <p>点击或拖拽文件到此处上传</p>
-                    <p class="upload-hint">支持 PDF、Word、Excel、HTML、TXT、Markdown 等格式</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 文档列表 -->
-              <div class="kb-documents-section">
-                <div class="kb-section-title">文档列表 ({{ kbStore.documents.length }})</div>
-                <div v-if="kbStore.documents.length === 0" class="kb-empty-docs">暂无文档</div>
-                <div v-else class="kb-doc-list">
-                  <div
-                    v-for="doc in kbStore.documents"
-                    :key="doc.id"
-                    class="kb-doc-item"
-                    :class="{ clickable: doc.status === 'completed' }"
-                    @click="doc.status === 'completed' && viewKbChunks(doc)"
-                  >
-                    <div class="kb-doc-info">
-                      <span class="kb-doc-name">{{ doc.filename }}</span>
-                      <span class="kb-doc-meta">
-                        {{ formatFileSize(doc.file_size) }} |
-                        {{ doc.chunk_count }} 分块 |
-                        <span :class="'status-' + doc.status">{{ getKbStatusText(doc.status) }}</span>
-                        <span v-if="doc.status === 'completed'" class="view-hint">点击查看分段</span>
-                      </span>
-                    </div>
-                    <div class="kb-doc-actions" @click.stop>
-                      <button
-                        v-if="doc.status === 'failed'"
-                        class="kb-btn-text"
-                        @click="handleKbRetry(doc.id)"
-                      >
-                        重试
-                      </button>
-                      <button class="kb-btn-text danger" @click="handleKbDeleteDoc(doc.id)">删除</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <KnowledgeBasePanel
+            v-if="managementPanel === 'knowledge-base'"
+            @show-create-dialog="showKbCreateDialog = true"
+            @show-edit-dialog="showKbEditDialog = true"
+            @close="managementPanel = null"
+            @view-chunks="viewKbChunks"
+            @retry-doc="handleKbRetry"
+            @delete-doc="handleKbDeleteDoc"
+          />
 
           <!-- 数据抓取管理面板 -->
-          <div v-else-if="managementPanel === 'fetchers'" class="management-panel fetchers-panel">
-            <div class="panel-header">
-              <h3>数据抓取管理</h3>
-              <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
-            </div>
-
-            <div class="fetchers-content">
-              <!-- 系统状态 -->
-              <div class="fetchers-status-card">
-                <h4>系统状态</h4>
-                <div class="status-grid" v-if="fetcherSystemStatus">
-                  <div class="status-item">
-                    <span class="label">调度器:</span>
-                    <span :class="['status-value', fetcherSystemStatus.fetchers?.scheduler_running ? 'running' : 'stopped']">
-                      {{ fetcherSystemStatus.fetchers?.scheduler_running ? '运行中' : '已停止' }}
-                    </span>
-                  </div>
-                  <div class="status-item">
-                    <span class="label">数据库:</span>
-                    <span :class="['status-value', fetcherSystemStatus.database?.enabled ? 'running' : 'stopped']">
-                      {{ fetcherSystemStatus.database?.enabled ? '已连接' : '未连接' }}
-                    </span>
-                  </div>
-                  <div class="status-item">
-                    <span class="label">Fetchers:</span>
-                    <span class="status-value">{{ Object.keys(fetcherSystemStatus.fetchers?.fetchers || {}).length }} 个</span>
-                  </div>
-                  <div class="status-item">
-                    <span class="label">LLM工具:</span>
-                    <span class="status-value">{{ fetcherSystemStatus.llm_tools?.count || 0 }} 个</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ERA5 历史数据补采 -->
-              <div class="era5-card">
-                <h4>ERA5 历史数据补采</h4>
-                <p class="era5-desc">手动补采指定日期的 ERA5 气象数据（广东省全境 825 个网格点）</p>
-
-                <div class="era5-controls">
-                  <div class="date-input-group">
-                    <label>选择日期：</label>
-                    <input
-                      type="date"
-                      v-model="era5HistoricalDate"
-                      :max="todayStr"
-                      class="date-input"
-                    />
-                  </div>
-                  <button
-                    @click="fetchEra5Historical"
-                    :disabled="!era5HistoricalDate || fetcherOperating"
-                    class="panel-btn primary"
-                  >
-                    开始补采
-                  </button>
-                </div>
-
-                <!-- 补采结果 -->
-                <div v-if="era5FetchResult" :class="['fetch-result', era5FetchResult.success ? 'success' : 'warning']">
-                  <div class="result-header">
-                    <span class="result-icon">{{ era5FetchResult.success ? '✓' : '!' }}</span>
-                    <span class="result-title">{{ era5FetchResult.message }}</span>
-                  </div>
-                  <div class="result-details">
-                    <div class="result-row">
-                      <span class="label">日期：</span>
-                      <span class="value">{{ era5FetchResult.date }}</span>
-                    </div>
-                    <div class="result-row">
-                      <span class="label">网格点数：</span>
-                      <span class="value">{{ era5FetchResult.grid_count }}</span>
-                    </div>
-                    <div class="result-row">
-                      <span class="label">成功：</span>
-                      <span class="value success-text">{{ era5FetchResult.success_count }}</span>
-                    </div>
-                    <div class="result-row">
-                      <span class="label">失败：</span>
-                      <span :class="['value', era5FetchResult.failed_count > 0 ? 'error-text' : '']">
-                        {{ era5FetchResult.failed_count }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Fetchers 列表 -->
-              <div class="fetchers-list-section">
-                <div class="section-header">
-                  <h4>数据获取器列表</h4>
-                  <button @click="refreshFetcherStatus" :disabled="fetcherLoading" class="panel-btn small">
-                    {{ fetcherLoading ? '刷新中...' : '刷新' }}
-                  </button>
-                </div>
-
-                <div v-if="fetcherLoading" class="fetcher-loading">
-                  <div class="spinner"></div>
-                  <p>加载中...</p>
-                </div>
-
-                <div v-else-if="fetcherError" class="fetcher-error">
-                  <p>错误: {{ fetcherError }}</p>
-                  <button @click="refreshFetcherStatus" class="panel-btn small">重试</button>
-                </div>
-
-                <div v-else class="fetcher-cards">
-                  <div
-                    v-for="(fetcher, name) in fetcherSystemStatus?.fetchers?.fetchers || {}"
-                    :key="name"
-                    class="fetcher-card"
-                  >
-                    <div class="fetcher-card-header">
-                      <h5>{{ fetcher.name }}</h5>
-                      <span :class="['status-badge', getFetcherStatusClass(fetcher.status)]">
-                        {{ getFetcherStatusText(fetcher.status) }}
-                      </span>
-                    </div>
-
-                    <div class="fetcher-card-info">
-                      <div class="info-row">
-                        <span class="label">描述:</span>
-                        <span class="value">{{ fetcher.description }}</span>
-                      </div>
-                      <div class="info-row">
-                        <span class="label">周期:</span>
-                        <code class="schedule">{{ fetcher.schedule }}</code>
-                      </div>
-                      <div class="info-row">
-                        <span class="label">版本:</span>
-                        <span class="value">{{ fetcher.version }}</span>
-                      </div>
-                    </div>
-
-                    <div class="fetcher-card-actions">
-                      <button
-                        @click="triggerFetcher(name)"
-                        :disabled="fetcherOperating"
-                        class="panel-btn small primary"
-                      >
-                        触发
-                      </button>
-                      <button
-                        v-if="fetcher.enabled"
-                        @click="pauseFetcher(name)"
-                        :disabled="fetcherOperating"
-                        class="panel-btn small warning"
-                      >
-                        暂停
-                      </button>
-                      <button
-                        v-else
-                        @click="resumeFetcher(name)"
-                        :disabled="fetcherOperating"
-                        class="panel-btn small success"
-                      >
-                        恢复
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <FetchersPanel
+            v-else-if="managementPanel === 'fetchers'"
+            :fetcher-system-status="fetcherSystemStatus"
+            :fetcher-loading="fetcherLoading"
+            :fetcher-error="fetcherError"
+            :fetcher-operating="fetcherOperating"
+            :era5-fetch-result="era5FetchResult"
+            @close="managementPanel = null"
+            @fetch-era5="fetchEra5Historical"
+            @refresh-status="refreshFetcherStatus"
+            @trigger-fetcher="triggerFetcher"
+            @pause-fetcher="pauseFetcher"
+            @resume-fetcher="resumeFetcher"
+          />
 
           <!-- 定时任务管理面板 -->
-          <div v-else-if="managementPanel === 'scheduled-tasks'" class="management-panel scheduled-tasks-panel">
-            <div class="panel-header">
-              <h3>定时任务管理</h3>
-              <button class="panel-btn small" @click="refreshScheduledTasks" :disabled="scheduledTasksRefreshing">
-                {{ scheduledTasksRefreshing ? '刷新中...' : '刷新' }}
-              </button>
-              <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
-            </div>
-
-            <div class="scheduled-tasks-content">
-              <!-- 统计信息 -->
-              <div class="scheduled-stats-card">
-                <div class="scheduled-stat-item">
-                  <div class="scheduled-stat-value">{{ scheduledTasksStore.stats.total }}</div>
-                  <div class="scheduled-stat-label">总任务</div>
-                </div>
-                <div class="scheduled-stat-item">
-                  <div class="scheduled-stat-value">{{ scheduledTasksStore.stats.running }}</div>
-                  <div class="scheduled-stat-label">运行中</div>
-                </div>
-                <div class="scheduled-stat-item">
-                  <div class="scheduled-stat-value">{{ scheduledTasksStore.stats.successRate }}%</div>
-                  <div class="scheduled-stat-label">成功率</div>
-                </div>
-              </div>
-
-              <!-- 任务列表 -->
-              <div class="scheduled-tasks-list">
-                <div v-if="scheduledTasksStore.tasks.length === 0" class="scheduled-empty-state">
-                  <p>暂无定时任务</p>
-                  <p class="scheduled-hint">在对话中说"创建定时任务"即可快速创建</p>
-                </div>
-
-                <div
-                  v-for="task in scheduledTasksStore.tasks"
-                  :key="task.task_id"
-                  class="scheduled-task-card"
-                >
-                  <!-- 任务头部 -->
-                  <div class="scheduled-task-header">
-                    <div class="scheduled-task-title">
-                      <span class="scheduled-task-name">{{ task.name }}</span>
-                      <span :class="['scheduled-task-tag', getScheduledTaskTagClass(task.schedule_type)]">
-                        {{ getScheduledTaskLabel(task.schedule_type) }}
-                      </span>
-                    </div>
-
-                    <!-- 快速开关 -->
-                    <label class="scheduled-switch">
-                      <input
-                        type="checkbox"
-                        :checked="task.enabled"
-                        @change="handleScheduledTaskToggle(task)"
-                        :disabled="task.toggling"
-                      />
-                      <span class="scheduled-slider"></span>
-                    </label>
-                  </div>
-
-                  <!-- 任务描述 -->
-                  <div class="scheduled-task-description">
-                    {{ task.description }}
-                  </div>
-
-                  <!-- 任务元信息 -->
-                  <div class="scheduled-task-meta">
-                    <span class="scheduled-meta-item">⏰ {{ formatScheduledNextRun(task.next_run_at) }}</span>
-                    <span class="scheduled-meta-item">📋 {{ task.steps?.length || 0 }} 个步骤</span>
-                    <span class="scheduled-meta-item">✅ {{ task.success_runs || 0 }}/{{ task.total_runs || 0 }}</span>
-                  </div>
-
-                  <!-- 标签 -->
-                  <div class="scheduled-task-tags" v-if="task.tags && task.tags.length > 0">
-                    <span v-for="tag in task.tags" :key="tag" class="scheduled-tag">
-                      {{ tag }}
-                    </span>
-                  </div>
-
-                  <!-- 操作按钮 -->
-                  <div class="scheduled-task-actions">
-                    <button
-                      class="scheduled-btn scheduled-btn-execute"
-                      @click="executeScheduledTask(task)"
-                      :disabled="task.executing"
-                      title="立即执行此任务"
-                    >
-                      {{ task.executing ? '执行中...' : '▶️ 立即执行' }}
-                    </button>
-                    <button class="scheduled-btn scheduled-btn-secondary" @click="editScheduledTask(task)">
-                      编辑
-                    </button>
-                    <button class="scheduled-btn scheduled-btn-danger" @click="deleteScheduledTask(task)">
-                      删除
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ScheduledTasksPanel
+            v-else-if="managementPanel === 'scheduled-tasks'"
+            :tasks="scheduledTasksStore.tasks"
+            :stats="scheduledTasksStore.stats"
+            :scheduled-tasks-refreshing="scheduledTasksRefreshing"
+            @close="managementPanel = null"
+            @refresh-tasks="refreshScheduledTasks"
+            @toggle-task="handleScheduledTaskToggle"
+            @execute-task="executeScheduledTask"
+            @edit-task="editScheduledTask"
+            @delete-task="deleteScheduledTask"
+          />
 
           <!-- 会话历史管理面板 -->
-          <div v-else-if="managementPanel === 'session-history'" class="management-panel session-history-panel">
-            <div class="panel-header">
-              <h3>会话历史</h3>
-              <button class="panel-btn small" @click="refreshSessionHistory" :disabled="sessionHistoryLoading">
-                {{ sessionHistoryLoading ? '刷新中...' : '刷新' }}
-              </button>
-              <button class="panel-btn small" @click="handleSessionCleanup">清理过期</button>
-              <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
-            </div>
-
-            <div class="session-history-content">
-              <!-- 过滤器 -->
-              <div class="session-filters">
-                <button
-                  v-for="filter in ['all', 'active', 'completed', 'failed', 'archived']"
-                  :key="filter"
-                  class="session-filter-btn"
-                  :class="{ active: sessionHistoryFilter === filter }"
-                  @click="sessionHistoryFilter = filter"
-                >
-                  <span class="filter-icon">{{ getSessionHistoryFilterIcon(filter) }}</span>
-                  <span class="filter-label">{{ getSessionHistoryFilterLabel(filter) }}</span>
-                  <span v-if="getSessionHistoryFilterCount(filter) > 0" class="filter-count">
-                    {{ getSessionHistoryFilterCount(filter) }}
-                  </span>
-                </button>
-              </div>
-
-              <!-- 批量操作 -->
-              <div v-if="selectedSessionIds.length > 0" class="session-batch-actions">
-                <span class="batch-selected-count">已选择 {{ selectedSessionIds.length }} 个会话</span>
-                <button class="panel-btn small danger" @click="handleBatchDeleteSessions">批量删除</button>
-                <button class="panel-btn small" @click="selectedSessionIds = []">取消选择</button>
-              </div>
-
-              <!-- 统计信息 -->
-              <div v-if="sessionHistoryStats" class="session-stats">
-                <div class="session-stat-item">
-                  <span class="session-stat-icon">📊</span>
-                  <div class="session-stat-info">
-                    <span class="session-stat-value">{{ sessionHistoryStats.total }}</span>
-                    <span class="session-stat-label">总会话数</span>
-                  </div>
-                </div>
-                <div class="session-stat-item">
-                  <span class="session-stat-icon">💾</span>
-                  <div class="session-stat-info">
-                    <span class="session-stat-value">{{ sessionHistoryStats.total_data_count }}</span>
-                    <span class="session-stat-label">数据项</span>
-                  </div>
-                </div>
-                <div class="session-stat-item">
-                  <span class="session-stat-icon">📈</span>
-                  <div class="session-stat-info">
-                    <span class="session-stat-value">{{ sessionHistoryStats.total_visual_count }}</span>
-                    <span class="session-stat-label">可视化</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 会话列表 -->
-              <div class="session-list">
-                <div v-if="sessionHistoryLoading" class="session-loading">
-                  <span class="session-spinner">⏳</span>
-                  <p>加载会话列表...</p>
-                </div>
-
-                <div v-else-if="getFilteredSessions().length === 0" class="session-empty">
-                  <span class="session-empty-icon">📭</span>
-                  <p>暂无{{ sessionHistoryFilter === 'all' ? '' : getSessionHistoryFilterLabel(sessionHistoryFilter) }}会话</p>
-                </div>
-
-                <div v-else>
-                  <div
-                    v-for="session in getFilteredSessions()"
-                    :key="session.session_id"
-                    class="session-item"
-                    :class="[getSessionHistoryStateClass(session.state), { 'session-expanded': session.isExpanded }]"
-                  >
-                    <!-- 会话头部 -->
-                    <div class="session-header" @click="toggleSessionExpand(session)">
-                      <div class="session-header-left">
-                        <input
-                          type="checkbox"
-                          :checked="selectedSessionIds.includes(session.session_id)"
-                          @click.stop="toggleSessionSelection(session.session_id)"
-                          class="session-checkbox"
-                        />
-                        <span class="session-state-icon">{{ getSessionHistoryStateIcon(session.state) }}</span>
-                        <div class="session-info">
-                          <div class="session-query">{{ getTruncatedQuery(session.query) }}</div>
-                          <div class="session-meta">
-                            <span class="session-id">{{ getShortSessionId(session.session_id) }}</span>
-                            <span class="session-time">{{ formatSessionTime(session.updated_at) }}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div class="session-header-right">
-                        <span class="session-expand-icon">{{ session.isExpanded ? '▲' : '▼' }}</span>
-                      </div>
-                    </div>
-
-                    <!-- 展开的详情 -->
-                    <div v-if="session.isExpanded" class="session-details">
-                      <div class="session-detail-row">
-                        <span class="session-detail-label">创建时间:</span>
-                        <span class="session-detail-value">{{ formatSessionFullTime(session.created_at) }}</span>
-                      </div>
-                      <div class="session-detail-row">
-                        <span class="session-detail-label">更新时间:</span>
-                        <span class="session-detail-value">{{ formatSessionFullTime(session.updated_at) }}</span>
-                      </div>
-
-                      <div class="session-stats">
-                        <div class="session-stat-box">
-                          <span class="session-stat-label-small">数据</span>
-                          <span class="session-stat-value-small">{{ session.data_count }}</span>
-                        </div>
-                        <div class="session-stat-box">
-                          <span class="session-stat-label-small">图表</span>
-                          <span class="session-stat-value-small">{{ session.visual_count }}</span>
-                        </div>
-                      </div>
-
-                      <div class="session-actions">
-                        <button
-                          v-if="session.state !== 'archived'"
-                          class="session-btn session-btn-primary"
-                          @click.stop="handleSessionRestore(session.session_id)"
-                        >
-                          🔄 恢复
-                        </button>
-                        <button
-                          v-if="session.state !== 'archived'"
-                          class="session-btn session-btn-secondary"
-                          @click.stop="handleSessionArchive(session.session_id)"
-                        >
-                          📦 归档
-                        </button>
-                        <button
-                          class="session-btn session-btn-secondary"
-                          @click.stop="handleSessionExport(session.session_id)"
-                        >
-                          📥 导出
-                        </button>
-                        <button
-                          class="session-btn session-btn-danger"
-                          @click.stop="handleSessionDelete(session.session_id)"
-                        >
-                          🗑️ 删除
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <SessionHistoryPanel
+            v-else-if="managementPanel === 'session-history'"
+            :sessions="getFilteredSessions()"
+            :session-history-stats="sessionHistoryStats"
+            :session-history-loading="sessionHistoryLoading"
+            :session-history-filter="sessionHistoryFilter"
+            :selected-session-ids="selectedSessionIds"
+            @close="managementPanel = null"
+            @refresh-sessions="refreshSessionHistory"
+            @cleanup-sessions="handleSessionCleanup"
+            @set-filter="sessionHistoryFilter = $event"
+            @batch-delete="handleBatchDeleteSessions"
+            @clear-selection="selectedSessionIds = []"
+            @toggle-expand="toggleSessionExpand"
+            @toggle-selection="toggleSessionSelection"
+            @restore-session="handleSessionRestore"
+            @archive-session="handleSessionArchive"
+            @export-session="handleSessionExport"
+            @delete-session="handleSessionDelete"
+          />
 
           <!-- 社交平台管理面板 -->
-          <div v-else-if="managementPanel === 'social-platform'" class="management-panel social-platform-panel">
-            <div class="panel-header">
-              <h3>社交平台管理</h3>
-              <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
-            </div>
-            <div class="panel-embedded-content">
-              <SocialAccountsView />
-            </div>
-          </div>
+          <SocialPlatformPanel
+            v-else-if="managementPanel === 'social-platform'"
+            @close="managementPanel = null"
+          />
 
           <!-- 工具管理面板 -->
-          <div v-else-if="managementPanel === 'tools-management'" class="management-panel tools-management-panel">
-            <div class="panel-header">
-              <h3>工具/技能管理</h3>
-              <button class="panel-btn close-btn" @click="managementPanel = null">关闭</button>
-            </div>
-            <div class="panel-embedded-content">
-              <ToolsManagementView />
-            </div>
-          </div>
+          <ToolsManagementPanel
+            v-else-if="managementPanel === 'tools-management'"
+            @close="managementPanel = null"
+          />
 
           <ReActMessageList
             v-if="!managementPanel"
@@ -731,8 +183,6 @@
               :selected-message-id="selectedMessageId"
               :assistant-mode="activeAssistant"
               :expert-results="currentModeExpertResults"
-              @fullscreen="openFullscreen"
-              @fullscreen-expert="handleExpertFullscreen"
             />
 
             <!-- Office文档预览面板 -->
@@ -747,14 +197,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 大屏模式 -->
-    <FullscreenDashboard
-      :visible="fullscreenMode"
-      :assistant-mode="activeAssistant"
-      :expert-results="currentModeExpertResults"
-      @close="closeFullscreen"
-    />
 
     <!-- 知识库创建对话框 -->
     <div v-if="showKbCreateDialog" class="dialog-overlay" @click.self="showKbCreateDialog = false">
@@ -905,10 +347,15 @@ import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import MeteorologyScenarioSelector from '@/components/MeteorologyScenarioSelector.vue'
-import FullscreenDashboard from '@/components/dashboard/FullscreenDashboard.vue'
 import SessionManagerModal from '@/components/SessionManagerModal.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
 import ToolsManagementView from '@/views/ToolsManagementView.vue'
+import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
+import FetchersPanel from '@/components/management/FetchersPanel.vue'
+import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
+import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
+import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
+import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import { restoreSession } from '@/api/session'
 
 const router = useRouter()
@@ -926,7 +373,6 @@ const vizWidth = ref(defaultVizWidth)
 const isDragging = ref(false)
 const layoutRef = ref(null)
 const activeAssistant = ref('general-agent')
-const fullscreenMode = ref(false)
 const vizPanelRef = ref(null)  // VisualizationPanel的引用
 const vizPanelVisible = ref(false)  // 可视化面板是否可见
 const inputBoxRef = ref(null)  // InputBox组件的引用
@@ -1261,32 +707,6 @@ const toggleVizPanel = () => {
     vizWidth.value = collapsedVizWidth
   } else {
     leftSidebarCollapsed.value = false
-  }
-}
-
-const openFullscreen = () => {
-  fullscreenMode.value = true
-}
-
-const closeFullscreen = () => {
-  fullscreenMode.value = false
-  // 清理激活标签页存储
-  localStorage.removeItem('activeExpertTab')
-}
-
-const handleExpertFullscreen = (expertType) => {
-  // 始终保持多专家模式，但设置激活标签页
-  if (!fullscreenMode.value) {
-    // 首次打开时，保持当前assistantMode，但强制进入多专家模式
-    fullscreenMode.value = true
-    // 强制激活指定专家的标签页
-    nextTick(() => {
-      // 通过event bus或全局状态设置激活的专家标签
-      // 这里使用localStorage作为临时方案
-      localStorage.setItem('activeExpertTab', expertType)
-      // 触发FullscreenDashboard更新
-      window.dispatchEvent(new CustomEvent('setActiveExpertTab', { detail: expertType }))
-    })
   }
 }
 
@@ -2085,15 +1505,18 @@ const quickLoadSession = async (session) => {
 
     // 恢复对话历史（优先从后端API，如果为空则从localStorage恢复）
     if (hasConversationHistory) {
-      // ✅ 修复：转换消息格式（role → type）
-      const convertedMessages = sessionData.conversation_history.map(msg => ({
-        id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: msg.role === 'user' ? 'user' : 'final',
-        content: msg.content,
-        timestamp: msg.timestamp,
-        streaming: false,
-        ...msg.metadata || {}
-      }))
+      // ✅ 修复：转换消息格式，同时兼容 type 和 role 字段
+      const convertedMessages = sessionData.conversation_history.map(msg => {
+        const msgType = msg.type || (msg.role === 'user' ? 'user' : 'final')
+        return {
+          id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: msgType,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          streaming: false,
+          ...msg.metadata || {}
+        }
+      })
       store.setMessages(convertedMessages)
       console.log('[会话恢复] 已从后端恢复对话历史，消息数量:', store.currentState.messages.length)
     } else {
@@ -2460,15 +1883,18 @@ const handleLoadSession = async (sessionId) => {
 
     // 恢复对话历史（优先从后端API，如果为空则从localStorage恢复）
     if (hasConversationHistory) {
-      // ✅ 修复：转换消息格式（role → type）
-      const convertedMessages = sessionData.conversation_history.map(msg => ({
-        id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: msg.role === 'user' ? 'user' : 'final',
-        content: msg.content,
-        timestamp: msg.timestamp,
-        streaming: false,
-        ...msg.metadata || {}
-      }))
+      // ✅ 修复：转换消息格式，同时兼容 type 和 role 字段
+      const convertedMessages = sessionData.conversation_history.map(msg => {
+        const msgType = msg.type || (msg.role === 'user' ? 'user' : 'final')
+        return {
+          id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: msgType,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          streaming: false,
+          ...msg.metadata || {}
+        }
+      })
       store.setMessages(convertedMessages)
       console.log('[快速加载会话] 已从后端恢复对话历史，消息数量:', store.currentState.messages.length)
     } else {
@@ -2858,20 +2284,41 @@ const handleSessionRestore = async (sessionId) => {
       const conversationHistory = sessionData.conversation_history
       const convertedHistory = conversationHistory.map((msg, index) => {
       console.log(`[会话恢复] 转换消息 ${index}:`, {
+        role: msg.role,
         type: msg.type,
+        hasId: !!msg.id,
+        id: msg.id,
         hasContent: !!msg.content,
         hasData: !!msg.data,
         dataKeys: msg.data ? Object.keys(msg.data) : []
       })
 
+      // 转换旧格式：从 data 中提取 content
+      const converted = { ...msg }
+
+      // 【修复】确保所有消息都有唯一的 id 字段（用于折叠逻辑）
+      if (!msg.id) {
+        converted.id = `hist-${Date.now()}-${index}`
+        console.log(`[会话恢复] 消息 ${index} 缺少id，生成新id:`, converted.id)
+      }
+
+      // 【修复】映射 role 字段到 type 字段（兼容后端格式）
+      if (msg.role && !msg.type) {
+        if (msg.role === 'user') {
+          converted.type = 'user'
+        } else if (msg.role === 'assistant') {
+          converted.type = 'final'
+        } else {
+          converted.type = msg.role
+        }
+        console.log(`[会话恢复] 消息 ${index} role->type 映射: ${msg.role} -> ${converted.type}`)
+      }
+
       // 如果已经有 content 字段，直接返回
       if (msg.content) {
         console.log(`[会话恢复] 消息 ${index} 已有content，直接返回`)
-        return msg
+        return converted
       }
-
-      // 转换旧格式：从 data 中提取 content
-      const converted = { ...msg }
 
       if (msg.type === 'thought' && msg.data?.thought) {
         converted.content = msg.data.thought
@@ -2885,8 +2332,14 @@ const handleSessionRestore = async (sessionId) => {
         converted.content = obs.summary || '获得结果'
         console.log(`[会话恢复] 消息 ${index} 转换observation:`, converted.content.substring(0, 50))
       } else if (msg.type === 'user') {
-        // 用户消息可能直接在 data 中
-        converted.content = msg.data?.content || msg.data || ''
+        // 【修复】用户消息转换逻辑：优先使用 msg.content（已存在），然后 msg.data.content，最后 msg.data（如果是字符串）
+        if (typeof msg.data === 'string') {
+          converted.content = msg.data
+        } else if (msg.data?.content && typeof msg.data.content === 'string') {
+          converted.content = msg.data.content
+        } else {
+          converted.content = '(用户消息)'
+        }
         console.log(`[会话恢复] 消息 ${index} 转换user:`, converted.content)
       } else if (msg.type === 'final') {
         // 最终答案
