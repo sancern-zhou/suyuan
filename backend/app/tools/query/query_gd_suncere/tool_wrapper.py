@@ -734,12 +734,15 @@ class QueryStandardComparisonTool(LLMTool):
 - end_date: 结束日期 (YYYY-MM-DD)
 - enable_sand_deduction: 是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）
 
-【返回数据】
-统计摘要包含：
-- 旧标准统计（从接口）：compositeIndex, overDays, overRate, rank, validDays, pM2_5_Rank
-- 新标准统计（计算）：新综合指数、新超标天数、新达标率
-- 对比数据：综合指数变化、超标天数变化
-- 统计浓度值：各污染物平均浓度
+【返回数据说明】
+- result字段：⭐ 新旧标准对比结果
+  - **旧标准统计**（HJ 633-2011）：compositeIndex（综合指数）, overDays（超标天数）, overRate（超标率%）, rank（排名）, validDays（有效天数）, pM2_5_Rank（PM2.5排名）
+  - **新标准统计**（HJ 633-2024）：composite_index（新综合指数）, exceed_days（新超标天数）, exceed_rate（新超标率%）, compliance_rate（新达标率%）
+  - **对比数据**：综合指数变化、超标天数变化、达标率变化
+  - **统计浓度值**：SO2, NO2, PM10, CO, PM2_5, NO, NOx, O3_8h 平均浓度
+  - ⚠️ 重要：result 字段包含完整的对比结果，**直接用于报告生成和分析**
+- data_id字段：完整日报数据（包含新旧标准计算结果）
+  - ⚠️ 重要：data_id 只包含每日监测数据（timestamp、AQI、measurements 等），**不包含**统计汇总指标
             """.strip(),
             "parameters": {
                 "type": "object",
@@ -1126,8 +1129,18 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
 - 超标判断：基于单项质量指数 > 1
 
 【返回数据说明】
-- result字段：统计汇总结果（综合指数、超标天数、首要污染物比例等）
+- result字段：⭐ 统计汇总结果（综合指数、超标天数、首要污染物比例等）
+  - **综合指标**：composite_index（综合指数）, exceed_days（超标天数）, valid_days（有效天数）, exceed_rate（超标率%）, compliance_rate（达标率%）, total_days（总天数）
+  - **六参数统计**：SO2, SO2_P98, NO2, NO2_P98, PM10, PM10_P95, PM2_5, PM2_5_P95, CO_P95, O3_8h_P90
+  - **加权单项质量指数**：single_indexes.SO2/NO2/PM10/CO/PM2_5/O3_8h
+  - **首要污染物统计**：primary_pollutant_days（各污染物作为首要污染物的天数）, primary_pollutant_ratio（首要污染物比例%）, total_primary_days（总首要污染物天数）, PM2_5_primary_dates（PM2.5作为首要污染物的日期列表）
+  - **超标统计**：exceed_days_by_pollutant（各污染物超标天数）, exceed_rate_by_pollutant（各污染物超标率%）, primary_pollutant_exceed_days（首要污染物超标天，既是首要污染物又超标的天数）
+  - 单城市查询：直接返回城市统计数据
+  - 多城市查询：返回各城市统计数据 + province_wide（全省汇总统计）
+  - ⚠️ 重要：result 字段包含完整的统计汇总结果，**直接用于报告生成和分析**
 - data_id字段：完整日报数据（基于HJ 633-2011旧标准计算）
+  - ⚠️ 重要：data_id 只包含每日监测数据（timestamp、AQI、measurements 等），**不包含**统计汇总指标
+  - ❌ 不要从 data_id 读取 exceed_days_by_pollutant、primary_pollutant_exceed_days 等统计字段（这些字段只在 result 中）
 
 **重要**：data_id中的日报数据已用旧标准计算结果覆盖原始字段，Agent可直接使用：
 - AQI：旧标准空气质量指数（覆盖原始值）
