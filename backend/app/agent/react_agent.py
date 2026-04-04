@@ -351,10 +351,10 @@ class ReActAgent:
                     try:
                         from app.agent.session import get_session_manager
                         session_manager = get_session_manager()
-                        session = session_manager.load_session(actual_session_id)
+                        session = await session_manager.load_session(actual_session_id)
                         if session:
                             session.office_documents = office_docs
-                            session_manager.save_session(session)
+                            await session_manager.save_session(session)
                             logger.info("office_documents_synced_to_session",
                                        session_id=actual_session_id,
                                        count=len(office_docs))
@@ -612,7 +612,7 @@ class ReActAgent:
                 try:
                     from app.agent.session import get_session_manager
                     session_manager = get_session_manager()
-                    saved_session = session_manager.load_session(session_id)
+                    saved_session = await session_manager.load_session(session_id)
 
                     if saved_session and saved_session.conversation_history:
                         logger.info(

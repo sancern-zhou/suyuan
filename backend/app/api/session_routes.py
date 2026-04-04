@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 import structlog
 
-from app.agent.session import SessionManager, get_session_manager, SessionState
+from app.agent.session import get_session_manager, SessionState
 
 logger = structlog.get_logger()
 
@@ -44,7 +44,7 @@ async def list_sessions(
                 detail=f"Invalid state: {state}. Must be one of: active, paused, completed, failed, archived"
             )
 
-    sessions = session_manager.list_sessions(state=state_filter, limit=limit)
+    sessions = await session_manager.list_sessions(state=state_filter, limit=limit)
 
     return {
         "sessions": [s.model_dump(mode='json') for s in sessions],
@@ -61,7 +61,7 @@ async def get_session_stats():
         统计信息
     """
     session_manager = get_session_manager()
-    stats = session_manager.get_session_stats()
+    stats = await session_manager.get_session_stats()
 
     return stats
 
@@ -75,7 +75,7 @@ async def get_active_sessions():
         活跃会话列表
     """
     session_manager = get_session_manager()
-    sessions = session_manager.get_active_sessions()
+    sessions = await session_manager.get_active_sessions()
 
     return {
         "sessions": [s.model_dump(mode='json') for s in sessions],
@@ -95,7 +95,7 @@ async def get_session(session_id: str):
         会话详情
     """
     session_manager = get_session_manager()
-    session = session_manager.get_session(session_id)
+    session = await session_manager.get_session(session_id)
 
     if not session:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
@@ -115,12 +115,12 @@ async def save_session(session_id: str):
         保存结果
     """
     session_manager = get_session_manager()
-    session = session_manager.get_session(session_id)
+    session = await session_manager.get_session(session_id)
 
     if not session:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
-    success = session_manager.save_session(session)
+    success = await session_manager.save_session(session)
 
     if not success:
         raise HTTPException(status_code=500, detail=f"Failed to save session: {session_id}")
@@ -128,43 +128,94 @@ async def save_session(session_id: str):
     return {"message": f"Session {session_id} saved successfully"}
 
 
-@router.post("/{session_id}/restore")
-async def restore_session(session_id: str):
+@router.get("/{session_id}/messages")
+async def get_session_messages(
+    session_id: str,
+    before: Optional[int] = None,
+    limit: int = 30
+):
     """
-    恢复会话
+    分页获取会话消息
 
     Args:
         session_id: 会话ID
+        before: 游标，加载 sequence_number < before 的消息（不传则返回最新消息）
+        limit: 每次加载数量，默认30
 
     Returns:
-        完整会话数据（包含conversation_history和office_documents）
+        消息列表、是否还有更多、总消息数
     """
-    logger.info("[会话恢复] 开始恢复会话", session_id=session_id)
+    from app.db.session_repository import get_session_repository
+
+    repo = get_session_repository()
+
+    # 先验证会话是否存在
+    session = await repo.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    result = await repo.get_messages_before(
+        session_id=session_id,
+        before_sequence=before,
+        limit=limit
+    )
+
+    return result
+
+
+@router.post("/{session_id}/restore")
+async def restore_session(session_id: str, message_limit: int = 5):
+    """
+    恢复会话（分段加载：首次只返回最新N条消息）
+
+    Args:
+        session_id: 会话ID
+        message_limit: 首次加载的最新消息数量，默认5
+
+    Returns:
+        会话元数据 + 最新N条消息 + 分页状态
+    """
+    logger.info("[会话恢复] 开始恢复会话", session_id=session_id, message_limit=message_limit)
 
     session_manager = get_session_manager()
-    session = session_manager.load_session(session_id)
+    session = await session_manager.load_session(session_id)
 
     if not session:
         logger.error("[会话恢复] 会话未找到", session_id=session_id)
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
+    # 使用 session 的 conversation_history 做分页
+    all_messages = session.conversation_history or []
+    total_count = len(all_messages)
+
+    # 取最新 N 条
+    latest_messages = all_messages[-message_limit:] if total_count > message_limit else all_messages
+    has_more = total_count > message_limit
+
+    # 计算 oldest_sequence（基于列表索引）
+    oldest_sequence = None
+    if latest_messages:
+        oldest_idx = total_count - len(latest_messages)
+        oldest_sequence = oldest_idx
+
     logger.info("[会话恢复] 会话加载成功",
                 session_id=session_id,
-                conversation_history_count=len(session.conversation_history) if session.conversation_history else 0,
-                data_ids_count=len(session.data_ids) if session.data_ids else 0,
-                visual_ids_count=len(session.visual_ids) if session.visual_ids else 0,
+                total_messages=total_count,
+                loaded_messages=len(latest_messages),
+                has_more=has_more,
                 state=session.state.value if session.state else None)
 
-    # 打印前3条消息示例
-    if session.conversation_history:
-        logger.info("[会话恢复] 前3条消息示例",
-                    messages=session.conversation_history[:3])
-
-    # 返回完整会话数据（包含conversation_history）
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
+    # 用分页结果替换 conversation_history
+    session_data["conversation_history"] = latest_messages
 
-    # 【新增】从react_agent的_session_store中获取office_documents
+    # 分页状态
+    session_data["has_more_messages"] = has_more
+    session_data["total_message_count"] = total_count
+    session_data["oldest_sequence"] = oldest_sequence
+
+    # 从react_agent的_session_store中获取office_documents
     try:
         from app.routers.agent import multi_expert_agent_instance
         if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:
@@ -180,16 +231,9 @@ async def restore_session(session_id: str):
                       session_id=session_id,
                       error=str(e))
 
-    logger.info("[会话恢复] 返回完整会话数据",
-                session_keys=list(session_data.keys()),
-                has_conversation_history=bool(session_data.get('conversation_history')),
-                conversation_history_length=len(session_data.get('conversation_history', [])),
-                has_office_documents=bool(session_data.get('office_documents')),
-                office_documents_count=len(session_data.get('office_documents', [])))
-
     return {
         "message": f"Session {session_id} restored successfully",
-        "session": session_data,  # 返回完整数据，不是摘要
+        "session": session_data,
         "can_continue": session.state in [SessionState.ACTIVE, SessionState.PAUSED]
     }
 
@@ -206,7 +250,7 @@ async def archive_session(session_id: str):
         归档结果
     """
     session_manager = get_session_manager()
-    success = session_manager.archive_session(session_id)
+    success = await session_manager.archive_session(session_id)
 
     if not success:
         raise HTTPException(
@@ -229,7 +273,7 @@ async def delete_session(session_id: str):
         删除结果
     """
     session_manager = get_session_manager()
-    success = session_manager.delete_session(session_id)
+    success = await session_manager.delete_session(session_id)
 
     if not success:
         raise HTTPException(
@@ -253,7 +297,7 @@ async def cleanup_expired_sessions():
         清理结果
     """
     session_manager = get_session_manager()
-    deleted_count = session_manager.cleanup_expired_sessions()
+    deleted_count = await session_manager.cleanup_expired_sessions()
 
     return {
         "message": f"Cleaned up {deleted_count} expired sessions",
@@ -279,7 +323,7 @@ async def export_session(session_id: str, output_path: Optional[str] = None):
     if not output_path:
         output_path = f"backend_data_registry/exports/{session_id}.json"
 
-    success = session_manager.export_session(session_id, output_path)
+    success = await session_manager.export_session(session_id, output_path)
 
     if not success:
         raise HTTPException(
@@ -305,7 +349,7 @@ async def import_session(input_path: str):
         导入的会话信息
     """
     session_manager = get_session_manager()
-    session = session_manager.import_session(input_path)
+    session = await session_manager.import_session(input_path)
 
     if not session:
         raise HTTPException(
@@ -314,6 +358,6 @@ async def import_session(input_path: str):
         )
 
     return {
-        "message": f"Session imported successfully",
+        "message": "Session imported successfully",
         "session": session.to_summary().model_dump(mode='json')
     }

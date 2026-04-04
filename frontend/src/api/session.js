@@ -69,6 +69,16 @@ export async function restoreSession(sessionId) {
 }
 
 /**
+ * 分页加载会话消息
+ */
+export async function getSessionMessages(sessionId, beforeSequence, limit = 30) {
+  const params = new URLSearchParams()
+  if (beforeSequence != null) params.set('before', beforeSequence)
+  if (limit) params.set('limit', limit)
+  return await request(`${BASE_URL}/${sessionId}/messages?${params}`)
+}
+
+/**
  * 归档会话
  */
 export async function archiveSession(sessionId) {
