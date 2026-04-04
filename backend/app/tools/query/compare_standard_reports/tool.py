@@ -470,7 +470,8 @@ class CompareStandardReportsTool(LLMTool):
                 elif current_value == 0:
                     city_comparison["change_rates"][metric] = 0.0
                 else:
-                    city_comparison["change_rates"][metric] = float('inf')
+                    # comparison_value=0 且 current_value!=0，变化率无意义，用 None 标记
+                    city_comparison["change_rates"][metric] = None
 
             comparison_result[city] = city_comparison
 
@@ -521,7 +522,8 @@ class CompareStandardReportsTool(LLMTool):
                 elif query_value == 0:
                     province_wide_comparison["change_rates"][metric] = 0.0
                 else:
-                    province_wide_comparison["change_rates"][metric] = float('inf')
+                    # comparison_value=0 且 query_value!=0，变化率无意义，用 None 标记
+                    province_wide_comparison["change_rates"][metric] = None
 
             comparison_result["province_wide"] = province_wide_comparison
 

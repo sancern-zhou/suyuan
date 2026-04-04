@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 
-from .models import Session, SessionInfo, SessionState
+from .models import Session, SessionInfo
 
 logger = structlog.get_logger()
 
@@ -84,7 +84,7 @@ class SessionManager:
 
             logger.info(
                 f"Session saved: {session.session_id} "
-                f"(state: {session.state.value}, data_count: {len(session.data_ids)})"
+                f"(data_count: {len(session.data_ids)})"
             )
 
             return True
@@ -121,7 +121,7 @@ class SessionManager:
             # 加载到内存缓存
             self.sessions[session_id] = session
 
-            logger.info(f"Session loaded: {session_id} (state: {session.state.value})")
+            logger.info(f"Session loaded: {session_id}")
 
             return session
 
@@ -173,14 +173,12 @@ class SessionManager:
 
     def list_sessions(
         self,
-        state: Optional[SessionState] = None,
         limit: Optional[int] = None
     ) -> List[SessionInfo]:
         """
         列出所有会话
 
         Args:
-            state: 过滤状态
             limit: 限制数量
 
         Returns:
@@ -194,11 +192,6 @@ class SessionManager:
                 try:
                     session_data = json.loads(file_path.read_text(encoding='utf-8'))
                     session = Session(**session_data)
-
-                    # 状态过滤
-                    if state and session.state != state:
-                        continue
-
                     sessions.append(session.to_summary())
 
                 except Exception as e:
@@ -229,8 +222,7 @@ class SessionManager:
             logger.warning(f"Session not found for archiving: {session_id}")
             return False
 
-        # 更新状态为归档
-        session.state = SessionState.ARCHIVED
+        # 更新时间戳
         session.updated_at = datetime.now()
 
         return self.save_session(session)
@@ -239,7 +231,7 @@ class SessionManager:
         """
         清理过期会话
 
-        删除超过保留天数且状态为completed/failed/archived的会话。
+        删除超过保留天数的会话。
 
         Returns:
             删除的会话数量
@@ -256,14 +248,8 @@ class SessionManager:
 
                     # 检查是否过期
                     if session.updated_at < cutoff_date:
-                        # 只删除已完成或失败的会话
-                        if session.state in [
-                            SessionState.COMPLETED,
-                            SessionState.FAILED,
-                            SessionState.ARCHIVED
-                        ]:
-                            self.delete_session(session.session_id)
-                            deleted_count += 1
+                        self.delete_session(session.session_id)
+                        deleted_count += 1
 
                 except Exception as e:
                     logger.error(f"Failed to process session file {file_path}: {e}")
@@ -275,7 +261,7 @@ class SessionManager:
 
     def get_active_sessions(self) -> List[SessionInfo]:
         """获取所有活跃会话"""
-        return self.list_sessions(state=SessionState.ACTIVE)
+        return self.list_sessions()
 
     def get_session_stats(self) -> Dict:
         """
@@ -288,21 +274,16 @@ class SessionManager:
 
         stats = {
             "total": len(all_sessions),
-            "by_state": {
-                "active": 0,
-                "paused": 0,
-                "completed": 0,
-                "failed": 0,
-                "archived": 0
-            },
             "total_data_count": 0,
-            "total_visual_count": 0
+            "total_visual_count": 0,
+            "error_count": 0
         }
 
         for session_info in all_sessions:
-            stats["by_state"][session_info.state.value] += 1
             stats["total_data_count"] += session_info.data_count
             stats["total_visual_count"] += session_info.visual_count
+            if session_info.has_error:
+                stats["error_count"] += 1
 
         return stats
 

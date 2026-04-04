@@ -130,6 +130,297 @@ end_time="2026-02-01 23:59:59"
         return result
 
 
+class QueryGDSuncereStationHourTool(LLMTool):
+    """
+    广东省站点小时数据查询工具
+
+    用于查询广东省站点级别的小时空气质量数据
+    LLM 只传城市名，工具内部自动展开为站点代码
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_gd_suncere_station_hour_new",
+            "description": """
+查询广东省站点级别小时空气质量数据（基于HJ 633-2024新标准）。
+
+【核心功能】
+- 查询广东省站点级别的小时空气质量数据
+- 支持按城市名展开（自动查询该城市下所有站点）或直接输入站点名称
+- 支持多城市查询（自动合并站点列表）
+- ⭐ 按新标准计算IAQI、AQI和首要污染物（PM2.5断点60，PM10断点120）
+- 根据查询时间自动判断数据源（三天内原始，三天前审核）
+- 浓度值修约（CO保留1位小数，其他取整）
+- 返回结果包含 station_name 字段，直观显示站点名称
+
+【与城市小时数据的区别】
+- 城市小时数据（query_gd_suncere_city_hour）：城市级别的聚合数据
+- 站点小时数据（本工具）：单个监测站点的小时数据，更精细
+
+【使用场景】
+- 站点级别的污染物浓度分析
+- 城市内不同站点对比分析
+- 精细化污染溯源（需要站点级别数据）
+- 站点数据质量检查
+
+【输入参数】
+- cities: 城市名称列表（如 ["广州", "深圳"]），会自动展开为站点（与 stations 二选一，可组合）
+- stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接查询指定站点（与 cities 二选一，可组合）
+- start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
+- end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
+
+【支持的城市和站点】
+- 广州（19站：广雅中学、市监测站、市五中、体育西、广东商学院、麓湖等）
+- 深圳（12站：洪湖、华侨城、盐田、龙岗、坪山等）
+- 珠海（3站：吉大、前山、唐家）
+- 佛山（3站：湾梁、华材职中、南海气象局）
+- 韶关（4站：韶关学院、曲江监测站、碧湖山庄、浈江十里亭）
+
+【重要】
+- cities 和 stations 至少提供一个，可同时提供（结果合并去重）
+- ⭐ 使用HJ 633-2024新标准计算IAQI和AQI
+- 返回 UDF v2.0 标准格式数据
+
+示例：
+# 按城市查询
+cities=["广州"], start_time="2026-02-01 00:00:00", end_time="2026-02-01 23:59:59"
+# 按站点查询
+stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end_time="2026-02-01 23:59:59"
+
+【返回数据】
+- data_id: 数据引用ID（UDF v2.0格式）
+- 包含站点级别的小时污染物数据
+- ⭐ 包含新标准计算的IAQI、AQI和首要污染物
+- 每条记录包含 station_name 字段（站点中文名称）
+- 可直接传递给可视化工具生成时序图
+            """.strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与 stations 二选一，可组合）"
+                    },
+                    "stations": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与 cities 二选一，可组合）"
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "开始时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    }
+                },
+                "required": ["start_time", "end_time"]
+            }
+        }
+
+        super().__init__(
+            name="query_gd_suncere_station_hour_new",
+            description="Query Guangdong station hourly air quality data (HJ 633-2024 new standard) - Suncere API",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="2.0.0",
+            requires_context=True
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        start_time: str,
+        end_time: str,
+        cities: Optional[List[str]] = None,
+        stations: Optional[List[str]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行站点小时数据查询
+
+        Args:
+            context: 执行上下文
+            start_time: 开始时间
+            end_time: 结束时间
+            cities: 城市名称列表（与 stations 二选一，可组合）
+            stations: 站点名称列表（与 cities 二选一，可组合）
+
+        Returns:
+            UDF v2.0格式的查询结果
+        """
+        from app.tools.query.query_gd_suncere import execute_query_gd_suncere_station_hour_real
+
+        logger.info(
+            "query_gd_suncere_station_hour_tool_start",
+            cities=cities,
+            stations=stations,
+            start_time=start_time,
+            end_time=end_time,
+            session_id=getattr(context, 'session_id', 'unknown')
+        )
+
+        result = execute_query_gd_suncere_station_hour_real(
+            start_time=start_time,
+            end_time=end_time,
+            context=context,
+            cities=cities,
+            stations=stations
+        )
+
+        return result
+
+
+class QueryGDSuncereStationDayTool(LLMTool):
+    """
+    广东省站点日数据查询工具
+
+    用于查询广东省站点级别的日空气质量数据
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_gd_suncere_station_day_new",
+            "description": """
+查询广东省站点级别日空气质量数据（基于HJ 633-2024新标准）。
+
+【核心功能】
+- 查询广东省站点级别的日空气质量数据
+- 支持按城市名展开（自动查询该城市下所有站点）或直接输入站点名称
+- 支持多城市查询（自动合并站点列表）
+- ⭐ 按新标准计算IAQI、AQI和首要污染物（PM2.5断点60，PM10断点120）
+- 根据查询时间自动判断数据源（三天内原始，三天前审核）
+- 浓度值修约（CO保留1位小数，其他取整）
+- 返回结果包含 name 字段（站点名称）和 cityName/districtName 字段
+
+【与城市日数据的区别】
+- 城市日数据（query_gd_suncere_city_day）：城市级别的聚合数据
+- 站点日数据（本工具）：单个监测站点的日数据，更精细
+
+【与站点小时数据的区别】
+- 站点小时数据（query_gd_suncere_station_hour）：每小时一条记录
+- 站点日数据（本工具）：每天一条记录（日均值）
+
+【使用场景】
+- 站点级别的日均污染物浓度分析
+- 城市内不同站点日数据对比
+- 长时间序列趋势分析（站点级别）
+- 站点数据质量检查（日数据）
+
+【输入参数】
+- cities: 城市名称列表（如 ["广州", "深圳"]），会自动展开为站点（与 stations 二选一，可组合）
+- stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接查询指定站点（与 cities 二选一，可组合）
+- start_date: 开始日期，格式 "YYYY-MM-DD"
+- end_date: 结束日期，格式 "YYYY-MM-DD"
+
+【支持的城市和站点】
+- 广州（19站：广雅中学、市监测站、市五中、体育西、广东商学院、麓湖等）
+- 深圳（12站：洪湖、华侨城、盐田、龙岗、坪山等）
+- 珠海（3站：吉大、前山、唐家）
+- 佛山（3站：湾梁、华材职中、南海气象局）
+- 韶关（4站：韶关学院、曲江监测站、碧湖山庄、浈江十里亭）
+
+【重要】
+- cities 和 stations 至少提供一个，可同时提供（结果合并去重）
+- ⭐ 使用HJ 633-2024新标准计算IAQI和AQI
+- 返回 UDF v2.0 标准格式数据
+- 日数据包含PM2.5、PM10、SO2、NO2、O3、CO等污染物的日均值
+- 返回数据中的 name 字段就是站点名称（LLM可从上下文理解）
+
+示例：
+# 按城市查询
+cities=["广州"], start_date="2025-03-01", end_date="2025-03-07"
+# 按站点查询
+stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="2025-03-07"
+
+【返回数据】
+- data_id: 数据引用ID（UDF v2.0格式）
+- 包含站点级别的日污染物数据
+- ⭐ 包含新标准计算的IAQI、AQI和首要污染物
+- 每条记录包含 name（站点名称）、cityName（城市）、districtName（区县）字段
+- 可直接传递给可视化工具生成趋势图
+            """.strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与 stations 二选一，可组合）"
+                    },
+                    "stations": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与 cities 二选一，可组合）"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "开始日期，格式 'YYYY-MM-DD'"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "结束日期，格式 'YYYY-MM-DD'"
+                    }
+                },
+                "required": ["start_date", "end_date"]
+            }
+        }
+
+        super().__init__(
+            name="query_gd_suncere_station_day_new",
+            description="Query Guangdong station daily air quality data (HJ 633-2024 new standard) - Suncere API",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="2.0.0",
+            requires_context=True
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        start_date: str,
+        end_date: str,
+        cities: Optional[List[str]] = None,
+        stations: Optional[List[str]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行站点日数据查询
+
+        Args:
+            context: 执行上下文
+            start_date: 开始日期
+            end_date: 结束日期
+            cities: 城市名称列表（与 stations 二选一，可组合）
+            stations: 站点名称列表（与 cities 二选一，可组合）
+
+        Returns:
+            UDF v2.0格式的查询结果
+        """
+        from app.tools.query.query_gd_suncere import execute_query_gd_suncere_station_day
+
+        logger.info(
+            "query_gd_suncere_station_day_tool_start",
+            cities=cities,
+            stations=stations,
+            start_date=start_date,
+            end_date=end_date,
+            session_id=getattr(context, 'session_id', 'unknown')
+        )
+
+        result = execute_query_gd_suncere_station_day(
+            start_date=start_date,
+            end_date=end_date,
+            context=context,
+            cities=cities,
+            stations=stations
+        )
+
+        return result
+
+
 class QueryGDSuncereRegionalComparisonTool(LLMTool):
     """
     广东省区域对比数据查询工具

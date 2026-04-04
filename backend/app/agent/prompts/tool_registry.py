@@ -58,6 +58,8 @@ EXPERT_TOOLS = {
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
     "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
+    "query_gd_suncere_station_hour_new": "查询广东省站点级别小时空气质量数据（⭐ 新标准 HJ 633-2024，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS'), cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称如['广雅中学','市监测站'])",
+    "query_gd_suncere_station_day_new": "查询广东省站点级别日空气质量数据（⭐ 新标准 HJ 633-2024，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。参数: start_date(str, 'YYYY-MM-DD'), end_date(str, 'YYYY-MM-DD'), cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称如['广雅中学','市监测站'])",
     "query_new_standard_report": "【第一优先级】查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_old_standard_report": "【第一优先级】查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_standard_comparison": "【第一优先级】新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
@@ -122,12 +124,20 @@ QUERY_TOOLS = {
     "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
     "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'working_orders'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ 中文查询注意事项：SQL Server 查询中文字符串必须使用 N 前缀，如 WHERE StationName LIKE N'%增城派潭%'（错误写法：LIKE '%增城派潭%'）。建议优先使用 StationCode（站点编码）查询。可选：limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史)、working_orders(运维工单)",
+    "query_gd_suncere_city_hour": "查询广东省城市小时空气质量数据（支持多城市并发查询）。参数: cities(list), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')",
+    "query_gd_suncere_station_hour_new": "查询广东省站点级别小时空气质量数据（⭐ 新标准 HJ 633-2024，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS'), cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称如['广雅中学','市监测站'])。cities和stations至少提供一个，可组合使用",
+    "query_gd_suncere_station_day_new": "查询广东省站点级别日空气质量数据（⭐ 新标准 HJ 633-2024，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。参数: start_date(str, 'YYYY-MM-DD'), end_date(str, 'YYYY-MM-DD'), cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称如['广雅中学','市监测站'])。cities和stations至少提供一个，可组合使用",
     "query_gd_suncere_city_day": "查询广东省城市日空气质量数据（旧标准，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2024，返回每日六参数、AQI、首要污染物）。参数: cities(list), start_date(str), end_date(str)",
+    "query_gd_suncere_regional_comparison": "查询广东省区域对比空气质量数据（目标城市与周边城市对比，用于区域传输分析）。参数: target_city(str), nearby_cities(list), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')",
+    "query_gd_suncere_report": "查询广东省综合统计报表（支持周报/月报/季报/年报/任意时间，含AQI、综合指数、污染物浓度统计）。参数: cities(list), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS'), time_type(int, 可选, 3=周报/4=月报/5=季报/7=年报/8=任意时间, 默认8), area_type(int, 可选, 0=站点/1=区县/2=城市, 默认2)",
+    "query_gd_suncere_report_compare": "查询广东省对比分析报表（两个时间段对比，支持月报和任意时间对比）。参数: cities(list), time_point(list, 当前时间范围['start', 'end']), contrast_time(list, 对比时间范围['start', 'end']), time_type(int, 可选, 4=月报/8=任意时间, 默认8), area_type(int, 可选, 0=站点/1=区县/2=城市, 默认2)",
     "query_new_standard_report": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "query_standard_comparison": "新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+    "query_station_new_standard_report": "站点级新标准统计报表查询（基于 HJ 633-2024，查询站点的综合指数、超标天数、达标率、六参数统计）。⚠️ 与城市工具的差异：不支持扣沙处理，使用station_name字段，支持城市名称自动展开为站点列表。参数: start_date(str), end_date(str), cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称), aggregate(bool, 可选, 是否计算多站点汇总, 默认false)",
+    "compare_station_standard_reports": "站点级新标准报表对比分析（对比两个时间段的站点统计数据，返回差值和变化率）。⚠️ 站点级同比环比查询必须使用此工具，禁止手动计算。参数: query_period{start_date, end_date}, comparison_period{start_date, end_date}, cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称), aggregate(bool, 可选, 是否计算多站点汇总对比, 默认false)",
 
      # === 新增：数据注册表工具 ===
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
@@ -168,6 +178,8 @@ REPORT_TOOLS = {
     "query_old_standard_report": "查询HJ 633-2011旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
     "query_standard_comparison": "查询新旧空气质量标准对比（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true)",
     "compare_standard_reports": "新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计等全部指标）。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
+    "query_station_new_standard_report": "站点级新标准统计报表查询（基于 HJ 633-2024，查询站点的综合指数、超标天数、达标率、六参数统计）。⚠️ 与城市工具的差异：不支持扣沙处理，使用station_name字段，支持城市名称自动展开为站点列表。参数: start_date(str), end_date(str), cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称), aggregate(bool, 可选, 是否计算多站点汇总, 默认false)",
+    "compare_station_standard_reports": "站点级新标准报表对比分析（对比两个时间段的站点统计数据，返回差值和变化率）。⚠️ 站点级同比环比查询必须使用此工具，禁止手动计算。参数: query_period{start_date, end_date}, comparison_period{start_date, end_date}, cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称), aggregate(bool, 可选, 是否计算多站点汇总对比, 默认false)",
 
     # 数据读取
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list)",
@@ -308,6 +320,8 @@ EXPERT_TOOL_ORDER = [
 
     # 广东省结构化查询工具
     "query_gd_suncere_city_hour",
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
     "query_gd_suncere_city_day", "query_gd_suncere_city_day_new",
     "query_new_standard_report", "query_old_standard_report",
     "query_standard_comparison", "compare_standard_reports",
@@ -370,12 +384,14 @@ QUERY_TOOL_ORDER = [
     "get_weather_forecast",
     "query_xcai_city_history",
     "execute_sql_query",  # 通用SQL执行工具
-    "query_gd_suncere_city_hour", "query_gd_suncere_city_day", "query_gd_suncere_city_day_new", "query_gd_suncere_regional_comparison",
+    "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new", "query_gd_suncere_city_day", "query_gd_suncere_city_day_new", "query_gd_suncere_regional_comparison",
     "query_gd_suncere_report", "query_gd_suncere_report_compare",
     "query_new_standard_report",  # 新标准统计报表
     "query_old_standard_report",  # 旧标准统计报表
     "query_standard_comparison",  # 新旧标准对比
     "compare_standard_reports",  # 新标准报表对比分析
+    "query_station_new_standard_report",  # 站点级新标准统计报表
+    "compare_station_standard_reports",  # 站点级新标准报表对比分析
 
     # 数据分析工具
     "aggregate_data",
@@ -416,6 +432,8 @@ REPORT_TOOL_ORDER = [
     "query_old_standard_report",  # 旧标准统计报表
     "query_standard_comparison",
     "compare_standard_reports",  # 新标准报表对比分析
+    "query_station_new_standard_report",  # 站点级新标准统计报表
+    "compare_station_standard_reports",  # 站点级新标准报表对比分析
 
     # 数据读取
     "read_data_registry",

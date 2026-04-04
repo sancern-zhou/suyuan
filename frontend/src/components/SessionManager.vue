@@ -11,24 +11,8 @@
       </button>
     </div>
 
-    <!-- 过滤和操作栏 -->
+    <!-- 操作栏 -->
     <div class="filter-bar">
-      <div class="filter-tabs">
-        <button
-          v-for="filter in filters"
-          :key="filter.value"
-          class="filter-tab"
-          :class="{ active: activeFilter === filter.value }"
-          @click="activeFilter = filter.value"
-        >
-          <span class="tab-icon">{{ filter.icon }}</span>
-          <span class="tab-label">{{ filter.label }}</span>
-          <span v-if="getFilterCount(filter.value) > 0" class="tab-count">
-            {{ getFilterCount(filter.value) }}
-          </span>
-        </button>
-      </div>
-
       <div class="actions">
         <button class="action-button" @click="refreshSessions">
           <span class="action-icon">🔄</span>
@@ -64,6 +48,13 @@
           <span class="stat-label">可视化</span>
         </div>
       </div>
+      <div class="stat-card">
+        <span class="stat-icon">❌</span>
+        <div class="stat-info">
+          <span class="stat-value">{{ stats.error_count || 0 }}</span>
+          <span class="stat-label">失败</span>
+        </div>
+      </div>
     </div>
 
     <!-- 会话列表 -->
@@ -83,11 +74,10 @@
       <!-- 会话项列表 -->
       <div v-else class="sessions-container">
         <SessionItem
-          v-for="session in filteredSessions"
+          v-for="session in sessions"
           :key="session.session_id"
           :session="session"
           @restore="handleRestore"
-          @archive="handleArchive"
           @export="handleExport"
           @delete="handleDelete"
         />
@@ -103,7 +93,6 @@ import {
   listSessions,
   getSessionStats,
   restoreSession,
-  archiveSession,
   exportSession,
   deleteSession,
   cleanupSessions
@@ -115,40 +104,9 @@ const emit = defineEmits(['close', 'restore'])
 const sessions = ref([])
 const stats = ref(null)
 const loading = ref(false)
-const activeFilter = ref('all')
-
-// 过滤器选项
-const filters = [
-  { value: 'all', label: '全部', icon: '📚' },
-  { value: 'active', label: '活跃', icon: '🔵' },
-  { value: 'completed', label: '已完成', icon: '✅' },
-  { value: 'failed', label: '失败', icon: '❌' },
-  { value: 'archived', label: '已归档', icon: '📦' }
-]
 
 // 计算属性
-const filteredSessions = computed(() => {
-  if (activeFilter.value === 'all') {
-    return sessions.value
-  }
-  return sessions.value.filter(s => s.state === activeFilter.value)
-})
-
-const emptyMessage = computed(() => {
-  if (activeFilter.value === 'all') {
-    return '暂无会话记录'
-  }
-  return `暂无${filters.find(f => f.value === activeFilter.value)?.label}会话`
-})
-
-// 方法
-const getFilterCount = (filterValue) => {
-  if (!stats.value) return 0
-  if (filterValue === 'all') {
-    return stats.value.total
-  }
-  return stats.value.by_state?.[filterValue] || 0
-}
+const emptyMessage = computed(() => '暂无会话记录')
 
 const fetchSessions = async () => {
   loading.value = true
@@ -191,21 +149,6 @@ const handleRestore = async (sessionId) => {
   }
 }
 
-const handleArchive = async (sessionId) => {
-  try {
-    await archiveSession(sessionId)
-    console.log('会话已归档:', sessionId)
-
-    // 刷新列表
-    await refreshSessions()
-
-    alert(`会话 ${sessionId.substring(0, 12)}... 已归档`)
-  } catch (error) {
-    console.error('Failed to archive session:', error)
-    alert('归档失败: ' + error.message)
-  }
-}
-
 const handleExport = async (sessionId) => {
   try {
     await exportSession(sessionId)
@@ -235,7 +178,7 @@ const handleDelete = async (sessionId) => {
 }
 
 const cleanupExpiredSessions = async () => {
-  if (!confirm('确定要清理所有过期会话吗？此操作将删除超过保留期限的已完成/失败会话。')) {
+  if (!confirm('确定要清理所有过期会话吗？此操作将删除超过保留期限的会话。')) {
     return
   }
 
@@ -315,59 +258,11 @@ onMounted(() => {
 /* 过滤栏 */
 .filter-bar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   padding: 12px 16px;
   background: #f8f9fa;
   border-bottom: 1px solid #e0e0e0;
-}
-
-.filter-tabs {
-  display: flex;
-  gap: 8px;
-  flex: 1;
-  overflow-x: auto;
-}
-
-.filter-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: none;
-  background: #fff;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 13px;
-  color: #666;
-  white-space: nowrap;
-}
-
-.filter-tab:hover {
-  background: #f0f0f0;
-}
-
-.filter-tab.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  font-weight: 500;
-}
-
-.tab-icon {
-  font-size: 14px;
-}
-
-.tab-count {
-  background: rgba(255, 255, 255, 0.3);
-  padding: 2px 6px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.filter-tab.active .tab-count {
-  background: rgba(255, 255, 255, 0.3);
 }
 
 .actions {

@@ -121,6 +121,8 @@ def build_query_prompt(available_tools: List[str]) -> str:
         "",
         "判断为复杂查询时，必须首先调用 `complex_query_planner`，禁止跳过规划直接调用查询工具。",
         "",
+        "⚠️ **重要**：`complex_query_planner` 返回的查询计划直接在 `data.plan` 字段中，**直接按照 plan_steps 执行工具调用，无需读取文件或二次规划**。",
+        "",
         "## 模式互调决策",
         "",
         "**何时调用专家Agent**（`call_sub_agent(target_mode='expert')`）：",

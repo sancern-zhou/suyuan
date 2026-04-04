@@ -24,29 +24,6 @@ from ..prompts.react_prompts import format_finish_summary_prompt
 # 简化的上下文构建器
 from ..context.simplified_context_builder import SimplifiedContextBuilder
 
-# 格式化器模块（替代硬编码的格式化逻辑）
-from .formatters import (
-    FormatterRegistry,
-    ImageFormatter,
-    FileFormatter,
-    GrepFormatter,
-    GlobFormatter,
-    ListDirectoryFormatter,
-    BrowserFormatter,
-    TodoWriteFormatter,
-    ExecutePythonFormatter,
-    WebSearchFormatter,
-    WebFetchFormatter,
-    SearchHistoryFormatter,
-    BashFormatter,
-    OfficeFormatter,
-    ReadDataRegistryFormatter,
-    ParsePDFFormatter,
-    DataQueryFormatter,
-    StatisticsFormatter,
-    DetailedResultFormatter,
-)
-
 # 守卫模块（任务完成守卫）
 from .guards import TaskCompletionGuard
 
@@ -121,10 +98,6 @@ class ReActLoop:
             tool_registry=tool_executor.tool_registry if hasattr(tool_executor, 'tool_registry') else None
         )
 
-        # ✅ 初始化格式化器注册表（替代硬编码的格式化逻辑）
-        self.formatter_registry = FormatterRegistry()
-        self._register_formatters()
-
         # ✅ 初始化任务完成守卫
         self.task_completion_guard = TaskCompletionGuard(memory_manager)
 
@@ -146,48 +119,23 @@ class ReActLoop:
             knowledge_base_ids=knowledge_base_ids  # ✅ 记录知识库ID
         )
 
-    def _register_formatters(self) -> None:
-        """注册所有格式化器到注册表"""
-        # 办公工具格式化器
-        self.formatter_registry.register(ImageFormatter)
-        self.formatter_registry.register(FileFormatter)
-        self.formatter_registry.register(GrepFormatter)
-        self.formatter_registry.register(GlobFormatter)
-        self.formatter_registry.register(ListDirectoryFormatter)
-        self.formatter_registry.register(BrowserFormatter)
-        self.formatter_registry.register(TodoWriteFormatter)
-        self.formatter_registry.register(ExecutePythonFormatter)
-        self.formatter_registry.register(WebSearchFormatter)
-        self.formatter_registry.register(WebFetchFormatter)
-        self.formatter_registry.register(SearchHistoryFormatter)
-
-        # 特殊工具格式化器
-        self.formatter_registry.register(BashFormatter)
-        self.formatter_registry.register(OfficeFormatter)
-        self.formatter_registry.register(ReadDataRegistryFormatter)
-        self.formatter_registry.register(ParsePDFFormatter)
-
-        logger.info(
-            "formatters_registered",
-            count=self.formatter_registry.get_formatter_count(),
-            formatters=self.formatter_registry.list_formatters()
-        )
-
     async def run(
         self,
         user_query: str,
         enhance_with_history: bool = True,
         initial_messages: Optional[List[Dict[str, Any]]] = None,  # ✅ 新增：历史消息注入
-        manual_mode: Optional[str] = None  # ✅ 新增：手动指定模式（"assistant" | "expert"）
+        manual_mode: Optional[str] = None,  # ✅ 新增：手动指定模式（"assistant" | "expert"）
+        original_query: Optional[str] = None  # ✅ 新增：原始查询（用于保存到历史，不包含记忆增强）
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行单步模式 ReAct 循环（V4版）
 
         Args:
-            user_query: 用户查询
+            user_query: 用户查询（可能包含记忆增强，用于LLM推理）
             enhance_with_history: 是否使用长期记忆增强
             initial_messages: 历史消息列表（用于会话恢复）
             manual_mode: 手动指定Agent模式（"assistant" | "expert"，默认expert）
+            original_query: 原始查询（不包含记忆增强，用于保存到对话历史）
 
         Yields:
             流式事件
@@ -205,7 +153,8 @@ class ReActLoop:
         async for event in self._run_react_loop(
             user_query,
             enhance_with_history,
-            initial_messages  # ✅ 传递历史消息
+            initial_messages,  # ✅ 传递历史消息
+            original_query  # ✅ 传递原始查询
         ):
             # 附加模式信息到事件
             event["mode"] = self.current_mode
@@ -215,7 +164,8 @@ class ReActLoop:
         self,
         user_query: str,
         enhance_with_history: bool = True,
-        initial_messages: Optional[List[Dict[str, Any]]] = None  # ✅ 新增：历史消息注入
+        initial_messages: Optional[List[Dict[str, Any]]] = None,  # ✅ 新增：历史消息注入
+        original_query: Optional[str] = None  # ✅ 新增：原始查询（用于保存到历史）
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         ReAct 循环（Thought + Action + Observation）
@@ -232,8 +182,10 @@ class ReActLoop:
         - 工具执行失败重试
 
         Args:
-            user_query: 用户查询
+            user_query: 用户查询（可能包含记忆增强，用于LLM推理）
             enhance_with_history: 是否使用长期记忆增强
+            initial_messages: 历史消息列表（用于会话恢复）
+            original_query: 原始查询（不包含记忆增强，用于保存到对话历史）
 
         Yields:
             流式事件
@@ -265,8 +217,21 @@ class ReActLoop:
                     hint="会话已在 _get_or_create_session 中从 SessionManager 恢复"
                 )
 
-            # Step 0: 记录用户消息
-            self.memory.session.add_user_message(user_query)
+            # Step 0: 记录用户消息（使用原始查询，不包含记忆增强）
+            query_to_save = original_query if original_query is not None else user_query
+            self.memory.session.add_user_message(query_to_save)
+
+            # ✅ 调试日志：验证原始查询和增强查询
+            if original_query is not None:
+                logger.info(
+                    "query_separation_verified",
+                    original_length=len(original_query),
+                    enhanced_length=len(user_query),
+                    original_preview=original_query[:100],
+                    has_memory_enhancement=user_query != original_query,
+                    saved_to_history="original_query",
+                    used_for_llm="enhanced_query"
+                )
 
             # Step 1: 使用原始查询（长期记忆增强已移除）
             enhanced_query = user_query
@@ -382,7 +347,7 @@ class ReActLoop:
                             # Yield thought事件（FINAL_ANSWER 除外）
                             action_type = action.get("type", "TOOL_CALL")
                             if action_type != "FINAL_ANSWER":
-                                yield {
+                                thought_event = {
                                     "type": "thought",
                                     "data": {
                                         "iteration": iteration_count,
@@ -391,6 +356,9 @@ class ReActLoop:
                                         "timestamp": datetime.now().isoformat()
                                     }
                                 }
+                                yield thought_event
+                                # ✅ 保存到对话历史
+                                self.memory.session.add_thought_message(thought, reasoning)
 
                     # 如果没有 action（异常情况），降级处理
                     if not action:
@@ -406,7 +374,7 @@ class ReActLoop:
                         reasoning = think_action_result.get("reasoning")
                         action = think_action_result["action"]
 
-                        yield {
+                        thought_event = {
                             "type": "thought",
                             "data": {
                                 "iteration": iteration_count,
@@ -415,6 +383,9 @@ class ReActLoop:
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
+                        yield thought_event
+                        # ✅ 保存到对话历史
+                        self.memory.session.add_thought_message(thought, reasoning)
 
                     logger.info("action_decided", action_type=action_type, iteration=iteration_count)
 
@@ -646,7 +617,7 @@ class ReActLoop:
                                     "schema_version": "v2.0"
                                 })
 
-                        yield {
+                        action_event = {
                             "type": "action",
                             "data": {
                                 "iteration": iteration_count,
@@ -654,9 +625,12 @@ class ReActLoop:
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
+                        yield action_event
+                        # ✅ 保存到对话历史
+                        self.memory.session.add_action_message(action)
 
                         # 发送observation事件
-                        yield {
+                        observation_event = {
                             "type": "observation",
                             "data": {
                                 "iteration": iteration_count,
@@ -664,6 +638,9 @@ class ReActLoop:
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
+                        yield observation_event
+                        # ✅ 保存到对话历史
+                        self.memory.session.add_observation_message(observation)
 
                         # 检查并行工具结果中是否有PDF预览，发送office_document事件
                         tool_results = observation.get("tool_results", [])
@@ -716,7 +693,7 @@ class ReActLoop:
                                 knowledge_base_ids_count=len(self.knowledge_base_ids)
                             )
 
-                        yield {
+                        action_event = {
                             "type": "action",
                             "data": {
                                 "iteration": iteration_count,
@@ -724,6 +701,9 @@ class ReActLoop:
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
+                        yield action_event
+                        # ✅ 保存到对话历史
+                        self.memory.session.add_action_message(action)
 
                         observation = await self.executor.execute_tool(
                             tool_name=tool_name,
@@ -991,7 +971,7 @@ class ReActLoop:
                             }
                         }
 
-                    yield {
+                    observation_event = {
                         "type": "observation",
                         "data": {
                             "iteration": iteration_count,
@@ -999,6 +979,9 @@ class ReActLoop:
                             "timestamp": datetime.now().isoformat()
                         }
                     }
+                    yield observation_event
+                    # ✅ 保存到对话历史
+                    self.memory.session.add_observation_message(observation)
 
                     # 发送office_document事件（用于前端PDF预览面板）
                     data = observation.get("data", {})
@@ -1040,35 +1023,10 @@ class ReActLoop:
                     # 记忆更新
                     self.memory.add_iteration(thought=thought, action=action, observation=observation)
 
-                    # ✅ 修复：不仅检查 summary，还要检查 result 字段
-                    # 对于有 result 字段但没有 summary 的工具（如 compare_standard_reports），也需要添加到对话历史
-                    if observation.get("summary") or observation.get("result"):
-                        # 使用完整格式化内容（包含完整数据）而非仅摘要
-                        full_message = self._format_observation(observation)
-                        # 添加工具调用信息（帮助LLM了解历史操作）
-                        action_info = self._format_action_info(action)
-                        full_message = f"{action_info}\n\n{full_message}"
-
-                        # 🔍 详细日志：验证完整数据传递（debug 级别）
-                        metadata = observation.get("metadata", {})
-                        generator = metadata.get("generator", "")
-                        data = observation.get("data")
-                        logger.debug(
-                            "format_observation_debug",
-                            generator=generator,
-                            full_message_length=len(full_message),
-                            full_message_preview=full_message[:500] if len(full_message) > 500 else full_message,
-                            has_analysis=isinstance(data, dict) and "analysis" in data,
-                            observation_keys=list(observation.keys()),
-                            data_keys=list(data.keys()) if isinstance(data, dict) else []
-                        )
-
-                        self.memory.session.add_assistant_message(
-                            full_message,
-                            thought=thought,
-                            reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
-                        )
-
+                    # ❌ 移除：不要将工具调用详情保存到对话历史
+                    # 这些详细信息只在实时对话时通过 observation 事件传递给前端
+                    # 历史对话恢复时不需要显示这些详细内容
+                    # （已经通过 add_observation_message 保存了摘要）
 
                 except Exception as e:
                     logger.error(
@@ -1521,179 +1479,34 @@ class ReActLoop:
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         """
-        格式化观察结果为字符串（使用格式化器注册表）
+        将观察结果直接序列化为JSON传递给LLM
+
+        简化设计：移除复杂的格式化器层，直接传递完整JSON数据给LLM。
+        LLM擅长理解JSON格式，无需额外的文本格式化层。
 
         Args:
             observation: 观察结果字典
 
         Returns:
-            格式化的字符串
+            JSON格式的字符串
         """
         if not observation:
             return ""
 
-        lines = []
-
-        # 状态
-        success = observation.get("success", False)
-        lines.append(f"**状态**: {'成功' if success else '失败'}")
-
-        # 数据引用
-        if "data_ref" in observation:
-            lines.append(f"**数据引用**: {observation['data_ref']}")
-
-        # 错误信息
-        if not success and "error" in observation:
-            lines.append(f"**错误**: {observation['error']}")
-
-        # Reflexion建议
-        if "reflexion_suggestion" in observation:
-            lines.append(f"**反思建议**: {observation['reflexion_suggestion']}")
-
-        # ✅ 特殊处理：并行工具执行结果
-        if observation.get("parallel") and observation.get("tool_results"):
-            # 并行执行：分别格式化每个工具的结果
-            tool_results = observation["tool_results"]
-            lines.append(f"**并行执行结果** ({len(tool_results)} 个工具)")
-
-            for idx, tool_res in enumerate(tool_results, 1):
-                tool_name = tool_res.get("tool", f"tool_{idx}")
-                result_data = tool_res.get("result", {})
-
-                if result_data.get("success"):
-                    # 使用格式化器注册表格式化单个工具结果
-                    sub_observation = result_data
-                    sub_lines = self._format_observation_with_formatter(sub_observation)
-                    lines.append(f"\n### 工具 {idx}: {tool_name}")
-                    lines.extend(sub_lines)
-                else:
-                    # 工具执行失败
-                    error_msg = result_data.get("error", "未知错误")
-                    lines.append(f"\n### 工具 {idx}: {tool_name}")
-                    lines.append(f"**状态**: 失败")
-                    lines.append(f"**错误**: {error_msg}")
-
-            return "\n".join(lines)
-
-        # ✅ 使用格式化器注册表处理办公助理工具
-        if success and "data" in observation and isinstance(observation["data"], dict):
-            data = observation["data"]
-            metadata = observation.get("metadata", {})
-            generator = metadata.get("generator", "")
-
-            # ✅ 特殊处理：execute_python 工具需要 visuals 信息
-            # 将 visuals 信息添加到 metadata 中传递给格式化器
-            if generator == "execute_python" and "visuals" in observation:
-                metadata = metadata.copy()  # 避免修改原始 metadata
-                metadata["visuals"] = observation["visuals"]
-
-            # 尝试从注册表获取合适的格式化器
-            formatter = self.formatter_registry.get_formatter(generator, data)
-            if formatter:
-                # 使用格式化器处理工具结果
-                formatter_lines = formatter.format(data, metadata)
-                lines.extend(formatter_lines)
-
-        # ✅ 数据查询工具：显示采样后的数据列表
-        elif success and "data" in observation and isinstance(observation["data"], list):
-            formatter_lines = DataQueryFormatter.format(observation)
-            lines.extend(formatter_lines)
-
-        # ✅ 数据分析工具：data 是字典（统计结果），完整显示JSON
-        elif success and "data" in observation and isinstance(observation["data"], dict):
-            data_dict = observation["data"]
-            formatter_lines = StatisticsFormatter.format(data_dict)
-            lines.extend(formatter_lines)
-
-        # 摘要（作为补充，不是主要信息源）
-        # 只在 summary 非空时才添加（对于返回 result 字段的工具，summary 为 None）
-        if observation.get("summary"):
-            lines.append(f"**摘要**: {observation['summary']}")
-
-        # ✅ 处理 results 字段（search_history 工具返回的搜索结果）
-        if success and "results" in observation and isinstance(observation["results"], list):
-            results = observation["results"]
-            metadata = observation.get("metadata", {})
-            generator = metadata.get("generator", "")
-
-            # search_history 工具：使用格式化器处理
-            if generator == "search_history":
-                formatter = self.formatter_registry.get_formatter(generator, {"results": results})
-                if formatter:
-                    formatter_lines = formatter.format({"results": results}, metadata)
-                    lines.extend(formatter_lines)
-
-        # ✅ 处理 result 字段（包含详细的结构化数据）
-        # 例如：compare_standard_reports 工具的详细对比数据
-        # ⚠️ 重要：result字段必须完整保留，不能截断（数据查询工具的详细结构化数据）
-        if success and "result" in observation and isinstance(observation["result"], dict):
-            result = observation["result"]
-            if result:  # 只有非空结果才显示
-                # 🔍 详细日志：记录result字段的处理
-                metadata = observation.get("metadata", {})
-                logger.info(
-                    "result_field_detected",
-                    generator=metadata.get("generator", ""),
-                    result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
-                    result_type=type(result).__name__,
-                    will_format_full_result=True
-                )
-                formatter_lines = DetailedResultFormatter.format(result)
-                lines.extend(formatter_lines)
-                # 🔍 详细日志：记录格式化后的result字段长度
-                logger.info(
-                    "result_field_formatted",
-                    formatted_char_count=len(f"```json\n{json.dumps(result, ensure_ascii=False, indent=2, default=str)}\n```"),
-                    result_preview=str(result)[:500] if isinstance(result, dict) else str(result)[:500]
-                )
-
-        return "\n".join(lines)
-
-    def _format_observation_with_formatter(self, observation: Dict[str, Any]) -> List[str]:
-        """
-        使用格式化器注册表格式化观察结果（用于并行工具执行）
-
-        Args:
-            observation: 观察结果字典
-
-        Returns:
-            格式化的字符串列表
-        """
-        lines = []
-
-        # 状态
-        success = observation.get("success", False)
-        lines.append(f"**状态**: {'成功' if success else '失败'}")
-
-        # ✅ 使用格式化器注册表处理办公助理工具
-        if success and "data" in observation and isinstance(observation["data"], dict):
-            data = observation["data"]
-            metadata = observation.get("metadata", {})
-            generator = metadata.get("generator", "")
-
-            # 尝试从注册表获取合适的格式化器
-            formatter = self.formatter_registry.get_formatter(generator, data)
-            if formatter:
-                # 使用格式化器处理工具结果
-                formatter_lines = formatter.format(data, metadata)
-                lines.extend(formatter_lines)
-            else:
-                # 没有找到合适的格式化器，使用默认处理
-                # 数据查询工具：显示采样后的数据列表
-                if "data" in observation and isinstance(observation["data"], list):
-                    formatter_lines = DataQueryFormatter.format(observation)
-                    lines.extend(formatter_lines)
-                # 数据分析工具：data 是字典（统计结果），完整显示JSON
-                elif "data" in observation and isinstance(observation["data"], dict):
-                    data_dict = observation["data"]
-                    formatter_lines = StatisticsFormatter.format(data_dict)
-                    lines.extend(formatter_lines)
-
-        # 摘要（只在 summary 非空时才添加）
-        if observation.get("summary"):
-            lines.append(f"**摘要**: {observation['summary']}")
-
-        return lines
+        try:
+            # 直接序列化为JSON，保持完整信息
+            # 使用 ensure_ascii=False 支持中文
+            # 使用 indent=2 提高可读性
+            # 使用 default=str 处理datetime等特殊类型
+            return json.dumps(observation, ensure_ascii=False, indent=2, default=str)
+        except Exception as e:
+            logger.error(
+                "observation_serialize_failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            # 降级：只返回摘要
+            return f"状态: {'成功' if observation.get('success') else '失败'}\n摘要: {observation.get('summary', '')}"
 
     def _format_action_info(self, action: Dict[str, Any]) -> str:
         """

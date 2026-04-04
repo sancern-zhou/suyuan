@@ -66,7 +66,6 @@
           class="recent-session-item"
           @click="loadSession(session)"
         >
-          <span class="session-state">{{ getSessionStateIcon(session.state) }}</span>
           <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
           <span class="session-time">{{ formatTime(session.updated_at) }}</span>
         </div>
@@ -207,18 +206,6 @@ const filteredModules = computed(() => {
   return modules.filter(m => m.id !== 'restart-session')
 })
 
-// 获取状态图标
-const getSessionStateIcon = (state) => {
-  const icons = {
-    'active': '🔵',
-    'paused': '⏸️',
-    'completed': '✅',
-    'failed': '❌',
-    'archived': '📦'
-  }
-  return icons[state] || '⚪'
-}
-
 // 截断查询文本
 const truncateQuery = (query, maxLength = 30) => {
   if (!query) return ''
@@ -229,9 +216,11 @@ const truncateQuery = (query, maxLength = 30) => {
 // 格式化时间
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
+  // 修正时区：数据库存储的是UTC时间，需要+8小时转换为北京时间
   const date = new Date(timestamp)
+  const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000)
   const now = new Date()
-  const diff = now - date
+  const diff = now - beijingDate
 
   if (diff < 60000) return '刚刚'
   if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
@@ -239,7 +228,7 @@ const formatTime = (timestamp) => {
   const days = Math.floor(diff / 86400000)
   if (days < 7) return `${days}天前`
 
-  return date.toLocaleDateString('zh-CN', {
+  return beijingDate.toLocaleDateString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

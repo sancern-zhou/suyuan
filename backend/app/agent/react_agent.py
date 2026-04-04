@@ -160,6 +160,12 @@ class ReActAgent:
         memory_context = ""
         unified_user_id = None
 
+        # ✅ 保存原始查询（用于保存到对话历史，不包含任何增强）
+        original_query = user_query
+
+        # ✅ 增强查询（用于传递给LLM，包含记忆和附件）
+        enhanced_query = user_query
+
         if self.enable_memory and manual_mode:
             if user_identifier:
                 # 有user_identifier：跨模式共享记忆（同一用户在所有模式下共享同一个记忆文件）
@@ -179,10 +185,10 @@ class ReActAgent:
                 memory_context = memory_store.get_memory_context()
                 memory_file_path = str(memory_store.memory_file.resolve())  # ✅ 转换为绝对路径
 
-                # 增强查询
+                # 增强查询（仅用于传递给LLM，不保存到历史）
                 if memory_context:
                     memory_info = f"{memory_context}\n\n**记忆文件路径**：{memory_file_path}"
-                    user_query = f"{memory_info}\n\n用户问题：{user_query}"
+                    enhanced_query = f"{memory_info}\n\n用户问题：{enhanced_query}"  # ✅ 只增强传递给LLM的查询
                     logger.info(
                         "memory_context_loaded",
                         user_id=unified_user_id,
@@ -191,7 +197,7 @@ class ReActAgent:
                         memory_file_path=memory_file_path
                     )
 
-        # ✅ 如果有附件，添加到查询中告知LLM
+        # ✅ 如果有附件，添加到查询中告知LLM（仅用于传递给LLM，不保存到历史）
         if attachments and len(attachments) > 0:
             attachment_info = "\n\n**用户上传的附件**：\n"
             for i, att in enumerate(attachments, 1):
@@ -225,7 +231,7 @@ class ReActAgent:
                 else:
                     attachment_info += f"{i}. 文件: {att_name}\n"
                     attachment_info += f"   路径: {att_url}\n"
-            user_query = user_query + attachment_info
+            enhanced_query = enhanced_query + attachment_info  # ✅ 只修改增强查询
             logger.info(
                 "attachments_added_to_query",
                 count=len(attachments),
@@ -272,7 +278,8 @@ class ReActAgent:
             )
 
             async for event in react_loop.run(
-                user_query=user_query,
+                user_query=enhanced_query,  # ✅ 传递增强查询给LLM（包含记忆和附件）
+                original_query=original_query,  # ✅ 传递原始查询用于保存到历史
                 enhance_with_history=enhance_with_history,
                 initial_messages=initial_messages,
                 manual_mode=manual_mode
@@ -327,7 +334,50 @@ class ReActAgent:
                 }
             }
         finally:
-            # ✅ 新增：检查并整合记忆（所有模式通用）
+            # ✅ 保存会话消息到数据库（每次分析完成后）
+            if actual_session_id:
+                try:
+                    from app.agent.session import get_session_manager
+                    from dataclasses import asdict
+                    session_manager = get_session_manager()
+                    session = await session_manager.load_session(actual_session_id)
+                    if session:
+                        # 同步 memory.session.conversation_history 到 Session 对象
+                        if actual_session_id in self._session_store:
+                            entry = self._session_store[actual_session_id]
+                            memory_manager = entry.get("memory")
+                            if memory_manager and hasattr(memory_manager, "session"):
+                                # 将 ConversationTurn dataclass 转换为字典
+                                conversation_history_dicts = [
+                                    asdict(turn) for turn in memory_manager.session.conversation_history
+                                ]
+                                session.conversation_history = conversation_history_dicts
+                                logger.debug(
+                                    "conversation_history_converted",
+                                    session_id=actual_session_id,
+                                    message_count=len(conversation_history_dicts)
+                                )
+
+                            # 同步 office_documents 到会话对象
+                            office_docs = entry.get("office_documents", [])
+                            if office_docs:
+                                session.office_documents = office_docs
+
+                        # 保存会话（包括 conversation_history）
+                        await session_manager.save_session(session)
+                        logger.info(
+                            "session_saved_after_analysis",
+                            session_id=actual_session_id,
+                            message_count=len(session.conversation_history)
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "failed_to_save_session_after_analysis",
+                        session_id=actual_session_id,
+                        error=str(e)
+                    )
+
+            # ✅ 检查并整合记忆（所有模式通用）
             if unified_user_id and manual_mode:
                 try:
                     await self._check_and_consolidate_memory(
@@ -343,25 +393,6 @@ class ReActAgent:
                         mode=manual_mode,
                         error=str(e)
                     )
-
-            # 同步 office_documents 到会话对象
-            if actual_session_id and actual_session_id in self._session_store:
-                office_docs = self._session_store[actual_session_id].get("office_documents", [])
-                if office_docs:
-                    try:
-                        from app.agent.session import get_session_manager
-                        session_manager = get_session_manager()
-                        session = await session_manager.load_session(actual_session_id)
-                        if session:
-                            session.office_documents = office_docs
-                            await session_manager.save_session(session)
-                            logger.info("office_documents_synced_to_session",
-                                       session_id=actual_session_id,
-                                       count=len(office_docs))
-                    except Exception as e:
-                        logger.warning("failed_to_sync_office_documents",
-                                      session_id=actual_session_id,
-                                      error=str(e))
 
             await self._mark_session_used(actual_session_id)
 

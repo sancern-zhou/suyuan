@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, update, delete, func
 
-from .models_session import SessionDB, SessionMessageDB, SessionState, MessageType
+from .models_session import SessionDB, SessionMessageDB, MessageType
 from .database import engine
 
 logger = structlog.get_logger()
@@ -32,7 +32,6 @@ class SessionRepository:
         self,
         session_id: str,
         query: str,
-        state: SessionState = SessionState.ACTIVE,
         mode: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> SessionDB:
@@ -41,9 +40,8 @@ class SessionRepository:
             db_session = SessionDB(
                 session_id=session_id,
                 query=query,
-                state=state,
                 mode=mode,
-                metadata=metadata or {}
+                session_metadata=metadata or {}  # ✅ 修复：使用 session_metadata 而不是 metadata
             )
             session.add(db_session)
             await session.commit()
@@ -52,8 +50,7 @@ class SessionRepository:
             logger.info(
                 "session_created_in_db",
                 session_id=session_id,
-                mode=mode,
-                state=state.value
+                mode=mode
             )
             return db_session
 
@@ -87,10 +84,8 @@ class SessionRepository:
             session_dict = {
                 "session_id": db_session.session_id,
                 "query": db_session.query,
-                "state": db_session.state.value,
                 "created_at": db_session.created_at.isoformat() if db_session.created_at else None,
                 "updated_at": db_session.updated_at.isoformat() if db_session.updated_at else None,
-                "completed_at": db_session.completed_at.isoformat() if db_session.completed_at else None,
                 "mode": db_session.mode,
                 "current_step": db_session.current_step,
                 "current_expert": db_session.current_expert,
@@ -144,18 +139,29 @@ class SessionRepository:
         **kwargs
     ) -> bool:
         """更新会话信息"""
+        # 处理字段映射：metadata -> session_metadata
+        if "metadata" in kwargs:
+            kwargs["session_metadata"] = kwargs.pop("metadata")
+
+        # 过滤掉无效的字段名（只保留 SessionDB 模型中定义的字段）
+        valid_fields = {
+            "query", "mode", "current_step", "current_expert",
+            "data_ids", "visual_ids", "error", "session_metadata"
+        }
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_fields}
+
         async with AsyncSession(self.engine) as session:
             stmt = (
                 update(SessionDB)
                 .where(SessionDB.session_id == session_id)
-                .values(**kwargs)
+                .values(**filtered_kwargs)
             )
             result = await session.execute(stmt)
             await session.commit()
 
             success = result.rowcount > 0
             if success:
-                logger.info("session_updated_in_db", session_id=session_id, updated_fields=list(kwargs.keys()))
+                logger.info("session_updated_in_db", session_id=session_id, updated_fields=list(filtered_kwargs.keys()))
 
             return success
 
@@ -174,7 +180,6 @@ class SessionRepository:
 
     async def list_sessions(
         self,
-        state: Optional[SessionState] = None,
         mode: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
@@ -184,8 +189,6 @@ class SessionRepository:
             stmt = select(SessionDB)
 
             # 过滤条件
-            if state:
-                stmt = stmt.where(SessionDB.state == state)
             if mode:
                 stmt = stmt.where(SessionDB.mode == mode)
 
@@ -202,7 +205,6 @@ class SessionRepository:
                 summaries.append({
                     "session_id": s.session_id,
                     "query": s.query[:100] if s.query else "",
-                    "state": s.state.value,
                     "created_at": s.created_at.isoformat() if s.created_at else None,
                     "updated_at": s.updated_at.isoformat() if s.updated_at else None,
                     "mode": s.mode,
@@ -223,53 +225,87 @@ class SessionRepository:
 
         删除旧消息，插入新消息（原子操作）
         """
-        async with AsyncSession(self.engine) as session:
-            try:
-                # 先删除旧消息
-                stmt_delete = delete(SessionMessageDB).where(SessionMessageDB.session_id == session_id)
-                await session.execute(stmt_delete)
+        import traceback
 
-                # 批量插入新消息
-                for idx, msg in enumerate(conversation_history):
-                    # 提取消息类型
-                    msg_type_str = msg.get("type") or (msg.get("role") if msg.get("role") == "user" else "final")
+        try:
+            # 使用原始连接（避免 ORM 层的问题）
+            async with self.engine.connect() as conn:
+                try:
+                    # 开始事务
+                    async with conn.begin():
+                        # 先删除旧消息（使用 Core API）
+                        stmt_delete = delete(SessionMessageDB.__table__).where(SessionMessageDB.__table__.c.session_id == session_id)
+                        await conn.execute(stmt_delete)
 
-                    # 映射消息类型枚举
-                    try:
-                        msg_type = MessageType(msg_type_str)
-                    except ValueError:
-                        # 如果是 "assistant"，映射为 "final"
-                        msg_type = MessageType.FINAL if msg_type_str == "assistant" else MessageType(msg_type_str)
+                        # 批量插入新消息（使用 Core API）
+                        for idx, msg in enumerate(conversation_history):
+                            # 提取消息类型
+                            msg_type_str = msg.get("type") or (msg.get("role") if msg.get("role") == "user" else "final")
 
-                    db_msg = SessionMessageDB(
+                            # 映射消息类型枚举
+                            try:
+                                msg_type = MessageType(msg_type_str)
+                            except ValueError:
+                                # 如果是 "assistant"，映射为 "final"
+                                msg_type = MessageType.FINAL if msg_type_str == "assistant" else MessageType(msg_type_str)
+
+                            # 解析时间戳
+                            timestamp = None
+                            if msg.get("timestamp"):
+                                try:
+                                    timestamp = datetime.fromisoformat(msg["timestamp"])
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(
+                                        "invalid_timestamp_format",
+                                        session_id=session_id,
+                                        timestamp=msg.get("timestamp"),
+                                        error=str(e)
+                                    )
+                                    timestamp = datetime.utcnow()
+                            else:
+                                timestamp = datetime.utcnow()
+
+                            # 提取元数据
+                            msg_metadata = {k: v for k, v in msg.items() if k not in ["type", "content", "data", "timestamp"]}
+
+                            # 使用 Core insert（注意：使用数据库列名，不是 ORM 属性名）
+                            stmt_insert = SessionMessageDB.__table__.insert().values(
+                                session_id=session_id,
+                                message_type=msg_type,
+                                content=msg.get("content"),
+                                data=msg.get("data"),
+                                timestamp=timestamp,
+                                metadata=msg_metadata,  # ✅ 使用数据库列名 metadata，而不是 ORM 属性名 msg_metadata
+                                sequence_number=idx
+                            )
+                            await conn.execute(stmt_insert)
+
+                        logger.info(
+                            "conversation_history_saved",
+                            session_id=session_id,
+                            message_count=len(conversation_history)
+                        )
+
+                        return True
+                except Exception as e:
+                    logger.error(
+                        "failed_to_save_conversation_history",
                         session_id=session_id,
-                        message_type=msg_type,
-                        content=msg.get("content"),
-                        data=msg.get("data"),
-                        timestamp=datetime.fromisoformat(msg["timestamp"]) if msg.get("timestamp") else datetime.utcnow(),
-                        msg_metadata={k: v for k, v in msg.items() if k not in ["type", "content", "data", "timestamp"]},
-                        sequence_number=idx
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        traceback=traceback.format_exc()
                     )
-                    session.add(db_msg)
+                    return False
 
-                await session.commit()
-
-                logger.info(
-                    "conversation_history_saved",
-                    session_id=session_id,
-                    message_count=len(conversation_history)
-                )
-
-                return True
-
-            except Exception as e:
-                await session.rollback()
-                logger.error(
-                    "failed_to_save_conversation_history",
-                    session_id=session_id,
-                    error=str(e)
-                )
-                return False
+        except Exception as e:
+            logger.error(
+                "failed_to_save_conversation_history",
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                traceback=traceback.format_exc()
+            )
+            return False
 
     async def add_message(
         self,

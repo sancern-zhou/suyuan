@@ -423,6 +423,56 @@ class GDSuncereAPIClient:
 
         return self._make_request(endpoint, payload, method="POST")
 
+    def query_station_day_data(
+        self,
+        station_codes: List[str],
+        start_date: str,
+        end_date: str,
+        data_type: int = 0
+    ) -> Dict[str, Any]:
+        """
+        查询站点日报数据
+
+        API 文档参考：
+        https://server/api/airprovinceproduct/airdata/DATStationDay/GetDATStationDayDisplayListAsync
+
+        请求方式：POST
+        Body 参数：
+          - codes: 站点代码数组，如 ["1001A", "1002A"]
+          - timePoint: 时间数组，格式 ["YYYY-MM-DD 00:00:00", "YYYY-MM-DD 23:59:59"]
+          - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+
+        Args:
+            station_codes: 站点代码列表（如 ["1001A", "1002A"]）
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            data_type: 数据类型，默认 0（原始实况）
+
+        Returns:
+            站点日报数据
+        """
+        endpoint = "/api/airprovinceproduct/airdata/DATStationDay/GetDATStationDayDisplayListAsync"
+
+        # POST 请求：参数通过 JSON body 传递
+        payload = {
+            "codes": station_codes,
+            "timePoint": [
+                f"{start_date} 00:00:00",
+                f"{end_date} 23:59:59"
+            ],
+            "dataType": data_type
+        }
+
+        logger.info(
+            "query_station_day_data",
+            station_codes=station_codes,
+            start_date=start_date,
+            end_date=end_date,
+            data_type=data_type
+        )
+
+        return self._make_request(endpoint, payload, method="POST")
+
     def query_report_data(
         self,
         city_codes: List[str],

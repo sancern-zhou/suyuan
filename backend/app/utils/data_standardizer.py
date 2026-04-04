@@ -89,12 +89,13 @@ class DataStandardizer:
             "站点名称": "station_name",
             "监测点": "station_name",
 
-            # 城市名称 - 新增 cityName 和 name 驼峰命名支持
+            # 城市名称
             "城市名称": "city",
             "city_name": "city",
             "cityName": "city",
             "CityName": "city",
-            "name": "city",  # ← 关键修复：日报数据接口使用 name 字段存储城市名称
+            # ⚠️ 注意：name 字段不映射，保留原样（站点日报数据中 name 是站点名称，城市日报数据中 name 是城市名称）
+            # 在后处理中根据上下文判断：有 cityName 字段时，name → station_name；否则 name → city
             "Name": "city",
             "城市": "city",
             "所属城市": "city",
@@ -105,9 +106,6 @@ class DataStandardizer:
             # 站点编码
             "station_code": "station_code",
             "stationCode": "station_code",
-            "StationCode": "station_code",
-            "uniqueCode": "station_code",
-            "unique_code": "station_code",
             "StationCode": "station_code",
             "code": "station_code",
             "city_code": "city_code",
@@ -979,6 +977,15 @@ class DataStandardizer:
             "city": "city",
             "cityName": "city",
             "城市": "city",
+
+            # 名称（直接保留，不做映射）
+            "name": "name",
+            "Name": "name",
+            "名称": "name",
+
+            # API原始字段（直接保留，不做映射）
+            "cityName": "cityName",
+            "districtName": "districtName",
             "城市名称": "city",
             "所属城市": "city"
         }
@@ -1521,6 +1528,8 @@ class DataStandardizer:
             'data_type', 'record_id', 'created_time', 'modified_time',
             'species_data', 'components', 'metadata', 'dimensions',
             'station_type', 'district', 'province', 'country',
+            # API原始字段（直接保留，不做映射）
+            'name', 'cityName', 'districtName',
             # 扣沙相关字段（必须保留在顶层）
             'is_sand_deduction_day', 'primary_pollutant_from_sand',
             'PM2_5_original', 'PM10_original'

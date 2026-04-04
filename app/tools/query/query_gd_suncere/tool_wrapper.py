@@ -14,6 +14,120 @@ from app.agent.context.execution_context import ExecutionContext
 logger = structlog.get_logger()
 
 
+class QueryGDSuncereCityDayTool(LLMTool):
+    """
+    广东省城市日报数据查询工具
+
+    用于查询广东省城市级别的日均空气质量数据
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_gd_suncere_city_day",
+            "description": """
+查询广东省城市日报空气质量数据。
+
+【核心功能】
+- 查询广东省城市的日均级别空气质量数据
+- 支持多城市并发查询
+- 城市名称自动映射到编码
+- 根据查询时间自动判断数据源（原始实况/审核实况）
+
+【使用场景】
+- 城市空气质量日均浓度查询
+- 多城市日均浓度对比
+- 污染物日变化趋势分析
+- 达标率统计
+
+【输入参数】
+- cities: 城市名称列表（如 ["广州", "深圳", "佛山"]）
+- start_date: 开始日期，格式 "YYYY-MM-DD"
+- end_date: 结束日期，格式 "YYYY-MM-DD"
+
+【重要】
+- 工具会自动将城市名称转换为编码
+- 工具会自动根据结束日期判断数据源类型（3天内用原始实况，否则用审核实况）
+- 返回 UDF v2.0 标准格式数据
+
+示例：
+cities=["广州", "深圳", "佛山"]
+start_date="2026-01-01"
+end_date="2026-03-31"
+
+【返回数据】
+- data_id: 数据引用ID（UDF v2.0格式）
+- 包含多城市的日均级别污染物数据（PM2.5、PM10、SO2、NO2、O3、CO等）
+            """.strip(),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称列表，如 ['广州', '深圳', '佛山']"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "开始日期，格式 'YYYY-MM-DD'"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "结束日期，格式 'YYYY-MM-DD'"
+                    }
+                },
+                "required": ["cities", "start_date", "end_date"]
+            }
+        }
+
+        super().__init__(
+            name="query_gd_suncere_city_day",
+            description="Query Guangdong city daily air quality data - Suncere API",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=True
+        )
+
+    def execute(
+        self,
+        context: ExecutionContext,
+        cities: List[str],
+        start_date: str,
+        end_date: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行城市日报数据查询
+
+        Args:
+            context: 执行上下文
+            cities: 城市名称列表
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            UDF v2.0格式的查询结果
+        """
+        from app.tools.query.query_gd_suncere import execute_query_gd_suncere_city_day
+
+        logger.info(
+            "query_gd_suncere_city_day_tool_start",
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            session_id=getattr(context, 'session_id', 'unknown')
+        )
+
+        result = execute_query_gd_suncere_city_day(
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            context=context
+        )
+
+        return result
+
+
 class QueryGDSuncereCityHourTool(LLMTool):
     """
     广东省城市小时数据查询工具

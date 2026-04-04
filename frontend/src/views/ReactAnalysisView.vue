@@ -73,23 +73,13 @@
           <!-- 会话历史管理面板 -->
           <SessionHistoryPanel
             v-else-if="managementPanel === 'session-history'"
-            :sessions="getFilteredSessions()"
+            :sessions="sessionHistoryData"
             :session-history-stats="sessionHistoryStats"
             :session-history-loading="sessionHistoryLoading"
-            :session-history-filter="sessionHistoryFilter"
-            :selected-session-ids="selectedSessionIds"
             @close="managementPanel = null"
             @refresh-sessions="refreshSessionHistory"
             @cleanup-sessions="handleSessionCleanup"
-            @set-filter="sessionHistoryFilter = $event"
-            @batch-delete="handleBatchDeleteSessions"
-            @clear-selection="selectedSessionIds = []"
-            @toggle-expand="toggleSessionExpand"
-            @toggle-selection="toggleSessionSelection"
             @restore-session="handleSessionRestore"
-            @archive-session="handleSessionArchive"
-            @export-session="handleSessionExport"
-            @delete-session="handleSessionDelete"
           />
 
           <!-- 社交平台管理面板 -->
@@ -445,8 +435,6 @@ const scheduledTasksRefreshing = ref(false)
 const sessionHistoryLoading = ref(false)
 const sessionHistoryData = ref([])
 const sessionHistoryStats = ref(null)
-const sessionHistoryFilter = ref('all')
-const selectedSessionIds = ref([])
 
 // 获取今天的日期字符串
 const today = new Date()
@@ -1345,47 +1333,6 @@ const refreshSessionHistory = async () => {
   }
 }
 
-const getSessionHistoryFilterLabel = (filter) => {
-  const labels = {
-    'all': '全部',
-    'active': '活跃',
-    'completed': '已完成',
-    'failed': '失败',
-    'archived': '已归档'
-  }
-  return labels[filter] || filter
-}
-
-const getSessionHistoryFilterIcon = (filter) => {
-  const icons = {
-    'all': '📚',
-    'active': '🔵',
-    'completed': '✅',
-    'failed': '❌',
-    'archived': '📦'
-  }
-  return icons[filter] || '⚪'
-}
-
-const getSessionHistoryFilterClass = (filter) => {
-  return `filter-${filter}`
-}
-
-const getSessionHistoryStateIcon = (state) => {
-  const icons = {
-    'active': '🔵',
-    'paused': '⏸️',
-    'completed': '✅',
-    'failed': '❌',
-    'archived': '📦'
-  }
-  return icons[state] || '⚪'
-}
-
-const getSessionHistoryStateClass = (state) => {
-  return `state-${state}`
-}
-
 const formatSessionTime = (timestamp) => {
   if (!timestamp) return '-'
   const date = new Date(timestamp)
@@ -1432,33 +1379,153 @@ const getRecentSessions = () => {
   return sorted.slice(0, 10)
 }
 
-const quickLoadSession = async (session) => {
+// ========== 会话恢复辅助函数 ==========
+
+/**
+ * 转换历史消息格式（兼容后端不同版本的消息格式）
+ * @param {Array} conversationHistory - 后端返回的对话历史
+ * @returns {Array} 转换后的消息列表
+ */
+const convertHistoryMessages = (conversationHistory) => {
+  if (!conversationHistory || conversationHistory.length === 0) {
+    return []
+  }
+
+  return conversationHistory.map((msg, index) => {
+    const converted = { ...msg }
+
+    // 确保所有消息都有唯一的 id 字段
+    if (!msg.id) {
+      converted.id = `hist-${Date.now()}-${index}`
+    }
+
+    // 映射 role 字段到 type 字段（兼容后端格式）
+    if (msg.role && !msg.type) {
+      if (msg.role === 'user') {
+        converted.type = 'user'
+      } else if (msg.role === 'assistant') {
+        converted.type = 'final'
+      } else {
+        converted.type = msg.role
+      }
+    }
+
+    // 如果已经有 content 字段，直接返回
+    if (msg.content) {
+      return converted
+    }
+
+    // 根据类型转换 content
+    if (msg.type === 'thought' && msg.data?.thought) {
+      converted.content = msg.data.thought
+    } else if (msg.type === 'action' && msg.data?.action) {
+      const toolName = msg.data.action.tool || ''
+      converted.content = toolName ? `调用工具: ${toolName}` : '执行行动'
+    } else if (msg.type === 'observation' && msg.data?.observation) {
+      const obs = msg.data.observation
+      converted.content = obs.summary || '获得结果'
+    } else if (msg.type === 'user') {
+      if (typeof msg.data === 'string') {
+        converted.content = msg.data
+      } else if (msg.data?.content && typeof msg.data.content === 'string') {
+        converted.content = msg.data.content
+      } else {
+        converted.content = '(用户消息)'
+      }
+    } else if (msg.type === 'final') {
+      converted.content = msg.data?.answer || ''
+    }
+
+    return converted
+  })
+}
+
+/**
+ * 恢复会话的可视化和面板状态
+ * @param {Object} sessionData - 会话数据
+ * @returns {number} 可视化数量
+ */
+const restoreSessionVisualizations = async (sessionData) => {
+  let visualCount = 0
+
+  // 检查是否有可视化内容
+  const hasVisuals = (
+    (sessionData.visual_ids && sessionData.visual_ids.length > 0) ||
+    (sessionData.visualizations && sessionData.visualizations.length > 0) ||
+    (store.currentState.groupedVisualizations &&
+      (store.currentState.groupedVisualizations.weather?.length > 0 ||
+       store.currentState.groupedVisualizations.component?.length > 0))
+  )
+
+  const hasOfficeDocs = sessionData.office_documents && sessionData.office_documents.length > 0
+
+  if (hasVisuals) {
+    vizPanelVisible.value = true
+    console.log('[会话恢复] 设置可视化面板可见')
+  }
+
+  if (hasOfficeDocs) {
+    officePanelVisible.value = true
+    console.log('[会话恢复] 设置Office文档面板可见')
+  }
+
+  if (hasVisuals || hasOfficeDocs) {
+    rightPanelVisible.value = true
+    console.log('[会话恢复] 设置右侧面板可见')
+    // 等待 DOM 更新
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+
+  visualCount = sessionData?.visual_ids?.length || 0
+  return visualCount
+}
+
+/**
+ * 统一的会话恢复逻辑
+ * @param {string} sessionId - 会话ID
+ * @param {Object} options - 恢复选项
+ * @returns {Promise<Object>} 恢复结果 { success, messageCount, visualCount, sessionData }
+ */
+const doRestoreSession = async (sessionId, options = {}) => {
+  const {
+    messageLimit = 5,
+    showAlert = false,
+    clearMessages = true,
+    restoreOfficeDocs = false
+  } = options
+
   try {
-    const response = await restoreSession(session.session_id)
-    console.log('[会话恢复] API响应完整数据:', response)
+    console.log('[会话恢复] 开始恢复会话:', sessionId)
+
+    // 1. 调用后端 API（使用数据库层分页）
+    const response = await restoreSession(sessionId, messageLimit)
+    console.log('[会话恢复] API响应:', response)
 
     const sessionData = response.session
 
-    // 【修复】即使 conversation_history 为空，也允许恢复会话（多专家模式可能没有对话历史）
-    const hasConversationHistory = sessionData?.conversation_history && sessionData.conversation_history.length > 0
-    const hasDataOrVisuals = (sessionData?.data_ids && sessionData.data_ids.length > 0) ||
-                            (sessionData?.visual_ids && sessionData.visual_ids.length > 0) ||
+    // 2. 验证会话数据
+    const hasConversationHistory = sessionData?.conversation_history?.length > 0
+    const hasDataOrVisuals = (sessionData?.data_ids?.length > 0) ||
+                            (sessionData?.visual_ids?.length > 0) ||
                             sessionData?.last_result
 
     if (!hasConversationHistory && !hasDataOrVisuals) {
-      console.warn('[会话恢复] 会话为空（无对话历史、数据或可视化）')
-      return
+      console.warn('[会话恢复] 会话为空')
+      if (showAlert) alert('会话数据为空')
+      return { success: false, messageCount: 0, visualCount: 0, sessionData: null }
     }
 
-    // 【修复】查找会话对应的模式
+    // 3. 提取并切换模式
     let sessionMode = store.extractModeFromSessionId(sessionData.session_id)
+    if (!sessionMode && sessionData.metadata?.mode) {
+      sessionMode = sessionData.metadata.mode
+    }
 
-    // 【新增】如果无法从sessionId提取模式（后端创建的session），尝试从localStorage查找
+    // 降级：如果无法提取模式，尝试从localStorage查找
     if (!sessionMode) {
       console.log('[会话恢复] 无法从sessionId提取模式，遍历所有模式查找消息')
       const modes = ['assistant', 'expert', 'query', 'code', 'report', 'chart', 'tracing']
-
-      // 【增强】不仅检查sessionId，还要检查是否有消息（旧架构可能sessionId不匹配但消息存在）
       let bestMatch = null
       let maxMessageCount = 0
 
@@ -1467,15 +1534,13 @@ const quickLoadSession = async (session) => {
         if (savedStateJSON) {
           try {
             const savedState = JSON.parse(savedStateJSON)
-
-            // 策略1：精确匹配sessionId
+            // 精确匹配sessionId
             if (savedState.sessionId === sessionData.session_id && savedState.messages && savedState.messages.length > 0) {
               sessionMode = mode
-              console.log(`[会话恢复] 精确匹配：在 ${mode} 模式中找到会话，数量: ${savedState.messages.length}`)
+              console.log(`[会话恢复] 精确匹配：在 ${mode} 模式中找到会话`)
               break
             }
-
-            // 策略2：模糊匹配（有消息且数量最多）- 旧架构可能sessionId不匹配
+            // 模糊匹配（有消息且数量最多）
             if (savedState.messages && savedState.messages.length > maxMessageCount) {
               maxMessageCount = savedState.messages.length
               bestMatch = mode
@@ -1486,13 +1551,11 @@ const quickLoadSession = async (session) => {
         }
       }
 
-      // 如果没有精确匹配，使用模糊匹配
       if (!sessionMode && bestMatch && maxMessageCount > 0) {
         sessionMode = bestMatch
-        console.log(`[会话恢复] 模糊匹配：使用 ${sessionMode} 模式（${maxMessageCount} 条消息）`)
+        console.log(`[会话恢复] 模糊匹配：使用 ${sessionMode} 模式`)
       }
 
-      // 如果还是找不到，默认使用expert模式（溯源分析通常用expert）
       if (!sessionMode) {
         sessionMode = 'expert'
         console.log('[会话恢复] 未找到会话消息，默认使用expert模式')
@@ -1500,121 +1563,81 @@ const quickLoadSession = async (session) => {
     }
 
     if (sessionMode && sessionMode !== store.currentMode) {
-      console.log(`[会话恢复] 检测到会话模式为 ${sessionMode}，当前模式为 ${store.currentMode}，自动切换`)
-      store.switchMode(sessionMode)
+      console.log('[会话恢复] 切换模式:', sessionMode)
+      await switchMode(sessionMode, false)
     }
 
-    // 使用新的 set 方法恢复会话状态
-    store.setSessionId(sessionData.session_id)
+    // 4. 清空当前消息（如果需要）
+    if (clearMessages && store.currentState.messages.length > 0) {
+      store.setMessages([])
+    }
 
-    // 恢复对话历史（优先从后端API，如果为空则从localStorage恢复）
+    // 5. 转换并恢复消息
+    let messageCount = 0
     if (hasConversationHistory) {
-      // ✅ 修复：转换消息格式，同时兼容 type 和 role 字段
-      const convertedMessages = sessionData.conversation_history.map(msg => {
-        const msgType = msg.type || (msg.role === 'user' ? 'user' : 'final')
-        return {
-          id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: msgType,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          streaming: false,
-          ...msg.metadata || {}
-        }
-      })
-      store.setMessages(convertedMessages)
-      console.log('[会话恢复] 已从后端恢复对话历史，消息数量:', store.currentState.messages.length)
-
-      // 设置分页状态
-      if (sessionData.has_more_messages !== undefined) {
-        store.setPagination({
-          hasMoreMessages: sessionData.has_more_messages,
-          totalMessageCount: sessionData.total_message_count || 0,
-          oldestSequence: sessionData.oldest_sequence ?? null,
-          loadingMore: false
-        })
-      }
+      const convertedHistory = convertHistoryMessages(sessionData.conversation_history)
+      store.setMessages(convertedHistory)
+      messageCount = convertedHistory.length
+      console.log('[会话恢复] 消息已恢复，数量:', messageCount)
+      await nextTick()
     } else {
-      // 【修复】后端没有conversation_history，尝试从localStorage恢复（多专家模式）
-      console.log('[会话恢复] 后端无对话历史，尝试从localStorage恢复')
-      store._restoreModeState(sessionMode)  // 使用检测到的模式，而不是currentMode
-      const restoredCount = store.currentState.messages.length
-      console.log(`[会话恢复] 从localStorage恢复 ${sessionMode} 模式消息，数量: ${restoredCount}`)
+      // 后端没有conversation_history，从localStorage恢复
+      console.log('[会话恢复] 后端无对话历史，从localStorage恢复')
+      store._restoreModeState(sessionMode)
+      await nextTick()
     }
 
-    // 恢复分析状态
+    // 6. 恢复会话状态
+    store.setSessionId(sessionData.session_id)
+    if (sessionData.state === 'completed') {
+      store.setComplete(true)
+    }
     if (sessionData.last_result) {
       store.currentState.lastExpertResults = sessionData.last_result
-      console.log('[会话恢复] 已恢复分析结果')
     }
 
-    // 恢复可视化历史（优先从metadata.visualizations读取完整数据）
-    if (sessionData.metadata?.visualizations && Array.isArray(sessionData.metadata.visualizations)) {
-      store.setVisualizationHistory(sessionData.metadata.visualizations)
-      console.log('[会话恢复] 从metadata恢复可视化历史，图表数量:', store.currentState.visualizationHistory.length)
-    } else if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
-      store.setVisualizationHistory(sessionData.visualizations)
-      console.log('[会话恢复] 已恢复可视化历史，图表数量:', store.currentState.visualizationHistory.length)
-    } else if (hasConversationHistory) {
-      // 降级方案：从conversation_history的metadata中提取visual_ids
-      const visualizations = []
-      sessionData.conversation_history.forEach(msg => {
-        if (msg.metadata && msg.metadata.visual_ids && Array.isArray(msg.metadata.visual_ids)) {
-          msg.metadata.visual_ids.forEach(visualId => {
-            visualizations.push({
-              id: visualId,
-              type: 'chart',
-              image_url: `/api/image/${visualId}`
-            })
-          })
-        }
+    // 7. 恢复分页状态
+    if (sessionData.has_more_messages !== undefined) {
+      store.setPagination({
+        hasMoreMessages: sessionData.has_more_messages,
+        totalMessageCount: sessionData.total_message_count || 0,
+        oldestSequence: sessionData.oldest_sequence ?? null,
+        loadingMore: false
       })
-      if (visualizations.length > 0) {
-        store.setVisualizationHistory(visualizations)
-        console.log('[会话恢复] 从消息metadata提取可视化，图表数量:', visualizations.length)
-      }
     }
 
-    // 恢复专家结果
-    if (sessionData.expert_results) {
-      store.setLastExpertResults(sessionData.expert_results)
-      console.log('[会话恢复] 已恢复专家结果')
+    // 8. 恢复可视化历史和分组
+    // 优先从 metadata.visualizations 读取
+    const visualizations = sessionData.metadata?.visualizations || sessionData.visualizations
+    if (visualizations && Array.isArray(visualizations)) {
+      store.setVisualizationHistory(visualizations)
+      console.log('[会话恢复] 已恢复可视化历史，图表数量:', visualizations.length)
     }
 
-    // ✅ 修复：恢复 groupedVisualizations（多专家模式）
+    // 恢复 groupedVisualizations
     let hasVisualsData = false
-
-    if (sessionData.visualizations && Array.isArray(sessionData.visualizations) && sessionData.visualizations.length > 0) {
-      // 方案1：从 sessionData.visualizations 恢复（新会话）
+    if (visualizations && Array.isArray(visualizations) && visualizations.length > 0) {
       const grouped = { weather: [], component: [], viz: [], report: [] }
-      sessionData.visualizations.forEach(viz => {
+      visualizations.forEach(viz => {
         const expert = viz.expert || viz.meta?.expert || 'unknown'
         if (grouped[expert]) {
           grouped[expert].push(viz)
         } else if (expert === 'weather' || expert === 'component') {
           grouped[expert].push(viz)
         } else {
-          // 默认归入 viz 组
           grouped.viz.push(viz)
         }
       })
       store.currentState.groupedVisualizations = grouped
       hasVisualsData = true
-      console.log('[会话恢复] 已从 visualizations 恢复 groupedVisualizations:', {
-        weather: grouped.weather.length,
-        component: grouped.component.length,
-        viz: grouped.viz.length
-      })
+      console.log('[会话恢复] 已恢复 groupedVisualizations')
     } else if (sessionData.visual_ids && Array.isArray(sessionData.visual_ids) && sessionData.visual_ids.length > 0) {
-      // 方案2：从消息的 Markdown 内容中提取图片URL（旧会话兼容）
-      console.log('[会话恢复] visualizations 为空，尝试从消息中提取图片URL')
-
-      // 提取所有消息中的图片URL
+      // 从消息中提取图片URL（旧会话兼容）
       const imageUrls = []
       const messages = store.currentState.messages || []
 
       messages.forEach(msg => {
         if (msg.content && typeof msg.content === 'string') {
-          // 匹配 Markdown 图片语法：![alt](/api/image/xxx)
           const imgRegex = /!\[([^\]]*)\]\((\/api\/image\/[^\)]+)\)/g
           let match
           while ((match = imgRegex.exec(msg.content)) !== null) {
@@ -1627,17 +1650,10 @@ const quickLoadSession = async (session) => {
         }
       })
 
-      console.log('[会话恢复] 从消息中提取到图片数量:', imageUrls.length)
-
-      // 根据 visual_ids 和 imageUrls 构造可视化数据
       if (imageUrls.length > 0) {
         const grouped = { weather: [], component: [], viz: [], report: [] }
-
-        // 将图片按内容特征分组
         imageUrls.forEach((img, index) => {
           const visualId = sessionData.visual_ids[index] || `img_${index}`
-
-          // 根据图片标题判断属于哪个专家
           let expert = 'viz'
           const alt = img.alt.toLowerCase()
           if (alt.includes('轨迹') || alt.includes('trajectory') || alt.includes('风向') || alt.includes('风玫瑰') || alt.includes('上风向')) {
@@ -1652,25 +1668,50 @@ const quickLoadSession = async (session) => {
             url: img.url,
             title: img.alt,
             expert: expert,
-            meta: {
-              expert: expert,
-              type: 'image'
-            }
+            meta: { expert: expert, type: 'image' }
           })
         })
 
         store.currentState.groupedVisualizations = grouped
         hasVisualsData = true
-        console.log('[会话恢复] 已从消息提取图片并恢复 groupedVisualizations:', {
-          weather: grouped.weather.length,
-          component: grouped.component.length,
-          viz: grouped.viz.length
+        console.log('[会话恢复] 已从消息提取图片并恢复 groupedVisualizations')
+      }
+    }
+
+    // 恢复专家结果
+    if (sessionData.expert_results) {
+      store.setLastExpertResults(sessionData.expert_results)
+      console.log('[会话恢复] 已恢复专家结果')
+    }
+
+    // 9. 恢复Office文档（可选）
+    if (restoreOfficeDocs && sessionData.office_documents && Array.isArray(sessionData.office_documents) && sessionData.office_documents.length > 0) {
+      console.log('[会话恢复] 恢复Office文档预览，数量:', sessionData.office_documents.length)
+
+      if (officePanelRef.value && typeof officePanelRef.value.loadDocuments === 'function') {
+        officePanelRef.value.loadDocuments(sessionData.office_documents)
+        console.log('[会话恢复] 已通过loadDocuments恢复Office文档')
+      } else {
+        console.warn('[会话恢复] loadDocuments方法不可用，使用回退方案')
+        sessionData.office_documents.forEach((doc, index) => {
+          setTimeout(() => {
+            const modeState = store.modeStates[store.currentMode]
+            if (modeState) {
+              modeState.lastOfficeDocument = {
+                pdf_preview: doc.pdf_preview,
+                file_path: doc.file_path,
+                generator: doc.generator,
+                summary: doc.summary,
+                timestamp: doc.timestamp
+              }
+            }
+            console.log('[会话恢复] 已恢复Office文档:', index + 1, doc.file_path)
+          }, index * 50)
         })
       }
     }
 
-    // ✅ 修复：根据恢复的内容设置面板可见状态
-    // 1. 检查是否有可视化内容（visual_ids 或 visualizations 或 groupedVisualizations）
+    // 10. 设置面板可见状态
     const hasVisuals = hasVisualsData || (
       (sessionData.visual_ids && sessionData.visual_ids.length > 0) ||
       (sessionData.visualizations && sessionData.visualizations.length > 0) ||
@@ -1679,10 +1720,8 @@ const quickLoadSession = async (session) => {
          store.currentState.groupedVisualizations.component?.length > 0))
     )
 
-    // 2. 检查是否有Office文档
     const hasOfficeDocs = sessionData.office_documents && sessionData.office_documents.length > 0
 
-    // 3. 设置面板可见状态
     if (hasVisuals) {
       vizPanelVisible.value = true
       console.log('[会话恢复] 设置可视化面板可见')
@@ -1693,25 +1732,47 @@ const quickLoadSession = async (session) => {
       console.log('[会话恢复] 设置Office文档面板可见')
     }
 
-    // 4. 确保右侧面板展开（如果有任一面板可见）
     if (hasVisuals || hasOfficeDocs) {
       rightPanelVisible.value = true
       console.log('[会话恢复] 设置右侧面板可见')
-      // 等待 DOM 更新，确保容器有尺寸
       await nextTick()
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
-    // 关闭管理面板并显示成功提示
-    managementPanel.value = null
-
-    // 根据恢复的内容显示不同的提示
-    const messageCount = store.currentState.messages.length
     const visualCount = sessionData?.visual_ids?.length || 0
-    console.log(`[会话恢复] 已加载对话，消息数: ${messageCount}, 图表数: ${visualCount}`)
 
-  } catch (error) {
-    console.error('Failed to restore session:', error)
+    console.log('[会话恢复] 恢复成功:', {
+      sessionId: sessionData.session_id.substring(0, 12) + '...',
+      messageCount,
+      visualCount,
+      hasMore: sessionData.has_more_messages
+    })
+
+    if (showAlert) {
+      alert(`会话 ${sessionId.substring(0, 12)}... 已恢复`)
+    }
+
+    return { success: true, messageCount, visualCount, sessionData }
+
+  } catch (err) {
+    console.error('[会话恢复] 恢复失败:', err)
+    if (showAlert) {
+      alert('会话恢复失败: ' + err.message)
+    }
+    return { success: false, messageCount: 0, visualCount: 0, error: err.message, sessionData: null }
+  }
+}
+
+// ========== 原有的会话恢复函数（现已重构为调用 doRestoreSession）==========
+
+const quickLoadSession = async (session) => {
+  // 使用统一的恢复逻辑
+  const result = await doRestoreSession(session.session_id, { messageLimit: 5 })
+
+  if (result.success) {
+    // 关闭管理面板
+    managementPanel.value = null
+    console.log(`[会话恢复] 已加载对话，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
   }
 }
 
@@ -1721,79 +1782,7 @@ const getShortSessionId = (sessionId) => {
 
 const getSessionHistoryFilterCount = (filterValue) => {
   if (!sessionHistoryStats.value) return 0
-  if (filterValue === 'all') return sessionHistoryStats.value.total || 0
-  return sessionHistoryStats.value.by_state?.[filterValue] || 0
-}
-
-const getFilteredSessions = () => {
-  if (sessionHistoryFilter.value === 'all') {
-    return sessionHistoryData.value
-  }
-  return sessionHistoryData.value.filter(s => s.state === sessionHistoryFilter.value)
-}
-
-const handleSessionArchive = async (sessionId) => {
-  try {
-    const response = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' })
-    if (!response.ok) throw new Error('Failed to archive session')
-    alert(`会话 ${sessionId.substring(0, 12)}... 已归档`)
-    await refreshSessionHistory()
-  } catch (error) {
-    console.error('Failed to archive session:', error)
-    alert('归档失败: ' + error.message)
-  }
-}
-
-const handleSessionExport = async (sessionId) => {
-  try {
-    const response = await fetch(`/api/sessions/${sessionId}/export`, { method: 'POST' })
-    if (!response.ok) throw new Error('Failed to export session')
-    alert(`会话 ${sessionId.substring(0, 12)}... 已导出到服务器`)
-  } catch (error) {
-    console.error('Failed to export session:', error)
-    alert('导出失败: ' + error.message)
-  }
-}
-
-const handleSessionDelete = async (sessionId) => {
-  try {
-    const response = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
-    if (!response.ok) throw new Error('Failed to delete session')
-    // 从列表中移除
-    sessionHistoryData.value = sessionHistoryData.value.filter(s => s.session_id !== sessionId)
-    // 刷新统计
-    await refreshSessionHistory()
-  } catch (error) {
-    console.error('Failed to delete session:', error)
-  }
-}
-
-const toggleSessionSelection = (sessionId) => {
-  const index = selectedSessionIds.value.indexOf(sessionId)
-  if (index > -1) {
-    selectedSessionIds.value.splice(index, 1)
-  } else {
-    selectedSessionIds.value.push(sessionId)
-  }
-}
-
-const handleBatchDeleteSessions = async () => {
-  if (selectedSessionIds.value.length === 0) return
-
-  try {
-    const deletePromises = selectedSessionIds.value.map(sessionId =>
-      fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
-    )
-    await Promise.all(deletePromises)
-    // 从列表中移除
-    sessionHistoryData.value = sessionHistoryData.value.filter(s => !selectedSessionIds.value.includes(s.session_id))
-    // 清空选择
-    selectedSessionIds.value = []
-    // 刷新统计
-    await refreshSessionHistory()
-  } catch (error) {
-    console.error('Failed to batch delete sessions:', error)
-  }
+  return sessionHistoryStats.value.total || 0
 }
 
 const handleSessionCleanup = async () => {
@@ -1809,305 +1798,16 @@ const handleSessionCleanup = async () => {
   }
 }
 
-const toggleSessionExpand = (session) => {
-  session.isExpanded = !session.isExpanded
-}
-
 // 从侧边栏快速加载会话
 const handleLoadSession = async (sessionId) => {
-  try {
-    const response = await restoreSession(sessionId)
-    console.log('[快速加载会话] API响应:', response)
+  // 使用统一的恢复逻辑（包含Office文档恢复）
+  const result = await doRestoreSession(sessionId, {
+    messageLimit: 5,
+    restoreOfficeDocs: true
+  })
 
-    const sessionData = response.session
-
-    // 【修复】即使 conversation_history 为空，也允许恢复会话（多专家模式可能没有对话历史）
-    const hasConversationHistory = sessionData?.conversation_history && sessionData.conversation_history.length > 0
-    const hasDataOrVisuals = (sessionData?.data_ids && sessionData.data_ids.length > 0) ||
-                            (sessionData?.visual_ids && sessionData.visual_ids.length > 0) ||
-                            sessionData?.last_result
-
-    if (!hasConversationHistory && !hasDataOrVisuals) {
-      console.warn('[快速加载会话] 会话为空（无对话历史、数据或可视化）')
-      return
-    }
-
-    // 【修复】从 sessionId 或会话元数据中提取模式，并自动切换到对应模式
-    let sessionMode = store.extractModeFromSessionId(sessionData.session_id)
-
-    // 【新增】优先从会话元数据中读取模式（后端保存的 metadata.mode）
-    if (!sessionMode && sessionData.metadata?.mode) {
-      sessionMode = sessionData.metadata.mode
-      console.log(`[快速加载会话] 从会话元数据中提取模式: ${sessionMode}`)
-    }
-
-    // 【降级】如果无法从sessionId或元数据提取模式，尝试从localStorage查找
-    if (!sessionMode) {
-      console.log('[快速加载会话] 无法从sessionId提取模式，遍历所有模式查找消息')
-      const modes = ['assistant', 'expert', 'query', 'code', 'report', 'chart', 'tracing']
-
-      // 【增强】不仅检查sessionId，还要检查是否有消息（旧架构可能sessionId不匹配但消息存在）
-      let bestMatch = null
-      let maxMessageCount = 0
-
-      for (const mode of modes) {
-        const savedStateJSON = localStorage.getItem(`mode-state-${mode}`)
-        if (savedStateJSON) {
-          try {
-            const savedState = JSON.parse(savedStateJSON)
-
-            // 策略1：精确匹配sessionId
-            if (savedState.sessionId === sessionData.session_id && savedState.messages && savedState.messages.length > 0) {
-              sessionMode = mode
-              console.log(`[快速加载会话] 精确匹配：在 ${mode} 模式中找到会话，数量: ${savedState.messages.length}`)
-              break
-            }
-
-            // 策略2：模糊匹配（有消息且数量最多）- 旧架构可能sessionId不匹配
-            if (savedState.messages && savedState.messages.length > maxMessageCount) {
-              maxMessageCount = savedState.messages.length
-              bestMatch = mode
-            }
-          } catch (e) {
-            // 忽略解析错误
-          }
-        }
-      }
-
-      // 如果没有精确匹配，使用模糊匹配
-      if (!sessionMode && bestMatch && maxMessageCount > 0) {
-        sessionMode = bestMatch
-        console.log(`[快速加载会话] 模糊匹配：使用 ${sessionMode} 模式（${maxMessageCount} 条消息）`)
-      }
-
-      // 如果还是找不到，默认使用expert模式（溯源分析通常用expert）
-      if (!sessionMode) {
-        sessionMode = 'expert'
-        console.log('[快速加载会话] 未找到会话消息，默认使用expert模式')
-      }
-    }
-
-    if (sessionMode && sessionMode !== store.currentMode) {
-      console.log(`[快速加载会话] 检测到会话模式为 ${sessionMode}，当前模式为 ${store.currentMode}，自动切换`)
-      store.switchMode(sessionMode)
-    }
-
-    // 更新当前会话ID（使用 Pinia 状态的 sessionId，而非 currentSessionId）
-    store.setSessionId(sessionData.session_id)
-
-    // 恢复对话历史（优先从后端API，如果为空则从localStorage恢复）
-    if (hasConversationHistory) {
-      // ✅ 修复：转换消息格式，同时兼容 type 和 role 字段
-      const convertedMessages = sessionData.conversation_history.map(msg => {
-        const msgType = msg.type || (msg.role === 'user' ? 'user' : 'final')
-        return {
-          id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: msgType,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          streaming: false,
-          ...msg.metadata || {}
-        }
-      })
-      store.setMessages(convertedMessages)
-      console.log('[快速加载会话] 已从后端恢复对话历史，消息数量:', store.currentState.messages.length)
-
-      // 设置分页状态
-      if (sessionData.has_more_messages !== undefined) {
-        store.setPagination({
-          hasMoreMessages: sessionData.has_more_messages,
-          totalMessageCount: sessionData.total_message_count || 0,
-          oldestSequence: sessionData.oldest_sequence ?? null,
-          loadingMore: false
-        })
-      }
-    } else {
-      // 【修复】后端没有conversation_history，尝试从localStorage恢复（多专家模式）
-      console.log('[快速加载会话] 后端无对话历史，尝试从localStorage恢复')
-      store._restoreModeState(sessionMode)  // 使用检测到的模式，而不是currentMode
-      const restoredCount = store.currentState.messages.length
-      console.log(`[快速加载会话] 从localStorage恢复 ${sessionMode} 模式消息，数量: ${restoredCount}`)
-    }
-
-    // 恢复分析状态
-    if (sessionData.last_result) {
-      store.currentState.lastExpertResults = sessionData.last_result
-    }
-
-    // 恢复可视化历史
-    if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
-      store.setVisualizationHistory(sessionData.visualizations)
-      console.log('[快速加载会话] 已恢复可视化历史，图表数量:', sessionData.visualizations.length)
-    }
-
-    // 恢复专家结果
-    if (sessionData.expert_results) {
-      store.setLastExpertResults(sessionData.expert_results)
-      console.log('[快速加载会话] 已恢复专家结果')
-    }
-
-    // ✅ 修复：恢复 groupedVisualizations（多专家模式）
-    let hasVisualsData = false
-
-    // 优先从 metadata.visualizations 读取（后端保存的完整数据）
-    const visualizations = sessionData.metadata?.visualizations || sessionData.visualizations
-
-    if (visualizations && Array.isArray(visualizations) && visualizations.length > 0) {
-      // 方案1：从 visualizations 恢复（新会话）
-      const grouped = { weather: [], component: [], viz: [], report: [] }
-      visualizations.forEach(viz => {
-        const expert = viz.expert || viz.meta?.expert || 'unknown'
-        if (grouped[expert]) {
-          grouped[expert].push(viz)
-        } else if (expert === 'weather' || expert === 'component') {
-          grouped[expert].push(viz)
-        } else {
-          // 默认归入 viz 组
-          grouped.viz.push(viz)
-        }
-      })
-      store.currentState.groupedVisualizations = grouped
-      hasVisualsData = true
-      console.log('[快速加载会话] 已从 visualizations 恢复 groupedVisualizations:', {
-        weather: grouped.weather.length,
-        component: grouped.component.length,
-        viz: grouped.viz.length
-      })
-    } else if (sessionData.visual_ids && Array.isArray(sessionData.visual_ids) && sessionData.visual_ids.length > 0) {
-      // 方案2：从消息的 Markdown 内容中提取图片URL（旧会话兼容）
-      console.log('[快速加载会话] visualizations 为空，尝试从消息中提取图片URL')
-
-      // 提取所有消息中的图片URL
-      const imageUrls = []
-      const messages = store.currentState.messages || []
-
-      messages.forEach(msg => {
-        if (msg.content && typeof msg.content === 'string') {
-          // 匹配 Markdown 图片语法：![alt](/api/image/xxx)
-          const imgRegex = /!\[([^\]]*)\]\((\/api\/image\/[^\)]+)\)/g
-          let match
-          while ((match = imgRegex.exec(msg.content)) !== null) {
-            imageUrls.push({
-              url: match[2],
-              alt: match[1],
-              type: 'image'
-            })
-          }
-        }
-      })
-
-      console.log('[快速加载会话] 从消息中提取到图片数量:', imageUrls.length)
-
-      // 根据 visual_ids 和 imageUrls 构造可视化数据
-      if (imageUrls.length > 0) {
-        const grouped = { weather: [], component: [], viz: [], report: [] }
-
-        // 将图片按内容特征分组
-        imageUrls.forEach((img, index) => {
-          const visualId = sessionData.visual_ids[index] || `img_${index}`
-
-          // 根据图片标题判断属于哪个专家
-          let expert = 'viz'
-          const alt = img.alt.toLowerCase()
-          if (alt.includes('轨迹') || alt.includes('trajectory') || alt.includes('风向') || alt.includes('风玫瑰') || alt.includes('上风向')) {
-            expert = 'weather'
-          } else if (alt.includes('离子') || alt.includes('ec') || alt.includes('oc') || alt.includes('地壳') || alt.includes('组分')) {
-            expert = 'component'
-          }
-
-          grouped[expert].push({
-            id: visualId,
-            type: 'image',
-            url: img.url,
-            title: img.alt,
-            expert: expert,
-            meta: {
-              expert: expert,
-              type: 'image'
-            }
-          })
-        })
-
-        store.currentState.groupedVisualizations = grouped
-        hasVisualsData = true
-        console.log('[快速加载会话] 已从消息提取图片并恢复 groupedVisualizations:', {
-          weather: grouped.weather.length,
-          component: grouped.component.length,
-          viz: grouped.viz.length
-        })
-      }
-    }
-
-    // ✅ 修复：根据恢复的内容设置面板可见状态
-    // 1. 检查是否有可视化内容（visual_ids 或 visualizations 或 groupedVisualizations）
-    const hasVisuals = hasVisualsData || (
-      (sessionData.visual_ids && sessionData.visual_ids.length > 0) ||
-      (sessionData.visualizations && sessionData.visualizations.length > 0) ||
-      (store.currentState.groupedVisualizations &&
-        (store.currentState.groupedVisualizations.weather?.length > 0 ||
-         store.currentState.groupedVisualizations.component?.length > 0))
-    )
-
-    // 2. 检查是否有Office文档
-    const hasOfficeDocs = sessionData.office_documents && sessionData.office_documents.length > 0
-
-    // 3. 设置面板可见状态
-    if (hasVisuals) {
-      vizPanelVisible.value = true
-      console.log('[快速加载会话] 设置可视化面板可见')
-    }
-
-    if (hasOfficeDocs) {
-      officePanelVisible.value = true
-      console.log('[快速加载会话] 设置Office文档面板可见')
-    }
-
-    // 4. 确保右侧面板展开（如果有任一面板可见）
-    if (hasVisuals || hasOfficeDocs) {
-      rightPanelVisible.value = true
-      console.log('[快速加载会话] 设置右侧面板可见')
-      // 等待 DOM 更新，确保容器有尺寸
-      await nextTick()
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-
-    // 【新增】恢复Office文档预览（用于历史对话PDF预览）
-    if (sessionData.office_documents && Array.isArray(sessionData.office_documents) && sessionData.office_documents.length > 0) {
-      console.log('[快速加载会话] 恢复Office文档预览，数量:', sessionData.office_documents.length)
-
-      // 方案1：使用OfficeDocumentPanel的loadDocuments方法（推荐）
-      if (officePanelRef.value && typeof officePanelRef.value.loadDocuments === 'function') {
-        officePanelRef.value.loadDocuments(sessionData.office_documents)
-        console.log('[快速加载会话] 已通过loadDocuments恢复Office文档')
-      } else {
-        // 方案2：回退方案 - 依次注入到lastOfficeDocument（兼容性）
-        console.warn('[快速加载会话] loadDocuments方法不可用，使用回退方案')
-        sessionData.office_documents.forEach((doc, index) => {
-          setTimeout(() => {
-            // ✅ 修复：直接修改modeState，而非computed只读属性
-            const modeState = store.modeStates[store.currentMode]
-            if (modeState) {
-              modeState.lastOfficeDocument = {
-                pdf_preview: doc.pdf_preview,
-                file_path: doc.file_path,
-                generator: doc.generator,
-                summary: doc.summary,
-                timestamp: doc.timestamp
-              }
-            }
-            console.log('[快速加载会话] 已恢复Office文档:', index + 1, doc.file_path)
-          }, index * 50)
-        })
-      }
-    }
-
-    // 显示成功提示
-    const messageCount = store.currentState.messages.length
-    const visualCount = sessionData?.visual_ids?.length || 0
-    console.log(`[快速加载会话] 已加载会话，消息数: ${messageCount}, 图表数: ${visualCount}`)
-
-  } catch (error) {
-    console.error('Failed to load session:', error)
+  if (result.success) {
+    console.log(`[快速加载会话] 已加载会话，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
   }
 }
 
@@ -2206,250 +1906,16 @@ const handlePause = async () => {
 
 // 会话恢复处理
 const handleSessionRestore = async (sessionId) => {
-  try {
-    console.log('[会话恢复] 开始恢复会话:', sessionId)
+  // 使用统一的恢复逻辑
+  const result = await doRestoreSession(sessionId, { messageLimit: 5 })
 
-    // 调用后端恢复接口
-    const response = await restoreSession(sessionId)
-    console.log('[会话恢复] API响应完整数据:', response)
-    console.log('[会话恢复] response.session存在:', !!response?.session)
+  if (result.success) {
+    console.log(`[会话恢复] 会话 ${sessionId.substring(0, 12)}... 已成功恢复，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
 
-    const sessionData = response.session
-
-    console.log('[会话恢复] sessionData keys:', Object.keys(sessionData || {}))
-    console.log('[会话恢复] conversation_history存在:', !!sessionData?.conversation_history)
-    console.log('[会话恢复] conversation_history长度:', sessionData?.conversation_history?.length)
-
-    // 【修复】从 sessionId 或会话元数据中提取模式，并自动切换到对应模式
-    let sessionMode = store.extractModeFromSessionId(sessionData.session_id)
-
-    // 【新增】优先从会话元数据中读取模式（后端保存的 metadata.mode）
-    if (!sessionMode && sessionData.metadata?.mode) {
-      sessionMode = sessionData.metadata.mode
-      console.log(`[会话恢复] 从会话元数据中提取模式: ${sessionMode}`)
-    }
-
-    // 【降级】如果无法从sessionId或元数据提取模式，尝试从localStorage查找
-    if (!sessionMode) {
-      console.log('[会话恢复] 无法从sessionId提取模式，遍历所有模式查找消息')
-      const modes = ['assistant', 'expert', 'query', 'code', 'report', 'chart', 'tracing']
-
-      // 【增强】不仅检查sessionId，还要检查是否有消息（旧架构可能sessionId不匹配但消息存在）
-      let bestMatch = null
-      let maxMessageCount = 0
-
-      for (const mode of modes) {
-        const savedStateJSON = localStorage.getItem(`mode-state-${mode}`)
-        if (savedStateJSON) {
-          try {
-            const savedState = JSON.parse(savedStateJSON)
-
-            // 策略1：精确匹配sessionId
-            if (savedState.sessionId === sessionData.session_id && savedState.messages && savedState.messages.length > 0) {
-              sessionMode = mode
-              console.log(`[会话恢复] 精确匹配：在 ${mode} 模式中找到会话，数量: ${savedState.messages.length}`)
-              break
-            }
-
-            // 策略2：模糊匹配（有消息且数量最多）- 旧架构可能sessionId不匹配
-            if (savedState.messages && savedState.messages.length > maxMessageCount) {
-              maxMessageCount = savedState.messages.length
-              bestMatch = mode
-            }
-          } catch (e) {
-            // 忽略解析错误
-          }
-        }
-      }
-
-      // 如果没有精确匹配，使用模糊匹配
-      if (!sessionMode && bestMatch && maxMessageCount > 0) {
-        sessionMode = bestMatch
-        console.log(`[会话恢复] 模糊匹配：使用 ${sessionMode} 模式（${maxMessageCount} 条消息）`)
-      }
-
-      // 如果还是找不到，默认使用expert模式（溯源分析通常用expert）
-      if (!sessionMode) {
-        sessionMode = 'expert'
-        console.log('[会话恢复] 未找到会话消息，默认使用expert模式')
-      }
-    }
-
-    if (sessionMode && sessionMode !== store.currentMode) {
-      console.log(`[会话恢复] 检测到会话模式为 ${sessionMode}，当前模式为 ${store.currentMode}，自动切换`)
-      store.switchMode(sessionMode)
-    }
-
-    // 【修复】即使 conversation_history 为空，也允许恢复会话（多专家模式可能没有对话历史）
-    const hasConversationHistory = sessionData?.conversation_history && sessionData.conversation_history.length > 0
-    const hasDataOrVisuals = (sessionData?.data_ids && sessionData.data_ids.length > 0) ||
-                            (sessionData?.visual_ids && sessionData.visual_ids.length > 0) ||
-                            sessionData?.last_result
-
-    if (!hasConversationHistory && !hasDataOrVisuals) {
-      console.warn('[会话恢复] 会话为空（无对话历史、数据或可视化）')
-      return
-    }
-
-    // 打印前3条原始消息（如果有对话历史）
-    if (hasConversationHistory) {
-      console.log('[会话恢复] 前3条原始消息:', sessionData.conversation_history.slice(0, 3))
-    } else {
-      console.log('[会话恢复] 无对话历史（可能是多专家模式）')
-    }
-
-    // 更新当前会话ID
-    store.setSessionId(sessionData.session_id)
-    console.log('[会话恢复] 已更新sessionId:', sessionData.session_id)
-
-    // 【修复】如果后端有conversation_history，转换旧格式消息
-    if (hasConversationHistory) {
-      // ✅ 转换旧格式消息（兼容没有 content 字段的历史消息）
-      const conversationHistory = sessionData.conversation_history
-      const convertedHistory = conversationHistory.map((msg, index) => {
-      console.log(`[会话恢复] 转换消息 ${index}:`, {
-        role: msg.role,
-        type: msg.type,
-        hasId: !!msg.id,
-        id: msg.id,
-        hasContent: !!msg.content,
-        hasData: !!msg.data,
-        dataKeys: msg.data ? Object.keys(msg.data) : []
-      })
-
-      // 转换旧格式：从 data 中提取 content
-      const converted = { ...msg }
-
-      // 【修复】确保所有消息都有唯一的 id 字段（用于折叠逻辑）
-      if (!msg.id) {
-        converted.id = `hist-${Date.now()}-${index}`
-        console.log(`[会话恢复] 消息 ${index} 缺少id，生成新id:`, converted.id)
-      }
-
-      // 【修复】映射 role 字段到 type 字段（兼容后端格式）
-      if (msg.role && !msg.type) {
-        if (msg.role === 'user') {
-          converted.type = 'user'
-        } else if (msg.role === 'assistant') {
-          converted.type = 'final'
-        } else {
-          converted.type = msg.role
-        }
-        console.log(`[会话恢复] 消息 ${index} role->type 映射: ${msg.role} -> ${converted.type}`)
-      }
-
-      // 如果已经有 content 字段，直接返回
-      if (msg.content) {
-        console.log(`[会话恢复] 消息 ${index} 已有content，直接返回`)
-        return converted
-      }
-
-      if (msg.type === 'thought' && msg.data?.thought) {
-        converted.content = msg.data.thought
-        console.log(`[会话恢复] 消息 ${index} 转换thought:`, converted.content.substring(0, 50))
-      } else if (msg.type === 'action' && msg.data?.action) {
-        const toolName = msg.data.action.tool || ''
-        converted.content = toolName ? `调用工具: ${toolName}` : '执行行动'
-        console.log(`[会话恢复] 消息 ${index} 转换action:`, converted.content)
-      } else if (msg.type === 'observation' && msg.data?.observation) {
-        const obs = msg.data.observation
-        converted.content = obs.summary || '获得结果'
-        console.log(`[会话恢复] 消息 ${index} 转换observation:`, converted.content.substring(0, 50))
-      } else if (msg.type === 'user') {
-        // 【修复】用户消息转换逻辑：优先使用 msg.content（已存在），然后 msg.data.content，最后 msg.data（如果是字符串）
-        if (typeof msg.data === 'string') {
-          converted.content = msg.data
-        } else if (msg.data?.content && typeof msg.data.content === 'string') {
-          converted.content = msg.data.content
-        } else {
-          converted.content = '(用户消息)'
-        }
-        console.log(`[会话恢复] 消息 ${index} 转换user:`, converted.content)
-      } else if (msg.type === 'final') {
-        // 最终答案
-        converted.content = msg.data?.answer || ''
-        console.log(`[会话恢复] 消息 ${index} 转换final:`, converted.content.substring(0, 50))
-      } else {
-        console.warn(`[会话恢复] 消息 ${index} 无法转换，类型:`, msg.type)
-      }
-
-      return converted
-    })
-
-    console.log('[会话恢复] 转换后的消息数量:', convertedHistory.length)
-    console.log('[会话恢复] 转换后前3条消息:', convertedHistory.slice(0, 3))
-
-    // 清空现有消息并恢复会话状态到store（使用新的setMessages方法）
-    console.log('[会话恢复] 清空前 store.currentState.messages 长度:', store.currentState.messages.length)
-
-    // 使用 store 的 restoreSessionState 方法批量恢复状态
-    store.setSessionId(sessionData.session_id)
-    store.setMessages(convertedHistory)
-
-    console.log('[会话恢复] 赋值后 store.currentState.messages 长度:', store.currentState.messages.length)
-    console.log('[会话恢复] 赋值后 store.currentState.messages 前3条:', store.currentState.messages.slice(0, 3))
-
-    // 等待DOM更新
-    await nextTick()
-    console.log('[会话恢复] nextTick后 store.currentState.messages 长度:', store.currentState.messages.length)
+    // 关闭管理面板
+    managementPanel.value = null
   } else {
-    // 【修复】后端没有conversation_history，从localStorage恢复（多专家模式）
-    console.log('[会话恢复] 后端无对话历史，从localStorage恢复')
-    store._restoreModeState(sessionMode)  // 使用检测到的模式，而不是currentMode
-    console.log('[会话恢复] 从localStorage恢复后的消息长度:', store.currentState.messages.length)
-    console.log('[会话恢复] 从localStorage恢复后的前3条消息:', store.currentState.messages.slice(0, 3))
-
-    // 等待DOM更新
-    await nextTick()
-    console.log('[会话恢复] nextTick后 store.currentState.messages 长度:', store.currentState.messages.length)
-  }
-
-    // 等待DOM更新
-    await nextTick()
-    console.log('[会话恢复] nextTick后 store.currentState.messages 长度:', store.currentState.messages.length)
-
-    // 如果有数据ID，可以加载相关数据
-    if (sessionData.data_ids && sessionData.data_ids.length > 0) {
-      console.log('[会话恢复] 会话包含数据ID:', sessionData.data_ids)
-      // 这里可以根据需要加载数据和可视化
-    }
-
-    // ✅ 修复：设置面板可见状态（适用于所有模式）
-    const hasVisuals = (
-      (sessionData.visual_ids && sessionData.visual_ids.length > 0) ||
-      (sessionData.visualizations && sessionData.visualizations.length > 0) ||
-      (store.currentState.groupedVisualizations &&
-        (store.currentState.groupedVisualizations.weather?.length > 0 ||
-         store.currentState.groupedVisualizations.component?.length > 0))
-    )
-
-    const hasOfficeDocs = sessionData.office_documents && sessionData.office_documents.length > 0
-
-    if (hasVisuals) {
-      vizPanelVisible.value = true
-      console.log('[会话恢复] 设置可视化面板可见')
-    }
-
-    if (hasOfficeDocs) {
-      officePanelVisible.value = true
-      console.log('[会话恢复] 设置Office文档面板可见')
-    }
-
-    if (hasVisuals || hasOfficeDocs) {
-      rightPanelVisible.value = true
-      console.log('[会话恢复] 设置右侧面板可见')
-      // 等待 DOM 更新，确保容器有尺寸
-      await nextTick()
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-
-    // 显示成功提示
-    const messageCount = store.currentState.messages.length
-    const visualCount = sessionData?.visual_ids?.length || 0
-    console.log(`[会话恢复] 会话 ${sessionId.substring(0, 12)}... 已成功恢复，消息数: ${messageCount}, 图表数: ${visualCount}`)
-  } catch (error) {
-    console.error('[会话恢复] 恢复会话失败:', error)
-    console.error('[会话恢复] 错误堆栈:', error.stack)
+    console.error('[会话恢复] 恢复会话失败:', result.error)
   }
 }
 
@@ -4231,23 +3697,6 @@ input:disabled + .scheduled-slider {
 
 .session-item:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.session-item.state-active {
-  border-left: 3px solid #1890ff;
-}
-
-.session-item.state-completed {
-  border-left: 3px solid #52c41a;
-}
-
-.session-item.state-failed {
-  border-left: 3px solid #ff4d4f;
-}
-
-.session-item.state-archived {
-  border-left: 3px solid #999;
-  opacity: 0.8;
 }
 
 .session-header {

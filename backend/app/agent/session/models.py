@@ -10,15 +10,6 @@ from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field
 
 
-class SessionState(str, Enum):
-    """会话状态枚举"""
-    ACTIVE = "active"           # 活跃状态
-    PAUSED = "paused"           # 暂停状态
-    COMPLETED = "completed"     # 已完成
-    FAILED = "failed"           # 失败
-    ARCHIVED = "archived"       # 已归档
-
-
 class Session(BaseModel):
     """
     会话数据模型
@@ -29,12 +20,10 @@ class Session(BaseModel):
     # 基本信息
     session_id: str = Field(..., description="会话ID")
     query: str = Field(..., description="用户原始查询")
-    state: SessionState = Field(default=SessionState.ACTIVE, description="会话状态")
 
     # 时间信息
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     updated_at: datetime = Field(default_factory=datetime.now, description="更新时间")
-    completed_at: Optional[datetime] = Field(default=None, description="完成时间")
 
     # 对话历史
     conversation_history: List[Dict[str, Any]] = Field(
@@ -84,7 +73,6 @@ class Session(BaseModel):
         return SessionInfo(
             session_id=self.session_id,
             query=self.query,
-            state=self.state,
             created_at=self.created_at,
             updated_at=self.updated_at,
             data_count=len(self.data_ids),
@@ -92,10 +80,8 @@ class Session(BaseModel):
             has_error=self.error is not None
         )
 
-    def get_duration(self) -> Optional[float]:
+    def get_duration(self) -> float:
         """获取会话持续时间（秒）"""
-        if self.completed_at:
-            return (self.completed_at - self.created_at).total_seconds()
         return (datetime.now() - self.created_at).total_seconds()
 
 
@@ -107,7 +93,6 @@ class SessionInfo(BaseModel):
     """
     session_id: str = Field(..., description="会话ID")
     query: str = Field(..., description="用户查询（前100字符）")
-    state: SessionState = Field(..., description="会话状态")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
     data_count: int = Field(default=0, description="数据数量")
