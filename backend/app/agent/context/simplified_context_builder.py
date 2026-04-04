@@ -231,7 +231,20 @@ class SimplifiedContextBuilder:
 
         # 2. 当前进行的任务
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sections.append(f"## 当前进行的任务（请根据对话记录确认是否已经完成，不要重复执行）\n{query}\n\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
+
+        if conversation_history:
+            # 已有对话历史：不要重复完整查询，避免LLM重复执行工具
+            # 对话历史中已包含工具结果，只需提醒LLM检查是否完成
+            sections.append(
+                f"## 当前状态\n"
+                f"**迭代次数**: {iteration} | **当前时间**: {current_time}\n\n"
+                f"请根据上方对话历史中的工具执行结果，判断用户任务是否已完成。\n"
+                f"- 如果已完成：直接使用 FINAL_ANSWER 回复用户\n"
+                f"- 如果未完成：继续调用必要的工具，但**不要重复执行已经成功过的工具调用**"
+            )
+        else:
+            # 首次迭代：显示完整查询
+            sections.append(f"## 当前进行的任务\n{query}\n\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）
         # conversation_history已包含所有历史对话，包括完整的observation数据

@@ -13,7 +13,7 @@ import json
 import structlog
 
 from app.agent import create_react_agent
-from app.agent.session import SessionManager, Session, SessionState, get_session_manager
+from app.agent.session import Session, SessionState, get_session_manager
 
 from app.agent.experts.expert_router_v3 import ExpertRouterV3, PipelineResult  # ✅ 旧架构多专家路由器
 logger = structlog.get_logger()
@@ -328,7 +328,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
 
             # 创建或加载会话
             if actual_session_id:
-                session = session_manager.load_session(actual_session_id)
+                session = await session_manager.load_session(actual_session_id)
                 if session:
                     logger.info(
                         "session_restored",
@@ -362,7 +362,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
 
             # 保存初始会话状态
             session.state = SessionState.ACTIVE
-            session_manager.save_session(session)
+            await session_manager.save_session(session)
 
             # ✅ 添加用户消息到对话历史
             user_message = {
@@ -469,7 +469,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         session.conversation_history = conversation_history
                         session.data_ids = list(set(collected_data_ids))  # 去重
                         session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-                        session_manager.save_session(session)
+                        await session_manager.save_session(session)
                         logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids))
                     elif event["type"] in ["incomplete", "fatal_error"]:
                         session.state = SessionState.FAILED if event["type"] == "fatal_error" else SessionState.COMPLETED
@@ -493,7 +493,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                                 "message": event["data"].get("error", "Unknown error"),
                                 "timestamp": datetime.now().isoformat()
                             }
-                        session_manager.save_session(session)
+                        await session_manager.save_session(session)
                         logger.info("session_saved_on_error", session_id=actual_session_id, error_type=event["type"])
 
                     # 将事件序列化为 SSE 格式
@@ -519,7 +519,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     "message": str(e),
                     "timestamp": datetime.now().isoformat()
                 }
-                session_manager.save_session(session)
+                await session_manager.save_session(session)
                 logger.info("session_saved_on_exception", session_id=actual_session_id)
 
                 error_event = {

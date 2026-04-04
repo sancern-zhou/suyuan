@@ -114,6 +114,10 @@
             :selected-message-id="selectedMessageId"
             :visualization-panel-ref="vizPanelRef"
             :on-message-click="selectMessage"
+            :has-more-messages="store.currentState.pagination.hasMoreMessages"
+            :total-message-count="store.currentState.pagination.totalMessageCount"
+            :loading-more="store.currentState.pagination.loadingMore"
+            @load-more="handleLoadMore"
           />
 
           <InputBox
@@ -356,7 +360,7 @@ import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
-import { restoreSession } from '@/api/session'
+import { restoreSession, getSessionMessages } from '@/api/session'
 
 const router = useRouter()
 
@@ -1519,6 +1523,16 @@ const quickLoadSession = async (session) => {
       })
       store.setMessages(convertedMessages)
       console.log('[会话恢复] 已从后端恢复对话历史，消息数量:', store.currentState.messages.length)
+
+      // 设置分页状态
+      if (sessionData.has_more_messages !== undefined) {
+        store.setPagination({
+          hasMoreMessages: sessionData.has_more_messages,
+          totalMessageCount: sessionData.total_message_count || 0,
+          oldestSequence: sessionData.oldest_sequence ?? null,
+          loadingMore: false
+        })
+      }
     } else {
       // 【修复】后端没有conversation_history，尝试从localStorage恢复（多专家模式）
       console.log('[会话恢复] 后端无对话历史，尝试从localStorage恢复')
@@ -1897,6 +1911,16 @@ const handleLoadSession = async (sessionId) => {
       })
       store.setMessages(convertedMessages)
       console.log('[快速加载会话] 已从后端恢复对话历史，消息数量:', store.currentState.messages.length)
+
+      // 设置分页状态
+      if (sessionData.has_more_messages !== undefined) {
+        store.setPagination({
+          hasMoreMessages: sessionData.has_more_messages,
+          totalMessageCount: sessionData.total_message_count || 0,
+          oldestSequence: sessionData.oldest_sequence ?? null,
+          loadingMore: false
+        })
+      }
     } else {
       // 【修复】后端没有conversation_history，尝试从localStorage恢复（多专家模式）
       console.log('[快速加载会话] 后端无对话历史，尝试从localStorage恢复')
@@ -2426,6 +2450,44 @@ const handleSessionRestore = async (sessionId) => {
   } catch (error) {
     console.error('[会话恢复] 恢复会话失败:', error)
     console.error('[会话恢复] 错误堆栈:', error.stack)
+  }
+}
+
+// ========== 消息分页加载 ==========
+
+const handleLoadMore = async () => {
+  const pagination = store.currentState.pagination
+  if (pagination.loadingMore || !pagination.hasMoreMessages) return
+
+  const sessionId = store.currentState.sessionId
+  if (!sessionId) return
+
+  const container = document.querySelector('.react-message-list')
+  const prevScrollHeight = container?.scrollHeight || 0
+
+  store.setPagination({ loadingMore: true })
+
+  try {
+    const result = await getSessionMessages(
+      sessionId,
+      pagination.oldestSequence,
+      50
+    )
+
+    store.prependMessages(result.messages)
+    store.setPagination({
+      hasMoreMessages: result.has_more,
+      loadingMore: false
+    })
+
+    // 保持滚动位置不跳动
+    await nextTick()
+    if (container) {
+      container.scrollTop = container.scrollHeight - prevScrollHeight
+    }
+  } catch (error) {
+    console.error('[加载更多] 失败:', error)
+    store.setPagination({ loadingMore: false })
   }
 }
 </script>

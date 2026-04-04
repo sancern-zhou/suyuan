@@ -10,6 +10,20 @@
       <p class="hint">{{ welcomeContent.example }}</p>
     </div>
 
+    <!-- 加载更多按钮 -->
+    <div v-if="hasMoreMessages" class="load-more-container">
+      <button
+        v-if="!loadingMore"
+        @click="emit('load-more')"
+        class="load-more-btn"
+      >
+        加载更早的消息 ({{ totalMessageCount - messages.length }} 条)
+      </button>
+      <div v-else class="loading-indicator">
+        <span class="spinner"></span> 加载中...
+      </div>
+    </div>
+
     <!-- 消息列表 -->
     <div v-for="(message, index) in filteredMessages" :key="message.id" class="message-wrapper"
       :class="{
@@ -246,8 +260,23 @@ const props = defineProps({
   onMessageClick: {
     type: Function,
     default: null
+  },
+  // 【新增】分页加载状态
+  hasMoreMessages: {
+    type: Boolean,
+    default: false
+  },
+  totalMessageCount: {
+    type: Number,
+    default: 0
+  },
+  loadingMore: {
+    type: Boolean,
+    default: false
   }
 })
+
+const emit = defineEmits(['load-more'])
 
 const messagesContainer = ref(null)
 
@@ -816,6 +845,14 @@ const handleUserScroll = () => {
   scrollTimeout.value = setTimeout(() => {
     // 不自动重置为false，保留用户的滚动意图
   }, 2000)
+
+  // 滚动到顶部时自动加载更多历史消息
+  if (messagesContainer.value) {
+    const { scrollTop } = messagesContainer.value
+    if (scrollTop <= 30 && props.hasMoreMessages && !props.loadingMore) {
+      emit('load-more')
+    }
+  }
 }
 
 // 只在"首次加载"或"用户发送消息"时强制滚动到底部
@@ -1654,6 +1691,52 @@ const closeImagePreview = () => {
     background: #d0d0d0;
     border-radius: 3px;
   }
+}
+
+// 加载更多按钮
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 8px;
+}
+
+.load-more-btn {
+  padding: 8px 20px;
+  border: 1px solid #e0e0e0;
+  border-radius: 20px;
+  background: #f8f9fa;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: #e9ecef;
+    border-color: #d0d0d0;
+    color: #333;
+  }
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #999;
+  font-size: 13px;
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #e0e0e0;
+    border-top-color: #999;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .welcome-message {

@@ -59,6 +59,14 @@ const createEmptyModeState = () => ({
   sessionRound: 0,
   interventionQueue: [],
 
+  // 消息分页加载状态
+  pagination: {
+    hasMoreMessages: false,
+    totalMessageCount: 0,
+    oldestSequence: null,
+    loadingMore: false
+  },
+
   // 流式渲染状态
   streamingAnswerMessageId: null,
   _forceRenderCount: 0,
@@ -496,6 +504,33 @@ export const useReactStore = defineStore('react', {
       }
 
       console.log(`[restoreSessionState] Session restored for mode ${this.currentMode}`)
+
+      // 恢复分页状态
+      if (sessionData.has_more_messages !== undefined) {
+        this.currentState.pagination.hasMoreMessages = sessionData.has_more_messages
+        this.currentState.pagination.totalMessageCount = sessionData.total_message_count || 0
+        this.currentState.pagination.oldestSequence = sessionData.oldest_sequence ?? null
+      }
+    },
+
+    // ========== 消息分页加载 ==========
+
+    /**
+     * 设置分页状态
+     */
+    setPagination(state) {
+      Object.assign(this.currentState.pagination, state)
+    },
+
+    /**
+     * 前置插入更早的消息（滚动加载更多）
+     */
+    prependMessages(messages) {
+      if (!messages || messages.length === 0) return
+      this.currentState.messages = [...messages, ...this.currentState.messages]
+      if (messages.length > 0) {
+        this.currentState.pagination.oldestSequence = messages[0].sequence_number
+      }
     },
 
     // ========== 原有方法（适配多模式）==========

@@ -22,7 +22,7 @@ from app.agent.core.structured_query_parser import StructuredQuery, StructuredQu
 from app.agent.core.expert_plan_generator import ExpertPlanGenerator, ExpertTask
 from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
 from app.agent.task import OldTaskList as TaskList, TaskStatus
-from app.agent.session import SessionManager, Session, SessionState, get_session_manager
+from app.agent.session import Session, SessionState, get_session_manager
 from .expert_executor import ExpertResult
 from .weather_executor import WeatherExecutor
 from .component_executor import ComponentExecutor
@@ -205,7 +205,7 @@ class ExpertRouterV3:
 
         # 创建或恢复会话
         if session_id:
-            session = self.session_manager.load_session(session_id)
+            session = await self.session_manager.load_session(session_id)
             if not session:
                 logger.warning(f"Session {session_id} not found, creating new session")
                 # ✅ 保留原有模式前缀（如 tracing_session_xxx -> tracing_session_yyy）
@@ -223,7 +223,7 @@ class ExpertRouterV3:
             session = Session(session_id=session_id, query=user_query)
 
         # 保存初始会话状态
-        self.session_manager.save_session(session)
+        await self.session_manager.save_session(session)
 
         logger.info(
             "pipeline_started",
@@ -297,7 +297,7 @@ class ExpertRouterV3:
             if "_" in session_id:
                 mode = session_id.split("_")[0]
                 session.metadata["mode"] = mode
-            self.session_manager.save_session(session)
+            await self.session_manager.save_session(session)
 
             logger.info(
                 "task_list_created",
@@ -503,7 +503,7 @@ class ExpertRouterV3:
                 }
             ]
 
-            self.session_manager.save_session(session)
+            await self.session_manager.save_session(session)
 
             logger.info(
                 "pipeline_completed",
@@ -529,7 +529,7 @@ class ExpertRouterV3:
                 "message": str(e),
                 "timestamp": datetime.now().isoformat()
             }
-            self.session_manager.save_session(session)
+            await self.session_manager.save_session(session)
 
             # 发送失败事件
             if self.event_callback:
