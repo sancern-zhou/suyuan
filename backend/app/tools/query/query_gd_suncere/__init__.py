@@ -16,7 +16,9 @@
 """
 from app.tools.query.query_gd_suncere.tool import (
     execute_query_gd_suncere_city_day,
+    execute_query_gd_suncere_station_day,
     execute_query_gd_suncere_station_hour,
+    execute_query_gd_suncere_station_hour_real,
     execute_query_gd_suncere_regional_comparison,
     execute_query_gd_suncere_report,
     execute_query_gd_suncere_report_compare,
@@ -38,6 +40,8 @@ from app.tools.query.query_gd_suncere.tool_city_day_old_standard import (
 # Agent 工具包装器
 from app.tools.query.query_gd_suncere.tool_wrapper import (
     QueryGDSuncereCityHourTool,
+    QueryGDSuncereStationHourTool,
+    QueryGDSuncereStationDayTool,
     QueryGDSuncereRegionalComparisonTool,
     QueryGDSuncereCityDayTool,
     QueryGDSuncereReportTool,
@@ -49,7 +53,9 @@ from app.tools.query.query_gd_suncere.tool_wrapper import (
 
 __all__ = [
     "execute_query_gd_suncere_city_day",
+    "execute_query_gd_suncere_station_day",
     "execute_query_gd_suncere_station_hour",
+    "execute_query_gd_suncere_station_hour_real",
     "execute_query_gd_suncere_regional_comparison",
     "execute_query_gd_suncere_report",
     "execute_query_gd_suncere_report_compare",
@@ -59,6 +65,8 @@ __all__ = [
     "QueryGDSuncereDataTool",
     "GeoMappingResolver",
     "QueryGDSuncereCityHourTool",
+    "QueryGDSuncereStationHourTool",
+    "QueryGDSuncereStationDayTool",
     "QueryGDSuncereRegionalComparisonTool",
     "QueryGDSuncereCityDayTool",
     "QueryGDSuncereReportTool",

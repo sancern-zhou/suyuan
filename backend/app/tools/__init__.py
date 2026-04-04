@@ -191,78 +191,106 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_hour", error=str(e))
 
     try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereStationHourTool
+        registry.register(QueryGDSuncereStationHourTool(), priority=33)
+        logger.info("tool_loaded", tool="query_gd_suncere_station_hour")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_station_hour", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereStationDayTool
+        registry.register(QueryGDSuncereStationDayTool(), priority=34)
+        logger.info("tool_loaded", tool="query_gd_suncere_station_day")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_station_day", error=str(e))
+
+    try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereRegionalComparisonTool
-        registry.register(QueryGDSuncereRegionalComparisonTool(), priority=33)
+        registry.register(QueryGDSuncereRegionalComparisonTool(), priority=35)
         logger.info("tool_loaded", tool="query_gd_suncere_regional_comparison")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_gd_suncere_regional_comparison", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayTool
-        registry.register(QueryGDSuncereCityDayTool(), priority=34)
+        registry.register(QueryGDSuncereCityDayTool(), priority=36)
         logger.info("tool_loaded", tool="query_gd_suncere_city_day")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_day", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportTool
-        registry.register(QueryGDSuncereReportTool(), priority=35)
+        registry.register(QueryGDSuncereReportTool(), priority=37)
         logger.info("tool_loaded", tool="query_gd_suncere_report")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_gd_suncere_report", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportCompareTool
-        registry.register(QueryGDSuncereReportCompareTool(), priority=36)
+        registry.register(QueryGDSuncereReportCompareTool(), priority=38)
         logger.info("tool_loaded", tool="query_gd_suncere_report_compare")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_gd_suncere_report_compare", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryStandardComparisonTool
-        registry.register(QueryStandardComparisonTool(), priority=37)
+        registry.register(QueryStandardComparisonTool(), priority=39)
         logger.info("tool_loaded", tool="query_standard_comparison")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_standard_comparison", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayNewStandardTool
-        registry.register(QueryGDSuncereCityDayNewStandardTool(), priority=38)
+        registry.register(QueryGDSuncereCityDayNewStandardTool(), priority=40)
         logger.info("tool_loaded", tool="query_gd_suncere_city_day_new")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_new", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayOldStandardTool
-        registry.register(QueryGDSuncereCityDayOldStandardTool(), priority=39)
+        registry.register(QueryGDSuncereCityDayOldStandardTool(), priority=40)
         logger.info("tool_loaded", tool="query_gd_suncere_city_day_old_standard")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_old_standard", error=str(e))
 
     try:
         from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-        registry.register(QueryNewStandardReportTool(), priority=40)
+        registry.register(QueryNewStandardReportTool(), priority=41)
         logger.info("tool_loaded", tool="query_new_standard_report")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_new_standard_report", error=str(e))
 
     try:
         from app.tools.query.compare_standard_reports.tool import CompareStandardReportsTool
-        registry.register(CompareStandardReportsTool(), priority=41)
+        registry.register(CompareStandardReportsTool(), priority=42)
         logger.info("tool_loaded", tool="compare_standard_reports")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="compare_standard_reports", error=str(e))
 
     try:
+        from app.tools.query.query_station_new_standard_report.tool import QueryStationNewStandardReportTool
+        registry.register(QueryStationNewStandardReportTool(), priority=43)
+        logger.info("tool_loaded", tool="query_station_new_standard_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_station_new_standard_report", error=str(e))
+
+    try:
+        from app.tools.query.compare_station_standard_reports.tool import CompareStationStandardReportsTool
+        registry.register(CompareStationStandardReportsTool(), priority=44)
+        logger.info("tool_loaded", tool="compare_station_standard_reports")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="compare_station_standard_reports", error=str(e))
+
+    try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereOldStandardReportTool
-        registry.register(QueryGDSuncereOldStandardReportTool(), priority=41)
+        registry.register(QueryGDSuncereOldStandardReportTool(), priority=45)
         logger.info("tool_loaded", tool="query_old_standard_report")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_old_standard_report", error=str(e))
 
     try:
         from app.tools.query.get_satellite_data.tool import GetSatelliteDataTool
-        registry.register(GetSatelliteDataTool(), priority=42)
+        registry.register(GetSatelliteDataTool(), priority=43)
         logger.info("tool_loaded", tool="get_satellite_data")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
@@ -270,7 +298,7 @@ def create_global_tool_registry() -> ToolRegistry:
     # XcAiDb SQL Server 城市历史数据查询工具
     try:
         from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool
-        registry.register(QueryXcAiCityHistoryTool(), priority=43)
+        registry.register(QueryXcAiCityHistoryTool(), priority=44)
         logger.info("tool_loaded", tool="query_xcai_city_history")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))

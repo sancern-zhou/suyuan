@@ -113,3 +113,16 @@ export async function cleanupSessions() {
     method: 'POST'
   })
 }
+
+/**
+ * 自动保存会话消息（每次AI回复完成时调用）
+ */
+export async function autoSaveSession(sessionId, messages) {
+  return await request(`${BASE_URL}/auto-save`, {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: sessionId,
+      messages: messages
+    })
+  })
+}

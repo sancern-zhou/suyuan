@@ -13,7 +13,7 @@ import json
 import structlog
 
 from app.agent import create_react_agent
-from app.agent.session import Session, SessionState, get_session_manager
+from app.agent.session import Session, get_session_manager
 
 from app.agent.experts.expert_router_v3 import ExpertRouterV3, PipelineResult  # ✅ 旧架构多专家路由器
 logger = structlog.get_logger()
@@ -333,7 +333,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     logger.info(
                         "session_restored",
                         session_id=actual_session_id,
-                        state=session.state.value if session.state else None,
                         has_conversation_history=bool(session.conversation_history),
                         conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
                         has_data_ids=bool(session.data_ids),
@@ -360,8 +359,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                 # 更新 analyze_kwargs 中的 session_id
                 analyze_kwargs["session_id"] = actual_session_id
 
-            # 保存初始会话状态
-            session.state = SessionState.ACTIVE
+            # 保存初始会话
             await session_manager.save_session(session)
 
             # ✅ 添加用户消息到对话历史
@@ -463,8 +461,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                                    collected_data_ids_count=len(collected_data_ids),
                                    collected_visuals_count=len(collected_visuals))
 
-                        session.state = SessionState.COMPLETED
-                        session.completed_at = datetime.now()
                         # ✅ 完整保存所有消息（使用数据库存储，不需要压缩）
                         session.conversation_history = conversation_history
                         session.data_ids = list(set(collected_data_ids))  # 去重
@@ -472,7 +468,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         await session_manager.save_session(session)
                         logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids))
                     elif event["type"] in ["incomplete", "fatal_error"]:
-                        session.state = SessionState.FAILED if event["type"] == "fatal_error" else SessionState.COMPLETED
                         # ✅ 优化：压缩中间过程，只保留必要信息
                         compressed_history = []
                         for msg in conversation_history:
@@ -511,7 +506,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     exc_info=True
                 )
                 # 保存失败会话
-                session.state = SessionState.FAILED
                 session.conversation_history = conversation_history
                 session.data_ids = list(set(collected_data_ids))
                 session.error = {

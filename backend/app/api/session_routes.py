@@ -4,11 +4,12 @@
 提供会话保存、恢复、列表、删除等API端点。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Optional
+from datetime import datetime
 import structlog
 
-from app.agent.session import get_session_manager, SessionState
+from app.agent.session import get_session_manager
 
 logger = structlog.get_logger()
 
@@ -18,33 +19,19 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 @router.get("/")
 @router.get("")  # 同时支持不带斜杠的请求
 async def list_sessions(
-    state: Optional[str] = None,
     limit: Optional[int] = None
 ):
     """
     列出所有会话
 
     Args:
-        state: 过滤状态（active/paused/completed/failed/archived）
         limit: 限制数量
 
     Returns:
         会话列表
     """
     session_manager = get_session_manager()
-
-    # 解析状态过滤
-    state_filter = None
-    if state:
-        try:
-            state_filter = SessionState(state)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid state: {state}. Must be one of: active, paused, completed, failed, archived"
-            )
-
-    sessions = await session_manager.list_sessions(state=state_filter, limit=limit)
+    sessions = await session_manager.list_sessions(limit=limit)
 
     return {
         "sessions": [s.model_dump(mode='json') for s in sessions],
@@ -163,10 +150,29 @@ async def get_session_messages(
     return result
 
 
+def _sanitize_floats(obj):
+    """
+    清理数据中的特殊浮点值（inf, -inf, nan），转换为 None
+
+    防止 JSON 序列化时出现 "Out of range float values are not JSON compliant" 错误
+    """
+    import math
+
+    if isinstance(obj, float):
+        if math.isinf(obj) or math.isnan(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_floats(item) for item in obj]
+    return obj
+
+
 @router.post("/{session_id}/restore")
 async def restore_session(session_id: str, message_limit: int = 5):
     """
-    恢复会话（分段加载：首次只返回最新N条消息）
+    恢复会话（数据库层分页加载：只返回最新N条消息）
 
     Args:
         session_id: 会话ID
@@ -178,42 +184,33 @@ async def restore_session(session_id: str, message_limit: int = 5):
     logger.info("[会话恢复] 开始恢复会话", session_id=session_id, message_limit=message_limit)
 
     session_manager = get_session_manager()
-    session = await session_manager.load_session(session_id)
 
-    if not session:
+    # ✅ 使用数据库层分页方法，不加载全部消息到内存
+    result = await session_manager.load_session_with_pagination(
+        session_id,
+        message_limit
+    )
+
+    if not result:
         logger.error("[会话恢复] 会话未找到", session_id=session_id)
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
-    # 使用 session 的 conversation_history 做分页
-    all_messages = session.conversation_history or []
-    total_count = len(all_messages)
+    session = result["session"]
+    pagination = result["pagination"]
 
-    # 取最新 N 条
-    latest_messages = all_messages[-message_limit:] if total_count > message_limit else all_messages
-    has_more = total_count > message_limit
-
-    # 计算 oldest_sequence（基于列表索引）
-    oldest_sequence = None
-    if latest_messages:
-        oldest_idx = total_count - len(latest_messages)
-        oldest_sequence = oldest_idx
-
-    logger.info("[会话恢复] 会话加载成功",
+    logger.info("[会话恢复] 会话加载成功（数据库层分页）",
                 session_id=session_id,
-                total_messages=total_count,
-                loaded_messages=len(latest_messages),
-                has_more=has_more,
-                state=session.state.value if session.state else None)
+                loaded_messages=len(session.conversation_history),
+                total_messages=pagination["total_count"],
+                has_more=pagination["has_more"])
 
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
-    # 用分页结果替换 conversation_history
-    session_data["conversation_history"] = latest_messages
 
-    # 分页状态
-    session_data["has_more_messages"] = has_more
-    session_data["total_message_count"] = total_count
-    session_data["oldest_sequence"] = oldest_sequence
+    # 分页状态（从数据库查询结果获取）
+    session_data["has_more_messages"] = pagination["has_more"]
+    session_data["total_message_count"] = pagination["total_count"]
+    session_data["oldest_sequence"] = pagination["oldest_sequence"]
 
     # 从react_agent的_session_store中获取office_documents
     try:
@@ -231,34 +228,13 @@ async def restore_session(session_id: str, message_limit: int = 5):
                       session_id=session_id,
                       error=str(e))
 
+    # 清理特殊浮点值，防止 JSON 序列化错误
+    session_data = _sanitize_floats(session_data)
+
     return {
         "message": f"Session {session_id} restored successfully",
-        "session": session_data,
-        "can_continue": session.state in [SessionState.ACTIVE, SessionState.PAUSED]
+        "session": session_data
     }
-
-
-@router.post("/{session_id}/archive")
-async def archive_session(session_id: str):
-    """
-    归档会话
-
-    Args:
-        session_id: 会话ID
-
-    Returns:
-        归档结果
-    """
-    session_manager = get_session_manager()
-    success = await session_manager.archive_session(session_id)
-
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Session not found or failed to archive: {session_id}"
-        )
-
-    return {"message": f"Session {session_id} archived successfully"}
 
 
 @router.delete("/{session_id}")
@@ -291,7 +267,7 @@ async def cleanup_expired_sessions():
     """
     清理过期会话
 
-    删除超过保留天数的已完成/失败/归档会话。
+    删除超过保留天数的会话。
 
     Returns:
         清理结果
@@ -303,6 +279,69 @@ async def cleanup_expired_sessions():
         "message": f"Cleaned up {deleted_count} expired sessions",
         "deleted_count": deleted_count
     }
+
+
+@router.post("/auto-save")
+async def auto_save_session(request: Request):
+    """
+    自动保存会话消息（每次AI回复完成时调用）
+
+    Args:
+        request: 包含 session_id, messages, state 的请求体
+
+    Returns:
+        保存结果
+    """
+    from app.agent.session import get_session_manager
+    from app.agent.session.models import Session
+
+    data = await request.json()
+    session_id = data.get("session_id")
+    messages = data.get("messages", [])
+    state = data.get("state", "active")
+
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+
+    logger.info(
+        "[autoSave] 自动保存会话",
+        session_id=session_id,
+        message_count=len(messages),
+        state=state
+    )
+
+    session_manager = get_session_manager()
+
+    # 加载现有会话
+    session = await session_manager.load_session(session_id)
+
+    if session:
+        # 更新对话历史
+        session.conversation_history = messages
+        session.updated_at = datetime.now()
+
+        # 保存到数据库
+        success = await session_manager.save_session(session)
+
+        if success:
+            logger.info(
+                "[autoSave] 会话保存成功",
+                session_id=session_id,
+                message_count=len(messages)
+            )
+            return {
+                "status": "ok",
+                "message": f"Session {session_id} auto-saved with {len(messages)} messages"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save session")
+    else:
+        # 会话不存在，创建新会话
+        logger.warning("[autoSave] 会话不存在，跳过保存", session_id=session_id)
+        return {
+            "status": "skipped",
+            "message": f"Session {session_id} does not exist"
+        }
 
 
 @router.post("/{session_id}/export")

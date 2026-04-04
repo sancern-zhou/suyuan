@@ -3,6 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
+import { autoSaveSession } from '@/api/session'
 
 // 辅助函数：创建空的模式状态
 const createEmptyModeState = () => ({
@@ -850,6 +851,15 @@ export const useReactStore = defineStore('react', {
               }
             }
             targetState.streamingAnswerMessageId = null
+
+            // ✅ 自动保存会话：每次AI回复完成时保存
+            if (targetState.sessionId && targetState.messages.length > 0) {
+              console.log('[autoSave] AI回复完成，自动保存会话')
+              // 使用 fire-and-forget 方式，不阻塞UI
+              autoSaveSession(targetState.sessionId, targetState.messages, 'active').catch(err => {
+                console.warn('[autoSave] 自动保存失败:', err)
+              })
+            }
           }
           break
 

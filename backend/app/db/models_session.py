@@ -16,15 +16,6 @@ import enum
 Base = declarative_base()
 
 
-class SessionState(str, enum.Enum):
-    """会话状态枚举"""
-    ACTIVE = "active"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    ARCHIVED = "archived"
-
-
 class MessageType(str, enum.Enum):
     """消息类型枚举"""
     USER = "user"
@@ -47,12 +38,10 @@ class SessionDB(Base):
 
     # 基本信息
     query = Column(Text, nullable=False)
-    state = Column(SQLEnum(SessionState), default=SessionState.ACTIVE, nullable=False, index=True)
 
     # 时间信息
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    completed_at = Column(DateTime, nullable=True)
 
     # 执行上下文
     mode = Column(String(50), nullable=True)  # 助手模式/专家模式
@@ -74,7 +63,6 @@ class SessionDB(Base):
 
     # 索引
     __table_args__ = (
-        Index('ix_sessions_state_created', 'state', 'created_at'),
         Index('ix_sessions_mode_created', 'mode', 'created_at'),
     )
 

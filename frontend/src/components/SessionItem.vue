@@ -1,12 +1,12 @@
 <template>
-  <div class="session-item" :class="stateClass">
+  <div class="session-item">
     <div class="session-header" @click="toggleExpand">
       <div class="header-left">
-        <span class="state-icon">{{ stateIcon }}</span>
         <div class="session-info">
           <div class="session-query">{{ truncatedQuery }}</div>
           <div class="session-meta">
             <span class="session-id">{{ shortSessionId }}</span>
+            <span v-if="session.has_error" class="error-icon">❌</span>
             <span class="session-time">{{ formatTime(session.updated_at) }}</span>
           </div>
         </div>
@@ -47,20 +47,11 @@
       <!-- 操作按钮 -->
       <div class="action-buttons">
         <button
-          v-if="session.state !== 'archived'"
           class="btn-primary"
           @click.stop="$emit('restore', session.session_id)"
         >
           <span class="btn-icon">🔄</span>
           恢复会话
-        </button>
-        <button
-          v-if="session.state !== 'archived'"
-          class="btn-secondary"
-          @click.stop="$emit('archive', session.session_id)"
-        >
-          <span class="btn-icon">📦</span>
-          归档
         </button>
         <button
           class="btn-secondary"
@@ -91,26 +82,11 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['restore', 'archive', 'export', 'delete'])
+const emit = defineEmits(['restore', 'export', 'delete'])
 
 const isExpanded = ref(false)
 
 // 计算属性
-const stateClass = computed(() => {
-  return `state-${props.session.state}`
-})
-
-const stateIcon = computed(() => {
-  const icons = {
-    active: '🔵',
-    paused: '⏸️',
-    completed: '✅',
-    failed: '❌',
-    archived: '📦'
-  }
-  return icons[props.session.state] || '⚪'
-})
-
 const truncatedQuery = computed(() => {
   const maxLength = 80
   if (props.session.query.length <= maxLength) {
@@ -130,9 +106,11 @@ const toggleExpand = () => {
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '-'
+  // 修正时区：数据库存储的是UTC时间，需要+8小时转换为北京时间
   const date = new Date(timestamp)
+  const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000)
   const now = new Date()
-  const diff = now - date
+  const diff = now - beijingDate
 
   // 小于1分钟
   if (diff < 60000) {
@@ -155,7 +133,7 @@ const formatTime = (timestamp) => {
   }
 
   // 超过7天显示日期
-  return date.toLocaleDateString('zh-CN', {
+  return beijingDate.toLocaleDateString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -165,8 +143,10 @@ const formatTime = (timestamp) => {
 
 const formatFullTime = (timestamp) => {
   if (!timestamp) return '-'
+  // 修正时区：数据库存储的是UTC时间，需要+8小时转换为北京时间
   const date = new Date(timestamp)
-  return date.toLocaleString('zh-CN', {
+  const beijingDate = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  return beijingDate.toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -197,28 +177,6 @@ const handleDelete = () => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* 状态相关样式 */
-.state-active {
-  border-left: 4px solid #2196f3;
-}
-
-.state-paused {
-  border-left: 4px solid #ff9800;
-}
-
-.state-completed {
-  border-left: 4px solid #4caf50;
-}
-
-.state-failed {
-  border-left: 4px solid #f44336;
-}
-
-.state-archived {
-  border-left: 4px solid #9e9e9e;
-  opacity: 0.8;
-}
-
 /* 会话头部 */
 .session-header {
   display: flex;
@@ -239,11 +197,6 @@ const handleDelete = () => {
   gap: 12px;
   flex: 1;
   min-width: 0;
-}
-
-.state-icon {
-  font-size: 20px;
-  flex-shrink: 0;
 }
 
 .session-info {
@@ -273,6 +226,11 @@ const handleDelete = () => {
   background: #f0f0f0;
   padding: 2px 6px;
   border-radius: 3px;
+}
+
+.error-icon {
+  font-size: 14px;
+  margin-left: 8px;
 }
 
 .session-time {

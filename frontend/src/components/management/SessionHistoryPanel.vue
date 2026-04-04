@@ -10,30 +10,6 @@
     </div>
 
     <div class="session-history-content">
-      <!-- 过滤器 -->
-      <div class="session-filters">
-        <button
-          v-for="filter in ['all', 'active', 'completed', 'failed', 'archived']"
-          :key="filter"
-          class="session-filter-btn"
-          :class="{ active: sessionHistoryFilter === filter }"
-          @click="$emit('set-filter', filter)"
-        >
-          <span class="filter-icon">{{ getFilterIcon(filter) }}</span>
-          <span class="filter-label">{{ getFilterLabel(filter) }}</span>
-          <span v-if="getFilterCount(filter) > 0" class="filter-count">
-            {{ getFilterCount(filter) }}
-          </span>
-        </button>
-      </div>
-
-      <!-- 批量操作 -->
-      <div v-if="selectedSessionIds.length > 0" class="session-batch-actions">
-        <span class="batch-selected-count">已选择 {{ selectedSessionIds.length }} 个会话</span>
-        <button class="panel-btn small danger" @click="$emit('batch-delete', selectedSessionIds)">批量删除</button>
-        <button class="panel-btn small" @click="$emit('clear-selection')">取消选择</button>
-      </div>
-
       <!-- 统计信息 -->
       <div v-if="sessionHistoryStats" class="session-stats">
         <div class="session-stat-item">
@@ -57,6 +33,13 @@
             <span class="session-stat-label">可视化</span>
           </div>
         </div>
+        <div class="session-stat-item">
+          <span class="session-stat-icon">❌</span>
+          <div class="session-stat-info">
+            <span class="session-stat-value">{{ sessionHistoryStats.error_count || 0 }}</span>
+            <span class="session-stat-label">失败</span>
+          </div>
+        </div>
       </div>
 
       <!-- 会话列表 -->
@@ -68,7 +51,7 @@
 
         <div v-else-if="sessions.length === 0" class="session-empty">
           <span class="session-empty-icon">📭</span>
-          <p>暂无{{ sessionHistoryFilter === 'all' ? '' : getFilterLabel(sessionHistoryFilter) }}会话</p>
+          <p>暂无会话记录</p>
         </div>
 
         <div v-else>
@@ -76,80 +59,14 @@
             v-for="session in sessions"
             :key="session.session_id"
             class="session-item"
-            :class="[getStateClass(session.state), { 'session-expanded': session.isExpanded }]"
+            @click="$emit('restore-session', session.session_id)"
           >
-            <!-- 会话头部 -->
-            <div class="session-header" @click="$emit('toggle-expand', session)">
-              <div class="session-header-left">
-                <input
-                  type="checkbox"
-                  :checked="selectedSessionIds.includes(session.session_id)"
-                  @click.stop="$emit('toggle-selection', session.session_id)"
-                  class="session-checkbox"
-                />
-                <span class="session-state-icon">{{ getStateIcon(session.state) }}</span>
-                <div class="session-info">
-                  <div class="session-query">{{ truncateQuery(session.query) }}</div>
-                  <div class="session-meta">
-                    <span class="session-id">{{ getShortId(session.session_id) }}</span>
-                    <span class="session-time">{{ formatTime(session.updated_at) }}</span>
-                  </div>
-                </div>
-              </div>
-              <div class="session-header-right">
-                <span class="session-expand-icon">{{ session.isExpanded ? '▲' : '▼' }}</span>
-              </div>
-            </div>
-
-            <!-- 展开的详情 -->
-            <div v-if="session.isExpanded" class="session-details">
-              <div class="session-detail-row">
-                <span class="session-detail-label">创建时间:</span>
-                <span class="session-detail-value">{{ formatFullTime(session.created_at) }}</span>
-              </div>
-              <div class="session-detail-row">
-                <span class="session-detail-label">更新时间:</span>
-                <span class="session-detail-value">{{ formatFullTime(session.updated_at) }}</span>
-              </div>
-
-              <div class="session-stats">
-                <div class="session-stat-box">
-                  <span class="session-stat-label-small">数据</span>
-                  <span class="session-stat-value-small">{{ session.data_count }}</span>
-                </div>
-                <div class="session-stat-box">
-                  <span class="session-stat-label-small">图表</span>
-                  <span class="session-stat-value-small">{{ session.visual_count }}</span>
-                </div>
-              </div>
-
-              <div class="session-actions">
-                <button
-                  v-if="session.state !== 'archived'"
-                  class="session-btn session-btn-primary"
-                  @click.stop="$emit('restore-session', session.session_id)"
-                >
-                  🔄 恢复
-                </button>
-                <button
-                  v-if="session.state !== 'archived'"
-                  class="session-btn session-btn-secondary"
-                  @click.stop="$emit('archive-session', session.session_id)"
-                >
-                  📦 归档
-                </button>
-                <button
-                  class="session-btn session-btn-secondary"
-                  @click.stop="$emit('export-session', session.session_id)"
-                >
-                  📥 导出
-                </button>
-                <button
-                  class="session-btn session-btn-danger"
-                  @click.stop="$emit('delete-session', session.session_id)"
-                >
-                  🗑️ 删除
-                </button>
+            <div class="session-info">
+              <div class="session-query">{{ truncateQuery(session.query) }}</div>
+              <div class="session-meta">
+                <span class="session-id">{{ getShortId(session.session_id) }}</span>
+                <span v-if="session.has_error" class="error-icon">❌</span>
+                <span class="session-time">{{ formatTime(session.updated_at) }}</span>
               </div>
             </div>
           </div>
@@ -173,59 +90,10 @@ const props = defineProps({
   sessionHistoryLoading: {
     type: Boolean,
     default: false
-  },
-  sessionHistoryFilter: {
-    type: String,
-    default: 'all'
-  },
-  selectedSessionIds: {
-    type: Array,
-    default: () => []
   }
 })
 
 // Methods
-const getFilterLabel = (filter) => {
-  const labels = {
-    all: '全部',
-    active: '活跃',
-    completed: '完成',
-    failed: '失败',
-    archived: '归档'
-  }
-  return labels[filter] || filter
-}
-
-const getFilterIcon = (filter) => {
-  const icons = {
-    all: '📋',
-    active: '🟢',
-    completed: '✅',
-    failed: '❌',
-    archived: '📦'
-  }
-  return icons[filter] || '📄'
-}
-
-const getFilterCount = (filter) => {
-  if (filter === 'all') return props.sessions.length
-  return props.sessions.filter(s => s.state === filter).length
-}
-
-const getStateIcon = (state) => {
-  const icons = {
-    active: '🟢',
-    completed: '✅',
-    failed: '❌',
-    archived: '📦'
-  }
-  return icons[state] || '⚪'
-}
-
-const getStateClass = (state) => {
-  return `session-state-${state}`
-}
-
 const truncateQuery = (query, maxLength = 80) => {
   if (!query) return '无查询'
   if (query.length <= maxLength) return query
@@ -279,15 +147,7 @@ defineEmits([
   'close',
   'refresh-sessions',
   'cleanup-sessions',
-  'set-filter',
-  'batch-delete',
-  'clear-selection',
-  'toggle-expand',
-  'toggle-selection',
-  'restore-session',
-  'archive-session',
-  'export-session',
-  'delete-session'
+  'restore-session'
 ])
 </script>
 
@@ -359,72 +219,6 @@ defineEmits([
   gap: 15px;
 }
 
-.session-filters {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.session-filter-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid #dee2e6;
-  background: white;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 0.2s;
-}
-
-.session-filter-btn:hover {
-  border-color: #1976d2;
-  background: #e3f2fd;
-}
-
-.session-filter-btn.active {
-  border-color: #1976d2;
-  background: #1976d2;
-  color: white;
-}
-
-.filter-icon {
-  font-size: 14px;
-}
-
-.filter-label {
-  font-weight: 500;
-}
-
-.filter-count {
-  padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.session-filter-btn.active .filter-count {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.session-batch-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 15px;
-  background: #fff3cd;
-  border: 1px solid #ffc107;
-  border-radius: 6px;
-}
-
-.batch-selected-count {
-  font-size: 13px;
-  color: #856404;
-  font-weight: 500;
-}
-
 .session-stats {
   display: flex;
   gap: 15px;
@@ -493,46 +287,20 @@ defineEmits([
   background: white;
   border: 1px solid #dee2e6;
   border-radius: 8px;
-  overflow: hidden;
+  padding: 12px 15px;
+  cursor: pointer;
   transition: all 0.2s;
 }
 
 .session-item:hover {
   border-color: #1976d2;
+  background: #f8f9fa;
   box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
 }
 
-.session-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 15px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.session-header:hover {
-  background: #f8f9fa;
-}
-
-.session-header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-
-.session-checkbox {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.session-state-icon {
-  font-size: 18px;
-  flex-shrink: 0;
+.error-icon {
+  font-size: 14px;
+  margin-left: 8px;
 }
 
 .session-info {
@@ -555,134 +323,5 @@ defineEmits([
   gap: 10px;
   font-size: 12px;
   color: #6c757d;
-}
-
-.session-id {
-  font-family: monospace;
-}
-
-.session-header-right {
-  flex-shrink: 0;
-}
-
-.session-expand-icon {
-  font-size: 12px;
-  color: #6c757d;
-}
-
-.session-details {
-  padding: 15px;
-  border-top: 1px solid #dee2e6;
-  background: #f8f9fa;
-}
-
-.session-detail-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-
-.session-detail-label {
-  color: #6c757d;
-  font-weight: 500;
-}
-
-.session-detail-value {
-  color: #495057;
-}
-
-.session-stats {
-  display: flex;
-  gap: 10px;
-  margin: 15px 0;
-}
-
-.session-stat-box {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 10px;
-  background: white;
-  border-radius: 6px;
-  border: 1px solid #dee2e6;
-}
-
-.session-stat-label-small {
-  font-size: 11px;
-  color: #6c757d;
-  margin-bottom: 4px;
-}
-
-.session-stat-value-small {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1976d2;
-}
-
-.session-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.session-btn {
-  padding: 4px 10px;
-  border: 1px solid #dee2e6;
-  background: white;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: all 0.2s;
-}
-
-.session-btn:hover {
-  background: #f8f9fa;
-}
-
-.session-btn-primary {
-  background: #1976d2;
-  color: white;
-  border-color: #1976d2;
-}
-
-.session-btn-primary:hover {
-  background: #1565c0;
-}
-
-.session-btn-secondary {
-  color: #1976d2;
-  border-color: #1976d2;
-}
-
-.session-btn-secondary:hover {
-  background: #e3f2fd;
-}
-
-.session-btn-danger {
-  color: #dc3545;
-  border-color: #dc3545;
-}
-
-.session-btn-danger:hover {
-  background: #f8d7da;
-}
-
-.session-state-active {
-  border-left: 4px solid #28a745;
-}
-
-.session-state-completed {
-  border-left: 4px solid #007bff;
-}
-
-.session-state-failed {
-  border-left: 4px solid #dc3545;
-}
-
-.session-state-archived {
-  border-left: 4px solid #6c757d;
-  opacity: 0.7;
 }
 </style>

@@ -7,7 +7,7 @@
 文件存储（SessionManager）保留用于向后兼容。
 """
 
-from .models import Session, SessionInfo, SessionState
+from .models import Session, SessionInfo
 from .session_manager import SessionManager, get_session_manager as _get_file_session_manager
 
 # 数据库版本（默认）
@@ -26,7 +26,6 @@ else:
 __all__ = [
     "Session",
     "SessionInfo",
-    "SessionState",
     "SessionManager",
     "get_session_manager",
     "DB_AVAILABLE",

@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
-from .models import Session, SessionInfo, SessionState
+from .models import Session, SessionInfo
 from ...db.session_repository import get_session_repository
-from ...db.models_session import SessionState as DBSessionState
 
 logger = structlog.get_logger()
 
@@ -71,6 +70,7 @@ class SessionManagerDB:
         Returns:
             是否保存成功
         """
+        import traceback
         try:
             # 更新时间戳（除非明确禁止）
             if update_timestamp:
@@ -89,28 +89,30 @@ class SessionManagerDB:
                 await self.repository.update_session(
                     session.session_id,
                     query=session.query,
-                    state=DBSessionState(session.state.value),
                     mode=session.metadata.get("mode"),
                     current_step=session.current_step,
                     current_expert=session.current_expert,
                     data_ids=session.data_ids,
                     visual_ids=session.visual_ids,
                     error=session.error,
-                    metadata=session.metadata,
-                    completed_at=session.completed_at
+                    metadata=session.metadata
                 )
             else:
                 # 创建新会话
                 await self.repository.create_session(
                     session_id=session.session_id,
                     query=session.query,
-                    state=DBSessionState(session.state.value),
                     mode=session.metadata.get("mode"),
                     metadata=session.metadata
                 )
 
             # 保存对话历史
             if session.conversation_history:
+                logger.debug(
+                    "saving_conversation_history",
+                    session_id=session.session_id,
+                    message_count=len(session.conversation_history)
+                )
                 await self.repository.save_conversation_history(
                     session.session_id,
                     session.conversation_history
@@ -119,7 +121,6 @@ class SessionManagerDB:
             logger.info(
                 "session_saved_to_db",
                 session_id=session.session_id,
-                state=session.state.value,
                 message_count=len(session.conversation_history)
             )
 
@@ -129,7 +130,9 @@ class SessionManagerDB:
             logger.error(
                 "failed_to_save_session",
                 session_id=session.session_id,
-                error=str(e)
+                error=str(e),
+                error_type=type(e).__name__,
+                traceback=traceback.format_exc()
             )
             return False
 
@@ -163,10 +166,8 @@ class SessionManagerDB:
             session = Session(
                 session_id=session_dict["session_id"],
                 query=session_dict["query"],
-                state=SessionState(session_dict["state"]),
                 created_at=datetime.fromisoformat(session_dict["created_at"]) if session_dict["created_at"] else None,
                 updated_at=datetime.fromisoformat(session_dict["updated_at"]) if session_dict["updated_at"] else None,
-                completed_at=datetime.fromisoformat(session_dict["completed_at"]) if session_dict["completed_at"] else None,
                 conversation_history=session_dict["conversation_history"],
                 data_ids=session_dict["data_ids"],
                 visual_ids=session_dict["visual_ids"],
@@ -183,7 +184,6 @@ class SessionManagerDB:
             logger.info(
                 "session_loaded_from_db",
                 session_id=session_id,
-                state=session.state.value,
                 message_count=len(session.conversation_history)
             )
 
@@ -192,6 +192,112 @@ class SessionManagerDB:
         except Exception as e:
             logger.error(
                 "failed_to_load_session",
+                session_id=session_id,
+                error=str(e)
+            )
+            return None
+
+    async def load_session_with_pagination(
+        self,
+        session_id: str,
+        message_limit: int = 5
+    ) -> Optional[Dict[str, Any]]:
+        """
+        加载会话（数据库层分页，只加载最新N条消息）
+
+        相比 load_session，这个方法：
+        1. 在数据库层进行分页查询，不加载全部消息到内存
+        2. 返回分页元数据（has_more, total_count, oldest_sequence）
+        3. 适用于大消息会话的快速恢复
+
+        Args:
+            session_id: 会话ID
+            message_limit: 首次加载的消息数量（默认5）
+
+        Returns:
+            {
+                "session": Session对象（conversation_history只包含最新N条）,
+                "pagination": {
+                    "has_more": bool,
+                    "total_count": int,
+                    "oldest_sequence": int | None
+                }
+            }
+        """
+        try:
+            # 1. 先获取会话元数据（不加载消息）
+            session_dict = await self.repository.get_session_with_messages(
+                session_id,
+                include_messages=False  # 不加载消息
+            )
+
+            if not session_dict:
+                logger.debug("session_not_found_in_db", session_id=session_id)
+                return None
+
+            # 2. 获取消息总数
+            total_count = await self.repository.get_message_count(session_id)
+
+            # 3. 分页加载最新消息（在数据库层）
+            if total_count > 0:
+                # 加载最新 message_limit 条消息
+                # 使用 get_messages_before 且不传 before，即获取最新消息
+                message_result = await self.repository.get_messages_before(
+                    session_id=session_id,
+                    before_sequence=None,  # None 表示获取最新消息
+                    limit=message_limit
+                )
+                session_dict["conversation_history"] = message_result["messages"]
+
+                # 分页元数据
+                pagination = {
+                    "has_more": message_result["has_more"],
+                    "total_count": message_result["total_count"],
+                    "oldest_sequence": message_result["oldest_sequence"]
+                }
+            else:
+                session_dict["conversation_history"] = []
+                pagination = {
+                    "has_more": False,
+                    "total_count": 0,
+                    "oldest_sequence": None
+                }
+
+            # 4. 转换为 Session 对象（只包含最新消息）
+            session = Session(
+                session_id=session_dict["session_id"],
+                query=session_dict["query"],
+                created_at=datetime.fromisoformat(session_dict["created_at"]) if session_dict["created_at"] else None,
+                updated_at=datetime.fromisoformat(session_dict["updated_at"]) if session_dict["updated_at"] else None,
+                conversation_history=session_dict["conversation_history"],  # 只包含最新N条
+                data_ids=session_dict["data_ids"],
+                visual_ids=session_dict["visual_ids"],
+                metadata=session_dict["metadata"],
+                error=session_dict["error"],
+                current_step=session_dict.get("current_step"),
+                current_expert=session_dict.get("current_expert")
+            )
+
+            # 加载到内存缓存
+            if self.enable_cache:
+                self.sessions[session_id] = session
+
+            logger.info(
+                "session_loaded_with_pagination",
+                session_id=session_id,
+                loaded_messages=len(session_dict["conversation_history"]),
+                total_messages=pagination["total_count"],
+                has_more=pagination["has_more"]
+            )
+
+            return {
+                "session": session,
+                "pagination": pagination
+            }
+
+        except Exception as e:
+            logger.error(
+                "failed_to_load_session_with_pagination",
                 session_id=session_id,
                 error=str(e)
             )
@@ -244,7 +350,6 @@ class SessionManagerDB:
 
     async def list_sessions(
         self,
-        state: Optional[SessionState] = None,
         mode: Optional[str] = None,
         limit: int = 100
     ) -> List[SessionInfo]:
@@ -252,7 +357,6 @@ class SessionManagerDB:
         列出所有会话
 
         Args:
-            state: 过滤状态
             mode: 过滤模式
             limit: 限制数量
 
@@ -260,11 +364,7 @@ class SessionManagerDB:
             会话信息列表
         """
         try:
-            # 转换状态枚举
-            db_state = DBSessionState(state.value) if state else None
-
             summaries = await self.repository.list_sessions(
-                state=db_state,
                 mode=mode,
                 limit=limit
             )
@@ -275,7 +375,6 @@ class SessionManagerDB:
                 session_infos.append(SessionInfo(
                     session_id=summary["session_id"],
                     query=summary["query"],
-                    state=SessionState(summary["state"]),
                     created_at=datetime.fromisoformat(summary["created_at"]) if summary["created_at"] else None,
                     updated_at=datetime.fromisoformat(summary["updated_at"]) if summary["updated_at"] else None,
                     data_count=summary["data_count"],
@@ -289,29 +388,6 @@ class SessionManagerDB:
             logger.error("failed_to_list_sessions", error=str(e))
             return []
 
-    async def archive_session(self, session_id: str) -> bool:
-        """
-        归档会话
-
-        Args:
-            session_id: 会话ID
-
-        Returns:
-            是否归档成功
-        """
-        session = await self.get_session(session_id)
-        if not session:
-            logger.warning("session_not_found_for_archiving", session_id=session_id)
-            return False
-
-        session.state = SessionState.ARCHIVED
-        session.updated_at = datetime.now()
-        return await self.save_session(session)
-
-    async def get_active_sessions(self) -> List[SessionInfo]:
-        """获取所有活跃会话"""
-        return await self.list_sessions(state=SessionState.ACTIVE)
-
     async def get_session_stats(self) -> Dict[str, Any]:
         """
         获取会话统计信息
@@ -323,21 +399,16 @@ class SessionManagerDB:
 
         stats: Dict[str, Any] = {
             "total": len(all_sessions),
-            "by_state": {
-                "active": 0,
-                "paused": 0,
-                "completed": 0,
-                "failed": 0,
-                "archived": 0
-            },
             "total_data_count": 0,
-            "total_visual_count": 0
+            "total_visual_count": 0,
+            "error_count": 0
         }
 
         for session_info in all_sessions:
-            stats["by_state"][session_info.state.value] += 1
             stats["total_data_count"] += session_info.data_count
             stats["total_visual_count"] += session_info.visual_count
+            if session_info.has_error:
+                stats["error_count"] += 1
 
         return stats
 
@@ -407,7 +478,7 @@ class SessionManagerDB:
         """
         清理过期会话
 
-        删除超过保留天数且状态为completed/failed/archived的会话。
+        删除超过保留天数的会话。
 
         Returns:
             清理的会话数量
@@ -418,12 +489,7 @@ class SessionManagerDB:
             cutoff_date = datetime.now() - timedelta(days=self.retention_days)
             deleted_count = 0
 
-            terminal_states = {"completed", "failed", "archived"}
-
             for summary in all_sessions:
-                if summary["state"] not in terminal_states:
-                    continue
-
                 updated_at = summary.get("updated_at")
                 if not updated_at:
                     continue

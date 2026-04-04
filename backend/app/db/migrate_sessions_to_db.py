@@ -11,8 +11,6 @@ from datetime import datetime
 import structlog
 
 from app.db.session_repository import get_session_repository
-from app.db.models_session import SessionState as DBSessionState
-from app.agent.session.models import SessionState
 
 logger = structlog.get_logger()
 
@@ -75,16 +73,9 @@ async def migrate_sessions_to_db(
                 continue
 
             # 创建会话
-            state_str = session_data.get("state", "active")
-            try:
-                state = DBSessionState(state_str)
-            except ValueError:
-                state = DBSessionState.ACTIVE
-
             await repository.create_session(
                 session_id=session_id,
                 query=session_data.get("query", ""),
-                state=state,
                 mode=session_data.get("metadata", {}).get("mode"),
                 metadata=session_data.get("metadata", {})
             )

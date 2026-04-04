@@ -21,7 +21,6 @@ class ActionHandler(ABC):
         self.memory = loop_instance.memory
         self.planner = loop_instance.planner
         self.executor = loop_instance.executor
-        self.formatter_registry = loop_instance.formatter_registry
 
     @abstractmethod
     async def handle(self, action: Dict[str, Any], **kwargs) -> AsyncGenerator[Dict[str, Any], None]:

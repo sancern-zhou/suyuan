@@ -1,7 +1,7 @@
 """
 上下文压缩器 - 使用 LLM 智能压缩对话历史
 
-参考 Claude Code 的压缩策略，保留关键信息，移除冗余内容。
+保留消息类型结构，让前端可以像处理实时对话一样处理历史对话。
 """
 
 from typing import List, Dict, Any
@@ -14,73 +14,78 @@ logger = structlog.get_logger()
 class ContextCompressor:
     """上下文压缩器（使用 LLM）"""
 
-    # 参考 Claude Code 的压缩提示词
+    # ⭐ 新版压缩提示词：保留消息类型结构
     COMPRESSION_PROMPT = """你是一个对话上下文压缩专家。你的任务是压缩以下对话历史，保留关键信息，移除冗余内容。
 
-**压缩原则**：
+**⚠️ 核心原则（CRITICAL）**：
+- **保留消息类型结构**：保持每条消息的 "type" 和 "role" 字段不变
+- **只压缩消息内容**：不要合并或删除消息，只精简每条消息的 content 字段
+- **支持前端折叠渲染**：保留 thought/action/observation/final 消息类型，让前端可以折叠显示
 
-**必须完整保留（不压缩）**：
-1. 用户的核心需求和问题
-2. 重要的 data_id 引用（如 weather_001, pmf_result_002 等）
-3. 关键的分析结论和发现
-4. 重要的决策点和推理链
-5. 关键的数值和统计结果
+**必须保留的消息类型**：
+1. **user** - 用户问题（完整保留）
+2. **thought** - 思考过程（提炼关键决策点）
+3. **action** - 工具调用（保留工具名和关键参数）
+4. **observation** - 工具结果（保留 data_id 和摘要）
+5. **final/assistant** - 最终答案（完整保留）
 
-**可以移除**：
-1. data字段的详细数据（保留 data_id 和关键统计即可）✅ 注意：只压缩data字段，不压缩result字段
-2. 重复的思考过程
-3. 详细的中间步骤（保留结论）
-4. 已完成任务的详细执行日志（保留结果）
+**压缩策略（按消息类型）**：
 
-**压缩策略**：
-- 数据查询工具（get_*/calculate_*/download_*等）的data字段：压缩为 "调用 get_weather_data → data_id: weather_001 (30条记录, 温度25°C)"
-- 数据查询工具的result字段：✅ 完整保留，不压缩（包含详细的结构化数据，如对比结果、统计分析等）
-- 思考过程：提炼为关键决策点 "决定先分析气象条件"
-- 分析结果：保留核心结论 "发现15天高温天气导致O3浓度升高"
-- 办公助理工具（bash/read_file/analyze_image/Office工具/read_docx/grep/glob/list_directory/execute_python/web_search/search_history）：完整保留工具返回的 data/results 字段内容
+**user 消息**：
+- 完整保留，不压缩
 
-**重要**：
-- 保持对话的逻辑连贯性
+**thought 消息**：
+- 提炼关键决策点，去除冗余推理
+- 原始："我需要分析广州的臭氧污染情况。首先，我应该查询气象数据，了解温度、湿度、风速等条件。然后，我需要查看臭氧浓度数据，分析其变化趋势。最后，我将综合这些信息，给出分析结论。"
+- 压缩后："决定先查询气象数据，再分析臭氧浓度趋势，最后给出综合结论"
+
+**action 消息**：
+- 保留工具名和关键参数，省略详细参数
+- 原始：完整的工具调用 JSON，包含所有参数
+- 压缩后："调用 get_weather_data，参数：城市=广州，日期=2024-03-01"
+
+**observation 消息**：
+- 保留 data_id 和摘要，省略详细数据
+- 原始：包含完整的工具返回数据（可能有数千条记录）
+- 压缩后："成功获取 30 条气象记录，data_id: weather_001，平均温度 25°C"
+
+**final/assistant 消息**：
+- 完整保留，不压缩（这是用户看到的最终答案）
+
+**重要提示**：
 - 保留所有 data_id 引用（后续分析可能需要）
-- 保留用户的每个问题
-- 保留助手的最终回答
+- 保持对话的逻辑连贯性
+- 不要合并或删除任何消息
 
 **原始对话**：
 {conversation_json}
 
 **输出要求（CRITICAL - 必须严格遵守）**：
 
-⚠️ **你的输出将直接传递给 json.loads() 解析，任何非 JSON 字符都会导致系统崩溃！**
+⚠️ **你的输出将直接传递给 json.loads() 解析，任何非 JSON 字符都会导致系统崩溃！
 
 **强制规则**：
 1. 第一个字符必须是 `[`（左方括号）
 2. 最后一个字符必须是 `]`（右方括号）
 3. 禁止使用 ```json 或 ``` 包裹 JSON
 4. 禁止在 JSON 前后添加任何解释文字、空行或其他字符
-5. 每条消息必须包含 "role" 和 "content" 字段
+5. 每条消息必须保留原始的 "type" 和 "role" 字段
 6. 返回标准 JSON 数组格式
 
-**错误示例（会导致系统崩溃）**：
-```json
+**正确示例（保留消息类型结构）**：
 [
-  {{"role": "user", "content": "分析广州O3污染"}}
-]
-```
-
-或者：
-
-这是压缩后的结果：
-[{{"role": "user", "content": "..."}}]
-
-**正确示例（直接输出 JSON 数组）**：
-[
-  {{"role": "user", "content": "分析广州O3污染"}},
-  {{"role": "assistant", "content": "调用 get_weather_data → data_id: weather_001 (30条记录)"}},
-  {{"role": "user", "content": "读取这个图片文件 D:/chart.png 并分析"}},
-  {{"role": "assistant", "content": "已读取图片并完成分析。分析结果：\\n\\n图片内容：这是一张折线图，显示了...\\n数据趋势：...\\n关键发现：...（完整的 analyze_image 返回内容）"}}
+  {{"type": "user", "role": "user", "content": "分析广州O3污染"}},
+  {{"type": "thought", "role": "assistant", "content": "决定先查询气象数据"}},
+  {{"type": "action", "role": "assistant", "content": "调用 get_weather_data，参数：城市=广州"}},
+  {{"type": "observation", "role": "assistant", "content": "成功获取 30 条记录，data_id: weather_001"}},
+  {{"type": "final", "role": "assistant", "content": "根据分析，发现..."}}
 ]
 
-⚠️ 再次强调：你的输出必须以 [ 开头，以 ] 结尾，中间不能有任何非 JSON 内容。
+⚠️ 再次强调：
+1. 保持每条消息的 type 字段不变
+2. 只压缩 content 字段的内容
+3. 不要合并或删除消息
+4. 输出必须以 [ 开头，以 ] 结尾
 """
 
     def __init__(self, llm_client):
@@ -270,7 +275,7 @@ class ContextCompressor:
         tail = []
         accumulated = 0
         for msg in reversed(tail_candidates):
-            msg_chars = len(json.dumps(msg, ensure_ascii=False))
+            msg_chars = len(json.dumps(m, ensure_ascii=False))
             if accumulated + msg_chars > budget:
                 break
             tail.insert(0, msg)

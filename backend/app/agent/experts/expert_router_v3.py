@@ -22,7 +22,7 @@ from app.agent.core.structured_query_parser import StructuredQuery, StructuredQu
 from app.agent.core.expert_plan_generator import ExpertPlanGenerator, ExpertTask
 from app.tools.query.get_nearby_stations.tool import GetNearbyStationsTool
 from app.agent.task import OldTaskList as TaskList, TaskStatus
-from app.agent.session import Session, SessionState, get_session_manager
+from app.agent.session import Session, get_session_manager
 from .expert_executor import ExpertResult
 from .weather_executor import WeatherExecutor
 from .component_executor import ComponentExecutor
@@ -445,9 +445,7 @@ class ExpertRouterV3:
             # 6. 生成最终答案
             result = self._finalize_result(result)
 
-            # 更新会话状态：完成
-            session.state = SessionState.COMPLETED
-            session.completed_at = datetime.now()
+            # 更新会话数据
             session.data_ids = result.data_ids
 
             # ✅ 修复：确保visual_ids只存储字符串ID（不存储字典对象）
@@ -522,8 +520,7 @@ class ExpertRouterV3:
             result.status = "failed"
             result.errors.append({"type": "pipeline_error", "message": str(e)})
 
-            # 更新会话状态：失败
-            session.state = SessionState.FAILED
+            # 更新会话错误信息
             session.error = {
                 "type": "pipeline_error",
                 "message": str(e),

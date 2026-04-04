@@ -46,13 +46,15 @@ def _get_llm_service():
 
 @dataclass
 class ConversationTurn:
-    """Simple structure that stores a user or assistant message."""
+    """Simple structure that stores a conversation message."""
 
-    role: str
+    role: str  # "user" or "assistant"
     content: str
     timestamp: str
+    type: Optional[str] = None  # "user"/"thought"/"action"/"observation"/"final"
     thought: Optional[str] = None  # LLM thought for this assistant turn
     reasoning: Optional[str] = None  # LLM reasoning process (detailed reasoning)
+    data: Optional[Dict[str, Any]] = None  # Additional data (for action/observation)
 
 
 class SessionMemory:
@@ -570,7 +572,7 @@ class SessionMemory:
 
     def add_user_message(self, content: str) -> None:
         """Record a user utterance."""
-        self._append_conversation_turn("user", content)
+        self._append_conversation_turn("user", content, type="user")
         logger.debug(
             "add_user_message_called",
             session_id=self.session_id,
@@ -580,7 +582,7 @@ class SessionMemory:
 
     def add_assistant_message(self, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None) -> None:
         """Record an assistant response."""
-        self._append_conversation_turn("assistant", content, thought=thought, reasoning=reasoning)
+        self._append_conversation_turn("assistant", content, thought=thought, reasoning=reasoning, type="final")
         logger.debug(
             "add_assistant_message_called",
             session_id=self.session_id,
@@ -593,6 +595,72 @@ class SessionMemory:
     # 向后兼容旧接口
     def add_assistant_response(self, content: str) -> None:
         self.add_assistant_message(content)
+
+    def add_thought_message(self, thought: str, reasoning: Optional[str] = None) -> None:
+        """添加思考消息到对话历史"""
+        self.conversation_history.append(
+            ConversationTurn(
+                role="assistant",
+                content=thought,
+                timestamp=datetime.utcnow().isoformat(),
+                type="thought",
+                reasoning=reasoning
+            )
+        )
+        logger.debug(
+            "add_thought_message_called",
+            session_id=self.session_id,
+            thought_preview=thought[:100],
+            history_length=len(self.conversation_history)
+        )
+
+    def add_action_message(self, action: Dict[str, Any]) -> None:
+        """添加行动消息到对话历史"""
+        tool_name = action.get("tool", action.get("name", ""))
+        content = f"调用 {tool_name}"
+        self.conversation_history.append(
+            ConversationTurn(
+                role="assistant",
+                content=content,
+                timestamp=datetime.utcnow().isoformat(),
+                type="action",
+                data={"action": action}
+            )
+        )
+        logger.debug(
+            "add_action_message_called",
+            session_id=self.session_id,
+            tool_name=tool_name,
+            history_length=len(self.conversation_history)
+        )
+
+    def add_observation_message(self, observation: Dict[str, Any]) -> None:
+        """
+        添加观察消息到对话历史
+
+        简化设计：直接存储完整的JSON observation，而不是只存储摘要。
+        这样LLM能够访问完整的工具返回数据，避免信息丢失。
+
+        Args:
+            observation: 观察结果字典
+        """
+        # 直接存储完整的JSON observation
+        observation_json = json.dumps(observation, ensure_ascii=False, indent=2, default=str)
+        self.conversation_history.append(
+            ConversationTurn(
+                role="assistant",
+                content=observation_json,
+                timestamp=datetime.utcnow().isoformat(),
+                type="observation",
+                data={"observation": observation}
+            )
+        )
+        logger.debug(
+            "add_observation_message_called",
+            session_id=self.session_id,
+            observation_type=observation.get("metadata", {}).get("generator", "unknown"),
+            history_length=len(self.conversation_history)
+        )
 
     def load_history_messages(self, messages: List[Dict[str, Any]]) -> None:
         """
@@ -757,14 +825,16 @@ class SessionMemory:
             previous_history_length=len(self.conversation_history) - loaded_count
         )
 
-    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None) -> None:
+    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
         self.conversation_history.append(
             ConversationTurn(
                 role=role,
                 content=content,
                 timestamp=datetime.utcnow().isoformat(),
+                type=type,
                 thought=thought,
-                reasoning=reasoning
+                reasoning=reasoning,
+                data=data
             )
         )
 

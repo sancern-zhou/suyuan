@@ -11,6 +11,8 @@
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 import structlog
+import json
+from pathlib import Path
 
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
 from app.agent.context.execution_context import ExecutionContext
@@ -24,13 +26,107 @@ class GeoMappingResolver:
     """
     地理位置映射解析器
 
-    参考 Vanna 项目的 geo_mappings.json，提供：
+    提供：
     1. 城市名称 → 城市编码映射
     2. 站点名称 → 站点编码映射
     3. 区域名称 → 区域编码映射
+    4. 城市名称 → 下辖站点编码列表映射
+    5. 区县名称 → 下辖站点编码列表映射
 
-    LLM 输出城市/站点/区域名称，工具内部自动转换为编码
+    站点数据来源：
+    - station_district_results_with_type_id.json：376个站点，含城市/区县归属
     """
+
+    # 类变量，用于缓存从 JSON 加载的站点数据
+    _station_data_loaded = False
+    _station_code_map_from_json: Dict[str, str] = {}           # 站点名 -> 站点编码
+    _city_stations_map_from_json: Dict[str, List[str]] = {}    # 城市短名 -> 站点编码列表
+    _district_stations_map_from_json: Dict[str, List[str]] = {}  # 区县名 -> 站点编码列表
+    _station_meta_map: Dict[str, Dict] = {}                    # 站点编码 -> 元数据
+
+    @classmethod
+    def _load_station_data_from_json(cls):
+        """从 station_district_results_with_type_id.json 加载站点数据（只加载一次）"""
+        if cls._station_data_loaded:
+            return
+
+        try:
+            possible_paths = [
+                Path(__file__).parent.parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json",
+                Path(__file__).parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json",
+            ]
+
+            station_file = None
+            for path in possible_paths:
+                if path.exists():
+                    station_file = path
+                    break
+
+            if not station_file:
+                logger.warning("station_district_json_not_found", message="station_district_results_with_type_id.json 文件未找到")
+                cls._station_data_loaded = True
+                return
+
+            with open(station_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            records = data.get("data", [])
+
+            for item in records:
+                station_name = item.get("站点名称", "").strip()
+                station_code = item.get("唯一编码", "").strip()
+                # 城市短名（如"广州"），用于与 CITY_CODE_MAP 对齐
+                city_short = item.get("城市名称", "").strip()
+                # 区县名（str 或空 list）
+                district_raw = item.get("区县", "")
+                district = district_raw.strip() if isinstance(district_raw, str) else ""
+
+                if not station_name or not station_code:
+                    continue
+
+                # 站点名 -> 编码
+                cls._station_code_map_from_json[station_name] = station_code
+
+                # 站点元数据
+                cls._station_meta_map[station_code] = {
+                    "name": station_name,
+                    "city": city_short,
+                    "district": district,
+                    "lng": item.get("经度"),
+                    "lat": item.get("纬度"),
+                    "address": item.get("详细地址", ""),
+                    "admin_code": item.get("行政区划代码", ""),
+                    "type_id": item.get("站点类型ID"),
+                }
+
+                # 城市 -> 站点列表（按城市短名索引，同时索引去掉"市"后缀）
+                if city_short:
+                    for key in (city_short, city_short.rstrip("市")):
+                        cls._city_stations_map_from_json.setdefault(key, [])
+                        if station_code not in cls._city_stations_map_from_json[key]:
+                            cls._city_stations_map_from_json[key].append(station_code)
+
+                # 区县 -> 站点列表
+                if district:
+                    district_key = district.rstrip("区县市")  # 保留核心字，便于模糊匹配
+                    for key in (district, district_key):
+                        cls._district_stations_map_from_json.setdefault(key, [])
+                        if station_code not in cls._district_stations_map_from_json[key]:
+                            cls._district_stations_map_from_json[key].append(station_code)
+
+            cls._station_data_loaded = True
+
+            logger.info(
+                "station_data_loaded_from_json",
+                total_stations=len(cls._station_code_map_from_json),
+                cities=len(cls._city_stations_map_from_json),
+                districts=len(cls._district_stations_map_from_json),
+                source=str(station_file)
+            )
+
+        except Exception as e:
+            logger.error("station_data_load_failed", error=str(e), exc_info=True)
+            cls._station_data_loaded = True
 
     # 广东省城市代码映射（完整版，支持别名）
     CITY_CODE_MAP = {
@@ -80,59 +176,41 @@ class GeoMappingResolver:
         "云浮市": "445300"
     }
 
-    # 主要站点代码映射（参考 Vanna geo_mappings.json）
-    STATION_CODE_MAP = {
-        # 广州主要站点
-        "广雅中学": "1001A",
-        "市监测站": "1008A",
-        "市五中": "1002A",
-        "体育西": "1145A",
-        "广东商学院": "1004A",
-        "麓湖": "1010A",
-        "市八十六中": "1005A",
-        "番禺中学": "1006A",
-        "花都师范": "1007A",
-        "黄埔科学城": "4561A",
-        "南沙街": "4564A",
-        "海珠湖": "1422A",
-        "天河奥体": "9006A",
-        "白云山": "9011A",
-        "黄埔港": "1386A",
-        "番禺大学城": "1421A",
-        "从化街口": "1420A",
-        "增城荔城": "1429A",
-        "增城新塘": "9025A",
+    # 从 station_district_results_with_type_id.json 动态加载，以下为空占位
+    STATION_CODE_MAP: Dict[str, str] = {}
+    CODE_STATION_MAP: Dict[str, str] = {}
+    CITY_STATIONS_MAP: Dict[str, List[str]] = {}
 
-        # 深圳主要站点
-        "洪湖": "1018A",
-        "华侨城": "1019A",
-        "南海子站": "1020A",
-        "盐田": "1021A",
-        "龙岗": "1022A",
-        "梅沙": "1026A",
-        "南澳": "1024A",
-        "西乡": "4575A",
-        "深南": "5002A",
-        "莲塘": "1431A",
-        "坪山": "4560A",
-        "横岗": "1432A",
+    @classmethod
+    def _get_full_station_code_map(cls) -> Dict[str, str]:
+        """获取站点名称 → 站点编码映射"""
+        cls._load_station_data_from_json()
+        return cls._station_code_map_from_json
 
-        # 珠海主要站点
-        "吉大": "1028A",
-        "前山": "1029A",
-        "唐家": "1030A",
+    @classmethod
+    def _get_full_city_stations_map(cls) -> Dict[str, List[str]]:
+        """获取城市短名 → 站点编码列表映射"""
+        cls._load_station_data_from_json()
+        return cls._city_stations_map_from_json
 
-        # 佛山主要站点
-        "湾梁": "1033A",
-        "华材职中": "1115A",
-        "南海气象局": "1384A",
+    @classmethod
+    def _get_full_district_stations_map(cls) -> Dict[str, List[str]]:
+        """获取区县名 → 站点编码列表映射"""
+        cls._load_station_data_from_json()
+        return cls._district_stations_map_from_json
 
-        # 韶关主要站点
-        "韶关学院": "1015A",
-        "曲江监测站": "1016A",
-        "碧湖山庄": "4572A",
-        "浈江十里亭": "1437A",
-    }
+    @classmethod
+    def resolve_station_name(cls, code: str) -> str:
+        """站点编码→站点名称，找不到返回原编码"""
+        # 确保已加载 JSON 数据
+        cls._load_station_data_from_json()
+
+        # 从 JSON 加载的数据中生成反向映射
+        reverse_json_map = {v: k for k, v in cls._station_code_map_from_json.items()}
+        return reverse_json_map.get(str(code), str(code))
+
+    # 城市→站点代码列表映射（从 geo_mappings.json 动态加载）
+    CITY_STATIONS_MAP = {}
 
     # 广东省区域代码映射
     REGION_CODE_MAP = {
@@ -213,40 +291,157 @@ class GeoMappingResolver:
         """
         将站点名称列表转换为站点编码列表
 
+        支持硬编码站点和从 station_info.json 加载的站点
+
         Args:
             station_names: 站点名称列表（LLM 输出）
 
         Returns:
             站点编码列表
         """
+        # 获取完整的站点映射（硬编码 + JSON）
+        full_station_map = cls._get_full_station_code_map()
+
         station_codes = []
 
         for station_name in station_names:
             station_name = station_name.strip()
 
             # 直接查找
-            if station_name in cls.STATION_CODE_MAP:
-                station_codes.append(cls.STATION_CODE_MAP[station_name])
+            if station_name in full_station_map:
+                station_codes.append(full_station_map[station_name])
                 continue
 
             # 模糊匹配
-            for mapped_name, code in cls.STATION_CODE_MAP.items():
+            for mapped_name, code in full_station_map.items():
                 if station_name in mapped_name or mapped_name in station_name:
                     station_codes.append(code)
                     break
             else:
                 logger.warning(
                     "station_code_not_found",
-                    station_name=station_name
+                    station_name=station_name,
+                    available_stations=list(full_station_map.keys())[:10]  # 只显示前10个
                 )
 
         logger.info(
             "station_names_resolved_to_codes",
             input_names=station_names,
-            output_codes=station_codes
+            output_codes=station_codes,
+            total_available=len(full_station_map)
         )
 
         return station_codes
+
+    @classmethod
+    def resolve_station_codes_by_city(cls, city_names: List[str]) -> List[str]:
+        """
+        将城市名称列表展开为对应的所有站点代码列表
+
+        LLM 只传城市名（如 ["广州"]），工具内部自动展开为该城市下所有站点代码。
+
+        Args:
+            city_names: 城市名称列表
+
+        Returns:
+            站点代码列表（去重）
+        """
+        full_city_stations_map = cls._get_full_city_stations_map()
+
+        station_codes = []
+        seen = set()
+
+        for city_name in city_names:
+            city_name = city_name.strip().replace("市", "")
+
+            codes = full_city_stations_map.get(city_name, [])
+            if not codes:
+                logger.warning(
+                    "city_stations_not_found",
+                    city_name=city_name,
+                    available_cities=list(full_city_stations_map.keys())
+                )
+                continue
+
+            for code in codes:
+                if code not in seen:
+                    station_codes.append(code)
+                    seen.add(code)
+
+        logger.info(
+            "city_names_resolved_to_station_codes",
+            input_names=city_names,
+            station_codes=station_codes,
+            station_count=len(station_codes),
+            total_cities=len(full_city_stations_map)
+        )
+
+        return station_codes
+
+    @classmethod
+    def resolve_station_codes_by_district(cls, district_names: List[str]) -> List[str]:
+        """
+        将区县名称列表展开为对应的所有站点编码列表
+
+        LLM 传入区县名（如 ["白云区", "番禺区"]），工具内部自动展开为该区县下所有站点编码。
+        支持精确匹配和去后缀模糊匹配（"白云区" 可匹配 "白云"）。
+
+        Args:
+            district_names: 区县名称列表
+
+        Returns:
+            站点编码列表（去重）
+        """
+        full_district_map = cls._get_full_district_stations_map()
+
+        station_codes = []
+        seen = set()
+
+        for district_name in district_names:
+            district_name = district_name.strip()
+            # 精确匹配
+            codes = full_district_map.get(district_name, [])
+            # 去后缀模糊匹配（"白云区" -> "白云"）
+            if not codes:
+                district_short = district_name.rstrip("区县市")
+                codes = full_district_map.get(district_short, [])
+
+            if not codes:
+                logger.warning(
+                    "district_stations_not_found",
+                    district_name=district_name,
+                    available_districts=list(full_district_map.keys())[:20]
+                )
+                continue
+
+            for code in codes:
+                if code not in seen:
+                    station_codes.append(code)
+                    seen.add(code)
+
+        logger.info(
+            "district_names_resolved_to_station_codes",
+            input_names=district_names,
+            station_codes=station_codes,
+            station_count=len(station_codes),
+            total_districts=len(full_district_map)
+        )
+
+        return station_codes
+
+    @classmethod
+    def get_station_meta(cls, station_code: str) -> Optional[Dict]:
+        """
+        获取站点元数据（城市、区县、坐标等）
+
+        Args:
+            station_code: 站点编码
+
+        Returns:
+            元数据字典，包含 name/city/district/lng/lat/address/admin_code/type_id
+        """
+        cls._load_station_data_from_json()
+        return cls._station_meta_map.get(station_code)
 
 
 class QueryGDSuncereDataTool:
@@ -546,6 +741,276 @@ class QueryGDSuncereDataTool:
         except Exception as e:
             logger.error(
                 "query_gd_suncere_city_day_failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return cls._create_error_response(str(e))
+
+    @classmethod
+    def query_station_day_data(
+        cls,
+        cities: Optional[List[str]] = None,
+        stations: Optional[List[str]] = None,
+        start_date: str = None,
+        end_date: str = None,
+        context: ExecutionContext = None,
+        data_type: int = 1
+    ) -> Dict[str, Any]:
+        """
+        查询站点日报数据
+
+        Args:
+            cities: 城市名称列表（自动展开为站点，与 stations 二选一，可组合）
+            stations: 站点名称列表（直接查询指定站点，与 cities 二选一，可组合）
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            context: 执行上下文
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+
+        Returns:
+            查询结果
+        """
+        logger.info(
+            "query_gd_suncere_station_day_start",
+            cities=cities,
+            stations=stations,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        try:
+            api_client = get_gd_suncere_api_client()
+
+            # 解析站点代码（分别处理站点和城市）
+            station_codes = []
+            if stations:
+                station_codes.extend(cls.geo_resolver.resolve_station_codes(stations))
+            if cities:
+                station_codes.extend(cls.geo_resolver.resolve_station_codes_by_city(cities))
+
+            # 去重保持顺序
+            seen = set()
+            unique_station_codes = []
+            for code in station_codes:
+                if code not in seen:
+                    seen.add(code)
+                    unique_station_codes.append(code)
+            station_codes = unique_station_codes
+
+            if not station_codes:
+                raise Exception(f"未找到任何有效的站点代码: cities={cities}, stations={stations}")
+
+            logger.info(
+                "query_station_day_codes_resolved",
+                cities=cities,
+                stations=stations,
+                station_codes=station_codes,
+                count=len(station_codes)
+            )
+
+            # 智能计算 DataSource 参数（根据结束时间判断）
+            calculated_data_type = QueryGDSuncereDataTool.calculate_data_source(end_date)
+
+            logger.info(
+                "query_station_day_data_type_calculated",
+                end_date=end_date,
+                data_type=calculated_data_type,
+                data_type_name="原始实况" if calculated_data_type == 0 else "审核实况"
+            )
+
+            # 调用 API 查询站点日报数据
+            response = api_client.query_station_day_data(
+                station_codes=station_codes,
+                start_date=start_date,
+                end_date=end_date,
+                data_type=calculated_data_type
+            )
+
+            if not response.get("success"):
+                error_msg = response.get("msg", "Unknown error")
+                raise Exception(f"API 查询失败: {error_msg}")
+
+            # 提取结果
+            raw_records = response.get("result", [])
+
+            if not raw_records:
+                logger.warning(
+                    "query_station_day_no_data",
+                    cities=cities,
+                    stations=stations,
+                    date_range=f"{start_date} to {end_date}"
+                )
+                return {
+                    "status": "empty",
+                    "success": True,
+                    "data": [],
+                    "metadata": {
+                        "tool_name": "query_gd_suncere_station_day",
+                        "cities": cities or [],
+                        "stations": stations or [],
+                        "date_range": f"{start_date} to {end_date}",
+                        "message": "查询成功但无数据返回"
+                    },
+                    "summary": f"未找到指定站点在 {start_date} 至 {end_date} 的日报数据"
+                }
+
+            logger.info(
+                "query_station_day_data_received",
+                record_count=len(raw_records)
+            )
+
+            # 数据标准化
+            standardizer = get_data_standardizer()
+            standardized_records = standardizer.standardize(raw_records)
+
+            logger.info(
+                "gd_suncere_station_data_standardized",
+                raw_count=len(raw_records),
+                standardized_count=len(standardized_records)
+            )
+
+            # 对日数据浓度值应用修约规则（按原始监测数据规则：CO保留1位小数，其他取整）
+            def safe_float(value, default=0.0):
+                if value is None or value == '' or value == '-':
+                    return default
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            for record in standardized_records:
+                measurements = record.get("measurements", {})
+
+                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                    record.get("pm2_5") or record.get("PM2_5"))
+                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                    record.get("pm10") or record.get("PM10"))
+                so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                                   record.get("so2") or record.get("SO2"))
+                no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                                   record.get("no2") or record.get("NO2"))
+                co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                                  record.get("co") or record.get("CO"))
+                o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                                    record.get("o3_8h") or record.get("O3_8h"))
+
+                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+                measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+                measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+                measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')
+                measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
+
+            # 按新标准重算 IAQI、AQI 和首要污染物
+            import math
+            for record in standardized_records:
+                measurements = record.get("measurements", {})
+
+                # 获取修约后的浓度值
+                pm25 = safe_float(measurements.get("PM2_5"))
+                pm10 = safe_float(measurements.get("PM10"))
+                so2 = safe_float(measurements.get("SO2"))
+                no2 = safe_float(measurements.get("NO2"))
+                co = safe_float(measurements.get("CO"))
+                o3_8h = safe_float(measurements.get("O3_8h"))
+
+                # 使用新标准计算 IAQI（向上进位取整数）
+                pm25_iaqi = math.ceil(calculate_iaqi(pm25, 'PM2_5', 'new'))
+                pm10_iaqi = math.ceil(calculate_iaqi(pm10, 'PM10', 'new'))
+                so2_iaqi = math.ceil(calculate_iaqi(so2, 'SO2', 'new'))
+                no2_iaqi = math.ceil(calculate_iaqi(no2, 'NO2', 'new'))
+                co_iaqi = math.ceil(calculate_iaqi(co, 'CO', 'new'))
+                o3_8h_iaqi = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'new'))
+
+                # 保存新标准 IAQI
+                measurements['PM2_5_IAQI'] = pm25_iaqi
+                measurements['PM10_IAQI'] = pm10_iaqi
+                measurements['SO2_IAQI'] = so2_iaqi
+                measurements['NO2_IAQI'] = no2_iaqi
+                measurements['CO_IAQI'] = co_iaqi
+                measurements['O3_8h_IAQI'] = o3_8h_iaqi
+
+                # 计算 AQI（取最大 IAQI）
+                aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+                measurements['AQI'] = aqi
+
+                # 确定首要污染物（AQI > 50 时才有首要污染物）
+                if aqi > 50:
+                    pollutants_with_iaqi = {
+                        'PM2_5': pm25_iaqi,
+                        'PM10': pm10_iaqi,
+                        'SO2': so2_iaqi,
+                        'NO2': no2_iaqi,
+                        'CO': co_iaqi,
+                        'O3_8h': o3_8h_iaqi
+                    }
+                    primary_pollutants = [p for p, iaqi in pollutants_with_iaqi.items() if iaqi == aqi]
+                    # 将首要污染物列表转换为中文
+                    primary_pollutant_map = {
+                        'PM2_5': 'PM2.5',
+                        'PM10': 'PM10',
+                        'SO2': 'SO2',
+                        'NO2': 'NO2',
+                        'CO': 'CO',
+                        'O3_8h': 'O3'
+                    }
+                    primary_pollutants_zh = [primary_pollutant_map.get(p, p) for p in primary_pollutants]
+                    record['primary_pollutant'] = ', '.join(primary_pollutants_zh) if primary_pollutants_zh else '-'
+                else:
+                    record['primary_pollutant'] = '-'
+
+            logger.info(
+                "station_day_new_standard_indices_calculated",
+                record_count=len(standardized_records)
+            )
+
+            # 保存到数据上下文
+            data_id = context.save_data(
+                data=standardized_records,
+                schema="air_quality_unified"
+            )
+
+            # 智能采样：如果记录数超过24条，进行采样
+            preview_data = standardized_records
+            if len(standardized_records) > 24:
+                preview_data = cls._smart_sample_data(standardized_records, max_records=24)
+                logger.info(
+                    "station_day_data_sampled",
+                    total=len(standardized_records),
+                    preview=len(preview_data)
+                )
+
+            # 获取城市/站点列表用于摘要
+            if stations:
+                location_list = stations
+            elif cities:
+                location_list = cities
+            else:
+                location_list = [station_codes[0]]
+
+            return {
+                "status": "success",
+                "success": True,
+                "data": preview_data,
+                "data_id": data_id,
+                "metadata": {
+                    "tool_name": "query_gd_suncere_station_day",
+                    "data_id": data_id,
+                    "total_records": len(standardized_records),
+                    "returned_records": len(preview_data),
+                    "cities": cities or [],
+                    "stations": stations or [],
+                    "station_codes": station_codes,
+                    "date_range": f"{start_date} to {end_date}",
+                    "schema_version": "v2.0",
+                    "source": "gd_suncere_api"
+                },
+                "summary": f"成功获取 {', '.join(location_list)} 的站点日报数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+            }
+
+        except Exception as e:
+            logger.error(
+                "query_gd_suncere_station_day_failed",
                 error=str(e),
                 error_type=type(e).__name__
             )
@@ -872,6 +1337,57 @@ class QueryGDSuncereDataTool:
             "summary": f"查询失败: {message}"
         }
 
+    @staticmethod
+    def _smart_sample_data(data: List[Dict], max_records: int = 24) -> List[Dict]:
+        """
+        智能采样数据（用于大数据集采样）
+
+        策略：
+        1. 优先保留首尾数据（时间序列的起点和终点）
+        2. 中间部分均匀采样
+
+        Args:
+            data: 原始数据列表
+            max_records: 最大保留记录数
+
+        Returns:
+            采样后的数据
+        """
+        n = len(data)
+        if n <= max_records:
+            return data
+
+        # 分配采样比例
+        head_ratio = 0.3  # 前30%的记录
+        tail_ratio = 0.3  # 后30%的记录
+        middle_ratio = 0.4  # 中间40%的记录
+
+        head_count = int(max_records * head_ratio)
+        tail_count = int(max_records * tail_ratio)
+        middle_count = max_records - head_count - tail_count
+
+        # 采样首部
+        head_sample = data[:head_count]
+
+        # 采样尾部
+        tail_sample = data[-tail_count:] if tail_count > 0 else []
+
+        # 采样中间部分（均匀采样）
+        middle_start = head_count
+        middle_end = n - tail_count
+        middle_data = data[middle_start:middle_end]
+
+        if middle_count > 0 and len(middle_data) > 0:
+            step = max(1, len(middle_data) // middle_count)
+            middle_sample = middle_data[::step][:middle_count]
+        else:
+            middle_sample = []
+
+        sampled = head_sample + middle_sample + tail_sample
+        sampled = sampled[:max_records]  # 确保不超过max_records
+
+        return sampled
+
 
 # 导出函数供工具调用
 def execute_query_gd_suncere_city_day(
@@ -935,6 +1451,270 @@ def execute_query_gd_suncere_station_hour(
         end_time=end_time,
         context=context
     )
+
+
+def execute_query_gd_suncere_station_hour_real(
+    start_time: str,
+    end_time: str,
+    context: ExecutionContext,
+    cities: Optional[List[str]] = None,
+    stations: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """
+    执行站点级别小时数据查询（真实站点数据）
+
+    与 execute_query_gd_suncere_station_hour（城市级别）不同，此函数：
+    1. 将城市名/站点名展开为对应的站点代码列表
+    2. 调用 query_station_hour_data API（POST，传站点代码）
+    3. 返回站点级别的小时数据（含 station_name 字段）
+
+    Args:
+        start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
+        end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
+        context: 执行上下文
+        cities: 城市名称列表（如 ["广州"]），工具自动展开为站点代码
+        stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接转编码
+
+    Returns:
+        UDF v2.0 格式的查询结果
+    """
+    logger.info(
+        "query_gd_suncere_station_hour_real_start",
+        cities=cities,
+        stations=stations,
+        start_time=start_time,
+        end_time=end_time
+    )
+
+    try:
+        api_client = get_gd_suncere_api_client()
+
+        # 将站点名/城市名展开为站点代码
+        station_codes = []
+        if stations:
+            station_codes.extend(GeoMappingResolver.resolve_station_codes(stations))
+        if cities:
+            station_codes.extend(GeoMappingResolver.resolve_station_codes_by_city(cities))
+        # 去重保持顺序
+        seen = set()
+        station_codes = [c for c in station_codes if not (c in seen or seen.add(c))]
+
+        if not station_codes:
+            raise Exception(f"未找到任何有效的站点代码: cities={cities}, stations={stations}")
+
+        logger.info(
+            "station_hour_real_codes_resolved",
+            cities=cities,
+            stations=stations,
+            station_codes=station_codes,
+            station_count=len(station_codes)
+        )
+
+        # 智能计算 DataSource 参数
+        data_type = QueryGDSuncereDataTool.calculate_data_source(end_time)
+
+        # 调用站点小时数据 API
+        response = api_client.query_station_hour_data(
+            station_codes=station_codes,
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type
+        )
+
+        if not response.get("success"):
+            error_msg = response.get("msg", "Unknown error")
+            raise Exception(f"API 查询失败: {error_msg}")
+
+        # 提取结果
+        raw_records = response.get("result", [])
+
+        if not raw_records:
+            logger.warning(
+                "query_station_hour_real_no_data",
+                cities=cities,
+                stations=stations,
+                station_codes=station_codes,
+                time_range=f"{start_time} - {end_time}"
+            )
+            return {
+                "status": "empty",
+                "success": True,
+                "data": [],
+                "metadata": {
+                    "tool_name": "query_gd_suncere_station_hour",
+                    "cities": cities,
+                    "stations": stations,
+                    "station_codes": station_codes,
+                    "time_range": f"{start_time} - {end_time}",
+                    "message": "查询成功但无数据返回"
+                },
+                "summary": f"未找到 {', '.join(cities)} 站点在指定时间段的小时数据"
+            }
+
+        logger.info(
+            "station_hour_real_data_received",
+            record_count=len(raw_records)
+        )
+
+        # 数据标准化
+        standardizer = get_data_standardizer()
+        standardized_records = standardizer.standardize(raw_records)
+
+        # 补充 station_name 字段（优先使用 API 返回的 name 字段）
+        for record in standardized_records:
+            # 优先使用 API 返回的 name 字段（站点中文名称）
+            station_name = record.get("name", "")
+            if station_name:
+                record["station_name"] = station_name
+            else:
+                # 降级：通过 station_code 解析站点名称
+                code = record.get("station_code", "")
+                record["station_name"] = GeoMappingResolver.resolve_station_name(code)
+
+        # 对小时数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
+        def safe_float(value, default=0.0):
+            if value is None or value == '' or value == '-':
+                return default
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        for record in standardized_records:
+            measurements = record.get("measurements", {})
+
+            pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                record.get("pm2_5") or record.get("PM2_5"))
+            pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                record.get("pm10") or record.get("PM10"))
+            so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                               record.get("so2") or record.get("SO2"))
+            no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                               record.get("no2") or record.get("NO2"))
+            co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                              record.get("co") or record.get("CO"))
+            o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                                record.get("o3_8h") or record.get("O3_8h"))
+
+            measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+            measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+            measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+            measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+            measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')
+            measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
+
+        # 按新标准重算 IAQI、AQI 和首要污染物
+        import math
+        for record in standardized_records:
+            measurements = record.get("measurements", {})
+
+            # 获取修约后的浓度值
+            pm25 = safe_float(measurements.get("PM2_5"))
+            pm10 = safe_float(measurements.get("PM10"))
+            so2 = safe_float(measurements.get("SO2"))
+            no2 = safe_float(measurements.get("NO2"))
+            co = safe_float(measurements.get("CO"))
+            o3_8h = safe_float(measurements.get("O3_8h"))
+
+            # 使用新标准计算 IAQI（向上进位取整数）
+            pm25_iaqi = math.ceil(calculate_iaqi(pm25, 'PM2_5', 'new'))
+            pm10_iaqi = math.ceil(calculate_iaqi(pm10, 'PM10', 'new'))
+            so2_iaqi = math.ceil(calculate_iaqi(so2, 'SO2', 'new'))
+            no2_iaqi = math.ceil(calculate_iaqi(no2, 'NO2', 'new'))
+            co_iaqi = math.ceil(calculate_iaqi(co, 'CO', 'new'))
+            o3_8h_iaqi = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'new'))
+
+            # 保存新标准 IAQI
+            measurements['PM2_5_IAQI'] = pm25_iaqi
+            measurements['PM10_IAQI'] = pm10_iaqi
+            measurements['SO2_IAQI'] = so2_iaqi
+            measurements['NO2_IAQI'] = no2_iaqi
+            measurements['CO_IAQI'] = co_iaqi
+            measurements['O3_8h_IAQI'] = o3_8h_iaqi
+
+            # 计算 AQI（取最大 IAQI）
+            aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+            measurements['AQI'] = aqi
+
+            # 确定首要污染物（AQI > 50 时才有首要污染物）
+            if aqi > 50:
+                pollutants_with_iaqi = {
+                    'PM2_5': pm25_iaqi,
+                    'PM10': pm10_iaqi,
+                    'SO2': so2_iaqi,
+                    'NO2': no2_iaqi,
+                    'CO': co_iaqi,
+                    'O3_8h': o3_8h_iaqi
+                }
+                primary_pollutants = [p for p, iaqi in pollutants_with_iaqi.items() if iaqi == aqi]
+                # 将首要污染物列表转换为中文
+                primary_pollutant_map = {
+                    'PM2_5': 'PM2.5',
+                    'PM10': 'PM10',
+                    'SO2': 'SO2',
+                    'NO2': 'NO2',
+                    'CO': 'CO',
+                    'O3_8h': 'O3'
+                }
+                primary_pollutants_zh = [primary_pollutant_map.get(p, p) for p in primary_pollutants]
+                record['primary_pollutant'] = ', '.join(primary_pollutants_zh) if primary_pollutants_zh else '-'
+            else:
+                record['primary_pollutant'] = '-'
+
+        logger.info(
+            "station_hour_new_standard_indices_calculated",
+            record_count=len(standardized_records)
+        )
+
+        # 保存到上下文
+        data_id = context.data_manager.save_data(
+            data=standardized_records,
+            schema="air_quality_unified",
+            metadata={
+                "source": "gd_suncere_api",
+                "query_type": "station_hour",
+                "cities": cities,
+                "stations": stations,
+                "station_codes": station_codes,
+                "time_range": f"{start_time} - {end_time}",
+                "schema_version": "v2.0",
+                "field_mapping_applied": True,
+                "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
+            }
+        )
+
+        logger.info(
+            "gd_suncere_station_hour_real_saved",
+            data_id=data_id,
+            record_count=len(standardized_records)
+        )
+
+        return {
+            "status": "success",
+            "success": True,
+            "data": standardized_records[:24],
+            "metadata": {
+                "tool_name": "query_gd_suncere_station_hour",
+                "data_id": data_id,
+                "total_records": len(standardized_records),
+                "returned_records": min(24, len(standardized_records)),
+                "cities": cities,
+                "stations": stations,
+                "station_codes": station_codes,
+                "time_range": f"{start_time} - {end_time}",
+                "schema_version": "v2.0",
+                "source": "gd_suncere_api"
+            },
+            "summary": f"成功获取站点级别小时数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+        }
+
+    except Exception as e:
+        logger.error(
+            "query_gd_suncere_station_hour_real_failed",
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        return QueryGDSuncereDataTool._create_error_response(str(e))
 
 
 def execute_query_gd_suncere_regional_comparison(
@@ -1428,6 +2208,49 @@ def execute_query_gd_suncere_report_compare(
             error_type=type(e).__name__
         )
         return QueryGDSuncereDataTool._create_error_response(str(e))
+
+
+def execute_query_gd_suncere_station_day(
+    cities: Optional[List[str]] = None,
+    stations: Optional[List[str]] = None,
+    start_date: str = None,
+    end_date: str = None,
+    context: Optional[ExecutionContext] = None,
+    data_type: int = 1
+) -> Dict[str, Any]:
+    """
+    执行站点日报数据查询
+
+    支持按城市名展开（自动查询该城市下所有站点）或直接输入站点名称
+
+    Args:
+        cities: 城市名称列表（与 stations 二选一，可组合）
+        stations: 站点名称列表（与 cities 二选一，可组合）
+        start_date: 开始日期，格式 "YYYY-MM-DD"
+        end_date: 结束日期，格式 "YYYY-MM-DD"
+        context: 执行上下文
+        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+
+    Returns:
+        查询结果字典
+    """
+    logger.info(
+        "execute_query_gd_suncere_station_day",
+        cities=cities,
+        stations=stations,
+        start_date=start_date,
+        end_date=end_date,
+        data_type=data_type
+    )
+
+    return QueryGDSuncereDataTool.query_station_day_data(
+        cities=cities,
+        stations=stations,
+        start_date=start_date,
+        end_date=end_date,
+        context=context,
+        data_type=data_type
+    )
 
 
 # =============================================================================
