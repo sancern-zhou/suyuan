@@ -46,6 +46,12 @@ Thumbs.db
 .env
 .env.local
 
+# Sensitive configuration files (API keys, secrets)
+config/social_config.yaml
+config/social_config.yaml.local
+backend/config/social_config.yaml
+backend/config/social_config.yaml.local
+
 # Test outputs
 test_outputs/
 
