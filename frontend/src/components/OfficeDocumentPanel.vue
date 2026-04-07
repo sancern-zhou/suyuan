@@ -25,10 +25,14 @@
                   ⬇️ 下载
                 </button>
                 <div v-if="showDownloadMenu" class="download-menu">
-                  <button @click="downloadPDF(doc)" class="download-item">
+                  <button v-if="doc.doc_type === 'markdown'" @click="downloadMarkdown(doc)" class="download-item">
+                    📄 下载Markdown文件
+                  </button>
+                  <button v-if="doc.pdf_url" @click="downloadPDF(doc)" class="download-item">
                     📄 下载PDF文件
                   </button>
                   <button
+                    v-if="doc.doc_type === 'word'"
                     @click="downloadWord(doc)"
                     class="download-item"
                     :disabled="!doc.file_path || doc.file_path === ''"
@@ -53,6 +57,11 @@
                 type="application/pdf"
                 @load="onPdfLoaded(doc)"
               ></iframe>
+            </div>
+
+            <!-- Markdown preview -->
+            <div v-else-if="doc.markdown_content && doc.doc_type === 'markdown'" class="markdown-wrapper">
+              <MarkdownRenderer :content="doc.markdown_content" :streaming="false" />
             </div>
 
             <!-- Error state -->
@@ -114,6 +123,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 
 const reactStore = useReactStore()
 const emit = defineEmits(['submit-edit'])
@@ -163,11 +173,12 @@ const hasOfficeDocuments = computed(() => {
 
 // 监听 store.lastOfficeDocument，直接更新文档列表
 watch(() => reactStore.lastOfficeDocument, (doc) => {
-  if (!doc?.pdf_preview) return
+  if (!doc?.pdf_preview && !doc?.markdown_preview) return
 
   console.log('[OfficeDocumentPanel] 收到office_document事件:', {
     generator: doc.generator,
-    pdf_id: doc.pdf_preview.pdf_id,
+    pdf_id: doc.pdf_preview?.pdf_id,
+    has_markdown_preview: !!doc.markdown_preview,
     file_path: doc.file_path
   })
 
@@ -181,22 +192,28 @@ watch(() => reactStore.lastOfficeDocument, (doc) => {
 
   if (existingDoc) {
     // 更新现有文档
-    if (existingDoc.pdf_id !== doc.pdf_preview.pdf_id) {
+    if (doc.pdf_preview && existingDoc.pdf_id !== doc.pdf_preview.pdf_id) {
       console.log('[OfficeDocumentPanel] 更新现有文档PDF:', fileName)
       existingDoc.pdf_url = doc.pdf_preview.pdf_url
       existingDoc.pdf_id = doc.pdf_preview.pdf_id
       existingDoc.file_path = filePath
       triggerPdfRefresh(existingDoc)
     }
+    // 更新markdown内容
+    if (doc.markdown_preview) {
+      existingDoc.markdown_content = doc.markdown_preview.content
+      existingDoc.file_path = filePath
+    }
   } else {
     // 添加新文档
     console.log('[OfficeDocumentPanel] 添加新文档:', fileName)
     officeDocuments.value.push({
-      doc_type: getDocType(doc.generator),
+      doc_type: getDocType(doc.generator, doc.markdown_preview),
       file_name: fileName,
       file_path: filePath,
-      pdf_url: doc.pdf_preview.pdf_url,
-      pdf_id: doc.pdf_preview.pdf_id,
+      pdf_url: doc.pdf_preview?.pdf_url,
+      pdf_id: doc.pdf_preview?.pdf_id,
+      markdown_content: doc.markdown_preview?.content,
       loading: false,
       editContent: '',
       submitting: false,
@@ -330,6 +347,34 @@ async function downloadWord(doc) {
   }
 }
 
+// Download Markdown file
+function downloadMarkdown(doc) {
+  if (!doc.file_path || doc.file_path === '') {
+    console.error('[OfficeDocumentPanel] Markdown file path not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    // 使用通用文件下载API（类似PDF的简单方式）
+    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+
+    // 创建下载链接
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = doc.file_name || 'document.md'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    console.log('[OfficeDocumentPanel] Markdown download started:', doc.file_name)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Markdown download failed:', error)
+  }
+}
+
 // Cancel edit
 function cancelEdit() {
   isEditMode.value = false
@@ -376,11 +421,13 @@ async function submitEdit(doc) {
   }
 }
 
-function getDocType(generator) {
+function getDocType(generator, markdownPreview) {
   if (['word_edit', 'find_replace_word', 'accept_word_changes'].includes(generator)) {
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
     return 'ppt'
+  } else if (markdownPreview) {
+    return 'markdown'
   }
   return 'unknown'
 }
@@ -423,7 +470,8 @@ function loadDocuments(documents) {
   console.log('[OfficeDocumentPanel] 开始加载历史文档，数量:', documents.length)
 
   documents.forEach((doc, index) => {
-    if (!doc.pdf_preview || !doc.file_path) {
+    // 检查是否有有效的预览数据（PDF或Markdown）
+    if ((!doc.pdf_preview && !doc.markdown_preview) || !doc.file_path) {
       console.warn('[OfficeDocumentPanel] 跳过无效文档:', index, doc)
       return
     }
@@ -440,11 +488,12 @@ function loadDocuments(documents) {
       // 添加新文档（不触发动画，因为这是历史数据）
       console.log('[OfficeDocumentPanel] 加载历史文档:', index + 1, fileName)
       officeDocuments.value.push({
-        doc_type: getDocType(doc.generator),
+        doc_type: getDocType(doc.generator, doc.markdown_preview),
         file_name: fileName,
         file_path: filePath,
-        pdf_url: doc.pdf_preview.pdf_url,
-        pdf_id: doc.pdf_preview.pdf_id,
+        pdf_url: doc.pdf_preview?.pdf_url,
+        pdf_id: doc.pdf_preview?.pdf_id,
+        markdown_content: doc.markdown_preview?.content,
         loading: false,
         editContent: '',
         submitting: false,
@@ -631,6 +680,16 @@ defineExpose({
   height: 750px;
   border: none;
   transition: height 0.3s ease;
+}
+
+.markdown-wrapper {
+  width: 100%;
+  min-height: 750px;
+  padding: 20px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
 }
 
 .office-panel.expanded .pdf-iframe {

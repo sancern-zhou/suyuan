@@ -86,27 +86,20 @@ class MemoryStore:
 
         Args:
             workspace: 基础工作空间
-            user_id: 用户ID
+            user_id: 用户ID（暂不使用，保留接口兼容性）
             mode: 模式标识
 
         Returns:
-            用户专属工作空间路径
+            模式专属工作空间路径
         """
-        base = workspace or Path("backend_data_registry/memory")
+        base = workspace or Path("/home/xckj/suyuan/backend_data_registry/memory")
 
-        # 按mode分组存储
+        # 按mode分组存储（不考虑用户登录场景）
         mode_dir = base / mode
         mode_dir.mkdir(parents=True, exist_ok=True)
 
-        if user_id and user_id != "global":
-            # 用户专属目录
-            # 文件系统将 : 替换为 _ 以避免路径问题
-            safe_user_id = user_id.replace(":", "_")
-            user_dir = mode_dir / safe_user_id
-            user_dir.mkdir(parents=True, exist_ok=True)
-            return user_dir
-
-        # 全局目录（向后兼容）
+        # 直接返回模式目录
+        # 例如：/home/xckj/suyuan/backend_data_registry/memory/query/MEMORY.md
         return mode_dir
 
     def _init_files(self) -> None:
@@ -519,39 +512,38 @@ class ImprovedMemoryStore(MemoryStore):
                 max_retries=2
             )
 
-            if not response.get("success"):
+            # 直接验证返回的 JSON 对象（call_llm_with_json_response 返回的是原始 JSON）
+            if not response:
                 logger.warning(
-                    "memory_consolidation_llm_failed",
+                    "memory_consolidation_no_response",
                     user_id=self.user_id,
-                    mode=self.mode,
-                    error=response.get("error", "Unknown error")
+                    mode=self.mode
                 )
                 return self._fail_or_raw_archive(messages)
 
-            # 提取数据
-            data = response.get("data")
-
-            if not data:
-                logger.warning(
-                    "memory_consolidation_no_data",
-                    user_id=self.user_id,
-                    mode=self.mode,
-                    response=response
-                )
-                return self._fail_or_raw_archive(messages)
+            # 调试日志：记录 LLM 返回的内容
+            logger.info(
+                "memory_consolidation_llm_response",
+                user_id=self.user_id,
+                mode=self.mode,
+                response_keys=list(response.keys()),
+                has_history_entry="history_entry" in response,
+                has_memory_update="memory_update" in response
+            )
 
             # 验证字段
-            if "history_entry" not in data or "memory_update" not in data:
+            if "history_entry" not in response or "memory_update" not in response:
                 logger.warning(
                     "memory_consolidation_missing_fields",
                     user_id=self.user_id,
                     mode=self.mode,
-                    data_keys=list(data.keys())
+                    response_keys=list(response.keys()),
+                    response_preview=str(response)[:500]
                 )
                 return self._fail_or_raw_archive(messages)
 
-            entry = data["history_entry"]
-            update = data["memory_update"]
+            entry = response["history_entry"]
+            update = response["memory_update"]
 
             if not entry or not update:
                 logger.warning(

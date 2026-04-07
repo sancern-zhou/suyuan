@@ -225,7 +225,7 @@ class Settings(BaseSettings):
         description="SQL Server port"
     )
     sqlserver_database: str = Field(
-        default="AirPollutionAnalysis",
+        default="XcAiDb",
         description="SQL Server database name"
     )
     sqlserver_user: str = Field(

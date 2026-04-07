@@ -32,10 +32,21 @@ class GeoMappingResolver:
     3. 区域名称 → 区域编码映射
     4. 城市名称 → 下辖站点编码列表映射
     5. 区县名称 → 下辖站点编码列表映射
+    6. 站点类型过滤功能（国控/省控/市控等）
 
     站点数据来源：
     - station_district_results_with_type_id.json：376个站点，含城市/区县归属
     """
+
+    # 站点类型映射常量
+    STATION_TYPE_MAP = {
+        "国控": 1.0,
+        "省控": 2.0,
+        "市控": 3.0,
+        "1.0": 1.0, "2.0": 2.0, "3.0": 3.0,
+        "4.0": 4.0, "5.0": 5.0, "6.0": 6.0,
+        "7.0": 7.0, "8.0": 8.0, "9.0": 9.0, "15.0": 15.0,
+    }
 
     # 类变量，用于缓存从 JSON 加载的站点数据
     _station_data_loaded = False
@@ -443,6 +454,197 @@ class GeoMappingResolver:
         cls._load_station_data_from_json()
         return cls._station_meta_map.get(station_code)
 
+    @classmethod
+    def _parse_station_type(cls, station_type: str) -> float:
+        """
+        解析站点类型字符串为数字ID
+
+        Args:
+            station_type: 站点类型（支持中文名称或数字ID字符串）
+
+        Returns:
+            站点类型ID（浮点数）
+
+        Raises:
+            ValueError: 无效的站点类型
+        """
+        cls._load_station_data_from_json()
+
+        if station_type in cls.STATION_TYPE_MAP:
+            return cls.STATION_TYPE_MAP[station_type]
+
+        # 尝试直接转换为浮点数
+        try:
+            type_id = float(station_type)
+            if type_id in cls.STATION_TYPE_MAP.values():
+                return type_id
+        except (ValueError, TypeError):
+            pass
+
+        valid_values = list(cls.STATION_TYPE_MAP.keys())
+        raise ValueError(
+            f"无效的站点类型: '{station_type}'。"
+            f"有效值: {valid_values}"
+        )
+
+    @classmethod
+    def _get_type_name(cls, type_id: float) -> str:
+        """
+        将类型ID转换为中文名称
+
+        Args:
+            type_id: 站点类型ID
+
+        Returns:
+            站点类型中文名称
+        """
+        type_name_map = {
+            1.0: "国控",
+            2.0: "省控",
+            3.0: "市控",
+            4.0: "区县控",
+            5.0: "乡镇控",
+            6.0: "其他",
+            7.0: "背景站",
+            8.0: "区域站",
+            9.0: "交通站",
+            15.0: "专项站",
+        }
+        return type_name_map.get(type_id, f"类型{type_id}")
+
+    @classmethod
+    def resolve_station_codes_by_type(
+        cls,
+        station_type: str,
+        cities: List[str]
+    ) -> Tuple[List[str], Dict]:
+        """
+        根据站点类型和城市列表获取站点编码列表
+
+        Args:
+            station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
+            cities: 城市名称列表（必填，不允许全省查询）
+
+        Returns:
+            (站点编码列表, 元数据字典)
+
+        Raises:
+            ValueError: cities参数为空或站点类型无效
+        """
+        if not cities:
+            raise ValueError(
+                "必须提供cities参数。"
+                "为避免数据量过大，不支持全省查询。"
+                "请指定具体城市。"
+            )
+
+        cls._load_station_data_from_json()
+
+        # 解析站点类型
+        type_id = cls._parse_station_type(station_type)
+        type_name = cls._get_type_name(type_id)
+
+        # 获取城市下的所有站点
+        all_station_codes = cls.resolve_station_codes_by_city(cities)
+
+        # 按站点类型过滤
+        filtered_stations = []
+        for station_code in all_station_codes:
+            meta = cls._station_meta_map.get(station_code, {})
+            station_type_id = meta.get("type_id")
+            if station_type_id == type_id:
+                filtered_stations.append(station_code)
+
+        metadata = {
+            "type_id": type_id,
+            "type_name": type_name,
+            "station_count": len(filtered_stations),
+            "cities": cities,
+            "total_stations_in_cities": len(all_station_codes),
+        }
+
+        logger.info(
+            "station_codes_resolved_by_type",
+            station_type=station_type,
+            type_id=type_id,
+            type_name=type_name,
+            cities=cities,
+            filtered_count=len(filtered_stations),
+            total_count=len(all_station_codes)
+        )
+
+        return filtered_stations, metadata
+
+    @classmethod
+    def validate_station_type_match(
+        cls,
+        station_names: List[str],
+        station_type: str
+    ) -> Tuple[bool, List[str], str]:
+        """
+        验证指定站点是否匹配给定类型
+
+        Args:
+            station_names: 站点名称列表
+            station_type: 期望的站点类型
+
+        Returns:
+            (是否全部匹配, 不匹配的站点列表, 错误消息)
+        """
+        cls._load_station_data_from_json()
+
+        # 解析站点类型
+        type_id = cls._parse_station_type(station_type)
+        type_name = cls._get_type_name(type_id)
+
+        # 解析站点编码
+        station_codes = cls.resolve_station_codes(station_names)
+
+        # 检查每个站点的类型
+        mismatched = []
+        for station_code in station_codes:
+            meta = cls._station_meta_map.get(station_code, {})
+            station_type_id = meta.get("type_id")
+            if station_type_id != type_id:
+                station_name = meta.get("name", station_code)
+                actual_type = cls._get_type_name(station_type_id) if station_type_id else "未知"
+                mismatched.append(f"{station_name}({actual_type})")
+
+        if mismatched:
+            error_msg = (
+                f"以下站点不是{type_name}站点: {', '.join(mismatched)}"
+            )
+            return False, mismatched, error_msg
+
+        return True, [], ""
+
+    @classmethod
+    def _filter_stations_by_type(
+        cls,
+        station_codes: List[str],
+        station_types: List[float]
+    ) -> List[str]:
+        """
+        根据站点类型过滤站点编码列表
+
+        Args:
+            station_codes: 站点编码列表
+            station_types: 允许的站点类型ID列表
+
+        Returns:
+            过滤后的站点编码列表
+        """
+        cls._load_station_data_from_json()
+
+        filtered = []
+        for station_code in station_codes:
+            meta = cls._station_meta_map.get(station_code, {})
+            station_type_id = meta.get("type_id")
+            if station_type_id in station_types:
+                filtered.append(station_code)
+
+        return filtered
+
 
 class QueryGDSuncereDataTool:
     """
@@ -754,7 +956,8 @@ class QueryGDSuncereDataTool:
         start_date: str = None,
         end_date: str = None,
         context: ExecutionContext = None,
-        data_type: int = 1
+        data_type: int = 1,
+        station_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -766,6 +969,7 @@ class QueryGDSuncereDataTool:
             end_date: 结束日期 (YYYY-MM-DD)
             context: 执行上下文
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+            station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
 
         Returns:
             查询结果
@@ -775,18 +979,52 @@ class QueryGDSuncereDataTool:
             cities=cities,
             stations=stations,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            station_type=station_type
         )
 
         try:
             api_client = get_gd_suncere_api_client()
 
-            # 解析站点代码（分别处理站点和城市）
+            # 解析站点代码（支持站点类型过滤）
             station_codes = []
+
             if stations:
+                # 场景1: 指定站点 - 验证类型匹配
+                if station_type:
+                    is_valid, mismatched, error_msg = cls.geo_resolver.validate_station_type_match(
+                        stations, station_type
+                    )
+                    if not is_valid:
+                        return cls._create_error_response(
+                            f"站点类型不匹配: {error_msg}"
+                        )
                 station_codes.extend(cls.geo_resolver.resolve_station_codes(stations))
+
             if cities:
-                station_codes.extend(cls.geo_resolver.resolve_station_codes_by_city(cities))
+                # 场景2: 指定城市 - 按类型+城市过滤（支持多城市并发查询）
+                if station_type:
+                    type_codes, metadata = cls.geo_resolver.resolve_station_codes_by_type(
+                        station_type, cities
+                    )
+                    if not type_codes:
+                        type_name = metadata.get("type_name", station_type)
+                        return {
+                            "status": "empty",
+                            "success": True,
+                            "data": [],
+                            "summary": f"未找到类型为'{type_name}'的站点（城市：{', '.join(cities)}）",
+                            "metadata": {
+                                "station_type": station_type,
+                                "type_id": metadata.get("type_id"),
+                                "cities": cities,
+                                "stations": [],
+                                "suggestion": f"该城市没有{type_name}站点，建议使用其他站点类型查询"
+                            }
+                        }
+                    station_codes.extend(type_codes)
+                else:
+                    station_codes.extend(cls.geo_resolver.resolve_station_codes_by_city(cities))
 
             # 去重保持顺序
             seen = set()
@@ -1458,7 +1696,8 @@ def execute_query_gd_suncere_station_hour_real(
     end_time: str,
     context: ExecutionContext,
     cities: Optional[List[str]] = None,
-    stations: Optional[List[str]] = None
+    stations: Optional[List[str]] = None,
+    station_type: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     执行站点级别小时数据查询（真实站点数据）
@@ -1467,6 +1706,7 @@ def execute_query_gd_suncere_station_hour_real(
     1. 将城市名/站点名展开为对应的站点代码列表
     2. 调用 query_station_hour_data API（POST，传站点代码）
     3. 返回站点级别的小时数据（含 station_name 字段）
+    4. 支持按站点类型过滤（国控/省控/市控等）
 
     Args:
         start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
@@ -1474,6 +1714,7 @@ def execute_query_gd_suncere_station_hour_real(
         context: 执行上下文
         cities: 城市名称列表（如 ["广州"]），工具自动展开为站点代码
         stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接转编码
+        station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
 
     Returns:
         UDF v2.0 格式的查询结果
@@ -1483,18 +1724,61 @@ def execute_query_gd_suncere_station_hour_real(
         cities=cities,
         stations=stations,
         start_time=start_time,
-        end_time=end_time
+        end_time=end_time,
+        station_type=station_type
     )
 
     try:
         api_client = get_gd_suncere_api_client()
 
-        # 将站点名/城市名展开为站点代码
+        # 将站点名/城市名展开为站点代码（支持站点类型过滤）
         station_codes = []
+
         if stations:
+            # 场景1: 指定站点 - 验证类型匹配
+            if station_type:
+                is_valid, mismatched, error_msg = GeoMappingResolver.validate_station_type_match(
+                    stations, station_type
+                )
+                if not is_valid:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "data": [],
+                        "summary": f"站点类型不匹配: {error_msg}",
+                        "metadata": {
+                            "station_type": station_type,
+                            "stations": stations,
+                            "error": "Station type mismatch"
+                        }
+                    }
             station_codes.extend(GeoMappingResolver.resolve_station_codes(stations))
+
         if cities:
-            station_codes.extend(GeoMappingResolver.resolve_station_codes_by_city(cities))
+            # 场景2: 指定城市 - 按类型+城市过滤（支持多城市并发查询）
+            if station_type:
+                type_codes, metadata = GeoMappingResolver.resolve_station_codes_by_type(
+                    station_type, cities
+                )
+                if not type_codes:
+                    type_name = metadata.get("type_name", station_type)
+                    return {
+                        "status": "empty",
+                        "success": True,
+                        "data": [],
+                        "summary": f"未找到类型为'{type_name}'的站点（城市：{', '.join(cities)}）",
+                        "metadata": {
+                            "station_type": station_type,
+                            "type_id": metadata.get("type_id"),
+                            "cities": cities,
+                            "stations": [],
+                            "suggestion": f"该城市没有{type_name}站点，建议使用其他站点类型查询"
+                        }
+                    }
+                station_codes.extend(type_codes)
+            else:
+                station_codes.extend(GeoMappingResolver.resolve_station_codes_by_city(cities))
+
         # 去重保持顺序
         seen = set()
         station_codes = [c for c in station_codes if not (c in seen or seen.add(c))]
@@ -2216,12 +2500,14 @@ def execute_query_gd_suncere_station_day(
     start_date: str = None,
     end_date: str = None,
     context: Optional[ExecutionContext] = None,
-    data_type: int = 1
+    data_type: int = 1,
+    station_type: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     执行站点日报数据查询
 
     支持按城市名展开（自动查询该城市下所有站点）或直接输入站点名称
+    支持按站点类型过滤（国控/省控/市控等）
 
     Args:
         cities: 城市名称列表（与 stations 二选一，可组合）
@@ -2230,6 +2516,7 @@ def execute_query_gd_suncere_station_day(
         end_date: 结束日期，格式 "YYYY-MM-DD"
         context: 执行上下文
         data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+        station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
 
     Returns:
         查询结果字典
@@ -2240,7 +2527,8 @@ def execute_query_gd_suncere_station_day(
         stations=stations,
         start_date=start_date,
         end_date=end_date,
-        data_type=data_type
+        data_type=data_type,
+        station_type=station_type
     )
 
     return QueryGDSuncereDataTool.query_station_day_data(
@@ -2249,7 +2537,8 @@ def execute_query_gd_suncere_station_day(
         start_date=start_date,
         end_date=end_date,
         context=context,
-        data_type=data_type
+        data_type=data_type,
+        station_type=station_type
     )
 
 

@@ -12,6 +12,7 @@
     "@traptitech/markdown-it-katex": "^3.6.0",
     "axios": "^1.13.6",
     "echarts": "^5.5.1",
+    "echarts-gl": "^2.0.9",
     "html2canvas": "^1.4.1",
     "katex": "^0.16.9",
     "markdown-it": "^14.1.0",

@@ -822,11 +822,11 @@ const scrollToBottom = () => {
   })
 }
 
-// 判断用户是否在底部（接近底部100px内）
+// 判断用户是否在底部（接近底部30px内）
 const isAtBottom = () => {
   if (!messagesContainer.value) return true
   const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-  return scrollHeight - scrollTop - clientHeight < 100
+  return scrollHeight - scrollTop - clientHeight < 30
 }
 
 // 【新增】用户滚动状态追踪
@@ -835,7 +835,17 @@ const scrollTimeout = ref(null)
 
 // 检测用户是否手动滚动
 const handleUserScroll = () => {
-  userHasScrolled.value = true
+  // 只有当用户向上滚动（查看历史消息）时才标记
+  if (messagesContainer.value) {
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
+    const distanceToBottom = scrollHeight - scrollTop - clientHeight
+
+    // 只有距离底部超过50px时才认为用户在查看历史消息
+    if (distanceToBottom > 50) {
+      userHasScrolled.value = true
+    }
+  }
+
   // 清除之前的超时
   if (scrollTimeout.value) {
     clearTimeout(scrollTimeout.value)
@@ -843,7 +853,7 @@ const handleUserScroll = () => {
   }
   // 2秒后重置，让用户在停止滚动后可以恢复自动滚动
   scrollTimeout.value = setTimeout(() => {
-    // 不自动重置为false，保留用户的滚动意图
+    userHasScrolled.value = false
   }, 2000)
 
   // 滚动到顶部时自动加载更多历史消息
@@ -869,9 +879,16 @@ watch(
     // 如果有新的消息，滚动到底部
     if (newLength > oldLength) {
       const lastMessage = props.messages[newLength - 1]
-      // 用户发送消息 或 用户在底部时，自动滚动到底部
-      // 这样如果用户没有主动查看历史消息，AI回复时也会自动显示
-      if (lastMessage.type === 'user' || isAtBottom()) {
+
+      // 用户发送消息时，总是滚动到底部
+      if (lastMessage.type === 'user') {
+        userHasScrolled.value = false // 重置滚动状态
+        scrollToBottom()
+        return
+      }
+
+      // AI回复时，只有在用户未手动滚动查看历史消息时才自动滚动
+      if (!userHasScrolled.value && isAtBottom()) {
         scrollToBottom()
       }
     }

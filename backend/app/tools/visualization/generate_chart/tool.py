@@ -525,47 +525,34 @@ class GenerateChartTool(LLMTool):
             try:
                 from datetime import datetime
                 import uuid
-                from app.schemas.chart import ChartConfig
 
-                # 创建ChartConfig模型
-                chart_config_model = ChartConfig(
-                    chart_id=chart_response.get("id", "chart_" + uuid.uuid4().hex[:8]),
-                    chart_type=chart_response.get("type", chart_type),
-                    title=chart_response.get("title", title or "图表"),
-                    payload=chart_response,
-                    method=method,
-                    template_used=template_used,
-                    scenario="custom",
-                    data_record_count=len(data) if isinstance(data, list) else 1,
-                    pollutant=chart_meta.get("pollutant"),
-                    station_name=chart_meta.get("station_name"),
-                    venue_name=chart_meta.get("venue_name"),
-                    generated_at=datetime.now().isoformat(),
-                    metadata={
-                        **chart_meta,
-                        "format_version": "3.1",
-                        "simplified": True  # 标记为简化版本
-                    }
-                )
+                # 将元数据添加到chart_response中
+                chart_response["meta"] = chart_response.get("meta") or {}
+                chart_response["meta"].update({
+                    "method": method,
+                    "template_used": template_used,
+                    "generated_at": datetime.now().isoformat(),
+                    "data_record_count": len(data) if isinstance(data, list) else 1,
+                    **chart_meta
+                })
 
-                # 保存到context
+                # 保存到context（直接存储ChartResponse字典）
                 # save_data() 返回 {"data_id": str, "file_path": str}
                 data_ref = context.save_data(
-                    data=[chart_config_model],
-                    schema="chart_config",
+                    data=[chart_response],
+                    schema="chart_response",
                     metadata={
-                        "chart_type": chart_config_model.chart_type,
+                        "chart_type": chart_response.get("type"),
                         "method": method,
                         "template_used": template_used,
                         "scenario": "custom",
-                        "format_version": "3.1",
-                        "simplified": True
+                        "format_version": "3.1"
                     }
                 )
                 data_id = data_ref["data_id"]
                 file_path = data_ref["file_path"]
 
-                logger.info("chart_config_saved", data_id=data_id, file_path=file_path)
+                logger.info("chart_response_saved", data_id=data_id, file_path=file_path)
 
             except Exception as exc:
                 logger.error(
@@ -747,210 +734,76 @@ class GenerateChartTool(LLMTool):
             pollutant_mapping_str = ", ".join(pollutant_mapping_examples[:5])
 
             prompt = f"""
-你是一个高级数据可视化专家。请分析数据并生成v3.1标准格式的图表配置。
+你是ECharts图表专家。请生成ECharts标准格式的图表配置。
 
-# 数据样本（前4000字符）
+# 数据
 ```json
 {data_sample}
 ```
 
 # 需求
-- 图表类型提示: {chart_type_hint}
+- 类型: {chart_type_hint}
 - 标题: {title or '自动生成'}
-- X轴字段: {x_field or '自动识别'}
-- Y轴字段: {y_field or '自动识别'}
 
-# 【重要】标准字段名称规范
-生成图表时必须使用以下标准字段名称（从data_sample中提取实际字段名，然后映射到标准名称）：
+# ECharts标准格式示例
 
-【时间字段】
-- timestamp: 时间戳（标准格式：YYYY-MM-DD HH:MM:SS）
-
-【地理字段】
-- station_name: 站点名称
-- city: 城市名称
-- lat: 纬度
-- lon: 经度
-
-【污染物字段（标准名称）】
-- PM2_5: PM2.5（注意：使用下划线，不是点号）
-- PM10: PM10
-- O3: 臭氧（注意：使用大写O，不是小写o）
-- O3_8h: 8小时臭氧平均值（与O3是不同的指标！）
-- NO2: 二氧化氮
-- SO2: 二氧化硫
-- CO: 一氧化碳
-
-【气象字段】
-- temperature_2m: 2米温度
-- wind_speed_10m: 10米风速
-- wind_direction_10m: 10米风向
-- relative_humidity_2m: 2米相对湿度
-- surface_pressure: 地面气压
-
-【数据筛选要求】
-1. **严格使用标准字段名**：O3不是o3，PM2_5不是PM2.5或PM25
-2. **从data_sample提取**：必须检查data_sample中的实际字段名
-3. **字段名匹配**：生成的图表中字段名必须与实际数据字段名完全一致
-4. **大小写敏感**：严格区分大小写（O3≠o3，PM2_5≠PM2.5）
-
-【错误示例】
-❌ 错误：使用"o3"（应为"O3"）
-❌ 错误：使用"PM2.5"（应为"PM2_5"）
-❌ 错误：使用"PM25"（应为"PM2_5"）
-✅ 正确：从data_sample中提取真实字段名，映射到上述标准名称
-
-# 支持的图表类型（15种）
-
-## 基础图表（适用于常规数据分析）
-
-### pie（饼图）
-- 适用场景: 展示占比/组成关系
-- 最佳实践: 污染源贡献率、物种占比、组分分布
-- 数据格式: [{{name: "类别", value: 数值}}, ...]
-- 字段要求: name为类别名，value为数值（如PM2_5或O3的浓度值）
-
-### bar（柱状图）
-- 适用场景: 对比不同类别的数值
-- 最佳实践: 不同站点对比、不同污染物对比
-- 数据格式: {{"x": [类别1, 类别2, ...], "y": [数值1, 数值2, ...]}}
-- 字段要求: x为类别列表（如站点名、时间等），y为对应的数值列表
-
-### line（折线图）
-- 适用场景: 展示单一指标的趋势变化
-- 最佳实践: 单一污染物随时间变化（如O3浓度日变化）
-- 数据格式: {{"x": [时间1, 时间2, ...], "y": [数值1, 数值2, ...]}}
-- 字段要求: x为时间序列，y为对应时间的污染物浓度值（必须使用标准字段名：PM2_5, O3, NO2等）
-
-### timeseries（时序图）
-- 适用场景: 展示多系列时间序列，支持多条线对比
-- 最佳实践: 多污染物时序对比、多站点时序对比
-- 数据格式: {{"x": [时间1, 时间2, ...], "series": [{{name: "系列1", data: [...]}}, ...]}}
-- 字段要求: series中name必须使用标准字段名（O3, PM2_5, PM10等），data为对应时间序列的数值
-
-### radar（雷达图）
-- 适用场景: 多维度对比
-- 最佳实践: 敏感性分析、多指标综合评价
-- 数据格式: {{"dimensions": [维度1, 维度2, ...], "series": [{{name: "系列1", values: [...]}}]}}
-- 字段要求: dimensions为评估维度，series中name为指标名称（如"敏感性"）
-
----
-
-## 气象专业图表（适用于气象数据）
-
-### wind_rose（风向玫瑰图）
-- 适用场景: 展示风向风速分布
-- 触发条件: **必须包含wind_speed和wind_direction字段**
-- 数据格式: {{"sectors": [{{direction: "N", angle: 0, avg_speed: 3.5, max_speed: 8.2, count: 120, speed_distribution: {{"0-2": 30, "2-5": 60}}}}]}}
-
-### profile（边界层廓线图）
-- 适用场景: 展示大气垂直结构（高度-参数关系）
-- 触发条件: **必须包含altitude或height字段**
-- 数据格式: {{"altitudes": [0, 100, 200, ...], "elements": [{{name: "温度", unit: "°C", data: [25.0, 24.5, ...]}}]}}
-
----
-
-## 空间图表（适用于地理数据）
-
-### map（地图）
-- 适用场景: 展示地理分布、站点位置
-- 触发条件: **必须包含longitude和latitude字段**
-- 数据格式: {{"map_center": {{lng: 114.05, lat: 22.54}}, "zoom": 12, "layers": [{{type: "marker", data: [{{lng: 114.05, lat: 22.54, name: "站点A", value: 35}}]}}]}}
-
-### heatmap（热力图）
-- 适用场景: 展示空间密度/强度分布
-- 触发条件: **必须包含longitude、latitude和value字段**
-- 数据格式: {{"points": [{{lng: 114.05, lat: 22.54, value: 45.2}}, ...]}}
-
----
-
-## 3D图表（适用于三维空间数据）
-
-### scatter3d（3D散点图）
-- 适用场景: 展示3维空间分布
-- 触发条件: **必须包含x、y、z三个坐标字段**
-- 数据格式: {{"x": [...], "y": [...], "z": [...]}}
-
-### surface3d（3D曲面图）
-- 适用场景: 展示3维连续曲面
-- 数据格式: {{"x": [...], "y": [...], "z": [[...]]}}  # z是二维数组
-
-### line3d（3D线图）
-- 适用场景: 展示3维轨迹
-- 数据格式: {{"x": [...], "y": [...], "z": [...]}}
-
-### bar3d（3D柱状图）
-- 适用场景: 3维柱状对比
-- 数据格式: {{"x": [...], "y": [...], "z": [...]}}
-
-### volume3d（3D体素图）
-- 适用场景: 展示3维体积数据
-- 数据格式: {{"x": [...], "y": [...], "z": [...], "values": [[[]]]}}  # values是三维数组
-
----
-
-# v3.1输出格式（必须严格遵循）
-
-返回JSON格式（不要markdown代码块）：
+## 时序图（timeseries）
+```json
 {{
-    "id": "unique_chart_id",
-    "type": "选择上述15种之一",
-    "title": "图表标题",
-    "data": {{
-        // 根据type选择对应的数据结构（见上述各类型说明）
-        // ⚠️ 重要：data中使用的字段名必须与实际数据中的字段名完全一致！
+  "xAxis": {{
+    "type": "category",
+    "data": ["2026-01-01", "2026-01-02", "2026-01-03"]
+  }},
+  "yAxis": {{ "type": "value" }},
+  "series": [
+    {{
+      "name": "SO2",
+      "type": "line",
+      "data": [8, 9, 7]
     }},
-    "meta": {{
-        "schema_version": "3.1",
-        "unit": "单位",
-        "station_name": "站点名",
-        "pollutant": "污染物类型",
-        "generator": "llm_generated",
-        "scenario": "custom",
-        "data_source": "generate_chart_llm",
-        "record_count": 数据记录数
+    {{
+      "name": "NO2",
+      "type": "line",
+      "data": [33, 35, 30]
     }}
+  ]
 }}
+```
 
-【必读】输出前自检清单（LLM必须执行）：
-☐ 1. 检查data_sample中的实际字段名
-☐ 2. 确认生成的图表中使用的字段名与实际数据字段名完全一致
-☐ 3. 验证污染物字段使用标准名称（PM2_5不是PM2.5或PM25，O3不是o3）
-☐ 4. 确保chart_type匹配data的数据结构
-☐ 5. 验证所有数值类型正确（无字符串数字）
+## 饼图（pie）
+```json
+{{
+  "series": [
+    {{
+      "type": "pie",
+      "data": [
+        {{"value": 45.2, "name": "源A"}},
+        {{"value": 32.8, "name": "源B"}}
+      ]
+    }}
+  ]
+}}
+```
 
-# 智能决策规则（优先级从高到低）
+## 柱状图（bar）
+```json
+{{
+  "xAxis": {{
+    "type": "category",
+    "data": ["站点A", "站点B", "站点C"]
+  }},
+  "yAxis": {{ "type": "value" }},
+  "series": [
+    {{
+      "type": "bar",
+      "data": [45.2, 32.8, 22.0]
+    }}
+  ]
+}}
+```
 
-1. **数据包含wind_speed+wind_direction** → 优先推荐 wind_rose
-2. **数据包含altitude或height** → 优先推荐 profile
-3. **数据包含longitude+latitude+value** → 优先推荐 heatmap
-4. **数据包含longitude+latitude** → 优先推荐 map
-5. **数据包含x+y+z（三个坐标）** → 优先推荐 3D 图表（scatter3d/line3d等）
-6. **数据包含时间序列+多个污染物/指标** → 推荐 timeseries
-7. **数据包含时间序列+单一指标** → 推荐 line 或 timeseries
-8. **数据只有单一时间点** → 推荐 bar
-9. **数据是占比/组成关系** → 推荐 pie
-10. **数据是对比分析** → 推荐 bar
-11. **数据是多维度评价** → 推荐 radar
-
-# 重要规则
-
-1. **必须使用data字段**（不是payload或option）
-2. **确保所有数值类型正确**（浮点数、整数）
-3. **meta.schema_version必须是"3.1"**
-4. **type必须是上述15种之一**（不能自己发明类型）
-5. **只返回JSON**（不要markdown代码块，不要额外文字）
-6. **如果chart_type_hint不是auto**，优先使用提示的类型
-7. **⚠️ 字段名必须匹配**：生成图表时使用的字段名必须与实际数据中的字段名完全一致！
-
-# 数据分析提示
-
-1. 观察数据结构：列表 vs 字典，嵌套层级
-2. 检查字段名：是否包含特殊字段（wind_speed, longitude, altitude等）
-3. 识别数据维度：一维（列表）、二维（时间序列）、三维（空间）
-4. 判断数据关系：占比、趋势、对比、分布
-
-请直接返回JSON（不要代码块标记）。
+请按照ECharts官方格式生成图表配置。
+只返回JSON，不要markdown。
         """.strip()
 
         try:
@@ -2166,37 +2019,23 @@ class GenerateChartTool(LLMTool):
             try:
                 from datetime import datetime
                 import uuid
-                from app.schemas.chart import ChartConfig
 
-                # 创建ChartConfig模型
-                chart_config_model = ChartConfig(
-                    chart_id=revised_chart.get("id", f"revised_{uuid.uuid4().hex[:8]}"),
-                    chart_type=revised_chart.get("type", "custom"),
-                    title=revised_chart.get("title", "修订图表"),
-                    payload=revised_chart,
-                    method="revision",
-                    template_used=None,
-                    scenario=revised_chart["meta"].get("scenario", "custom"),
-                    data_record_count=revised_chart["meta"].get("record_count", 0),
-                    pollutant=revised_chart["meta"].get("pollutant"),
-                    station_name=revised_chart["meta"].get("station_name"),
-                    venue_name=revised_chart["meta"].get("venue_name"),
-                    generated_at=datetime.now().isoformat(),
-                    metadata={
-                        **revised_chart.get("meta", {}),
-                        "format_version": "3.1",
-                        "revision_from": original_chart_id,
-                        "revision_instruction": revision_instruction[:200]
-                    }
-                )
+                # 将元数据添加到revised_chart中
+                revised_chart["meta"] = revised_chart.get("meta") or {}
+                revised_chart["meta"].update({
+                    "method": "revision",
+                    "generated_at": datetime.now().isoformat(),
+                    "revision_from": original_chart_id,
+                    "revision_instruction": revision_instruction[:200]
+                })
 
-                # 保存到context
+                # 保存到context（直接存储ChartResponse字典）
                 # save_data() 返回 {"data_id": str, "file_path": str}
                 revised_chart_data_ref = context.save_data(
-                    data=[chart_config_model],
-                    schema="chart_config",
+                    data=[revised_chart],
+                    schema="chart_response",
                     metadata={
-                        "chart_type": chart_config_model.chart_type,
+                        "chart_type": revised_chart.get("type"),
                         "method": "revision",
                         "revision_count": revised_chart["meta"].get("revision_count", 1),
                         "format_version": "3.1"

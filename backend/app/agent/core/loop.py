@@ -233,13 +233,33 @@ class ReActLoop:
                     used_for_llm="enhanced_query"
                 )
 
-            # Step 1: 使用原始查询（长期记忆增强已移除）
+            # Step 1: 使用增强查询（已在 react_agent.py 中加载记忆）
+            # user_query 参数已经是增强后的查询（包含记忆上下文）
             enhanced_query = user_query
+
+            # 检测是否有记忆增强（通过比较原始查询和增强查询）
+            has_memory = (
+                original_query is not None and
+                len(user_query) > len(original_query) and
+                "长期记忆" in user_query
+            )
+
             logger.info(
                 "query_processing",
                 query_length=len(user_query),
-                longterm_memory_disabled=True
+                original_length=len(original_query) if original_query else 0,
+                has_memory_enhancement=has_memory,
+                longterm_memory_disabled=not has_memory
             )
+
+            # ✅ 调试日志：显示增强查询的前400字符
+            if has_memory:
+                logger.debug(
+                    "enhanced_query_with_memory",
+                    preview=enhanced_query[:400],
+                    contains_memory_marker="长期记忆" in enhanced_query,
+                    contains_file_path="记忆文件路径" in enhanced_query
+                )
 
             # Step 2: 初始化循环状态
             iteration_count = 0
@@ -247,6 +267,7 @@ class ReActLoop:
             final_answer = None
             direct_from_workflow = False  # ✅ 跟踪是否来自工作流直接返回
             workflow_sources = []  # ✅ 保存工作流的sources数据
+            workflow_visuals = []  # ✅ 保存工作流的visuals数据
 
             # Yield start event
             yield {
@@ -602,20 +623,36 @@ class ReActLoop:
                             "total_count": parallel_result.get("total_count", 0)
                         }
 
-                        # 处理visuals
+                        # 处理visuals（兼容Chart v3.1和ECharts标准格式）
                         if observation.get("visuals"):
                             for idx, vb in enumerate(observation["visuals"]):
-                                p = vb.get("payload", {})
-                                m = vb.get("meta", {})
-                                self.memory.add_chart_observation({
-                                    "visual_id": vb.get("id", f"visual_{idx}"),
-                                    "chart_id": p.get("id", f"chart_{idx}"),
-                                    "chart_type": p.get("type", "unknown"),
-                                    "chart_title": p.get("title", ""),
-                                    "data_id": m.get("source_data_ids", [None])[0],
-                                    "source_tools": [t.get("tool") for t in tools],
-                                    "schema_version": "v2.0"
-                                })
+                                # ✅ 适配ECharts标准格式：data字段直接包含图表配置
+                                if "data" in vb:
+                                    # ECharts标准格式
+                                    chart_data = vb.get("data", {})
+                                    m = vb.get("meta", {})
+                                    self.memory.add_chart_observation({
+                                        "visual_id": vb.get("id", f"visual_{idx}"),
+                                        "chart_id": vb.get("id", f"echarts_{idx}"),
+                                        "chart_type": vb.get("type", chart_data.get("series", [{}])[0].get("type", "unknown") if isinstance(chart_data.get("series"), list) and len(chart_data.get("series", [])) > 0 else "unknown"),
+                                        "chart_title": vb.get("title", chart_data.get("title", {}).get("text", "")),
+                                        "data_id": m.get("source_data_ids", [None])[0] if m else None,
+                                        "source_tools": [t.get("tool") for t in tools],
+                                        "schema_version": m.get("schema_version", "echarts_standard") if m else "echarts_standard"
+                                    })
+                                else:
+                                    # 旧格式（Chart v3.1）：payload字段
+                                    p = vb.get("payload", {})
+                                    m = vb.get("meta", {})
+                                    self.memory.add_chart_observation({
+                                        "visual_id": vb.get("id", f"visual_{idx}"),
+                                        "chart_id": p.get("id", f"chart_{idx}"),
+                                        "chart_type": p.get("type", "unknown"),
+                                        "chart_title": p.get("title", ""),
+                                        "data_id": m.get("source_data_ids", [None])[0],
+                                        "source_tools": [t.get("tool") for t in tools],
+                                        "schema_version": "v2.0"
+                                    })
 
                         action_event = {
                             "type": "action",
@@ -642,40 +679,69 @@ class ReActLoop:
                         # ✅ 保存到对话历史
                         self.memory.session.add_observation_message(observation)
 
-                        # 检查并行工具结果中是否有PDF预览，发送office_document事件
+                        # 检查并行工具结果中是否有PDF预览或Markdown预览，发送office_document事件
                         tool_results = observation.get("tool_results", [])
                         for tool_result in tool_results:
                             result_data = tool_result.get("result", {})
-                            # pdf_preview 可能在 result_data 中直接存在，或者在 result_data.data 中
+                            # pdf_preview 和 markdown_preview 可能在 result_data 中直接存在，或者在 result_data.data 中
                             pdf_preview = None
+                            markdown_preview = None
                             if isinstance(result_data, dict):
-                                # 检查直接在 result_data 中的 pdf_preview
+                                # 检查直接在 result_data 中的预览
                                 if result_data.get("pdf_preview"):
                                     pdf_preview = result_data["pdf_preview"]
-                                    file_path = result_data.get("file_path") or result_data.get("source_file") or result_data.get("output_file")
-                                    summary = result_data.get("summary", "")
-                                # 检查在 result_data.data 中的 pdf_preview
-                                elif isinstance(result_data.get("data"), dict) and result_data["data"].get("pdf_preview"):
-                                    pdf_preview = result_data["data"]["pdf_preview"]
-                                    file_path = result_data["data"].get("file_path") or result_data["data"].get("source_file") or result_data["data"].get("output_file")
-                                    summary = result_data.get("summary", "")
+                                if result_data.get("markdown_preview"):
+                                    markdown_preview = result_data["markdown_preview"]
 
-                            if pdf_preview:
+                                # 获取文件路径和摘要
+                                file_path = (
+                                    result_data.get("file_path") or
+                                    result_data.get("path") or
+                                    result_data.get("source_file") or
+                                    result_data.get("output_file")
+                                )
+                                summary = result_data.get("summary", "")
+
+                                # 检查在 result_data.data 中的预览
+                                if isinstance(result_data.get("data"), dict):
+                                    if not pdf_preview and result_data["data"].get("pdf_preview"):
+                                        pdf_preview = result_data["data"]["pdf_preview"]
+                                    if not markdown_preview and result_data["data"].get("markdown_preview"):
+                                        markdown_preview = result_data["data"]["markdown_preview"]
+                                    if not file_path:
+                                        file_path = (
+                                            result_data["data"].get("file_path") or
+                                            result_data["data"].get("path") or
+                                            result_data["data"].get("source_file") or
+                                            result_data["data"].get("output_file")
+                                        )
+                                    if not summary:
+                                        summary = result_data.get("summary", "")
+
+                            if pdf_preview or markdown_preview:
                                 metadata = tool_result.get("metadata", {})
+                                event_data = {
+                                    "file_path": file_path,
+                                    "generator": metadata.get("generator"),
+                                    "summary": summary,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+
+                                if pdf_preview:
+                                    event_data["pdf_preview"] = pdf_preview
+                                if markdown_preview:
+                                    event_data["markdown_preview"] = markdown_preview
+
                                 yield {
                                     "type": "office_document",
-                                    "data": {
-                                        "pdf_preview": pdf_preview,
-                                        "file_path": file_path,
-                                        "generator": metadata.get("generator"),
-                                        "summary": summary,
-                                        "timestamp": datetime.now().isoformat()
-                                    }
+                                    "data": event_data
                                 }
                                 logger.info(
                                     "office_document_event_sent_parallel",
                                     generator=metadata.get("generator"),
-                                    pdf_id=pdf_preview.get("pdf_id")
+                                    has_pdf_preview=bool(pdf_preview),
+                                    has_markdown_preview=bool(markdown_preview),
+                                    pdf_id=pdf_preview.get("pdf_id") if pdf_preview else None
                                 )
 
                     # TOOL_CALL: 单工具执行
@@ -928,6 +994,8 @@ class ReActLoop:
                             direct_from_workflow = True
                             # ✅ 保存 sources 数据
                             workflow_sources = data.get("sources", [])
+                            # ✅ 保存 visuals 数据
+                            workflow_visuals = observation.get("visuals", [])
 
                             # 记录到记忆
                             self.memory.add_iteration(
@@ -960,6 +1028,9 @@ class ReActLoop:
 
                     # 处理visuals结果事件
                     if observation.get("visuals") and isinstance(observation.get("visuals"), list):
+                        # ✅ 收集visuals到workflow_visuals（用于complete事件）
+                        workflow_visuals.extend(observation["visuals"])
+
                         yield {
                             "type": "result",
                             "data": {
@@ -983,7 +1054,7 @@ class ReActLoop:
                     # ✅ 保存到对话历史
                     self.memory.session.add_observation_message(observation)
 
-                    # 发送office_document事件（用于前端PDF预览面板）
+                    # 发送office_document事件（用于前端PDF预览面板和Markdown预览面板）
                     data = observation.get("data", {})
                     logger.info(
                         "office_document_event_check",
@@ -991,10 +1062,16 @@ class ReActLoop:
                         data_is_dict=isinstance(data, dict),
                         data_keys=list(data.keys()) if isinstance(data, dict) else "N/A",
                         has_pdf_preview=isinstance(data, dict) and "pdf_preview" in data,
+                        has_markdown_preview=isinstance(data, dict) and "markdown_preview" in data,
                         pdf_preview_type=type(data.get("pdf_preview")).__name__ if isinstance(data, dict) else "N/A",
                         observation_keys=list(observation.keys()),
                     )
-                    if isinstance(data, dict) and data.get("pdf_preview"):
+
+                    # 检查是否有PDF预览或Markdown预览
+                    has_pdf_preview = isinstance(data, dict) and data.get("pdf_preview")
+                    has_markdown_preview = isinstance(data, dict) and data.get("markdown_preview")
+
+                    if has_pdf_preview or has_markdown_preview:
                         metadata = observation.get("metadata", {})
                         # 获取文件路径，支持多种字段名：file_path, path, source_file, output_file
                         file_path = (
@@ -1003,20 +1080,33 @@ class ReActLoop:
                             data.get("source_file") or
                             data.get("output_file")
                         )
+
+                        event_data = {
+                            "file_path": file_path,
+                            "generator": metadata.get("generator"),
+                            "summary": observation.get("summary", ""),
+                            "timestamp": datetime.now().isoformat()
+                        }
+
+                        # 添加PDF预览数据
+                        if has_pdf_preview:
+                            event_data["pdf_preview"] = data["pdf_preview"]
+
+                        # 添加Markdown预览数据
+                        if has_markdown_preview:
+                            event_data["markdown_preview"] = data["markdown_preview"]
+
                         yield {
                             "type": "office_document",
-                            "data": {
-                                "pdf_preview": data["pdf_preview"],
-                                "file_path": file_path,
-                                "generator": metadata.get("generator"),
-                                "summary": observation.get("summary", ""),
-                                "timestamp": datetime.now().isoformat()
-                            }
+                            "data": event_data
                         }
+
                         logger.info(
                             "office_document_event_sent",
                             generator=metadata.get("generator"),
-                            pdf_id=data["pdf_preview"].get("pdf_id"),
+                            has_pdf_preview=has_pdf_preview,
+                            has_markdown_preview=has_markdown_preview,
+                            pdf_id=data["pdf_preview"].get("pdf_id") if has_pdf_preview else None,
                             file_path=file_path
                         )
 
@@ -1078,12 +1168,14 @@ class ReActLoop:
 
                 # Note: 长期记忆保存已移除
 
-                # ✅ 日志：输出sources字段信息
+                # ✅ 日志：输出sources和visuals字段信息
                 logger.info(
-                    "complete_event_sources",
+                    "complete_event_data",
                     sources_count=len(workflow_sources),
+                    visuals_count=len(workflow_visuals),
                     direct_from_workflow=direct_from_workflow,
-                    sources_preview=workflow_sources[:2] if workflow_sources else []
+                    sources_preview=workflow_sources[:2] if workflow_sources else [],
+                    visuals_preview=[{"id": v.get("id"), "type": v.get("type")} for v in workflow_visuals[:2]] if workflow_visuals else []
                 )
 
                 yield {
@@ -1095,6 +1187,7 @@ class ReActLoop:
                         "session_id": self.memory.session_id,
                         "timestamp": datetime.now().isoformat(),
                         "sources": workflow_sources,  # ✅ 添加sources字段（已在处理工作流时保存）
+                        "visuals": workflow_visuals,  # ✅ 添加visuals字段（图表数据）
                         "direct_from_workflow": direct_from_workflow  # ✅ 标记：是否来自工作流直接返回
                     }
                 }

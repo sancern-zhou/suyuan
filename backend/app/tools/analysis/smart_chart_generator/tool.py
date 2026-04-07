@@ -876,39 +876,27 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
                         charts=[c.get("type") for c in multi_charts]
                     )
 
-                    # 保存每个图表到 chart_config（关键修复：确保图表被保存）
+                    # 保存每个图表到 chart_response（关键修复：确保图表被保存）
                     from datetime import datetime
-                    from app.schemas.chart import ChartConfig
-                    
+
                     saved_chart_ids = []
                     visual_blocks = []
-                    
+
                     for i, chart_cfg in enumerate(multi_charts):
-                        # 创建 ChartConfig 模型
-                        chart_config_model = ChartConfig(
-                            chart_id=chart_cfg.get("id", f"chart_{uuid.uuid4().hex[:8]}"),
-                            chart_type=chart_cfg.get("type", "timeseries"),
-                            title=chart_cfg.get("title", f"图表{i+1}"),
-                            payload=chart_cfg,
-                            method="smart_chart_generator_multi",
-                            template_used=None,
-                            scenario=f"multi_chart_{multi_chart_layout}",
-                            data_record_count=1,
-                            pollutant=None,
-                            station_name=chart_cfg.get("meta", {}).get("station_name"),
-                            venue_name=None,
-                            generated_at=datetime.now().isoformat(),
-                            metadata={
-                                "source_data_id": data_id,
-                                "source_schema": schema_type,
-                                "chart_index": i
-                            }
-                        )
+                        # 将元数据添加到chart_cfg中
+                        chart_cfg["meta"] = chart_cfg.get("meta") or {}
+                        chart_cfg["meta"].update({
+                            "method": "smart_chart_generator_multi",
+                            "generated_at": datetime.now().isoformat(),
+                            "source_data_id": data_id,
+                            "source_schema": schema_type,
+                            "chart_index": i
+                        })
 
                         try:
                             chart_data_id = context.save_data(
-                                data=[chart_config_model],
-                                schema="chart_config",
+                                data=[chart_cfg],
+                                schema="chart_response",
                                 metadata={
                                     "source_data_id": data_id,
                                     "source_schema": schema_type,
@@ -1015,32 +1003,20 @@ smart_chart_generator(data_id="guangdong_stations:v1:f8e7d6c5")
             # Step 8: 保存图表配置到统一存储
             # 【方案A】图表配置必须保存，否则返回失败
             from datetime import datetime
-            from app.schemas.chart import ChartConfig
 
-            # 创建ChartConfig模型
-            chart_config_model = ChartConfig(
-                chart_id=final_chart.get("id", "chart_" + uuid.uuid4().hex[:8]),
-                chart_type=final_chart.get("type", "pie"),
-                title=final_chart.get("title", title or "图表"),
-                payload=final_chart,
-                method="smart_chart_generator",
-                template_used=None,
-                scenario="auto",
-                data_record_count=1,
-                pollutant=None,
-                station_name=None,
-                venue_name=None,
-                generated_at=datetime.now().isoformat(),
-                metadata={
-                    "source_data_id": data_id,
-                    "source_schema": schema_type
-                }
-            )
+            # 将元数据添加到final_chart中
+            final_chart["meta"] = final_chart.get("meta") or {}
+            final_chart["meta"].update({
+                "method": "smart_chart_generator",
+                "generated_at": datetime.now().isoformat(),
+                "source_data_id": data_id,
+                "source_schema": schema_type
+            })
 
             try:
                 chart_data_id = context.save_data(
-                    data=[chart_config_model],
-                    schema="chart_config",
+                    data=[final_chart],
+                    schema="chart_response",
                     metadata={
                         "source_data_id": data_id,
                         "source_schema": schema_type,

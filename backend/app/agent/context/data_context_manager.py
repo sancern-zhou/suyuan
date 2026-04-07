@@ -33,7 +33,7 @@ from app.schemas.particulate import ParticulateSample, UnifiedParticulateData
 from app.schemas.vocs import VOCsSample, UnifiedVOCsData
 from app.schemas.unified import UnifiedDataRecord, ParticulateAnalysisResult  # 新增 ParticulateAnalysisResult
 from app.schemas.pmf import PMFResult
-from app.schemas.chart import ChartConfig
+from app.schemas.visualization import ChartResponse
 from app.schemas.obm import OBMOFPResult
 from app.schemas.enhanced_obm import EnhancedOBMResult
 from app.schemas.trajectory import TrajectorySourceAnalysisResult
@@ -50,7 +50,7 @@ SCHEMA_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "particulate": ParticulateSample,
     "particulate_unified": UnifiedParticulateData,  # 统一颗粒物数据格式
     "pmf_result": PMFResult,
-    "chart_config": ChartConfig,
+    "chart_response": ChartResponse,
     "obm_ofp_result": OBMOFPResult,
     "enhanced_obm_result": EnhancedOBMResult,  # 增强OBM分析结果
     "guangdong_stations": UnifiedDataRecord,  # 广东站点数据

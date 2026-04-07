@@ -11,6 +11,7 @@ from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.city_statistics import CityStatisticsFetcher, ProvinceStatisticsFetcher  # 168城市统计和省级统计
 # 导入单一工具注册源
 from app.tools import global_tool_registry
 
@@ -41,6 +42,12 @@ def initialize_fetchers():
 
         # 注册Dust Fetchers
         fetcher_scheduler.register(CAMSDustFetcher())
+
+        # 注册168城市统计Fetcher
+        fetcher_scheduler.register(CityStatisticsFetcher())
+
+        # 注册省级统计Fetcher ⭐ 新增
+        fetcher_scheduler.register(ProvinceStatisticsFetcher())
 
         logger.info(
             "fetchers_registered",

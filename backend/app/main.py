@@ -121,6 +121,10 @@ app.include_router(monitoring_router.router)
 from app.api.image_routes import router as image_router
 app.include_router(image_router, prefix="/api")
 
+# Include Utility routes (file download, etc.)
+from app.api.utility_routes import router as utility_router
+app.include_router(utility_router, prefix="/api")
+
 # Include Session Management routes (会话持久化)
 from app.api.session_routes import router as session_router
 app.include_router(session_router)
@@ -479,11 +483,13 @@ async def shutdown_event():
     except Exception as e:
         logger.error("fetchers_stop_failed", error=str(e))
 
-    # 1.5. 停止知识库处理队列
+    # 1.5. 停止知识库处理队列（先于数据库关闭）
     try:
         from app.knowledge_base.tasks import stop_processing_queue
         await stop_processing_queue()
         logger.info("knowledge_base_processing_queue_stopped")
+        # 等待所有数据库会话被释放
+        await asyncio.sleep(1.0)
     except Exception as e:
         logger.warning("knowledge_base_queue_stop_failed", error=str(e))
 

@@ -132,14 +132,24 @@ class DocumentProcessingQueue:
 
     async def stop(self):
         """停止处理队列"""
+        # 先设置停止标志，让worker自然退出
         self._is_running = False
 
-        # 取消所有worker
-        for worker in self._workers:
-            worker.cancel()
+        # 等待所有worker完成当前任务（最多等待10秒）
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*self._workers, return_exceptions=True),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            # 超时后强制取消剩余worker
+            logger.warning("worker_stop_timeout", message="Workers did not stop gracefully, force cancelling")
+            for worker in self._workers:
+                if not worker.done():
+                    worker.cancel()
+            # 等待取消完成
+            await asyncio.gather(*self._workers, return_exceptions=True)
 
-        # 等待worker完成
-        await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
 
         logger.info("document_processing_queue_stopped")

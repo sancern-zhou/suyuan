@@ -173,7 +173,8 @@ class ReActAgent:
                 memory_mode = "shared"  # ✅ 使用特殊的 shared 模式，实现跨模式共享
             else:
                 # 无user_identifier：模式内共享记忆（每个模式独立记忆，模式之间隔离）
-                unified_user_id = f"{manual_mode}:global:shared"
+                # ✅ 修复：直接使用 "global" 作为 user_id，让 memory_store 创建模式专属记忆
+                unified_user_id = "global"
                 memory_mode = manual_mode or "expert"  # ✅ 使用当前模式，实现模式内共享
 
             # 加载记忆上下文
@@ -189,12 +190,24 @@ class ReActAgent:
                 if memory_context:
                     memory_info = f"{memory_context}\n\n**记忆文件路径**：{memory_file_path}"
                     enhanced_query = f"{memory_info}\n\n用户问题：{enhanced_query}"  # ✅ 只增强传递给LLM的查询
+
+                    # ✅ 详细日志：显示记忆增强详情
                     logger.info(
                         "memory_context_loaded",
                         user_id=unified_user_id,
                         mode=manual_mode,
                         context_length=len(memory_context),
-                        memory_file_path=memory_file_path
+                        memory_file_path=memory_file_path,
+                        original_query_length=len(original_query),
+                        enhanced_query_length=len(enhanced_query),
+                        memory_preview=memory_context[:200] if memory_context else ""
+                    )
+
+                    # ✅ 调试日志：显示增强后的查询前300字符
+                    logger.debug(
+                        "enhanced_query_preview",
+                        preview=enhanced_query[:300],
+                        total_length=len(enhanced_query)
                     )
 
         # ✅ 如果有附件，添加到查询中告知LLM（仅用于传递给LLM，不保存到历史）
@@ -232,6 +245,7 @@ class ReActAgent:
                     attachment_info += f"{i}. 文件: {att_name}\n"
                     attachment_info += f"   路径: {att_url}\n"
             enhanced_query = enhanced_query + attachment_info  # ✅ 只修改增强查询
+
             logger.info(
                 "attachments_added_to_query",
                 count=len(attachments),
@@ -296,6 +310,7 @@ class ReActAgent:
                     # 提取关键字段并保存
                     doc_entry = {
                         "pdf_preview": office_doc_data.get("pdf_preview"),
+                        # "markdown_preview": office_doc_data.get("markdown_preview"),  # 暂时注释：历史会话恢复功能待实现
                         "file_path": office_doc_data.get("file_path"),
                         "generator": office_doc_data.get("generator"),
                         "summary": office_doc_data.get("summary"),

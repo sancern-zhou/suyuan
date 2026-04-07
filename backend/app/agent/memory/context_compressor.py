@@ -275,7 +275,7 @@ class ContextCompressor:
         tail = []
         accumulated = 0
         for msg in reversed(tail_candidates):
-            msg_chars = len(json.dumps(m, ensure_ascii=False))
+            msg_chars = len(json.dumps(msg, ensure_ascii=False))
             if accumulated + msg_chars > budget:
                 break
             tail.insert(0, msg)
