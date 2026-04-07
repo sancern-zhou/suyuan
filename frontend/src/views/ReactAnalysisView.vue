@@ -549,7 +549,8 @@ const hasOfficeDocuments = computed(() => {
       const generator = metadata.generator
 
       const isOfficeTool = ['word_edit', 'find_replace_word', 'accept_word_changes',
-              'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide'].includes(generator)
+              'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide',
+              'read_file'].includes(generator)
 
       if (isOfficeTool) {
         console.log('[ReactAnalysisView] 检测到Office工具:', generator)
@@ -557,8 +558,15 @@ const hasOfficeDocuments = computed(() => {
         console.log('[ReactAnalysisView] observation数据:', {
           hasData: !!obs.data,
           hasPdfPreview: !!(obs.data && obs.data.pdf_preview),
+          hasMarkdownPreview: !!(obs.data && obs.data.markdown_preview),
           dataKeys: obs.data ? Object.keys(obs.data) : []
         })
+      }
+
+      // 对于 read_file，需要检查是否有 markdown_preview 或 pdf_preview
+      if (generator === 'read_file') {
+        const obs = msg.data.observation
+        return !!(obs.data && (obs.data.pdf_preview || obs.data.markdown_preview))
       }
 
       return isOfficeTool
@@ -581,7 +589,10 @@ const hasVizContent = computed(() => {
 
   // 检查是否有Office文档操作（检查消息中的observation + lastOfficeDocument）
   const hasOfficeFromMessages = hasOfficeDocuments.value
-  const hasOfficeFromLastDoc = !!(store.lastOfficeDocument?.pdf_preview)
+  const hasOfficeFromLastDoc = !!(
+    store.lastOfficeDocument?.pdf_preview ||
+    store.lastOfficeDocument?.markdown_preview
+  )
   const hasOffice = hasOfficeFromMessages || hasOfficeFromLastDoc
 
   return hasCharts || hasSources || hasOffice
@@ -612,6 +623,34 @@ watch(hasOfficeDocuments, (newValue) => {
     shouldShowRightPanel: vizPanelVisible.value || officePanelVisible.value
   })
 }, { immediate: true })
+
+// 监听消息数量变化，自动提取visuals（用于分页加载场景）
+watch(() => store.currentState.messages?.length || 0, (newCount, oldCount) => {
+  // 只在消息数量增加时触发（分页加载）
+  if (newCount > oldCount && newCount > 5) {
+    console.log('[消息变化监听] 消息数量增加:', { oldCount, newCount })
+
+    // 重新提取visuals
+    const visualsFromMessages = extractVisualsFromMessages()
+
+    if (visualsFromMessages.length > 0) {
+      console.log('[消息变化监听] 提取到visuals，更新可视化历史，数量:', visualsFromMessages.length)
+
+      // 获取当前的可视化历史
+      const currentHistory = store.visualizationHistory || []
+
+      // 合并：只添加新的visuals（基于ID去重）
+      const existingIds = new Set(currentHistory.map(v => v.id))
+      const newVisuals = visualsFromMessages.filter(v => !existingIds.has(v.id))
+
+      if (newVisuals.length > 0) {
+        const mergedHistory = [...currentHistory, ...newVisuals]
+        store.setVisualizationHistory(mergedHistory)
+        console.log('[消息变化监听] 已更新可视化历史，新增:', newVisuals.length, '总计:', mergedHistory.length)
+      }
+    }
+  }
+})
 
 // 监听右侧面板显示状态，自动展开/收起
 watch([vizPanelVisible, officePanelVisible], ([viz, office]) => {
@@ -1441,6 +1480,41 @@ const convertHistoryMessages = (conversationHistory) => {
 }
 
 /**
+ * 从消息中提取visuals（用于会话恢复和动态加载）
+ * @returns {Array} 提取到的visuals数组
+ */
+const extractVisualsFromMessages = () => {
+  const messages = store.currentState.messages || []
+  const visualsFromMessages = []
+
+  console.log('[extractVisuals] 开始从消息中提取visuals，消息数量:', messages.length)
+
+  messages.forEach(msg => {
+    let visuals = null
+
+    if (msg.visuals && Array.isArray(msg.visuals)) {
+      visuals = msg.visuals
+      console.log('[extractVisuals] 从顶层visuals提取:', msg.id, visuals.length)
+    } else if (msg.data?.observation?.visuals && Array.isArray(msg.data.observation.visuals)) {
+      // observation类型：visuals在data.observation.visuals中
+      visuals = msg.data.observation.visuals
+      console.log('[extractVisuals] 从data.observation.visuals提取:', msg.id, visuals.length, '消息类型:', msg.type)
+    } else if (msg.data?.visuals && Array.isArray(msg.data.visuals)) {
+      // final类型：visuals直接在data.visuals中
+      visuals = msg.data.visuals
+      console.log('[extractVisuals] 从data.visuals提取:', msg.id, visuals.length, '消息类型:', msg.type)
+    }
+
+    if (visuals) {
+      visualsFromMessages.push(...visuals)
+    }
+  })
+
+  console.log('[extractVisuals] 从消息中提取的visuals数量:', visualsFromMessages.length)
+  return visualsFromMessages
+}
+
+/**
  * 恢复会话的可视化和面板状态
  * @param {Object} sessionData - 会话数据
  * @returns {number} 可视化数量
@@ -1489,7 +1563,7 @@ const restoreSessionVisualizations = async (sessionData) => {
  */
 const doRestoreSession = async (sessionId, options = {}) => {
   const {
-    messageLimit = 5,
+    messageLimit = 100,  // 增加默认加载消息数量，确保能加载到图表数据
     showAlert = false,
     clearMessages = true,
     restoreOfficeDocs = false
@@ -1564,7 +1638,7 @@ const doRestoreSession = async (sessionId, options = {}) => {
 
     if (sessionMode && sessionMode !== store.currentMode) {
       console.log('[会话恢复] 切换模式:', sessionMode)
-      await switchMode(sessionMode, false)
+      store.switchMode(sessionMode)
     }
 
     // 4. 清空当前消息（如果需要）
@@ -1609,16 +1683,35 @@ const doRestoreSession = async (sessionId, options = {}) => {
     // 8. 恢复可视化历史和分组
     // 优先从 metadata.visualizations 读取
     const visualizations = sessionData.metadata?.visualizations || sessionData.visualizations
+    console.log('[会话恢复] 检查visualizations数据:', {
+      fromMetadata: !!sessionData.metadata?.visualizations,
+      fromDirect: !!sessionData.visualizations,
+      metadataVizCount: sessionData.metadata?.visualizations?.length || 0,
+      directVizCount: sessionData.visualizations?.length || 0,
+      finalValue: visualizations,
+      isArray: Array.isArray(visualizations)
+    })
+
     if (visualizations && Array.isArray(visualizations)) {
       store.setVisualizationHistory(visualizations)
       console.log('[会话恢复] 已恢复可视化历史，图表数量:', visualizations.length)
     }
 
+    // 从历史final消息中提取visuals字段（修复ECharts图表历史渲染）
+    const visualsFromMessages = extractVisualsFromMessages()
+
+    // 合并visuals：优先使用metadata中的，其次从消息中提取
+    const allVisuals = visualizations && Array.isArray(visualizations)
+      ? [...visualizations, ...visualsFromMessages]
+      : visualsFromMessages
+
+    console.log('[会话恢复] 合并后的allVisuals数量:', allVisuals.length)
+
     // 恢复 groupedVisualizations
     let hasVisualsData = false
-    if (visualizations && Array.isArray(visualizations) && visualizations.length > 0) {
+    if (allVisuals.length > 0) {
       const grouped = { weather: [], component: [], viz: [], report: [] }
-      visualizations.forEach(viz => {
+      allVisuals.forEach(viz => {
         const expert = viz.expert || viz.meta?.expert || 'unknown'
         if (grouped[expert]) {
           grouped[expert].push(viz)
@@ -1630,7 +1723,6 @@ const doRestoreSession = async (sessionId, options = {}) => {
       })
       store.currentState.groupedVisualizations = grouped
       hasVisualsData = true
-      console.log('[会话恢复] 已恢复 groupedVisualizations')
     } else if (sessionData.visual_ids && Array.isArray(sessionData.visual_ids) && sessionData.visual_ids.length > 0) {
       // 从消息中提取图片URL（旧会话兼容）
       const imageUrls = []
@@ -1736,7 +1828,8 @@ const doRestoreSession = async (sessionId, options = {}) => {
       rightPanelVisible.value = true
       console.log('[会话恢复] 设置右侧面板可见')
       await nextTick()
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // 增加延迟时间，确保容器布局完成
+      await new Promise(resolve => setTimeout(resolve, 500))
     }
 
     const visualCount = sessionData?.visual_ids?.length || 0
@@ -1828,13 +1921,15 @@ function selectMessage(index, message) {
   }
 }
 
-onMounted(async () => {
+onMounted(() => {
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('mouseup', stopDragging)
   window.addEventListener('keydown', handleKeyboardShortcuts)
-  await store.init()
-  // 加载知识库列表并自动全选
-  await kbStore.fetchKnowledgeBases()
+
+  // 并行加载，不阻塞页面渲染
+  // 工具列表和知识库列表在后台加载
+  store.init()
+  kbStore.fetchKnowledgeBases()
 })
 
 onBeforeUnmount(() => {
@@ -1988,6 +2083,7 @@ const handleLoadMore = async () => {
   min-width: 360px;
   position: relative;
   transition: background-color 0.2s, box-shadow 0.2s;
+  overflow: hidden;
 
   &.drag-over {
     background: #e3f2fd;

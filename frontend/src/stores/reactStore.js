@@ -725,8 +725,19 @@ export const useReactStore = defineStore('react', {
 
       // 创建局部的 addMessage 函数，自动路由到正确的模式
       const addMessage = (msgType, msgContent, msgData = null, msgAttachments = null, msgExtraFields = {}) => {
-        console.log(`[handleEvent] addMessage called: mode=${targetMode}, type=${msgType}, content=${msgContent?.substring(0, 50)}...`)
-        const msgId = this.addMessageToMode(targetMode, msgType, msgContent, msgData, msgAttachments, msgExtraFields)
+        // 确保msgContent是字符串类型
+        let contentStr = msgContent
+        if (typeof msgContent !== 'string') {
+          if (msgContent === null || msgContent === undefined) {
+            contentStr = ''
+          } else {
+            contentStr = JSON.stringify(msgContent)
+          }
+        }
+
+        const preview = contentStr.substring(0, 50)
+        console.log(`[handleEvent] addMessage called: mode=${targetMode}, type=${msgType}, content=${preview}...`)
+        const msgId = this.addMessageToMode(targetMode, msgType, contentStr, msgData, msgAttachments, msgExtraFields)
         console.log(`[handleEvent] Message added to ${targetMode}, total messages: ${this.modeStates[targetMode]?.messages?.length}`)
         return msgId
       }
@@ -783,7 +794,22 @@ export const useReactStore = defineStore('react', {
 
         case 'observation':
           // 观察结果
-          const obsContent = data?.observation || '获得结果'
+          const obsData = data?.observation
+          let obsContent = '获得结果'
+
+          // 处理不同类型的observation数据
+          if (typeof obsData === 'string') {
+            obsContent = obsData
+          } else if (obsData && typeof obsData === 'object') {
+            // 优先使用summary字段
+            if (obsData.summary) {
+              obsContent = obsData.summary
+            } else {
+              // 如果没有summary，序列化对象（限制长度）
+              obsContent = JSON.stringify(obsData).substring(0, 200)
+            }
+          }
+
           addMessage('observation', obsContent, data)
           break
 
@@ -792,6 +818,7 @@ export const useReactStore = defineStore('react', {
           // 【修复】使用targetState而不是currentState
           targetState.lastOfficeDocument = {
             pdf_preview: data?.pdf_preview,
+            markdown_preview: data?.markdown_preview,
             file_path: data?.file_path,
             generator: data?.generator,
             summary: data?.summary,
@@ -800,6 +827,7 @@ export const useReactStore = defineStore('react', {
           console.log('[reactStore] office_document事件:', {
             generator: data?.generator,
             pdf_id: data?.pdf_preview?.pdf_id,
+            has_markdown_preview: !!data?.markdown_preview,
             file_path: data?.file_path,
             targetMode: targetMode
           })

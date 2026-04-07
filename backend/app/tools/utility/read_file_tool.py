@@ -57,6 +57,9 @@ class ReadFileTool(LLMTool):
     # 支持的 DOCX 格式
     DOCX_EXTENSIONS = {'.docx'}
 
+    # 支持的 Markdown 格式
+    MARKDOWN_EXTENSIONS = {'.md', '.markdown'}
+
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
 
@@ -349,6 +352,14 @@ PDF 智能解析：
                 "total_lines": total_lines,
                 "is_truncated": is_truncated
             }
+
+            # Markdown文件添加预览字段
+            if file_path.suffix.lower() in self.MARKDOWN_EXTENSIONS:
+                data["markdown_preview"] = {
+                    "content": content,
+                    "file_name": file_path.name,
+                    "file_path": str(file_path)
+                }
 
             # 构建摘要信息
             if is_large_file and limit is None:

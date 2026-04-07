@@ -8,6 +8,7 @@ import json
 import structlog
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, update, delete, func
@@ -28,12 +29,35 @@ class SessionRepository:
     def __init__(self):
         self.engine = engine
 
+    @staticmethod
+    def _convert_decimal_to_float(obj: Any) -> Any:
+        """
+        递归地将 Decimal 对象转换为 float，以便 JSON 序列化
+
+        Args:
+            obj: 任意 Python 对象
+
+        Returns:
+            转换后的对象（Decimal → float）
+        """
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, dict):
+            return {key: SessionRepository._convert_decimal_to_float(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [SessionRepository._convert_decimal_to_float(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(SessionRepository._convert_decimal_to_float(item) for item in obj)
+        else:
+            return obj
+
     async def create_session(
         self,
         session_id: str,
         query: str,
         mode: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        office_documents: Optional[List[Dict[str, Any]]] = None
     ) -> SessionDB:
         """创建新会话"""
         async with AsyncSession(self.engine) as session:
@@ -41,7 +65,8 @@ class SessionRepository:
                 session_id=session_id,
                 query=query,
                 mode=mode,
-                session_metadata=metadata or {}  # ✅ 修复：使用 session_metadata 而不是 metadata
+                session_metadata=metadata or {},  # ✅ 修复：使用 session_metadata 而不是 metadata
+                office_documents=office_documents or []  # ✅ 添加：保存Office文档数据
             )
             session.add(db_session)
             await session.commit()
@@ -50,7 +75,8 @@ class SessionRepository:
             logger.info(
                 "session_created_in_db",
                 session_id=session_id,
-                mode=mode
+                mode=mode,
+                office_documents_count=len(office_documents) if office_documents else 0
             )
             return db_session
 
@@ -91,6 +117,7 @@ class SessionRepository:
                 "current_expert": db_session.current_expert,
                 "data_ids": db_session.data_ids or [],
                 "visual_ids": db_session.visual_ids or [],
+                "office_documents": db_session.office_documents or [],  # ✅ 添加：加载Office文档数据
                 "error": db_session.error,
                 "metadata": db_session.session_metadata or {},
                 "conversation_history": []
@@ -146,7 +173,7 @@ class SessionRepository:
         # 过滤掉无效的字段名（只保留 SessionDB 模型中定义的字段）
         valid_fields = {
             "query", "mode", "current_step", "current_expert",
-            "data_ids", "visual_ids", "error", "session_metadata"
+            "data_ids", "visual_ids", "office_documents", "error", "session_metadata"
         }
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_fields}
 
@@ -268,14 +295,18 @@ class SessionRepository:
                             # 提取元数据
                             msg_metadata = {k: v for k, v in msg.items() if k not in ["type", "content", "data", "timestamp"]}
 
+                            # 转换 Decimal 为 float（JSON 序列化兼容）
+                            msg_data = self._convert_decimal_to_float(msg.get("data"))
+                            msg_metadata_converted = self._convert_decimal_to_float(msg_metadata)
+
                             # 使用 Core insert（注意：使用数据库列名，不是 ORM 属性名）
                             stmt_insert = SessionMessageDB.__table__.insert().values(
                                 session_id=session_id,
                                 message_type=msg_type,
                                 content=msg.get("content"),
-                                data=msg.get("data"),
+                                data=msg_data,
                                 timestamp=timestamp,
-                                metadata=msg_metadata,  # ✅ 使用数据库列名 metadata，而不是 ORM 属性名 msg_metadata
+                                metadata=msg_metadata_converted,  # ✅ 使用数据库列名 metadata，而不是 ORM 属性名 msg_metadata
                                 sequence_number=idx
                             )
                             await conn.execute(stmt_insert)
@@ -334,13 +365,17 @@ class SessionRepository:
                 except ValueError:
                     msg_type = MessageType.FINAL if msg_type_str == "assistant" else MessageType(msg_type_str)
 
+                # 转换 Decimal 为 float（JSON 序列化兼容）
+                msg_data = self._convert_decimal_to_float(message.get("data"))
+                msg_metadata = self._convert_decimal_to_float({k: v for k, v in message.items() if k not in ["type", "content", "data", "timestamp"]})
+
                 db_msg = SessionMessageDB(
                     session_id=session_id,
                     message_type=msg_type,
                     content=message.get("content"),
-                    data=message.get("data"),
+                    data=msg_data,
                     timestamp=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else datetime.utcnow(),
-                    msg_metadata={k: v for k, v in message.items() if k not in ["type", "content", "data", "timestamp"]},
+                    msg_metadata=msg_metadata,
                     sequence_number=sequence_number
                 )
                 session.add(db_msg)

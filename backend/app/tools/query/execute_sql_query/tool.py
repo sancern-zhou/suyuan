@@ -44,6 +44,8 @@ class ExecuteSQLQueryTool(LLMTool):
         self.sql_validator.ALLOWED_TABLES.extend([
             'working_orders',
             'qc_history',  # 自动质控历史数据表
+            'city_168_statistics',  # 168城市空气质量统计预计算表
+            'province_statistics',  # 省级空气质量统计预计算表（31个省份）
             # 系统视图（用于动态查询表结构）
             'information_schema.columns',
             'information_schema.tables',
@@ -72,16 +74,15 @@ class ExecuteSQLQueryTool(LLMTool):
 - 输入完整的SQL查询语句
 - 不需要提供 describe_table 参数
 
-**⚠️ 重要：中文查询注意事项**
-SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）：
-- ❌ 错误：WHERE StationName LIKE '%增城派潭%'
-- ✅ 正确：WHERE StationName LIKE N'%增城派潭%'
-- ✅ 正确：WHERE StationCode = '1428A'（英文和数字不需要 N 前缀）
-- 建议：优先使用 StationCode（站点编码）进行查询，避免中文编码问题
+**⚠️ SQL Server语法规则**
+- ❌ WHERE province_name = '广东' → 必须使用N前缀：N'广东'
+- ❌ SELECT ... LIMIT 10 → SQL Server使用TOP而非LIMIT
 
 **可用数据表**：
-- qc_history: 自动质控历史数据表（包含 StationCode、StationName 等字段）
-- working_orders: 运维工单记录表
+- city_168_statistics：168城市空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀）
+- province_statistics：省级空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀，⚠️ 中文字段查询必须用N前缀）
+- qc_history：自动质控历史
+- working_orders：运维工单
 
 **安全限制**：
 - 只允许SELECT查询

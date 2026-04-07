@@ -277,13 +277,13 @@ doc.save('/root/report.docx')
             # ✅ 检测图表输出（CHART_SAVED:xxx.png）
             chart_paths = self._extract_chart_paths(result["data"].get("output", ""))
 
-            # ✅ 新增：检测 Chart v3.1 JSON 输出
-            chart_v31_data = self._extract_chart_v31(result["data"].get("output", ""))
+            # ✅ 新增：检测 ECharts 标准格式 JSON 输出
+            echarts_data = self._extract_echarts_format(result["data"].get("output", ""))
 
             logger.info(
                 "chart_paths_extracted",
                 chart_paths=chart_paths,
-                chart_v31_found=chart_v31_data is not None,
+                echarts_found=echarts_data is not None,
                 output_preview=result["data"].get("output", "")[:200]
             )
 
@@ -388,32 +388,53 @@ doc.save('/root/report.docx')
                             })
                             result["summary"] = f"✅ 工具已执行完成，图表生成成功（缓存失败）：{abs_chart_path}"
 
-            # ✅ 新增：处理 Chart v3.1 JSON 数据
-            if chart_v31_data:
+            # ✅ 新增：处理 ECharts 标准格式 JSON 数据
+            if echarts_data:
                 try:
+                    # 检测图表类型
+                    if "series" in echarts_data:
+                        series_list = echarts_data["series"]
+                        if isinstance(series_list, list) and len(series_list) > 0:
+                            first_series = series_list[0]
+                            chart_type = first_series.get("type", "chart").lower()  # 统一转换为小写
+                        else:
+                            chart_type = "chart"
+                    else:
+                        chart_type = "chart"
+
+                    # ✅ 从ECharts配置中提取display title
+                    echarts_title = echarts_data.get("title", {})
+                    if isinstance(echarts_title, dict):
+                        display_title = echarts_title.get("text", f"{chart_type.upper()}图表")
+                    else:
+                        display_title = echarts_title or f"{chart_type.upper()}图表"
+
+                    # ✅ 直接使用 ECharts 标准格式
                     result.setdefault("visuals", []).append({
-                        "id": chart_v31_data.get("id", "chart_v31"),
-                        "type": chart_v31_data.get("type", "chart"),
-                        "title": chart_v31_data.get("title", "Chart v3.1"),
-                        "data": chart_v31_data.get("data", {}),
+                        "id": f"echarts_{time.time_ns()}",
+                        "type": chart_type,
+                        "title": display_title,
+                        "data": echarts_data,  # 直接使用ECharts格式（包含完整title、yAxis.name等）
                         "meta": {
                             "generator": "execute_python",
-                            "schema_version": chart_v31_data.get("meta", {}).get("schema_version", "3.1")
+                            "schema_version": "echarts_standard"
                         }
                     })
                     logger.info(
-                        "chart_v31_added",
-                        chart_id=chart_v31_data.get("id"),
-                        chart_type=chart_v31_data.get("type")
+                        "echarts_format_added",
+                        chart_type=chart_type,
+                        display_title=display_title,
+                        has_title_text="title" in echarts_data,
+                        data_format=list(echarts_data.keys()) if isinstance(echarts_data, dict) else type(echarts_data).__name__
                     )
                     # 更新摘要
-                    if not chart_paths:  # 如果没有matplotlib图表，使用v3.1摘要
-                        result["summary"] = f"✅ 工具已执行完成，Chart v3.1图表生成成功：{chart_v31_data.get('title', '')}"
+                    if not chart_paths:  # 如果没有matplotlib图表，使用ECharts摘要
+                        result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{display_title}"
                 except Exception as e:
                     logger.warning(
-                        "chart_v31_processing_failed",
+                        "echarts_processing_failed",
                         error=str(e),
-                        chart_data=chart_v31_data
+                        echarts_data=echarts_data
                     )
 
             return result
@@ -641,17 +662,18 @@ doc.save('/root/report.docx')
 
         return chart_paths
 
-    def _extract_chart_v31(self, output: str) -> dict:
+    def _extract_echarts_format(self, output: str) -> dict:
         """
-        从 Python 代码输出中提取 Chart v3.1 JSON 数据
+        从 Python 代码输出中提取 ECharts 标准格式 JSON 数据
 
-        检测格式：JSON字符串包含 id, type, title, data, meta 字段
+        检测格式：JSON字符串包含 series 字段（ECharts标准格式）
+        可能包含：xAxis, yAxis, series, tooltip, legend 等字段
 
         Args:
             output: Python 代码输出
 
         Returns:
-            Chart v3.1 数据字典，如果未找到则返回 None
+            ECharts 配置字典，如果未找到则返回 None
         """
         import json
         import re
@@ -667,15 +689,16 @@ doc.save('/root/report.docx')
                 # 尝试解析 JSON
                 chart_data = json.loads(line)
 
-                # 验证是否为 Chart v3.1 格式（必须是字典类型）
-                if isinstance(chart_data, dict) and all(key in chart_data for key in ["id", "type", "title", "data"]):
-                    # 检查 meta.schema_version
-                    if "meta" in chart_data and chart_data["meta"].get("schema_version") == "3.1":
+                # 验证是否为 ECharts 标准格式（必须有 series 字段）
+                if isinstance(chart_data, dict) and "series" in chart_data:
+                    # series 必须是数组类型
+                    if isinstance(chart_data["series"], list):
                         logger.info(
-                            "chart_v31_detected",
-                            chart_id=chart_data.get("id"),
-                            chart_type=chart_data.get("type"),
-                            title=chart_data.get("title")
+                            "echarts_format_detected",
+                            chart_type=chart_data.get("series", [{}])[0].get("type", "unknown") if len(chart_data.get("series", [])) > 0 else "unknown",
+                            has_xAxis="xAxis" in chart_data,
+                            has_yAxis="yAxis" in chart_data,
+                            series_count=len(chart_data.get("series", []))
                         )
                         return chart_data
             except (json.JSONDecodeError, ValueError):

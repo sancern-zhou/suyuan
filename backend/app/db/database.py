@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 import os
 from dotenv import load_dotenv
 import structlog
+import asyncio
 
 load_dotenv()
 logger = structlog.get_logger()
@@ -126,5 +127,16 @@ async def close_db():
     Close database connections.
     Should be called on application shutdown.
     """
-    await engine.dispose()
-    logger.info("database_closed")
+    try:
+        # 尝试优雅关闭连接池（最多等待10秒）
+        await asyncio.wait_for(engine.dispose(), timeout=10.0)
+        logger.info("database_closed")
+    except asyncio.TimeoutError:
+        logger.warning("database_close_timeout", message="Database close timed out, forcing disposal")
+        # 超时后尝试强制关闭（忽略错误）
+        try:
+            engine.dispose(close_wake_up=True)
+        except Exception as e:
+            logger.warning("database_force_close_failed", error=str(e))
+    except Exception as e:
+        logger.error("database_close_failed", error=str(e), exc_info=True)

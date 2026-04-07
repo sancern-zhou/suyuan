@@ -212,21 +212,22 @@ async def restore_session(session_id: str, message_limit: int = 5):
     session_data["total_message_count"] = pagination["total_count"]
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
 
-    # 从react_agent的_session_store中获取office_documents
-    try:
-        from app.routers.agent import multi_expert_agent_instance
-        if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:
-            session_store_data = multi_expert_agent_instance._session_store[session_id]
-            office_documents = session_store_data.get("office_documents", [])
-            if office_documents:
-                session_data["office_documents"] = office_documents
-                logger.info("[会话恢复] 从react_agent获取office_documents",
-                            session_id=session_id,
-                            count=len(office_documents))
-    except Exception as e:
-        logger.warning("[会话恢复] 获取office_documents失败",
-                      session_id=session_id,
-                      error=str(e))
+    # ✅ 优先从数据库获取office_documents，如果没有再从react_agent的_session_store获取（兼容旧数据）
+    if not session_data.get("office_documents"):
+        try:
+            from app.routers.agent import multi_expert_agent_instance
+            if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:
+                session_store_data = multi_expert_agent_instance._session_store[session_id]
+                office_documents = session_store_data.get("office_documents", [])
+                if office_documents:
+                    session_data["office_documents"] = office_documents
+                    logger.info("[会话恢复] 从react_agent获取office_documents（内存降级）",
+                                session_id=session_id,
+                                count=len(office_documents))
+        except Exception as e:
+            logger.warning("[会话恢复] 获取office_documents失败",
+                          session_id=session_id,
+                          error=str(e))
 
     # 清理特殊浮点值，防止 JSON 序列化错误
     session_data = _sanitize_floats(session_data)

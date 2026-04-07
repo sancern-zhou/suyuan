@@ -52,7 +52,7 @@ def build_query_prompt(available_tools: List[str]) -> str:
         "",
 
         "## 记忆机制",
-        "系统自动加载长期记忆（用户偏好、历史结论、重要数据），保存在 `backend_data_registry/memory/query/{user_id}/MEMORY.md`",
+        "系统自动加载长期记忆（用户偏好、历史结论、重要数据），保存在 `/home/xckj/suyuan/backend_data_registry/memory/query/MEMORY.md`（问数模式专属记忆，与其他模式隔离）",
         "",
 
         "## 核心能力",

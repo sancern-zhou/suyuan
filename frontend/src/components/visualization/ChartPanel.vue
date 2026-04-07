@@ -17,6 +17,7 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
+import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
 import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
 
 const props = defineProps({
@@ -271,6 +272,88 @@ const formatTimeLabel = (value, analysis, index) => {
   }
 }
 
+/**
+ * 检测并优化完整 ECharts 配置格式
+ * 用于识别 execute_python 工具返回的完整 ECharts 配置
+ * @param {Object} chartData - 图表数据
+ * @param {string} chartType - 图表类型（用于特殊检测）
+ * @returns {Object|null} 优化后的配置或 null（非完整格式）
+ */
+const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
+  if (!chartData || typeof chartData !== 'object') {
+    return null
+  }
+
+  // 特殊图表类型检测（饼图、雷达图、3D图表）
+  if (chartType) {
+    // 饼图检测：包含 title 和 series 字段
+    if (chartType === 'pie' && 'title' in chartData && 'series' in chartData) {
+      console.log('[ChartPanel] 检测到完整饼图配置')
+      return chartData
+    }
+
+    // 雷达图检测：包含 radar 和 series 字段
+    if (chartType === 'radar' && 'radar' in chartData && 'series' in chartData) {
+      console.log('[ChartPanel] 检测到完整雷达图配置')
+      return chartData
+    }
+
+    // 3D图表检测：包含 grid3D 或 xAxis3D/yAxis3D/zAxis3D
+    if (chartType.includes('3d') &&
+        ('grid3D' in chartData ||
+         ('xAxis3D' in chartData && 'yAxis3D' in chartData && 'zAxis3D' in chartData))) {
+      console.log('[ChartPanel] 检测到完整3D图表配置')
+      return chartData
+    }
+  }
+
+  // 标准图表检测：包含 xAxis、yAxis、series
+  if (!('xAxis' in chartData) || !('yAxis' in chartData) || !('series' in chartData)) {
+    return null
+  }
+
+  console.log('[ChartPanel] 检测到完整 ECharts 配置格式')
+
+  // 优化配置
+  const optimized = { ...chartData }
+
+  // 优化 yAxis.name 显示
+  if (optimized.yAxis?.name) {
+    optimized.yAxis = {
+      ...optimized.yAxis,
+      nameTextStyle: {
+        fontSize: 12,
+        overflow: 'none',
+        breakAll: false
+      },
+      nameGap: optimized.yAxis.nameGap || 35,
+      nameLocation: optimized.yAxis.nameLocation || 'middle'
+    }
+    console.log('[ChartPanel] 优化 yAxis.name 配置:', {
+      name: optimized.yAxis.name,
+      nameLocation: optimized.yAxis.nameLocation,
+      nameGap: optimized.yAxis.nameGap
+    })
+  }
+
+  // 优化 grid.left
+  if (optimized.grid) {
+    const currentLeft = optimized.grid.left || '3%'
+    if (typeof currentLeft === 'string' && currentLeft.includes('%')) {
+      const leftValue = parseInt(currentLeft)
+      if (leftValue > 6) {
+        optimized.grid = {
+          ...optimized.grid,
+          left: '6%'
+        }
+        console.log('[ChartPanel] 优化 grid.left 配置:', '6%')
+      }
+    }
+  }
+
+  return optimized
+}
+
 // 构建ECharts配置（v3.0格式）
 const buildOption = () => {
   try {
@@ -280,7 +363,7 @@ const buildOption = () => {
     }
 
     // v3.0格式：直接从data.data获取图表类型、数据和元数据
-    const chartType = props.data.type
+    const chartType = (props.data.type || '').toLowerCase()  // 统一转换为小写，避免大小写不匹配
     const title = props.data.title || ''
     const meta = props.data.meta || {}
     const chartData = props.data.data
@@ -379,6 +462,12 @@ const buildOption = () => {
 
 // 饼图
 const buildPieOption = (payload, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(payload, 'pie')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const data = Array.isArray(payload) ? payload : []
 
   return {
@@ -411,6 +500,14 @@ const buildBarOption = (chartData, title, meta) => {
   // 支持两种格式：
   // 1. 单序列: { x: [...], y: [...] }
   // 2. 多序列: { x: [...], series: [{name, data}, ...] }
+  // 3. 完整 ECharts 配置格式（包含 xAxis、yAxis、series）
+
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'bar')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const xData = chartData.x || []
   const yData = chartData.y || []
   const series = chartData.series || []
@@ -577,6 +674,13 @@ const buildLineOption = (chartData, title, meta) => {
   // v3.0格式：chartData = { x: [...], series: [{name, data}, ...] } 或 { x: [...], y: [...] }
   // 也支持原始记录列表格式（包含 O3 和 O3_8h 字段）
   // 也支持 series[].data 为 [{time, value}] 对象数组格式（Agent生成）
+  // 也支持完整 ECharts 配置格式（包含 xAxis、yAxis、series）
+
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'line')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
 
   // 预处理：合并 O3 和 O3_8h 数据
   const processedData = preprocessO3DualData(chartData)
@@ -730,6 +834,12 @@ const buildLineOption = (chartData, title, meta) => {
 
 // 雷达图（v3.0格式）
 const buildRadarOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'radar')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   // 支持两种格式：
   // 1. 旧格式（单站点）: { x: [...], y: [...] }
   // 2. 新格式（多站点）: { indicator: [...], series: [...] }
@@ -810,6 +920,12 @@ const buildRadarOption = (chartData, title, meta) => {
 
 // 热力图（v3.0格式）
 const buildHeatmapOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'heatmap')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   // v3.0格式：chartData = { xAxis: [...], yAxis: [...], data: [[x, y, value], ...] }
   const xAxisData = chartData.xAxis || []
   const yAxisData = chartData.yAxis || []
@@ -910,6 +1026,25 @@ const buildHeatmapOption = (chartData, title, meta) => {
 
 // 通用配置（v3.0格式）
 const buildGenericOption = (chartData, title, meta) => {
+  // 检测完整ECharts配置（包括3D图表）
+  if (chartData && typeof chartData === 'object') {
+    // 3D图表检测：包含 grid3D 或 xAxis3D/yAxis3D/zAxis3D
+    if ('grid3D' in chartData ||
+        ('xAxis3D' in chartData && 'yAxis3D' in chartData && 'zAxis3D' in chartData) ||
+        'xAxis3D' in chartData) {
+      console.log('[ChartPanel] buildGenericOption 检测到完整3D图表配置，直接返回')
+      return chartData
+    }
+
+    // 标准图表检测：包含 xAxis、yAxis、series
+    if ('xAxis' in chartData && 'yAxis' in chartData && 'series' in chartData) {
+      console.log('[ChartPanel] buildGenericOption 检测到完整ECharts配置，直接返回')
+      return chartData
+    }
+  }
+
+  // 默认返回空配置
+  console.warn('[ChartPanel] buildGenericOption 无法识别图表格式，返回默认配置')
   return {
     title: { text: title || '图表', left: 'center' },
     tooltip: {},
@@ -921,6 +1056,12 @@ const buildGenericOption = (chartData, title, meta) => {
 
 // 风向玫瑰图（v3.0格式）
 const buildWindRoseOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'wind_rose')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const sectors = chartData.sectors || []
   const legend = chartData.legend || {}
 
@@ -969,6 +1110,12 @@ const buildWindRoseOption = (chartData, title, meta) => {
 
 // 带风向指针的气象时序图（v3.2新增）
 const buildWeatherTimeseriesOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'weather_timeseries')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const xData = chartData.x || []
   const series = chartData.series || []
   const windStats = chartData.wind_statistics || {}
@@ -1210,6 +1357,12 @@ const buildWeatherTimeseriesOption = (chartData, title, meta) => {
 
 // 气压+边界层高度双Y轴图
 const buildPressurePblOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'pressure_pbl_timeseries')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const xData = chartData.x || []
   const series = chartData.series || []
 
@@ -1345,6 +1498,12 @@ const buildPressurePblOption = (chartData, title, meta) => {
 
 // 堆叠时序图（颗粒物离子堆叠+PM2.5双Y轴）
 const buildStackedTimeseriesOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'stacked_timeseries')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const xData = chartData.x || []
   const series = chartData.series || []
   const yAxisConfig = chartData.yAxis || []
@@ -1498,6 +1657,12 @@ const buildStackedTimeseriesOption = (chartData, title, meta) => {
 
 // 3D散点图（v3.0格式）
 const buildScatter3dOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'scatter3d')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const points = chartData.data?.points || []
   const axisLabels = chartData.data?.axis_labels || {}
 
@@ -1554,6 +1719,12 @@ const buildScatter3dOption = (chartData, title, meta) => {
 
 // 3D曲面图（v3.0格式）
 const buildSurface3dOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'surface3d')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const x = chartData.data?.x || []
   const y = chartData.data?.y || []
   const z = chartData.data?.z || []
@@ -1606,6 +1777,12 @@ const buildSurface3dOption = (chartData, title, meta) => {
 
 // 3D线图（v3.0格式）
 const buildLine3dOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'line3d')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const trajectory = chartData.data?.trajectory || []
   const axisLabels = chartData.data?.axis_labels || {}
 
@@ -1666,6 +1843,12 @@ const buildLine3dOption = (chartData, title, meta) => {
 
 // 3D柱状图（v3.0格式）
 const buildBar3dOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'bar3d')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const bars = chartData.data?.bars || []
   const axisLabels = chartData.data?.axis_labels || {}
 
@@ -1721,6 +1904,12 @@ const buildBar3dOption = (chartData, title, meta) => {
 
 // 3D体素图（v3.0格式）
 const buildVolume3dOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'volume3d')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const voxels = chartData.data?.voxels || []
   const valueRange = chartData.data?.value_range || { min: 0, max: 1 }
   const axisLabels = chartData.data?.axis_labels || {}
@@ -1786,6 +1975,12 @@ const buildVolume3dOption = (chartData, title, meta) => {
 
 // 边界层廓线图（v3.0格式）
 const buildProfileOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'profile')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const altitudes = chartData.altitudes || []
   const elements = chartData.elements || []
 
@@ -1835,6 +2030,12 @@ const buildProfileOption = (chartData, title, meta) => {
 
 // 分面时序图（多污染物×多站点场景）
 const buildFacetTimeseriesOption = (chartData, title, meta) => {
+  // 检测完整 ECharts 配置格式
+  const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'facet_timeseries')
+  if (optimizedConfig) {
+    return optimizedConfig
+  }
+
   const facets = chartData.facets || []
   const layout = chartData.layout || 'vertical'
 
@@ -2003,7 +2204,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
   }
 }
 
-const MAX_INIT_RETRY = 20
+const MAX_INIT_RETRY = 50 // 增加到50次，总时间约4秒
 const INIT_RETRY_DELAY = 80 // ms
 
 let deferredInitTimer = null
@@ -2035,7 +2236,7 @@ const scheduleDeferredInit = () => {
         scheduleDeferredInit()
       }
     }
-  }, 500) // 每500ms检查一次
+  }, 200) // 减少到200ms，更快响应容器尺寸变化
 }
 
 // 等待容器具备尺寸后再初始化，避免 clientWidth/clientHeight 为 0
@@ -2147,21 +2348,24 @@ onMounted(() => {
 
   if ('ResizeObserver' in window) {
     resizeObserver = new ResizeObserver(() => {
-      updateChartWidth()
-      // 如果之前因为尺寸为0放弃了初始化，尺寸变化后再尝试一次
-      if (waitingForVisible && chartContainer.value) {
-        const { clientWidth, clientHeight } = chartContainer.value
-        if (clientWidth > 0 && clientHeight > 0) {
-          console.log('[ChartPanel] 容器尺寸变化，重新初始化', {
-            clientWidth,
-            clientHeight,
-            chartId: getChartIdForLog()
-          })
-          clearDeferredInitTimer() // 清除延迟检查，因为已经手动触发了
-          waitingForVisible = false
-          initChart()
+      // 使用 requestAnimationFrame 避免在主渲染过程中执行
+      requestAnimationFrame(() => {
+        updateChartWidth()
+        // 如果之前因为尺寸为0放弃了初始化，尺寸变化后再尝试一次
+        if (waitingForVisible && chartContainer.value) {
+          const { clientWidth, clientHeight } = chartContainer.value
+          if (clientWidth > 0 && clientHeight > 0) {
+            console.log('[ChartPanel] 容器尺寸变化，重新初始化', {
+              clientWidth,
+              clientHeight,
+              chartId: getChartIdForLog()
+            })
+            clearDeferredInitTimer() // 清除延迟检查，因为已经手动触发了
+            waitingForVisible = false
+            initChart()
+          }
         }
-      }
+      })
     })
     if (scrollContainer.value) {
       resizeObserver.observe(scrollContainer.value)
@@ -2210,7 +2414,8 @@ const getDataPointCount = () => {
 const updateChartWidth = () => {
   // 固定100%宽度，通过dataZoom滑块查看更多数据，避免横向滚动
   chartWidth.value = '100%'
-  nextTick(() => {
+  // 使用 requestAnimationFrame 避免在主渲染过程中调用 resize
+  requestAnimationFrame(() => {
     if (chartInstance) {
       chartInstance.resize()
     }
@@ -2253,6 +2458,7 @@ watch(() => props.data, (newData, oldData) => {
               title: props.data?.title
             })
             waitingForVisible = true
+            scheduleDeferredInit() // ✅ 添加：启动延迟检查
             return
           }
           chartInstance.dispose()
@@ -2270,6 +2476,7 @@ watch(() => props.data, (newData, oldData) => {
             title: props.data?.title
           })
           waitingForVisible = true
+          scheduleDeferredInit() // ✅ 添加：启动延迟检查
           return
         }
         initChart()
@@ -2491,7 +2698,49 @@ defineExpose({
   getChartState,
   getChartImage,
   getChartInstance,
-  getChartData
+  getChartData,
+  // 重新初始化图表（当容器从不可见变为可见时调用）
+  reinitChart: () => {
+    console.log('[ChartPanel] reinitChart 调用', {
+      chartId: getChartIdForLog(),
+      hasContainer: !!chartContainer.value,
+      hasInstance: !!chartInstance,
+      waitingForVisible
+    })
+
+    // 如果之前在等待可见性，现在可以尝试初始化
+    if (waitingForVisible && chartContainer.value && !chartInstance) {
+      const { clientWidth, clientHeight } = chartContainer.value
+      if (clientWidth > 0 && clientHeight > 0) {
+        console.log('[ChartPanel] 容器已可见，重新初始化', {
+          clientWidth,
+          clientHeight,
+          chartId: getChartIdForLog()
+        })
+        clearDeferredInitTimer()
+        waitingForVisible = false
+        initChart(0)
+      } else {
+        console.log('[ChartPanel] 容器仍然不可见，继续等待', {
+          clientWidth,
+          clientHeight,
+          chartId: getChartIdForLog()
+        })
+      }
+    } else if (chartInstance) {
+      // 如果已经有实例，调整大小
+      console.log('[ChartPanel] 图表已存在，调整大小', {
+        chartId: getChartIdForLog()
+      })
+      chartInstance.resize()
+    } else {
+      // 尝试初始化
+      console.log('[ChartPanel] 尝试初始化图表', {
+        chartId: getChartIdForLog()
+      })
+      initChart(0)
+    }
+  }
 })
 </script>
 
@@ -2500,10 +2749,11 @@ defineExpose({
   width: 100%;
   /* 移除固定高度，使用动态高度 */
   min-height: 280px;
-  background: #fafafa;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  /* 移除背景、边框、阴影和内边距，让图表填满整个空间 */
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
   position: relative;
   overflow: hidden;
 }

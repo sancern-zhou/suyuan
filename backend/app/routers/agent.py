@@ -437,12 +437,18 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     if event["type"] == "complete":
                         # ✅ 添加最终答案消息
                         if event.get("data", {}).get("answer"):
+                            event_data = event.get("data", {})
                             final_message = {
                                 "type": "final",
                                 "content": event["data"]["answer"],
                                 "data": event.get("data", {}),
                                 "timestamp": event.get("data", {}).get("timestamp", datetime.now().isoformat())
                             }
+
+                            # ✅ 将visuals提取到消息顶层，确保能被正确存储和恢复
+                            if "visuals" in event_data and isinstance(event_data["visuals"], list):
+                                final_message["visuals"] = event_data["visuals"]
+
                             conversation_history.append(final_message)
                             logger.debug("final_answer_added", answer_preview=event["data"]["answer"][:100])
 
@@ -461,12 +467,24 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                                    collected_data_ids_count=len(collected_data_ids),
                                    collected_visuals_count=len(collected_visuals))
 
+                        # ✅ 从react_agent的_session_store中获取office_documents并保存到数据库
+                        office_docs = []
+                        if actual_session_id in multi_expert_agent_instance._session_store:
+                            session_store_data = multi_expert_agent_instance._session_store[actual_session_id]
+                            office_docs = session_store_data.get("office_documents", [])
+                            logger.info(
+                                "office_documents_found_in_session_store",
+                                session_id=actual_session_id,
+                                count=len(office_docs)
+                            )
+
                         # ✅ 完整保存所有消息（使用数据库存储，不需要压缩）
                         session.conversation_history = conversation_history
                         session.data_ids = list(set(collected_data_ids))  # 去重
                         session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+                        session.office_documents = office_docs  # ✅ 保存Office文档数据
                         await session_manager.save_session(session)
-                        logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids))
+                        logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids), office_docs_count=len(office_docs))
                     elif event["type"] in ["incomplete", "fatal_error"]:
                         # ✅ 优化：压缩中间过程，只保留必要信息
                         compressed_history = []
@@ -482,6 +500,14 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         session.conversation_history = compressed_history
                         session.data_ids = list(set(collected_data_ids))
                         session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+
+                        # ✅ 从react_agent的_session_store中获取office_documents并保存到数据库
+                        office_docs = []
+                        if actual_session_id in multi_expert_agent_instance._session_store:
+                            session_store_data = multi_expert_agent_instance._session_store[actual_session_id]
+                            office_docs = session_store_data.get("office_documents", [])
+                        session.office_documents = office_docs
+
                         if "data" in event and "error" in event["data"]:
                             session.error = {
                                 "type": event["type"],

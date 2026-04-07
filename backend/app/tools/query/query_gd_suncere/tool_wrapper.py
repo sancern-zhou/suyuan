@@ -197,15 +197,19 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "station_type": {
+                        "type": "string",
+                        "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
+                    },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与 stations 二选一，可组合）"
+                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与stations至少提供一个）"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与 cities 二选一，可组合）"
+                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与cities至少提供一个）"
                     },
                     "start_time": {
                         "type": "string",
@@ -216,7 +220,7 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
                         "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
                     }
                 },
-                "required": ["start_time", "end_time"]
+                "required": ["station_type", "start_time", "end_time"]
             }
         }
 
@@ -234,6 +238,7 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
         context: ExecutionContext,
         start_time: str,
         end_time: str,
+        station_type: str,
         cities: Optional[List[str]] = None,
         stations: Optional[List[str]] = None,
         **kwargs
@@ -245,18 +250,33 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
             context: 执行上下文
             start_time: 开始时间
             end_time: 结束时间
-            cities: 城市名称列表（与 stations 二选一，可组合）
-            stations: 站点名称列表（与 cities 二选一，可组合）
+            station_type: 站点类型
+            cities: 城市名称列表（与stations至少提供一个）
+            stations: 站点名称列表（与cities至少提供一个）
 
         Returns:
             UDF v2.0格式的查询结果
         """
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_station_hour_real
 
+        # 验证cities或stations至少提供一个
+        if not cities and not stations:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "summary": "必须提供cities或stations参数。为避免数据量过大，不支持全省查询。请指定具体城市或站点。",
+                "metadata": {
+                    "error": "Missing cities or stations parameter",
+                    "suggestion": "请提供需要查询的城市或站点"
+                }
+            }
+
         logger.info(
             "query_gd_suncere_station_hour_tool_start",
             cities=cities,
             stations=stations,
+            station_type=station_type,
             start_time=start_time,
             end_time=end_time,
             session_id=getattr(context, 'session_id', 'unknown')
@@ -267,7 +287,8 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
             end_time=end_time,
             context=context,
             cities=cities,
-            stations=stations
+            stations=stations,
+            station_type=station_type
         )
 
         return result
@@ -345,15 +366,19 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "station_type": {
+                        "type": "string",
+                        "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
+                    },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与 stations 二选一，可组合）"
+                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与stations至少提供一个）"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与 cities 二选一，可组合）"
+                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与cities至少提供一个）"
                     },
                     "start_date": {
                         "type": "string",
@@ -364,7 +389,7 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
                         "description": "结束日期，格式 'YYYY-MM-DD'"
                     }
                 },
-                "required": ["start_date", "end_date"]
+                "required": ["station_type", "start_date", "end_date"]
             }
         }
 
@@ -382,6 +407,7 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
         context: ExecutionContext,
         start_date: str,
         end_date: str,
+        station_type: str,
         cities: Optional[List[str]] = None,
         stations: Optional[List[str]] = None,
         **kwargs
@@ -393,18 +419,33 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
             context: 执行上下文
             start_date: 开始日期
             end_date: 结束日期
-            cities: 城市名称列表（与 stations 二选一，可组合）
-            stations: 站点名称列表（与 cities 二选一，可组合）
+            station_type: 站点类型
+            cities: 城市名称列表（与stations至少提供一个）
+            stations: 站点名称列表（与cities至少提供一个）
 
         Returns:
             UDF v2.0格式的查询结果
         """
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_station_day
 
+        # 验证cities或stations至少提供一个
+        if not cities and not stations:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "summary": "必须提供cities或stations参数。为避免数据量过大，不支持全省查询。请指定具体城市或站点。",
+                "metadata": {
+                    "error": "Missing cities or stations parameter",
+                    "suggestion": "请提供需要查询的城市或站点"
+                }
+            }
+
         logger.info(
             "query_gd_suncere_station_day_tool_start",
             cities=cities,
             stations=stations,
+            station_type=station_type,
             start_date=start_date,
             end_date=end_date,
             session_id=getattr(context, 'session_id', 'unknown')
@@ -415,7 +456,8 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
             end_date=end_date,
             context=context,
             cities=cities,
-            stations=stations
+            stations=stations,
+            station_type=station_type
         )
 
         return result

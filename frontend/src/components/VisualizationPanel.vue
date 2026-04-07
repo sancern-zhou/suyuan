@@ -101,7 +101,7 @@
 
           <!-- 图表 -->
           <ChartPanel
-            v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries', 'facet_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(viz.type)"
+            v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries', 'facet_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes((viz.type || '').toLowerCase())"
             :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
             :key="viz.id || viz.title || `chart_${index}`"
             :data="viz"
@@ -159,7 +159,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
 import KnowledgeSourcePanel from './visualization/panels/KnowledgeSourcePanel.vue'
@@ -216,6 +216,26 @@ const clearChartRefs = () => {
   }
   chartRefs.value = {}
   console.log('[VisualizationPanel] 清理所有图表引用并注销截图管理器')
+}
+
+// ==================== 图表刷新方法 ====================
+// 内部方法：刷新所有图表（当新图表数据到达时调用）
+const refreshAllChartsInternal = () => {
+  console.log('[VisualizationPanel] refreshAllChartsInternal 触发，图表数量:', Object.keys(chartRefs.value).length)
+
+  // 遍历所有图表引用，调用重新初始化方法
+  for (const [chartId, chartRef] of Object.entries(chartRefs.value)) {
+    if (chartRef && typeof chartRef.reinitChart === 'function') {
+      console.log('[VisualizationPanel] 调用图表重新初始化:', chartId)
+      try {
+        chartRef.reinitChart()
+      } catch (error) {
+        console.error('[VisualizationPanel] 图表重新初始化失败:', chartId, error)
+      }
+    }
+  }
+
+  console.log('[VisualizationPanel] refreshAllChartsInternal 完成')
 }
 
 // ==================== 对外暴露的方法 ====================
@@ -350,7 +370,10 @@ defineExpose({
   // 获取图表引用（用于调试）
   getChartRefs: () => {
     return chartRefs.value
-  }
+  },
+
+  // 刷新所有图表（当面板从不可见变为可见时调用）
+  refreshAllCharts: refreshAllChartsInternal
 })
 
 // 切换导出模式
@@ -484,8 +507,9 @@ const handleExportComplete = () => {
 
 // 判断是否为图表类型（需要获取状态）
 const isChartType = (type) => {
-  return ['chart', 'pie', 'bar', 'line', 'timeseries', 'radar', 'wind_rose', 
-          'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(type)
+  const normalizedType = (type || '').toLowerCase()
+  return ['chart', 'pie', 'bar', 'line', 'timeseries', 'radar', 'wind_rose',
+          'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(normalizedType)
 }
 
 // 判断是否为多专家模式
@@ -616,6 +640,19 @@ const isDirectUrlImage = (viz) => {
 const visualizations = computed(() => {
   let allVisualizations = []
 
+  console.log('[VisualizationPanel] visualizations计算触发', {
+    isQuickTracingMode: isQuickTracingMode.value,
+    hasGroupedViz: !!(store.groupedVisualizations),
+    hasContent: !!(props.content),
+    hasContentVisuals: !!(props.content?.visuals),
+    groupedVizKeys: store.groupedVisualizations ? Object.keys(store.groupedVisualizations) : [],
+    groupedVizCounts: store.groupedVisualizations ? {
+      weather: store.groupedVisualizations.weather?.length || 0,
+      component: store.groupedVisualizations.component?.length || 0,
+      viz: store.groupedVisualizations.viz?.length || 0
+    } : {}
+  })
+
   // 多专家模式：从 store.groupedVisualizations 获取所有图表
   if (isQuickTracingMode.value) {
     const groups = store.groupedVisualizations
@@ -641,6 +678,7 @@ const visualizations = computed(() => {
 
     if (props.content) {
       if (props.content?.visuals && Array.isArray(props.content.visuals)) {
+        console.log('[VisualizationPanel] 普通模式 - 从content.visuals获取，数量:', props.content.visuals.length)
         // 兼容两种格式：
         // 1. VisualBlock格式: {payload: {...}, meta: {...}}
         // 2. 直接格式: {id, type, data, meta, ...} (如EKMA专业图表)
@@ -655,10 +693,13 @@ const visualizations = computed(() => {
         })
         allVisualizations = allVisualizations.concat(currentVisuals)
       } else {
+        console.log('[VisualizationPanel] 普通模式 - content.visuals不是数组，使用content本身')
         allVisualizations = allVisualizations.concat([props.content])
       }
     }
   }
+
+  console.log('[VisualizationPanel] 过滤前的可视化数量:', allVisualizations.length)
 
   // 【关键修复】过滤掉已经通过URL直接渲染的图片（在对话区已显示）
   allVisualizations = allVisualizations.filter(viz => !isDirectUrlImage(viz))
@@ -1179,15 +1220,16 @@ const debugUnknownViz = (viz) => {
 
 .viz-item {
   position: relative;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-  padding: 16px;
+  /* 移除所有边框、内边距和阴影，让图表填满整个空间 */
+  border: none;
+  border-radius: 0;
+  padding: 0;  /* 完全移除内边距 */
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  gap: 0;
+  box-shadow: none;
   flex: 0 0 auto;
-  min-height: 0;
+  min-height: 320px;
 
   &.export-selected {
     border-color: #1976d2;
@@ -1246,15 +1288,13 @@ const debugUnknownViz = (viz) => {
 }
 
 .viz-item-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  display: none;  /* 隐藏标题栏，图表已有标题 */
 }
 
 .viz-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;  /* 减少间距 */
   font-weight: 600;
 }
 
@@ -1262,29 +1302,25 @@ const debugUnknownViz = (viz) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 8px;
+  padding: 2px 6px;  /* 减少内边距 */
   background: #eef4ff;
   color: #4169e1;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;  /* 减小字体 */
 }
 
 .viz-title-text {
-  font-size: 14px;
+  font-size: 13px;  /* 减小字体 */
   color: #333;
 }
 
 .viz-time {
-  font-size: 12px;
+  font-size: 11px;  /* 减小字体 */
   color: #999;
 }
 
 .viz-meta {
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  background: #fafafa;
-  border-radius: 6px;
-  border: 1px solid #f0f0f0;
+  display: none;  /* 隐藏元数据栏，节省空间 */
 }
 
 .meta-row {

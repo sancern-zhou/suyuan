@@ -32,7 +32,7 @@ def build_expert_prompt(available_tools: List[str]) -> str:
         "\n",
         "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
         "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `backend_data_registry/memory/expert/{user_id}/MEMORY.md`（如需查看或编辑可使用 read_file 工具）。\n",
+        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/expert/MEMORY.md`（专家模式专属记忆，与其他模式隔离。如需查看或编辑可使用 read_file 工具）。\n",
         "\n",
         "## ⚠️ 输出格式（CRITICAL）\n",
         "\n",

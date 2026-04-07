@@ -89,6 +89,17 @@ class SimplifiedContextBuilder:
         # 设置当前模式
         self.current_mode = mode
 
+        # ✅ 调试日志：检查查询是否包含记忆
+        has_memory_in_query = "长期记忆" in query and "记忆文件路径" in query
+        if has_memory_in_query:
+            logger.debug(
+                "query_contains_memory",
+                query_length=len(query),
+                memory_marker_found="长期记忆" in query,
+                file_path_marker_found="记忆文件路径" in query,
+                query_preview=query[:300]
+            )
+
         # 1. 构建系统提示词（固定部分）
         system_prompt = self._build_system_prompt()
         system_tokens = token_budget_manager.count_tokens(system_prompt)
@@ -209,6 +220,24 @@ class SimplifiedContextBuilder:
         Returns:
             用户对话内容字符串
         """
+        # ✅ 调试日志：检查查询是否包含记忆
+        has_memory_in_query = "长期记忆" in query and "用户问题：" in query
+        if has_memory_in_query:
+            # 提取记忆部分用于日志预览
+            memory_preview = ""
+            if "用户问题：" in query:
+                memory_part = query.split("用户问题：")[0].strip()
+                memory_preview = memory_part[:200]
+
+            logger.info(
+                "user_conversation_contains_memory",
+                query_length=len(query),
+                contains_memory_marker="长期记忆" in query,
+                contains_user_question_marker="用户问题：" in query,
+                memory_part_preview=memory_preview,
+                will_add_to_status_section=True  # ✅ 确认会添加到状态部分
+            )
+
         sections = []
 
         # ✅ 检测到中断时，在对话历史前添加明确提示
@@ -232,16 +261,53 @@ class SimplifiedContextBuilder:
         # 2. 当前进行的任务
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # ✅ 检测记忆增强内容
+        has_memory_enhancement = "长期记忆" in query and "用户问题：" in query
+        memory_section = ""
+        user_question_section = ""
+
+        if has_memory_enhancement:
+            # 提取记忆部分（在"用户问题："之前）
+            if "用户问题：" in query:
+                parts = query.split("用户问题：", 1)
+                memory_part = parts[0].strip()
+                # 提取用户问题和附件信息（在"用户问题："之后的所有内容）
+                user_question_and_attachments = parts[1].strip() if len(parts) > 1 else ""
+                memory_section = f"\n\n{memory_part}\n\n"
+                # ✅ 用户问题部分：包含用户问题和可能的附件信息
+                user_question_section = f"\n\n{user_question_and_attachments}\n\n"
+
+                # ✅ 调试日志：确认用户问题和附件信息
+                logger.debug(
+                    "user_question_section_extracted",
+                    section_length=len(user_question_section),
+                    has_attachments="**用户上传的附件**" in user_question_section,
+                    preview=user_question_section[:200]
+                )
+
         if conversation_history:
             # 已有对话历史：不要重复完整查询，避免LLM重复执行工具
             # 对话历史中已包含工具结果，只需提醒LLM检查是否完成
-            sections.append(
+            status_section = (
                 f"## 当前状态\n"
                 f"**迭代次数**: {iteration} | **当前时间**: {current_time}\n\n"
+                f"{memory_section}"  # ✅ 添加记忆增强内容
+                f"{user_question_section}"  # ✅ 添加用户问题和附件信息
                 f"请根据上方对话历史中的工具执行结果，判断用户任务是否已完成。\n"
                 f"- 如果已完成：直接使用 FINAL_ANSWER 回复用户\n"
                 f"- 如果未完成：继续调用必要的工具，但**不要重复执行已经成功过的工具调用**"
             )
+            sections.append(status_section)
+
+            # ✅ 调试日志：确认记忆和用户问题内容已添加
+            if has_memory_enhancement:
+                logger.debug(
+                    "memory_context_added_to_status",
+                    memory_length=len(memory_section),
+                    user_question_length=len(user_question_section),
+                    has_attachments="**用户上传的附件**" in user_question_section,
+                    iteration=iteration
+                )
         else:
             # 首次迭代：显示完整查询
             sections.append(f"## 当前进行的任务\n{query}\n\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")

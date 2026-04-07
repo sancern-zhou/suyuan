@@ -40,6 +40,7 @@ class SQLValidator:
         'city_aqi_publish_history',
         'working_orders',
         'qc_history',  # 自动质控历史数据表
+        'city_168_statistics',  # 168城市空气质量统计预计算表
         # 系统视图（用于动态查询表结构）
         'information_schema.columns',
         'information_schema.tables',

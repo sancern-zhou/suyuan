@@ -154,7 +154,8 @@ defineEmits([
 <style scoped>
 .management-panel {
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   padding: 20px;
   background: white;
 }
@@ -168,6 +169,7 @@ defineEmits([
   border-bottom: 1px solid #e0e0e0;
   flex-wrap: wrap;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .panel-header h3 {
@@ -214,9 +216,12 @@ defineEmits([
 }
 
 .session-history-content {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 15px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .session-stats {
@@ -225,6 +230,7 @@ defineEmits([
   background: #f8f9fa;
   border-radius: 8px;
   padding: 15px;
+  flex-shrink: 0;
 }
 
 .session-stat-item {
@@ -262,6 +268,8 @@ defineEmits([
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
+  min-height: 0;
 }
 
 .session-loading,
