@@ -382,7 +382,7 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="analyze_trajectory_sources", error=str(e))
 
-    # IAQI计算功能已整合到 aggregate_data 工具（使用新标准 HJ 633-2024）
+    # IAQI计算功能已整合到 aggregate_data 工具（使用新标准 HJ 633-2026）
     # 旧的 iaqi_calculator 工具已删除
 
     try:
@@ -600,22 +600,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="find_replace_word")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="find_replace_word", error=str(e))
-
-    # Phase 3: Excel 公式重算（跨平台）
-    try:
-        from app.tools.office.excel_recalc_tool import ExcelRecalcTool
-        registry.register(ExcelRecalcTool(), priority=595)
-        logger.info("tool_loaded", tool="recalc_excel")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="recalc_excel", error=str(e))
-
-    # Phase 4: PPT 幻灯片操作（跨平台）
-    try:
-        from app.tools.office.add_slide_tool import AddSlideTool
-        registry.register(AddSlideTool(), priority=594)
-        logger.info("tool_loaded", tool="add_ppt_slide")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="add_ppt_slide", error=str(e))
 
 
     # ========================================

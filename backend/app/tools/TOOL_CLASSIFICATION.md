@@ -94,8 +94,7 @@ class GetVOCsDataTool(LLMTool):
 - `write_file` - 写入文件
 - `analyze_image` - 图片分析（OCR/理解）
 - `word_processor` - Word 文档处理
-- `excel_processor` - Excel 表格处理
-- `ppt_processor` - PowerPoint 处理
+- `execute_python` - Python代码执行（Excel/数据分析/可视化）
 - `create_scheduled_task` - 创建定时任务
 
 **代码示例**：

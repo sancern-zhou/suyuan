@@ -7,10 +7,99 @@
 - 支持文件操作、定时任务、记忆管理和调用专家Agent
 """
 
-from typing import List
+from typing import List, Dict, Any
 
 
-def build_social_prompt(available_tools: List[str]) -> str:
+def _get_style_config(style: str) -> Dict[str, str]:
+    """
+    获取回答风格配置
+
+    Args:
+        style: 风格类型（casual/formal/professional/simple）
+
+    Returns:
+        风格配置字典
+    """
+    styles = {
+        "casual": {
+            "principle": "用日常对话的方式回应用户，像朋友聊天一样自然",
+            "tone": "轻松、友好、亲切",
+            "example": "好的，没问题！今天天气真不错~"
+        },
+        "formal": {
+            "principle": "使用正式、专业的表达方式，适合工作场景",
+            "tone": "正式、专业、礼貌",
+            "example": "您好，根据数据分析结果，建议采取以下措施..."
+        },
+        "professional": {
+            "principle": "使用专业术语和技术性表达，适合技术人员交流",
+            "tone": "专业、技术性强",
+            "example": "根据PMF源解析结果，O3主要来源于..."
+        },
+        "simple": {
+            "principle": "用简单的语言解释复杂概念，适合非专业人士",
+            "tone": "简单、易懂、耐心",
+            "example": "简单来说，就像做饭时火太大容易糊一样..."
+        }
+    }
+    return styles.get(style, styles["casual"])
+
+
+def _get_format_config(format_type: str) -> Dict[str, str]:
+    """
+    获取输出格式配置
+
+    Args:
+        format_type: 格式类型（plain/markdown/structured）
+
+    Returns:
+        格式配置字典
+    """
+    formats = {
+        "plain": {
+            "description": "纯文本，不使用任何格式化",
+            "instruction": "不要用markdown格式，不要用格式化的列表或表格"
+        },
+        "markdown": {
+            "description": "使用Markdown格式，支持标题、列表、加粗等",
+            "instruction": "可以适度使用Markdown格式（标题、列表、加粗）来增强可读性"
+        },
+        "structured": {
+            "description": "使用分段和列表，结构清晰",
+            "instruction": "使用结构化的纯文本格式，适当使用分段和列表"
+        }
+    }
+    return formats.get(format_type, formats["plain"])
+
+
+def _get_detail_config(detail: str) -> Dict[str, Any]:
+    """
+    获取详细程度配置
+
+    Args:
+        detail: 详细程度（concise/moderate/detailed）
+
+    Returns:
+        详细程度配置字典
+    """
+    details = {
+        "concise": {
+            "max_length": 200,
+            "description": "只说重点，简洁明了"
+        },
+        "moderate": {
+            "max_length": 1000,
+            "description": "适量信息，适中篇幅"
+        },
+        "detailed": {
+            "max_length": 2000,
+            "description": "提供完整信息和背景"
+        }
+    }
+    return details.get(detail, details["moderate"])
+
+
+def build_social_prompt(available_tools: List[str], user_preferences: dict = None) -> str:
     """
     构建社交模式系统提示词
 
@@ -18,9 +107,11 @@ def build_social_prompt(available_tools: List[str]) -> str:
     - 自然语言对话风格
     - 移动端优化（<2000字）
     - 支持文件操作、定时任务、记忆管理和调用专家Agent
+    - 动态适配用户偏好配置
 
     Args:
         available_tools: 可用工具列表
+        user_preferences: 用户偏好配置（可选）
 
     Returns:
         系统提示词字符串
@@ -36,6 +127,24 @@ def build_social_prompt(available_tools: List[str]) -> str:
         if tool in available_tools
     ]
 
+    # 解析用户偏好
+    if user_preferences:
+        style = user_preferences.get("style", "casual")
+        format_type = user_preferences.get("format", "plain")
+        detail = user_preferences.get("detail", "moderate")
+        use_emoji = user_preferences.get("use_emoji", False)
+    else:
+        # 默认偏好
+        style = "casual"
+        format_type = "plain"
+        detail = "moderate"
+        use_emoji = False
+
+    # 根据偏好生成提示词
+    style_config = _get_style_config(style)
+    format_config = _get_format_config(format_type)
+    detail_config = _get_detail_config(detail)
+
     prompt_parts = [
         "你是移动端助理助手，通过自然语言对话为用户提供服务。\n",
         "## 记忆机制\n",
@@ -46,23 +155,57 @@ def build_social_prompt(available_tools: List[str]) -> str:
         "\n",
         "## ⚠️ 重要：输出格式要求\n",
         "\n",
-        "你必须返回JSON格式（包含thought和action字段），但action.answer字段内的内容要用纯文本，不要用markdown格式。\n",
-        "\n",
-        "正确示例：\n",
-        '{\n',
-        '  "thought": "用户问今天天气",\n',
-        '  "action": {"type": "FINAL_ANSWER", "answer": "今天晴天，温度20-28度，适合出门玩"}\n',
-        '}\n',
-        "\n",
-        "错误示例（不要这样）：\n",
-        '{\n',
-        '  "action": {"answer": "今天\\n\\n## 天气情况\\n\\n- 晴天\\n- 20-28度"}\n',
-        '}\n',
-        "\n",
+    ]
+
+    # 根据格式偏好添加输出格式说明
+    if format_type == "plain":
+        prompt_parts.extend([
+            "你必须返回JSON格式（包含thought和action字段），但action.answer字段内的内容要用纯文本，不要用markdown格式。\n",
+            "\n",
+            "正确示例：\n",
+            '{\n',
+            '  "thought": "用户问今天天气",\n',
+            '  "action": {"type": "FINAL_ANSWER", "answer": "今天晴天，温度20-28度，适合出门玩"}\n',
+            '}\n',
+            "\n",
+            "错误示例（不要这样）：\n",
+            '{\n',
+            '  "action": {"answer": "今天\\n\\n## 天气情况\\n\\n- 晴天\\n- 20-28度"}\n',
+            '}\n',
+            "\n",
+        ])
+    elif format_type == "markdown":
+        prompt_parts.extend([
+            "你可以使用Markdown格式来增强可读性（标题、列表、加粗等），但要适度使用。\n",
+            "\n",
+            "正确示例：\n",
+            '{\n',
+            '  "thought": "用户问今天天气",\n',
+            '  "action": {"type": "FINAL_ANSWER", "answer": "## 天气情况\\n\\n今天晴天，温度20-28度，适合出门玩。"}\n',
+            '}\n',
+            "\n",
+        ])
+    else:  # structured
+        prompt_parts.extend([
+            "使用结构化的纯文本格式，适当使用分段和列表，让内容清晰易读。\n",
+            "\n",
+            "正确示例：\n",
+            '{\n',
+            '  "thought": "用户问今天天气",\n',
+            '  "action": {"type": "FINAL_ANSWER", "answer": "今天天气情况：\\n\\n天气：晴天\\n温度：20-28度\\n建议：适合出门玩"}\n',
+            '}\n',
+            "\n",
+        ])
+
+    prompt_parts.extend([
         "## 工作原则\n",
         "\n",
-        "1. 用日常对话的方式回应用户，像朋友聊天一样自然\n",
-        "2. 控制在2000字以内，简洁明了\n",
+    ])
+
+    # 根据风格偏好添加工作原则
+    prompt_parts.append(f"1. {style_config['principle']}\n")
+    prompt_parts.append(f"2. 控制在{detail_config['max_length']}字以内，{detail_config['description']}\n")
+    prompt_parts.extend([
         "3. 简单任务自己处理（编辑配置、执行命令、查询数据、定时任务等）\n",
         "4. 复杂编程任务委托给code模式（开发工具、复杂脚本、代码重构）\n",
         "5. 数据分析任务委托给expert模式（PMF/OBM分析、气象分析、轨迹分析）\n",
@@ -84,7 +227,7 @@ def build_social_prompt(available_tools: List[str]) -> str:
         "\n",
         "## 可用工具\n",
         "\n",
-    ]
+    ])
 
 
     # ✅ 动态添加当前会话信息（从全局单例获取）
@@ -150,6 +293,60 @@ def build_social_prompt(available_tools: List[str]) -> str:
         '  }\n',
         '}\n',
         "\n",
+        "### 5. 连续对话：使用session_id\n",
+        "\n",
+        "子Agent调用支持连续对话，就像你和用户对话一样：\n",
+        "\n",
+        "**首次调用（创建新session）**：\n",
+        "```json\n",
+        "{\n",
+        '  "thought": "用户需要查询空气质量数据",\n',
+        '  "action": {\n',
+        '    "type": "TOOL_CALL",\n',
+        '    "tool": "call_sub_agent",\n',
+        '    "args": {\n',
+        '      "target_mode": "query",\n',
+        '      "task_description": "查询广州2025年1月的空气质量统计报表"\n',
+        "    }\n",
+        "  }\n",
+        "}\n",
+        "```\n",
+        "\n",
+        "**返回结果**（包含session_id）：\n",
+        "```json\n",
+        "{\n",
+        '  "status": "success",\n',
+        '  "result": "查询完成...",\n',
+        '  "metadata": {\n',
+        '    "session_id": "social__to__query__20250409_143052",  // 记住这个session_id\n',
+        '    "is_new_session": true\n',
+        "  }\n",
+        "}\n",
+        "```\n",
+        "\n",
+        "**继续对话**（使用返回的session_id）：\n",
+        "```json\n",
+        "{\n",
+        '  "thought": "用户想继续查看上个月的数据",\n',
+        '  "action": {\n',
+        '    "type": "TOOL_CALL",\n',
+        '    "tool": "call_sub_agent",\n',
+        '    "args": {\n',
+        '      "target_mode": "query",\n',
+        '      "task_description": "继续查询，对比2024年12月的数据",\n',
+        '      "session_id": "social__to__query__20250409_143052"  // 使用上次的session_id\n',
+        "    }\n",
+        "  }\n",
+        "}\n",
+        "```\n",
+        "\n",
+        "**重要提示**：\n",
+        "- 每次调用都会返回session_id，请记住它用于后续连续对话\n",
+        "- 如果用户说\"继续\"、\"再看看\"、\"还有呢\"等，使用上次返回的session_id\n",
+        "- 如果用户开始新话题，不传session_id（会创建新session）\n",
+        "- 从对话历史的最近结果中找到session_id（通常在metadata字段）\n",
+        "\n",
+        "\n",
         "给出最终答案：\n",
         "{\n",
         '  "thought": "任务完成了",\n',
@@ -161,7 +358,33 @@ def build_social_prompt(available_tools: List[str]) -> str:
         "\n",
         "## 回答风格\n",
         "\n",
-        "用日常对话的方式，像朋友聊天一样自然，不要用格式化的列表或表格。\n",
+    ])
+
+    # 根据用户偏好添加风格说明
+    if user_preferences:
+        style_info = _get_style_config(style)
+        format_info = _get_format_config(format_type)
+        detail_info = _get_detail_config(detail)
+
+        prompt_parts.extend([
+            f"- 语气风格：{style_info['tone']}\n",
+            f"- 字数限制：{detail_info['max_length']}字以内\n",
+            f"- 输出格式：{format_info['description']}\n",
+        ])
+
+        if use_emoji:
+            prompt_parts.append("- 可以适当使用表情符号增加亲和力\n")
+        else:
+            prompt_parts.append("- 不要使用表情符号\n")
+
+        prompt_parts.append(f"\n{format_info['instruction']}。\n")
+    else:
+        # 默认风格（向后兼容）
+        prompt_parts.extend([
+            "用日常对话的方式，像朋友聊天一样自然，不要用格式化的列表或表格。\n",
+        ])
+
+    prompt_parts.extend([
         "\n",
         "## 任务清单功能\n",
         "\n",

@@ -28,8 +28,9 @@ from app.fetchers.city_statistics.city_statistics_fetcher import (
     safe_round,
     calculate_percentile,
     calculate_statistics,
-    ANNUAL_STANDARD_LIMITS,
-    WEIGHTS
+    ANNUAL_STANDARD_LIMITS_2026,
+    WEIGHTS_2026,
+    WEIGHTS_2013
 )
 
 logger = structlog.get_logger()
@@ -43,21 +44,41 @@ def calculate_province_rankings(statistics: List[Dict]) -> List[Dict]:
     """
     计算省份排名（按综合指数）
 
+    同时计算4套标准组合的排名
+
     Args:
         statistics: 统计数据列表
 
     Returns:
         添加了排名的统计数据列表
     """
-    # 过滤有效数据（有综合指数的）
+    # 计算新标准排名（新限值+新算法）
     valid_stats = [s for s in statistics if s.get('comprehensive_index') is not None]
-
-    # 按综合指数排序（从小到大，越小越好）
     sorted_stats = sorted(valid_stats, key=lambda x: x['comprehensive_index'])
 
-    # 添加排名
     for rank, stat in enumerate(sorted_stats, start=1):
         stat['comprehensive_index_rank'] = rank
+
+    # 计算旧标准排名（旧限值+旧算法）
+    valid_stats_old = [s for s in statistics if s.get('comprehensive_index_old') is not None]
+    sorted_stats_old = sorted(valid_stats_old, key=lambda x: x['comprehensive_index_old'])
+
+    for rank, stat in enumerate(sorted_stats_old, start=1):
+        stat['comprehensive_index_rank_old'] = rank
+
+    # 计算新限值+旧算法排名
+    valid_stats_new_limit_old_algo = [s for s in statistics if s.get('comprehensive_index_new_limit_old_algo') is not None]
+    sorted_stats_new_limit_old_algo = sorted(valid_stats_new_limit_old_algo, key=lambda x: x['comprehensive_index_new_limit_old_algo'])
+
+    for rank, stat in enumerate(sorted_stats_new_limit_old_algo, start=1):
+        stat['comprehensive_index_rank_new_limit_old_algo'] = rank
+
+    # 计算旧限值+新算法排名
+    valid_stats_old_limit_new_algo = [s for s in statistics if s.get('comprehensive_index_old_limit_new_algo') is not None]
+    sorted_stats_old_limit_new_algo = sorted(valid_stats_old_limit_new_algo, key=lambda x: x['comprehensive_index_old_limit_new_algo'])
+
+    for rank, stat in enumerate(sorted_stats_old_limit_new_algo, start=1):
+        stat['comprehensive_index_rank_old_limit_new_algo'] = rank
 
     # 返回完整列表（包括无效数据）
     result = []
@@ -388,9 +409,13 @@ class ProvinceSQLServerClient(SQLServerClient):
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
+                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
+                comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
+                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
+                standard_version,
                 data_days, sample_coverage, city_count, city_names,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for stat in statistics:
@@ -411,6 +436,15 @@ class ProvinceSQLServerClient(SQLServerClient):
                     stat.get('o3_8h_index'),
                     stat.get('comprehensive_index'),
                     stat.get('comprehensive_index_rank'),
+                    stat.get('pm10_index_old'),
+                    stat.get('pm2_5_index_old'),
+                    stat.get('comprehensive_index_old'),
+                    stat.get('comprehensive_index_rank_old'),
+                    stat.get('comprehensive_index_new_limit_old_algo'),
+                    stat.get('comprehensive_index_rank_new_limit_old_algo'),
+                    stat.get('comprehensive_index_old_limit_new_algo'),
+                    stat.get('comprehensive_index_rank_old_limit_new_algo'),
+                    'HJ663-2026',
                     stat.get('data_days'),
                     stat.get('sample_coverage'),
                     stat.get('city_count'),
@@ -703,6 +737,9 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
+                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
+                comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
+                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 data_days, sample_coverage, city_count, city_names
             FROM province_statistics
             WHERE stat_type = 'current_month' AND stat_date = ?
@@ -742,9 +779,13 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
+                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
+                comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
+                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
+                standard_version,
                 data_days, sample_coverage, city_count, city_names,
                 created_at, updated_at
-            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for row in current_data:
@@ -755,6 +796,10 @@ class ProvinceStatisticsFetcher(DataFetcher):
                     row.co_concentration, row.o3_8h_concentration,
                     row.so2_index, row.no2_index, row.pm10_index, row.pm2_5_index, row.co_index, row.o3_8h_index,
                     row.comprehensive_index, row.comprehensive_index_rank,
+                    row.pm10_index_old, row.pm2_5_index_old, row.comprehensive_index_old, row.comprehensive_index_rank_old,
+                    row.comprehensive_index_new_limit_old_algo, row.comprehensive_index_rank_new_limit_old_algo,
+                    row.comprehensive_index_old_limit_new_algo, row.comprehensive_index_rank_old_limit_new_algo,
+                    'HJ663-2026',
                     row.data_days, row.sample_coverage, row.city_count, row.city_names
                 ]
                 cursor.execute(insert_sql, params)

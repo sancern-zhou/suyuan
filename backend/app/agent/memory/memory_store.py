@@ -107,13 +107,13 @@ class MemoryStore:
         if not self.memory_file.exists():
             initial_memory = """# 长期记忆 (MEMORY.md)
 
-此文件存储用户的偏好、重要结论和关键信息。
+此文件存储用户的偏好、领域知识和重要结论。
 
 ## 用户偏好
 
-## 历史结论
+## 领域知识
 
-## 重要数据
+## 历史结论
 """
             self.memory_file.write_text(initial_memory, encoding="utf-8")
             logger.info("memory_file_created", path=str(self.memory_file))
@@ -278,16 +278,42 @@ class MemoryStore:
 新的对话内容：
 {conversation_text}
 
+**⚠️ 长期记忆内容限制（CRITICAL - 必须严格遵守）**：
+
+长期记忆只能包含以下三个章节，严禁新增其他章节：
+
+### ✅ 允许的三个章节：
+
+1. **## 用户偏好**：用户明确表达的习惯、要求、禁忌、工作方式
+2. **## 领域知识**：可复用的业务规则、概念定义、数据含义、系统特性
+3. **## 历史结论**：经过验证的、具有普适性的分析结论和规律
+
+### 🚫 严禁保留到长期记忆的内容：
+
+1. **具体任务内容**：某次具体查询、分析、操作的详细过程或结果
+2. **技术架构细节**：系统架构、工具调用流程、数据流转路径
+3. **一次性数据**：具体的data_id、临时查询结果、单次统计数值
+4. **时间敏感信息**：具体某天/某月的排名、临时统计数据、时效性结论
+5. **操作细节**：具体的工具调用步骤、中间过程、调试信息
+6. **可查询数据**：可以通过数据库查询获得的任何数值数据
+
+### 📝 格式要求：
+
+- **章节固定**：只能使用"## 用户偏好"、"## 领域知识"、"## 历史结论"三个章节
+- **禁止新增章节**：不能添加"## 重要数据"、"## 操作记录"等新章节
+- **总长度限制**：长期记忆总字数不超过1500字
+- **内容泛化**：将具体结论泛化为可复用知识
+
 请执行以下任务：
-1. 提取对话中的重要信息（用户偏好、关键结论、有用数据）
-2. 整合到当前记忆中
-3. 去除重复或过时的信息
+1. 提取对话中的重要信息（只保留用户偏好、领域知识、重要结论）
+2. 整合到当前记忆中（只能使用三个固定章节）
+3. 去除重复、过时、以及所有具体任务细节和技术架构信息
 4. 返回更新后的完整记忆内容（Markdown格式）
 
 **重要**：
 - 只返回更新后的记忆内容，不要有其他解释
-- 保持简洁，记忆内容不超过1000字
-- 使用清晰的分类和标题
+- 保持简洁，记忆内容不超过1500字
+- 严格遵守三个章节限制，不能新增章节
 """
 
         try:
@@ -485,20 +511,56 @@ class ImprovedMemoryStore(MemoryStore):
 {self._format_messages(messages)}
 
 **任务**：
-1. 分析对话内容，提取重要信息（用户偏好、关键结论、重要数据）
+1. 分析对话内容，提取重要信息
 2. 生成 history_entry：一段简洁的对话摘要（格式：[YYYY-MM-DD HH:MM] 摘要内容，包含关键事件、决策、主题，便于 grep 搜索）
 3. 生成 memory_update：更新后的长期记忆（Markdown格式，包含所有原有记忆+新信息）
 
-**要求**：
-- 保持记忆简洁（不超过1000字）
-- 使用清晰的分类和标题
-- 避免重复信息
+**⚠️ 长期记忆内容限制（CRITICAL - 必须严格遵守）**：
+
+长期记忆只能包含以下三个章节，严禁新增其他章节：
+
+### ✅ 允许的三个章节：
+
+1. **## 用户偏好**：用户明确表达的习惯、要求、禁忌、工作方式
+   - 例如：时间基准、工具使用偏好、输出格式要求
+   - 每条偏好简明扼要，不超过30字
+
+2. **## 领域知识**：可复用的业务规则、概念定义、数据含义、系统特性
+   - 例如：数据表含义、字段说明、业务规则、系统限制
+   - 只保留抽象知识，不包含具体数值
+
+3. **## 历史结论**：经过验证的、具有普适性的分析结论和规律
+   - 例如：数据质量规律、系统行为模式、可复用结论
+   - 必须是泛化结论，不能是单次任务的发现
+
+### 🚫 严禁保留到长期记忆的内容：
+
+1. **具体任务内容**：某次具体查询、分析、操作的详细过程或结果
+2. **技术架构细节**：系统架构、工具调用流程、数据流转路径
+3. **一次性数据**：具体的data_id、临时查询结果、单次统计数值
+4. **时间敏感信息**：具体某天/某月的排名、临时统计数据、时效性结论
+5. **操作细节**：具体的工具调用步骤、中间过程、调试信息
+6. **可查询数据**：可以通过数据库查询获得的任何数值数据
+
+### 📝 格式要求：
+
+- **章节固定**：只能使用"## 用户偏好"、"## 领域知识"、"## 历史结论"三个章节
+- **禁止新增章节**：不能添加"## 重要数据"、"## 操作记录"等新章节
+- **总长度限制**：长期记忆总字数不超过1500字
+- **内容泛化**：将具体结论泛化为可复用知识
+
+### 🔄 更新策略：
+
+- 新信息与旧记忆冲突时，保留最新信息
+- 删除重复或过时的信息
+- 合并相似的信息条目
+- 具体任务中发现的知识，要泛化后才能进入长期记忆
 
 **返回格式（必须严格遵守）**：
 ```json
 {{
-    "history_entry": "对话摘要",
-    "memory_update": "更新后的长期记忆（Markdown格式）"
+    "history_entry": "对话摘要（可包含具体任务细节）",
+    "memory_update": "更新后的长期记忆（只包含三个固定章节，删除所有任务细节和技术架构信息）"
 }}
 ```
 
@@ -639,12 +701,16 @@ class ImprovedMemoryStore(MemoryStore):
     def write_long_term(self, content: str) -> None:
         """写入长期记忆"""
         try:
-            self.memory_file.write_text(content, encoding="utf-8")
+            # 验证记忆内容
+            validated_content = self._validate_and_clean_memory(content)
+
+            self.memory_file.write_text(validated_content, encoding="utf-8")
             logger.info(
                 "long_term_memory_updated",
                 user_id=self.user_id,
                 mode=self.mode,
-                length=len(content)
+                original_length=len(content),
+                validated_length=len(validated_content)
             )
         except Exception as e:
             logger.error(
@@ -654,6 +720,83 @@ class ImprovedMemoryStore(MemoryStore):
                 error=str(e)
             )
             raise
+
+    def _validate_and_clean_memory(self, content: str) -> str:
+        """
+        验证和清理记忆内容，确保符合长期记忆要求
+
+        Args:
+            content: 原始记忆内容
+
+        Returns:
+            清理后的记忆内容
+        """
+        lines = content.split('\n')
+        valid_lines = []
+        allowed_sections = {"## 用户偏好", "## 领域知识", "## 历史结论"}
+        current_section = None
+
+        for line in lines:
+            # 检查是否是章节标题
+            if line.startswith("## "):
+                section_name = line.strip()
+
+                # 检查是否是允许的章节
+                if section_name in allowed_sections:
+                    current_section = section_name
+                    valid_lines.append(line)
+                else:
+                    # 不允许的章节，跳过并记录警告
+                    logger.warning(
+                        "memory_section_not_allowed",
+                        section=section_name,
+                        user_id=self.user_id,
+                        mode=self.mode
+                    )
+                    current_section = None
+                continue
+
+            # 如果当前在有效的章节中，保留内容
+            if current_section is not None:
+                # 过滤掉包含data_id的行
+                if 'data_id:' in line or 'data_id：' in line:
+                    logger.debug(
+                        "memory_filtered_data_id",
+                        line=line[:50],
+                        user_id=self.user_id,
+                        mode=self.mode
+                    )
+                    continue
+
+                # 过滤掉包含技术架构细节的行
+                forbidden_keywords = ['工具调用流程', '数据流转', '系统架构', '调用步骤']
+                if any(keyword in line for keyword in forbidden_keywords):
+                    logger.debug(
+                        "memory_filtered_architecture_detail",
+                        line=line[:50],
+                        user_id=self.user_id,
+                        mode=self.mode
+                    )
+                    continue
+
+                valid_lines.append(line)
+
+        # 重新构建内容
+        cleaned_content = '\n'.join(valid_lines)
+
+        # 硬性长度限制
+        max_length = 1500
+        if len(cleaned_content) > max_length:
+            logger.warning(
+                "memory_too_long_truncated",
+                user_id=self.user_id,
+                mode=self.mode,
+                original_length=len(cleaned_content),
+                max_length=max_length
+            )
+            cleaned_content = cleaned_content[:max_length] + "\n\n... (记忆已截断)"
+
+        return cleaned_content
 
     def _fail_or_raw_archive(self, messages: List[Dict[str, Any]]) -> bool:
         """

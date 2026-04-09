@@ -13,8 +13,8 @@
 - ✅ **数据查询工具**（5个）：
   - `query_gd_suncere_city_hour` - 查询广东省城市小时空气质量数据
   - `query_gd_suncere_city_day_new` - 查询广东省城市日空气质量数据（新标准）
-  - `query_new_standard_report` - 查询HJ 633-2024新标准空气质量统计报表
-  - `query_old_standard_report` - 查询HJ 633-2011旧标准空气质量统计报表
+  - `query_new_standard_report` - 查询HJ 633-2026新标准空气质量统计报表
+  - `query_old_standard_report` - 查询HJ 633-2013旧标准空气质量统计报表
   - `compare_standard_reports` - 新标准报表对比分析
 
 - ✅ **文件操作工具**（3个）：

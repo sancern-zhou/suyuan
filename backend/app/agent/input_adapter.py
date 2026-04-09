@@ -331,6 +331,74 @@ TOOL_RULES = {
             }
         }
     },
+    "find_replace_word": {
+        "required_fields": ["path", "find_text", "replace_text"],
+        "optional_fields": ["output_file", "use_regex", "case_sensitive"],
+        "field_mapping": {
+            "docx_path": "path",
+            "file_path": "path",
+            "文件路径": "path",
+            "find": "find_text",
+            "查找文本": "find_text",
+            "搜索": "find_text",
+            "replace": "replace_text",
+            "替换文本": "replace_text",
+            "替换为": "replace_text"
+        }
+    },
+    "unpack_office": {
+        "required_fields": ["path"],
+        "optional_fields": ["output_dir"],
+        "field_mapping": {
+            "file_path": "path",
+            "docx_path": "path",
+            "文件路径": "path",
+            "输出目录": "output_dir"
+        }
+    },
+    "pack_office": {
+        "required_fields": ["input_dir"],
+        "optional_fields": ["output_file"],
+        "field_mapping": {
+            "xml_dir": "input_dir",
+            "xml_path": "input_dir",
+            "目录": "input_dir",
+            "input_path": "input_dir",
+            "输出路径": "output_file",
+            "output_path": "output_file"
+        }
+    },
+    "accept_word_changes": {
+        "required_fields": ["input_file"],
+        "optional_fields": ["output_file"],
+        "field_mapping": {
+            "file_path": "input_file",
+            "docx_path": "input_file",
+            "文件路径": "input_file",
+            "输出路径": "output_file"
+        }
+    },
+    "recalc_excel": {
+        "required_fields": ["path"],
+        "optional_fields": [],
+        "field_mapping": {
+            "file_path": "path",
+            "xlsx_path": "path",
+            "文件路径": "path"
+        }
+    },
+    "add_ppt_slide": {
+        "required_fields": ["unpacked_dir", "source"],
+        "optional_fields": [],
+        "field_mapping": {
+            "pptx_path": "unpacked_dir",
+            "file_path": "unpacked_dir",
+            "文件路径": "unpacked_dir",
+            "目录": "unpacked_dir",
+            "源文件": "source",
+            "source_file": "source"
+        }
+    },
 }
 
 

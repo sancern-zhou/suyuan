@@ -618,6 +618,8 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
         # 为每个工具创建一个闭包，避免延迟绑定问题
         def make_tool_wrapper(name: str):
             async def tool_wrapper(context=None, **kwargs):
+                # 移除 kwargs 中的 tool_name 参数，避免与位置参数 name 冲突
+                kwargs.pop('tool_name', None)
                 return await call_llm_tool(name, context=context, **kwargs)
             tool_wrapper.__name__ = name
             # 从注册表获取工具描述

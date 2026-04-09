@@ -8,7 +8,7 @@ from app.services.gd_suncere_api_client import get_gd_suncere_api_client
 import math
 import csv
 
-# 新标准（HJ 633-2024）断点
+# 新标准（HJ 633-2026）断点
 BREAKPOINTS_NEW = {
     'PM2_5': [(0, 35, 0, 50), (35, 75, 50, 100), (75, 115, 100, 150), (115, 150, 150, 200),
               (150, 250, 200, 300), (250, 350, 300, 400), (350, 500, 400, 500)],

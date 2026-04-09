@@ -52,21 +52,21 @@ aggregate_data(
 - `PERCENTILE` - 百分位数（需要percentile参数）
 - `O3_8H_MAX` - O3日最大8小时平均
 
-### 空气质量指数函数（基于HJ 633-2024新标准）
+### 空气质量指数函数（基于HJ 633-2026新标准）
 - `IAQI` - 空气质量分指数
 - `AQI` - 空气质量指数（取各污染物IAQI最大值）
 - `PRIMARY_POLLUTANT` - 首要污染物（IAQI最大的污染物）
 
 **⚠️ 重要限制**：IAQI/AQI/PRIMARY_POLLUTANT **仅限单日数据评价**
 
-- 这些函数基于**日平均浓度**设计（HJ 633-2024标准）
+- 这些函数基于**日平均浓度**设计（HJ 633-2026标准）
 - 如果数据跨越多日，工具会**返回错误**，提示使用 `start_date`/`end_date` 限制为单日
 - **原因**：多日数据先求平均再计算IAQI，会平滑掉高值，导致评价结果不准确
 - **正确用法**：使用 `start_date` 和 `end_date` 参数限制为单日（见下方示例）
 
 ### 质量指数函数
 - `SINGLE_INDEX` - 单项指数（浓度/标准限值）
-- `COMPREHENSIVE_INDEX` - 综合指数（六项污染物单项指数之和）
+- `COMPREHENSIVE_INDEX` - 综合指数（新标准加权求和：PM2.5权重3，O3权重2，NO2权重2，其他权重1）
 
 **⚠️ 重要限制**：SINGLE_INDEX/COMPREHENSIVE_INDEX **仅限多日数据评价（至少2天）**
 
@@ -165,7 +165,7 @@ aggregations=[{'column':'pm25','function':'SINGLE_INDEX','pollutant':'PM2_5'}]
 aggregations=[{'column':'composite','function':'COMPREHENSIVE_INDEX'}]
 ```
 
-## 新标准说明（HJ 633-2024）
+## 新标准说明（HJ 633-2026）
 
 ### IAQI断点变化
 - PM2.5: IAQI=100时浓度60μg/m³（旧标准75）
@@ -179,11 +179,23 @@ aggregations=[{'column':'composite','function':'COMPREHENSIVE_INDEX'}]
 - CO: 4 mg/m³
 - O3_8h: 160 μg/m³
 
-### 综合指数计算公式
+### 综合指数计算公式（新标准 HJ 633-2026）
 ```
-综合指数 = Σ(单项指数) = Σ(Ci/Si)
+综合指数 = Σ(单项指数 × 权重) = Σ((Ci/Si) × Wi)
 ```
-所有权重均为1
+
+**权重配置**：
+- PM2.5权重：3
+- PM10权重：1
+- SO2权重：1
+- NO2权重：2
+- CO权重：1
+- O3_8h权重：2
+
+其中：
+- Ci为污染物浓度
+- Si为标准限值（年均限值）
+- Wi为权重
 
 ## 污染物列名映射
 
@@ -200,7 +212,7 @@ aggregations=[{'column':'composite','function':'COMPREHENSIVE_INDEX'}]
 1. **天数限制（重要）**：
    - **IAQI/AQI/PRIMARY_POLLUTANT**：仅限单日数据，多日数据会返回错误
    - **SINGLE_INDEX/COMPREHENSIVE_INDEX**：仅限多日数据（≥2天），单日数据会返回错误
-   - 这些限制基于HJ 633-2024标准，确保评价结果的科学性和准确性
+   - 这些限制基于HJ 633-2026标准，确保评价结果的科学性和准确性
 
 2. IAQI和SINGLE_INDEX函数必须提供pollutant参数
 

@@ -1,7 +1,7 @@
 """
 新标准统计报表查询工具
 
-基于 HJ 633-2024 新标准的空气质量统计报表查询工具
+基于 HJ 633-2026 新标准的空气质量统计报表查询工具
 
 【核心功能】
 - 新标准综合指数计算（PM2.5权重3，O3权重2，NO2权重2，其他权重1）
@@ -38,6 +38,38 @@ from app.tools.query.query_gd_suncere.tool import QueryGDSuncereDataTool
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
 
 logger = structlog.get_logger()
+
+
+# =============================================================================
+# 广东省区域划分
+# =============================================================================
+
+# 广东省21个地级市的区域划分
+GUANGDONG_REGIONS = {
+    # 珠三角（9市）
+    "珠三角": ["广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆"],
+    # 粤东（4市）
+    "粤东": ["汕头", "汕尾", "潮州", "揭阳"],
+    # 粤西（3市）
+    "粤西": ["湛江", "茂名", "阳江"],
+    # 粤北（5市）
+    "粤北": ["韶关", "河源", "梅州", "清远", "云浮"],
+}
+
+# 非珠三角 = 粤东 + 粤西 + 粤北
+GUANGDONG_REGIONS["非珠三角"] = (
+    GUANGDONG_REGIONS["粤东"] +
+    GUANGDONG_REGIONS["粤西"] +
+    GUANGDONG_REGIONS["粤北"]
+)
+
+# 城市到区域的反向映射（用于快速查找）
+CITY_TO_REGION = {}
+for region, cities in GUANGDONG_REGIONS.items():
+    for city in cities:
+        if city not in CITY_TO_REGION:
+            CITY_TO_REGION[city] = []
+        CITY_TO_REGION[city].append(region)
 
 
 # =============================================================================
@@ -435,13 +467,13 @@ ROUNDING_PRECISION = {
     }
 }
 
-# 新标准（HJ 633-2024）24小时平均标准限值（单位：μg/m³，CO为mg/m³）
-# 注意：新标准相比旧标准（HJ 633-2011）加严了PM2.5和PM10的限值
+# 新标准（HJ 633-2026）24小时平均标准限值（单位：μg/m³，CO为mg/m³）
+# 注意：新标准相比旧标准（HJ 633-2013）加严了PM2.5和PM10的限值
 # - PM2.5: 新标准60 vs 旧标准75
 # - PM10: 新标准120 vs 旧标准150
 STANDARD_LIMITS = {
-    'PM2_5': 60,   # 新标准24小时平均二级标准（HJ 633-2024，IAQI=100对应60）
-    'PM10': 120,   # 新标准24小时平均二级标准（HJ 633-2024，IAQI=100对应120）
+    'PM2_5': 60,   # 新标准24小时平均二级标准（HJ 633-2026，IAQI=100对应60）
+    'PM10': 120,   # 新标准24小时平均二级标准（HJ 633-2026，IAQI=100对应120）
     'SO2': 150,    # 24小时平均二级标准
     'NO2': 80,     # 24小时平均二级标准
     'CO': 4,       # 24小时平均二级标准（mg/m³）
@@ -469,7 +501,7 @@ WEIGHTS = {
     'O3_8h': 2
 }
 
-# 新标准IAQI分段表（HJ 633-2024）
+# 新标准IAQI分段表（HJ 633-2026）
 # IAQI 分段断点表：[浓度限值, IAQI值]
 # 浓度单位：μg/m³（CO为mg/m³）
 IAQI_BREAKPOINTS_NEW = {
@@ -804,6 +836,7 @@ async def execute_query_new_standard_report(
     end_date: str,
     enable_sand_deduction: bool = True,
     exclude_exceed_details: bool = False,
+    use_old_composite_algorithm: bool = False,
     context: Optional[ExecutionContext] = None
 ) -> Dict[str, Any]:
     """
@@ -815,6 +848,9 @@ async def execute_query_new_standard_report(
         end_date: 结束日期 (YYYY-MM-DD)
         enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
         exclude_exceed_details: 是否排除超标详情（默认False），为True时不返回exceed_details字段
+        use_old_composite_algorithm: 是否使用旧综合指数算法（默认False，使用新算法）
+            - False（默认）: PM2.5权重3，NO2权重2，O3权重2，其他权重1
+            - True: 所有污染物权重均为1
         context: 执行上下文（可选）
 
     Returns:
@@ -1165,8 +1201,8 @@ async def execute_query_new_standard_report(
                     "daily_calculation_debug",
                     date=date_only,
                     concentrations={
-                        'PM2_5': f"{pm25_for_aqi:.1f}",
-                        'PM10': f"{pm10_for_aqi:.1f}",
+                        'PM2_5': f"{pm25:.1f}",
+                        'PM10': f"{pm10:.1f}",
                         'SO2': f"{so2:.1f}",
                         'NO2': f"{no2:.1f}",
                         'CO': f"{co:.1f}",
@@ -1451,13 +1487,30 @@ async def execute_query_new_standard_report(
         co_index = safe_round(new_standard_concentrations['CO'] / ANNUAL_STANDARD_LIMITS['CO'], 3)
         o3_8h_index = safe_round(new_standard_concentrations['O3_8h'] / ANNUAL_STANDARD_LIMITS['O3_8h'], 3)
 
+        # 根据参数选择综合指数算法权重
+        # use_old_composite_algorithm=False（默认）: 新算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
+        # use_old_composite_algorithm=True: 旧算法（所有污染物权重均为1）
+        if use_old_composite_algorithm:
+            # 旧综合指数算法：所有权重均为1
+            composite_weights = {
+                'PM2_5': 1,
+                'PM10': 1,
+                'SO2': 1,
+                'NO2': 1,
+                'CO': 1,
+                'O3_8h': 1
+            }
+        else:
+            # 新综合指数算法（默认）：PM2.5权重3，NO2权重2，O3权重2，其他权重1
+            composite_weights = WEIGHTS
+
         # 计算加权单项质量指数
-        pm25_weighted_index = safe_round(pm25_index * WEIGHTS['PM2_5'], 3)
-        pm10_weighted_index = safe_round(pm10_index * WEIGHTS['PM10'], 3)
-        so2_weighted_index = safe_round(so2_index * WEIGHTS['SO2'], 3)
-        no2_weighted_index = safe_round(no2_index * WEIGHTS['NO2'], 3)
-        co_weighted_index = safe_round(co_index * WEIGHTS['CO'], 3)
-        o3_8h_weighted_index = safe_round(o3_8h_index * WEIGHTS['O3_8h'], 3)
+        pm25_weighted_index = safe_round(pm25_index * composite_weights['PM2_5'], 3)
+        pm10_weighted_index = safe_round(pm10_index * composite_weights['PM10'], 3)
+        so2_weighted_index = safe_round(so2_index * composite_weights['SO2'], 3)
+        no2_weighted_index = safe_round(no2_index * composite_weights['NO2'], 3)
+        co_weighted_index = safe_round(co_index * composite_weights['CO'], 3)
+        o3_8h_weighted_index = safe_round(o3_8h_index * composite_weights['O3_8h'], 3)
 
         # 计算综合指数
         avg_composite_index = safe_round(
@@ -1594,22 +1647,34 @@ async def execute_query_new_standard_report(
 
     # 计算全省汇总统计（多城市查询时）
     province_wide_stats = None
+    regional_stats = None
     if len(cities) > 1 and city_stats:
         province_wide_stats = calculate_province_wide_stats(city_stats)
+        # 计算各区域汇总统计（珠三角、粤东、粤西、粤北、非珠三角）
+        regional_stats = calculate_regional_stats(city_stats)
 
     # 构建返回结果
     # 统计结果放在 result 字段，与 query_standard_comparison 保持一致
     # 原始日数据通过 data_id 引用
+
+    # 综合指数算法说明
+    composite_algorithm_desc = "旧综合指数算法（所有权重均为1）" if use_old_composite_algorithm else "新综合指数算法（PM2.5权重3，NO2权重2，O3权重2）"
+
     if len(cities) == 1 and city_stats:
         city_name = list(city_stats.keys())[0]
         result_summary_data = city_stats[city_name]
-        result_summary = f"新标准统计报表查询完成，{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
     else:
         result_summary_data = city_stats
-        result_summary = f"新标准统计报表查询完成，共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
-        # 添加全省汇总到结果
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+        # 合并全省和各区域汇总到结果（按顺序：粤东、粤西、粤北、珠三角、非珠三角、全省）
+        if regional_stats:
+            result_summary_data["regional_stats"] = regional_stats
+        # 添加全省汇总到区域统计的最后
         if province_wide_stats:
-            result_summary_data["province_wide"] = province_wide_stats
+            if "regional_stats" not in result_summary_data:
+                result_summary_data["regional_stats"] = {}
+            result_summary_data["regional_stats"]["全省"] = province_wide_stats
 
     # 添加数据存储信息到摘要
     # if data_id_str:
@@ -1622,6 +1687,7 @@ async def execute_query_new_standard_report(
         "cities": cities,
         "date_range": f"{start_date} to {end_date}",
         "total_days": sum(s.get("total_days", 0) for s in city_stats.values()) if city_stats else 0,
+        "composite_algorithm": "old" if use_old_composite_algorithm else "new",  # 综合指数算法标识
         "sand_deduction_applied": enable_sand_deduction and bool(sand_dates),  # 是否应用了扣沙处理
         "sand_deduction_info": {
             "enabled": enable_sand_deduction,
@@ -1863,6 +1929,214 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
     return province_wide
 
 
+def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
+    """
+    计算各区域汇总统计指标（珠三角、粤东、粤西、粤北、非珠三角）
+
+    汇总规则：
+    - **均值类指标**（各城市均值）：composite_index, single_indexes.*, SO2, NO2, PM10, PM2_5, CO_P95, O3_8h_P90等
+    - **累加类指标**（各城市累加）：exceed_days, valid_days, exceed_days_by_pollutant.*, primary_pollutant_days.*, total_primary_days
+    - **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
+
+    Args:
+        city_stats: 各城市统计数据字典
+
+    Returns:
+        各区域汇总统计数据字典，key为区域名称，value为该区域的统计数据
+    """
+    if not city_stats:
+        return {}
+
+    logger.info("calculating_regional_stats", cities_count=len(city_stats))
+
+    # 过滤有效城市数据
+    valid_cities = {k: v for k, v in city_stats.items() if v and isinstance(v, dict)}
+    if not valid_cities:
+        return {}
+
+    # 按区域分组城市
+    regional_cities = {}
+    for city_name in valid_cities.keys():
+        # 查找城市所属区域（城市可能属于多个区域，如非珠三角）
+        for region_name, region_cities in GUANGDONG_REGIONS.items():
+            if city_name in region_cities:
+                if region_name not in regional_cities:
+                    regional_cities[region_name] = []
+                regional_cities[region_name].append(city_name)
+                # 不break，因为一个城市可能属于多个区域（如汕头属于粤东和非珠三角）
+
+    # 计算各区域统计
+    regional_stats = {}
+    for region_name, region_city_list in regional_cities.items():
+        if not region_city_list:
+            continue
+
+        # 获取该区域的城市统计数据
+        region_city_stats = {city: valid_cities[city] for city in region_city_list}
+        num_cities = len(region_city_stats)
+
+        # ========== 累加类指标 ==========
+        total_exceed_days = sum(s.get("exceed_days", 0) for s in region_city_stats.values())
+        total_valid_days = sum(s.get("valid_days", 0) for s in region_city_stats.values())
+        total_primary_days = sum(s.get("total_primary_days", 0) for s in region_city_stats.values())
+
+        # 各污染物超标天累加
+        exceed_days_by_pollutant = {
+            'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_exceed = city_stats_data.get("exceed_days_by_pollutant", {})
+            for pollutant in exceed_days_by_pollutant.keys():
+                exceed_days_by_pollutant[pollutant] += int(city_exceed.get(pollutant, 0))
+
+        # 首要污染物天数累加
+        primary_pollutant_days = {
+            'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_primary = city_stats_data.get("primary_pollutant_days", {})
+            for pollutant in primary_pollutant_days.keys():
+                primary_pollutant_days[pollutant] += int(city_primary.get(pollutant, 0))
+
+        # 首要污染物超标天累加
+        primary_pollutant_exceed_days = {
+            'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_primary_exceed = city_stats_data.get("primary_pollutant_exceed_days", {})
+            if city_primary_exceed:
+                for pollutant in primary_pollutant_exceed_days.keys():
+                    primary_pollutant_exceed_days[pollutant] += int(city_primary_exceed.get(pollutant, 0))
+
+        # ========== 均值类指标 ==========
+        # 综合指数均值
+        composite_index_sum = sum(s.get("composite_index", 0) for s in region_city_stats.values())
+        avg_composite_index = safe_round(composite_index_sum / num_cities, 3) if num_cities > 0 else 0
+
+        # 各污染物浓度均值
+        so2_sum = sum(s.get("SO2", 0) for s in region_city_stats.values())
+        no2_sum = sum(s.get("NO2", 0) for s in region_city_stats.values())
+        pm10_sum = sum(s.get("PM10", 0) for s in region_city_stats.values())
+        pm25_sum = sum(s.get("PM2_5", 0) for s in region_city_stats.values())
+        co_p95_sum = sum(s.get("CO_P95", 0) for s in region_city_stats.values())
+        o3_8h_p90_sum = sum(s.get("O3_8h_P90", 0) for s in region_city_stats.values())
+
+        so2_percentile_98_sum = sum(s.get("SO2_P98", 0) for s in region_city_stats.values())
+        no2_percentile_98_sum = sum(s.get("NO2_P98", 0) for s in region_city_stats.values())
+        pm10_percentile_95_sum = sum(s.get("PM10_P95", 0) for s in region_city_stats.values())
+        pm25_percentile_95_sum = sum(s.get("PM2_5_P95", 0) for s in region_city_stats.values())
+
+        # 计算原始均值
+        avg_so2_raw = so2_sum / num_cities if num_cities > 0 else 0
+        avg_no2_raw = no2_sum / num_cities if num_cities > 0 else 0
+        avg_pm10_raw = pm10_sum / num_cities if num_cities > 0 else 0
+        avg_pm25_raw = pm25_sum / num_cities if num_cities > 0 else 0
+        avg_co_p95_raw = co_p95_sum / num_cities if num_cities > 0 else 0
+        avg_o3_8h_p90_raw = o3_8h_p90_sum / num_cities if num_cities > 0 else 0
+
+        avg_so2_p98_raw = so2_percentile_98_sum / num_cities if num_cities > 0 else 0
+        avg_no2_p98_raw = no2_percentile_98_sum / num_cities if num_cities > 0 else 0
+        avg_pm10_p95_raw = pm10_percentile_95_sum / num_cities if num_cities > 0 else 0
+        avg_pm25_p95_raw = pm25_percentile_95_sum / num_cities if num_cities > 0 else 0
+
+        # 应用修约规则
+        avg_so2 = format_pollutant_value(avg_so2_raw, 'SO2', 'statistical_data', use_final_rounding=True)
+        avg_no2 = format_pollutant_value(avg_no2_raw, 'NO2', 'statistical_data', use_final_rounding=True)
+        avg_pm10 = format_pollutant_value(avg_pm10_raw, 'PM10', 'statistical_data', use_final_rounding=True)
+        avg_pm25 = format_pollutant_value(avg_pm25_raw, 'PM2_5', 'statistical_data', use_final_rounding=True)
+        avg_co_p95 = format_pollutant_value(avg_co_p95_raw, 'CO', 'statistical_data', use_final_rounding=True)
+        avg_o3_8h_p90 = format_pollutant_value(avg_o3_8h_p90_raw, 'O3_8h', 'statistical_data', use_final_rounding=True)
+
+        avg_so2_p98 = format_pollutant_value(avg_so2_p98_raw, 'SO2', 'statistical_data', use_final_rounding=True)
+        avg_no2_p98 = format_pollutant_value(avg_no2_p98_raw, 'NO2', 'statistical_data', use_final_rounding=True)
+        avg_pm10_p95 = format_pollutant_value(avg_pm10_p95_raw, 'PM10', 'statistical_data', use_final_rounding=True)
+        avg_pm25_p95 = format_pollutant_value(avg_pm25_p95_raw, 'PM2_5', 'statistical_data', use_final_rounding=True)
+
+        # 单项质量指数均值
+        single_indexes_sums = {
+            'SO2': 0, 'NO2': 0, 'PM10': 0, 'CO': 0, 'PM2_5': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_indexes = city_stats_data.get("single_indexes", {})
+            for pollutant in single_indexes_sums.keys():
+                single_indexes_sums[pollutant] += city_indexes.get(pollutant, 0)
+
+        single_indexes = {
+            pollutant: safe_round(single_indexes_sums[pollutant] / num_cities, 3)
+            for pollutant in single_indexes_sums.keys()
+        } if num_cities > 0 else {p: 0 for p in single_indexes_sums.keys()}
+
+        # ========== 计算类指标 ==========
+        # 超标率和达标率
+        exceed_rate = safe_round(total_exceed_days / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+        compliance_rate = safe_round((total_valid_days - total_exceed_days) / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+
+        # 各污染物超标率
+        exceed_rate_by_pollutant = {}
+        for pollutant, days in exceed_days_by_pollutant.items():
+            exceed_rate_by_pollutant[pollutant] = safe_round(days / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+
+        # 首要污染物比例
+        primary_pollutant_ratio = {}
+        for pollutant, days in primary_pollutant_days.items():
+            primary_pollutant_ratio[pollutant] = safe_round(days / total_primary_days * 100, 1) if total_primary_days > 0 else 0
+
+        # 总天数累计
+        total_days_sum = sum(s.get("total_days", 0) for s in region_city_stats.values())
+        total_total_days = int(total_days_sum) if num_cities > 0 else 0
+
+        # 构建区域汇总结果
+        regional_stats[region_name] = {
+            "composite_index": avg_composite_index,
+            "exceed_days": int(total_exceed_days),
+            "valid_days": int(total_valid_days),
+            "exceed_rate": exceed_rate,
+            "compliance_rate": compliance_rate,
+            "total_days": int(total_total_days),
+            # 六参数统计指标
+            "SO2": avg_so2,
+            "SO2_P98": avg_so2_p98,
+            "NO2": avg_no2,
+            "NO2_P98": avg_no2_p98,
+            "PM10": avg_pm10,
+            "PM10_P95": avg_pm10_p95,
+            "PM2_5": avg_pm25,
+            "PM2_5_P95": avg_pm25_p95,
+            "CO_P95": avg_co_p95,
+            "O3_8h_P90": avg_o3_8h_p90,
+            # 单项质量指数
+            "single_indexes": single_indexes,
+            # 首要污染物统计
+            "primary_pollutant_days": {k: int(v) for k, v in primary_pollutant_days.items()},
+            "primary_pollutant_ratio": primary_pollutant_ratio,
+            "total_primary_days": int(total_primary_days),
+            # 各污染物超标统计
+            "exceed_days_by_pollutant": {k: int(v) for k, v in exceed_days_by_pollutant.items()},
+            "exceed_rate_by_pollutant": exceed_rate_by_pollutant,
+            # 首要污染物超标天统计
+            "primary_pollutant_exceed_days": primary_pollutant_exceed_days,
+        }
+
+        logger.info(
+            "regional_stats_calculated",
+            region=region_name,
+            cities_count=num_cities,
+            composite_index=avg_composite_index,
+            exceed_days=total_exceed_days,
+            valid_days=total_valid_days
+        )
+
+    # 按照指定顺序重新排列区域统计结果
+    # 顺序：粤东、粤西、粤北、珠三角、非珠三角
+    region_order = ["粤东", "粤西", "粤北", "珠三角", "非珠三角"]
+    ordered_regional_stats = {}
+    for region in region_order:
+        if region in regional_stats:
+            ordered_regional_stats[region] = regional_stats[region]
+
+    return ordered_regional_stats
+
+
 # =============================================================================
 # 工具类
 # =============================================================================
@@ -1871,17 +2145,18 @@ class QueryNewStandardReportTool(LLMTool):
     """
     新标准统计报表查询工具
 
-    查询任意时间段内基于HJ 633-2024新标准的空气质量统计报表
+    查询任意时间段内基于HJ 633-2026新标准的空气质量统计报表
     """
 
     def __init__(self):
         function_schema = {
             "name": "query_new_standard_report",
             "description": """
-查询基于HJ 633-2024新标准的空气质量统计报表。
+查询基于HJ 633-2026新标准的空气质量统计报表。
 
 【核心功能】
-- 新标准综合指数计算（所有污染物权重均为1）
+- 新标准污染物浓度限值（PM2.5断点60μg/m³，PM10断点120μg/m³）
+- 综合指数计算（默认：PM2.5权重3，NO2权重2，O3权重2，其他权重1；可选：所有权重均为1）
 - 超标天数和达标率统计（基于单项质量指数 > 1）
 - 六参数统计浓度（SO2_P98, NO2_P98, PM10_P95, PM2_5_P95, CO_P95, O3_8h_P90）
 - 首要污染物分析
@@ -1899,9 +2174,9 @@ class QueryNewStandardReportTool(LLMTool):
   - **首要污染物统计**：primary_pollutant_days（各污染物作为首要污染物的天数）, primary_pollutant_ratio（首要污染物比例%）, total_primary_days（总首要污染物天数）, PM2_5_primary_dates（PM2.5作为首要污染物的日期列表）
   - **超标统计**：exceed_days_by_pollutant（各污染物超标天数）, exceed_rate_by_pollutant（各污染物超标率%）, primary_pollutant_exceed_days（首要污染物超标天，既是首要污染物又超标的天数）
   - 单城市查询：直接返回城市统计数据
-  - 多城市查询：返回各城市统计数据 + province_wide（全省汇总统计）
+  - 多城市查询：返回各城市统计数据 + province_wide（全省汇总统计）+ regional_stats（区域汇总统计）
   - ⚠️ 重要：result 字段包含完整的统计汇总结果，**直接用于报告生成和分析**
-- data_id字段：完整日报数据（基于HJ 633-2024新标准计算的每日监测数据）
+- data_id字段：完整日报数据（基于HJ 633-2026新标准计算的每日监测数据）
   - ⚠️ 重要：data_id 只包含每日监测数据（timestamp、AQI、measurements 等），**不包含**统计汇总指标
   - ❌ 不要从 data_id 读取 exceed_days_by_pollutant、primary_pollutant_exceed_days 等统计字段（这些字段只在 result 中）
 
@@ -1911,6 +2186,18 @@ class QueryNewStandardReportTool(LLMTool):
 - **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
 
 **重要**：全省汇总结果中包含 `_indicator_types` 字段，明确标注每个指标是"平均值"还是"累计值"，避免误解。
+
+【区域汇总统计规则】（多城市查询时）
+- **区域划分**：
+  - 珠三角（9市）：广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆
+  - 粤东（4市）：汕头、汕尾、潮州、揭阳
+  - 粤西（3市）：湛江、茂名、阳江
+  - 粤北（5市）：韶关、河源、梅州、清远、云浮
+  - 非珠三角（12市）：粤东+粤西+粤北
+- **均值类指标**（区域内各城市均值）：composite_index, single_indexes.*, SO2, NO2, PM10, PM2_5, CO_P95, O3_8h_P90等
+- **累加类指标**（区域内各城市累加）：exceed_days, valid_days, exceed_days_by_pollutant.*, primary_pollutant_days.*, primary_pollutant_exceed_days.*, total_primary_days
+- **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
+- **返回格式**：regional_stats 字段包含各区域的统计数据，key为区域名称（"珠三角"、"粤东"、"粤西"、"粤北"、"非珠三角"），value为该区域的统计汇总
 
 **重要**：data_id中的日报数据已用新标准计算结果覆盖原始字段，Agent可直接使用：
 - AQI：新标准空气质量指数（覆盖原始值）
@@ -1926,6 +2213,9 @@ class QueryNewStandardReportTool(LLMTool):
 - start_date: 开始日期 (YYYY-MM-DD)
 - end_date: 结束日期 (YYYY-MM-DD)
 - enable_sand_deduction: 是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）
+- use_old_composite_algorithm: 是否使用旧综合指数算法（默认false，使用新算法）
+    - false（默认）: 新综合指数算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
+    - true: 旧综合指数算法（所有污染物权重均为1）
             """.strip(),
             "parameters": {
                 "type": "object",
@@ -1946,6 +2236,10 @@ class QueryNewStandardReportTool(LLMTool):
                     "enable_sand_deduction": {
                         "type": "boolean",
                         "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
+                    },
+                    "use_old_composite_algorithm": {
+                        "type": "boolean",
+                        "description": "是否使用旧综合指数算法（默认false，使用新算法）。false=新算法（PM2.5权重3，NO2权重2，O3权重2），true=旧算法（所有权重均为1）"
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -1954,7 +2248,7 @@ class QueryNewStandardReportTool(LLMTool):
 
         super().__init__(
             name="query_new_standard_report",
-            description="Query new standard (HJ 633-2024) air quality statistics report",
+            description="Query new standard (HJ 633-2026) air quality statistics report",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
@@ -1982,6 +2276,7 @@ class QueryNewStandardReportTool(LLMTool):
         end_date = kwargs.get("end_date", "")
         enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
         exclude_exceed_details = kwargs.get("exclude_exceed_details", False)  # 默认false（保留详情）
+        use_old_composite_algorithm = kwargs.get("use_old_composite_algorithm", False)  # 默认false（使用新算法）
 
         # 参数验证
         if not cities:
@@ -2034,5 +2329,6 @@ class QueryNewStandardReportTool(LLMTool):
             end_date=end_date,
             enable_sand_deduction=enable_sand_deduction,
             exclude_exceed_details=exclude_exceed_details,
+            use_old_composite_algorithm=use_old_composite_algorithm,
             context=context
         )

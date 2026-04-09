@@ -216,8 +216,11 @@ class UnpackOfficeTool(LLMTool):
                 # 如果不在 working_dir 下，返回绝对路径
                 relative_output_dir = str(output_dir).replace("\\", "/")
 
+            # 统一路径分隔符（使用正斜杠）
+            output_dir_normalized = str(output_dir).replace("\\", "/")
+
             result_data = {
-                "output_dir": relative_output_dir,  # 相对路径（统一使用正斜杠）
+                "output_dir": output_dir_normalized,  # 绝对路径（统一使用正斜杠）
                 "file_count": file_count,
                 "source_file": str(file_path),  # 添加原始文件路径，方便PDF预览
                 # 分类文件列表（完整路径，LLM 可直接使用）
@@ -229,7 +232,7 @@ class UnpackOfficeTool(LLMTool):
                 "rels_count": len(rels_files),
                 "other_files": other_files,
                 "other_count": len(other_files),
-                "main_document": f"{relative_output_dir}/word/document.xml"  # 主文档路径
+                "main_document": f"{output_dir_normalized}/word/document.xml"  # 主文档绝对路径
             }
 
             # 如果有PDF预览，添加到数据中

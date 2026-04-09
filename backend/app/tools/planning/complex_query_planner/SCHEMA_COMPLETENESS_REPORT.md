@@ -9,7 +9,7 @@
 ## 2. 涉及的查询工具列表
 
 ### 2.1 新标准相关工具（4个）
-1. `query_gd_suncere_city_day_new` - 城市日数据（新标准 HJ 633-2024）
+1. `query_gd_suncere_city_day_new` - 城市日数据（新标准 HJ 633-2026）
 2. `query_new_standard_report` - 新标准统计报表
 3. `query_old_standard_report` - 旧标准统计报表
 4. `query_standard_comparison` - 新旧标准对比
@@ -207,7 +207,7 @@
         "returned_records": int,
         "cities": List[str],
         "date_range": str,
-        "standard": "HJ 633-2024",
+        "standard": "HJ 633-2026",
         "schema_version": "v2.0",
         "source": "gd_suncere_api",
         "enable_sand_deduction": bool
@@ -244,13 +244,13 @@
   - **加权单项质量指数**：single_indexes.SO2/NO2/PM10/CO/PM2_5/O3_8h
   ...
   - ⚠️ 重要：result 字段包含完整的统计汇总结果，**直接用于报告生成和分析**
-- data_id字段：完整日报数据（基于HJ 633-2024新标准计算的每日监测数据）
+- data_id字段：完整日报数据（基于HJ 633-2026新标准计算的每日监测数据）
   - ⚠️ 重要：data_id 只包含每日监测数据，**不包含**统计汇总指标
 ```
 
 #### complex_query_planner 中的简短描述：
 ```
-"description": "查询HJ 633-2024新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）"
+"description": "查询HJ 633-2026新标准空气质量统计报表（综合指数、超标天数、达标率、六参数统计浓度）"
 ```
 
 ### 4.4 影响分析
@@ -271,7 +271,7 @@
 "query_new_standard_report": {
     "name": "query_new_standard_report",
     "description": """
-查询HJ 633-2024新标准空气质量统计报表。
+查询HJ 633-2026新标准空气质量统计报表。
 
 【返回数据说明】
 - result字段：⭐ 统计汇总结果（综合指数、超标天数、首要污染物比例等）

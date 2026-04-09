@@ -1,7 +1,7 @@
 """
-广东省 Suncere 城市日数据查询工具（新标准 HJ 633-2024）
+广东省 Suncere 城市日数据查询工具（新标准 HJ 633-2026）
 
-查询广东省城市日空气质量数据，并自动更新为新标准（HJ 633-2024）字段。
+查询广东省城市日空气质量数据，并自动更新为新标准（HJ 633-2026）字段。
 
 **新标准变化**：
 - PM2.5 日平均(IAQI=100): 75 → 60 μg/m³
@@ -14,7 +14,7 @@
 - record.air_quality_level → 新标准等级
 - record.primary_pollutant → 新标准首要污染物
 
-**修约规则**（按 HJ 633-2024）：
+**修约规则**（按 HJ 633-2026）：
 - PM2.5/PM10/SO2/NO2/O3：保留0位小数
 - CO：保留1位小数
 - IAQI/AQI：向上进位取整数
@@ -39,7 +39,7 @@ logger = structlog.get_logger()
 
 
 # -----------------------------------------------------------------------------
-# 新标准 IAQI 断点配置（HJ 633-2024）
+# 新标准 IAQI 断点配置（HJ 633-2026）
 # -----------------------------------------------------------------------------
 # IAQI 分段断点表：[浓度限值, IAQI值]
 # 浓度单位：μg/m³（CO为mg/m³）
@@ -74,7 +74,7 @@ IAQI_BREAKPOINTS_NEW = {
 
 def calculate_iaqi_new(concentration: float, pollutant: str) -> int:
     """
-    计算新标准（HJ 633-2024）污染物的空气质量分指数（IAQI）
+    计算新标准（HJ 633-2026）污染物的空气质量分指数（IAQI）
 
     使用分段线性插值公式：
     IAQIP = (IAQIHi - IAQILo) / (BPHi - BPLo) × (CP - BPLo) + IAQILo
@@ -119,7 +119,7 @@ def calculate_iaqi_new(concentration: float, pollutant: str) -> int:
             if bp_hi == bp_lo:  # 防止除零
                 return iaqi_hi
             iaqi = (iaqi_hi - iaqi_lo) / (bp_hi - bp_lo) * (concentration - bp_lo) + iaqi_lo
-            # 向上进位取整数（HJ 633-2024 要求）
+            # 向上进位取整数（HJ 633-2026 要求）
             return math.ceil(iaqi)
 
     # 浓度超过最高分段，返回最高IAQI
@@ -262,7 +262,7 @@ async def execute_query_city_day_new_standard(
     enable_sand_deduction: bool = True
 ) -> Dict[str, Any]:
     """
-    查询城市日数据（新标准 HJ 633-2024）
+    查询城市日数据（新标准 HJ 633-2026）
 
     复用现有查询逻辑，但将返回的数据更新为新标准字段。
 
@@ -379,7 +379,7 @@ async def execute_query_city_day_new_standard(
                     "tool_name": "query_gd_suncere_city_day_new",
                     "cities": cities,
                     "date_range": f"{start_date} to {end_date}",
-                    "standard": "HJ 633-2024",
+                    "standard": "HJ 633-2026",
                     "message": "查询成功但无数据返回"
                 },
                 "summary": f"未找到 {', '.join(cities)} 在指定时间段的日报数据"
@@ -416,7 +416,7 @@ async def execute_query_city_day_new_standard(
             else:
                 logger.info("sand_deduction_skipped", reason="no_sand_data_loaded")
 
-        # 更新为新标准字段（HJ 633-2024）
+        # 更新为新标准字段（HJ 633-2026）
         update_to_new_standard(standardized_records)
 
         logger.info(
@@ -434,7 +434,7 @@ async def execute_query_city_day_new_standard(
                 "query_type": "city_day_new_standard",
                 "cities": cities,
                 "date_range": f"{start_date} to {end_date}",
-                "standard": "HJ 633-2024",  # 标记为新标准
+                "standard": "HJ 633-2026",  # 标记为新标准
                 "schema_version": "v2.0",
                 "field_mapping_applied": True,
                 "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {},
@@ -460,11 +460,11 @@ async def execute_query_city_day_new_standard(
                 "returned_records": min(24, len(standardized_records)),
                 "cities": cities,
                 "date_range": f"{start_date} to {end_date}",
-                "standard": "HJ 633-2024",  # 标记为新标准
+                "standard": "HJ 633-2026",  # 标记为新标准
                 "schema_version": "v2.0",
                 "source": "gd_suncere_api"
             },
-            "summary": f"成功获取 {', '.join(cities)} 的日报数据共 {len(standardized_records)} 条（新标准 HJ 633-2024），已保存为 {data_id}" + (f"，已应用扣沙处理" if bool(sand_dates) else "")
+            "summary": f"成功获取 {', '.join(cities)} 的日报数据共 {len(standardized_records)} 条（新标准 HJ 633-2026），已保存为 {data_id}" + (f"，已应用扣沙处理" if bool(sand_dates) else "")
         }
 
     except Exception as e:
@@ -482,7 +482,7 @@ async def execute_query_city_day_new_standard(
                 "tool_name": "query_gd_suncere_city_day_new",
                 "cities": cities,
                 "date_range": f"{start_date} to {end_date}",
-                "standard": "HJ 633-2024"
+                "standard": "HJ 633-2026"
             },
             "summary": f"新标准城市日数据查询失败: {str(e)}"
         }

@@ -316,7 +316,8 @@ class GenerateAQICalendarTool(LLMTool):
         # 处理每条数据
         for record in raw_data:
             # 提取城市名（支持多种字段名）
-            city = record.get('city') or record.get('city_name') or record.get('station_name')
+            city = (record.get('name') or record.get('city') or
+                   record.get('city_name') or record.get('station_name'))
             if not city:
                 continue
 

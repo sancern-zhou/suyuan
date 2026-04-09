@@ -15,6 +15,7 @@ from app.social.session_mapper import SessionMapper
 from app.social.heartbeat_service import HeartbeatService
 from app.social.memory_store import MemoryStore
 from app.social.task_status_store import TaskStatusStore
+from app.social.user_preferences import UserPreferences
 
 logger = structlog.get_logger(__name__)
 
@@ -204,6 +205,46 @@ class AgentBridge:
                            error=str(e),
                            exc_info=True)
 
+    def _is_preferences_response(self, content: str) -> bool:
+        """
+        检测消息是否为偏好配置响应
+
+        Args:
+            content: 消息内容
+
+        Returns:
+            是否为偏好配置响应
+        """
+        import re
+
+        # 检测模式：
+        # 1. 包含数字+字母的组合（如 "1A 2B 3C 4B"）
+        # 2. 包含"默认"或"default"
+        # 3. 包含风格关键词（如"轻松随意"、"正式专业"等）
+
+        content_upper = content.strip().upper()
+
+        # 检查数字+字母模式
+        if re.search(r'\d[ABCD]', content_upper):
+            return True
+
+        # 检查"默认"
+        if "默认" in content or "DEFAULT" in content_upper:
+            return True
+
+        # 检查风格关键词
+        style_keywords = [
+            "轻松随意", "正式专业", "技术专业", "通俗易懂",
+            "纯文本", "Markdown", "结构化",
+            "简洁", "适中", "详细",
+            "表情", "Emoji"
+        ]
+        for keyword in style_keywords:
+            if keyword in content:
+                return True
+
+        return False
+
     async def _process_message(self, msg: InboundMessage) -> None:
         """
         Process an inbound message through the agent.
@@ -245,12 +286,116 @@ class AgentBridge:
 
             # ✅ 加载用户专属记忆上下文（social模式）
             memory_context = ""
+            user_preferences = None
             if self.user_memory_manager and self.mode == "social":
                 memory_store = await self.user_memory_manager.get_user_memory(social_user_id)
                 memory_context = memory_store.get_memory_context()
                 logger.debug("memory_context_loaded",
                            user_id=social_user_id,
                            length=len(memory_context))
+
+            # ✅ 检查是否为新用户并引导偏好配置（social模式）
+            if self.mode == "social":
+                preferences_manager = UserPreferences(social_user_id)
+
+                # ⚠️ 重要：先检查是否是偏好配置响应（即使是新用户也可能在回复偏好）
+                if self._is_preferences_response(msg.content):
+                    logger.info("preferences_response_detected",
+                               user_id=social_user_id,
+                               content_preview=msg.content[:50])
+
+                    # 解析用户响应
+                    parsed_prefs = preferences_manager.parse_preferences_response(msg.content)
+
+                    if parsed_prefs:
+                        # 保存用户偏好
+                        preferences_manager.set_preferences(**parsed_prefs)
+
+                        # 发送确认消息
+                        confirmation_msg = OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=preferences_manager.generate_confirmation_message(parsed_prefs),
+                            reply_to=msg.sender_id
+                        )
+                        await self.message_bus.publish_outbound(confirmation_msg)
+                        logger.info("preferences_saved_and_confirmed",
+                                   user_id=social_user_id,
+                                   preferences=parsed_prefs)
+                        return  # 结束处理
+                    else:
+                        # 解析失败，提示重新输入
+                        error_msg = OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="抱歉，无法理解你的选择。请按照格式输入，例如：1A 2B 3C 4B\n\n或者回复'默认'使用默认配置。",
+                            reply_to=msg.sender_id
+                        )
+                        await self.message_bus.publish_outbound(error_msg)
+                        logger.warning("preferences_parse_failed",
+                                      user_id=social_user_id,
+                                      content=msg.content)
+                        return  # 结束处理
+
+                # 检查是否为新用户（只有在不是偏好响应的情况下才检查）
+                if preferences_manager.is_new_user():
+                    logger.info("new_user_detected",
+                               user_id=social_user_id,
+                               channel=msg.channel)
+
+                    # 发送欢迎消息
+                    welcome_msg = OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content=preferences_manager.generate_welcome_message(),
+                        reply_to=msg.sender_id
+                    )
+                    await self.message_bus.publish_outbound(welcome_msg)
+                    logger.info("welcome_message_sent", user_id=social_user_id)
+                    return  # 结束处理，等待用户响应
+
+                # 加载用户偏好（用于动态提示词）
+                user_preferences = preferences_manager.get_preferences()
+                logger.debug("user_preferences_loaded",
+                           user_id=social_user_id,
+                           preferences=user_preferences)
+
+                # ✅ 将用户偏好信息注入到记忆上下文中（用于动态提示词）
+                if user_preferences:
+                    from app.agent.prompts.social_prompt import (
+                        _get_style_config,
+                        _get_format_config,
+                        _get_detail_config
+                    )
+
+                    style = user_preferences.get("style", "casual")
+                    format_type = user_preferences.get("format", "plain")
+                    detail = user_preferences.get("detail", "moderate")
+                    use_emoji = user_preferences.get("use_emoji", False)
+
+                    style_info = _get_style_config(style)
+                    format_info = _get_format_config(format_type)
+                    detail_info = _get_detail_config(detail)
+
+                    # 构建偏好信息
+                    preference_info = f"""
+## 用户偏好配置
+
+- 回答风格：{style_info['tone']}（{style_info['principle']}）
+- 输出格式：{format_info['description']}
+- 详细程度：{detail_info['description']}（最多{detail_info['max_length']}字）
+- 表情符号：{'使用' if use_emoji else '不使用'}
+"""
+
+                    # 将偏好信息注入到记忆上下文前面
+                    if memory_context:
+                        memory_context = f"{preference_info}\n{memory_context}"
+                    else:
+                        memory_context = preference_info
+
+                    logger.debug("user_preferences_injected_to_memory",
+                               user_id=social_user_id,
+                               preference_info=preference_info[:200])
 
             # Aggregate events from agent
             logger.info("Calling agent.analyze",

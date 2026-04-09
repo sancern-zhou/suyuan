@@ -16,7 +16,7 @@
 - `backend/app/tools/query/query_station_new_standard_report/__init__.py`
 
 **核心功能**：
-- 查询任意时间段内基于 HJ 633-2024 新标准的站点级空气质量统计报表
+- 查询任意时间段内基于 HJ 633-2026 新标准的站点级空气质量统计报表
 - 支持单站点和多站点查询
 - 支持城市名称自动展开为站点列表
 - 支持多站点汇总统计（aggregate参数）

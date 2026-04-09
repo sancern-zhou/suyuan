@@ -203,16 +203,16 @@ class ComponentExecutor(ExpertExecutor):
         except ImportError:
             pass
 
-        # IAQI计算功能已整合到 aggregate_data 工具（使用新标准 HJ 633-2024）
+        # IAQI计算功能已整合到 aggregate_data 工具（使用新标准 HJ 633-2026）
         # 旧的 iaqi_calculator 工具已删除
 
         # ========================================
-        # 新标准统计报表工具（HJ 633-2024）
+        # 新标准统计报表工具（HJ 633-2026）
         # ========================================
         try:
             from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
             tools["query_new_standard_report"] = QueryNewStandardReportTool()
-            logger.info("新标准统计报表工具加载成功: query_new_standard_report（HJ 633-2024）")
+            logger.info("新标准统计报表工具加载成功: query_new_standard_report（HJ 633-2026）")
         except ImportError as e:
             logger.warning("新标准统计报表工具加载失败", tool="query_new_standard_report", error=str(e))
 

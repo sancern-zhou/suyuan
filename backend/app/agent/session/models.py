@@ -51,6 +51,20 @@ class Session(BaseModel):
     data_ids: List[str] = Field(default_factory=list, description="生成的数据ID列表")
     visual_ids: List[str] = Field(default_factory=list, description="生成的可视化ID列表")
 
+    # 子Agent专用字段
+    parent_mode: Optional[str] = Field(
+        default=None,
+        description="父Agent模式（如果是子Agent session）"
+    )
+    child_mode: Optional[str] = Field(
+        default=None,
+        description="子Agent模式（如果是子Agent session）"
+    )
+    is_sub_agent_session: bool = Field(
+        default=False,
+        description="是否为子Agent session"
+    )
+
     # Office文档预览数据（用于历史对话恢复PDF预览）
     office_documents: List[Dict[str, Any]] = Field(
         default_factory=list,
