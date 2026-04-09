@@ -116,7 +116,7 @@ NO2 浓度: 91.0 μg/m³ → IAQI = 106
 ## 技术说明
 
 ### IAQI 计算逻辑
-`aggregate_data` 工具的 IAQI 函数使用新标准（HJ 633-2024）：
+`aggregate_data` 工具的 IAQI 函数使用新标准（HJ 633-2026）：
 - PM2.5 断点：IAQI=100 对应 60 μg/m³（旧标准75）
 - PM10 断点：IAQI=100 对应 120 μg/m³（旧标准150）
 - 计算函数：`calculate_iaqi_for_aggregate()`

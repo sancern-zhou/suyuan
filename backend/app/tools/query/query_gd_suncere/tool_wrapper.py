@@ -32,31 +32,37 @@ class QueryGDSuncereCityHourTool(LLMTool):
 - 支持多城市并发查询
 - 城市/站点名称自动映射到编码
 - 根据查询时间自动判断数据源（原始实况/审核实况）
+- ⭐ 支持提取气象字段（风速、风向、温度、湿度、气压等）
 
 【使用场景】
 - 城市空气质量时序分析
 - 区域传输分析
 - 多城市对比分析
 - 污染过程追溯
+- 污染过程与气象条件关联分析
 
 【输入参数】
 - cities: 城市名称列表（如 ["广州", "深圳", "佛山"]）
 - start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
 - end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
+- include_weather: 是否包含气象字段（默认true），设为false时不包含风速、风向、温度、湿度、气压等
 
 【重要】
 - 工具会自动将城市名称转换为编码
 - 工具会自动根据结束时间判断数据源类型
 - 返回 UDF v2.0 标准格式数据
+- 气象字段（默认启用）：wind_speed_10m, wind_direction_10m, temperature_2m, relative_humidity_2m, surface_pressure
 
 示例：
 cities=["广州", "深圳", "佛山"]
 start_time="2026-02-01 00:00:00"
 end_time="2026-02-01 23:59:59"
+# 默认包含气象数据，不需要指定 include_weather
 
 【返回数据】
 - data_id: 数据引用ID（UDF v2.0格式）
 - 包含多城市的小时级别污染物数据
+- 如果include_weather=true，还包含气象字段数据
 - 可直接传递给可视化工具生成时序图
             """.strip(),
             "parameters": {
@@ -74,6 +80,10 @@ end_time="2026-02-01 23:59:59"
                     "end_time": {
                         "type": "string",
                         "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "include_weather": {
+                        "type": "boolean",
+                        "description": "是否包含气象字段（风速、风向、温度、湿度、气压等），默认true"
                     }
                 },
                 "required": ["cities", "start_time", "end_time"]
@@ -95,6 +105,7 @@ end_time="2026-02-01 23:59:59"
         cities: List[str],
         start_time: str,
         end_time: str,
+        include_weather: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -105,6 +116,7 @@ end_time="2026-02-01 23:59:59"
             cities: 城市名称列表
             start_time: 开始时间
             end_time: 结束时间
+            include_weather: 是否包含气象字段
 
         Returns:
             UDF v2.0格式的查询结果
@@ -116,6 +128,7 @@ end_time="2026-02-01 23:59:59"
             cities=cities,
             start_time=start_time,
             end_time=end_time,
+            include_weather=include_weather,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -124,7 +137,8 @@ end_time="2026-02-01 23:59:59"
             cities=cities,
             start_time=start_time,
             end_time=end_time,
-            context=context
+            context=context,
+            include_weather=include_weather
         )
 
         return result
@@ -142,7 +156,7 @@ class QueryGDSuncereStationHourTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_station_hour_new",
             "description": """
-查询广东省站点级别小时空气质量数据（基于HJ 633-2024新标准）。
+查询广东省站点级别小时空气质量数据（基于HJ 633-2026新标准）。
 
 【核心功能】
 - 查询广东省站点级别的小时空气质量数据
@@ -152,6 +166,7 @@ class QueryGDSuncereStationHourTool(LLMTool):
 - 根据查询时间自动判断数据源（三天内原始，三天前审核）
 - 浓度值修约（CO保留1位小数，其他取整）
 - 返回结果包含 station_name 字段，直观显示站点名称
+- ⭐ 支持提取气象字段（风速、风向、温度、湿度、气压等）
 
 【与城市小时数据的区别】
 - 城市小时数据（query_gd_suncere_city_hour）：城市级别的聚合数据
@@ -166,8 +181,10 @@ class QueryGDSuncereStationHourTool(LLMTool):
 【输入参数】
 - cities: 城市名称列表（如 ["广州", "深圳"]），会自动展开为站点（与 stations 二选一，可组合）
 - stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接查询指定站点（与 cities 二选一，可组合）
+- station_type: 站点类型（可选，默认"国控"）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'
 - start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
 - end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
+- include_weather: 是否包含气象字段（默认true），设为false时不包含风速、风向、温度、湿度、气压等
 
 【支持的城市和站点】
 - 广州（19站：广雅中学、市监测站、市五中、体育西、广东商学院、麓湖等）
@@ -178,14 +195,19 @@ class QueryGDSuncereStationHourTool(LLMTool):
 
 【重要】
 - cities 和 stations 至少提供一个，可同时提供（结果合并去重）
-- ⭐ 使用HJ 633-2024新标准计算IAQI和AQI
+- ⭐ 使用HJ 633-2026新标准计算IAQI和AQI
 - 返回 UDF v2.0 标准格式数据
+- 气象字段（默认启用）：wind_speed_10m, wind_direction_10m, temperature_2m, relative_humidity_2m, surface_pressure
 
 示例：
-# 按城市查询
+# 按城市查询（默认国控站点）
 cities=["广州"], start_time="2026-02-01 00:00:00", end_time="2026-02-01 23:59:59"
-# 按站点查询
+# 按城市查询指定站点类型
+cities=["广州"], station_type="省控", start_time="2026-02-01 00:00:00", end_time="2026-02-01 23:59:59"
+# 按站点查询（不需要 station_type）
 stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end_time="2026-02-01 23:59:59"
+# 不包含气象数据
+cities=["广州"], start_time="2026-02-01 00:00:00", end_time="2026-02-01 23:59:59", include_weather=false
 
 【返回数据】
 - data_id: 数据引用ID（UDF v2.0格式）
@@ -199,17 +221,17 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
                 "properties": {
                     "station_type": {
                         "type": "string",
-                        "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
+                        "description": "站点类型（可选，默认'国控'）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
                     },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与stations至少提供一个）"
+                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与stations至少提供一个）。如果不提供 station_type，默认查询国控站点"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与cities至少提供一个）"
+                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与cities至少提供一个）。使用此参数时不需要提供 station_type"
                     },
                     "start_time": {
                         "type": "string",
@@ -218,15 +240,19 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
                     "end_time": {
                         "type": "string",
                         "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "include_weather": {
+                        "type": "boolean",
+                        "description": "是否包含气象字段（风速、风向、温度、湿度、气压等），默认true"
                     }
                 },
-                "required": ["station_type", "start_time", "end_time"]
+                "required": ["start_time", "end_time"]
             }
         }
 
         super().__init__(
             name="query_gd_suncere_station_hour_new",
-            description="Query Guangdong station hourly air quality data (HJ 633-2024 new standard) - Suncere API",
+            description="Query Guangdong station hourly air quality data (HJ 633-2026 new standard) - Suncere API",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="2.0.0",
@@ -238,9 +264,10 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
         context: ExecutionContext,
         start_time: str,
         end_time: str,
-        station_type: str,
+        station_type: Optional[str] = None,
         cities: Optional[List[str]] = None,
         stations: Optional[List[str]] = None,
+        include_weather: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -250,9 +277,10 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
             context: 执行上下文
             start_time: 开始时间
             end_time: 结束时间
-            station_type: 站点类型
+            station_type: 站点类型（可选，仅在使用cities时有效，默认国控）
             cities: 城市名称列表（与stations至少提供一个）
             stations: 站点名称列表（与cities至少提供一个）
+            include_weather: 是否包含气象字段
 
         Returns:
             UDF v2.0格式的查询结果
@@ -272,13 +300,36 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
                 }
             }
 
+        # 智能推断 station_type
+        # 规则1: 如果使用 stations 参数，不需要 station_type（站点名称已确定类型）
+        # 规则2: 如果只使用 cities 参数且没有 station_type，默认使用"国控"
+        if stations and not cities:
+            # 场景1: 只提供站点名称，不需要 station_type
+            if station_type:
+                logger.warning(
+                    "query_gd_suncere_station_hour_ignored_station_type",
+                    reason="使用stations参数时，station_type将被忽略",
+                    stations=stations,
+                    provided_station_type=station_type
+                )
+            # 不传递 station_type
+            effective_station_type = None
+        elif cities and not stations:
+            # 场景2: 只提供城市名称，使用默认的"国控"或用户指定的 station_type
+            effective_station_type = station_type or "国控"
+        else:
+            # 场景3: 同时提供 cities 和 stations，使用用户指定的 station_type（如果有）
+            effective_station_type = station_type
+
         logger.info(
             "query_gd_suncere_station_hour_tool_start",
             cities=cities,
             stations=stations,
             station_type=station_type,
+            effective_station_type=effective_station_type,
             start_time=start_time,
             end_time=end_time,
+            include_weather=include_weather,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -288,7 +339,8 @@ stations=["广雅中学", "市监测站"], start_time="2026-02-01 00:00:00", end
             context=context,
             cities=cities,
             stations=stations,
-            station_type=station_type
+            station_type=effective_station_type,
+            include_weather=include_weather
         )
 
         return result
@@ -305,7 +357,7 @@ class QueryGDSuncereStationDayTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_station_day_new",
             "description": """
-查询广东省站点级别日空气质量数据（基于HJ 633-2024新标准）。
+查询广东省站点级别日空气质量数据（基于HJ 633-2026新标准）。
 
 【核心功能】
 - 查询广东省站点级别的日空气质量数据
@@ -333,6 +385,7 @@ class QueryGDSuncereStationDayTool(LLMTool):
 【输入参数】
 - cities: 城市名称列表（如 ["广州", "深圳"]），会自动展开为站点（与 stations 二选一，可组合）
 - stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接查询指定站点（与 cities 二选一，可组合）
+- station_type: 站点类型（可选，默认"国控"）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'
 - start_date: 开始日期，格式 "YYYY-MM-DD"
 - end_date: 结束日期，格式 "YYYY-MM-DD"
 
@@ -345,15 +398,17 @@ class QueryGDSuncereStationDayTool(LLMTool):
 
 【重要】
 - cities 和 stations 至少提供一个，可同时提供（结果合并去重）
-- ⭐ 使用HJ 633-2024新标准计算IAQI和AQI
+- ⭐ 使用HJ 633-2026新标准计算IAQI和AQI
 - 返回 UDF v2.0 标准格式数据
 - 日数据包含PM2.5、PM10、SO2、NO2、O3、CO等污染物的日均值
 - 返回数据中的 name 字段就是站点名称（LLM可从上下文理解）
 
 示例：
-# 按城市查询
+# 按城市查询（默认国控站点）
 cities=["广州"], start_date="2025-03-01", end_date="2025-03-07"
-# 按站点查询
+# 按城市查询指定站点类型
+cities=["广州"], station_type="省控", start_date="2025-03-01", end_date="2025-03-07"
+# 按站点查询（不需要 station_type）
 stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="2025-03-07"
 
 【返回数据】
@@ -368,17 +423,17 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
                 "properties": {
                     "station_type": {
                         "type": "string",
-                        "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
+                        "description": "站点类型（可选，默认'国控'）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
                     },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与stations至少提供一个）"
+                        "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与stations至少提供一个）。如果不提供 station_type，默认查询国控站点"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与cities至少提供一个）"
+                        "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与cities至少提供一个）。使用此参数时不需要提供 station_type"
                     },
                     "start_date": {
                         "type": "string",
@@ -389,13 +444,13 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
                         "description": "结束日期，格式 'YYYY-MM-DD'"
                     }
                 },
-                "required": ["station_type", "start_date", "end_date"]
+                "required": ["start_date", "end_date"]
             }
         }
 
         super().__init__(
             name="query_gd_suncere_station_day_new",
-            description="Query Guangdong station daily air quality data (HJ 633-2024 new standard) - Suncere API",
+            description="Query Guangdong station daily air quality data (HJ 633-2026 new standard) - Suncere API",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="2.0.0",
@@ -407,7 +462,7 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
         context: ExecutionContext,
         start_date: str,
         end_date: str,
-        station_type: str,
+        station_type: Optional[str] = None,
         cities: Optional[List[str]] = None,
         stations: Optional[List[str]] = None,
         **kwargs
@@ -419,7 +474,7 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
             context: 执行上下文
             start_date: 开始日期
             end_date: 结束日期
-            station_type: 站点类型
+            station_type: 站点类型（可选，仅在使用cities时有效，默认国控）
             cities: 城市名称列表（与stations至少提供一个）
             stations: 站点名称列表（与cities至少提供一个）
 
@@ -441,11 +496,33 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
                 }
             }
 
+        # 智能推断 station_type
+        # 规则1: 如果使用 stations 参数，不需要 station_type（站点名称已确定类型）
+        # 规则2: 如果只使用 cities 参数且没有 station_type，默认使用"国控"
+        if stations and not cities:
+            # 场景1: 只提供站点名称，不需要 station_type
+            if station_type:
+                logger.warning(
+                    "query_gd_suncere_station_day_ignored_station_type",
+                    reason="使用stations参数时，station_type将被忽略",
+                    stations=stations,
+                    provided_station_type=station_type
+                )
+            # 不传递 station_type
+            effective_station_type = None
+        elif cities and not stations:
+            # 场景2: 只提供城市名称，使用默认的"国控"或用户指定的 station_type
+            effective_station_type = station_type or "国控"
+        else:
+            # 场景3: 同时提供 cities 和 stations，使用用户指定的 station_type（如果有）
+            effective_station_type = station_type
+
         logger.info(
             "query_gd_suncere_station_day_tool_start",
             cities=cities,
             stations=stations,
             station_type=station_type,
+            effective_station_type=effective_station_type,
             start_date=start_date,
             end_date=end_date,
             session_id=getattr(context, 'session_id', 'unknown')
@@ -457,7 +534,7 @@ stations=["广雅中学", "市监测站"], start_date="2025-03-01", end_date="20
             context=context,
             cities=cities,
             stations=stations,
-            station_type=station_type
+            station_type=effective_station_type
         )
 
         return result
@@ -1069,8 +1146,8 @@ class QueryStandardComparisonTool(LLMTool):
 
 【返回数据说明】
 - result字段：⭐ 新旧标准对比结果
-  - **旧标准统计**（HJ 633-2011）：compositeIndex（综合指数）, overDays（超标天数）, overRate（超标率%）, rank（排名）, validDays（有效天数）, pM2_5_Rank（PM2.5排名）
-  - **新标准统计**（HJ 633-2024）：composite_index（新综合指数）, exceed_days（新超标天数）, exceed_rate（新超标率%）, compliance_rate（新达标率%）
+  - **旧标准统计**（HJ 633-2013）：compositeIndex（综合指数）, overDays（超标天数）, overRate（超标率%）, rank（排名）, validDays（有效天数）, pM2_5_Rank（PM2.5排名）
+  - **新标准统计**（HJ 633-2026）：composite_index（新综合指数）, exceed_days（新超标天数）, exceed_rate（新超标率%）, compliance_rate（新达标率%）
   - **对比数据**：综合指数变化、超标天数变化、达标率变化
   - **统计浓度值**：SO2, NO2, PM10, CO, PM2_5, NO, NOx, O3_8h 平均浓度
   - ⚠️ 重要：result 字段包含完整的对比结果，**直接用于报告生成和分析**
@@ -1161,7 +1238,7 @@ class QueryStandardComparisonTool(LLMTool):
 
 class QueryGDSuncereCityDayNewStandardTool(LLMTool):
     """
-    广东省城市日数据查询工具（新标准 HJ 633-2024）
+    广东省城市日数据查询工具（新标准 HJ 633-2026）
 
     查询广东省城市级别的日空气质量数据，并自动更新为新标准字段。
     """
@@ -1170,11 +1247,11 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_city_day_new",
             "description": """
-查询广东省城市日空气质量数据（新标准 HJ 633-2024）。
+查询广东省城市日空气质量数据（新标准 HJ 633-2026）。
 
 【核心功能】
 - 查询广东省城市的日级别空气质量数据
-- 自动更新为新标准（HJ 633-2024）字段
+- 自动更新为新标准（HJ 633-2026）字段
 - 支持多城市并发查询
 - 城市/站点名称自动映射到编码
 
@@ -1259,7 +1336,7 @@ enable_sand_deduction=true  # 启用扣沙处理（默认）
 
         super().__init__(
             name="query_gd_suncere_city_day_new",
-            description="Query Guangdong city daily air quality data (New Standard HJ 633-2024) - Suncere API",
+            description="Query Guangdong city daily air quality data (New Standard HJ 633-2026) - Suncere API",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
@@ -1439,7 +1516,7 @@ class QueryGDSuncereCityDayOldStandardTool(LLMTool):
 
 class QueryGDSuncereOldStandardReportTool(LLMTool):
     """
-    旧标准统计报表查询工具（HJ 633-2011）
+    旧标准统计报表查询工具（HJ 633-2013）
 
     查询基于旧标准的空气质量统计报表，返回旧标准综合指数、超标天数、首要污染物等统计指标。
     """
@@ -1448,7 +1525,7 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
         function_schema = {
             "name": "query_old_standard_report",
             "description": """
-查询基于旧标准（HJ 633-2011）的空气质量统计报表。
+查询基于旧标准（HJ 633-2013）的空气质量统计报表。
 
 【核心功能】
 - 旧标准综合指数计算（所有污染物权重均为1）
@@ -1471,7 +1548,7 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
   - 单城市查询：直接返回城市统计数据
   - 多城市查询：返回各城市统计数据 + province_wide（全省汇总统计）
   - ⚠️ 重要：result 字段包含完整的统计汇总结果，**直接用于报告生成和分析**
-- data_id字段：完整日报数据（基于HJ 633-2011旧标准计算）
+- data_id字段：完整日报数据（基于HJ 633-2013旧标准计算）
   - ⚠️ 重要：data_id 只包含每日监测数据（timestamp、AQI、measurements 等），**不包含**统计汇总指标
   - ❌ 不要从 data_id 读取 exceed_days_by_pollutant、primary_pollutant_exceed_days 等统计字段（这些字段只在 result 中）
 
@@ -1489,6 +1566,9 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
 - start_date: 开始日期 (YYYY-MM-DD)
 - end_date: 结束日期 (YYYY-MM-DD)
 - enable_sand_deduction: 是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）
+- use_new_composite_algorithm: 是否使用新综合指数算法（默认false，使用旧算法）
+    - false（默认）: 旧综合指数算法（所有污染物权重均为1）
+    - true: 新综合指数算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
 
 【重要】
 - 工具会自动将城市名称转换为编码
@@ -1524,6 +1604,10 @@ enable_sand_deduction=true  # 启用扣沙处理
                     "enable_sand_deduction": {
                         "type": "boolean",
                         "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
+                    },
+                    "use_new_composite_algorithm": {
+                        "type": "boolean",
+                        "description": "是否使用新综合指数算法（默认false，使用旧算法）。false=旧算法（所有权重均为1），true=新算法（PM2.5权重3，NO2权重2，O3权重2）"
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -1532,7 +1616,7 @@ enable_sand_deduction=true  # 启用扣沙处理
 
         super().__init__(
             name="query_old_standard_report",
-            description="Query old standard (HJ 633-2011) air quality statistical report - Suncere API",
+            description="Query old standard (HJ 633-2013) air quality statistical report - Suncere API",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
@@ -1552,6 +1636,7 @@ enable_sand_deduction=true  # 启用扣沙处理
 
         # 提取可选参数
         enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        use_new_composite_algorithm = kwargs.get("use_new_composite_algorithm", False)  # 默认false（使用旧算法）
 
         logger.info(
             "query_old_standard_report_tool_start",
@@ -1559,6 +1644,7 @@ enable_sand_deduction=true  # 启用扣沙处理
             start_date=start_date,
             end_date=end_date,
             enable_sand_deduction=enable_sand_deduction,
+            use_new_composite_algorithm=use_new_composite_algorithm,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -1568,6 +1654,7 @@ enable_sand_deduction=true  # 启用扣沙处理
             start_date=start_date,
             end_date=end_date,
             enable_sand_deduction=enable_sand_deduction,
+            use_new_composite_algorithm=use_new_composite_algorithm,
             context=context
         )
 

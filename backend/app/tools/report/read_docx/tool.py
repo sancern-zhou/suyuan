@@ -41,7 +41,23 @@ class ReadDocxTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="read_docx",
-            description="读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
+            description="""读取DOCX文档内容（直接读取，无需解包）
+
+功能：
+- 提取文档段落和表格
+- 保留文档结构（标题层级）
+- 自动生成 PDF 预览
+
+⚠️ 格式说明：
+- 标题会转换为 Markdown 格式（如 ## 标题），便于理解层级
+- 这是工具添加的格式标记，实际文档不包含 # 符号
+- find_replace_word 会自动处理，无需手动移除 # 符号
+
+参数：
+- path: DOCX 文件路径
+- max_paragraphs: 最大段落数（可选，默认100，用于控制token消耗）
+- include_tables: 是否包含表格（可选，默认true）
+""",
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False
@@ -158,6 +174,41 @@ class ReadDocxTool(LLMTool):
                     if run._element.xpath('.//pic:pic'):
                         image_count += 1
 
+            # 如果有图片，自动解包文档获取图片路径
+            image_paths = []
+            if image_count > 0:
+                import tempfile
+                import zipfile
+                import shutil
+                import uuid
+
+                # 创建临时解包目录
+                temp_dir = Path(tempfile.gettempdir()) / f"docx_images_{uuid.uuid4().hex[:8]}"
+                try:
+                    # 解包DOCX（本质是ZIP）
+                    with zipfile.ZipFile(str(file_path), 'r') as zip_ref:
+                        zip_ref.extractall(temp_dir)
+
+                    # 查找所有图片文件（word/media目录）
+                    media_dir = temp_dir / "word" / "media"
+                    if media_dir.exists():
+                        for img_file in sorted(media_dir.iterdir()):
+                            if img_file.is_file() and img_file.suffix.lower() in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg']:
+                                # 使用绝对路径
+                                image_paths.append(str(img_file.resolve()))
+
+                    logger.info(
+                        "docx_images_extracted",
+                        temp_dir=str(temp_dir),
+                        image_count=len(image_paths)
+                    )
+                except Exception as extract_error:
+                    logger.warning("docx_image_extraction_failed", error=str(extract_error))
+                finally:
+                    # 注意：不立即删除临时目录，因为analyze_image需要访问
+                    # 临时文件会在系统清理时删除（如/tmp定时清理）
+                    pass
+
             # 构建结果
             content = "\n\n".join(content_parts)
 
@@ -180,10 +231,15 @@ class ReadDocxTool(LLMTool):
                 "total_tables": len(doc.tables)
             }
 
-            # 如果有图片，添加提示信息
-            if image_count > 0:
-                result_data["image_note"] = "文档" + (f"包含 {image_count} 张图片。" if image_count > 1 else "包含图片。")
-                result_data["image_suggestion"] = "如需提取图片内容，请使用 unpack_office 工具解包文档后，使用 analyze_image 工具分析图片。"
+            # 如果有图片，添加图片路径列表
+            if image_paths:
+                result_data["image_paths"] = image_paths
+                result_data["image_note"] = f"文档包含 {len(image_paths)} 张图片。"
+                result_data["image_suggestion"] = "图片已提取到临时目录，可直接使用 analyze_image 工具分析（使用上面 image_paths 中的路径）。"
+            elif image_count > 0:
+                # 如果检测到图片但提取失败
+                result_data["image_note"] = f"文档包含 {image_count} 张图片，但提取失败。"
+                result_data["image_suggestion"] = "请使用 unpack_office 工具手动解包文档后，再使用 analyze_image 工具分析图片。"
 
             # 生成PDF预览
             try:

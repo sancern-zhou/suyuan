@@ -55,6 +55,11 @@ class FindReplaceTool(LLMTool):
 - 更可靠、更简单、更安全
 - 速度更快，无需解包/打包流程
 
+✨ 智能处理 Markdown 格式标记（自动兼容 read_docx 输出）：
+- 如果查找文本以 # 开头（如"## 4.小结"），工具会自动移除 # 符号后查找
+- 例如：查找"## 4.小结"会自动尝试查找"4.小结"（文档的实际内容）
+- 这是因为 read_docx/read_file 工具会在标题前添加 # 符号标记层级
+
 使用场景：
 - ✅ 简单文本替换（批量修改术语、拼写错误）
 - ✅ 在某处插入内容（"标记" → "标记\n\n新内容"）
@@ -67,6 +72,8 @@ class FindReplaceTool(LLMTool):
 示例：
 - find_replace_word(path="report.docx", find_text="旧术语", replace_text="新术语")
 - find_replace_word(path="doc.docx", find_text="标题", replace_text="标题\\n\\n插入的新段落")
+- find_replace_word(path="doc.docx", find_text="## 4.小结", replace_text="## 4.小结\\n\\n新增内容")
+  → 工具会自动查找"4.小结"（移除##符号）
 - find_replace_word(path="doc.docx", find_text="\\d{4}-\\d{2}-\\d{2}", replace_text="2024-01-01", use_regex=True)
 
 插入内容的技巧：
@@ -75,7 +82,7 @@ class FindReplaceTool(LLMTool):
 
 参数说明：
 - path: DOCX 文件路径
-- find_text: 要查找的文本（支持正则表达式）
+- find_text: 要查找的文本（支持正则表达式，自动处理开头的 # 符号）
 - replace_text: 替换后的文本
 - output_file: 输出文件路径（可选，默认覆盖原文件）
 - use_regex: 是否使用正则表达式（默认 False）
@@ -85,6 +92,7 @@ class FindReplaceTool(LLMTool):
 - 如果不指定 output_file，会覆盖原文件
 - 正则表达式替换支持捕获组（如 $1, $2）
 - ⚠️ 编辑 Word 文档时优先使用此工具，而非 edit_file
+- ✅ 工具会自动处理 Markdown 格式标记，无需手动移除 # 符号
 """,
             category=ToolCategory.QUERY,
             version="1.0.0",
@@ -163,6 +171,34 @@ class FindReplaceTool(LLMTool):
             total_replacements = 0
             paragraphs_affected = 0
 
+            # ⚠️ 智能处理 Markdown 格式标记（read_docx 工具会在标题前添加 # 符号）
+            # 如果 find_text 以 # 开头，说明可能是 Markdown 格式，需要移除 # 后再查找
+            find_text_variants = [find_text]  # 原始查找文本
+
+            # 如果查找文本以 # 开头，添加移除 # 的变体
+            if find_text.strip().startswith('#') and not use_regex:
+                stripped = find_text.strip()
+                # 移除开头的所有 # 和后续空格
+                while stripped.startswith('#'):
+                    stripped = stripped[1:].lstrip()
+                if stripped and stripped != find_text.strip():
+                    find_text_variants.append(stripped)
+                    logger.info(
+                        "find_replace_markdown_detected",
+                        original=find_text,
+                        stripped=stripped,
+                        message="检测到Markdown格式标记，将尝试移除#符号后查找"
+                    )
+
+            # 同样处理 replace_text（如果也以 # 开头）
+            replace_text_stripped = replace_text
+            if replace_text.strip().startswith('#') and not use_regex:
+                replace_stripped = replace_text.strip()
+                while replace_stripped.startswith('#'):
+                    replace_stripped = replace_stripped[1:].lstrip()
+                if replace_stripped:
+                    replace_text_stripped = replace_stripped
+
             # 编译正则表达式（如果需要）
             if use_regex:
                 flags = 0 if case_sensitive else re.IGNORECASE
@@ -174,25 +210,35 @@ class FindReplaceTool(LLMTool):
             for paragraph in doc.paragraphs:
                 original_text = paragraph.text
 
-                if use_regex:
-                    # 正则表达式替换
-                    new_text = pattern.sub(replace_text, original_text)
-                    count = len(pattern.findall(original_text))
-                else:
-                    # 普通文本替换
-                    if case_sensitive:
-                        count = original_text.count(find_text)
-                        new_text = original_text.replace(find_text, replace_text)
+                # 尝试所有查找文本变体
+                matched = False
+                for find_variant, replace_variant in zip(find_text_variants, [replace_text, replace_text_stripped]):
+                    if use_regex:
+                        # 正则表达式替换
+                        new_text = pattern.sub(replace_variant, original_text)
+                        count = len(pattern.findall(original_text))
                     else:
-                        # 大小写不敏感替换
-                        count = original_text.lower().count(find_text.lower())
-                        new_text = self._case_insensitive_replace(original_text, find_text, replace_text)
+                        # 普通文本替换
+                        if case_sensitive:
+                            count = original_text.count(find_variant)
+                            new_text = original_text.replace(find_variant, replace_variant)
+                        else:
+                            # 大小写不敏感替换
+                            count = original_text.lower().count(find_variant.lower())
+                            new_text = self._case_insensitive_replace(original_text, find_variant, replace_variant)
 
-                if count > 0:
-                    # 替换段落文本（保留格式）
-                    self._replace_paragraph_text(paragraph, new_text)
-                    total_replacements += count
-                    paragraphs_affected += 1
+                    if count > 0:
+                        # 替换段落文本（保留格式）
+                        self._replace_paragraph_text(paragraph, new_text)
+                        total_replacements += count
+                        paragraphs_affected += 1
+                        matched = True
+                        logger.info(
+                            "find_replace_matched",
+                            variant=find_variant,
+                            replacements=count
+                        )
+                        break  # 找到匹配后不再尝试其他变体
 
             # 遍历表格
             for table in doc.tables:
@@ -201,21 +247,26 @@ class FindReplaceTool(LLMTool):
                         for paragraph in cell.paragraphs:
                             original_text = paragraph.text
 
-                            if use_regex:
-                                new_text = pattern.sub(replace_text, original_text)
-                                count = len(pattern.findall(original_text))
-                            else:
-                                if case_sensitive:
-                                    count = original_text.count(find_text)
-                                    new_text = original_text.replace(find_text, replace_text)
+                            # 尝试所有查找文本变体
+                            matched = False
+                            for find_variant, replace_variant in zip(find_text_variants, [replace_text, replace_text_stripped]):
+                                if use_regex:
+                                    new_text = pattern.sub(replace_variant, original_text)
+                                    count = len(pattern.findall(original_text))
                                 else:
-                                    count = original_text.lower().count(find_text.lower())
-                                    new_text = self._case_insensitive_replace(original_text, find_text, replace_text)
+                                    if case_sensitive:
+                                        count = original_text.count(find_variant)
+                                        new_text = original_text.replace(find_variant, replace_variant)
+                                    else:
+                                        count = original_text.lower().count(find_variant.lower())
+                                        new_text = self._case_insensitive_replace(original_text, find_variant, replace_variant)
 
-                            if count > 0:
-                                self._replace_paragraph_text(paragraph, new_text)
-                                total_replacements += count
-                                paragraphs_affected += 1
+                                if count > 0:
+                                    self._replace_paragraph_text(paragraph, new_text)
+                                    total_replacements += count
+                                    paragraphs_affected += 1
+                                    matched = True
+                                    break  # 找到匹配后不再尝试其他变体
 
             # 5. 保存文档
             doc.save(output_path)
@@ -250,13 +301,24 @@ class FindReplaceTool(LLMTool):
                 "replace_text": replace_text
             }
 
+            # 如果使用了移除 # 符号的变体，添加说明
+            if len(find_text_variants) > 1 and total_replacements > 0:
+                result_data["actual_find_text"] = find_text_variants[1]
+                result_data["markdown_handled"] = True
+                result_data["note"] = f"查找文本包含Markdown格式标记（{find_text}），已自动移除#符号后查找（{find_text_variants[1]}）"
+
             if pdf_preview:
                 result_data["pdf_preview"] = pdf_preview
+
+            # 构建摘要信息
+            summary_parts = [f"已替换 {total_replacements} 处文本，影响 {paragraphs_affected} 个段落"]
+            if len(find_text_variants) > 1 and total_replacements > 0:
+                summary_parts.append(f"（自动处理Markdown格式：{find_text} → {find_text_variants[1]}）")
 
             return {
                 "success": True,
                 "data": result_data,
-                "summary": f"已替换 {total_replacements} 处文本，影响 {paragraphs_affected} 个段落"
+                "summary": "，".join(summary_parts)
             }
 
         except Exception as e:

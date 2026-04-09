@@ -49,7 +49,9 @@ class AnalyzeImageTool(LLMTool):
             description="""分析图片内容（使用通义千问 VL 模型）
 
 支持输入格式：
-- 本地文件路径：D:/work_dir/image.png 或 ./image.png
+- 本地文件路径：支持任意绝对路径或相对路径（无路径限制）
+  - 绝对路径：D:/images/photo.png, /tmp/screenshot.png
+  - 相对路径：./image.png, uploads/photo.jpg（自动拼接工作目录）
 - HTTP URL：http://localhost:8000/api/upload/xxx（用户上传的图片，自动下载）
 - HTTP URL：http://localhost:8000/api/image/xxx（系统生成的图表，自动下载）
 
@@ -66,9 +68,10 @@ class AnalyzeImageTool(LLMTool):
 - analyze: 综合分析（默认，包含以上所有内容）
 
 示例：
-- analyze_image(path="D:/work_dir/chart.png", operation="ocr")  # 本地文件OCR
-- analyze_image(path="http://localhost:8000/api/image/xxx", operation="describe")  # URL图片描述
-- analyze_image(path="./photo.jpg", operation="chart", prompt="提取图表数据")  # 相对路径
+- analyze_image(path="D:/images/chart.png", operation="ocr")  # 绝对路径
+- analyze_image(path="/tmp/screenshot.png", operation="describe")  # 系统路径
+- analyze_image(path="http://localhost:8000/api/image/xxx", operation="chart")  # URL
+- analyze_image(path="./photo.jpg", operation="analyze")  # 相对路径
 
 配置：
 - 使用通义千问 VL 模型（qwen-vl-max-latest）
@@ -81,7 +84,7 @@ class AnalyzeImageTool(LLMTool):
             requires_context=False
         )
 
-        # 工作目录限制
+        # 工作目录（用于相对路径解析）
         self.working_dir = Path(__file__).parent.parent.parent.parent.parent.parent
         self.max_image_size = 5 * 1024 * 1024  # 5MB
 
@@ -361,9 +364,6 @@ class AnalyzeImageTool(LLMTool):
                 file_path = self.working_dir / file_path
             file_path = file_path.resolve()
 
-            if not file_path.is_relative_to(self.working_dir):
-                return None
-
             return file_path
         except Exception:
             return None
@@ -378,7 +378,7 @@ class AnalyzeImageTool(LLMTool):
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "图片文件路径（支持本地路径或HTTP URL）。例如：D:/image.png 或 http://localhost:8000/api/image/xxx"
+                        "description": "图片文件路径（支持任意本地路径或HTTP URL，无路径限制）。例如：D:/images/photo.png, /tmp/screenshot.png, ./image.png, http://localhost:8000/api/image/xxx"
                     },
                     "operation": {
                         "type": "string",

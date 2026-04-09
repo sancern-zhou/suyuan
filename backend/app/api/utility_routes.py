@@ -64,6 +64,12 @@ async def download_file(file_path: str):
             media_type = 'text/markdown'
         elif path.suffix in ['.docx']:
             media_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif path.suffix in ['.xlsx']:
+            media_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        elif path.suffix in ['.xls']:
+            media_type = 'application/vnd.ms-excel'
+        elif path.suffix in ['.pptx']:
+            media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
         elif path.suffix in ['.txt']:
             media_type = 'text/plain'
 

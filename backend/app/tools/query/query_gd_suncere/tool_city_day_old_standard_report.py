@@ -1,7 +1,7 @@
 """
 旧标准统计报表查询工具
 
-基于 HJ 633-2011 旧标准的空气质量统计报表查询工具
+基于 HJ 633-2013 旧标准的空气质量统计报表查询工具
 
 【核心功能】
 - 旧标准综合指数计算（所有污染物权重均为1）
@@ -16,7 +16,7 @@
 
 【返回数据说明】
 - result字段：统计汇总结果（综合指数、超标天数、首要污染物比例等）
-- data_id字段：完整日报数据（基于HJ 633-2011旧标准计算）
+- data_id字段：完整日报数据（基于HJ 633-2013旧标准计算）
 
 **重要**：data_id中的日报数据已用旧标准计算结果覆盖原始字段，Agent可直接使用：
 - AQI：旧标准空气质量指数（覆盖原始值）
@@ -71,6 +71,7 @@ async def execute_query_old_standard_report(
     start_date: str,
     end_date: str,
     enable_sand_deduction: bool = True,
+    use_new_composite_algorithm: bool = False,
     context: Optional[ExecutionContext] = None
 ) -> Dict[str, Any]:
     """
@@ -81,6 +82,9 @@ async def execute_query_old_standard_report(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
+        use_new_composite_algorithm: 是否使用新综合指数算法（默认False，使用旧算法）
+            - False（默认）: 旧综合指数算法（所有污染物权重均为1）
+            - True: 新综合指数算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
         context: 执行上下文（可选）
 
     Returns:
@@ -330,7 +334,10 @@ async def execute_query_old_standard_report(
             logger.info("calculating_old_standard_stats_for_city", city=city, day_count=len(city_daily_records))
 
             # 计算旧标准统计
-            city_stat = calculate_old_standard_city_stats(city_daily_records, city)
+            city_stat = calculate_old_standard_city_stats(
+                city_daily_records, city,
+                use_new_composite_algorithm=use_new_composite_algorithm
+            )
             city_stats[city] = city_stat
 
         # 计算全省汇总统计（多城市查询时）
@@ -358,14 +365,17 @@ async def execute_query_old_standard_report(
         # 步骤8: 构建返回结果
         total_days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
 
+        # 综合指数算法说明
+        composite_algorithm_desc = "新综合指数算法（PM2.5权重3，NO2权重2，O3权重2）" if use_new_composite_algorithm else "旧综合指数算法（所有权重均为1）"
+
         # 统计结果放在 result 字段，原始日数据通过 data_id 引用
         if len(cities) == 1 and city_stats:
             city_name = list(city_stats.keys())[0]
             result_summary_data = city_stats[city_name]
-            result_summary = f"旧标准统计报表查询完成，{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
         else:
             result_summary_data = city_stats
-            result_summary = f"旧标准统计报表查询完成，共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
             # 添加全省汇总到结果
             if province_wide_stats:
                 result_summary_data["province_wide"] = province_wide_stats
@@ -380,7 +390,8 @@ async def execute_query_old_standard_report(
             "date_range": f"{start_date} to {end_date}",
             "schema_version": "v2.0",
             "total_days": total_days,
-            "standard": "HJ 633-2011",  # 标识旧标准
+            "standard": "HJ 633-2013",  # 标识旧标准
+            "composite_algorithm": "new" if use_new_composite_algorithm else "old",  # 综合指数算法标识
             "enable_sand_deduction": enable_sand_deduction
         }
 
@@ -408,7 +419,8 @@ async def execute_query_old_standard_report(
 
 def calculate_old_standard_city_stats(
     daily_records: List[Dict],
-    city_name: str
+    city_name: str,
+    use_new_composite_algorithm: bool = False
 ) -> Dict[str, Any]:
     """
     计算单个城市的旧标准统计指标
@@ -416,6 +428,9 @@ def calculate_old_standard_city_stats(
     Args:
         daily_records: 日报数据列表（已清洗扣沙日、已标准化、已计算旧标准AQI/IAQI）
         city_name: 城市名称
+        use_new_composite_algorithm: 是否使用新综合指数算法（默认False，使用旧算法）
+            - False（默认）: 旧综合指数算法（所有污染物权重均为1）
+            - True: 新综合指数算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
 
     Returns:
         旧标准统计结果
@@ -681,13 +696,30 @@ def calculate_old_standard_city_stats(
     co_index = safe_round(old_standard_concentrations['CO'] / ANNUAL_STANDARD_LIMITS_OLD['CO'], 3)
     o3_8h_index = safe_round(old_standard_concentrations['O3_8h'] / ANNUAL_STANDARD_LIMITS_OLD['O3_8h'], 3)
 
-    # 计算加权单项质量指数（所有权重均为1）
-    pm25_weighted_index = safe_round(pm25_index * WEIGHTS['PM2_5'], 3)
-    pm10_weighted_index = safe_round(pm10_index * WEIGHTS['PM10'], 3)
-    so2_weighted_index = safe_round(so2_index * WEIGHTS['SO2'], 3)
-    no2_weighted_index = safe_round(no2_index * WEIGHTS['NO2'], 3)
-    co_weighted_index = safe_round(co_index * WEIGHTS['CO'], 3)
-    o3_8h_weighted_index = safe_round(o3_8h_index * WEIGHTS['O3_8h'], 3)
+    # 根据参数选择综合指数算法权重
+    # use_new_composite_algorithm=False（默认）: 旧算法（所有权重均为1）
+    # use_new_composite_algorithm=True: 新算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
+    if use_new_composite_algorithm:
+        # 新综合指数算法：PM2.5权重3，NO2权重2，O3权重2，其他权重1
+        composite_weights = WEIGHTS
+    else:
+        # 旧综合指数算法（默认）：所有权重均为1
+        composite_weights = {
+            'PM2_5': 1,
+            'PM10': 1,
+            'SO2': 1,
+            'NO2': 1,
+            'CO': 1,
+            'O3_8h': 1
+        }
+
+    # 计算加权单项质量指数
+    pm25_weighted_index = safe_round(pm25_index * composite_weights['PM2_5'], 3)
+    pm10_weighted_index = safe_round(pm10_index * composite_weights['PM10'], 3)
+    so2_weighted_index = safe_round(so2_index * composite_weights['SO2'], 3)
+    no2_weighted_index = safe_round(no2_index * composite_weights['NO2'], 3)
+    co_weighted_index = safe_round(co_index * composite_weights['CO'], 3)
+    o3_8h_weighted_index = safe_round(o3_8h_index * composite_weights['O3_8h'], 3)
 
     # 计算综合指数
     avg_composite_index = safe_round(

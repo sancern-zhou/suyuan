@@ -1,7 +1,7 @@
 """
 标准限值对比验证（简化版）
 
-验证168城市统计系统是否使用新标准（HJ 633-2024）
+验证168城市统计系统是否使用新标准（HJ 633-2026）
 """
 print("="*70)
 print("标准限值对比验证（168城市统计系统 vs 新标准报表工具）")
@@ -72,7 +72,7 @@ for pollutant in ['SO2', 'NO2', 'PM10', 'PM2_5', 'CO', 'O3_8h']:
     status = "✓ 一致" if is_consistent else f"✗ 不一致 ({city_weight} vs {report_weight})"
     print(f"{pollutant:<12} {city_weight:<15} {report_weight:<15} {status}")
 
-print("\n3. 新标准（HJ 633-2024）关键变化:")
+print("\n3. 新标准（HJ 633-2026）关键变化:")
 print("-"*70)
 print("  • PM2.5: 年平均二级标准收严（35→30 μg/m³）")
 print("  • PM10:  年平均二级标准收严（70→60 μg/m³）")
@@ -88,7 +88,7 @@ print("  • O3: 日最大8小时第90百分位数")
 
 print("\n" + "="*70)
 if all_consistent:
-    print("✓ 结论：168城市统计系统完全使用新标准（HJ 633-2024）")
+    print("✓ 结论：168城市统计系统完全使用新标准（HJ 633-2026）")
 else:
     print("✗ 警告：标准限值不一致！")
 print("="*70)

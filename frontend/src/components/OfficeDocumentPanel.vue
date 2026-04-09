@@ -39,6 +39,14 @@
                   >
                     📝 下载Word文档
                   </button>
+                  <button
+                    v-if="doc.doc_type === 'excel'"
+                    @click="downloadExcel(doc)"
+                    class="download-item"
+                    :disabled="!doc.file_path || doc.file_path === ''"
+                  >
+                    📊 下载Excel文件
+                  </button>
                 </div>
               </div>
             </div>
@@ -208,7 +216,7 @@ watch(() => reactStore.lastOfficeDocument, (doc) => {
     // 添加新文档
     console.log('[OfficeDocumentPanel] 添加新文档:', fileName)
     officeDocuments.value.push({
-      doc_type: getDocType(doc.generator, doc.markdown_preview),
+      doc_type: getDocType(doc.generator, doc.markdown_preview, filePath),
       file_name: fileName,
       file_path: filePath,
       pdf_url: doc.pdf_preview?.pdf_url,
@@ -375,6 +383,34 @@ function downloadMarkdown(doc) {
   }
 }
 
+// Download Excel file
+function downloadExcel(doc) {
+  if (!doc.file_path || doc.file_path === '') {
+    console.error('[OfficeDocumentPanel] Excel file path not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    // 使用通用文件下载API
+    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+
+    // 创建下载链接
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = doc.file_name || 'document.xlsx'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    console.log('[OfficeDocumentPanel] Excel download started:', doc.file_name)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Excel download failed:', error)
+  }
+}
+
 // Cancel edit
 function cancelEdit() {
   isEditMode.value = false
@@ -421,7 +457,8 @@ async function submitEdit(doc) {
   }
 }
 
-function getDocType(generator, markdownPreview) {
+function getDocType(generator, markdownPreview, filePath) {
+  // 先根据 generator 判断
   if (['word_edit', 'find_replace_word', 'accept_word_changes'].includes(generator)) {
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
@@ -429,6 +466,21 @@ function getDocType(generator, markdownPreview) {
   } else if (markdownPreview) {
     return 'markdown'
   }
+
+  // 如果 generator 无法判断，根据文件扩展名判断
+  if (filePath) {
+    const ext = filePath.toLowerCase().split('.').pop()
+    if (['doc', 'docx'].includes(ext)) {
+      return 'word'
+    } else if (['ppt', 'pptx'].includes(ext)) {
+      return 'ppt'
+    } else if (['xls', 'xlsx'].includes(ext)) {
+      return 'excel'
+    } else if (['md', 'markdown'].includes(ext)) {
+      return 'markdown'
+    }
+  }
+
   return 'unknown'
 }
 

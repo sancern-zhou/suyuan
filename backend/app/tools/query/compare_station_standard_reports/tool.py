@@ -1,7 +1,7 @@
 """
 站点级新标准报表对比分析工具
 
-对比两个时间段基于 HJ 633-2024 新标准的站点级空气质量统计报表
+对比两个时间段基于 HJ 633-2026 新标准的站点级空气质量统计报表
 
 【核心功能】
 - 查询两个时间段的站点统计数据
@@ -76,7 +76,7 @@ class CompareStationStandardReportsTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "compare_station_standard_reports",
-            "description": """对比两个时间段基于 HJ 633-2024 新标准的站点级空气质量统计报表。
+            "description": """对比两个时间段基于 HJ 633-2026 新标准的站点级空气质量统计报表。
 
 【核心功能】
 - 并发查询两个时间段的站点统计数据

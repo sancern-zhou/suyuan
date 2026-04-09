@@ -23,7 +23,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-# IAQI断点表（HJ 633-2024新标准）
+# IAQI断点表（HJ 633-2026新标准）
 IAQI_BREAKPOINTS_NEW = {
     'SO2': [(0, 0), (50, 50), (150, 100), (475, 150), (800, 200), (1600, 300), (2100, 400), (2620, 500)],
     'NO2': [(0, 0), (40, 50), (80, 100), (180, 150), (280, 200), (565, 300), (750, 400), (940, 500)],
@@ -53,7 +53,7 @@ GUANGDONG_CITIES = [
 
 
 def calculate_iaqi(concentration: float, pollutant: str) -> int:
-    """计算污染物IAQI（基于HJ 633-2024新标准）
+    """计算污染物IAQI（基于HJ 633-2026新标准）
 
     Args:
         concentration: 污染物浓度值（μg/m³，CO为mg/m³）

@@ -1,7 +1,7 @@
 """
 站点级新标准统计报表查询工具
 
-基于 HJ 633-2024 新标准的站点级空气质量统计报表查询工具
+基于 HJ 633-2026 新标准的站点级空气质量统计报表查询工具
 
 【核心功能】
 - 新标准综合指数计算（PM2.5权重3，O3权重2，NO2权重2，其他权重1）
@@ -63,7 +63,7 @@ ROUNDING_PRECISION = {
     }
 }
 
-# 新标准（HJ 633-2024）24小时平均标准限值
+# 新标准（HJ 633-2026）24小时平均标准限值
 STANDARD_LIMITS = {
     'PM2_5': 60,
     'PM10': 120,
@@ -736,8 +736,25 @@ def execute_query_station_new_standard_report(
                 }
             }
 
-        # 2. 获取数据记录
-        records = query_result.get("data", [])
+        # 2. 获取数据记录（优先从data_id获取完整数据）
+        data_id = query_result.get("data_id")
+
+        if data_id and context:
+            # 从data_id获取完整数据（未采样的完整数据集）
+            records = context.get_raw_data(data_id)
+            logger.info(
+                "loading_full_data_from_data_id",
+                data_id=data_id,
+                record_count=len(records) if records else 0
+            )
+        else:
+            # 降级：从data字段获取（可能已被采样）
+            records = query_result.get("data", [])
+            logger.warning(
+                "using_sampled_data_from_data_field",
+                record_count=len(records),
+                warning="统计数据可能不准确（采样数据）"
+            )
 
         if not records:
             return {
@@ -842,7 +859,7 @@ class QueryStationNewStandardReportTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "query_station_new_standard_report",
-            "description": """查询站点级基于 HJ 633-2024 新标准的空气质量统计报表。
+            "description": """查询站点级基于 HJ 633-2026 新标准的空气质量统计报表。
 
 【核心功能】
 - 新标准综合指数计算（PM2.5权重3，O3权重2，NO2权重2，其他权重1）
@@ -867,33 +884,33 @@ class QueryStationNewStandardReportTool(LLMTool):
   - ⚠️ 一般情况下不需要使用此字段，result 字段已包含所有统计结果
 
 【输入参数】
-- station_type: 站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'
-- cities: 城市名称列表（可选，自动展开为该城市下所有站点），如 ['广州']
-- stations: 站点名称列表（可选，直接查询指定站点），如 ['广雅中学', '市监测站']
+- station_type: 站点类型（可选，默认'国控'）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'
+- cities: 城市名称列表（可选，自动展开为该城市下所有站点），如 ['广州']。如果不提供 station_type，默认查询国控站点
+- stations: 站点名称列表（可选，直接查询指定站点），如 ['广雅中学', '市监测站']。使用此参数时不需要提供 station_type
 - start_date: 开始日期 (YYYY-MM-DD)
 - end_date: 结束日期 (YYYY-MM-DD)
 - aggregate: 是否计算多站点汇总统计（默认false）
 
 【重要】
 - cities 和 stations 至少提供一个（为避免数据量过大，不支持全省查询）
-- station_type 为必填参数，必须指定站点类型
+- station_type 为可选参数，使用 stations 时不需要提供，使用 cities 时默认为'国控'
             """.strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "station_type": {
                         "type": "string",
-                        "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
+                        "description": "站点类型（可选，默认'国控'）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
                     },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表（可选，自动展开为该城市下所有站点），如 ['广州']"
+                        "description": "城市名称列表（可选，自动展开为该城市下所有站点），如 ['广州']。如果不提供 station_type，默认查询国控站点"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表（可选，直接查询指定站点），如 ['广雅中学', '市监测站']"
+                        "description": "站点名称列表（可选，直接查询指定站点），如 ['广雅中学', '市监测站']。使用此参数时不需要提供 station_type"
                     },
                     "start_date": {
                         "type": "string",
@@ -908,7 +925,7 @@ class QueryStationNewStandardReportTool(LLMTool):
                         "description": "是否计算多站点汇总统计（默认false）"
                     }
                 },
-                "required": ["station_type", "start_date", "end_date"]
+                "required": ["start_date", "end_date"]
             }
         }
 
@@ -927,6 +944,9 @@ class QueryStationNewStandardReportTool(LLMTool):
         start_date = kwargs.get("start_date")
         end_date = kwargs.get("end_date")
         station_type = kwargs.get("station_type")
+        cities = kwargs.get("cities")
+        stations = kwargs.get("stations")
+        aggregate = kwargs.get("aggregate", False)
 
         if not start_date or not end_date:
             return {
@@ -940,23 +960,6 @@ class QueryStationNewStandardReportTool(LLMTool):
                     "error": "Missing required parameters",
                 }
             }
-
-        if not station_type:
-            return {
-                "status": "failed",
-                "success": False,
-                "result": {},
-                "summary": "缺少必填参数: station_type（站点类型）",
-                "metadata": {
-                    "schema_version": "v2.0",
-                    "generator": "query_station_new_standard_report",
-                    "error": "Missing station_type parameter",
-                }
-            }
-
-        cities = kwargs.get("cities")
-        stations = kwargs.get("stations")
-        aggregate = kwargs.get("aggregate", False)
 
         if not cities and not stations:
             return {
@@ -972,6 +975,27 @@ class QueryStationNewStandardReportTool(LLMTool):
                 }
             }
 
+        # 智能推断 station_type
+        # 规则1: 如果使用 stations 参数，不需要 station_type（站点名称已确定类型）
+        # 规则2: 如果只使用 cities 参数且没有 station_type，默认使用"国控"
+        if stations and not cities:
+            # 场景1: 只提供站点名称，不需要 station_type
+            if station_type:
+                logger.warning(
+                    "query_station_new_standard_report_ignored_station_type",
+                    reason="使用stations参数时，station_type将被忽略",
+                    stations=stations,
+                    provided_station_type=station_type
+                )
+            # 不传递 station_type
+            effective_station_type = None
+        elif cities and not stations:
+            # 场景2: 只提供城市名称，使用默认的"国控"或用户指定的 station_type
+            effective_station_type = station_type or "国控"
+        else:
+            # 场景3: 同时提供 cities 和 stations，使用用户指定的 station_type（如果有）
+            effective_station_type = station_type
+
         # 调用同步函数（不使用await）
         return execute_query_station_new_standard_report(
             cities=cities,
@@ -980,5 +1004,5 @@ class QueryStationNewStandardReportTool(LLMTool):
             end_date=end_date,
             aggregate=aggregate,
             context=context,
-            station_type=station_type
+            station_type=effective_station_type
         )

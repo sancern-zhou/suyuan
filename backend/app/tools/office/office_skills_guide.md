@@ -6,19 +6,14 @@
 ## 🚀 快速开始
 
 **工具列表**：
-"unpack_office": "解包Office文件为XML",
-"pack_office": "打包XML为Office文件",
-"word_edit": "Word文档结构化编辑",
-"accept_word_changes": "接受Word文档所有修订",
-"find_replace_word": "Word简单文本替换",
-"recalc_excel": "Excel公式重算",
-"add_ppt_slide": "PPT添加幻灯片",
+- "unpack_office": "解包Office文件为XML"
+- "pack_office": "打包XML为Office文件"
+- "word_edit": "Word文档结构化编辑"
+- "accept_word_changes": "接受Word文档所有修订"
 
 **Word 编辑决策**：
 ```
-简单换文字 → find_replace_word
-换段落/插入/删除 → word_edit
-不确定 → word_edit
+所有 Word 编辑 → word_edit（推荐）
 ```
 
 **绝对禁止**：
@@ -28,8 +23,8 @@
 
 **Excel/PPT**：
 ```
-Excel → recalc_excel
-PPT → add_ppt_slide（需先 unpack_office）
+Excel → execute_python（使用 openpyxl、pandas 等库）
+PPT → execute_python（使用 python-pptx 库）
 ```
 
 **核心原则**：
@@ -56,7 +51,7 @@ PPT → add_ppt_slide（需先 unpack_office）
 
 **编辑完成后必须告知用户文件位置！**
 
-### word_edit/find_replace_word 编辑
+### word_edit 编辑
 
 **内容格式要求**：
 ```
@@ -83,7 +78,7 @@ XML 文件位于：[解包目录]/word/document.xml
 
 步骤 3：等待用户确认修改完成
 
-步骤 4：重新打包（`word_edit`/`find_replace_word` 编辑完成后不需要手动打包，会自动完成打包）
+步骤 4：重新打包（`word_edit` 编辑完成后不需要手动打包，会自动完成打包）
 pack_office(input_dir="[解包目录]", output_file="[输出文件路径]")
 
 步骤 5：告知用户
@@ -96,8 +91,8 @@ pack_office(input_dir="[解包目录]", output_file="[输出文件路径]")
 - 重新打包后告知用户文件地址
 
 **⚠️ 已解包文档的处理**：
-- 如果解包后需用 `word_edit`/`find_replace_word` 编辑 → 传**原 .docx 路径**（工具自动解包/打包）
-- **不要**把解包目录传给 `word_edit`/`find_replace_word`
+- 如果解包后需用 `word_edit` 编辑 → 传**原 .docx 路径**（工具自动解包/打包）
+- **不要**把解包目录传给 `word_edit`
 
 ---
 
@@ -129,27 +124,7 @@ pack_office(input_dir="[解包目录]", output_file="[输出文件路径]")
 
 ---
 
-## 1. find_replace_word - 简单文本替换
-
-批量替换文本，直接操作 .docx
-
-**核心参数**：
-```
-path: 文件路径（必需）
-find_text: 要查找的文本（必需）
-replace_text: 替换后的文本（必需）
-use_regex: 是否使用正则（可选）
-```
-
-**示例**：
-```
-简单替换：find_replace_word(path="[文件路径]", find_text="旧文本", replace_text="新文本")
-正则替换：find_replace_word(path="[文件路径]", find_text="\\d{4}-\\d{2}-\\d{2}", replace_text="2024-01-01", use_regex=True)
-```
-
----
-
-## 2. word_edit - 结构化编辑
+## 1. word_edit - 结构化编辑
 
 复杂 Word 编辑：替换段落、插入、删除
 
@@ -183,30 +158,112 @@ operation: 操作类型（必需）
 
 ---
 
-## 3. recalc_excel - 公式重算
+## 2. Excel 操作说明
 
-**示例**：`recalc_excel(path="[Excel文件路径]")`
+所有Excel操作请使用 `execute_python` 工具，配合以下库：
+
+**推荐库**：
+- **openpyxl** - Excel文件读写（.xlsx格式）
+- **pandas** - 数据处理和Excel读写
+- **xlsxwriter** - Excel文件写入（支持格式化）
+
+**常用场景**：
+
+```python
+# 创建Excel文件
+import openpyxl
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.append(['城市', 'AQI', 'PM2.5'])
+ws.append(['广州', 85, 45])
+wb.save('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+```
+
+```python
+# 使用pandas读取和处理Excel
+import pandas as pd
+df = pd.read_excel('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+df_filtered = df[df['AQI'] > 100]
+df_filtered.to_excel('/home/xckj/suyuan/backend_data_registry/output.xlsx', index=False)
+```
+
+```python
+# Excel公式重算
+import openpyxl
+wb = openpyxl.load_workbook('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+# openpyxl会自动重算公式
+wb.save('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+```
 
 ---
 
-## 4. add_ppt_slide - 添加幻灯片
+## 3. PPT 操作说明
 
-**流程**：
+所有PPT操作请使用 `execute_python` 工具，配合 **python-pptx** 库：
+
+**推荐库**：
+- **python-pptx** - PPT文件读写和编辑
+
+**常用场景**：
+
+```python
+# 创建PPT文件
+from pptx import Presentation
+
+prs = Presentation()
+title_slide = prs.slides.add_slide(prs.slide_layouts[0])
+title = title_slide.shapes.title
+title.text = "演示标题"
+
+prs.save('/home/xckj/suyuan/backend_data_registry/presentation.pptx')
 ```
-1. unpack_office(path="[PPT文件路径]")
-2. add_ppt_slide(unpacked_dir="[解包目录]", source="[模板文件]")
-3. pack_office(input_dir="[解包目录]", output_file="[输出文件路径]")
+
+```python
+# 读取和编辑PPT
+from pptx import Presentation
+
+prs = Presentation('/home/xckj/suyuan/backend_data_registry/presentation.pptx')
+
+# 访问第一张幻灯片
+slide = prs.slides[0]
+
+# 添加文本框
+left = top = width = height = Inches(1)
+textbox = slide.shapes.add_textbox(left, top, width, height)
+text_frame = textbox.text_frame
+text_frame.text = "新文本内容"
+
+# 保存
+prs.save('/home/xckj/suyuan/backend_data_registry/presentation.pptx')
+```
+
+```python
+# 添加图片到PPT
+from pptx import Presentation
+from pptx.util import Inches
+
+prs = Presentation()
+slide = prs.slides.add_slide(prs.slide_layouts[0])
+
+# 添加图片
+pic = slide.shapes.add_picture(
+    '/home/xckj/suyuan/backend_data_registry/image.png',
+    Inches(1), Inches(1),
+    width=Inches(6)
+)
+
+prs.save('/home/xckj/suyuan/backend_data_registry/presentation_with_image.pptx')
 ```
 
 ---
 
-## 5. accept_word_changes - 接受修订
+## 4. accept_word_changes - 接受修订
 
 **示例**：`accept_word_changes(input_file="[输入文件路径]", output_file="[输出文件路径]")`
 
 ---
 
-## 6. 图片处理
+## 5. 图片处理
 
 **限制**：当前工具无法直接编辑图片
 
@@ -221,6 +278,6 @@ unpack_office(path="file.docx") → 图片位于 unpacked/word/media/ 目录 →
 
 | 错误 | 原因 | 解决 |
 |------|------|------|
-| old_string 未找到 | read_file 返回 markdown，无法匹配 XML | 用 find_replace_word 或 word_edit |
+| old_string 未找到 | read_file 返回 markdown，无法匹配 XML | 用 word_edit |
 | 未知操作类型 | 操作名称错误 | 用有效类型：replace_text, replace_paragraph, insert_after, insert_before, delete_paragraph |
 | 缺少必需参数 | 参数与操作类型不匹配 | 根据操作类型提供正确参数 |

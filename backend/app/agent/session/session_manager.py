@@ -186,8 +186,14 @@ class SessionManager:
         """
         sessions = []
 
-        # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*, tracing_session_*, chart_session_*, code_session_*
-        for pattern in ["session_*.json", "assistant_session_*.json", "query_session_*.json", "report_session_*.json", "tracing_session_*.json", "chart_session_*.json", "code_session_*.json"]:
+        # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*, tracing_session_*, chart_session_*, code_session_*, 以及子Agent session (*__to__*)
+        patterns = [
+            "session_*.json", "assistant_session_*.json", "query_session_*.json",
+            "report_session_*.json", "tracing_session_*.json", "chart_session_*.json",
+            "code_session_*.json",
+            "*__to__*.json"  # ✅ 新增：子Agent session (parent__to__child__timestamp.json)
+        ]
+        for pattern in patterns:
             for file_path in self.storage_path.glob(pattern):
                 try:
                     session_data = json.loads(file_path.read_text(encoding='utf-8'))
@@ -239,8 +245,14 @@ class SessionManager:
         cutoff_date = datetime.now() - timedelta(days=self.retention_days)
         deleted_count = 0
 
-        # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*, tracing_session_*, chart_session_*, code_session_*
-        for pattern in ["session_*.json", "assistant_session_*.json", "query_session_*.json", "report_session_*.json", "tracing_session_*.json", "chart_session_*.json", "code_session_*.json"]:
+        # 匹配所有类型的会话文件：session_*, assistant_session_*, query_session_*, report_session_*, tracing_session_*, chart_session_*, code_session_*, 以及子Agent session (*__to__*)
+        patterns = [
+            "session_*.json", "assistant_session_*.json", "query_session_*.json",
+            "report_session_*.json", "tracing_session_*.json", "chart_session_*.json",
+            "code_session_*.json",
+            "*__to__*.json"  # ✅ 新增：子Agent session (parent__to__child__timestamp.json)
+        ]
+        for pattern in patterns:
             for file_path in self.storage_path.glob(pattern):
                 try:
                     session_data = json.loads(file_path.read_text(encoding='utf-8'))

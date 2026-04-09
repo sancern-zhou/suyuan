@@ -42,8 +42,6 @@ class ExecuteSQLQueryTool(LLMTool):
         self.sql_validator = SQLValidator(max_limit=10000)
         # 添加业务表到白名单
         self.sql_validator.ALLOWED_TABLES.extend([
-            'working_orders',
-            'qc_history',  # 自动质控历史数据表
             'city_168_statistics',  # 168城市空气质量统计预计算表
             'province_statistics',  # 省级空气质量统计预计算表（31个省份）
             # 系统视图（用于动态查询表结构）
@@ -79,10 +77,8 @@ class ExecuteSQLQueryTool(LLMTool):
 - ❌ SELECT ... LIMIT 10 → SQL Server使用TOP而非LIMIT
 
 **可用数据表**：
-- city_168_statistics：168城市空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀）
-- province_statistics：省级空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀，⚠️ 中文字段查询必须用N前缀）
-- qc_history：自动质控历史
-- working_orders：运维工单
+- city_168_statistics：168城市空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀，⚠️ 省份名不带'省'后缀）
+- province_statistics：省级空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀）
 
 **安全限制**：
 - 只允许SELECT查询
@@ -91,8 +87,8 @@ class ExecuteSQLQueryTool(LLMTool):
 - 最大返回10000条记录
 
 **使用流程**：
-1. 先查看表结构：execute_sql_query(describe_table='qc_history')
-2. 根据表结构编写SQL（注意中文字符串使用 N 前缀）
+1. 先查看表结构：execute_sql_query(describe_table='city_168_statistics')
+2. 根据表结构和数据样例编写SQL（注意中文字符串使用 N 前缀）
 3. 执行查询：execute_sql_query(sql='SELECT ...')
             """.strip(),
             "parameters": {
@@ -174,7 +170,7 @@ class ExecuteSQLQueryTool(LLMTool):
             table_name: 表名
 
         Returns:
-            表结构信息
+            表结构信息 + 1条最新数据样例
         """
         # 验证表名是否在白名单中
         if table_name not in self.sql_validator.ALLOWED_TABLES:
@@ -215,17 +211,37 @@ class ExecuteSQLQueryTool(LLMTool):
                     "summary": f"未找到表 '{table_name}' 的结构信息"
                 }
 
+            # 获取1条最新数据样例（尝试通过日期字段排序）
+            sample_sql = self._build_sample_sql(table_name, columns)
+            sample_data = self._execute_query(sample_sql)
+
             # 格式化字段列表
             fields_text = "\n".join([
                 f"  - {col['COLUMN_NAME']} ({col['DATA_TYPE']}{'(' + str(col['CHARACTER_MAXIMUM_LENGTH']) + ')' if col['CHARACTER_MAXIMUM_LENGTH'] else ''}, {'可空' if col['IS_NULLABLE'] == 'YES' else '非空'})"
                 for col in columns
             ])
 
+            # 格式化数据样例
+            sample_text = ""
+            if sample_data:
+                sample_record = sample_data[0]
+                sample_text = "\n最新数据样例:\n"
+                for col in columns:
+                    col_name = col['COLUMN_NAME']
+                    value = sample_record.get(col_name, "NULL")
+                    # 截断过长的字符串
+                    if isinstance(value, str) and len(value) > 50:
+                        value = value[:50] + "..."
+                    sample_text += f"  {col_name}: {value}\n"
+            else:
+                sample_text = "\n数据样例: 表中暂无数据\n"
+
             result = {
                 "success": True,
                 "data": {
                     "table_name": table_name,
-                    "columns": columns
+                    "columns": columns,
+                    "sample_data": sample_data[0] if sample_data else None
                 },
                 "summary": f"""表名: {table_name}
 
@@ -233,14 +249,14 @@ class ExecuteSQLQueryTool(LLMTool):
 {fields_text}
 
 字段总数: {len(columns)}
-
-提示：使用 execute_sql_query(sql='SELECT TOP 100 * FROM {table_name}') 查看数据示例"""
+{sample_text}提示：使用 execute_sql_query(sql='SELECT TOP 100 * FROM {table_name}') 查看更多数据"""
             }
 
             logger.info(
                 "table_schema_described",
                 table_name=table_name,
-                field_count=len(columns)
+                field_count=len(columns),
+                has_sample=len(sample_data) > 0
             )
 
             return result
@@ -389,6 +405,42 @@ class ExecuteSQLQueryTool(LLMTool):
                     return sql[:select_end] + f'TOP {limit} ' + sql[select_end:]
 
             return sql
+
+    def _build_sample_sql(self, table_name: str, columns: list) -> str:
+        """
+        构建获取最新数据样例的SQL（智能检测日期字段排序）
+
+        Args:
+            table_name: 表名
+            columns: 字段信息列表
+
+        Returns:
+            SQL查询语句
+        """
+        # 检测常见的日期/时间字段名
+        date_keywords = ['date', 'time', 'created', 'updated', 'modified', 'stat_date', 'create_time', 'update_time']
+        date_column = None
+
+        for col in columns:
+            col_name_lower = col['COLUMN_NAME'].lower()
+            # 检查是否是日期类型字段
+            if col['DATA_TYPE'] in ('datetime', 'datetime2', 'date', 'timestamp'):
+                # 优先匹配包含日期关键词的字段
+                for keyword in date_keywords:
+                    if keyword in col_name_lower:
+                        date_column = col['COLUMN_NAME']
+                        break
+                # 如果还没找到，使用第一个日期类型字段
+                if not date_column:
+                    date_column = col['COLUMN_NAME']
+
+        # 构建SQL
+        if date_column:
+            # 使用日期字段排序获取最新记录
+            return f"SELECT TOP 1 * FROM {table_name} ORDER BY {date_column} DESC"
+        else:
+            # 没有日期字段，直接取1条
+            return f"SELECT TOP 1 * FROM {table_name}"
 
     def _extract_table_name(self, sql: str) -> Optional[str]:
         """从SQL中提取表名"""

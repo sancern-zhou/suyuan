@@ -1260,7 +1260,8 @@ class QueryGDSuncereDataTool:
         cities: List[str],
         start_time: str,
         end_time: str,
-        context: ExecutionContext
+        context: ExecutionContext,
+        include_weather: bool = True
     ) -> Dict[str, Any]:
         """
         查询城市小时数据（用于区域对比分析）
@@ -1273,9 +1274,22 @@ class QueryGDSuncereDataTool:
             start_time: 开始时间 (YYYY-MM-DD HH:MM:SS)
             end_time: 结束时间 (YYYY-MM-DD HH:MM:SS)
             context: 执行上下文
+            include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
 
         Returns:
             查询结果
+
+        Note:
+            气象字段包括：
+            - wind_speed_10m: 10米风速 (m/s)
+            - wind_direction_10m: 10米风向 (度)
+            - temperature_2m: 2米气温 (°C)
+            - relative_humidity_2m: 2米相对湿度 (%)
+            - surface_pressure: 地面气压 (hPa)
+            - precipitation: 降水量 (mm)
+            - visibility: 能见度 (km)
+
+            某些站点的气象字段可能返回空值或无效值（如 -99.000），这是数据源的正常情况。
         """
         logger.info(
             "query_gd_suncere_city_hour_start",
@@ -1384,6 +1398,28 @@ class QueryGDSuncereDataTool:
                 standardized_count=len(standardized_records)
             )
 
+            # 根据 include_weather 参数决定是否保留气象字段
+            if not include_weather:
+                # 移除气象字段（当用户显式设置为False时）
+                weather_fields = [
+                    'wind_speed_10m', 'wind_direction_10m',
+                    'temperature_2m', 'relative_humidity_2m',
+                    'surface_pressure', 'wind_gusts_10m',
+                    'precipitation', 'cloud_cover', 'visibility'
+                ]
+                for record in standardized_records:
+                    measurements = record.get('measurements', {})
+                    for field in weather_fields:
+                        measurements.pop(field, None)
+                logger.debug(
+                    "gd_suncere_city_hour_weather_fields_removed",
+                    weather_fields=weather_fields
+                )
+            else:
+                logger.debug(
+                    "gd_suncere_city_hour_weather_fields_included"
+                )
+
             # 对小时数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
             def safe_float(value, default=0.0):
                 """安全转换为浮点数"""
@@ -1469,38 +1505,252 @@ class QueryGDSuncereDataTool:
     @classmethod
     def query_station_hour_data(
         cls,
-        cities: List[str],
+        stations: List[str],
         start_time: str,
         end_time: str,
-        context: ExecutionContext
+        context: ExecutionContext,
+        include_weather: bool = True
     ) -> Dict[str, Any]:
         """
         查询站点小时数据（用于精细化分析）
 
-        注意：此方法需要提供具体的站点代码，而不是城市代码
-        如果只查询城市级别数据，请使用 query_city_hour_data
+        注意：此方法需要提供具体的站点代码或站点名称
+        城市级别数据请使用 query_city_hour_data
 
         Args:
-            cities: 城市名称列表（保留参数兼容性，但此方法不推荐使用）
+            stations: 站点名称列表或站点编码列表（如 "广雅中学" 或 "1001A"）
             start_time: 开始时间 (YYYY-MM-DD HH:MM:SS)
             end_time: 结束时间 (YYYY-MM-DD HH:MM:SS)
             context: 执行上下文
+            include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
 
         Returns:
             查询结果
+
+        Note:
+            站点编码格式：通常为字母数字组合（如 "1001A"）
+            可以通过站点名称自动解析为站点编码
+
+            气象字段包括：
+            - wind_speed_10m: 10米风速 (m/s)
+            - wind_direction_10m: 10米风向 (度)
+            - temperature_2m: 2米气温 (°C)
+            - relative_humidity_2m: 2米相对湿度 (%)
+            - surface_pressure: 地面气压 (hPa)
+            - precipitation: 降水量 (mm)
+            - visibility: 能见度 (km)
+
+            某些站点的气象字段可能返回空值或无效值（如 -99.000），这是数据源的正常情况。
         """
-        logger.warning(
-            "query_station_hour_data_deprecated",
-            message="此方法已弃用，请使用 query_city_hour_data 代替"
+        logger.info(
+            "query_gd_suncere_station_hour_start",
+            stations=stations,
+            start_time=start_time,
+            end_time=end_time
         )
 
-        # 重定向到城市小时数据查询
-        return cls.query_city_hour_data(
-            cities=cities,
-            start_time=start_time,
-            end_time=end_time,
-            context=context
-        )
+        try:
+            api_client = get_gd_suncere_api_client()
+
+            # 解析站点代码（支持站点名称或编码）
+            station_codes = []
+            for station in stations:
+                station = station.strip()
+                # 尝试从站点名称映射
+                code = cls.get_station_code(station)
+                if code:
+                    station_codes.append(code)
+                    logger.debug(
+                        "station_name_converted_to_code",
+                        station_name=station,
+                        station_code=code
+                    )
+                else:
+                    # 如果直接提供了站点编码，使用它
+                    # 站点编码通常包含字母（如 "1001A"）
+                    if any(c.isalpha() for c in station):
+                        station_codes.append(station)
+                        logger.debug(
+                            "station_input_is_code",
+                            station=station
+                        )
+                    else:
+                        logger.warning(
+                            "station_code_not_found",
+                            station=station
+                        )
+
+            if not station_codes:
+                raise Exception(f"未找到任何有效的站点代码: {stations}")
+
+            logger.info(
+                "query_station_hour_codes_resolved",
+                stations=stations,
+                station_codes=station_codes
+            )
+
+            # 智能计算 DataSource 参数（根据结束时间判断）
+            data_type = cls.calculate_data_source(end_time)
+
+            logger.info(
+                "query_station_hour_data_type_calculated",
+                end_time=end_time,
+                data_type=data_type,
+                data_type_name="原始实况" if data_type == 0 else "审核实况"
+            )
+
+            # 调用 API 查询站点小时数据
+            response = api_client.query_station_hour_data(
+                station_codes=station_codes,
+                start_time=start_time,
+                end_time=end_time,
+                data_type=data_type
+            )
+
+            if not response.get("success"):
+                error_msg = response.get("msg", "Unknown error")
+                raise Exception(f"API 查询失败: {error_msg}")
+
+            # 提取结果
+            raw_records = response.get("result", [])
+
+            if not raw_records:
+                logger.warning(
+                    "query_station_hour_no_data",
+                    stations=stations,
+                    time_range=f"{start_time} - {end_time}"
+                )
+                return {
+                    "status": "empty",
+                    "success": True,
+                    "data": [],
+                    "metadata": {
+                        "tool_name": "query_gd_suncere_station_hour",
+                        "stations": stations,
+                        "time_range": f"{start_time} - {end_time}",
+                        "message": "查询成功但无数据返回"
+                    },
+                    "summary": f"未找到 {', '.join(stations)} 在指定时间段的小时数据"
+                }
+
+            logger.info(
+                "query_station_hour_data_received",
+                record_count=len(raw_records)
+            )
+
+            # 数据标准化
+            standardizer = get_data_standardizer()
+            standardized_records = standardizer.standardize(raw_records)
+
+            logger.info(
+                "gd_suncere_station_hour_standardized",
+                raw_count=len(raw_records),
+                standardized_count=len(standardized_records)
+            )
+
+            # 根据 include_weather 参数决定是否保留气象字段
+            if not include_weather:
+                # 移除气象字段（保持当前默认行为）
+                weather_fields = [
+                    'wind_speed_10m', 'wind_direction_10m',
+                    'temperature_2m', 'relative_humidity_2m',
+                    'surface_pressure', 'wind_gusts_10m',
+                    'precipitation', 'cloud_cover', 'visibility'
+                ]
+                for record in standardized_records:
+                    measurements = record.get('measurements', {})
+                    for field in weather_fields:
+                        measurements.pop(field, None)
+                logger.debug(
+                    "gd_suncere_station_hour_weather_fields_removed",
+                    weather_fields=weather_fields
+                )
+            else:
+                logger.debug(
+                    "gd_suncere_station_hour_weather_fields_included"
+                )
+
+            # 对小时数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
+            def safe_float(value, default=0.0):
+                """安全转换为浮点数"""
+                if value is None or value == '' or value == '-':
+                    return default
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            for record in standardized_records:
+                measurements = record.get("measurements", {})
+
+                # 提取原始浓度值
+                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                    record.get("pm2_5") or record.get("PM2_5"))
+                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                    record.get("pm10") or record.get("PM10"))
+                so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
+                                   record.get("so2") or record.get("SO2"))
+                no2_raw = safe_float(measurements.get("NO2") or measurements.get("no2") or
+                                   record.get("no2") or record.get("NO2"))
+                co_raw = safe_float(measurements.get("CO") or measurements.get("co") or
+                                  record.get("co") or record.get("CO"))
+                o3_8h_raw = safe_float(measurements.get("O3_8h") or measurements.get("o3_8h") or
+                                    record.get("o3_8h") or record.get("O3_8h"))
+
+                # 应用修约规则并更新 measurements
+                # 0位小数转为整数类型，避免显示 .0
+                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
+                measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
+                measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
+                measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')  # CO保留1位小数
+                measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
+
+            # 保存到上下文
+            data_id = context.data_manager.save_data(
+                data=standardized_records,
+                schema="air_quality_unified",
+                metadata={
+                    "source": "gd_suncere_api",
+                    "query_type": "station_hour",
+                    "stations": stations,
+                    "time_range": f"{start_time} - {end_time}",
+                    "schema_version": "v2.0",  # UDF v2.0 标记
+                    "field_mapping_applied": True,
+                    "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
+                }
+            )
+
+            logger.info(
+                "gd_suncere_station_hour_saved",
+                data_id=data_id,
+                record_count=len(standardized_records)
+            )
+
+            return {
+                "status": "success",
+                "success": True,
+                "data": standardized_records[:24],  # 返回前24条供预览
+                "metadata": {
+                    "tool_name": "query_gd_suncere_station_hour",
+                    "data_id": data_id,
+                    "total_records": len(standardized_records),
+                    "returned_records": min(24, len(standardized_records)),
+                    "stations": stations,
+                    "time_range": f"{start_time} - {end_time}",
+                    "schema_version": "v2.0",  # UDF v2.0 标记
+                    "source": "gd_suncere_api"
+                },
+                "summary": f"成功获取 {', '.join(stations)} 的小时数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+            }
+
+        except Exception as e:
+            logger.error(
+                "query_gd_suncere_station_hour_failed",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return cls._create_error_response(str(e))
 
     @classmethod
     def query_regional_comparison(
@@ -1664,7 +1914,8 @@ def execute_query_gd_suncere_station_hour(
     cities: List[str],
     start_time: str,
     end_time: str,
-    context: ExecutionContext
+    context: ExecutionContext,
+    include_weather: bool = True
 ) -> Dict[str, Any]:
     """
     执行站点小时数据查询（实际使用城市小时数据 API）
@@ -1679,15 +1930,29 @@ def execute_query_gd_suncere_station_hour(
         start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
         end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
         context: 执行上下文
+        include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
 
     Returns:
         查询结果字典
+
+    Note:
+        气象字段包括：
+        - wind_speed_10m: 10米风速 (m/s)
+        - wind_direction_10m: 10米风向 (度)
+        - temperature_2m: 2米气温 (°C)
+        - relative_humidity_2m: 2米相对湿度 (%)
+        - surface_pressure: 地面气压 (hPa)
+        - precipitation: 降水量 (mm)
+        - visibility: 能见度 (km)
+
+        某些站点的气象字段可能返回空值或无效值（如 -99.000），这是数据源的正常情况。
     """
     return QueryGDSuncereDataTool.query_city_hour_data(
         cities=cities,
         start_time=start_time,
         end_time=end_time,
-        context=context
+        context=context,
+        include_weather=include_weather
     )
 
 
@@ -1697,7 +1962,8 @@ def execute_query_gd_suncere_station_hour_real(
     context: ExecutionContext,
     cities: Optional[List[str]] = None,
     stations: Optional[List[str]] = None,
-    station_type: Optional[str] = None
+    station_type: Optional[str] = None,
+    include_weather: bool = True
 ) -> Dict[str, Any]:
     """
     执行站点级别小时数据查询（真实站点数据）
@@ -1707,6 +1973,7 @@ def execute_query_gd_suncere_station_hour_real(
     2. 调用 query_station_hour_data API（POST，传站点代码）
     3. 返回站点级别的小时数据（含 station_name 字段）
     4. 支持按站点类型过滤（国控/省控/市控等）
+    5. 支持提取气象字段（风速、风向、温度、湿度、气压等）
 
     Args:
         start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
@@ -1715,9 +1982,22 @@ def execute_query_gd_suncere_station_hour_real(
         cities: 城市名称列表（如 ["广州"]），工具自动展开为站点代码
         stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接转编码
         station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
+        include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
 
     Returns:
         UDF v2.0 格式的查询结果
+
+    Note:
+        气象字段包括：
+        - wind_speed_10m: 10米风速 (m/s)
+        - wind_direction_10m: 10米风向 (度)
+        - temperature_2m: 2米气温 (°C)
+        - relative_humidity_2m: 2米相对湿度 (%)
+        - surface_pressure: 地面气压 (hPa)
+        - precipitation: 降水量 (mm)
+        - visibility: 能见度 (km)
+
+        某些站点的气象字段可能返回空值或无效值（如 -99.000），这是数据源的正常情况。
     """
     logger.info(
         "query_gd_suncere_station_hour_real_start",
@@ -1843,6 +2123,28 @@ def execute_query_gd_suncere_station_hour_real(
         # 数据标准化
         standardizer = get_data_standardizer()
         standardized_records = standardizer.standardize(raw_records)
+
+        # 根据 include_weather 参数决定是否保留气象字段
+        if not include_weather:
+            # 移除气象字段（保持当前默认行为）
+            weather_fields = [
+                'wind_speed_10m', 'wind_direction_10m',
+                'temperature_2m', 'relative_humidity_2m',
+                'surface_pressure', 'wind_gusts_10m',
+                'precipitation', 'cloud_cover', 'visibility'
+            ]
+            for record in standardized_records:
+                measurements = record.get('measurements', {})
+                for field in weather_fields:
+                    measurements.pop(field, None)
+            logger.debug(
+                "gd_suncere_station_hour_real_weather_fields_removed",
+                weather_fields=weather_fields
+            )
+        else:
+            logger.debug(
+                "gd_suncere_station_hour_real_weather_fields_included"
+            )
 
         # 补充 station_name 字段（优先使用 API 返回的 name 字段）
         for record in standardized_records:
@@ -2744,12 +3046,12 @@ def format_pollutant_value(value: float, pollutant: str, data_type: str = 'stati
 # 《环境空气质量标准》（GB 3095-2012）二级标准限值（单位：μg/m³，CO为mg/m³）
 
 # 24小时平均标准限值（用于超标判断）
-# 注意：新标准（HJ 633-2024）相比旧标准（HJ 633-2011）加严了PM2.5和PM10的限值
+# 注意：新标准（HJ 633-2026）相比旧标准（HJ 633-2013）加严了PM2.5和PM10的限值
 # - PM2.5: 新标准60 vs 旧标准75
 # - PM10: 新标准120 vs 旧标准150
 STANDARD_LIMITS = {
-    'PM2_5': 60,   # 新标准24小时平均二级标准（HJ 633-2024，IAQI=100对应60）
-    'PM10': 120,   # 新标准24小时平均二级标准（HJ 633-2024，IAQI=100对应120）
+    'PM2_5': 60,   # 新标准24小时平均二级标准（HJ 633-2026，IAQI=100对应60）
+    'PM10': 120,   # 新标准24小时平均二级标准（HJ 633-2026，IAQI=100对应120）
     'SO2': 150,    # 24小时平均二级标准
     'NO2': 80,     # 24小时平均二级标准
     'CO': 4,       # 24小时平均二级标准（mg/m³）
@@ -2757,10 +3059,10 @@ STANDARD_LIMITS = {
 }
 
 # 旧标准24小时平均限值（用于旧标准超标判断）
-# 参考：HJ 633-2011 环境空气质量评价技术规范
+# 参考：HJ 633-2013 环境空气质量评价技术规范
 OLD_STANDARD_LIMITS = {
-    'PM2_5': 75,   # 旧标准24小时平均二级标准（HJ 633-2011，IAQI=100对应75）
-    'PM10': 150,   # 旧标准24小时平均二级标准（HJ 633-2011，IAQI=100对应150）
+    'PM2_5': 75,   # 旧标准24小时平均二级标准（HJ 633-2013，IAQI=100对应75）
+    'PM10': 150,   # 旧标准24小时平均二级标准（HJ 633-2013，IAQI=100对应150）
     'SO2': 150,    # 24小时平均二级标准（与新标准相同）
     'NO2': 80,     # 24小时平均二级标准（与新标准相同）
     'CO': 4,       # 24小时平均二级标准（mg/m³，与新标准相同）
@@ -2778,7 +3080,7 @@ ANNUAL_STANDARD_LIMITS = {
     'O3_8h': 160   # 日最大8小时平均二级标准
 }
 
-# 旧标准年均标准限值（HJ 633-2011）
+# 旧标准年均标准限值（HJ 633-2013）
 ANNUAL_STANDARD_LIMITS_OLD = {
     'PM2_5': 35,   # 年平均二级标准（旧标准）
     'PM10': 70,    # 年平均二级标准（旧标准）
@@ -2800,12 +3102,12 @@ WEIGHTS = {
 
 # -----------------------------------------------------------------------------
 # IAQI 分段标准表（用于计算空气质量分指数）
-# 参考：HJ 633-2024 环境空气质量评价技术规范
+# 参考：HJ 633-2026 环境空气质量评价技术规范
 # -----------------------------------------------------------------------------
 # IAQI 分段断点表：[浓度限值, IAQI值]
 # 浓度单位：μg/m³（CO为mg/m³）
 
-# 旧标准IAQI分段表（HJ 633-2011）
+# 旧标准IAQI分段表（HJ 633-2013）
 IAQI_BREAKPOINTS_OLD = {
     'SO2': [        # SO2 日平均
         (0, 0), (50, 50), (150, 100), (475, 150),
@@ -2833,7 +3135,7 @@ IAQI_BREAKPOINTS_OLD = {
     ]
 }
 
-# 新标准IAQI分段表（HJ 633-2024）
+# 新标准IAQI分段表（HJ 633-2026）
 IAQI_BREAKPOINTS_NEW = {
     'SO2': [        # SO2 日平均
         (0, 0), (50, 50), (150, 100), (475, 150),
@@ -2922,9 +3224,13 @@ def calculate_new_composite_index(concentrations: dict) -> float:
     """
     计算新标准综合指数（带权重）
 
-    计算方法（按 GB 3095-2012）：
+    计算方法（按 HJ 633-2026 新标准）：
     1. 计算各污染物单项质量指数 Ii = Ci / Si（浓度/标准值）
-    2. 按权重求和：Isum = SO2 + NO2 + PM10 + PM2.5 + CO + O3（所有权重均为1）
+    2. 按权重求和：Isum = 3×PM2.5 + 2×O3 + 2×NO2 + PM10 + SO2 + CO
+       - PM2.5权重为3
+       - O3权重为2
+       - NO2权重为2
+       - PM10、SO2、CO权重为1
 
     Args:
         concentrations: 各污染物平均浓度字典
@@ -3138,7 +3444,7 @@ def calculate_old_standard_stats_from_daily(
     city_name: str
 ) -> Dict[str, Any]:
     """
-    从日报数据计算旧标准统计指标（HJ 633-2011）
+    从日报数据计算旧标准统计指标（HJ 633-2013）
 
     业务规则：
     - 使用旧标准限值和IAQI断点表

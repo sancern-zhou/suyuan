@@ -28,10 +28,10 @@ logger = structlog.get_logger()
 
 
 # =============================================================================
-# 空气质量指数计算常量（基于 HJ 633-2024 新标准）
+# 空气质量指数计算常量（基于 HJ 633-2026 新标准）
 # =============================================================================
 
-# 新标准IAQI分段表（HJ 633-2024）
+# 新标准IAQI分段表（HJ 633-2026）
 # IAQI 分段断点表：[浓度限值, IAQI值]
 # 浓度单位：μg/m³（CO为mg/m³）
 IAQI_BREAKPOINTS_NEW = {
@@ -69,6 +69,16 @@ ANNUAL_STANDARD_LIMITS = {
     'NO2': 40,     # 年平均二级标准
     'CO': 4,       # 24小时平均二级标准（mg/m³）
     'O3_8h': 160   # 日最大8小时平均二级标准
+}
+
+# 权重配置（新标准 HJ 633-2026：PM2.5取3，O3、NO2取2，其他取1）
+WEIGHTS = {
+    'PM2_5': 3,
+    'PM10': 1,
+    'SO2': 1,
+    'NO2': 2,
+    'CO': 1,
+    'O3_8h': 2
 }
 
 # 污染物列名映射（支持多种命名格式）
@@ -217,13 +227,14 @@ class AggregateDataTool(LLMTool):
                 "- 空气质量指数（仅限单日数据）：IAQI（空气质量分指数）、AQI（空气质量指数）、PRIMARY_POLLUTANT（首要污染物）\n"
                 "- 质量指数（限多日数据）：SINGLE_INDEX（单项指数）、COMPREHENSIVE_INDEX（综合指数）\n"
                 "\n"
-                "**⚠️ 重要使用限制（HJ 633-2024标准）：**\n"
+                "**⚠️ 重要使用限制（HJ 633-2026标准）：**\n"
                 "- **IAQI/AQI/PRIMARY_POLLUTANT**：仅限单日数据评价，基于日平均浓度设计\n"
                 "  - 使用start_date和end_date参数限制为单日（如start_date='2026-01-17', end_date='2026-01-17'）\n"
                 "  - 多日数据会先求平均再计算，导致评价结果不准确\n"
                 "- **SINGLE_INDEX/COMPREHENSIVE_INDEX**：仅限多日数据评价（至少2天）\n"
                 "  - 用于月/季/年等时段的综合评价\n"
                 "  - 单日数据计算无统计学意义\n"
+                "  - **COMPREHENSIVE_INDEX（综合指数）**采用新标准加权求和（PM2.5权重3，O3权重2，NO2权重2，其他权重1）\n"
                 "\n"
                 "**日期过滤功能：**\n"
                 "- 使用start_date和end_date参数可以只计算指定日期范围的数据\n"
@@ -232,7 +243,7 @@ class AggregateDataTool(LLMTool):
                 "**⚠️ IAQI函数使用注意事项（重要）：**\n"
                 "- 使用IAQI函数时，column参数应指定**浓度字段**（如measurements.PM2_5、measurements.NO2）\n"
                 "- 不要使用已存储的IAQI字段（如measurements.PM2_5_IAQI），因为那可能是旧标准计算的值\n"
-                "- 工具会根据**新标准（HJ 633-2024）**从浓度重新计算IAQI值\n"
+                "- 工具会根据**新标准（HJ 633-2026）**从浓度重新计算IAQI值\n"
                 "- 必须指定pollutant参数（如PM2_5、NO2、SO2等）\n"
                 "\n"
                 "**使用前必读：**\n"
@@ -270,7 +281,7 @@ class AggregateDataTool(LLMTool):
                                 },
                                 "pollutant": {
                                     "type": "string",
-                                    "description": "污染物名称（IAQI/SINGLE_INDEX函数必需，用于修约规则和指数计算，如PM2_5、SO2、NO2、O3_8h、CO、PM10等）。\n\n**重要提示**：使用IAQI函数时，column参数应指定浓度字段（如measurements.PM2_5），而不是已存储的IAQI字段（如measurements.PM2_5_IAQI）。工具会根据新标准（HJ 633-2024）从浓度重新计算IAQI值。"
+                                    "description": "污染物名称（IAQI/SINGLE_INDEX函数必需，用于修约规则和指数计算，如PM2_5、SO2、NO2、O3_8h、CO、PM10等）。\n\n**重要提示**：使用IAQI函数时，column参数应指定浓度字段（如measurements.PM2_5），而不是已存储的IAQI字段（如measurements.PM2_5_IAQI）。工具会根据新标准（HJ 633-2026）从浓度重新计算IAQI值。"
                                 },
                                 "percentile": {
                                     "type": "number",
@@ -1060,10 +1071,18 @@ class AggregateDataTool(LLMTool):
 
     def _calculate_comprehensive_index_for_group(self, group: pd.DataFrame) -> float:
         """
-        计算分组的综合指数
+        计算分组的综合指数（新标准 HJ 633-2026）
 
-        综合指数 = Σ(单项指数) = Σ(Ci / Si)
-        其中Ci为污染物浓度，Si为标准限值
+        综合指数 = Σ(单项指数 × 权重) = Σ((Ci / Si) × Wi)
+        其中Ci为污染物浓度，Si为标准限值，Wi为权重
+
+        权重配置（新标准）：
+        - PM2.5权重3
+        - O3权重2
+        - NO2权重2
+        - PM10权重1
+        - SO2权重1
+        - CO权重1
 
         Args:
             group: 分组数据
@@ -1071,31 +1090,42 @@ class AggregateDataTool(LLMTool):
         Returns:
             综合指数值
         """
-        single_indexes = []
+        weighted_indexes = []
 
-        # 计算各污染物的单项指数
+        # 计算各污染物的加权单项指数
         for pollutant in ['PM2_5', 'PM10', 'SO2', 'NO2', 'CO', 'O3_8h']:
             column = self._find_pollutant_column(group, pollutant)
             if column and column in group.columns:
                 standard_limit = ANNUAL_STANDARD_LIMITS.get(pollutant)
+                weight = WEIGHTS.get(pollutant, 1)
                 if standard_limit:
                     # 计算平均浓度
                     avg_concentration = group[column].mean()
                     if pd.notna(avg_concentration):
                         # 单项指数 = 浓度 / 标准限值
                         single_index = avg_concentration / standard_limit
-                        single_indexes.append(single_index)
+                        # 加权单项指数 = 单项指数 × 权重
+                        weighted_index = single_index * weight
+                        weighted_indexes.append(weighted_index)
 
-        # 综合指数 = Σ(单项指数)
-        comprehensive_index = sum(single_indexes)
+        # 综合指数 = Σ(加权单项指数)
+        comprehensive_index = sum(weighted_indexes)
         return safe_round_for_index(comprehensive_index, 2)
 
     def _calculate_comprehensive_index_for_dataframe(self, df: pd.DataFrame) -> float:
         """
-        计算整个DataFrame的综合指数
+        计算整个DataFrame的综合指数（新标准 HJ 633-2026）
 
-        综合指数 = Σ(单项指数) = Σ(Ci / Si)
-        其中Ci为污染物浓度，Si为标准限值
+        综合指数 = Σ(单项指数 × 权重) = Σ((Ci / Si) × Wi)
+        其中Ci为污染物浓度，Si为标准限值，Wi为权重
+
+        权重配置（新标准）：
+        - PM2.5权重3
+        - O3权重2
+        - NO2权重2
+        - PM10权重1
+        - SO2权重1
+        - CO权重1
 
         Args:
             df: DataFrame对象
@@ -1103,23 +1133,26 @@ class AggregateDataTool(LLMTool):
         Returns:
             综合指数值
         """
-        single_indexes = []
+        weighted_indexes = []
 
-        # 计算各污染物的单项指数
+        # 计算各污染物的加权单项指数
         for pollutant in ['PM2_5', 'PM10', 'SO2', 'NO2', 'CO', 'O3_8h']:
             column = self._find_pollutant_column(df, pollutant)
             if column and column in df.columns:
                 standard_limit = ANNUAL_STANDARD_LIMITS.get(pollutant)
+                weight = WEIGHTS.get(pollutant, 1)
                 if standard_limit:
                     # 计算平均浓度
                     avg_concentration = df[column].mean()
                     if pd.notna(avg_concentration):
                         # 单项指数 = 浓度 / 标准限值
                         single_index = avg_concentration / standard_limit
-                        single_indexes.append(single_index)
+                        # 加权单项指数 = 单项指数 × 权重
+                        weighted_index = single_index * weight
+                        weighted_indexes.append(weighted_index)
 
-        # 综合指数 = Σ(单项指数)
-        comprehensive_index = sum(single_indexes)
+        # 综合指数 = Σ(加权单项指数)
+        comprehensive_index = sum(weighted_indexes)
         return safe_round_for_index(comprehensive_index, 2)
 
     def _calculate_primary_pollutant_for_group(self, group: pd.DataFrame, time_column: str) -> str:
