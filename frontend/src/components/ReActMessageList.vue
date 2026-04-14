@@ -212,7 +212,6 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
 
 const reactStore = useReactStore()
 
@@ -563,16 +562,16 @@ const welcomeContent = computed(() => {
 // 调试：监听消息变化
 watch(() => props.messages, (newMessages) => {
   console.log('[ReActMessageList] 消息数量变化:', newMessages.length)
-  newMessages.forEach((msg, idx) => {
-    if (msg.type === 'observation') {
-      console.log(`[ReActMessageList] 观察事件 #${idx}:`, {
-        id: msg.id,
-        hasData: !!msg.data,
-        dataKeys: msg.data ? Object.keys(msg.data) : [],
-        data: msg.data
-      })
-    }
-  })
+  // newMessages.forEach((msg, idx) => {
+  //   if (msg.type === 'observation') {
+  //     console.log(`[ReActMessageList] 观察事件 #${idx}:`, {
+  //       id: msg.id,
+  //       hasData: !!msg.data,
+  //       dataKeys: msg.data ? Object.keys(msg.data) : [],
+  //       data: msg.data
+  //     })
+  //   }
+  // })
 }, { deep: true, immediate: true })
 
 // 过滤掉系统消息，保留所有其他消息（实时显示过程消息）
@@ -585,12 +584,29 @@ const filteredMessages = computed(() => {
     return true
   })
 
+  // 【修复】检查是否有重复的消息ID（同一消息被多次显示）
+  const messageIds = new Set()
+  const duplicates = []
+  filtered.forEach((msg, idx) => {
+    if (messageIds.has(msg.id)) {
+      duplicates.push({ id: msg.id, index: idx, content: msg.content?.substring(0, 50) })
+    } else {
+      messageIds.add(msg.id)
+    }
+  })
+
+  if (duplicates.length > 0) {
+    console.error(`[ReActMessageList] ⚠️ 发现 ${duplicates.length} 个重复的消息ID:`, duplicates)
+  }
+
   // 【修复】兼容 role 和 type 字段统计
   const getType = (m) => m.role || m.type
 
   console.log('[ReActMessageList] filteredMessages计算:', {
     原始消息数: props.messages.length,
     过滤后消息数: filtered.length,
+    唯一消息ID数: messageIds.size,
+    重复数: duplicates.length,
     过滤后类型分布: {
       user: filtered.filter(m => getType(m) === 'user').length,
       thought: filtered.filter(m => getType(m) === 'thought').length,
@@ -616,22 +632,22 @@ const isInitialLoad = ref(true)
 const isProcessExpanded = (messageId) => {
   // 【关键修复】初次加载时，强制所有 details 折叠
   if (isInitialLoad.value) {
-    console.log('[ReActMessageList] isProcessExpanded: initial load, forcing collapse')
+    // console.log('[ReActMessageList] isProcessExpanded: initial load, forcing collapse')
     return undefined
   }
 
   // 处理 messageId 为 undefined 或 null 的情况
   if (!messageId) {
-    console.log('[ReActMessageList] isProcessExpanded: messageId is empty, returning undefined (collapsed)')
+    // console.log('[ReActMessageList] isProcessExpanded: messageId is empty, returning undefined (collapsed)')
     return undefined
   }
 
   const isExpanded = expandedProcessIds.value.has(messageId)
-  console.log('[ReActMessageList] isProcessExpanded:', {
-    messageId,
-    isExpanded,
-    expandedIds: Array.from(expandedProcessIds.value)
-  })
+  // console.log('[ReActMessageList] isProcessExpanded:', {
+  //   messageId,
+  //   isExpanded,
+  //   expandedIds: Array.from(expandedProcessIds.value)
+  // })
 
   if (isExpanded) {
     return true
@@ -671,9 +687,9 @@ const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
   }
   collapsedProcessIds.value = newCollapsedIds
 
-  if (processCount > 0) {
-    console.log(`[ReActMessageList] 折叠了 ${processCount} 个过程消息`)
-  }
+  // if (processCount > 0) {
+  //   console.log(`[ReActMessageList] 折叠了 ${processCount} 个过程消息`)
+  // }
 }
 
 // 【新增】判断消息是否应该被隐藏（已被final折叠）
@@ -927,11 +943,11 @@ watch(
       expandedProcessIds.value.clear()
       collapsedProcessIds.value.clear() // 【修复】清空折叠集合，重新计算
       isInitialLoad.value = true // 【修复】重置初始加载标志
-      console.log('[ReActMessageList] 批量加载历史对话，默认折叠所有过程消息', {
-        isFirstLoad,
-        isBulkLoad,
-        messageCount: newMessages.length
-      })
+      // console.log('[ReActMessageList] 批量加载历史对话，默认折叠所有过程消息', {
+      //   isFirstLoad,
+      //   isBulkLoad,
+      //   messageCount: newMessages.length
+      // })
 
       // 【修复】遍历所有final消息，折叠它们之前的过程消息
       nextTick(() => {
@@ -953,11 +969,11 @@ watch(
                 if (procMsg.id) { // 【修复】确保有id才折叠
                   collapsedProcessIds.value.add(procMsg.id)
                   totalCollapsedCount++
-                  console.log('[ReActMessageList] 折叠过程消息:', {
-                    type: procMsgType,
-                    id: procMsg.id,
-                    hasContent: !!procMsg.content
-                  })
+                  // console.log('[ReActMessageList] 折叠过程消息:', {
+                  //   type: procMsgType,
+                  //   id: procMsg.id,
+                  //   hasContent: !!procMsg.content
+                  // })
                 }
               }
             }
@@ -966,14 +982,14 @@ watch(
           }
         }
 
-        console.log(`[ReActMessageList] 批量加载：已折叠 ${totalCollapsedCount} 个过程消息`)
-        console.log('[ReActMessageList] collapsedProcessIds数量:', collapsedProcessIds.value.size)
+        // console.log(`[ReActMessageList] 批量加载：已折叠 ${totalCollapsedCount} 个过程消息`)
+        // console.log('[ReActMessageList] collapsedProcessIds数量:', collapsedProcessIds.value.size)
       })
 
       // 【新增】延迟一段时间后允许用户手动展开 details
       setTimeout(() => {
         isInitialLoad.value = false
-        console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
+        // console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
       }, 3000) // 3秒后允许用户手动展开
     } else {
       // 非初次加载：只处理新添加的final消息

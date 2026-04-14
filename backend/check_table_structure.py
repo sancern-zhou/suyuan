@@ -1,45 +1,71 @@
-"""
-检查city_aqi_publish_history表的实际结构
-"""
-import asyncio
-import sys
-sys.path.insert(0, 'D:\\溯源\\backend')
+#!/usr/bin/env python3
+"""检查表结构"""
+import pyodbc
+from config.settings import Settings
 
-from app.db.database import async_session
-from sqlalchemy import text
+def describe_table(table_name: str):
+    settings = Settings()
+    conn_str = settings.sqlserver_connection_string
 
+    conn = pyodbc.connect(conn_str, timeout=30)
+    cursor = conn.cursor()
 
-async def check_table_structure():
-    """检查表结构"""
-    async with async_session() as session:
-        # 查询表结构
-        query = text("""
-            SELECT column_name, data_type, is_nullable
-            FROM information_schema.columns
-            WHERE table_name = 'city_aqi_publish_history'
-            ORDER BY ordinal_position;
-        """)
-        result = await session.execute(query)
-        columns = result.all()
+    # 查询表结构
+    sql = f"""
+        SELECT
+            COLUMN_NAME,
+            DATA_TYPE,
+            CHARACTER_MAXIMUM_LENGTH,
+            IS_NULLABLE,
+            COLUMN_DEFAULT
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = '{table_name}'
+        ORDER BY ORDINAL_POSITION
+    """
 
-        print("city_aqi_publish_history 表结构:")
-        print("-" * 50)
-        for col in columns:
-            print(f"  {col[0]:<25} {col[1]:<20} {col[2]}")
+    cursor.execute(sql)
+    columns = cursor.fetchall()
 
-        # 查询示例数据
-        sample_query = text("""
-            SELECT * FROM city_aqi_publish_history
-            LIMIT 3;
-        """)
-        sample_result = await session.execute(sample_query)
-        samples = sample_result.all()
+    if not columns:
+        print(f"未找到表 '{table_name}' 的结构信息")
+        return
 
-        print("\n示例数据:")
-        print("-" * 50)
-        for sample in samples:
-            print(f"  {dict(sample._asdict())}")
+    print(f"表名: {table_name}\n")
+    print("字段列表:")
+    for col in columns:
+        col_name, data_type, max_length, is_nullable, col_default = col
+        length_str = f"({max_length})" if max_length else ""
+        nullable_str = "可空" if is_nullable == "YES" else "非空"
+        print(f"  - {col_name} ({data_type}{length_str}, {nullable_str})")
 
+    # 获取1条数据样例
+    sample_sql = f"SELECT TOP 1 * FROM {table_name}"
+    cursor.execute(sample_sql)
+    sample = cursor.fetchone()
+
+    if sample:
+        print("\n数据样例:")
+        for i, col in enumerate(columns):
+            col_name = col[0]
+            value = sample[i] if i < len(sample) else "NULL"
+            if value and len(str(value)) > 50:
+                value = str(value)[:50] + "..."
+            print(f"  {col_name}: {value}")
+
+    cursor.close()
+    conn.close()
 
 if __name__ == "__main__":
-    asyncio.run(check_table_structure())
+    # 检查可能相关的表
+    tables_to_check = [
+        "CityDayAQIPublishHistory",
+        "CityAQIPublishHistory",
+        "CurrentAirQuality",
+        "dat_station_day",
+        "city_168_statistics"
+    ]
+
+    for table in tables_to_check:
+        print("=" * 80)
+        describe_table(table)
+        print()

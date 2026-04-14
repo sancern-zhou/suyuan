@@ -143,6 +143,57 @@ class SessionManager:
             return self.sessions[session_id]
         return self.load_session(session_id)
 
+    def find_latest_session(
+        self,
+        parent_mode: str,
+        child_mode: str
+    ) -> Optional[Session]:
+        """
+        查找最近的子Agent会话
+
+        Args:
+            parent_mode: 父Agent模式（如 "social"）
+            child_mode: 子Agent模式（如 "query"）
+
+        Returns:
+            最近的匹配会话，如果不存在则返回None
+        """
+        # 构建session ID前缀：parent_mode__to__child_mode
+        session_prefix = f"{parent_mode}__to__{child_mode}__"
+
+        # 从内存缓存中查找
+        matching_sessions = [
+            session for session_id, session in self.sessions.items()
+            if session_id.startswith(session_prefix)
+        ]
+
+        # 如果内存中没有，从磁盘查找
+        if not matching_sessions:
+            pattern = f"{session_prefix}*.json"
+            for file_path in self.storage_path.glob(pattern):
+                try:
+                    session_data = json.loads(file_path.read_text(encoding='utf-8'))
+                    session = Session(**session_data)
+                    matching_sessions.append(session)
+                except Exception as e:
+                    logger.error(f"Failed to read session file {file_path}: {e}")
+
+        # 按更新时间降序排序，返回最近的
+        if matching_sessions:
+            matching_sessions.sort(key=lambda s: s.updated_at, reverse=True)
+            latest_session = matching_sessions[0]
+            logger.info(
+                f"Found latest session: {latest_session.session_id} "
+                f"(parent={parent_mode}, child={child_mode}, "
+                f"updated_at={latest_session.updated_at})"
+            )
+            return latest_session
+
+        logger.debug(
+            f"No session found for parent={parent_mode}, child={child_mode}"
+        )
+        return None
+
     def delete_session(self, session_id: str) -> bool:
         """
         删除会话

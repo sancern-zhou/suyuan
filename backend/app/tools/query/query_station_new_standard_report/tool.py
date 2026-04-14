@@ -199,16 +199,19 @@ def _calculate_station_statistics(
     if not records:
         return {
             "station_name": station_name,
+            "station_type": "未知",
             "error": "无数据"
         }
+
+    # 获取站点类型（从第一条记录中提取）
+    station_type = records[0].get("station_type", "未知")
 
     # 初始化统计变量
     total_days = len(records)
     valid_days = 0
     exceed_days = 0
-    composite_index_sum = 0.0
 
-    # 污染物浓度列表
+    # 污染物浓度列表（用于计算百分位数和平均浓度）
     pm25_values = []
     pm10_values = []
     so2_values = []
@@ -367,33 +370,71 @@ def _calculate_station_statistics(
             if si_o3_8h > 1:
                 exceed_days_by_pollutant["O3_8h"] += 1
 
-        # 计算当日综合指数
-        day_composite_index = (
-            si_pm25 * WEIGHTS['PM2_5'] +
-            si_pm10 * WEIGHTS['PM10'] +
-            si_so2 * WEIGHTS['SO2'] +
-            si_no2 * WEIGHTS['NO2'] +
-            si_co * WEIGHTS['CO'] +
-            si_o3_8h * WEIGHTS['O3_8h']
-        ) / sum(WEIGHTS.values())
+    # 计算百分位数（按国家标准修约）
+    PM2_5_P95 = calculate_percentile(pm25_values, 95)
+    PM10_P95 = calculate_percentile(pm10_values, 95)
+    SO2_P98 = calculate_percentile(so2_values, 98)
+    NO2_P98 = calculate_percentile(no2_values, 98)
+    CO_P95 = calculate_percentile(co_values, 95)
+    O3_8h_P90 = calculate_percentile(o3_8h_values, 90)
 
-        composite_index_sum += day_composite_index
+    # 计算平均浓度（按国家标准修约）
+    avg_PM2_5 = apply_rounding(sum(pm25_values) / len(pm25_values), 'PM2_5', 'statistical_data') if pm25_values else 0
+    avg_PM10 = apply_rounding(sum(pm10_values) / len(pm10_values), 'PM10', 'statistical_data') if pm10_values else 0
+    avg_SO2 = apply_rounding(sum(so2_values) / len(so2_values), 'SO2', 'statistical_data') if so2_values else 0
+    avg_NO2 = apply_rounding(sum(no2_values) / len(no2_values), 'NO2', 'statistical_data') if no2_values else 0
+    avg_CO = apply_rounding(sum(co_values) / len(co_values), 'CO', 'statistical_data') if co_values else 0
+    avg_O3_8h = apply_rounding(sum(o3_8h_values) / len(o3_8h_values), 'O3_8h', 'statistical_data') if o3_8h_values else 0
 
-    # 计算平均单项质量指数
-    avg_single_indexes = {}
-    for pollutant in single_index_sums:
-        if valid_days > 0:
-            avg_single_indexes[pollutant] = safe_round(
-                single_index_sums[pollutant] / valid_days,
-                3
-            )
-        else:
-            avg_single_indexes[pollutant] = 0.0
+    # 计算修约后的百分位数
+    pm25_percentile_95 = apply_rounding(PM2_5_P95, 'PM2_5', 'statistical_data') if PM2_5_P95 is not None else None
+    pm10_percentile_95 = apply_rounding(PM10_P95, 'PM10', 'statistical_data') if PM10_P95 is not None else None
+    so2_percentile_98 = apply_rounding(SO2_P98, 'SO2', 'statistical_data') if SO2_P98 is not None else None
+    no2_percentile_98 = apply_rounding(NO2_P98, 'NO2', 'statistical_data') if NO2_P98 is not None else None
+    co_percentile_95 = apply_rounding(CO_P95, 'CO', 'statistical_data') if CO_P95 is not None else None
+    o3_8h_percentile_90 = apply_rounding(O3_8h_P90, 'O3_8h', 'statistical_data') if O3_8h_P90 is not None else None
+
+    # 计算新标准综合指数（使用修约后的浓度值）
+    new_standard_concentrations = {
+        'PM2_5': avg_PM2_5,
+        'PM10': avg_PM10,
+        'SO2': avg_SO2,
+        'NO2': avg_NO2,
+        'CO': co_percentile_95,  # CO使用百分位数
+        'O3_8h': o3_8h_percentile_90  # O3使用百分位数
+    }
+
+    # 计算单项质量指数（浓度/标准限值）
+    pm25_index = new_standard_concentrations['PM2_5'] / STANDARD_LIMITS['PM2_5']
+    pm10_index = new_standard_concentrations['PM10'] / STANDARD_LIMITS['PM10']
+    so2_index = new_standard_concentrations['SO2'] / STANDARD_LIMITS['SO2']
+    no2_index = new_standard_concentrations['NO2'] / STANDARD_LIMITS['NO2']
+    co_index = new_standard_concentrations['CO'] / STANDARD_LIMITS['CO'] if new_standard_concentrations['CO'] else 0
+    o3_8h_index = new_standard_concentrations['O3_8h'] / STANDARD_LIMITS['O3_8h'] if new_standard_concentrations['O3_8h'] else 0
+
+    # 计算加权单项指数
+    pm25_weighted_index = safe_round(pm25_index * WEIGHTS['PM2_5'], 3)
+    pm10_weighted_index = safe_round(pm10_index * WEIGHTS['PM10'], 3)
+    so2_weighted_index = safe_round(so2_index * WEIGHTS['SO2'], 3)
+    no2_weighted_index = safe_round(no2_index * WEIGHTS['NO2'], 3)
+    co_weighted_index = safe_round(co_index * WEIGHTS['CO'], 3)
+    o3_8h_weighted_index = safe_round(o3_8h_index * WEIGHTS['O3_8h'], 3)
 
     # 计算综合指数
-    composite_index = 0.0
-    if valid_days > 0:
-        composite_index = safe_round(composite_index_sum / valid_days, 3)
+    composite_index = safe_round(
+        pm25_weighted_index + pm10_weighted_index + so2_weighted_index +
+        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 3
+    )
+
+    # 计算平均单项质量指数
+    avg_single_indexes = {
+        "PM2_5": pm25_index,
+        "PM10": pm10_index,
+        "SO2": so2_index,
+        "NO2": no2_index,
+        "CO": co_index,
+        "O3_8h": o3_8h_index
+    }
 
     # 计算超标率和达标率
     exceed_rate = 0.0
@@ -402,25 +443,10 @@ def _calculate_station_statistics(
         exceed_rate = safe_round((exceed_days / valid_days) * 100, 1)
         compliance_rate = safe_round(100 - exceed_rate, 1)
 
-    # 计算百分位数
-    PM2_5_P95 = calculate_percentile(pm25_values, 95)
-    PM10_P95 = calculate_percentile(pm10_values, 95)
-    SO2_P98 = calculate_percentile(so2_values, 98)
-    NO2_P98 = calculate_percentile(no2_values, 98)
-    CO_P95 = calculate_percentile(co_values, 95)
-    O3_8h_P90 = calculate_percentile(o3_8h_values, 90)
-
-    # 计算平均浓度
-    avg_PM2_5 = safe_round(sum(pm25_values) / len(pm25_values), 1) if pm25_values else None
-    avg_PM10 = safe_round(sum(pm10_values) / len(pm10_values), 1) if pm10_values else None
-    avg_SO2 = safe_round(sum(so2_values) / len(so2_values), 1) if so2_values else None
-    avg_NO2 = safe_round(sum(no2_values) / len(no2_values), 1) if no2_values else None
-    avg_CO = safe_round(sum(co_values) / len(co_values), 2) if co_values else None
-    avg_O3_8h = safe_round(sum(o3_8h_values) / len(o3_8h_values), 1) if o3_8h_values else None
-
     # 构建结果
     result = {
         "station_name": station_name,
+        "station_type": station_type,
         "composite_index": composite_index,
         "exceed_days": exceed_days,
         "exceed_rate": exceed_rate,
@@ -428,21 +454,18 @@ def _calculate_station_statistics(
         "total_days": total_days,
         "valid_days": valid_days,
 
-        # 平均浓度
-        "PM2_5": avg_PM2_5,
-        "PM10": avg_PM10,
-        "SO2": avg_SO2,
-        "NO2": avg_NO2,
-        "CO": avg_CO,
-        "O3_8h": avg_O3_8h,
-
-        # 百分位数
-        "PM2_5_P95": apply_rounding(PM2_5_P95, 'PM2_5', 'statistical_data') if PM2_5_P95 is not None else None,
-        "PM10_P95": apply_rounding(PM10_P95, 'PM10', 'statistical_data') if PM10_P95 is not None else None,
-        "SO2_P98": apply_rounding(SO2_P98, 'SO2', 'statistical_data') if SO2_P98 is not None else None,
-        "NO2_P98": apply_rounding(NO2_P98, 'NO2', 'statistical_data') if NO2_P98 is not None else None,
-        "CO_P95": apply_rounding(CO_P95, 'CO', 'statistical_data') if CO_P95 is not None else None,
-        "O3_8h_P90": apply_rounding(O3_8h_P90, 'O3_8h', 'statistical_data') if O3_8h_P90 is not None else None,
+        # 六参数统计指标（应用最终输出修约规则：PM2.5和CO保留1位小数，其他取整）
+        "SO2": format_pollutant_value(avg_SO2, 'SO2', 'statistical_data', use_final_rounding=True),
+        "SO2_P98": format_pollutant_value(so2_percentile_98, 'SO2', 'statistical_data', use_final_rounding=True) if so2_percentile_98 is not None else None,
+        "NO2": format_pollutant_value(avg_NO2, 'NO2', 'statistical_data', use_final_rounding=True),
+        "NO2_P98": format_pollutant_value(no2_percentile_98, 'NO2', 'statistical_data', use_final_rounding=True) if no2_percentile_98 is not None else None,
+        "PM10": format_pollutant_value(avg_PM10, 'PM10', 'statistical_data', use_final_rounding=True),
+        "PM10_P95": format_pollutant_value(pm10_percentile_95, 'PM10', 'statistical_data', use_final_rounding=True) if pm10_percentile_95 is not None else None,
+        "PM2_5": format_pollutant_value(avg_PM2_5, 'PM2_5', 'statistical_data', use_final_rounding=True),
+        "PM2_5_P95": format_pollutant_value(pm25_percentile_95, 'PM2_5', 'statistical_data', use_final_rounding=True) if pm25_percentile_95 is not None else None,
+        # CO和O3只展示百分位数
+        "CO_P95": format_pollutant_value(co_percentile_95, 'CO', 'statistical_data', use_final_rounding=True) if co_percentile_95 is not None else None,
+        "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data', use_final_rounding=True) if o3_8h_percentile_90 is not None else None,
 
         # 单项质量指数
         "single_indexes": {
@@ -510,16 +533,6 @@ def _calculate_station_aggregate_stats(station_results: List[Dict]) -> Dict[str,
     co_p95_sum = 0.0
     o3_8h_p90_sum = 0.0
 
-    # 单项质量指数累加
-    single_index_sums = {
-        "PM2_5": 0.0,
-        "PM10": 0.0,
-        "SO2": 0.0,
-        "NO2": 0.0,
-        "CO": 0.0,
-        "O3_8h": 0.0
-    }
-
     # 首要污染物天数累加
     primary_pollutant_sums = {
         "PM2_5": 0,
@@ -586,11 +599,6 @@ def _calculate_station_aggregate_stats(station_results: List[Dict]) -> Dict[str,
         if result.get("O3_8h_P90") is not None:
             o3_8h_p90_sum += result["O3_8h_P90"]
 
-        # 累加单项质量指数
-        single_indexes = result.get("single_indexes", {})
-        for p in single_index_sums:
-            single_index_sums[p] += single_indexes.get(p, 0)
-
         # 累加首要污染物天数
         primary_days = result.get("primary_pollutant_days", {})
         for p in primary_pollutant_sums:
@@ -607,43 +615,106 @@ def _calculate_station_aggregate_stats(station_results: List[Dict]) -> Dict[str,
         for p in primary_exceed_sums:
             primary_exceed_sums[p] += primary_exceed.get(p, 0)
 
-    # 计算平均值
+    # 计算原始均值（不修约）
+    avg_pm25_raw = pm25_sum / n if pm25_sum > 0 else 0
+    avg_pm10_raw = pm10_sum / n if pm10_sum > 0 else 0
+    avg_so2_raw = so2_sum / n if so2_sum > 0 else 0
+    avg_no2_raw = no2_sum / n if no2_sum > 0 else 0
+    avg_co_raw = co_sum / n if co_sum > 0 else 0
+    avg_o3_8h_raw = o3_8h_sum / n if o3_8h_sum > 0 else 0
+
+    avg_pm25_p95_raw = pm25_p95_sum / n if pm25_p95_sum > 0 else 0
+    avg_pm10_p95_raw = pm10_p95_sum / n if pm10_p95_sum > 0 else 0
+    avg_so2_p98_raw = so2_p98_sum / n if so2_p98_sum > 0 else 0
+    avg_no2_p98_raw = no2_p98_sum / n if no2_p98_sum > 0 else 0
+    avg_co_p95_raw = co_p95_sum / n if co_p95_sum > 0 else 0
+    avg_o3_8h_p90_raw = o3_8h_p90_sum / n if o3_8h_p90_sum > 0 else 0
+
+    # 应用修约规则（statistical_data）
+    avg_pm25 = apply_rounding(avg_pm25_raw, 'PM2_5', 'statistical_data') if avg_pm25_raw > 0 else None
+    avg_pm10 = apply_rounding(avg_pm10_raw, 'PM10', 'statistical_data') if avg_pm10_raw > 0 else None
+    avg_so2 = apply_rounding(avg_so2_raw, 'SO2', 'statistical_data') if avg_so2_raw > 0 else None
+    avg_no2 = apply_rounding(avg_no2_raw, 'NO2', 'statistical_data') if avg_no2_raw > 0 else None
+    avg_co = apply_rounding(avg_co_raw, 'CO', 'statistical_data') if avg_co_raw > 0 else None
+    avg_o3_8h = apply_rounding(avg_o3_8h_raw, 'O3_8h', 'statistical_data') if avg_o3_8h_raw > 0 else None
+
+    avg_pm25_p95 = apply_rounding(avg_pm25_p95_raw, 'PM2_5', 'statistical_data') if avg_pm25_p95_raw > 0 else None
+    avg_pm10_p95 = apply_rounding(avg_pm10_p95_raw, 'PM10', 'statistical_data') if avg_pm10_p95_raw > 0 else None
+    avg_so2_p98 = apply_rounding(avg_so2_p98_raw, 'SO2', 'statistical_data') if avg_so2_p98_raw > 0 else None
+    avg_no2_p98 = apply_rounding(avg_no2_p98_raw, 'NO2', 'statistical_data') if avg_no2_p98_raw > 0 else None
+    avg_co_p95 = apply_rounding(avg_co_p95_raw, 'CO', 'statistical_data') if avg_co_p95_raw > 0 else None
+    avg_o3_8h_p90 = apply_rounding(avg_o3_8h_p90_raw, 'O3_8h', 'statistical_data') if avg_o3_8h_p90_raw > 0 else None
+
+    # 计算新标准综合指数（使用修约后的浓度值）
+    new_standard_concentrations = {
+        'PM2_5': avg_pm25 if avg_pm25 else 0,
+        'PM10': avg_pm10 if avg_pm10 else 0,
+        'SO2': avg_so2 if avg_so2 else 0,
+        'NO2': avg_no2 if avg_no2 else 0,
+        'CO': avg_co_p95 if avg_co_p95 else 0,
+        'O3_8h': avg_o3_8h_p90 if avg_o3_8h_p90 else 0
+    }
+
+    # 计算单项质量指数
+    pm25_index = new_standard_concentrations['PM2_5'] / STANDARD_LIMITS['PM2_5']
+    pm10_index = new_standard_concentrations['PM10'] / STANDARD_LIMITS['PM10']
+    so2_index = new_standard_concentrations['SO2'] / STANDARD_LIMITS['SO2']
+    no2_index = new_standard_concentrations['NO2'] / STANDARD_LIMITS['NO2']
+    co_index = new_standard_concentrations['CO'] / STANDARD_LIMITS['CO']
+    o3_8h_index = new_standard_concentrations['O3_8h'] / STANDARD_LIMITS['O3_8h']
+
+    # 计算加权单项指数
+    pm25_weighted_index = safe_round(pm25_index * WEIGHTS['PM2_5'], 3)
+    pm10_weighted_index = safe_round(pm10_index * WEIGHTS['PM10'], 3)
+    so2_weighted_index = safe_round(so2_index * WEIGHTS['SO2'], 3)
+    no2_weighted_index = safe_round(no2_index * WEIGHTS['NO2'], 3)
+    co_weighted_index = safe_round(co_index * WEIGHTS['CO'], 3)
+    o3_8h_weighted_index = safe_round(o3_8h_index * WEIGHTS['O3_8h'], 3)
+
+    # 计算综合指数
+    composite_index = safe_round(
+        pm25_weighted_index + pm10_weighted_index + so2_weighted_index +
+        no2_weighted_index + co_weighted_index + o3_8h_weighted_index, 3
+    )
+
+    # 计算超标率和达标率
+    exceed_rate = safe_round((exceed_days_sum / valid_days_sum) * 100, 1) if valid_days_sum > 0 else 0
+    compliance_rate = safe_round(100 - exceed_rate, 1)
+
+    # 构建汇总结果
     aggregate_result = {
         "station_name": "多站点汇总",
-        "composite_index": safe_round(composite_index_sum / n, 3) if n > 0 else 0,
+        "station_type": "汇总",
+        "composite_index": composite_index,
         "exceed_days": exceed_days_sum,
         "total_days": total_days_sum,
         "valid_days": valid_days_sum,
-        "exceed_rate": safe_round((exceed_days_sum / valid_days_sum) * 100, 1) if valid_days_sum > 0 else 0,
-        "compliance_rate": safe_round(100 - (exceed_days_sum / valid_days_sum) * 100, 1) if valid_days_sum > 0 else 100,
+        "exceed_rate": exceed_rate,
+        "compliance_rate": compliance_rate,
 
-        # 平均浓度
-        "PM2_5": safe_round(pm25_sum / n, 1) if pm25_sum > 0 else None,
-        "PM10": safe_round(pm10_sum / n, 1) if pm10_sum > 0 else None,
-        "SO2": safe_round(so2_sum / n, 1) if so2_sum > 0 else None,
-        "NO2": safe_round(no2_sum / n, 1) if no2_sum > 0 else None,
-        "CO": safe_round(co_sum / n, 2) if co_sum > 0 else None,
-        "O3_8h": safe_round(o3_8h_sum / n, 1) if o3_8h_sum > 0 else None,
+        # 六参数统计指标（应用最终输出修约规则）
+        "SO2": format_pollutant_value(avg_so2, 'SO2', 'statistical_data', use_final_rounding=True) if avg_so2 is not None else None,
+        "SO2_P98": format_pollutant_value(avg_so2_p98, 'SO2', 'statistical_data', use_final_rounding=True) if avg_so2_p98 is not None else None,
+        "NO2": format_pollutant_value(avg_no2, 'NO2', 'statistical_data', use_final_rounding=True) if avg_no2 is not None else None,
+        "NO2_P98": format_pollutant_value(avg_no2_p98, 'NO2', 'statistical_data', use_final_rounding=True) if avg_no2_p98 is not None else None,
+        "PM10": format_pollutant_value(avg_pm10, 'PM10', 'statistical_data', use_final_rounding=True) if avg_pm10 is not None else None,
+        "PM10_P95": format_pollutant_value(avg_pm10_p95, 'PM10', 'statistical_data', use_final_rounding=True) if avg_pm10_p95 is not None else None,
+        "PM2_5": format_pollutant_value(avg_pm25, 'PM2_5', 'statistical_data', use_final_rounding=True) if avg_pm25 is not None else None,
+        "PM2_5_P95": format_pollutant_value(avg_pm25_p95, 'PM2_5', 'statistical_data', use_final_rounding=True) if avg_pm25_p95 is not None else None,
+        "CO_P95": format_pollutant_value(avg_co_p95, 'CO', 'statistical_data', use_final_rounding=True) if avg_co_p95 is not None else None,
+        "O3_8h_P90": format_pollutant_value(avg_o3_8h_p90, 'O3_8h', 'statistical_data', use_final_rounding=True) if avg_o3_8h_p90 is not None else None,
 
-        # 平均百分位数
-        "PM2_5_P95": safe_round(pm25_p95_sum / n, 1) if pm25_p95_sum > 0 else None,
-        "PM10_P95": safe_round(pm10_p95_sum / n, 1) if pm10_p95_sum > 0 else None,
-        "SO2_P98": safe_round(so2_p98_sum / n, 1) if so2_p98_sum > 0 else None,
-        "NO2_P98": safe_round(no2_p98_sum / n, 1) if no2_p98_sum > 0 else None,
-        "CO_P95": safe_round(co_p95_sum / n, 2) if co_p95_sum > 0 else None,
-        "O3_8h_P90": safe_round(o3_8h_p90_sum / n, 1) if o3_8h_p90_sum > 0 else None,
-
-        # 平均单项质量指数
+        # 单项质量指数（使用修约后的浓度重新计算）
         "single_indexes": {
-            "PM2_5": safe_round(single_index_sums["PM2_5"] / n, 3) if n > 0 else 0,
-            "PM10": safe_round(single_index_sums["PM10"] / n, 3) if n > 0 else 0,
-            "SO2": safe_round(single_index_sums["SO2"] / n, 3) if n > 0 else 0,
-            "NO2": safe_round(single_index_sums["NO2"] / n, 3) if n > 0 else 0,
-            "CO": safe_round(single_index_sums["CO"] / n, 3) if n > 0 else 0,
-            "O3_8h": safe_round(single_index_sums["O3_8h"] / n, 3) if n > 0 else 0,
+            "PM2_5": pm25_index,
+            "PM10": pm10_index,
+            "SO2": so2_index,
+            "NO2": no2_index,
+            "CO": co_index,
+            "O3_8h": o3_8h_index
         },
 
-        # 平均首要污染物天数
+        # 首要污染物天数
         "primary_pollutant_days": {
             "PM2_5": primary_pollutant_sums["PM2_5"],
             "PM10": primary_pollutant_sums["PM10"],

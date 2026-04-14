@@ -15,11 +15,11 @@ ASSISTANT_TOOLS = {
 
     # 文件操作
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
-    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "list_directory": "列出目录内容。参数: path(str)",
-    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
 
     # Office工具（⚠️ **必须先阅读 Office 技能指导文档**：read_file(file_path='backend/app/tools/office/office_skills_guide.md')）
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
@@ -55,7 +55,7 @@ EXPERT_TOOLS = {
 
     # 全国城市历史数据查询工具
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'city_168_statistics'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史数据表)、working_orders(运维工单)、city_168_statistics(168城市空气质量统计，支持新旧标准综合指数查询，stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀)、province_statistics(省级空气质量统计，支持新旧标准综合指数查询，stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀，⚠️ 中文字段查询必须用N前缀)、information_schema.columns/information_schema.tables(系统视图，用于动态查询表结构)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史数据表，AirPollutionAnalysis数据库)、quality_control_records(质控例行检查记录，AirPollutionAnalysis数据库)、working_orders(运维工单)、city_168_statistics_new_standard(168城市空气质量统计-新标准限值，存储新限值+新算法和新限值+旧算法两套综合指数)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值，使用final_output修约规则，存储旧限值+新算法和旧限值+旧算法两套综合指数)、province_statistics_new_standard(省级空气质量统计-新标准限值，存储新限值+新算法和新限值+旧算法两套综合指数)、province_statistics_old_standard(省级空气质量统计-旧标准限值，使用final_output修约规则，存储旧限值+新算法和旧限值+旧算法两套综合指数)、information_schema.columns/information_schema.tables(系统视图，用于动态查询表结构)",
     # 广东省数据查询工具（⚠️ 注意区分城市级别和站点级别工具）
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点小时数据，请使用 query_gd_suncere_station_hour_new）。⚠️ 必需参数: cities(list, 城市名称列表), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_city_day": "查询广东省【城市级别】日空气质量数据（旧标准 HJ 633-2013，⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点日数据，请使用 query_gd_suncere_station_day_new）。参数: cities(list, 城市名称列表), start_date(str), end_date(str)",
@@ -99,10 +99,10 @@ EXPERT_TOOLS = {
     # 文件操作（保存分析结果、读取配置文件）
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
-    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "list_directory": "列出目录内容。参数: path(str)",
-    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
 
     # 其他
     "call_sub_agent": "调用助手Agent。参数: target_mode(str), task_description(str)",
@@ -111,13 +111,16 @@ EXPERT_TOOLS = {
 
 # ===== 问数模式工具 =====
 QUERY_TOOLS = {
+    # === 系统操作 ===
+    "bash": "执行Shell命令。参数: command(str), timeout(int, 可选, 默认60), working_dir(str, 可选)",
+
     # === 源码查看工具（了解工具实现细节） ===
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
-    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "list_directory": "列出目录内容。参数: path(str)",
-    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
 
     # === 现有参数化查询工具（复用） ===
     "get_pm25_ionic": "查询PM2.5水溶性离子。参数: start_time(str), end_time(str), locations(可选)",
@@ -125,7 +128,7 @@ QUERY_TOOLS = {
     "get_pm25_crustal": "查询PM2.5地壳元素。参数: start_time(str), end_time(str), locations(可选)",
     "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'city_168_statistics'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史数据表)、working_orders(运维工单)、city_168_statistics(168城市空气质量统计，支持新旧标准综合指数查询，stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀)、province_statistics(省级空气质量统计，支持新旧标准综合指数查询，stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀，⚠️ 中文字段查询必须用N前缀)、information_schema.columns/information_schema.tables(系统视图，用于动态查询表结构)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史数据表，AirPollutionAnalysis数据库)、quality_control_records(质控例行检查记录，AirPollutionAnalysis数据库)、working_orders(运维工单)、city_168_statistics_new_standard(168城市空气质量统计-新标准限值，存储新限值+新算法和新限值+旧算法两套综合指数)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值，使用final_output修约规则，存储旧限值+新算法和旧限值+旧算法两套综合指数)、province_statistics_new_standard(省级空气质量统计-新标准限值，存储新限值+新算法和新限值+旧算法两套综合指数)、province_statistics_old_standard(省级空气质量统计-旧标准限值，使用final_output修约规则，存储旧限值+新算法和旧限值+旧算法两套综合指数)、information_schema.columns/information_schema.tables(系统视图，用于动态查询表结构)",
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点小时数据，请使用 query_gd_suncere_station_hour_new）。参数: cities(list, 城市名称列表), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS'), include_weather(bool, 可选, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_station_hour_new": "查询广东省【站点级别】小时空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物。⚠️ 适用场景：当用户提到具体站点名称（如'广雅中学'、'市监测站'、'天河职防'）或需要站点级别数据时必须使用此工具，不要使用 query_gd_suncere_city_hour）。⚠️ 必需参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: station_type(str, 站点类型, 默认'国控'。⚠️ 仅在使用cities参数时有效，用于过滤该城市下的指定类型站点。如果使用stations参数，则不需要此参数), cities(list, 城市名自动展开该城市下所有站点，与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个。使用stations时不需要提供station_type), include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_station_day_new": "查询广东省站点级别日空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。⚠️ 必需参数: station_type(str, 站点类型, 如'国控'/'省控'/'市控'或'1.0'/'2.0'/'3.0'), start_date(str, 'YYYY-MM-DD'), end_date(str, 'YYYY-MM-DD')。可选: cities(list, 城市名自动展开站点, 与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个)",
@@ -175,7 +178,7 @@ REPORT_TOOLS = {
 
     # 数据查询工具（直接调用，支持并发）
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'city_168_statistics'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史数据表)、working_orders(运维工单)、city_168_statistics(168城市空气质量统计，支持新旧标准综合指数查询，stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀)、province_statistics(省级空气质量统计，支持新旧标准综合指数查询，stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀，⚠️ 中文字段查询必须用N前缀)、information_schema.columns/information_schema.tables(系统视图，用于动态查询表结构)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认1000, 最大10000)。可用表：qc_history(自动质控历史数据表，AirPollutionAnalysis数据库)、quality_control_records(质控例行检查记录，AirPollutionAnalysis数据库)、working_orders(运维工单)、city_168_statistics_new_standard(168城市空气质量统计-新标准限值，存储新限值+新算法和新限值+旧算法两套综合指数)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值，使用final_output修约规则，存储旧限值+新算法和旧限值+旧算法两套综合指数)、province_statistics_new_standard(省级空气质量统计-新标准限值，存储新限值+新算法和新限值+旧算法两套综合指数)、province_statistics_old_standard(省级空气质量统计-旧标准限值，使用final_output修约规则，存储旧限值+新算法和旧限值+旧算法两套综合指数)、information_schema.columns/information_schema.tables(系统视图，用于动态查询表结构)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2026）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
     "query_new_standard_report": "查询HJ 633-2026新标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true), use_old_composite_algorithm(bool, 可选, 默认false, 使用旧综合指数算法。false=新算法(PM2.5权重3,NO2权重2,O3权重2),true=旧算法(所有权重均为1))",
     "query_old_standard_report": "查询HJ 633-2013旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true), use_new_composite_algorithm(bool, 可选, 默认false, 使用新综合指数算法。false=旧算法(所有权重均为1),true=新算法(PM2.5权重3,NO2权重2,O3权重2))",
@@ -190,10 +193,10 @@ REPORT_TOOLS = {
     # 文件操作
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
-    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "list_directory": "列出目录内容。参数: path(str)",
-    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -209,6 +212,7 @@ REPORT_TOOLS = {
 }
 CHART_TOOLS = {
     # 数据查询工具（广东省数据）
+    "get_5min_data": "查询站点5分钟污染物浓度和气象数据（SQL Server air_quality_db数据库，表名格式Air_5m_{年份}_{站点代码}_Src）。⚠️ 必需参数: station(str, 站点名称或站点代码，如'广雅中学'或'1001A'), start_time(str, 开始时间ISO 8601格式'YYYY-MM-DDTHH:MM:SS'), end_time(str, 结束时间ISO 8601格式'YYYY-MM-DDTHH:MM:SS')。可选: pollutants(list, 污染物列表，如['PM2.5','O3','WS','WD'], 默认查询所有)。返回: 5分钟数据（宽表格式，包含PM2.5、PM10、SO2、NO2、O3、CO、风速WS、风向WD、温度TEMP、湿度RH、气压PRESSURE），支持生成风玫瑰图、时序图等高精度图表",
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称，不支持站点名称。如果用户提到具体站点如'广雅中学'、'市监测站'等，必须使用 query_gd_suncere_station_hour_new 工具）。⚠️ 必需参数: cities(list, 城市名称列表, 如['广州','深圳','珠海'], 不支持站点名称), start_time(str, 开始时间'YYYY-MM-DD HH:MM:SS'), end_time(str, 结束时间'YYYY-MM-DD HH:MM:SS')。可选: include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)。返回: 城市级别PM2.5、PM10、SO2、NO2、CO、O3小时数据（多个站点的平均值）",
     "query_gd_suncere_station_hour_new": "查询广东省【站点级别】小时空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物，支持气象字段提取）。⚠️ 适用场景：当用户提到具体站点名称（如'广雅中学'、'市监测站'、'天河职防'）或需要站点级别数据时使用。⚠️ 必需参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: station_type(str, 站点类型, 默认'国控'。⚠️ 仅在使用cities参数时有效，用于过滤该城市下的指定类型站点。如果使用stations参数，则不需要此参数), cities(list, 城市名自动展开该城市下所有站点，与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个。使用stations时不需要提供station_type), include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)。返回: 站点级别小时数据、新标准IAQI/AQI/首要污染物",
     "query_gd_suncere_city_day_new": "查询广东省【城市级别】日空气质量数据（新标准 HJ 633-2026，⚠️ 仅支持城市名称，不支持站点名称。如需站点日数据，请使用 query_gd_suncere_station_day_new）。⚠️ 必需参数: cities(list, 城市名称列表, 如['广州','深圳']), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: data_type(int, 数据类型, 默认1=审核数据)。返回: 城市级别日均值、AQI、首要污染物、空气质量等级",
@@ -218,10 +222,11 @@ CHART_TOOLS = {
     # 文件操作
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
-    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "list_directory": "列出目录内容。参数: path(str)",
-    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
+    "bash": "执行Shell命令（谨慎使用，用于删除/移动文件等操作）。参数: command(str), timeout(int, 可选, 默认60), working_dir(str, 可可选)",
 
     # 代码执行
     "execute_python": "执行 Python 代码（数值计算、生成 Matplotlib 图表）。参数: code(str), timeout(int, 可选, 默认30)",
@@ -240,13 +245,13 @@ SOCIAL_TOOLS = {
 
     # === 文件操作 ===
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
-    "edit_file": "精确编辑文件（字符串替换）。参数: path(str), old_string(str), new_string(str)",
+    "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
     "parse_pdf": "解析PDF文件并提取内容（支持文本提取、OCR识别、表格提取、元数据提取）。⚠️ 必需参数: path(str, PDF文件路径)。可选: mode(str, 解析模式: auto=自动检测/text=文本提取/ocr=OCR识别/table=表格提取/image=图片信息/meta=元数据, 默认auto), pages(str, 页面范围如'1-5', 可选), extract_tables(bool, 是否提取表格, 默认false), extract_images(bool, 是否提取图片信息, 默认false), ocr_engine(str, OCR引擎: auto/qwen/paddleocr/tesseract, 默认auto)",
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "list_directory": "列出目录内容。参数: path(str)",
-    "search_files": "搜索文件（glob模式）。参数: pattern(str)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
 
     # === 图片分析 ===
     "analyze_image": "分析图片内容。参数: path(str), operation(str, 可选, 默认analyze), prompt(str, 可选)",
@@ -267,7 +272,7 @@ SOCIAL_TOOLS = {
     "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析）。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 模式互调 ===
-    "call_sub_agent": "调用子Agent（code=编程, expert=数据分析, query=数据查询）。参数: target_mode(str), task_description(str), context_data(dict, 可选, 包含tool_name和parameters)",
+    "call_sub_agent": "调用子Agent（code=编程, expert=数据分析, query=数据查询）。⚠️ 用自然语言描述任务，不要传递结构化参数或指定工具名称。参数: target_mode(str), task_description(str)",
 
     # === 呼吸式特有工具 ===
     "schedule_task": "创建定时任务。参数: task_description(str), schedule(str, cron表达式), channels(list, 可选, 支持'weixin'|'qq')",
@@ -289,8 +294,8 @@ CODE_TOOLS = {
     "read_file": "读取文件（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件。参数: path(str), content(str)",
     "edit_file": "编辑文件。参数: path(str), old_string(str), new_string(str)",
-    "grep": "搜索文件内容。参数: pattern(str), path(str)",
-    "search_files": "搜索文件名。参数: pattern(str)",
+    "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
+    "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
     "list_directory": "列出目录。参数: path(str)",
 
     # Shell命令
@@ -330,7 +335,7 @@ EXPERT_TOOL_ORDER = [
     "query_new_standard_report", "query_old_standard_report",
     "query_standard_comparison", "compare_standard_reports",
     "query_xcai_city_history",  # 全国城市历史数据（XcAiDb SQL Server）
-    "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics表）
+    "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics_new_standard表）
     "read_data_registry",
     "aggregate_data",
 
@@ -380,6 +385,9 @@ CODE_TOOL_ORDER = [
 QUERY_TOOL_ORDER = [
     # 规划工具（复杂查询时优先考虑）
     "complex_query_planner",
+
+    # 系统操作
+    "bash",
 
     # 源码查看工具
     "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
@@ -440,7 +448,7 @@ REPORT_TOOL_ORDER = [
     "query_station_new_standard_report",  # 站点级新标准统计报表
     "compare_station_standard_reports",  # 站点级新标准报表对比分析
     "query_xcai_city_history",  # 全国城市历史数据（XcAiDb SQL Server）
-    "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics表）
+    "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics_new_standard表）
 
     # 数据读取
     "read_data_registry",
@@ -461,6 +469,7 @@ REPORT_TOOL_ORDER = [
 # ===== 图表模式工具排序 =====
 CHART_TOOL_ORDER = [
     # 数据查询工具（广东省数据）
+    "get_5min_data",  # 5分钟数据查询（高精度数据，支持风玫瑰图等）
     "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day_new",
@@ -472,7 +481,7 @@ CHART_TOOL_ORDER = [
     "read_data_registry",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files", "bash",
 
     # 代码执行
     "execute_python",

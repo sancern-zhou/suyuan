@@ -12,23 +12,13 @@
         <div class="status-grid" v-if="fetcherSystemStatus">
           <div class="status-item">
             <span class="label">调度器:</span>
-            <span :class="['status-value', fetcherSystemStatus.fetchers?.scheduler_running ? 'running' : 'stopped']">
-              {{ fetcherSystemStatus.fetchers?.scheduler_running ? '运行中' : '已停止' }}
-            </span>
-          </div>
-          <div class="status-item">
-            <span class="label">数据库:</span>
-            <span :class="['status-value', fetcherSystemStatus.database?.enabled ? 'running' : 'stopped']">
-              {{ fetcherSystemStatus.database?.enabled ? '已连接' : '未连接' }}
+            <span :class="['status-value', fetcherSystemStatus.scheduler_running ? 'running' : 'stopped']">
+              {{ fetcherSystemStatus.scheduler_running ? '运行中' : '已停止' }}
             </span>
           </div>
           <div class="status-item">
             <span class="label">Fetchers:</span>
-            <span class="status-value">{{ Object.keys(fetcherSystemStatus.fetchers?.fetchers || {}).length }} 个</span>
-          </div>
-          <div class="status-item">
-            <span class="label">LLM工具:</span>
-            <span class="status-value">{{ fetcherSystemStatus.llm_tools?.count || 0 }} 个</span>
+            <span class="status-value">{{ Object.keys(fetcherSystemStatus.fetchers || {}).length }} 个</span>
           </div>
         </div>
       </div>
@@ -43,14 +33,14 @@
             <label>选择日期：</label>
             <input
               type="date"
-              v-model="era5HistoricalDate"
+              v-model="localEra5Date"
               :max="todayStr"
               class="date-input"
             />
           </div>
           <button
-            @click="$emit('fetch-era5', era5HistoricalDate)"
-            :disabled="!era5HistoricalDate || fetcherOperating"
+            @click="$emit('fetch-era5', localEra5Date)"
+            :disabled="!localEra5Date || fetcherOperating"
             class="panel-btn primary"
           >
             开始补采
@@ -107,7 +97,7 @@
 
         <div v-else class="fetcher-cards">
           <div
-            v-for="(fetcher, name) in fetcherSystemStatus?.fetchers?.fetchers || {}"
+            v-for="(fetcher, name) in fetcherSystemStatus?.fetchers || {}"
             :key="name"
             class="fetcher-card"
           >
@@ -186,18 +176,28 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  era5HistoricalDate: {
+    type: String,
+    default: ''
+  },
   era5FetchResult: {
     type: Object,
     default: null
   }
 })
 
-// State
-const era5HistoricalDate = ref('')
+// Emit events
+const emit = defineEmits(['close', 'fetch-era5', 'refresh-status', 'trigger-fetcher', 'pause-fetcher', 'resume-fetcher', 'update:era5HistoricalDate'])
 
 // Computed
 const todayStr = computed(() => {
   return new Date().toISOString().split('T')[0]
+})
+
+// 本地 v-model 绑定
+const localEra5Date = computed({
+  get: () => props.era5HistoricalDate,
+  set: (value) => emit('update:era5HistoricalDate', value)
 })
 
 // Methods
@@ -220,9 +220,6 @@ const getFetcherStatusText = (status) => {
   }
   return textMap[status] || status
 }
-
-// Emit events
-defineEmits(['close', 'fetch-era5', 'refresh-status', 'trigger-fetcher', 'pause-fetcher', 'resume-fetcher'])
 </script>
 
 <style scoped>

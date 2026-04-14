@@ -23,7 +23,8 @@ AgentMode = Literal["assistant", "expert", "code", "query", "report", "social", 
 def build_react_system_prompt(
     mode: AgentMode,
     available_tools: Optional[List[str]] = None,
-    user_preferences: Optional[dict] = None
+    user_preferences: Optional[dict] = None,
+    memory_file_path: Optional[str] = None
 ) -> str:
     """
     构建ReAct系统提示词（七模式架构）
@@ -32,6 +33,7 @@ def build_react_system_prompt(
         mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social" | "chart")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
         user_preferences: 用户偏好配置（仅social模式使用）
+        memory_file_path: 用户记忆文件路径（仅social模式使用）
 
     Returns:
         系统提示词字符串
@@ -53,7 +55,8 @@ def build_react_system_prompt(
         "building_prompt",
         mode=mode,
         tool_count=len(filtered_tools),
-        has_user_preferences=user_preferences is not None
+        has_user_preferences=user_preferences is not None,
+        memory_file_path=memory_file_path
     )
 
     # 根据模式构建Prompt
@@ -68,7 +71,7 @@ def build_react_system_prompt(
     elif mode == "report":
         return build_report_prompt(filtered_tools)
     elif mode == "social":
-        return build_social_prompt(filtered_tools, user_preferences)
+        return build_social_prompt(filtered_tools, user_preferences, memory_file_path)
     elif mode == "chart":
         return build_chart_prompt(filtered_tools)
     else:

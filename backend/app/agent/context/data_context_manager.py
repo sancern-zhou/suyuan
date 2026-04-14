@@ -55,6 +55,7 @@ SCHEMA_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "enhanced_obm_result": EnhancedOBMResult,  # 增强OBM分析结果
     "guangdong_stations": UnifiedDataRecord,  # 广东站点数据
     "air_quality_unified": UnifiedDataRecord,  # 空气质量统一数据
+    "air_quality_5min": UnifiedDataRecord,  # 5分钟数据 (get_5min_data)
     "regional_city_comparison": UnifiedDataRecord,  # 城市级区域对比数据
     "regional_station_comparison": UnifiedDataRecord,  # 站点级区域对比数据
     "trajectory_analysis_result": TrajectorySourceAnalysisResult,  # 深度溯源结果

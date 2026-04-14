@@ -102,6 +102,7 @@ class UserPreferences:
         # 用户ID转换（避免特殊字符）
         safe_user_id = user_id.replace(":", "_")
         self.preferences_file = self.data_dir / f"{safe_user_id}.json"
+        self.waiting_preferences_file = self.data_dir / f"{safe_user_id}_waiting.flag"  # 状态标记文件
 
         # 默认偏好
         self._preferences = {
@@ -180,6 +181,9 @@ class UserPreferences:
                              key=key)
 
         self._save()
+
+        # ✅ 保存偏好后清除等待状态
+        self.clear_waiting_preferences()
 
     def get_style_description(self) -> str:
         """
@@ -346,3 +350,46 @@ B. 否
 - 表情符号：{emoji_text}
 
 现在你可以开始提问了！有什么可以帮助你的吗？"""
+
+    def set_waiting_preferences(self) -> None:
+        """
+        设置等待偏好配置响应状态
+
+        新用户收到欢迎消息后调用，标记为等待用户回复偏好配置
+        """
+        try:
+            self.waiting_preferences_file.write_text(
+                datetime.now().isoformat(),
+                encoding='utf-8'
+            )
+            logger.info("waiting_preferences_state_set",
+                       user_id=self.user_id)
+        except Exception as e:
+            logger.error("failed_to_set_waiting_preferences",
+                        user_id=self.user_id,
+                        error=str(e))
+
+    def is_waiting_preferences(self) -> bool:
+        """
+        检查是否在等待偏好配置响应
+
+        Returns:
+            是否在等待偏好配置响应
+        """
+        return self.waiting_preferences_file.exists()
+
+    def clear_waiting_preferences(self) -> None:
+        """
+        清除等待偏好配置响应状态
+
+        用户成功配置偏好后调用
+        """
+        try:
+            if self.waiting_preferences_file.exists():
+                self.waiting_preferences_file.unlink()
+                logger.info("waiting_preferences_state_cleared",
+                           user_id=self.user_id)
+        except Exception as e:
+            logger.error("failed_to_clear_waiting_preferences",
+                        user_id=self.user_id,
+                        error=str(e))

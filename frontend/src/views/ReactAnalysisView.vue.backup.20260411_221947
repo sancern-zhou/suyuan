@@ -1,0 +1,3992 @@
+<template>
+  <div class="react-analysis-view">
+    <!-- 会话管理模态框 -->
+    <SessionManagerModal
+      v-model="showSessionManager"
+      @restore="handleSessionRestore"
+    />
+
+    <div class="main-layout">
+      <AssistantSidebar
+        v-model:activeModule="activeAssistant"
+        :collapsed="leftSidebarCollapsed"
+        @update:collapsed="leftSidebarCollapsed = $event"
+        @select="handleAssistantSelect"
+        @action="handleSidebarAction"
+        @loadSession="handleLoadSession"
+      />
+
+      <!-- 所有模式使用统一的分析面板 -->
+      <div class="analysis-panel" ref="layoutRef">
+        <div class="chat-area" :class="{ 'drag-over': chatAreaDragOver }" @dragover.prevent="handleChatAreaDragOver" @dragleave.prevent="handleChatAreaDragLeave" @drop.prevent="handleChatAreaDrop">
+          <!-- 可视化面板折叠/展开按钮 -->
+          <button
+            v-if="hasVizContent"
+            class="viz-toggle-btn"
+            :class="{ expanded: rightPanelVisible }"
+            @click="toggleVizPanel"
+            :title="rightPanelVisible ? '隐藏右侧面板' : '显示右侧面板'"
+          >
+            <span class="toggle-icon">{{ rightPanelVisible ? '»' : '«' }}</span>
+          </button>
+          <!-- 知识库管理面板 -->
+          <KnowledgeBasePanel
+            v-if="managementPanel === 'knowledge-base'"
+            @show-create-dialog="showKbCreateDialog = true"
+            @show-edit-dialog="showKbEditDialog = true"
+            @close="managementPanel = null"
+            @view-chunks="viewKbChunks"
+            @retry-doc="handleKbRetry"
+            @delete-doc="handleKbDeleteDoc"
+          />
+
+          <!-- 数据抓取管理面板 -->
+          <FetchersPanel
+            v-else-if="managementPanel === 'fetchers'"
+            :fetcher-system-status="fetcherSystemStatus"
+            :fetcher-loading="fetcherLoading"
+            :fetcher-error="fetcherError"
+            :fetcher-operating="fetcherOperating"
+            :era5-fetch-result="era5FetchResult"
+            @close="managementPanel = null"
+            @fetch-era5="fetchEra5Historical"
+            @refresh-status="refreshFetcherStatus"
+            @trigger-fetcher="triggerFetcher"
+            @pause-fetcher="pauseFetcher"
+            @resume-fetcher="resumeFetcher"
+          />
+
+          <!-- 定时任务管理面板 -->
+          <ScheduledTasksPanel
+            v-else-if="managementPanel === 'scheduled-tasks'"
+            :tasks="scheduledTasksStore.tasks"
+            :stats="scheduledTasksStore.stats"
+            :scheduled-tasks-refreshing="scheduledTasksRefreshing"
+            @close="managementPanel = null"
+            @refresh-tasks="refreshScheduledTasks"
+            @toggle-task="handleScheduledTaskToggle"
+            @execute-task="executeScheduledTask"
+            @edit-task="editScheduledTask"
+            @delete-task="deleteScheduledTask"
+          />
+
+          <!-- 会话历史管理面板 -->
+          <SessionHistoryPanel
+            v-else-if="managementPanel === 'session-history'"
+            :sessions="sessionHistoryData"
+            :session-history-stats="sessionHistoryStats"
+            :session-history-loading="sessionHistoryLoading"
+            @close="managementPanel = null"
+            @refresh-sessions="refreshSessionHistory"
+            @cleanup-sessions="handleSessionCleanup"
+            @restore-session="handleSessionRestore"
+          />
+
+          <!-- 社交平台管理面板 -->
+          <SocialPlatformPanel
+            v-else-if="managementPanel === 'social-platform'"
+            @close="managementPanel = null"
+          />
+
+          <!-- 工具管理面板 -->
+          <ToolsManagementPanel
+            v-else-if="managementPanel === 'tools-management'"
+            @close="managementPanel = null"
+          />
+
+          <ReActMessageList
+            v-if="!managementPanel"
+            :messages="currentModeMessages"
+            :show-reflexion="store.currentState.showReflexion"
+            :reflexion-count="store.currentState.reflexionCount"
+            :use-markdown="true"
+            :assistant-mode="activeAssistant"
+            :selected-message-id="selectedMessageId"
+            :visualization-panel-ref="vizPanelRef"
+            :on-message-click="selectMessage"
+            :has-more-messages="store.currentState.pagination.hasMoreMessages"
+            :total-message-count="store.currentState.pagination.totalMessageCount"
+            :loading-more="store.currentState.pagination.loadingMore"
+            @load-more="handleLoadMore"
+          />
+
+          <InputBox
+            v-if="!managementPanel"
+            ref="inputBoxRef"
+            v-model="currentModeCurrentMessage"
+            :disabled="inputDisabled"
+            :is-analyzing="currentModeIsAnalyzing"
+            :placeholder="inputPlaceholder"
+            :assistant-mode="activeAssistant"
+            :use-reranker="useReranker"
+            @send="handleSend"
+            @pause="handlePause"
+            @update:useReranker="handleRerankerChange"
+            @update:agentMode="handleAgentModeChange"
+          />
+        </div>
+
+        <div
+          v-if="rightPanelVisible"
+          class="resize-handle"
+          :class="{ dragging: isDragging }"
+          @mousedown="startDragging"
+          @dblclick.stop="resetWidth"
+          title="拖拽调整右侧面板宽度，双击恢复默认"
+        ></div>
+
+        <!-- 拖动时的透明遮罩层，用于捕获鼠标事件 -->
+        <div
+          v-if="isDragging"
+          class="drag-overlay"
+          @mouseup="stopDragging"
+          @mouseleave="stopDragging"
+        ></div>
+
+        <div v-if="rightPanelVisible" class="viz-wrapper" :style="vizPanelStyle">
+          <!-- 报告生成专家 -->
+          <ReportGenerationPanel
+            v-if="activeAssistant === 'report-generation-expert'"
+            :assistant-mode="activeAssistant"
+          />
+
+          <!-- 其他模式：可视化面板 + Office文档预览面板 -->
+          <template v-else>
+            <!-- 标签页切换按钮 -->
+            <div v-if="vizPanelVisible && officePanelVisible" class="right-panel-tabs">
+              <button
+                :class="['tab-btn', { active: activeRightTab === 'visualization' }]"
+                @click="activeRightTab = 'visualization'"
+              >
+                可视化
+              </button>
+              <button
+                :class="['tab-btn', { active: activeRightTab === 'document' }]"
+                @click="activeRightTab = 'document'"
+              >
+                文档预览
+              </button>
+            </div>
+
+            <!-- 可视化面板 -->
+            <VisualizationPanel
+              v-show="activeRightTab === 'visualization'"
+              ref="vizPanelRef"
+              :content="currentModeVisualization"
+              :history="currentModeMessages"
+              :selected-message-id="selectedMessageId"
+              :assistant-mode="activeAssistant"
+              :expert-results="currentModeExpertResults"
+            />
+
+            <!-- Office文档预览面板 -->
+            <OfficeDocumentPanel
+              v-show="activeRightTab === 'document'"
+              ref="officePanelRef"
+              :history="currentModeMessages"
+              :session-id="currentModeSessionId || ''"
+              @submit-edit="handleOfficeEditSubmit"
+            />
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- 知识库创建对话框 -->
+    <div v-if="showKbCreateDialog" class="dialog-overlay" @click.self="showKbCreateDialog = false">
+      <div class="dialog">
+        <div class="dialog-header">
+          <h3>新建知识库</h3>
+          <button class="btn-close" @click="showKbCreateDialog = false">×</button>
+        </div>
+        <div class="dialog-body">
+          <div class="form-group">
+            <label>名称 *</label>
+            <input v-model="kbCreateForm.name" type="text" placeholder="输入知识库名称" />
+          </div>
+          <div class="form-group">
+            <label>描述</label>
+            <textarea v-model="kbCreateForm.description" placeholder="输入知识库描述"></textarea>
+          </div>
+          <div class="form-group">
+            <label>类型</label>
+            <select v-model="kbCreateForm.kb_type">
+              <option value="private">个人知识库</option>
+              <option value="public">公共知识库</option>
+            </select>
+          </div>
+          <div class="form-group" v-if="kbCreateForm.kb_type === 'public'">
+            <label>公共知识库权限</label>
+            <label class="checkbox-inline">
+              <input type="checkbox" v-model="kbAdminConfirm" />
+              以管理员身份创建（自动携带 X-Is-Admin: true）
+            </label>
+            <p class="form-hint danger">提醒：公共知识库必须以管理员身份创建，否则会返回 403。</p>
+          </div>
+          <div class="form-group">
+            <label>分块策略</label>
+            <select v-model="kbCreateForm.chunking_strategy">
+              <option value="llm">LLM智能分块（推荐）</option>
+              <option value="sentence">句子分块</option>
+              <option value="semantic">语义分块</option>
+              <option value="markdown">Markdown分块</option>
+              <option value="hybrid">混合分块</option>
+            </select>
+            <p class="form-hint">{{ getKbStrategyDesc(kbCreateForm.chunking_strategy) }}</p>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>分块大小</label>
+              <input v-model.number="kbCreateForm.chunk_size" type="number" min="64" max="2048" />
+            </div>
+            <div class="form-group">
+              <label>分块重叠</label>
+              <input v-model.number="kbCreateForm.chunk_overlap" type="number" min="0" max="512" />
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn-secondary" @click="showKbCreateDialog = false">取消</button>
+          <button class="btn-primary" @click="handleKbCreate" :disabled="!kbCreateForm.name">创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 知识库编辑对话框 -->
+    <div v-if="showKbEditDialog" class="dialog-overlay" @click.self="showKbEditDialog = false">
+      <div class="dialog">
+        <div class="dialog-header">
+          <h3>编辑知识库</h3>
+          <button class="btn-close" @click="showKbEditDialog = false">×</button>
+        </div>
+        <div class="dialog-body">
+          <div class="form-group">
+            <label>名称 *</label>
+            <input v-model="kbEditForm.name" type="text" placeholder="输入知识库名称" />
+          </div>
+          <div class="form-group">
+            <label>描述</label>
+            <textarea v-model="kbEditForm.description" placeholder="输入知识库描述"></textarea>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" v-model="kbEditForm.is_default" />
+              设为默认知识库
+            </label>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn-secondary" @click="showKbEditDialog = false">取消</button>
+          <button class="btn-primary" @click="handleKbUpdate" :disabled="!kbEditForm.name">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 文档分段全屏对话框 -->
+    <div v-if="showKbChunksDialog" class="chunks-fullscreen">
+      <div class="chunks-header">
+        <div class="chunks-title">
+          <button class="btn-back" @click="closeKbChunksDialog">← 返回</button>
+          <h2>{{ kbCurrentDoc?.filename }}</h2>
+          <span class="chunks-count">共 {{ kbDocumentChunks.length }} 个分块</span>
+        </div>
+        <div class="chunks-actions">
+          <button class="btn-secondary" @click="closeKbChunksDialog">关闭</button>
+        </div>
+      </div>
+      <div class="chunks-content">
+        <div class="chunks-list-full">
+          <div v-for="(chunk, index) in kbDocumentChunks" :key="index" class="chunk-card">
+            <div class="chunk-card-header">
+              <span class="chunk-number">分块 #{{ chunk.chunk_index + 1 }}</span>
+              <span class="chunk-length">{{ chunk.content.length }} 字符</span>
+              <span class="chunk-position" v-if="chunk.start_char !== null">
+                位置: {{ chunk.start_char }} - {{ chunk.end_char }}
+              </span>
+            </div>
+            <div class="chunk-metadata" v-if="chunk.metadata && Object.keys(chunk.metadata).length > 0">
+              <div class="metadata-row" v-if="chunk.metadata.topic">
+                <span class="metadata-label">主题:</span>
+                <span class="metadata-value">{{ chunk.metadata.topic }}</span>
+              </div>
+              <div class="metadata-row" v-if="chunk.metadata.section">
+                <span class="metadata-label">章节:</span>
+                <span class="metadata-value">{{ chunk.metadata.section }}</span>
+              </div>
+              <div class="metadata-row" v-if="chunk.metadata.type">
+                <span class="metadata-label">类型:</span>
+                <span class="metadata-value type-tag" :class="'type-' + chunk.metadata.type">
+                  {{ getKbChunkTypeName(chunk.metadata.type) }}
+                </span>
+              </div>
+            </div>
+            <div class="chunk-card-body">{{ chunk.content }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
+import { useReactStore } from '@/stores/reactStore'
+import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
+import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import ReActMessageList from '@/components/ReActMessageList.vue'
+import InputBox from '@/components/InputBox.vue'
+import VisualizationPanel from '@/components/VisualizationPanel.vue'
+import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
+import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
+import AssistantSidebar from '@/components/AssistantSidebar.vue'
+import MeteorologyScenarioSelector from '@/components/MeteorologyScenarioSelector.vue'
+import SessionManagerModal from '@/components/SessionManagerModal.vue'
+import SocialAccountsView from '@/views/SocialAccountsView.vue'
+import ToolsManagementView from '@/views/ToolsManagementView.vue'
+import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
+import FetchersPanel from '@/components/management/FetchersPanel.vue'
+import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
+import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
+import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
+import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
+import { restoreSession, getSessionMessages } from '@/api/session'
+
+const router = useRouter()
+
+const store = useReactStore()
+const kbStore = useKnowledgeBaseStore()
+const scheduledTasksStore = useScheduledTasksStore()
+
+const defaultVizWidth = 30  // 默认宽度（当左侧面板未折叠时）
+const collapsedVizWidth = 45  // 左侧面板折叠时的默认宽度（对话区55%，右侧面板45%）
+const minVizWidth = 20
+const maxVizWidth = 60
+
+const vizWidth = ref(defaultVizWidth)
+const isDragging = ref(false)
+const layoutRef = ref(null)
+const activeAssistant = ref('general-agent')
+const vizPanelRef = ref(null)  // VisualizationPanel的引用
+const vizPanelVisible = ref(false)  // 可视化面板是否可见
+const inputBoxRef = ref(null)  // InputBox组件的引用
+const chatAreaDragOver = ref(false)  // 对话区拖拽状态
+const officePanelRef = ref(null)  // OfficeDocumentPanel的引用
+const officePanelVisible = ref(false)  // Office文档预览面板是否可见
+const rightPanelVisible = ref(false)  // 右侧面板总体是否可见（默认隐藏，有内容时自动展开）
+const leftSidebarCollapsed = ref(false)  // 左侧侧边栏折叠状态
+const activeRightTab = ref('visualization')  // 右侧面板活动标签页: 'visualization' | 'document'
+const showSessionManager = ref(false)  // 会话管理模态框状态
+const useReranker = ref(false)  // 精准检索开关
+const selectedMessageId = ref(null)  // 当前选中的消息ID，用于显示其sources
+const managementPanel = ref(null)  // 当前显示的管理面板：knowledge-base | fetchers | null
+const showKbCreateDialog = ref(false)  // 知识库创建对话框
+const showKbEditDialog = ref(false)  // 知识库编辑对话框
+const showKbChunksDialog = ref(false)  // 文档分段对话框
+
+// 知识库创建表单
+const kbCreateForm = ref({
+  name: '',
+  description: '',
+  kb_type: 'private',
+  chunking_strategy: 'llm',
+  chunk_size: 800,
+  chunk_overlap: 100
+})
+const kbAdminConfirm = ref(localStorage.getItem('isAdmin') === 'true')
+
+// 知识库编辑表单
+const kbEditForm = ref({
+  name: '',
+  description: '',
+  is_default: false
+})
+
+// 知识库上传选项
+const kbUploadOptions = ref({
+  chunking_strategy: 'llm',
+  chunk_size: 800,
+  chunk_overlap: 100,
+  llm_mode: 'local'
+})
+
+// 知识库上传状态
+const kbIsDragging = ref(false)
+const kbIsUploading = ref(false)
+const kbUploadProgress = ref({ current: 0, total: 0 })
+const kbFileInput = ref(null)
+
+// 知识库文档相关
+const kbCurrentDoc = computed(() => kbStore.currentDoc)
+const kbDocumentChunks = computed(() => kbStore.documentChunks)
+
+// 数据抓取管理相关状态
+const fetcherSystemStatus = ref(null)
+const fetcherLoading = ref(false)
+const fetcherError = ref(null)
+const fetcherOperating = ref(false)
+const era5HistoricalDate = ref('')
+const era5FetchResult = ref(null)
+
+// 定时任务管理相关状态
+const scheduledTasksRefreshing = ref(false)
+
+// 会话历史管理相关状态
+const sessionHistoryLoading = ref(false)
+const sessionHistoryData = ref([])
+const sessionHistoryStats = ref(null)
+
+// 获取今天的日期字符串
+const today = new Date()
+const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+const handleRerankerChange = (value) => {
+  useReranker.value = value
+}
+
+const handleAgentModeChange = (value) => {
+  // ✅ 处理多模式架构的模式变化
+  store.switchMode(value)
+  console.log('[ReactAnalysisView] Agent模式切换:', value)
+}
+
+// ========== 多模式响应式计算属性 ==========
+// 确保模式切换时 UI 正确更新
+
+// 当前模式的对话消息
+const currentModeMessages = computed(() => store.currentState.messages)
+
+// 当前模式的可视化数据
+// 修复：返回包含所有历史可视化的对象，而不是单个最新的可视化
+const currentModeVisualization = computed(() => {
+  // 多专家模式：返回 groupedVisualizations
+  if (store.currentState.groupedVisualizations &&
+      (store.currentState.groupedVisualizations.weather?.length > 0 ||
+       store.currentState.groupedVisualizations.component?.length > 0)) {
+    return {
+      visuals: [
+        ...(store.currentState.groupedVisualizations.weather || []),
+        ...(store.currentState.groupedVisualizations.component || [])
+      ]
+    }
+  }
+
+  // 普通模式：返回 visualizationHistory 中的所有可视化
+  const history = store.currentState.visualizationHistory || []
+  if (history.length > 0) {
+    return {
+      visuals: history
+    }
+  }
+
+  // 如果没有历史，返回 currentVisualization（兼容旧逻辑）
+  return store.currentState.currentVisualization
+})
+
+// 当前模式的可视化历史
+const currentModeVisualizationHistory = computed(() => store.currentState.visualizationHistory)
+
+// 当前模式的专家结果
+const currentModeExpertResults = computed(() => store.currentState.lastExpertResults)
+
+// 当前模式的会话ID
+const currentModeSessionId = computed(() => store.currentState.sessionId)
+
+// 当前模式的分析状态
+const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
+
+// 当前模式的当前消息
+const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
+
+const vizPanelStyle = computed(() => ({
+  width: `${vizWidth.value}%`,  // 使用可拖动调整的宽度
+  display: 'flex',
+  flexDirection: 'column',
+  overflowY: 'auto',
+  maxHeight: '100vh',
+  overflowX: 'hidden'
+}))
+
+const allVisualizations = computed(() => {
+  const vizList = []
+  if (store.currentState.visualizationHistory?.length) {
+    vizList.push(...store.currentState.visualizationHistory)
+  }
+  if (store.currentState.currentVisualization) {
+    if (store.currentState.currentVisualization.visuals) {
+      // 兼容两种格式：VisualBlock格式 和 直接格式
+      const visuals = store.currentState.currentVisualization.visuals.map(v => {
+        if (v.payload) {
+          return { ...v.payload, meta: v.meta }
+        } else {
+          return v
+        }
+      })
+      vizList.push(...visuals)
+    } else {
+      vizList.push(store.currentState.currentVisualization)
+    }
+  }
+  const seen = new Set()
+  return vizList.filter(viz => {
+    if (!viz) return false
+    const key = viz.id || `${viz.type}_${JSON.stringify(viz.data || '')}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
+
+// 检测是否有Office文档操作
+const hasOfficeDocuments = computed(() => {
+  // 获取消息的引用，确保响应式
+  const messages = store.messages
+
+  // 检查每条消息
+  const result = messages && messages.length > 0 && messages.some(msg => {
+    if (msg && msg.type === 'observation' && msg.data && msg.data.observation) {
+      const metadata = msg.data.observation.metadata || {}
+      const generator = metadata.generator
+
+      const isOfficeTool = ['word_edit', 'find_replace_word', 'accept_word_changes',
+              'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide',
+              'read_file'].includes(generator)
+
+      if (isOfficeTool) {
+        console.log('[ReactAnalysisView] 检测到Office工具:', generator)
+        const obs = msg.data.observation
+        console.log('[ReactAnalysisView] observation数据:', {
+          hasData: !!obs.data,
+          hasPdfPreview: !!(obs.data && obs.data.pdf_preview),
+          hasMarkdownPreview: !!(obs.data && obs.data.markdown_preview),
+          dataKeys: obs.data ? Object.keys(obs.data) : []
+        })
+      }
+
+      // 对于 read_file，需要检查是否有 markdown_preview 或 pdf_preview
+      if (generator === 'read_file') {
+        const obs = msg.data.observation
+        return !!(obs.data && (obs.data.pdf_preview || obs.data.markdown_preview))
+      }
+
+      return isOfficeTool
+    }
+    return false
+  })
+
+  console.log('[ReactAnalysisView] hasOfficeDocuments计算结果:', result, '消息数量:', messages?.length)
+  return result
+})
+
+// 检测是否有可视化内容（图表或知识库溯源）
+const hasVizContent = computed(() => {
+  // 检查是否有可视化图表
+  const hasCharts = allVisualizations.value && allVisualizations.value.length > 0
+
+  // 检查是否有知识库溯源内容（选中消息且有sources）
+  const hasSources = selectedMessageId.value !== null &&
+    store.messages.some(msg => msg.id === selectedMessageId.value && msg.sources)
+
+  // 检查是否有Office文档操作（检查消息中的observation + lastOfficeDocument）
+  const hasOfficeFromMessages = hasOfficeDocuments.value
+  const hasOfficeFromLastDoc = !!(
+    store.lastOfficeDocument?.pdf_preview ||
+    store.lastOfficeDocument?.markdown_preview
+  )
+  const hasOffice = hasOfficeFromMessages || hasOfficeFromLastDoc
+
+  return hasCharts || hasSources || hasOffice
+})
+
+// 监听内容变化，自动显示/隐藏面板
+watch(hasVizContent, (newValue) => {
+  console.log('[ReactAnalysisView] hasVizContent变化:', newValue)
+  if (newValue && !vizPanelVisible.value) {
+    vizPanelVisible.value = true
+    console.log('[ReactAnalysisView] 设置vizPanelVisible为true')
+  }
+}, { immediate: true })
+
+// 监听Office文档变化，自动显示/隐藏面板
+watch(hasOfficeDocuments, (newValue) => {
+  console.log('[ReactAnalysisView] hasOfficeDocuments变化:', newValue)
+  officePanelVisible.value = newValue
+  // 当检测到Office文档时，自动切换到文档标签页
+  if (newValue) {
+    activeRightTab.value = 'document'
+  }
+  console.log('[ReactAnalysisView] officePanelVisible已设置为:', newValue)
+  console.log('[ReactAnalysisView] 面板状态:', {
+    vizPanelVisible: vizPanelVisible.value,
+    officePanelVisible: officePanelVisible.value,
+    activeRightTab: activeRightTab.value,
+    shouldShowRightPanel: vizPanelVisible.value || officePanelVisible.value
+  })
+}, { immediate: true })
+
+// 监听消息数量变化，自动提取visuals（用于分页加载场景）
+watch(() => store.currentState.messages?.length || 0, (newCount, oldCount) => {
+  // 只在消息数量增加时触发（分页加载）
+  if (newCount > oldCount && newCount > 5) {
+    console.log('[消息变化监听] 消息数量增加:', { oldCount, newCount })
+
+    // 重新提取visuals
+    const visualsFromMessages = extractVisualsFromMessages()
+
+    if (visualsFromMessages.length > 0) {
+      console.log('[消息变化监听] 提取到visuals，更新可视化历史，数量:', visualsFromMessages.length)
+
+      // 获取当前的可视化历史
+      const currentHistory = store.visualizationHistory || []
+
+      // 合并：只添加新的visuals（基于ID去重）
+      const existingIds = new Set(currentHistory.map(v => v.id))
+      const newVisuals = visualsFromMessages.filter(v => !existingIds.has(v.id))
+
+      if (newVisuals.length > 0) {
+        const mergedHistory = [...currentHistory, ...newVisuals]
+        store.setVisualizationHistory(mergedHistory)
+        console.log('[消息变化监听] 已更新可视化历史，新增:', newVisuals.length, '总计:', mergedHistory.length)
+      }
+    }
+  }
+})
+
+// 监听右侧面板显示状态，自动展开/收起
+watch([vizPanelVisible, officePanelVisible], ([viz, office]) => {
+  const shouldShow = viz || office
+  console.log('[ReactAnalysisView] 右侧面板状态变化:', {
+    vizPanelVisible: viz,
+    officePanelVisible: office,
+    willShow: shouldShow
+  })
+  // 当有内容时自动展开面板，并联动左侧面板
+  if (shouldShow) {
+    rightPanelVisible.value = true
+    // 右侧面板展开时，自动折叠左侧面板，并调整宽度为50%
+    leftSidebarCollapsed.value = true
+    vizWidth.value = collapsedVizWidth
+  } else {
+    rightPanelVisible.value = false
+    // 右侧面板收起时，恢复左侧面板
+    leftSidebarCollapsed.value = false
+  }
+}, { immediate: true })
+
+// 监听office_document事件，自动显示文档面板
+watch(() => store.lastOfficeDocument, (doc) => {
+  if (doc?.pdf_preview) {
+    console.log('[ReactAnalysisView] 检测到office_document事件:', {
+      generator: doc.generator,
+      pdf_id: doc.pdf_preview.pdf_id,
+      file_path: doc.file_path
+    })
+    officePanelVisible.value = true
+    activeRightTab.value = 'document'
+  }
+})
+
+// 处理用户编辑提交
+const handleOfficeEditSubmit = async (editData) => {
+  try {
+    // 调用后端API应用编辑
+    const response = await fetch('/api/office/apply-edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_path: editData.file_path,
+        content: editData.content,
+        doc_type: editData.doc_type,
+        session_id: store.currentState.sessionId || ''
+      })
+    })
+
+    const result = await response.json()
+
+    if (result.success) {
+      // 显示提示消息
+      showToast(result.message || '编辑已提交，正在处理...')
+
+      // 退出编辑模式，等待Agent处理完成
+      // Agent处理结果会通过SSE推送，自动更新PDF预览
+      if (officePanelRef.value) {
+        officePanelRef.value.cancelEdit()
+      }
+    } else {
+      showToast('提交失败：' + result.message, 'error')
+    }
+  } catch (error) {
+    console.error('提交编辑失败:', error)
+    showToast('提交失败：' + error.message, 'error')
+  }
+}
+
+// 简单的Toast提示
+const showToast = (message, type = 'info') => {
+  // 简单实现：使用现有的消息系统或console
+  console.log(`[${type.toUpperCase()}] ${message}`)
+  // TODO: 集成到现有的通知系统
+}
+
+// 切换可视化面板显示/隐藏
+const toggleVizPanel = () => {
+  const newState = !rightPanelVisible.value
+  rightPanelVisible.value = newState
+  // 联动左侧面板
+  if (newState) {
+    leftSidebarCollapsed.value = true
+    vizWidth.value = collapsedVizWidth
+  } else {
+    leftSidebarCollapsed.value = false
+  }
+}
+
+const assistantNoticeMap = {
+  'general-agent': '通用Agent已接入，支持自然语言提问和多轮交互。',
+  'knowledge-base': '知识库管理页面，用于管理文档与知识检索。'
+}
+
+const assistantNotice = computed(() => {
+  const noNoticeAssistants = ['general-agent']
+  if (noNoticeAssistants.includes(activeAssistant.value)) {
+    return ''
+  }
+  return assistantNoticeMap[activeAssistant.value] || '该助手尚未接入后台，敬请期待。'
+})
+
+const isAssistantReady = computed(() => {
+  const readyAssistants = ['general-agent']
+  return readyAssistants.includes(activeAssistant.value)
+})
+
+const inputPlaceholder = computed(() => {
+  return '输入您的问题...'
+})
+
+const inputDisabled = computed(() => {
+  const baseDisabled = !store.canInput && !store.isAnalyzing
+  return baseDisabled || !isAssistantReady.value
+})
+
+const clampWidth = (value) => {
+  return Math.min(maxVizWidth, Math.max(minVizWidth, value))
+}
+
+const updateWidthFromCursor = (clientX) => {
+  if (!layoutRef.value) return
+  const bounds = layoutRef.value.getBoundingClientRect()
+  const vizPixels = bounds.right - clientX
+  const percent = (vizPixels / bounds.width) * 100
+  vizWidth.value = clampWidth(percent)
+}
+
+const handleMouseMove = (event) => {
+  if (!isDragging.value) return
+
+  // 如果鼠标按钮已经释放，自动停止拖动
+  if (event.buttons === 0) {
+    stopDragging()
+    return
+  }
+
+  updateWidthFromCursor(event.clientX)
+}
+
+const stopDragging = () => {
+  isDragging.value = false
+}
+
+const startDragging = (event) => {
+  isDragging.value = true
+  updateWidthFromCursor(event.clientX)
+}
+
+const resetWidth = () => {
+  vizWidth.value = defaultVizWidth
+}
+
+// 对话区文件拖放处理
+const handleChatAreaDragOver = (e) => {
+  // 检查是否有文件被拖拽
+  if (e.dataTransfer.types.includes('Files')) {
+    chatAreaDragOver.value = true
+    e.dataTransfer.dropEffect = 'copy'
+  }
+}
+
+const handleChatAreaDragLeave = (e) => {
+  // 检查鼠标是否真的离开了对话区（避免子元素触发）
+  const rect = e.currentTarget.getBoundingClientRect()
+  const x = e.clientX
+  const y = e.clientY
+  if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) {
+    chatAreaDragOver.value = false
+  }
+}
+
+const handleChatAreaDrop = async (e) => {
+  chatAreaDragOver.value = false
+
+  const files = e.dataTransfer.files
+  if (!files || files.length === 0) return
+
+  // 如果 InputBox 有方法处理文件，调用它
+  if (inputBoxRef.value && typeof inputBoxRef.value.handleFilesDrop === 'function') {
+    await inputBoxRef.value.handleFilesDrop(files)
+  }
+}
+
+const switchToGeneral = () => {
+  activeAssistant.value = 'general-agent'
+}
+
+const handleAssistantSelect = async (moduleId) => {
+  if (moduleId !== 'general-agent' && store.currentState.isAnalyzing) {
+    await store.pauseAnalysis()
+  }
+}
+
+// 处理侧边栏操作按钮
+const handleSidebarAction = async (actionId) => {
+  switch (actionId) {
+    case 'tools-management':
+      if (managementPanel.value === 'tools-management') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'tools-management'
+      }
+      break
+    case 'knowledge-base':
+      if (managementPanel.value === 'knowledge-base') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'knowledge-base'
+        await kbStore.fetchKnowledgeBases()
+      }
+      break
+    case 'fetchers':
+      if (managementPanel.value === 'fetchers') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'fetchers'
+        await refreshFetcherStatus()
+      }
+      break
+    case 'scheduled-tasks':
+      if (managementPanel.value === 'scheduled-tasks') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'scheduled-tasks'
+        await refreshScheduledTasks()
+      }
+      break
+    case 'session-history':
+      if (managementPanel.value === 'session-history') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'session-history'
+        await refreshSessionHistory()
+      }
+      break
+    case 'social-platform':
+      if (managementPanel.value === 'social-platform') {
+        managementPanel.value = null
+      } else {
+        managementPanel.value = 'social-platform'
+      }
+      break
+    case 'restart-session':
+      // 总是执行restart，确保可以重新开始
+      store.restart()
+      managementPanel.value = null
+      // 新对话时隐藏右侧面板，同时重置所有面板状态
+      vizPanelVisible.value = false
+      officePanelVisible.value = false
+      rightPanelVisible.value = false
+      leftSidebarCollapsed.value = false
+      break
+  }
+}
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+// 知识库管理方法
+const selectKb = (kb) => {
+  kbStore.selectKnowledgeBase(kb)
+  // 初始化编辑表单
+  kbEditForm.value = {
+    name: kb.name,
+    description: kb.description || '',
+    is_default: kb.is_default
+  }
+}
+
+const handleKbBack = () => {
+  kbStore.currentKb = null
+  kbStore.documents = []
+}
+
+const handleKbCreate = async () => {
+  if (!kbCreateForm.value.name) return
+
+  // 公共知识库需要管理员确认，否则后端会返回403
+  if (kbCreateForm.value.kb_type === 'public' && !kbAdminConfirm.value) {
+    alert('创建公共知识库需要管理员权限，请勾选确认。')
+    return
+  }
+
+  try {
+    // 同步管理员标识到 localStorage，供 API 请求头使用
+    if (kbCreateForm.value.kb_type === 'public' && kbAdminConfirm.value) {
+      localStorage.setItem('isAdmin', 'true')
+    } else if (!kbAdminConfirm.value) {
+      localStorage.removeItem('isAdmin')
+    }
+
+    await kbStore.createKnowledgeBase(kbCreateForm.value)
+    showKbCreateDialog.value = false
+    kbCreateForm.value = {
+      name: '',
+      description: '',
+      kb_type: 'private',
+      chunking_strategy: 'llm',
+      chunk_size: 800,
+      chunk_overlap: 100
+    }
+    kbAdminConfirm.value = localStorage.getItem('isAdmin') === 'true'
+  } catch (e) {
+    alert('创建失败: ' + e.message)
+  }
+}
+
+const handleKbUpdate = async () => {
+  if (!kbStore.currentKb || !kbEditForm.value.name) return
+
+  try {
+    await kbStore.updateKnowledgeBase(kbStore.currentKb.id, kbEditForm.value)
+    showKbEditDialog.value = false
+  } catch (e) {
+    alert('更新失败: ' + e.message)
+  }
+}
+
+const handleDeleteKb = async () => {
+  if (!kbStore.currentKb) return
+  if (!confirm(`确定要删除知识库"${kbStore.currentKb.name}"吗？此操作不可恢复。`)) return
+
+  try {
+    await kbStore.deleteKnowledgeBase(kbStore.currentKb.id)
+    handleKbBack()
+  } catch (e) {
+    alert('删除失败: ' + e.message)
+  }
+}
+
+// 知识库文档上传相关方法
+const triggerKbFileInput = () => {
+  if (!kbIsUploading.value) {
+    kbFileInput.value?.click()
+  }
+}
+
+const handleKbFileSelect = async (event) => {
+  const files = event.target.files
+  if (files && files.length > 0) {
+    await uploadKbFiles(Array.from(files))
+  }
+  event.target.value = ''
+}
+
+const handleKbFileDrop = async (event) => {
+  kbIsDragging.value = false
+  const files = event.dataTransfer?.files
+  if (files && files.length > 0) {
+    await uploadKbFiles(Array.from(files))
+  }
+}
+
+const uploadKbFiles = async (files) => {
+  if (!kbStore.currentKb || kbIsUploading.value) return
+
+  kbIsUploading.value = true
+  kbUploadProgress.value = { current: 0, total: files.length }
+
+  for (const file of files) {
+    try {
+      kbUploadProgress.value.current++
+      await kbStore.uploadDocument(kbStore.currentKb.id, file, {
+        chunking_strategy: kbUploadOptions.value.chunking_strategy,
+        chunk_size: kbUploadOptions.value.chunk_size,
+        chunk_overlap: kbUploadOptions.value.chunk_overlap,
+        llm_mode: kbUploadOptions.value.llm_mode
+      })
+    } catch (e) {
+      alert(`上传"${file.name}"失败: ${e.message}`)
+    }
+  }
+
+  kbIsUploading.value = false
+}
+
+const handleKbDeleteDoc = async (docId) => {
+  if (!kbStore.currentKb) return
+
+  try {
+    await kbStore.deleteDocument(kbStore.currentKb.id, docId)
+  } catch (e) {
+    alert('删除失败: ' + e.message)
+  }
+}
+
+const handleKbRetry = async (docId) => {
+  if (!kbStore.currentKb) return
+  try {
+    await kbStore.retryDocument(kbStore.currentKb.id, docId)
+  } catch (e) {
+    alert('重试失败: ' + e.message)
+  }
+}
+
+const viewKbChunks = async (doc) => {
+  if (!kbStore.currentKb) return
+  try {
+    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, doc.id)
+    showKbChunksDialog.value = true
+  } catch (e) {
+    alert('获取分段失败: ' + e.message)
+  }
+}
+
+const closeKbChunksDialog = () => {
+  showKbChunksDialog.value = false
+  kbStore.clearCurrentDoc()
+}
+
+// 知识库辅助方法
+const getKbStrategyName = (strategy) => {
+  const map = {
+    sentence: '句子分块',
+    semantic: '语义分块',
+    markdown: 'Markdown分块',
+    hybrid: '混合分块',
+    llm: 'LLM智能分块'
+  }
+  return map[strategy] || strategy
+}
+
+const getKbStrategyDesc = (strategy) => {
+  const map = {
+    sentence: '按句子边界分割，适合大多数文档',
+    semantic: '基于语义相似度分割，适合技术文档',
+    markdown: '按Markdown标题层级分割，适合Markdown文档',
+    hybrid: '多层级混合分割，适合长文档',
+    llm: '使用大语言模型进行智能分割，质量最高但较慢'
+  }
+  return map[strategy] || ''
+}
+
+const getKbStatusText = (status) => {
+  const map = {
+    pending: '等待处理',
+    processing: '处理中',
+    completed: '已完成',
+    failed: '处理失败'
+  }
+  return map[status] || status
+}
+
+const getKbChunkTypeName = (type) => {
+  const map = {
+    paragraph: '正文',
+    table: '表格',
+    list: '列表',
+    header: '标题',
+    code: '代码'
+  }
+  return map[type] || type
+}
+
+// 数据抓取管理方法
+const getFetcherStatusClass = (status) => {
+  const classes = {
+    'idle': 'idle',
+    'running': 'running',
+    'disabled': 'disabled',
+    'error': 'error'
+  }
+  return classes[status] || 'unknown'
+}
+
+const getFetcherStatusText = (status) => {
+  const texts = {
+    'idle': '空闲',
+    'running': '运行中',
+    'disabled': '已禁用',
+    'error': '错误'
+  }
+  return texts[status] || status
+}
+
+const refreshFetcherStatus = async () => {
+  fetcherLoading.value = true
+  fetcherError.value = null
+  try {
+    const response = await fetch('/api/system/status')
+    const data = await response.json()
+    fetcherSystemStatus.value = data
+  } catch (err) {
+    fetcherError.value = err.message
+    console.error('Failed to fetch system status:', err)
+  } finally {
+    fetcherLoading.value = false
+  }
+}
+
+const triggerFetcher = async (fetcherName) => {
+  fetcherOperating.value = true
+  try {
+    const response = await fetch(`/api/fetchers/trigger/${fetcherName}`, {
+      method: 'POST'
+    })
+    if (response.ok) {
+      alert(`Fetcher "${fetcherName}" 已触发`)
+      await refreshFetcherStatus()
+    } else {
+      const error = await response.json()
+      alert(`触发失败: ${error.detail || '未知错误'}`)
+    }
+  } catch (err) {
+    alert(`触发失败: ${err.message}`)
+    console.error('Failed to trigger fetcher:', err)
+  } finally {
+    fetcherOperating.value = false
+  }
+}
+
+const pauseFetcher = async (fetcherName) => {
+  fetcherOperating.value = true
+  try {
+    const response = await fetch(`/api/fetchers/pause/${fetcherName}`, {
+      method: 'POST'
+    })
+    if (response.ok) {
+      alert(`Fetcher "${fetcherName}" 已暂停`)
+      await refreshFetcherStatus()
+    } else {
+      const error = await response.json()
+      alert(`暂停失败: ${error.detail || '未知错误'}`)
+    }
+  } catch (err) {
+    alert(`暂停失败: ${err.message}`)
+    console.error('Failed to pause fetcher:', err)
+  } finally {
+    fetcherOperating.value = false
+  }
+}
+
+const resumeFetcher = async (fetcherName) => {
+  fetcherOperating.value = true
+  try {
+    const response = await fetch(`/api/fetchers/resume/${fetcherName}`, {
+      method: 'POST'
+    })
+    if (response.ok) {
+      alert(`Fetcher "${fetcherName}" 已恢复`)
+      await refreshFetcherStatus()
+    } else {
+      const error = await response.json()
+      alert(`恢复失败: ${error.detail || '未知错误'}`)
+    }
+  } catch (err) {
+    alert(`恢复失败: ${err.message}`)
+    console.error('Failed to resume fetcher:', err)
+  } finally {
+    fetcherOperating.value = false
+  }
+}
+
+const fetchEra5Historical = async () => {
+  if (!era5HistoricalDate.value) {
+    alert('请选择日期')
+    return
+  }
+
+  fetcherOperating.value = true
+  era5FetchResult.value = null
+
+  try {
+    const response = await fetch('/api/fetchers/era5/historical', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: era5HistoricalDate.value })
+    })
+    const result = await response.json()
+
+    if (result.data) {
+      era5FetchResult.value = result.data
+      if (result.data.success) {
+        alert('ERA5 数据补采成功')
+      } else {
+        alert('ERA5 数据补采完成，部分失败')
+      }
+    } else {
+      alert('补采失败: ' + (result.detail || '未知错误'))
+    }
+  } catch (err) {
+    alert('ERA5 数据补采失败: ' + err.message)
+    console.error('Failed to fetch ERA5 historical data:', err)
+  } finally {
+    fetcherOperating.value = false
+  }
+}
+
+// 定时任务管理方法
+const refreshScheduledTasks = async () => {
+  scheduledTasksRefreshing.value = true
+  try {
+    await Promise.all([
+      scheduledTasksStore.fetchTasks(),
+      scheduledTasksStore.fetchStats()
+    ])
+  } catch (error) {
+    console.error('Failed to refresh tasks:', error)
+    alert('刷新失败')
+  } finally {
+    scheduledTasksRefreshing.value = false
+  }
+}
+
+const getScheduledTaskLabel = (type) => {
+  const labels = {
+    'daily_8am': '每天8:00',
+    'every_2h': '每2小时',
+    'every_30min': '每30分钟',
+    'once': '一次性',
+    'interval': '自定义间隔',
+    'daily_custom': '每天自定义'
+  }
+  return labels[type] || type
+}
+
+const getScheduledTaskTagClass = (type) => {
+  const classes = {
+    'daily_8am': 'tag-success',
+    'every_2h': 'tag-warning',
+    'every_30min': 'tag-info'
+  }
+  return classes[type] || ''
+}
+
+const formatScheduledNextRun = (time) => {
+  if (!time) return '未安排'
+  const date = new Date(time)
+  const now = new Date()
+  const diff = date - now
+
+  if (diff < 0) return '即将运行'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟后`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时后`
+  return date.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+}
+
+const handleScheduledTaskToggle = async (task) => {
+  task.toggling = true
+  try {
+    if (task.enabled) {
+      await scheduledTasksStore.disableTask(task.task_id)
+      task.enabled = false
+    } else {
+      await scheduledTasksStore.enableTask(task.task_id)
+      task.enabled = true
+    }
+  } catch (error) {
+    alert('操作失败')
+  } finally {
+    task.toggling = false
+  }
+}
+
+const executeScheduledTask = async (task) => {
+  if (!confirm(`确定立即执行任务"${task.name}"吗？`)) {
+    return
+  }
+
+  task.executing = true
+  try {
+    const result = await scheduledTasksStore.executeTaskNow(task.task_id)
+    alert(`任务已开始执行，执行ID: ${result.execution_id}`)
+    await refreshScheduledTasks()
+  } catch (error) {
+    console.error('Failed to execute task:', error)
+    alert('执行失败')
+  } finally {
+    task.executing = false
+  }
+}
+
+const editScheduledTask = (task) => {
+  alert('编辑功能开发中...')
+}
+
+const deleteScheduledTask = async (task) => {
+  try {
+    await scheduledTasksStore.deleteTask(task.task_id)
+    alert('任务已删除')
+  } catch (error) {
+    alert('删除失败')
+  }
+}
+
+// 会话历史管理方法
+const refreshSessionHistory = async () => {
+  sessionHistoryLoading.value = true
+  try {
+    // 获取会话列表
+    const listResponse = await fetch('/api/sessions')
+    if (!listResponse.ok) throw new Error('Failed to fetch sessions')
+    const listData = await listResponse.json()
+    sessionHistoryData.value = listData.sessions || []
+
+    // 获取统计数据
+    const statsResponse = await fetch('/api/sessions/stats')
+    if (!statsResponse.ok) throw new Error('Failed to fetch stats')
+    sessionHistoryStats.value = await statsResponse.json()
+  } catch (error) {
+    console.error('Failed to refresh session history:', error)
+    alert('刷新失败')
+  } finally {
+    sessionHistoryLoading.value = false
+  }
+}
+
+const formatSessionTime = (timestamp) => {
+  if (!timestamp) return '-'
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diff = now - date
+
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`
+  const days = Math.floor(diff / 86400000)
+  if (days < 7) return `${days}天前`
+
+  return date.toLocaleDateString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+const formatSessionFullTime = (timestamp) => {
+  if (!timestamp) return '-'
+  const date = new Date(timestamp)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+const getTruncatedQuery = (query, maxLength = 80) => {
+  if (query.length <= maxLength) return query
+  return query.substring(0, maxLength) + '...'
+}
+
+const getRecentSessions = () => {
+  // 返回最近10条会话，按更新时间排序
+  const sorted = [...sessionHistoryData.value].sort((a, b) => {
+    return new Date(b.updated_at) - new Date(a.updated_at)
+  })
+  return sorted.slice(0, 10)
+}
+
+// ========== 会话恢复辅助函数 ==========
+
+/**
+ * 转换历史消息格式（兼容后端不同版本的消息格式）
+ * @param {Array} conversationHistory - 后端返回的对话历史
+ * @returns {Array} 转换后的消息列表
+ */
+const convertHistoryMessages = (conversationHistory) => {
+  if (!conversationHistory || conversationHistory.length === 0) {
+    return []
+  }
+
+  return conversationHistory.map((msg, index) => {
+    const converted = { ...msg }
+
+    // 确保所有消息都有唯一的 id 字段
+    if (!msg.id) {
+      converted.id = `hist-${Date.now()}-${index}`
+    }
+
+    // 映射 role 字段到 type 字段（兼容后端格式）
+    if (msg.role && !msg.type) {
+      if (msg.role === 'user') {
+        converted.type = 'user'
+      } else if (msg.role === 'assistant') {
+        converted.type = 'final'
+      } else {
+        converted.type = msg.role
+      }
+    }
+
+    // 如果已经有 content 字段，直接返回
+    if (msg.content) {
+      return converted
+    }
+
+    // 根据类型转换 content
+    if (msg.type === 'thought' && msg.data?.thought) {
+      converted.content = msg.data.thought
+    } else if (msg.type === 'action' && msg.data?.action) {
+      const toolName = msg.data.action.tool || ''
+      converted.content = toolName ? `调用工具: ${toolName}` : '执行行动'
+    } else if (msg.type === 'observation' && msg.data?.observation) {
+      const obs = msg.data.observation
+      converted.content = obs.summary || '获得结果'
+    } else if (msg.type === 'user') {
+      if (typeof msg.data === 'string') {
+        converted.content = msg.data
+      } else if (msg.data?.content && typeof msg.data.content === 'string') {
+        converted.content = msg.data.content
+      } else {
+        converted.content = '(用户消息)'
+      }
+    } else if (msg.type === 'final') {
+      converted.content = msg.data?.answer || ''
+    }
+
+    return converted
+  })
+}
+
+/**
+ * 从消息中提取visuals（用于会话恢复和动态加载）
+ * @returns {Array} 提取到的visuals数组
+ */
+const extractVisualsFromMessages = () => {
+  const messages = store.currentState.messages || []
+  const visualsFromMessages = []
+
+  console.log('[extractVisuals] 开始从消息中提取visuals，消息数量:', messages.length)
+
+  messages.forEach(msg => {
+    let visuals = null
+
+    if (msg.visuals && Array.isArray(msg.visuals)) {
+      visuals = msg.visuals
+      console.log('[extractVisuals] 从顶层visuals提取:', msg.id, visuals.length)
+    } else if (msg.data?.observation?.visuals && Array.isArray(msg.data.observation.visuals)) {
+      // observation类型：visuals在data.observation.visuals中
+      visuals = msg.data.observation.visuals
+      console.log('[extractVisuals] 从data.observation.visuals提取:', msg.id, visuals.length, '消息类型:', msg.type)
+    } else if (msg.data?.visuals && Array.isArray(msg.data.visuals)) {
+      // final类型：visuals直接在data.visuals中
+      visuals = msg.data.visuals
+      console.log('[extractVisuals] 从data.visuals提取:', msg.id, visuals.length, '消息类型:', msg.type)
+    }
+
+    if (visuals) {
+      visualsFromMessages.push(...visuals)
+    }
+  })
+
+  console.log('[extractVisuals] 从消息中提取的visuals数量:', visualsFromMessages.length)
+  return visualsFromMessages
+}
+
+/**
+ * 恢复会话的可视化和面板状态
+ * @param {Object} sessionData - 会话数据
+ * @returns {number} 可视化数量
+ */
+const restoreSessionVisualizations = async (sessionData) => {
+  let visualCount = 0
+
+  // 检查是否有可视化内容
+  const hasVisuals = (
+    (sessionData.visual_ids && sessionData.visual_ids.length > 0) ||
+    (sessionData.visualizations && sessionData.visualizations.length > 0) ||
+    (store.currentState.groupedVisualizations &&
+      (store.currentState.groupedVisualizations.weather?.length > 0 ||
+       store.currentState.groupedVisualizations.component?.length > 0))
+  )
+
+  const hasOfficeDocs = sessionData.office_documents && sessionData.office_documents.length > 0
+
+  if (hasVisuals) {
+    vizPanelVisible.value = true
+    console.log('[会话恢复] 设置可视化面板可见')
+  }
+
+  if (hasOfficeDocs) {
+    officePanelVisible.value = true
+    console.log('[会话恢复] 设置Office文档面板可见')
+  }
+
+  if (hasVisuals || hasOfficeDocs) {
+    rightPanelVisible.value = true
+    console.log('[会话恢复] 设置右侧面板可见')
+    // 等待 DOM 更新
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+
+  visualCount = sessionData?.visual_ids?.length || 0
+  return visualCount
+}
+
+/**
+ * 统一的会话恢复逻辑
+ * @param {string} sessionId - 会话ID
+ * @param {Object} options - 恢复选项
+ * @returns {Promise<Object>} 恢复结果 { success, messageCount, visualCount, sessionData }
+ */
+const doRestoreSession = async (sessionId, options = {}) => {
+  const {
+    messageLimit = 100,  // 增加默认加载消息数量，确保能加载到图表数据
+    showAlert = false,
+    clearMessages = true,
+    restoreOfficeDocs = false
+  } = options
+
+  try {
+    console.log('[会话恢复] 开始恢复会话:', sessionId)
+
+    // 1. 调用后端 API（使用数据库层分页）
+    const response = await restoreSession(sessionId, messageLimit)
+    console.log('[会话恢复] API响应:', response)
+
+    const sessionData = response.session
+
+    // 2. 验证会话数据
+    const hasConversationHistory = sessionData?.conversation_history?.length > 0
+    const hasDataOrVisuals = (sessionData?.data_ids?.length > 0) ||
+                            (sessionData?.visual_ids?.length > 0) ||
+                            sessionData?.last_result
+
+    if (!hasConversationHistory && !hasDataOrVisuals) {
+      console.warn('[会话恢复] 会话为空')
+      if (showAlert) alert('会话数据为空')
+      return { success: false, messageCount: 0, visualCount: 0, sessionData: null }
+    }
+
+    // 3. 提取并切换模式
+    let sessionMode = store.extractModeFromSessionId(sessionData.session_id)
+    if (!sessionMode && sessionData.metadata?.mode) {
+      sessionMode = sessionData.metadata.mode
+    }
+
+    // 降级：如果无法提取模式，尝试从localStorage查找
+    if (!sessionMode) {
+      console.log('[会话恢复] 无法从sessionId提取模式，遍历所有模式查找消息')
+      const modes = ['assistant', 'expert', 'query', 'code', 'report', 'chart', 'tracing']
+      let bestMatch = null
+      let maxMessageCount = 0
+
+      for (const mode of modes) {
+        const savedStateJSON = localStorage.getItem(`mode-state-${mode}`)
+        if (savedStateJSON) {
+          try {
+            const savedState = JSON.parse(savedStateJSON)
+            // 精确匹配sessionId
+            if (savedState.sessionId === sessionData.session_id && savedState.messages && savedState.messages.length > 0) {
+              sessionMode = mode
+              console.log(`[会话恢复] 精确匹配：在 ${mode} 模式中找到会话`)
+              break
+            }
+            // 模糊匹配（有消息且数量最多）
+            if (savedState.messages && savedState.messages.length > maxMessageCount) {
+              maxMessageCount = savedState.messages.length
+              bestMatch = mode
+            }
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+
+      if (!sessionMode && bestMatch && maxMessageCount > 0) {
+        sessionMode = bestMatch
+        console.log(`[会话恢复] 模糊匹配：使用 ${sessionMode} 模式`)
+      }
+
+      if (!sessionMode) {
+        sessionMode = 'expert'
+        console.log('[会话恢复] 未找到会话消息，默认使用expert模式')
+      }
+    }
+
+    if (sessionMode && sessionMode !== store.currentMode) {
+      console.log('[会话恢复] 切换模式:', sessionMode)
+      store.switchMode(sessionMode)
+    }
+
+    // 4. 清空当前消息（如果需要）
+    if (clearMessages && store.currentState.messages.length > 0) {
+      store.setMessages([])
+    }
+
+    // 5. 转换并恢复消息
+    let messageCount = 0
+    if (hasConversationHistory) {
+      const convertedHistory = convertHistoryMessages(sessionData.conversation_history)
+      store.setMessages(convertedHistory)
+      messageCount = convertedHistory.length
+      console.log('[会话恢复] 消息已恢复，数量:', messageCount)
+      await nextTick()
+    } else {
+      // 后端没有conversation_history，从localStorage恢复
+      console.log('[会话恢复] 后端无对话历史，从localStorage恢复')
+      store._restoreModeState(sessionMode)
+      await nextTick()
+    }
+
+    // 6. 恢复会话状态
+    store.setSessionId(sessionData.session_id)
+    if (sessionData.state === 'completed') {
+      store.setComplete(true)
+    }
+    if (sessionData.last_result) {
+      store.currentState.lastExpertResults = sessionData.last_result
+    }
+
+    // 7. 恢复分页状态
+    if (sessionData.has_more_messages !== undefined) {
+      store.setPagination({
+        hasMoreMessages: sessionData.has_more_messages,
+        totalMessageCount: sessionData.total_message_count || 0,
+        oldestSequence: sessionData.oldest_sequence ?? null,
+        loadingMore: false
+      })
+    }
+
+    // 8. 恢复可视化历史和分组
+    // 优先从 metadata.visualizations 读取
+    const visualizations = sessionData.metadata?.visualizations || sessionData.visualizations
+    console.log('[会话恢复] 检查visualizations数据:', {
+      fromMetadata: !!sessionData.metadata?.visualizations,
+      fromDirect: !!sessionData.visualizations,
+      metadataVizCount: sessionData.metadata?.visualizations?.length || 0,
+      directVizCount: sessionData.visualizations?.length || 0,
+      finalValue: visualizations,
+      isArray: Array.isArray(visualizations)
+    })
+
+    if (visualizations && Array.isArray(visualizations)) {
+      store.setVisualizationHistory(visualizations)
+      console.log('[会话恢复] 已恢复可视化历史，图表数量:', visualizations.length)
+    }
+
+    // 从历史final消息中提取visuals字段（修复ECharts图表历史渲染）
+    const visualsFromMessages = extractVisualsFromMessages()
+
+    // 合并visuals：优先使用metadata中的，其次从消息中提取
+    const allVisuals = visualizations && Array.isArray(visualizations)
+      ? [...visualizations, ...visualsFromMessages]
+      : visualsFromMessages
+
+    console.log('[会话恢复] 合并后的allVisuals数量:', allVisuals.length)
+
+    // 恢复 groupedVisualizations
+    let hasVisualsData = false
+    if (allVisuals.length > 0) {
+      const grouped = { weather: [], component: [], viz: [], report: [] }
+      allVisuals.forEach(viz => {
+        const expert = viz.expert || viz.meta?.expert || 'unknown'
+        if (grouped[expert]) {
+          grouped[expert].push(viz)
+        } else if (expert === 'weather' || expert === 'component') {
+          grouped[expert].push(viz)
+        } else {
+          grouped.viz.push(viz)
+        }
+      })
+      store.currentState.groupedVisualizations = grouped
+      hasVisualsData = true
+    } else if (sessionData.visual_ids && Array.isArray(sessionData.visual_ids) && sessionData.visual_ids.length > 0) {
+      // 从消息中提取图片URL（旧会话兼容）
+      const imageUrls = []
+      const messages = store.currentState.messages || []
+
+      messages.forEach(msg => {
+        if (msg.content && typeof msg.content === 'string') {
+          const imgRegex = /!\[([^\]]*)\]\((\/api\/image\/[^\)]+)\)/g
+          let match
+          while ((match = imgRegex.exec(msg.content)) !== null) {
+            imageUrls.push({
+              url: match[2],
+              alt: match[1],
+              type: 'image'
+            })
+          }
+        }
+      })
+
+      if (imageUrls.length > 0) {
+        const grouped = { weather: [], component: [], viz: [], report: [] }
+        imageUrls.forEach((img, index) => {
+          const visualId = sessionData.visual_ids[index] || `img_${index}`
+          let expert = 'viz'
+          const alt = img.alt.toLowerCase()
+          if (alt.includes('轨迹') || alt.includes('trajectory') || alt.includes('风向') || alt.includes('风玫瑰') || alt.includes('上风向')) {
+            expert = 'weather'
+          } else if (alt.includes('离子') || alt.includes('ec') || alt.includes('oc') || alt.includes('地壳') || alt.includes('组分')) {
+            expert = 'component'
+          }
+
+          grouped[expert].push({
+            id: visualId,
+            type: 'image',
+            url: img.url,
+            title: img.alt,
+            expert: expert,
+            meta: { expert: expert, type: 'image' }
+          })
+        })
+
+        store.currentState.groupedVisualizations = grouped
+        hasVisualsData = true
+        console.log('[会话恢复] 已从消息提取图片并恢复 groupedVisualizations')
+      }
+    }
+
+    // 恢复专家结果
+    if (sessionData.expert_results) {
+      store.setLastExpertResults(sessionData.expert_results)
+      console.log('[会话恢复] 已恢复专家结果')
+    }
+
+    // 9. 恢复Office文档（可选）
+    if (restoreOfficeDocs && sessionData.office_documents && Array.isArray(sessionData.office_documents) && sessionData.office_documents.length > 0) {
+      console.log('[会话恢复] 恢复Office文档预览，数量:', sessionData.office_documents.length)
+
+      if (officePanelRef.value && typeof officePanelRef.value.loadDocuments === 'function') {
+        officePanelRef.value.loadDocuments(sessionData.office_documents)
+        console.log('[会话恢复] 已通过loadDocuments恢复Office文档')
+      } else {
+        console.warn('[会话恢复] loadDocuments方法不可用，使用回退方案')
+        sessionData.office_documents.forEach((doc, index) => {
+          setTimeout(() => {
+            const modeState = store.modeStates[store.currentMode]
+            if (modeState) {
+              modeState.lastOfficeDocument = {
+                pdf_preview: doc.pdf_preview,
+                file_path: doc.file_path,
+                generator: doc.generator,
+                summary: doc.summary,
+                timestamp: doc.timestamp
+              }
+            }
+            console.log('[会话恢复] 已恢复Office文档:', index + 1, doc.file_path)
+          }, index * 50)
+        })
+      }
+    }
+
+    // 10. 设置面板可见状态
+    const hasVisuals = hasVisualsData || (
+      (sessionData.visual_ids && sessionData.visual_ids.length > 0) ||
+      (sessionData.visualizations && sessionData.visualizations.length > 0) ||
+      (store.currentState.groupedVisualizations &&
+        (store.currentState.groupedVisualizations.weather?.length > 0 ||
+         store.currentState.groupedVisualizations.component?.length > 0))
+    )
+
+    const hasOfficeDocs = sessionData.office_documents && sessionData.office_documents.length > 0
+
+    if (hasVisuals) {
+      vizPanelVisible.value = true
+      console.log('[会话恢复] 设置可视化面板可见')
+    }
+
+    if (hasOfficeDocs) {
+      officePanelVisible.value = true
+      console.log('[会话恢复] 设置Office文档面板可见')
+    }
+
+    if (hasVisuals || hasOfficeDocs) {
+      rightPanelVisible.value = true
+      console.log('[会话恢复] 设置右侧面板可见')
+      await nextTick()
+      // 增加延迟时间，确保容器布局完成
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+
+    const visualCount = sessionData?.visual_ids?.length || 0
+
+    console.log('[会话恢复] 恢复成功:', {
+      sessionId: sessionData.session_id.substring(0, 12) + '...',
+      messageCount,
+      visualCount,
+      hasMore: sessionData.has_more_messages
+    })
+
+    if (showAlert) {
+      alert(`会话 ${sessionId.substring(0, 12)}... 已恢复`)
+    }
+
+    return { success: true, messageCount, visualCount, sessionData }
+
+  } catch (err) {
+    console.error('[会话恢复] 恢复失败:', err)
+    if (showAlert) {
+      alert('会话恢复失败: ' + err.message)
+    }
+    return { success: false, messageCount: 0, visualCount: 0, error: err.message, sessionData: null }
+  }
+}
+
+// ========== 原有的会话恢复函数（现已重构为调用 doRestoreSession）==========
+
+const quickLoadSession = async (session) => {
+  // 使用统一的恢复逻辑
+  const result = await doRestoreSession(session.session_id, { messageLimit: 5 })
+
+  if (result.success) {
+    // 关闭管理面板
+    managementPanel.value = null
+    console.log(`[会话恢复] 已加载对话，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
+  }
+}
+
+const getShortSessionId = (sessionId) => {
+  return sessionId.substring(0, 12)
+}
+
+const getSessionHistoryFilterCount = (filterValue) => {
+  if (!sessionHistoryStats.value) return 0
+  return sessionHistoryStats.value.total || 0
+}
+
+const handleSessionCleanup = async () => {
+  try {
+    const response = await fetch('/api/sessions/cleanup', { method: 'POST' })
+    if (!response.ok) throw new Error('Failed to cleanup sessions')
+    const data = await response.json()
+    alert(`已清理 ${data.deleted_count} 个过期会话`)
+    await refreshSessionHistory()
+  } catch (error) {
+    console.error('Failed to cleanup sessions:', error)
+    alert('清理失败: ' + error.message)
+  }
+}
+
+// 从侧边栏快速加载会话
+const handleLoadSession = async (sessionId) => {
+  // 使用统一的恢复逻辑（包含Office文档恢复）
+  const result = await doRestoreSession(sessionId, {
+    messageLimit: 5,
+    restoreOfficeDocs: true
+  })
+
+  if (result.success) {
+    console.log(`[快速加载会话] 已加载会话，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
+  }
+}
+
+// 选择消息查看来源详情（支持所有final消息）
+function selectMessage(index, message) {
+  const msg = message || store.currentState.messages[index]
+  if (!msg) return
+
+  // 如果点击的是final消息
+  if (msg.type === 'final') {
+    if (selectedMessageId.value === msg.id) {
+      // 取消选择
+      selectedMessageId.value = null
+    } else {
+      // 选择该消息
+      selectedMessageId.value = msg.id
+    }
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('mousemove', handleMouseMove)
+  window.addEventListener('mouseup', stopDragging)
+  window.addEventListener('keydown', handleKeyboardShortcuts)
+
+  // 并行加载，不阻塞页面渲染
+  // 工具列表和知识库列表在后台加载
+  store.init()
+  kbStore.fetchKnowledgeBases()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('mousemove', handleMouseMove)
+  window.removeEventListener('mouseup', stopDragging)
+  window.removeEventListener('keydown', handleKeyboardShortcuts)
+})
+
+// 键盘快捷键：Ctrl+1~5 切换模式
+const handleKeyboardShortcuts = (e) => {
+  // 检查是否在输入框中（如果在输入框中，不触发快捷键）
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+    return
+  }
+
+  // Ctrl+1~5 快速切换模式
+  if (e.ctrlKey && e.key >= '1' && e.key <= '5') {
+    e.preventDefault()
+    const modeMap = {
+      '1': 'assistant',
+      '2': 'expert',
+      '3': 'query',
+      '4': 'code',
+      '5': 'report'
+    }
+    const mode = modeMap[e.key]
+    if (mode) {
+      store.switchMode(mode)
+      console.log('[键盘快捷键] 切换到模式:', mode)
+    }
+  }
+}
+
+const handleSend = async (payload) => {
+  if (!isAssistantReady.value) return
+
+  // 处理新的输入格式：可能是字符串（向后兼容）或对象
+  const query = typeof payload === 'string' ? payload : payload.query
+  const knowledgeBaseIds = typeof payload === 'object' ? payload.knowledgeBaseIds || [] : []
+  const agentMode = typeof payload === 'object' ? payload.agentMode || store.agentMode : store.agentMode  // ✅ 使用store.agentMode作为默认值
+  const attachments = typeof payload === 'object' ? payload.attachments || null : null  // ✅ 提取附件信息
+
+  // 构建分析选项
+  const options = {
+    assistantMode: activeAssistant.value,
+    knowledgeBaseIds: knowledgeBaseIds,  // 选中的知识库ID列表
+    agentMode: agentMode,  // ✅ 双模式架构：assistant | expert
+    attachments: attachments  // ✅ 传递附件信息
+  }
+
+  // 根据选择的助手模式调用不同的分析方法
+  if (activeAssistant.value === 'general-agent') {
+    // 通用Agent模式：支持真正的ReAct循环
+    // 思考→行动→观察的自主决策过程
+    if (store.hasResults) {
+      await store.continueAnalysis(query, options)
+    } else {
+      await store.startAnalysis(query, options)
+    }
+  } else {
+    // 其他助手模式未实现
+    store.addMessage('error', '该助手模式尚未实现，请选择通用Agent')
+  }
+}
+
+const handlePause = async () => {
+  await store.pauseAnalysis()
+}
+
+// 会话恢复处理
+const handleSessionRestore = async (sessionId) => {
+  // 使用统一的恢复逻辑
+  const result = await doRestoreSession(sessionId, { messageLimit: 5 })
+
+  if (result.success) {
+    console.log(`[会话恢复] 会话 ${sessionId.substring(0, 12)}... 已成功恢复，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
+
+    // 关闭管理面板
+    managementPanel.value = null
+  } else {
+    console.error('[会话恢复] 恢复会话失败:', result.error)
+  }
+}
+
+// ========== 消息分页加载 ==========
+
+const handleLoadMore = async () => {
+  const pagination = store.currentState.pagination
+  if (pagination.loadingMore || !pagination.hasMoreMessages) return
+
+  const sessionId = store.currentState.sessionId
+  if (!sessionId) return
+
+  const container = document.querySelector('.react-message-list')
+  const prevScrollHeight = container?.scrollHeight || 0
+
+  store.setPagination({ loadingMore: true })
+
+  try {
+    const result = await getSessionMessages(
+      sessionId,
+      pagination.oldestSequence,
+      50
+    )
+
+    store.prependMessages(result.messages)
+    store.setPagination({
+      hasMoreMessages: result.has_more,
+      loadingMore: false
+    })
+
+    // 保持滚动位置不跳动
+    await nextTick()
+    if (container) {
+      container.scrollTop = container.scrollHeight - prevScrollHeight
+    }
+  } catch (error) {
+    console.error('[加载更多] 失败:', error)
+    store.setPagination({ loadingMore: false })
+  }
+}
+</script>
+
+<style lang="scss" scoped>
+.react-analysis-view {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f5f6fb;
+}
+
+.main-layout {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.analysis-panel {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-right: 1px solid #f0f0f5;
+  min-width: 360px;
+  position: relative;
+  transition: background-color 0.2s, box-shadow 0.2s;
+  overflow: hidden;
+
+  &.drag-over {
+    background: #e3f2fd;
+    box-shadow: inset 0 0 0 2px #1976d2;
+
+    &::after {
+      content: '拖放文件到此处上传';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      color: #1976d2;
+      font-weight: 500;
+      pointer-events: none;
+      z-index: 100;
+    }
+  }
+}
+
+.management-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+  overflow: hidden;
+}
+
+.panel-embedded-content {
+  flex: 1;
+  overflow: auto;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.close-btn {
+  padding: 6px 12px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.close-btn:hover {
+  background: #f0f0f0;
+}
+
+.panel-content {
+  padding: 20px;
+}
+
+.panel-content p {
+  margin: 0;
+  color: #666;
+  font-size: 14px;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.panel-btn {
+  padding: 6px 12px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.panel-btn:hover {
+  background: #f0f0f0;
+}
+
+.panel-btn.small {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.panel-btn.danger {
+  color: #ff4d4f;
+  border-color: #ff4d4f;
+}
+
+.panel-btn.danger:hover {
+  background: #fff1f0;
+}
+
+/* 知识库管理面板样式 */
+.kb-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.kb-content {
+  padding: 12px 16px;
+}
+
+.kb-section {
+  margin-bottom: 16px;
+}
+
+.kb-section:last-child {
+  margin-bottom: 0;
+}
+
+.kb-section-title {
+  font-size: 12px;
+  color: #666;
+  padding: 4px 0;
+  font-weight: 500;
+}
+
+.kb-item {
+  padding: 10px 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kb-item:hover {
+  border-color: #1890ff;
+}
+
+.kb-item.active {
+  border-color: #1890ff;
+  background: #e6f7ff;
+}
+
+.kb-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.kb-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.kb-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.kb-badge.public {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.kb-badge.private {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.kb-meta {
+  font-size: 12px;
+  color: #999;
+}
+
+.kb-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: #999;
+  font-size: 14px;
+}
+
+.kb-detail {
+  border-top: 1px solid #e0e0e0;
+  padding: 12px 16px;
+  background: #fafafa;
+}
+
+.kb-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.kb-detail-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kb-detail-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.kb-detail-desc {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.kb-detail-info {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #666;
+}
+
+.scenario-selector-wrapper {
+  padding: 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.assistant-notice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff7e6;
+  border-bottom: 1px solid #ffe6bf;
+  color: #ad6a00;
+  font-size: 13px;
+}
+
+.notice-button {
+  border: none;
+  background: #ffb74d;
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+// 可视化面板折叠/展开按钮
+.viz-toggle-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.2s;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+  &:hover {
+    border-color: #1976d2;
+    color: #1976d2;
+    box-shadow: 0 2px 8px rgba(25, 118, 210, 0.2);
+  }
+
+  .toggle-icon {
+    font-size: 16px;
+    font-weight: bold;
+    transition: transform 0.2s;
+  }
+
+  &.expanded .toggle-icon {
+    transform: rotate(180deg);
+  }
+}
+
+.viz-wrapper {
+  height: 100%;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.right-panel-tabs {
+  display: flex;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: #666;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn:hover {
+  color: #1976d2;
+  background: #f0f7ff;
+}
+
+.tab-btn.active {
+  color: #1976d2;
+  border-bottom-color: #1976d2;
+  background: #fff;
+}
+
+.resize-handle {
+  width: 8px;
+  cursor: col-resize;
+  background: #e0e0e0;
+  border-left: 1px solid #ccc;
+  border-right: 1px solid #ccc;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 200;
+}
+
+.drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: transparent;
+  z-index: 9999;
+  cursor: col-resize;
+}
+
+@media (max-width: 1280px) {
+  .react-analysis-view {
+    height: auto;
+  }
+
+  .main-layout {
+    flex-direction: column;
+  }
+
+  .analysis-panel {
+    flex-direction: column;
+  }
+
+  .chat-area {
+    min-width: 100%;
+  }
+
+  .resize-handle {
+    height: 6px;
+    width: 100%;
+    cursor: row-resize;
+  }
+
+  .viz-wrapper {
+    width: 100% !important;
+  }
+}
+
+/* 知识库完整样式 */
+.kb-detail-full {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.kb-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-detail-title h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.kb-upload-section {
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.chunking-options {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+}
+
+.kb-documents-section {
+  margin-top: 16px;
+}
+
+.kb-empty-docs {
+  text-align: center;
+  padding: 20px;
+  color: #999;
+  font-size: 13px;
+}
+
+.kb-doc-list {
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.kb-doc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.2s;
+}
+
+.kb-doc-item:last-child {
+  border-bottom: none;
+}
+
+.kb-doc-item.clickable {
+  cursor: pointer;
+}
+
+.kb-doc-item.clickable:hover {
+  background: #f5f7fa;
+}
+
+.kb-doc-info {
+  flex: 1;
+}
+
+.kb-doc-name {
+  font-weight: 500;
+  font-size: 14px;
+  display: block;
+}
+
+.kb-doc-meta {
+  font-size: 12px;
+  color: #999;
+  margin-top: 4px;
+}
+
+.kb-doc-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.kb-btn-text {
+  background: none;
+  border: none;
+  color: #1890ff;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.kb-btn-text:hover {
+  background: #f0f7ff;
+  border-radius: 4px;
+}
+
+.kb-btn-text.danger {
+  color: #ff4d4f;
+}
+
+.kb-btn-text.danger:hover {
+  background: #fff1f0;
+}
+
+.upload-area {
+  border: 2px dashed #d9d9d9;
+  border-radius: 6px;
+  padding: 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.upload-area:hover,
+.upload-area.dragging {
+  border-color: #1890ff;
+  background: #f0f7ff;
+}
+
+.upload-area.uploading {
+  cursor: not-allowed;
+  background: #fafafa;
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: #999;
+  margin-top: 8px;
+}
+
+.upload-note {
+  font-size: 12px;
+  color: #faad14;
+  margin-top: 8px;
+}
+
+.upload-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #f0f0f0;
+  border-top-color: #1890ff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.status-completed {
+  color: #52c41a;
+}
+
+.status-processing {
+  color: #1890ff;
+}
+
+.status-failed {
+  color: #ff4d4f;
+}
+
+.status-pending {
+  color: #faad14;
+}
+
+.view-hint {
+  color: #1890ff;
+  margin-left: 8px;
+  font-size: 11px;
+}
+
+/* 对话框样式 */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog {
+  background: #fff;
+  border-radius: 8px;
+  width: 480px;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.dialog-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.btn-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: #999;
+  line-height: 1;
+}
+
+.btn-close:hover {
+  color: #333;
+}
+
+.dialog-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.form-group textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: #999;
+  margin-top: 4px;
+}
+
+.form-hint.danger {
+  color: #ff4d4f;
+}
+
+.form-row {
+  display: flex;
+  gap: 16px;
+}
+
+.form-row .form-group {
+  flex: 1;
+}
+
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.btn-primary {
+  background: #1890ff;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-primary:hover {
+  background: #40a9ff;
+}
+
+.btn-primary:disabled {
+  background: #d9d9d9;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #333;
+  border: 1px solid #d9d9d9;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  border-color: #40a9ff;
+  color: #40a9ff;
+}
+
+.btn-back {
+  background: none;
+  border: 1px solid #d9d9d9;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #333;
+}
+
+.btn-back:hover {
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+/* 分段全屏样式 */
+.chunks-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #f5f6fb;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+
+.chunks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.chunks-title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.chunks-title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.chunks-count {
+  font-size: 14px;
+  color: #666;
+  background: #f0f0f0;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.chunks-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.chunks-list-full {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chunk-card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.chunk-card-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.chunk-number {
+  font-weight: 600;
+  color: #1890ff;
+  font-size: 14px;
+}
+
+.chunk-length {
+  font-size: 13px;
+  color: #666;
+}
+
+.chunk-position {
+  font-size: 12px;
+  color: #999;
+  margin-left: auto;
+}
+
+.chunk-metadata {
+  padding: 12px 20px;
+  background: #f0f7ff;
+  border-bottom: 1px solid #e6f0fa;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.metadata-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metadata-label {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+}
+
+.metadata-value {
+  font-size: 13px;
+  color: #1890ff;
+}
+
+.type-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.type-paragraph {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.type-table {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.type-list {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.type-header {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
+.type-code {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.chunk-card-body {
+  padding: 20px;
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #333;
+}
+
+/* 数据抓取管理面板样式 */
+.fetchers-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fetchers-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.fetchers-status-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid #e8e8e8;
+}
+
+.fetchers-status-card h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.fetchers-status-card .status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.fetchers-status-card .status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.fetchers-status-card .status-item .label {
+  font-weight: 500;
+  color: #666;
+}
+
+.fetchers-status-card .status-value {
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.fetchers-status-card .status-value.running {
+  color: #52c41a;
+  background: #f6ffed;
+}
+
+.fetchers-status-card .status-value.stopped {
+  color: #ff4d4f;
+  background: #fff1f0;
+}
+
+.era5-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid #e8e8e8;
+}
+
+.era5-card h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.era5-desc {
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: #666;
+}
+
+.era5-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.date-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.date-input-group label {
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.date-input {
+  padding: 6px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #333;
+  background: #fff;
+}
+
+.fetch-result {
+  margin-top: 16px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.fetch-result.success {
+  border: 1px solid #52c41a;
+  background: #f6ffed;
+}
+
+.fetch-result.warning {
+  border: 1px solid #faad14;
+  background: #fffbe6;
+}
+
+.fetch-result .result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.1);
+}
+
+.fetch-result .result-icon {
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.fetch-result.success .result-icon {
+  color: #52c41a;
+}
+
+.fetch-result.warning .result-icon {
+  color: #faad14;
+}
+
+.fetch-result .result-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.fetch-result .result-details {
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.fetch-result .result-row {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+}
+
+.fetch-result .result-row .label {
+  color: #666;
+  margin-right: 4px;
+}
+
+.fetch-result .result-row .value {
+  color: #333;
+  font-weight: 600;
+}
+
+.fetch-result .result-row .success-text {
+  color: #52c41a;
+}
+
+.fetch-result .result-row .error-text {
+  color: #ff4d4f;
+}
+
+.fetchers-list-section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  border: 1px solid #e8e8e8;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.section-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.fetcher-loading,
+.fetcher-error {
+  text-align: center;
+  padding: 30px;
+  color: #999;
+  font-size: 14px;
+}
+
+.fetcher-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.fetcher-card {
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.fetcher-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.fetcher-card-header h5 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.fetcher-card .status-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.fetcher-card .status-badge.idle {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.fetcher-card .status-badge.running {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.fetcher-card .status-badge.disabled {
+  background: #f5f5f5;
+  color: #999;
+}
+
+.fetcher-card .status-badge.error {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
+.fetcher-card-info {
+  margin-bottom: 12px;
+}
+
+.fetcher-card-info .info-row {
+  display: flex;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.fetcher-card-info .info-row .label {
+  font-weight: 600;
+  color: #666;
+  width: 60px;
+  flex-shrink: 0;
+}
+
+.fetcher-card-info .info-row .value {
+  color: #333;
+  flex: 1;
+}
+
+.fetcher-card-info .schedule {
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.fetcher-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.panel-btn.primary {
+  background: #1890ff;
+  color: #fff;
+  border-color: #1890ff;
+}
+
+.panel-btn.primary:hover {
+  background: #40a9ff;
+  border-color: #40a9ff;
+}
+
+.panel-btn.warning {
+  background: #faad14;
+  color: #fff;
+  border-color: #faad14;
+}
+
+.panel-btn.warning:hover {
+  background: #ffc53d;
+  border-color: #ffc53d;
+}
+
+.panel-btn.success {
+  background: #52c41a;
+  color: #fff;
+  border-color: #52c41a;
+}
+
+.panel-btn.success:hover {
+  background: #73d13d;
+  border-color: #73d13d;
+}
+
+/* 定时任务管理面板样式 */
+.scheduled-tasks-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scheduled-tasks-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.scheduled-stats-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.scheduled-stat-item {
+  text-align: center;
+}
+
+.scheduled-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+}
+
+.scheduled-stat-label {
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.scheduled-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scheduled-empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #999;
+}
+
+.scheduled-empty-state p {
+  margin: 0;
+}
+
+.scheduled-hint {
+  font-size: 12px;
+  color: #999;
+  margin-top: 8px;
+}
+
+.scheduled-task-card {
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.scheduled-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.scheduled-task-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.scheduled-task-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.scheduled-task-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.scheduled-task-tag.tag-success {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.scheduled-task-tag.tag-warning {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.scheduled-task-tag.tag-info {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.scheduled-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+}
+
+.scheduled-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.scheduled-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: 0.4s;
+  border-radius: 20px;
+}
+
+.scheduled-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: 0.4s;
+  border-radius: 50%;
+}
+
+input:checked + .scheduled-slider {
+  background-color: #52c41a;
+}
+
+input:checked + .scheduled-slider:before {
+  transform: translateX(20px);
+}
+
+input:disabled + .scheduled-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scheduled-task-description {
+  color: #666;
+  font-size: 13px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.scheduled-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.scheduled-meta-item {
+  font-size: 12px;
+  color: #999;
+}
+
+.scheduled-task-tags {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.scheduled-tag {
+  padding: 2px 8px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #666;
+}
+
+.scheduled-task-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scheduled-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.scheduled-btn-secondary {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.scheduled-btn-secondary:hover {
+  background: #e0e0e0;
+}
+
+.scheduled-btn-danger {
+  background: #ff4d4f;
+  color: white;
+}
+
+.scheduled-btn-danger:hover {
+  background: #ff7875;
+}
+
+.scheduled-btn-execute {
+  background: #52c41a;
+  color: white;
+  font-weight: 500;
+}
+
+.scheduled-btn-execute:hover:not(:disabled) {
+  background: #73d13d;
+}
+
+.scheduled-btn-execute:disabled {
+  background: #d9d9d9;
+  cursor: not-allowed;
+}
+
+/* 会话历史管理面板样式 */
+.session-history-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.session-history-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.session-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.session-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #e8e8e8;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 13px;
+  color: #666;
+}
+
+.session-filter-btn:hover {
+  background: #f0f0f0;
+}
+
+.session-filter-btn.active {
+  background: #1890ff;
+  color: white;
+  border-color: #1890ff;
+}
+
+.filter-icon {
+  font-size: 14px;
+}
+
+.filter-count {
+  background: rgba(255, 255, 255, 0.3);
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.session-filter-btn.active .filter-count {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.session-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.batch-selected-count {
+  flex: 1;
+  font-size: 14px;
+  color: #856404;
+  font-weight: 500;
+}
+
+.panel-btn.danger {
+  background: #ff4d4f;
+  color: white;
+  border-color: #ff4d4f;
+}
+
+.panel-btn.danger:hover {
+  background: #ff7875;
+  border-color: #ff7875;
+}
+
+.session-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.session-stat-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.session-stat-icon {
+  font-size: 24px;
+}
+
+.session-stat-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1;
+}
+
+.session-stat-label {
+  font-size: 12px;
+  color: #666;
+}
+
+/* 最近对话历史样式 */
+.recent-sessions-section {
+  margin-bottom: 20px;
+}
+
+.recent-sessions-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.recent-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recent-session-item {
+  padding: 10px 12px;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.recent-session-item:hover {
+  background: #f0f0f0;
+  border-color: #1890ff;
+}
+
+.recent-session-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recent-session-state {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.recent-session-query {
+  flex: 1;
+  font-size: 13px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-session-time {
+  font-size: 11px;
+  color: #999;
+  flex-shrink: 0;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.session-loading,
+.session-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  color: #999;
+}
+
+.session-spinner {
+  font-size: 32px;
+  display: block;
+  margin-bottom: 12px;
+  animation: spin 2s linear infinite;
+}
+
+.session-empty-icon {
+  font-size: 48px;
+  display: block;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.session-item {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+
+.session-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.session-header:hover {
+  background: #fafafa;
+}
+
+.session-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.session-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.session-state-icon {
+  font-size: 18px;
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-query {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #666;
+}
+
+.session-id {
+  font-family: monospace;
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.session-time {
+  color: #999;
+}
+
+.session-header-right {
+  flex-shrink: 0;
+}
+
+.session-expand-icon {
+  font-size: 12px;
+  color: #999;
+}
+
+.session-details {
+  padding: 12px;
+  background: #fafafa;
+  border-top: 1px solid #e8e8e8;
+}
+
+.session-detail-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.session-detail-label {
+  font-weight: 500;
+  color: #666;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.session-detail-value {
+  color: #333;
+}
+
+.session-stats {
+  display: flex;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.session-stat-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px;
+  background: #fff;
+  border-radius: 4px;
+  border: 1px solid #e8e8e8;
+}
+
+.session-stat-label-small {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.session-stat-value-small {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.session-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.session-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.session-btn-primary {
+  background: #1890ff;
+  color: white;
+}
+
+.session-btn-primary:hover {
+  background: #40a9ff;
+}
+
+.session-btn-secondary {
+  background: #fff;
+  color: #666;
+  border: 1px solid #e8e8e8;
+}
+
+.session-btn-secondary:hover {
+  background: #f5f5f5;
+  border-color: #d9d9d9;
+}
+
+.session-btn-danger {
+  background: #fff;
+  color: #ff4d4f;
+  border: 1px solid #ffccc7;
+}
+
+.session-btn-danger:hover {
+  background: #fff1f0;
+  border-color: #ffa39e;
+}
+
+/* 社交平台管理面板样式 */
+.social-platform-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #1890ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+</style>

@@ -652,12 +652,12 @@ def calculate_old_standard_city_stats(
             valid_days += 1
 
     # 计算平均浓度（按国家标准修约）
-    avg_pm25 = apply_rounding(pm25_sum / pm25_valid_count if pm25_valid_count > 0 else 0, 'PM2_5', 'statistical_data')
-    avg_pm10 = apply_rounding(pm10_sum / pm10_valid_count if pm10_valid_count > 0 else 0, 'PM10', 'statistical_data')
-    avg_so2 = apply_rounding(so2_sum / total_days, 'SO2', 'statistical_data') if total_days > 0 else 0
-    avg_no2 = apply_rounding(no2_sum / total_days, 'NO2', 'statistical_data') if total_days > 0 else 0
-    avg_co = apply_rounding(co_sum / total_days, 'CO', 'statistical_data') if total_days > 0 else 0
-    avg_o3_8h = apply_rounding(o3_8h_sum / total_days, 'O3_8h', 'statistical_data') if total_days > 0 else 0
+    avg_pm25 = apply_rounding(pm25_sum / pm25_valid_count if pm25_valid_count > 0 else 0, 'PM2_5', 'statistical_data_old')
+    avg_pm10 = apply_rounding(pm10_sum / pm10_valid_count if pm10_valid_count > 0 else 0, 'PM10', 'statistical_data_old')
+    avg_so2 = apply_rounding(so2_sum / total_days, 'SO2', 'statistical_data_old') if total_days > 0 else 0
+    avg_no2 = apply_rounding(no2_sum / total_days, 'NO2', 'statistical_data_old') if total_days > 0 else 0
+    avg_co = apply_rounding(co_sum / total_days, 'CO', 'statistical_data_old') if total_days > 0 else 0
+    avg_o3_8h = apply_rounding(o3_8h_sum / total_days, 'O3_8h', 'statistical_data_old') if total_days > 0 else 0
 
     # 计算百分位数
     def calculate_percentile(values, percentile):
@@ -675,12 +675,12 @@ def calculate_old_standard_city_stats(
         return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
 
     # 计算百分位数（按国家标准修约）
-    co_percentile_95 = apply_rounding(calculate_percentile(daily_co_values, 95), 'CO', 'statistical_data')
-    o3_8h_percentile_90 = apply_rounding(calculate_percentile(daily_o3_8h_values, 90), 'O3_8h', 'statistical_data')
-    so2_percentile_98 = apply_rounding(calculate_percentile(daily_so2_values, 98), 'SO2', 'statistical_data')
-    no2_percentile_98 = apply_rounding(calculate_percentile(daily_no2_values, 98), 'NO2', 'statistical_data')
-    pm10_percentile_95 = apply_rounding(calculate_percentile(daily_pm10_values, 95), 'PM10', 'statistical_data')
-    pm25_percentile_95 = apply_rounding(calculate_percentile(daily_pm25_values, 95), 'PM2_5', 'statistical_data')
+    co_percentile_95 = apply_rounding(calculate_percentile(daily_co_values, 95), 'CO', 'statistical_data_old')
+    o3_8h_percentile_90 = apply_rounding(calculate_percentile(daily_o3_8h_values, 90), 'O3_8h', 'statistical_data_old')
+    so2_percentile_98 = apply_rounding(calculate_percentile(daily_so2_values, 98), 'SO2', 'statistical_data_old')
+    no2_percentile_98 = apply_rounding(calculate_percentile(daily_no2_values, 98), 'NO2', 'statistical_data_old')
+    pm10_percentile_95 = apply_rounding(calculate_percentile(daily_pm10_values, 95), 'PM10', 'statistical_data_old')
+    pm25_percentile_95 = apply_rounding(calculate_percentile(daily_pm25_values, 95), 'PM2_5', 'statistical_data_old')
 
     # 计算旧标准综合指数
     old_standard_concentrations = {
@@ -771,18 +771,18 @@ def calculate_old_standard_city_stats(
         "exceed_rate": exceed_rate,
         "compliance_rate": compliance_rate,
         "total_days": int(total_days),
-        # 六参数统计指标
-        "SO2": format_pollutant_value(avg_so2, 'SO2', 'statistical_data', use_final_rounding=True),
-        "SO2_P98": format_pollutant_value(so2_percentile_98, 'SO2', 'statistical_data', use_final_rounding=True),
-        "NO2": format_pollutant_value(avg_no2, 'NO2', 'statistical_data', use_final_rounding=True),
-        "NO2_P98": format_pollutant_value(no2_percentile_98, 'NO2', 'statistical_data', use_final_rounding=True),
-        "PM10": format_pollutant_value(avg_pm10, 'PM10', 'statistical_data', use_final_rounding=True),
-        "PM10_P95": format_pollutant_value(pm10_percentile_95, 'PM10', 'statistical_data', use_final_rounding=True),
-        "PM2_5": format_pollutant_value(avg_pm25, 'PM2_5', 'statistical_data', use_final_rounding=True),
-        "PM2_5_P95": format_pollutant_value(pm25_percentile_95, 'PM2_5', 'statistical_data', use_final_rounding=True),
+        # 六参数统计指标（直接使用 statistical_data_old 修约后的值，不进行二次修约）
+        "SO2": avg_so2,
+        "SO2_P98": so2_percentile_98,
+        "NO2": avg_no2,
+        "NO2_P98": no2_percentile_98,
+        "PM10": avg_pm10,
+        "PM10_P95": pm10_percentile_95,
+        "PM2_5": avg_pm25,
+        "PM2_5_P95": pm25_percentile_95,
         # CO和O3只展示百分位数
-        "CO_P95": format_pollutant_value(co_percentile_95, 'CO', 'statistical_data', use_final_rounding=True),
-        "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data', use_final_rounding=True),
+        "CO_P95": co_percentile_95,
+        "O3_8h_P90": o3_8h_percentile_90,
         # 加权单项质量指数
         "single_indexes": {
             "SO2": so2_weighted_index, "NO2": no2_weighted_index,

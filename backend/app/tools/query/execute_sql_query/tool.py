@@ -29,24 +29,24 @@ class ExecuteSQLQueryTool(LLMTool):
     - 只允许SELECT查询
     - 禁止DROP/DELETE/UPDATE/INSERT等操作
     - 表名白名单验证
-    - 最大返回10000条记录
+    - 最大返回100条记录
     """
 
     # 默认返回记录数限制
-    DEFAULT_LIMIT = 1000
+    DEFAULT_LIMIT = 50
 
     def __init__(self):
         """初始化工具"""
 
         # 初始化SQL验证器，扩展表名白名单
-        self.sql_validator = SQLValidator(max_limit=10000)
+        self.sql_validator = SQLValidator(max_limit=100)
+        # 注意：qc_history 和 working_orders 已在 SQLValidator 类的白名单中，无需重复添加
         # 添加业务表到白名单
         self.sql_validator.ALLOWED_TABLES.extend([
-            'city_168_statistics',  # 168城市空气质量统计预计算表
-            'province_statistics',  # 省级空气质量统计预计算表（31个省份）
-            # 系统视图（用于动态查询表结构）
-            'information_schema.columns',
-            'information_schema.tables',
+            'city_168_statistics_new_standard',  # 168城市空气质量统计预计算表（新标准限值）
+            'city_168_statistics_old_standard',  # 168城市空气质量统计预计算表（旧标准限值）
+            'province_statistics_new_standard',  # 省级空气质量统计预计算表（新标准限值）
+            'province_statistics_old_standard',  # 省级空气质量统计预计算表（旧标准限值）
         ])
 
         function_schema = {
@@ -72,24 +72,46 @@ class ExecuteSQLQueryTool(LLMTool):
 - 输入完整的SQL查询语句
 - 不需要提供 describe_table 参数
 
+**database 参数说明**（可选）：
+- 指定查询的数据库名称
+- 'XcAiDb'（默认）：空气质量发布历史数据
+- 'AirPollutionAnalysis'：污染分析数据（包含qc_history、quality_control_records等质控表）
+
 **⚠️ SQL Server语法规则**
 - ❌ WHERE province_name = '广东' → 必须使用N前缀：N'广东'
 - ❌ SELECT ... LIMIT 10 → SQL Server使用TOP而非LIMIT
 
 **可用数据表**：
-- city_168_statistics：168城市空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 城市名不带'市'后缀，⚠️ 省份名不带'省'后缀）
-- province_statistics：省级空气质量统计（stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，⚠️ 省份名不带'省'后缀）
+【XcAiDb数据库（默认）】
+168城市统计（城市名不带'市'后缀，省份名不带'省'后缀）：
+- city_168_statistics_new_standard：168城市空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今）
+- city_168_statistics_old_standard：168城市空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整）
+
+省级统计（省份名不带'省'后缀）：
+- province_statistics_new_standard：省级空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今）
+- province_statistics_old_standard：省级空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整）
+
+原始数据表：
+- CityDayAQIPublishHistory：城市日空气质量发布历史（24小时均值）
+- CityAQIPublishHistory：城市小时空气质量发布历史
+- CurrentAirQuality：当前空气质量
+
+【AirPollutionAnalysis数据库】
+- qc_history：自动质控历史数据表（13551条记录，包含站点代码、任务组、任务名称、结果、目标值、响应值等，支持StationName字段查询）
+- quality_control_records：质控例行检查记录
+- working_orders：运维工单
+- analysis_history：分析历史记录
 
 **安全限制**：
 - 只允许SELECT查询
 - 禁止DROP/DELETE/INSERT/UPDATE等操作
 - 表名白名单验证
-- 最大返回10000条记录
+- 最大返回100条记录
 
 **使用流程**：
-1. 先查看表结构：execute_sql_query(describe_table='city_168_statistics')
+1. 先查看表结构：execute_sql_query(describe_table='qc_history', database='AirPollutionAnalysis')
 2. 根据表结构和数据样例编写SQL（注意中文字符串使用 N 前缀）
-3. 执行查询：execute_sql_query(sql='SELECT ...')
+3. 执行查询：execute_sql_query(sql='SELECT ...', database='AirPollutionAnalysis')
             """.strip(),
             "parameters": {
                 "type": "object",
@@ -102,10 +124,15 @@ class ExecuteSQLQueryTool(LLMTool):
                         "type": "string",
                         "description": "SQL查询语句（与describe_table参数二选一）。输入完整的SQL SELECT查询语句。"
                     },
+                    "database": {
+                        "type": "string",
+                        "description": "数据库名称（可选）。默认为'XcAiDb'，查询质控数据时使用'AirPollutionAnalysis'。",
+                        "enum": ["XcAiDb", "AirPollutionAnalysis"]
+                    },
                     "limit": {
                         "type": "integer",
-                        "description": "返回记录数限制（默认1000，最大10000，仅用于sql查询）",
-                        "default": 1000
+                        "description": "返回记录数限制（默认50，最大100，仅用于sql查询）",
+                        "default": 50
                     }
                 }
             }
@@ -120,13 +147,14 @@ class ExecuteSQLQueryTool(LLMTool):
             requires_context=False
         )
 
-    async def execute(self, describe_table: Optional[str] = None, sql: Optional[str] = None, limit: Optional[int] = None, **kwargs) -> Dict[str, Any]:
+    async def execute(self, describe_table: Optional[str] = None, sql: Optional[str] = None, database: Optional[str] = None, limit: Optional[int] = None, **kwargs) -> Dict[str, Any]:
         """
         执行工具
 
         Args:
             describe_table: 查看表结构（与sql二选一，不能为空）
             sql: SQL查询语句（与describe_table二选一）
+            database: 数据库名称（可选，默认'XcAiDb'）
             limit: 返回记录数限制
 
         Returns:
@@ -156,18 +184,31 @@ class ExecuteSQLQueryTool(LLMTool):
                 "summary": "describe_table 参数不能为空，请输入有效的表名"
             }
 
+        # 设置默认数据库
+        if database is None:
+            database = "XcAiDb"
+
+        # 验证数据库名称
+        if database not in ["XcAiDb", "AirPollutionAnalysis"]:
+            return {
+                "success": False,
+                "data": None,
+                "summary": f"不支持的数据库名称 '{database}'。支持的数据库：XcAiDb、AirPollutionAnalysis"
+            }
+
         # 判断是查看表结构还是执行SQL
         if describe_table:
-            return self._describe_table(describe_table)
+            return self._describe_table(describe_table, database)
         else:
-            return await self._execute_sql_query(sql, limit)
+            return await self._execute_sql_query(sql, database, limit)
 
-    def _describe_table(self, table_name: str) -> Dict[str, Any]:
+    def _describe_table(self, table_name: str, database: str) -> Dict[str, Any]:
         """
         查看表结构（动态从数据库获取）
 
         Args:
             table_name: 表名
+            database: 数据库名称
 
         Returns:
             表结构信息 + 1条最新数据样例
@@ -189,33 +230,78 @@ class ExecuteSQLQueryTool(LLMTool):
             }
 
         try:
-            # 动态查询表结构
+            # 动态查询表结构（支持多种schema：dbo, guest, sys等）
+            # 先尝试查询表所在的schema
+            schema_sql = f"""
+                SELECT TABLE_SCHEMA
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_NAME = '{table_name}'
+            """
+            schemas = self._execute_query(schema_sql, database)
+
+            # 构建查询条件
+            if schemas:
+                # 如果找到表，使用找到的schema
+                schema_list = [s['TABLE_SCHEMA'] for s in schemas]
+                where_clause = " OR ".join([f"(TABLE_SCHEMA = '{s}' AND TABLE_NAME = '{table_name}')" for s in schema_list])
+            else:
+                # 如果没找到，尝试常见schema
+                where_clause = f"(TABLE_SCHEMA = 'dbo' AND TABLE_NAME = '{table_name}') OR " \
+                              f"(TABLE_SCHEMA = 'guest' AND TABLE_NAME = '{table_name}') OR " \
+                              f"(TABLE_NAME = '{table_name}')"
+
             sql = f"""
                 SELECT
                     COLUMN_NAME,
                     DATA_TYPE,
                     CHARACTER_MAXIMUM_LENGTH,
                     IS_NULLABLE,
-                    COLUMN_DEFAULT
+                    COLUMN_DEFAULT,
+                    TABLE_SCHEMA
                 FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = '{table_name}'
-                ORDER BY ORDINAL_POSITION
+                WHERE {where_clause}
+                ORDER BY TABLE_SCHEMA, ORDINAL_POSITION
             """
 
-            columns = self._execute_query(sql)
+            columns = self._execute_query(sql, database)
 
             if not columns:
+                # 如果还是找不到，列出数据库中所有表（用于调试）
+                all_tables_sql = """
+                    SELECT TABLE_SCHEMA, TABLE_NAME
+                    FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_TYPE = 'BASE TABLE'
+                    ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """
+                all_tables = self._execute_query(all_tables_sql)
+
+                # 查找可能相似的表名
+                similar_tables = [t['TABLE_NAME'] for t in all_tables
+                                 if table_name.lower() in t['TABLE_NAME'].lower()]
+
+                hint = ""
+                if similar_tables:
+                    hint = f"\n\n相似的表名: {', '.join(similar_tables[:5])}"
+                else:
+                    # 列出前10个表作为参考
+                    sample_tables = [f"{t['TABLE_SCHEMA']}.{t['TABLE_NAME']}" for t in all_tables[:10]]
+                    hint = f"\n\n数据库中的前10个表: {', '.join(sample_tables)}"
+
                 return {
                     "success": False,
                     "data": None,
-                    "summary": f"未找到表 '{table_name}' 的结构信息"
+                    "summary": f"未找到表 '{table_name}' 的结构信息。{hint}"
                 }
 
-            # 获取1条最新数据样例（尝试通过日期字段排序）
-            sample_sql = self._build_sample_sql(table_name, columns)
-            sample_data = self._execute_query(sample_sql)
+            # 获取schema信息（使用第一个schema）
+            table_schema = columns[0].get('TABLE_SCHEMA', 'dbo')
+            full_table_name = f"{table_schema}.{table_name}"
 
-            # 格式化字段列表
+            # 获取1条最新数据样例（尝试通过日期字段排序）
+            sample_sql = self._build_sample_sql(full_table_name, columns)
+            sample_data = self._execute_query(sample_sql, database)
+
+            # 格式化字段列表（包含schema信息）
             fields_text = "\n".join([
                 f"  - {col['COLUMN_NAME']} ({col['DATA_TYPE']}{'(' + str(col['CHARACTER_MAXIMUM_LENGTH']) + ')' if col['CHARACTER_MAXIMUM_LENGTH'] else ''}, {'可空' if col['IS_NULLABLE'] == 'YES' else '非空'})"
                 for col in columns
@@ -240,16 +326,19 @@ class ExecuteSQLQueryTool(LLMTool):
                 "success": True,
                 "data": {
                     "table_name": table_name,
+                    "full_table_name": full_table_name,
+                    "table_schema": table_schema,
+                    "database": database,
                     "columns": columns,
                     "sample_data": sample_data[0] if sample_data else None
                 },
-                "summary": f"""表名: {table_name}
+                "summary": f"""表名: {full_table_name} (数据库: {database})
 
 字段列表:
 {fields_text}
 
 字段总数: {len(columns)}
-{sample_text}提示：使用 execute_sql_query(sql='SELECT TOP 100 * FROM {table_name}') 查看更多数据"""
+{sample_text}提示：使用 execute_sql_query(sql='SELECT TOP 100 * FROM {full_table_name}', database='{database}') 查看更多数据"""
             }
 
             logger.info(
@@ -269,12 +358,13 @@ class ExecuteSQLQueryTool(LLMTool):
                 "summary": f"查询表结构失败: {str(e)}"
             }
 
-    async def _execute_sql_query(self, sql: str, limit: Optional[int] = None) -> Dict[str, Any]:
+    async def _execute_sql_query(self, sql: str, database: str, limit: Optional[int] = None) -> Dict[str, Any]:
         """
         执行SQL查询
 
         Args:
             sql: SQL查询语句
+            database: 数据库名称
             limit: 返回记录数限制
 
         Returns:
@@ -290,6 +380,7 @@ class ExecuteSQLQueryTool(LLMTool):
 
         logger.info(
             "sql_query_start",
+            database=database,
             sql_preview=sql[:100] if len(sql) > 100 else sql,
             limit=limit
         )
@@ -306,17 +397,18 @@ class ExecuteSQLQueryTool(LLMTool):
                 return {
                     "success": False,
                     "data": [],
-                    "summary": f"SQL验证失败: {error_msg}。请使用 execute_sql_query(describe_table='表名') 查看正确的表结构信息。"
+                    "summary": f"SQL验证失败: {error_msg}。请使用 execute_sql_query(describe_table='表名', database='{database}') 查看正确的表结构信息。"
                 }
 
             # 2. 添加TOP子句（SQL Server使用TOP而非LIMIT）
             safe_sql = self._sanitize_limit_for_sqlserver(sql, limit)
 
             # 3. 执行查询
-            results = self._execute_query(safe_sql)
+            results = self._execute_query(safe_sql, database)
 
             logger.info(
                 "sql_query_success",
+                database=database,
                 result_count=len(results),
                 sql_preview=sql[:100]
             )
@@ -340,7 +432,7 @@ class ExecuteSQLQueryTool(LLMTool):
             table_name = self._extract_table_name(sql)
             hint = ""
             if table_name:
-                hint = f" 请使用 execute_sql_query(describe_table='{table_name}') 查看正确的字段名。"
+                hint = f" 请使用 execute_sql_query(describe_table='{table_name}', database='{database}') 查看正确的字段名。"
 
             return {
                 "success": False,
@@ -358,7 +450,7 @@ class ExecuteSQLQueryTool(LLMTool):
             return {
                 "success": False,
                 "data": [],
-                "summary": f"查询失败: {str(e)}。请使用 execute_sql_query(describe_table='表名') 查看正确的表结构信息。"
+                "summary": f"查询失败: {str(e)}。请使用 execute_sql_query(describe_table='表名', database='{database}') 查看正确的表结构信息。"
             }
 
     def _sanitize_limit_for_sqlserver(self, sql: str, limit: int) -> str:
@@ -457,19 +549,26 @@ class ExecuteSQLQueryTool(LLMTool):
 
         return None
 
-    def _get_connection_string(self) -> str:
+    def _get_connection_string(self, database: str) -> str:
         """获取数据库连接字符串"""
         try:
             from config.settings import Settings
             settings = Settings()
-            return settings.sqlserver_connection_string
+
+            # 替换数据库名称
+            conn_str = settings.sqlserver_connection_string
+            # 替换 DATABASE=部分
+            import re
+            conn_str = re.sub(r'DATABASE=\w+', f'DATABASE={database}', conn_str, flags=re.IGNORECASE)
+
+            return conn_str
         except Exception as e:
             logger.error("获取数据库配置失败", error=str(e))
             raise
 
-    def _execute_query(self, sql: str) -> list:
+    def _execute_query(self, sql: str, database: str) -> list:
         """执行SQL查询"""
-        connection_string = self._get_connection_string()
+        connection_string = self._get_connection_string(database)
 
         conn = pyodbc.connect(connection_string, timeout=30)
         cursor = conn.cursor()

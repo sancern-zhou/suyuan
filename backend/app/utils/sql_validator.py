@@ -38,9 +38,22 @@ class SQLValidator:
         'dust_events',
         'air_quality_forecast',
         'city_aqi_publish_history',
-        'working_orders',
-        'qc_history',  # 自动质控历史数据表
-        'city_168_statistics',  # 168城市空气质量统计预计算表
+        # 空气质量历史数据表（XcAiDb数据库）
+        'CityDayAQIPublishHistory',  # 城市日空气质量发布历史（24小时均值）
+        'CityAQIPublishHistory',  # 城市小时空气质量发布历史
+        'CurrentAirQuality',  # 当前空气质量
+        'dat_station_day',  # 站点日数据
+        'dat_station_hour',  # 站点小时数据
+        'dat_weather_hour',  # 气象小时数据
+        'city_168_statistics_new_standard',  # 168城市空气质量统计表（新标准 HJ 633-2026）
+        'city_168_statistics_old_standard',  # 168城市空气质量统计表（旧标准 HJ 633-2013）
+        'province_statistics_new_standard',  # 省级空气质量统计表（新标准 HJ 633-2026）
+        'province_statistics_old_standard',  # 省级空气质量统计表（旧标准 HJ 633-2013）
+        # 质控和分析数据表（AirPollutionAnalysis数据库）
+        'qc_history',  # 自动质控历史数据表（13551条记录）
+        'quality_control_records',  # 质控例行检查记录
+        'working_orders',  # 运维工单
+        'analysis_history',  # 分析历史记录
         # 系统视图（用于动态查询表结构）
         'information_schema.columns',
         'information_schema.tables',
@@ -70,9 +83,9 @@ class SQLValidator:
 
         sql_upper = sql.upper().strip()
 
-        # 检查1：必须是SELECT
-        if not sql_upper.startswith('SELECT'):
-            return False, "只允许SELECT查询"
+        # 检查1：必须是SELECT或CTE（WITH...SELECT）
+        if not (sql_upper.startswith('SELECT') or sql_upper.startswith('WITH')):
+            return False, "只允许SELECT查询（支持CTE/WITH子句）"
 
         # 检查2：危险关键词（使用词边界避免误判，如CREATETIME不匹配CREATE）
         for keyword in self.DANGEROUS_KEYWORDS:
@@ -110,23 +123,35 @@ class SQLValidator:
         Returns:
             (is_valid, error_message): 验证结果和错误信息
         """
-        # 提取FROM和JOIN后的表名
-        # 简化版本：检查是否包含允许的表名
+        # 提取FROM和JOIN后的表名（支持schema.table格式）
         sql_lower = sql.lower()
 
         # 检查是否包含任何允许的表名
-        has_allowed_table = any(
-            f'from {table}' in sql_lower or
-            f'join {table}' in sql_lower or
-            f'from "{table}"' in sql_lower or
-            f'join "{table}"' in sql_lower
-            for table in self.ALLOWED_TABLES
-        )
+        # 支持格式：from table, from schema.table, join table, join schema.table
+        has_allowed_table = False
+        found_tables = []
+
+        for table in self.ALLOWED_TABLES:
+            # 检查各种可能的格式
+            patterns = [
+                f'from {table.lower()} ',  # from table
+                f'from {table.lower()}',   # from table（行尾）
+                f'join {table.lower()} ',  # join table
+                f'join {table.lower()}',   # join table（行尾）
+                f'from dbo.{table.lower()} ',  # from dbo.table
+                f'from dbo.{table.lower()}',   # from dbo.table（行尾）
+                f'join dbo.{table.lower()} ',  # join dbo.table
+                f'join dbo.{table.lower()}',   # join dbo.table（行尾）
+            ]
+            if any(pattern in sql_lower for pattern in patterns):
+                has_allowed_table = True
+                found_tables.append(table)
+                break
 
         if not has_allowed_table:
-            # 检查是否包含其他表名（可能是未授权的表）
-            from_match = re.search(r'\bfrom\s+(\w+)', sql_lower)
-            join_match = re.search(r'\bjoin\s+(\w+)', sql_lower)
+            # 提取SQL中的表名（支持schema.table格式）
+            from_match = re.search(r'\bfrom\s+([\w.]+)', sql_lower)
+            join_match = re.search(r'\bjoin\s+([\w.]+)', sql_lower)
 
             if from_match or join_match:
                 return False, f"表名不在白名单中。允许的表: {', '.join(self.ALLOWED_TABLES[:5])}..."

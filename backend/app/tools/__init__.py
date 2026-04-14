@@ -13,6 +13,7 @@ LLM Tools
    - get_dust_data - 扬尘数据查询
    - get_component_data - 组分数据查询（VOCs/颗粒物，广东省超级站，已废弃）
    - get_vocs_data - VOCs组分数据查询（端口9092）
+   - get_5min_data - 5分钟数据查询（站点污染物浓度和气象数据）
 
 2. Analysis Tools - 分析工具（执行计算和分析）
    - analyze_upwind_enterprises - 上风向企业分析（广东省）
@@ -319,6 +320,14 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 
+    # 5分钟数据查询工具
+    try:
+        from app.tools.query.get_5min_data.tool import Get5MinDataTool
+        registry.register(Get5MinDataTool(), priority=48)
+        logger.info("tool_loaded", tool="get_5min_data")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_5min_data", error=str(e))
+
     # ========================================
     # External Data Tools（外部数据工具）
     # ========================================
@@ -519,11 +528,11 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="analyze_image", error=str(e))
 
     try:
-        from app.tools.utility.edit_file_tool import EditFileTool
+        from app.tools.utility.edit_file_tool_v2 import EditFileToolV2 as EditFileTool
         registry.register(EditFileTool(), priority=503)
-        logger.info("tool_loaded", tool="edit_file")
+        logger.info("tool_loaded", tool="edit_file", version="v2")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="edit_file", error=str(e))
+        logger.warning("tool_import_failed", tool="edit_file", version="v2", error=str(e))
 
     try:
         from app.tools.utility.grep_tool import GrepTool
@@ -559,6 +568,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="parse_pdf")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
+
+    try:
+        from app.tools.utility.notebook_edit_tool import NotebookEditTool
+        registry.register(NotebookEditTool(), priority=509)
+        logger.info("tool_loaded", tool="notebook_edit")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="notebook_edit", error=str(e))
 
     # ========================================
     # Office Automation Tools（Cross-Platform - Phase 1-4）

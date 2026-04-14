@@ -183,13 +183,6 @@ const hasOfficeDocuments = computed(() => {
 watch(() => reactStore.lastOfficeDocument, (doc) => {
   if (!doc?.pdf_preview && !doc?.markdown_preview) return
 
-  console.log('[OfficeDocumentPanel] 收到office_document事件:', {
-    generator: doc.generator,
-    pdf_id: doc.pdf_preview?.pdf_id,
-    has_markdown_preview: !!doc.markdown_preview,
-    file_path: doc.file_path
-  })
-
   const filePath = doc.file_path
   const fileName = filePath ? filePath.split(/[/\\]/).pop() : 'unknown'
 
@@ -201,7 +194,6 @@ watch(() => reactStore.lastOfficeDocument, (doc) => {
   if (existingDoc) {
     // 更新现有文档
     if (doc.pdf_preview && existingDoc.pdf_id !== doc.pdf_preview.pdf_id) {
-      console.log('[OfficeDocumentPanel] 更新现有文档PDF:', fileName)
       existingDoc.pdf_url = doc.pdf_preview.pdf_url
       existingDoc.pdf_id = doc.pdf_preview.pdf_id
       existingDoc.file_path = filePath
@@ -214,7 +206,6 @@ watch(() => reactStore.lastOfficeDocument, (doc) => {
     }
   } else {
     // 添加新文档
-    console.log('[OfficeDocumentPanel] 添加新文档:', fileName)
     officeDocuments.value.push({
       doc_type: getDocType(doc.generator, doc.markdown_preview, filePath),
       file_name: fileName,

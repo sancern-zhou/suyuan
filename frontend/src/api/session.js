@@ -61,9 +61,20 @@ export async function getSessionStats() {
 
 /**
  * 恢复会话
+ * @param {string} sessionId - 会话ID
+ * @param {object} options - 选项
+ * @param {number} options.messageLimit - 消息数量限制（默认200，确保加载所有消息）
  */
-export async function restoreSession(sessionId) {
-  return await request(`${BASE_URL}/${sessionId}/restore`, {
+export async function restoreSession(sessionId, options = {}) {
+  const { messageLimit = 200 } = options
+
+  // 构建查询参数
+  const params = new URLSearchParams()
+  if (messageLimit) {
+    params.set('message_limit', messageLimit)
+  }
+
+  return await request(`${BASE_URL}/${sessionId}/restore?${params}`, {
     method: 'POST'
   })
 }

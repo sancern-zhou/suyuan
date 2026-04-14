@@ -77,6 +77,21 @@ class ExecutePythonTool(LLMTool):
 - 支持 python-docx, matplotlib, pandas 等所有 Python 库
 - 超时时间：30秒（可调整）
 
+📊 数据访问功能（自动注入）：
+当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 函数：
+- `get_raw_data(data_id)`: 根据 data_id 获取原始数据（字典列表格式）
+
+使用示例：
+```python
+# 直接使用刚才查询返回的 data_id
+data = get_raw_data("air_quality_5min:v1:bbf34146...")
+print(f"数据点数: {{len(data)}}")
+
+# 提取字段进行分析
+wind_dirs = [float(record['wind_direction_10m']) for record in data]
+concentrations = [float(record['PM2_5']) for record in data]
+```
+
 中文字体设置（matplotlib图表）：
 ```python
 import matplotlib
@@ -104,8 +119,8 @@ doc.save('report.docx')  # 保存到当前工作目录
 doc.save('/root/report.docx')
 ```""",
             category=ToolCategory.QUERY,
-            version="1.0.2",
-            requires_context=False
+            version="1.0.3",
+            requires_context=True  # ✅ 需要上下文以支持数据访问功能
         )
 
         # 记录是否使用 IPython
@@ -179,17 +194,22 @@ doc.save('/root/report.docx')
                 # ⚠️ 在 backend 目录执行代码，以便相对路径能找到数据文件
                 os.chdir(backend_dir)
 
-                # ✅ 自动注册中文字体（避免用户代码中字体设置错误）
+                # ✅ 注入数据访问上下文（让用户可以通过 data_id 访问数据）
                 original_code = code
+                code = self._inject_data_context(code, context)
+
+                # ✅ 自动注册中文字体（避免用户代码中字体设置错误）
                 code = self._inject_chinese_font_support(code)
 
                 logger.info(
-                    "chinese_font_injection",
+                    "code_injection_completed",
                     original_code_length=len(original_code),
                     injected_code_length=len(code),
                     code_modified=(code != original_code),
                     has_matplotlib_import='import matplotlib' in original_code or 'from matplotlib' in original_code,
-                    has_chinese_font_setup='FontProperties' in original_code or 'font.sans-serif' in original_code or 'Noto' in original_code
+                    has_chinese_font_setup='FontProperties' in original_code or 'font.sans-serif' in original_code or 'Noto' in original_code,
+                    has_context=context is not None,
+                    available_data_count=len(context.available_data_ids) if context and hasattr(context, 'available_data_ids') else 0
                 )
 
                 result = await self._execute_with_ipython(code, timeout or self.default_timeout)
@@ -199,8 +219,11 @@ doc.save('/root/report.docx')
                 # subprocess 模式：在临时目录执行
                 os.chdir(temp_dir)
 
-                # ✅ 自动注册中文字体
+                # ✅ 注入数据访问上下文（让用户可以通过 data_id 访问数据）
                 original_code = code
+                code = self._inject_data_context(code, context)
+
+                # ✅ 自动注册中文字体
                 code = self._inject_chinese_font_support(code)
 
                 logger.info(
@@ -396,7 +419,13 @@ doc.save('/root/report.docx')
                         series_list = echarts_data["series"]
                         if isinstance(series_list, list) and len(series_list) > 0:
                             first_series = series_list[0]
-                            chart_type = first_series.get("type", "chart").lower()  # 统一转换为小写
+                            series_type = first_series.get("type", "chart").lower()
+
+                            # ✅ 检测极坐标图表（风向玫瑰图）
+                            if first_series.get("coordinateSystem") == "polar":
+                                chart_type = f"polar_{series_type}"
+                            else:
+                                chart_type = series_type
                         else:
                             chart_type = "chart"
                     else:
@@ -524,21 +553,23 @@ doc.save('/root/report.docx')
             }
 
         if execution_result["error"]:
+            error_info = self._format_python_error(execution_result["error"], code)
             return {
                 "status": "failed",  # ✅ 添加 status 字段
                 "success": False,
-                "data": {"error": str(execution_result["error"])},
-                "summary": "执行失败"
+                "data": {"error": error_info["error_message"], "error_details": error_info},
+                "summary": error_info["summary"]
             }
 
         result = execution_result["result"]
 
         if result.error_in_exec:
+            error_info = self._format_python_error(result.error_in_exec, code)
             return {
                 "status": "failed",  # ✅ 添加 status 字段
                 "success": False,
-                "data": {"error": str(result.error_in_exec)},
-                "summary": "执行失败"
+                "data": {"error": error_info["error_message"], "error_details": error_info},
+                "summary": error_info["summary"]
             }
 
         # 组合输出
@@ -586,16 +617,26 @@ doc.save('/root/report.docx')
             if len(output) > self.max_output_size:
                 output = output[:self.max_output_size] + "\n... (输出被截断)"
 
+            # 如果执行失败，尝试解析错误信息
+            if result.returncode != 0:
+                error_info = self._parse_subprocess_error(result.stderr, code)
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "data": {"error": error_info["error_message"], "error_details": error_info, "output": output},
+                    "summary": error_info["summary"]
+                }
+
             return {
-                "status": "success" if result.returncode == 0 else "failed",  # ✅ 添加 status 字段
-                "success": result.returncode == 0,
+                "status": "success",
+                "success": True,
                 "data": {"output": output},
-                "summary": "✅ 工具已执行完成，计算任务已完成" if result.returncode == 0 else "执行失败"
+                "summary": "✅ 工具已执行完成，计算任务已完成"
             }
 
         except subprocess.TimeoutExpired:
             return {
-                "status": "failed",  # ✅ 添加 status 字段
+                "status": "failed",
                 "success": False,
                 "data": {"error": "执行超时"},
                 "summary": "执行超时"
@@ -666,7 +707,9 @@ doc.save('/root/report.docx')
         """
         从 Python 代码输出中提取 ECharts 标准格式 JSON 数据
 
-        检测格式：JSON字符串包含 series 字段（ECharts标准格式）
+        检测格式：
+        1. 标准格式：JSON字符串包含 series 字段（ECharts标准格式）
+        2. 嵌套格式：包含 echarts_option 字段（兼容某些自定义格式）
         可能包含：xAxis, yAxis, series, tooltip, legend 等字段
 
         Args:
@@ -689,23 +732,151 @@ doc.save('/root/report.docx')
                 # 尝试解析 JSON
                 chart_data = json.loads(line)
 
-                # 验证是否为 ECharts 标准格式（必须有 series 字段）
+                # ✅ 检测方式1：标准 ECharts 格式（顶层有 series 字段）
                 if isinstance(chart_data, dict) and "series" in chart_data:
                     # series 必须是数组类型
                     if isinstance(chart_data["series"], list):
                         logger.info(
                             "echarts_format_detected",
+                            format="standard",
                             chart_type=chart_data.get("series", [{}])[0].get("type", "unknown") if len(chart_data.get("series", [])) > 0 else "unknown",
                             has_xAxis="xAxis" in chart_data,
                             has_yAxis="yAxis" in chart_data,
                             series_count=len(chart_data.get("series", []))
                         )
                         return chart_data
+
+                # ✅ 检测方式2：嵌套格式（包含 echarts_option 字段）
+                if isinstance(chart_data, dict) and "echarts_option" in chart_data:
+                    echarts_option = chart_data["echarts_option"]
+                    if isinstance(echarts_option, dict) and "series" in echarts_option:
+                        if isinstance(echarts_option["series"], list):
+                            logger.info(
+                                "echarts_format_detected",
+                                format="nested",
+                                chart_type=echarts_option.get("series", [{}])[0].get("type", "unknown") if len(echarts_option.get("series", [])) > 0 else "unknown",
+                                has_xAxis="xAxis" in echarts_option,
+                                has_yAxis="yAxis" in echarts_option,
+                                series_count=len(echarts_option.get("series", [])),
+                                original_fields=list(chart_data.keys())
+                            )
+                            # ✅ 直接返回 echarts_option（标准 ECharts 格式）
+                            return echarts_option
+
+                # ✅ 检测方式3：嵌套格式（包含 data 字段，data 内有 series）
+                if isinstance(chart_data, dict) and "data" in chart_data:
+                    inner_data = chart_data["data"]
+                    if isinstance(inner_data, dict) and "series" in inner_data:
+                        if isinstance(inner_data["series"], list):
+                            logger.info(
+                                "echarts_format_detected",
+                                format="data_nested",
+                                chart_type=inner_data.get("series", [{}])[0].get("type", "unknown") if len(inner_data.get("series", [])) > 0 else "unknown",
+                                has_xAxis="xAxis" in inner_data,
+                                has_yAxis="yAxis" in inner_data,
+                                series_count=len(inner_data.get("series", [])),
+                                original_fields=list(chart_data.keys())
+                            )
+                            # ✅ 直接返回 inner_data（标准 ECharts 格式）
+                            return inner_data
+
             except (json.JSONDecodeError, ValueError):
                 # 不是有效的 JSON，继续下一行
                 continue
 
         return None
+
+    def _inject_data_context(self, code: str, context) -> str:
+        """
+        注入数据访问上下文，让用户代码可以通过 data_id 访问数据
+
+        注入内容：
+        - get_raw_data(data_id): 获取原始数据（字典列表格式）
+
+        ⚠️ 重要：
+        - LLM 应该在代码中直接使用 data_id
+        - 不需要从 AVAILABLE_DATA_IDS 列表中选择
+        - 系统会根据 data_id 自动定位文件
+        """
+        # 检查 context 是否存在
+        if not context:
+            logger.debug("data_context_injection_skipped", reason="no_context")
+            return code
+
+        logger.info(
+            "data_context_injection_started",
+            has_data_manager=context.data_manager is not None
+        )
+
+        # 构建注入的代码
+        context_injection_code = '''# ===== 数据访问上下文（自动注入） =====
+# 获取原始数据（字典列表格式）
+def get_raw_data(data_id: str):
+    """根据 data_id 获取原始数据（字典列表格式）
+    
+    Args:
+        data_id: 数据ID，格式为 "dataset_name:v1:uuid" 或 "dataset_name_v1_uuid"
+    
+    Returns:
+        数据列表（字典列表）
+    """
+    import json
+    import os
+    import sys
+    
+    # 获取项目根目录（兼容 ipython 环境）
+    # 从 sys.path 中查找包含 'backend' 的路径
+    backend_root = None
+    for path in sys.path:
+        if 'backend' in path and os.path.isdir(path):
+            # 检查是否是 backend 目录
+            test_dir = os.path.join(path, 'backend_data_registry', 'datasets')
+            if os.path.isdir(test_dir):
+                backend_root = path
+                break
+    
+    # 如果没找到，使用默认路径
+    if backend_root is None:
+        backend_root = '/home/xckj/suyuan/backend'
+    
+    datasets_dir = os.path.join(backend_root, 'backend_data_registry', 'datasets')
+    
+    # 转换 data_id 为文件名
+    # 输入: "air_quality_5min:v1:3a61cec54f9a43a2a02e1eebf6cb9b91"
+    # 输出: "air_quality_5min_v1_3a61cec54f9a43a2a02e1eebf6cb9b91.json"
+    filename = data_id.replace(':', '_') + '.json'
+    file_path = os.path.join(datasets_dir, filename)
+    
+    if not os.path.exists(file_path):
+        # 列出可用文件供调试
+        try:
+            available_files = [f for f in os.listdir(datasets_dir) if f.endswith('.json')][:5]
+            raise FileNotFoundError(
+                f"数据文件不存在: {file_path}\\n"
+                f"可用的数据文件: {available_files}"
+            )
+        except FileNotFoundError as e:
+            raise e
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    return data
+
+# ===== 数据访问上下文注入完成 =====
+
+'''
+
+        # 在代码开头插入上下文代码
+        injected_code = context_injection_code + code
+
+        logger.info(
+            "data_context_injection_completed",
+            original_length=len(code),
+            injected_length=len(injected_code)
+        )
+
+        return injected_code
 
     def _inject_chinese_font_support(self, code: str) -> str:
         """
@@ -812,6 +983,225 @@ if os.path.exists(_font_path):
 
         return unique_paths
 
+    def _format_python_error(self, error: Exception, code: str) -> Dict[str, str]:
+        """
+        格式化 Python 错误信息，提供详细的错误上下文和修复建议
+
+        Args:
+            error: Python 异常对象
+            code: 执行的代码
+
+        Returns:
+            包含错误详情的字典
+        """
+        import traceback
+        import re
+
+        error_type = type(error).__name__
+        error_msg = str(error)
+        error_lines = traceback.format_exception(type(error), error, error.__traceback__)
+
+        # 提取行号
+        line_number = None
+        for line in error_lines:
+            match = re.search(r'File "<ipython-input-\d+>", line (\d+)', line)
+            if match:
+                line_number = int(match.group(1))
+                break
+
+        # 获取错误行的代码上下文
+        code_context = ""
+        if line_number:
+            code_lines = code.split('\n')
+            if 0 < line_number <= len(code_lines):
+                error_line = code_lines[line_number - 1].strip()
+                code_context = f"错误行代码（第{line_number}行）: {error_line}"
+
+        # 常见错误的修复建议
+        suggestions = self._get_error_suggestions(error_type, error_msg, code_context)
+
+        # 构建详细的错误信息
+        detailed_error = f"❌ Python 执行错误\n\n"
+        detailed_error += f"**错误类型**: {error_type}\n"
+        detailed_error += f"**错误信息**: {error_msg}\n"
+        if line_number:
+            detailed_error += f"**错误行号**: {line_number}\n"
+        if code_context:
+            detailed_error += f"{code_context}\n"
+        if suggestions:
+            detailed_error += f"\n**💡 修复建议**:\n{suggestions}\n"
+
+        logger.warning(
+            "python_execution_error",
+            error_type=error_type,
+            error_msg=error_msg,
+            line_number=line_number,
+            has_suggestions=bool(suggestions)
+        )
+
+        return {
+            "error_type": error_type,
+            "error_message": detailed_error,
+            "summary": f"❌ 执行失败: {error_type} - {error_msg}",
+            "line_number": line_number,
+            "code_context": code_context,
+            "suggestions": suggestions
+        }
+
+    def _get_error_suggestions(self, error_type: str, error_msg: str, code_context: str) -> str:
+        """
+        根据错误类型提供修复建议
+
+        Args:
+            error_type: 错误类型
+            error_msg: 错误消息
+            code_context: 错误行的代码上下文
+
+        Returns:
+            修复建议字符串
+        """
+        suggestions = []
+
+        if error_type == "TypeError":
+            if "can only concatenate str" in error_msg:
+                suggestions.append("• **类型不匹配**: 尝试将字符串和数字相加")
+                suggestions.append("• **解决方案**: 使用 `float()` 或 `int()` 转换变量类型")
+                if "wind_dir" in code_context or "wind_direction" in code_context:
+                    suggestions.append("• **示例修复**: `float(wind_dir) + 11.25` 而不是 `wind_dir + 11.25`")
+                suggestions.append("• **JSON 数据注意**: 从 JSON 读取的数字可能是字符串类型")
+
+            elif "unsupported operand type" in error_msg:
+                suggestions.append("• **运算符不支持**: 操作数类型不匹配")
+                suggestions.append("• **解决方案**: 检查变量类型，使用 `type()` 查看类型，使用 `int()`/`float()`/`str()` 转换")
+
+            elif "not subscriptable" in error_msg:
+                suggestions.append("• **不可下标访问**: 尝试对非列表/字典类型使用索引")
+                suggestions.append("• **解决方案**: 检查变量是否为列表或字典，使用 `list()` 或 `dict()` 转换")
+
+        elif error_type == "KeyError":
+            suggestions.append("• **键不存在**: 字典中没有指定的键")
+            suggestions.append("• **解决方案1**: 使用 `.get(key, default)` 方法提供默认值")
+            suggestions.append("• **解决方案2**: 检查键名是否正确（区分大小写）")
+            suggestions.append("• **示例修复**: `value = data.get('PM2_5', 0)` 而不是 `value = data['PM2_5']`")
+
+        elif error_type == "NameError":
+            suggestions.append("• **变量未定义**: 使用了未声明的变量")
+            suggestions.append("• **解决方案**: 检查变量名拼写，确保变量已定义")
+
+        elif error_type == "ValueError":
+            if "could not convert string to float" in error_msg:
+                suggestions.append("• **字符串转换失败**: 无法将字符串转换为数字")
+                suggestions.append("• **解决方案**: 检查数据是否包含非数字字符，使用 `try-except` 处理异常")
+                suggestions.append("• **示例修复**: `try: val = float(s) except: val = 0`")
+
+            elif "I/O operation on closed file" in error_msg:
+                suggestions.append("• **文件已关闭**: 尝试操作已关闭的文件对象")
+                suggestions.append("• **解决方案**: 确保文件在 `with` 块内操作，或重新打开文件")
+
+        elif error_type == "AttributeError":
+            if "'NoneType' object has no attribute" in error_msg:
+                suggestions.append("• **空对象属性**: 尝试访问 None 对象的属性")
+                suggestions.append("• **解决方案**: 检查对象是否为 None，添加空值检查")
+                suggestions.append("• **示例修复**: `if obj is not None: obj.method()`")
+
+            else:
+                suggestions.append("• **属性不存在**: 对象没有该属性或方法")
+                suggestions.append("• **解决方案**: 检查对象类型，使用 `dir()` 查看可用属性")
+
+        elif error_type == "IndexError":
+            suggestions.append("• **索引越界**: 列表索引超出范围")
+            suggestions.append("• **解决方案**: 检查列表长度，使用 `len()` 确保索引有效")
+            suggestions.append("• **示例修复**: `if i < len(lst): value = lst[i]`")
+
+        elif error_type == "FileNotFoundError":
+            suggestions.append("• **文件不存在**: 找不到指定的文件")
+            suggestions.append("• **解决方案**: 检查文件路径是否正确，使用绝对路径或相对于当前目录的路径")
+
+        elif error_type == "ZeroDivisionError":
+            suggestions.append("• **除零错误**: 尝试除以零")
+            suggestions.append("• **解决方案**: 检查除数是否为零，添加条件判断")
+            suggestions.append("• **示例修复**: `if divisor != 0: result = a / divisor`")
+
+        elif error_type == "SyntaxError":
+            suggestions.append("• **语法错误**: 代码语法不正确")
+            suggestions.append("• **常见原因**: 括号不匹配、冒号缺失、缩进错误")
+            suggestions.append("• **解决方案**: 检查括号、引号是否配对，检查缩进是否正确")
+
+        # 如果没有特定建议，提供通用建议
+        if not suggestions:
+            suggestions.append("• **检查代码**: 仔细阅读错误信息，定位问题代码")
+            suggestions.append("• **打印调试**: 使用 `print()` 输出变量值和类型")
+            suggestions.append("• **异常处理**: 使用 `try-except` 捕获异常")
+
+        return "\n".join(suggestions)
+
+    def _parse_subprocess_error(self, stderr: str, code: str) -> Dict[str, str]:
+        """
+        解析 subprocess 模式的错误信息
+
+        Args:
+            stderr: 标准错误输出
+            code: 执行的代码
+
+        Returns:
+            包含错误详情的字典
+        """
+        import re
+
+        # 尝试提取错误类型和错误消息
+        error_type = "UnknownError"
+        error_msg = stderr.strip() if stderr else "未知错误"
+
+        # 常见 Python 错误模式
+        patterns = [
+            r"(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError): (.+)",
+            r"Traceback \(most recent call last\):\s+.*\s+(NameError|TypeError|ValueError|KeyError|AttributeError|IndexError|FileNotFoundError|ZeroDivisionError|SyntaxError): (.+)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, stderr)
+            if match:
+                error_type = match.group(1)
+                error_msg = match.group(2).strip()
+                break
+
+        # 提取行号
+        line_number = None
+        line_match = re.search(r'File "<string>", line (\d+)', stderr)
+        if line_match:
+            line_number = int(line_match.group(1))
+
+        # 获取错误行的代码上下文
+        code_context = ""
+        if line_number:
+            code_lines = code.split('\n')
+            if 0 < line_number <= len(code_lines):
+                error_line = code_lines[line_number - 1].strip()
+                code_context = f"错误行代码（第{line_number}行）: {error_line}"
+
+        # 获取修复建议
+        suggestions = self._get_error_suggestions(error_type, error_msg, code_context)
+
+        # 构建详细的错误信息
+        detailed_error = f"❌ Python 执行错误\n\n"
+        detailed_error += f"**错误类型**: {error_type}\n"
+        detailed_error += f"**错误信息**: {error_msg}\n"
+        if line_number:
+            detailed_error += f"**错误行号**: {line_number}\n"
+        if code_context:
+            detailed_error += f"{code_context}\n"
+        if suggestions:
+            detailed_error += f"\n**💡 修复建议**:\n{suggestions}\n"
+
+        return {
+            "error_type": error_type,
+            "error_message": detailed_error,
+            "summary": f"❌ 执行失败: {error_type} - {error_msg}",
+            "line_number": line_number,
+            "code_context": code_context,
+            "suggestions": suggestions
+        }
+
     def get_function_schema(self) -> Dict[str, Any]:
         """获取 Function Calling Schema"""
         return {
@@ -856,6 +1246,15 @@ if os.path.exists(_font_path):
                 "• 工具名称必须是 'execute_python'，不要使用 run_python、exec_python 等其他名称\n"
                 "• 文件必须保存到项目目录内的绝对路径，例如 /home/xckj/suyuan/backend_data_registry/\n"
                 "• matplotlib 需要使用无后端模式：matplotlib.use('Agg')\n\n"
+                "【⚠️ 常见错误预防】\n"
+                "• **类型转换错误**: 从 JSON 读取的数据可能是字符串，需要使用 float() 或 int() 转换\n"
+                "  - ❌ 错误：`dir_idx = int((wind_dir + 11.25) / 22.5) % 16`  （wind_dir 是字符串）\n"
+                "  - ✅ 正确：`dir_idx = int((float(wind_dir) + 11.25) / 22.5) % 16`\n"
+                "• **字典键不存在**: 使用 .get() 方法避免 KeyError\n"
+                "  - ❌ 错误：`pm25 = record['PM2_5']`\n"
+                "  - ✅ 正确：`pm25 = record.get('PM2_5', 0)`  （提供默认值）\n"
+                "• **空值检查**: 使用变量前检查是否为 None\n"
+                "  - ✅ 正确：`if value is not None: result = float(value) + 10`\n\n"
                 "示例：\n"
                 "```\n"
                 "from docx import Document\n"

@@ -5,7 +5,8 @@ Layered matching strategy:
 1. Venue mapping (highest priority, O(n) substring search)
 2. City + Station matching (substring containment)
 3. Alias expansion (predefined abbreviations)
-4. Station name to code mapping (from geo_mappings.json)
+4. Station name to code mapping (from station_district_results_with_type_id.json)
+5. City/District name to code mapping (from geo_mappings.json)
 """
 import json
 import structlog
@@ -23,7 +24,8 @@ class GeoMatcher:
     - Layer 1: Exact venue mapping (hash lookup + substring)
     - Layer 2: City and station substring matching
     - Layer 3: Alias expansion for common abbreviations
-    - Layer 4: Station name to code mapping (from geo_mappings.json)
+    - Layer 4: Station name to code mapping (from station_district_results_with_type_id.json)
+    - Layer 5: City/District name to code mapping (from geo_mappings.json)
 
     No complex fuzzy matching or AC automaton - just simple, fast substring matching.
     """
@@ -69,6 +71,9 @@ class GeoMatcher:
         self.city_codes = {}  # city_name -> city_code
         self.district_codes = {}  # district_name -> district_code
 
+        # API名称到标准名称的映射（用于处理API返回的别名）
+        self.api_name_to_standard = {}  # api_station_name -> standard_station_name
+
         self._load_data()
         self._initialized = True
 
@@ -89,28 +94,35 @@ class GeoMatcher:
         )
 
     def _load_stations(self):
-        """Load stations and cities from station_info.json."""
-        station_file = Path(__file__).parent.parent.parent.parent / "station_info.json"
+        """Load stations and cities from station_district_results_with_type_id.json."""
+        station_file = Path(__file__).parent.parent.parent / "config" / "station_district_results_with_type_id.json"
 
         try:
             with open(station_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            results = data.get("results", [])
+            results = data.get("data", [])
             for station in results:
-                station_name = station.get("站点名称", "")
-                city_name = station.get("城市名称", "")
+                station_name = station.get("站点名称", "").strip()
+                city_name = station.get("城市名称", "").strip()
+                station_code = station.get("唯一编码", "").strip()
 
-                if station_name and station.get("站点状态"):
-                    station_data = {
-                        "name": station_name,
-                        "code": station.get("唯一编码", ""),
-                        "city": city_name,
-                        "latitude": station.get("纬度", ""),
-                        "longitude": station.get("经度", ""),
-                    }
-                    self.stations.append(station_data)
-                    self.station_index[station_name] = station_data
+                if not station_name:
+                    continue
+
+                station_data = {
+                    "name": station_name,
+                    "code": station_code,
+                    "city": city_name,
+                    "latitude": station.get("纬度", ""),
+                    "longitude": station.get("经度", ""),
+                }
+                self.stations.append(station_data)
+                self.station_index[station_name] = station_data
+
+                # Build station_codes mapping (name -> code)
+                if station_code:
+                    self.station_codes[station_name] = station_code
 
                 if city_name:
                     self.cities.add(city_name)
@@ -121,7 +133,12 @@ class GeoMatcher:
             # Convert to sorted list for efficient searching
             self.city_list = sorted(self.cities, key=len, reverse=True)
 
-            logger.info("stations_loaded", count=len(self.stations), cities=len(self.cities))
+            logger.info(
+                "stations_loaded",
+                count=len(self.stations),
+                cities=len(self.cities),
+                station_codes=len(self.station_codes)
+            )
 
         except Exception as e:
             logger.error("station_load_failed", error=str(e), exc_info=True)
@@ -170,20 +187,23 @@ class GeoMatcher:
             logger.error("venue_load_failed", error=str(e), exc_info=True)
 
     def _load_geo_mappings(self):
-        """Load station/city/district code mappings from geo_mappings.json."""
+        """Load city/district code mappings from geo_mappings.json.
+
+        Note: Station codes are loaded from station_district_results_with_type_id.json
+        in _load_stations() method.
+        """
         config_file = Path(__file__).parent.parent.parent / "config" / "geo_mappings.json"
 
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            self.station_codes = data.get("stations", {})
+            # Only load city and district codes (stations loaded separately)
             self.city_codes = data.get("cities", {})
             self.district_codes = data.get("districts", {})
 
             logger.info(
                 "geo_mappings_loaded",
-                stations=len(self.station_codes),
                 cities=len(self.city_codes),
                 districts=len(self.district_codes)
             )

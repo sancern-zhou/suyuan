@@ -48,7 +48,7 @@ class ReActLoop:
         memory_manager: HybridMemoryManager,
         llm_planner,
         tool_executor,
-        max_iterations: int,  # ⚠️ 必须从调用者接收，无默认值（单一配置源：ReactAgent）
+        max_iterations: int = 30,  # 默认30次（适应复杂分析任务）
         stream_enabled: bool = True,
         # 日志配置
         enable_agent_logging: bool = True,
@@ -64,7 +64,7 @@ class ReActLoop:
             memory_manager: 混合记忆管理器
             llm_planner: LLM 规划器
             tool_executor: 工具执行器
-            max_iterations: 最大迭代次数
+            max_iterations: 最大迭代次数（默认30次）
             stream_enabled: 是否启用流式输出
             enable_agent_logging: 是否启用Agent运行日志
             log_dir: 日志目录
@@ -477,6 +477,19 @@ class ReActLoop:
                         # 这里不需要再次输出
 
                         logger.info("task_completed_final_answer", iterations=iteration_count)
+
+                        # ✅ 新增：yield agent_finish事件给父Agent（用于call_sub_agent提取结果）
+                        yield {
+                            "type": "agent_finish",
+                            "answer": final_answer,
+                            "data": {
+                                "iterations": iteration_count,
+                                "session_id": self.memory.session_id,
+                                "thought": thought,
+                                "reasoning": reasoning if think_action_result is None else think_action_result.get("reasoning")
+                            }
+                        }
+
                         break
 
                     # FINISH_SUMMARY: 结束并生成最终答案
@@ -585,6 +598,19 @@ class ReActLoop:
                         }
 
                         logger.info("task_completed_finish_summary", iterations=iteration_count)
+
+                        # ✅ 新增：yield agent_finish事件给父Agent（用于call_sub_agent提取结果）
+                        yield {
+                            "type": "agent_finish",
+                            "answer": final_answer,
+                            "data": {
+                                "iterations": iteration_count,
+                                "session_id": self.memory.session_id,
+                                "thought": thought,
+                                "reasoning": reasoning if think_action_result is None else think_action_result.get("reasoning")
+                            }
+                        }
+
                         break
 
                     # TOOL_CALLS: 并行执行

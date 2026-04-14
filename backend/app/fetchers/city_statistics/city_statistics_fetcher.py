@@ -2,7 +2,7 @@
 168城市空气质量统计数据抓取器
 
 定时从XcAiDb数据库提取数据，计算168个重点城市的空气质量评价指标（按HJ663标准），
-并将结果缓存回XcAiDb数据库的city_168_statistics表。
+并将结果缓存回XcAiDb数据库的city_168_statistics_new_standard表。
 
 核心功能：
 - 每天上午8点自动运行
@@ -398,16 +398,6 @@ def calculate_statistics(records: List[Dict]) -> Dict:
         (result['o3_8h_concentration'] or 0) / ANNUAL_STANDARD_LIMITS_2026['O3_8h'], 3
     ) if result['o3_8h_concentration'] is not None else None
 
-    # 计算单项指数（旧标准 HJ 663-2013）
-    # 注意：旧标准只有PM10和PM2.5的标准限值不同
-    result['pm10_index_old'] = safe_round(
-        (result['pm10_concentration'] or 0) / ANNUAL_STANDARD_LIMITS_2013['PM10'], 3
-    ) if result['pm10_concentration'] is not None else None
-
-    result['pm2_5_index_old'] = safe_round(
-        (result['pm2_5_concentration'] or 0) / ANNUAL_STANDARD_LIMITS_2013['PM2_5'], 3
-    ) if result['pm2_5_concentration'] is not None else None
-
     # 计算综合指数（新标准 HJ 663-2026）= Σ(单项指数 × 权重)
     comprehensive_index = 0.0
     valid_indices = 0
@@ -420,27 +410,6 @@ def calculate_statistics(records: List[Dict]) -> Dict:
             valid_indices += 1
 
     result['comprehensive_index'] = safe_round(comprehensive_index, 3) if valid_indices > 0 else None
-
-    # 计算综合指数（旧标准 HJ 663-2013）= Σ(单项指数 × 权重)
-    # 注意：旧标准只有PM10和PM2.5的指数不同，且所有污染物权重均为1
-    comprehensive_index_old = 0.0
-    valid_indices_old = 0
-
-    for pollutant, weight in WEIGHTS_2013.items():
-        if index_value is not None:
-            # 对于PM10和PM2.5，使用旧标准的指数
-            if pollutant == 'PM10':
-                index_value = result.get('pm10_index_old')
-            elif pollutant == 'PM2_5':
-                index_value = result.get('pm2_5_index_old')
-            else:
-                index_value = result.get(f"{pollutant.lower()}_index")
-
-            if index_value is not None:
-                comprehensive_index_old += index_value * weight
-                valid_indices_old += 1
-
-    result['comprehensive_index_old'] = safe_round(comprehensive_index_old, 3) if valid_indices_old > 0 else None
 
     # 计算综合指数（新限值+旧算法）
     # 使用新标准限值（PM10=60, PM2.5=30），但使用旧算法权重（所有权重均为1）
@@ -457,36 +426,6 @@ def calculate_statistics(records: List[Dict]) -> Dict:
 
     result['comprehensive_index_new_limit_old_algo'] = safe_round(comprehensive_index_new_limit_old_algo, 3) if valid_indices_new_limit_old_algo > 0 else None
 
-    # 计算综合指数（旧限值+新算法）
-    # 使用旧标准限值（PM10=70, PM2.5=35），但使用新算法权重
-    comprehensive_index_old_limit_new_algo = 0.0
-    valid_indices_old_limit_new_algo = 0
-
-    # 计算旧限值的单项指数
-    pm10_index_for_old_limit = safe_round(
-        (result['pm10_concentration'] or 0) / ANNUAL_STANDARD_LIMITS_2013['PM10'], 3
-    ) if result['pm10_concentration'] is not None else None
-
-    pm2_5_index_for_old_limit = safe_round(
-        (result['pm2_5_concentration'] or 0) / ANNUAL_STANDARD_LIMITS_2013['PM2_5'], 3
-    ) if result['pm2_5_concentration'] is not None else None
-
-    # 使用新算法权重计算综合指数
-    for pollutant, weight in WEIGHTS_2026.items():
-        index_value = None
-        if pollutant == 'PM10':
-            index_value = pm10_index_for_old_limit
-        elif pollutant == 'PM2_5':
-            index_value = pm2_5_index_for_old_limit
-        else:
-            index_value = result.get(f"{pollutant.lower()}_index")
-
-        if index_value is not None:
-            comprehensive_index_old_limit_new_algo += index_value * weight
-            valid_indices_old_limit_new_algo += 1
-
-    result['comprehensive_index_old_limit_new_algo'] = safe_round(comprehensive_index_old_limit_new_algo, 3) if valid_indices_old_limit_new_algo > 0 else None
-
     # 计算数据天数
     result['data_days'] = len(records)
 
@@ -502,7 +441,7 @@ def calculate_rankings(statistics: List[Dict]) -> List[Dict]:
     """
     计算城市排名（按综合指数）
 
-    同时计算新旧标准的排名
+    计算新标准的两套综合指数排名
 
     Args:
         statistics: 统计数据列表
@@ -510,19 +449,12 @@ def calculate_rankings(statistics: List[Dict]) -> List[Dict]:
     Returns:
         添加了排名的统计数据列表
     """
-    # 计算新标准排名（HJ 663-2021）
+    # 计算新标准排名（新限值+新算法）
     valid_stats = [s for s in statistics if s.get('comprehensive_index') is not None]
     sorted_stats = sorted(valid_stats, key=lambda x: x['comprehensive_index'])
 
     for rank, stat in enumerate(sorted_stats, start=1):
         stat['comprehensive_index_rank'] = rank
-
-    # 计算旧标准排名（HJ 663-2013）
-    valid_stats_old = [s for s in statistics if s.get('comprehensive_index_old') is not None]
-    sorted_stats_old = sorted(valid_stats_old, key=lambda x: x['comprehensive_index_old'])
-
-    for rank, stat in enumerate(sorted_stats_old, start=1):
-        stat['comprehensive_index_rank_old'] = rank
 
     # 计算新限值+旧算法排名
     valid_stats_new_limit_old_algo = [s for s in statistics if s.get('comprehensive_index_new_limit_old_algo') is not None]
@@ -530,13 +462,6 @@ def calculate_rankings(statistics: List[Dict]) -> List[Dict]:
 
     for rank, stat in enumerate(sorted_stats_new_limit_old_algo, start=1):
         stat['comprehensive_index_rank_new_limit_old_algo'] = rank
-
-    # 计算旧限值+新算法排名
-    valid_stats_old_limit_new_algo = [s for s in statistics if s.get('comprehensive_index_old_limit_new_algo') is not None]
-    sorted_stats_old_limit_new_algo = sorted(valid_stats_old_limit_new_algo, key=lambda x: x['comprehensive_index_old_limit_new_algo'])
-
-    for rank, stat in enumerate(sorted_stats_old_limit_new_algo, start=1):
-        stat['comprehensive_index_rank_old_limit_new_algo'] = rank
 
     # 返回完整列表（包括无效数据）
     result = []
@@ -699,26 +624,24 @@ class SQLServerClient:
 
             # 删除旧数据（如果存在）
             delete_sql = """
-            DELETE FROM city_168_statistics
+            DELETE FROM city_168_statistics_new_standard
             WHERE stat_type = ? AND stat_date = ?
             """
             cursor.execute(delete_sql, [stat_type, stat_date])
 
             # 插入新数据
             insert_sql = """
-            INSERT INTO city_168_statistics (
+            INSERT INTO city_168_statistics_new_standard (
                 stat_date, stat_type, city_name, city_code,
                 so2_concentration, no2_concentration, pm10_concentration, pm2_5_concentration,
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
-                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 standard_version,
                 data_days, sample_coverage, region, province,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for stat in statistics:
@@ -740,14 +663,8 @@ class SQLServerClient:
                     stat.get('o3_8h_index'),
                     stat.get('comprehensive_index'),
                     stat.get('comprehensive_index_rank'),
-                    stat.get('pm10_index_old'),
-                    stat.get('pm2_5_index_old'),
-                    stat.get('comprehensive_index_old'),
-                    stat.get('comprehensive_index_rank_old'),
                     stat.get('comprehensive_index_new_limit_old_algo'),
                     stat.get('comprehensive_index_rank_new_limit_old_algo'),
-                    stat.get('comprehensive_index_old_limit_new_algo'),
-                    stat.get('comprehensive_index_rank_old_limit_new_algo'),
                     'HJ663-2026',  # 标识当前使用新标准
                     stat.get('data_days'),
                     stat.get('sample_coverage'),
@@ -785,7 +702,7 @@ class CityStatisticsFetcher(DataFetcher):
 
     def __init__(self):
         super().__init__(
-            name="city_168_statistics_fetcher",
+            name="city_168_statistics_new_standard_fetcher",
             description="168城市空气质量统计预计算",
             schedule="0 8 * * *",  # 每天上午8点
             version="1.0.0"
@@ -1027,11 +944,9 @@ class CityStatisticsFetcher(DataFetcher):
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
-                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 data_days, sample_coverage, region, province
-            FROM city_168_statistics
+            FROM city_168_statistics_new_standard
             WHERE stat_type = 'current_month' AND stat_date = ?
             """
 
@@ -1056,26 +971,24 @@ class CityStatisticsFetcher(DataFetcher):
 
             # 2. 删除已有的monthly数据（如果存在）
             delete_sql = """
-            DELETE FROM city_168_statistics
+            DELETE FROM city_168_statistics_new_standard
             WHERE stat_type = 'monthly' AND stat_date = ?
             """
             cursor.execute(delete_sql, [stat_date])
 
             # 3. 插入monthly数据
             insert_sql = """
-            INSERT INTO city_168_statistics (
+            INSERT INTO city_168_statistics_new_standard (
                 stat_date, stat_type, city_name, city_code,
                 so2_concentration, no2_concentration, pm10_concentration, pm2_5_concentration,
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
-                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 standard_version,
                 data_days, sample_coverage, region, province,
                 created_at, updated_at
-            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for row in current_data:
@@ -1087,9 +1000,7 @@ class CityStatisticsFetcher(DataFetcher):
                     row.co_concentration, row.o3_8h_concentration,
                     row.so2_index, row.no2_index, row.pm10_index, row.pm2_5_index, row.co_index, row.o3_8h_index,
                     row.comprehensive_index, row.comprehensive_index_rank,
-                    row.pm10_index_old, row.pm2_5_index_old, row.comprehensive_index_old, row.comprehensive_index_rank_old,
                     row.comprehensive_index_new_limit_old_algo, row.comprehensive_index_rank_new_limit_old_algo,
-                    row.comprehensive_index_old_limit_new_algo, row.comprehensive_index_rank_old_limit_new_algo,
                     'HJ663-2026',
                     row.data_days, row.sample_coverage, row.region, row.province
                 ]

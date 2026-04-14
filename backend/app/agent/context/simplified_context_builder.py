@@ -48,6 +48,9 @@ class SimplifiedContextBuilder:
         # ✅ 新增：当前模式（默认expert）
         self.current_mode = "expert"
 
+        # ✅ 新增：用户记忆文件路径（仅social模式使用）
+        self.memory_file_path = None
+
         logger.info(
             "simplified_context_builder_initialized",
             max_context=self.max_context_tokens,
@@ -184,7 +187,10 @@ class SimplifiedContextBuilder:
         """
         # ✅ 使用新的提示词构建器
         from ..prompts.prompt_builder import build_react_system_prompt
-        return build_react_system_prompt(mode=self.current_mode)
+        return build_react_system_prompt(
+            mode=self.current_mode,
+            memory_file_path=self.memory_file_path  # ✅ 传递记忆文件路径
+        )
 
     def _get_simple_tool_list(self) -> str:
         """获取简单工具列表（回退方案）"""
