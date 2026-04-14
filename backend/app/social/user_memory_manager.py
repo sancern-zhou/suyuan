@@ -32,7 +32,17 @@ class UserMemoryManager:
             base_workspace: 基础工作空间目录
             max_cache_size: 最大缓存用户数
         """
-        self.base_workspace = base_workspace or Path("backend_data_registry/social/memory")
+        # 解析相对路径为绝对路径（避免工作目录问题）
+        if base_workspace is None:
+            # 默认使用绝对路径
+            base_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+        elif not base_workspace.is_absolute():
+            # 如果是相对路径，转换为绝对路径（相对于backend目录）
+            current_file = Path(__file__).resolve()
+            backend_dir = current_file.parent.parent  # app/social -> app -> backend
+            base_workspace = (backend_dir / base_workspace).resolve()
+
+        self.base_workspace = base_workspace
         self.base_workspace.mkdir(parents=True, exist_ok=True)
 
         self._memory_cache: Dict[str, MemoryStore] = {}

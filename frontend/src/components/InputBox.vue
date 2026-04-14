@@ -58,6 +58,7 @@
           @input="handleInput"
           @focus="handleFocus"
           @blur="handleBlur"
+          @paste="handlePaste"
           rows="1"
         />
 
@@ -139,7 +140,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: '输入您的问题...'
+    default: '输入您的问题... (支持Ctrl+V粘贴图片和文件)'
   },
   disabled: {
     type: Boolean,
@@ -399,6 +400,64 @@ const handleFileSelect = async (event) => {
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
   }
+}
+
+// 处理粘贴板粘贴事件
+const handlePaste = async (event) => {
+  const clipboardData = event.clipboardData || window.clipboardData
+  if (!clipboardData) return
+
+  const items = clipboardData.items
+  if (!items || items.length === 0) return
+
+  // 收集粘贴的文件
+  const pastedFiles = []
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+
+    // 检查是否是文件类型
+    if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (file) {
+        // 如果文件没有类型（粘贴的图片可能没有扩展名），尝试根据 MIME 类型推断
+        if (!file.name && file.type) {
+          const extension = getFileExtensionFromMimeType(file.type)
+          file.name = `pasted-${Date.now()}${extension}`
+        }
+        pastedFiles.push(file)
+      }
+    }
+  }
+
+  // 如果有粘贴的文件，处理它们
+  if (pastedFiles.length > 0) {
+    // 阻止默认的粘贴行为（避免将图片URL粘贴到文本框）
+    event.preventDefault()
+    await processFiles(pastedFiles)
+  }
+}
+
+// 根据 MIME 类型获取文件扩展名
+const getFileExtensionFromMimeType = (mimeType) => {
+  const mimeToExt = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/svg+xml': '.svg',
+    'image/bmp': '.bmp',
+    'application/pdf': '.pdf',
+    'text/plain': '.txt',
+    'text/markdown': '.md',
+    'application/json': '.json',
+    'text/csv': '.csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx'
+  }
+  return mimeToExt[mimeType] || ''
 }
 
 // 拖拽相关事件处理

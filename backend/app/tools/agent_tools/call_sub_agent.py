@@ -2,9 +2,8 @@
 调用子Agent的工具（双向通用）
 
 功能：
-- 专家Agent可以调用助手Agent处理办公任务
-- 助手Agent可以调用专家Agent处理数据分析
-- Social Agent可以调用专家Agent进行数据分析
+- 助手Agent可以调用其他Agent处理任务
+- Social Agent可以调用其他Agent进行数据查询和报告生成
 
 Session支持：
 - 支持session_id参数实现连续对话
@@ -25,8 +24,8 @@ logger = structlog.get_logger()
 # 获取全局session管理器
 session_manager = get_session_manager()
 
-# ⚠️ 支持6种模式：assistant, expert, code, query, report, social
-AgentMode = Literal["assistant", "expert", "code", "query", "report", "social"]
+# ⚠️ 支持5种模式：assistant, code, query, report, social
+AgentMode = Literal["assistant", "code", "query", "report", "social"]
 
 
 class CallSubAgentTool(LLMTool):
@@ -34,40 +33,44 @@ class CallSubAgentTool(LLMTool):
     调用子Agent的工具（双向通用）
 
     用法：
-    - 专家Agent调用助手Agent：call_sub_agent(target_mode="assistant", ...)
-    - 助手Agent调用专家Agent：call_sub_agent(target_mode="expert", ...)
+    - Social Agent调用Query Agent：call_sub_agent(target_mode="query", ...)
+    - Social Agent调用Report Agent：call_sub_agent(target_mode="report", ...)
+    - 助手Agent调用其他Agent：call_sub_agent(target_mode="...", ...)
     """
 
     def __init__(
         self,
-        memory_manager=None,
+        memory_manager=None,  # ⚠️ 已弃用：不再传递 memory_manager 给子Agent
         llm_planner=None,
         tool_executor=None
     ):
         # 定义 function_schema
         function_schema = {
             "name": "call_sub_agent",
-            "description": "调用另一个Agent模式作为子Agent执行任务（支持session连续对话）",
+            "description": "调用另一个Agent模式作为子Agent执行任务（支持session连续对话）。⚠️ 用自然语言描述任务，不要传递结构化参数或指定工具名称。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "target_mode": {
                         "type": "string",
-                        "enum": ["assistant", "expert", "code", "query", "report", "social"],
-                        "description": "目标Agent模式（assistant=助手, expert=专家, social=社交, query=问数, report=报告, code=编程）"
+                        "enum": ["assistant", "code", "query", "report", "social"],
+                        "description": "目标Agent模式（assistant=助手, social=社交, query=问数, report=报告, code=编程）"
                     },
                     "task_description": {
                         "type": "string",
-                        "description": "任务描述（清晰说明需要子Agent完成什么任务）"
+                        "description": "⚠️ 用户原始查询（必须原封不动传递，禁止时间转换、意图澄清或改变用户表达方式）"
                     },
-                    "context_data": {
-                        "type": "object",
-                        "description": "传递给子Agent的上下文数据（可选）",
-                        "default": {}
+                    "context_supplement": {
+                        "type": "string",
+                        "description": "上下文补充说明（可选）：基于对话历史和用户习惯补充说明，如用户之前查询过'广州空气质量'后说'再看看深圳的'，可补充为'继续查看空气质量数据'。禁止时间转换和技术参数构造。"
                     },
                     "session_id": {
                         "type": "string",
-                        "description": "子Agent会话ID（可选）：传入则继续已有对话，不传则创建新会话。返回值中会包含此session_id可用于后续继续对话"
+                        "description": "子Agent会话ID（可选，一般不需要传递）：系统会自动复用最近的session。只有需要指定特定session时才传递。"
+                    },
+                    "force_new_session": {
+                        "type": "boolean",
+                        "description": "是否强制创建新会话（可选，默认false）：设为true时会创建新的session，而不是复用最近的session。当用户明确开始新话题时使用。"
                     }
                 },
                 "required": ["target_mode", "task_description"]
@@ -93,8 +96,9 @@ class CallSubAgentTool(LLMTool):
         context: Optional[Any] = None,  # ✅ context放在第一位
         target_mode: AgentMode = None,
         task_description: str = None,
-        context_data: Optional[Dict[str, Any]] = None,
-        session_id: Optional[str] = None,  # ✅ 新增：session_id参数
+        context_supplement: Optional[str] = None,  # ✅ 新增：上下文补充
+        session_id: Optional[str] = None,
+        force_new_session: bool = False,  # ✅ 新增：是否强制创建新会话
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -102,9 +106,9 @@ class CallSubAgentTool(LLMTool):
 
         Args:
             context: ExecutionContext（包含memory_manager等依赖）
-            target_mode: 目标Agent模式（"assistant" | "expert"）
-            task_description: 任务描述
-            context_data: 上下文数据
+            target_mode: 目标Agent模式（"assistant" | "query" | "code" | "report" | "social"）
+            task_description: ⚠️ 用户原始查询（必须原封不动传递，禁止时间转换、意图澄清）
+            context_supplement: 上下文补充说明（可选）：基于对话历史补充，禁止技术参数构造
             session_id: 可选，子Agent会话ID（传入则继续已有对话）
 
         Returns:
@@ -149,33 +153,32 @@ class CallSubAgentTool(LLMTool):
                 parent_mode=parent_mode,
                 target_mode=target_mode,
                 task=task_description[:100] if task_description else "",
-                has_context=context_data is not None,
-                session_id=session_id,
-                is_continuation=session_id is not None
+                provided_session_id=session_id,
+                force_new_session=force_new_session,
+                will_attempt_auto_reuse=session_id is None and not force_new_session
             )
 
             # ✅ 从context获取依赖（如果工具初始化时没有传递）
-            memory_manager = self.memory_manager
+            # ⚠️ 注意：不传递 memory_manager 给子Agent，因为：
+            #   1. context.memory_manager 是 HybridMemoryManager（会话记忆）
+            #   2. ReActAgent 期望的是 UnifiedMemoryManager（长期记忆）
+            #   3. 子Agent应该自己创建 UnifiedMemoryManager
             llm_planner = self.llm_planner
             tool_executor = self.tool_executor
 
-            if context and hasattr(context, 'memory_manager'):
-                memory_manager = context.memory_manager
-                if hasattr(context, 'llm_planner'):
-                    llm_planner = context.llm_planner
-                if hasattr(context, 'tool_executor'):
-                    tool_executor = context.tool_executor
+            if context and hasattr(context, 'llm_planner'):
+                llm_planner = context.llm_planner
+            if context and hasattr(context, 'tool_executor'):
+                tool_executor = context.tool_executor
 
-            # 验证必需的依赖
-            if not memory_manager:
-                raise RuntimeError("memory_manager is required for call_sub_agent")
+            # ✅ 不再验证 memory_manager，让子Agent自己创建
 
             # ✅ 1. Session处理：确定session_id和对话历史
             conversation_history = []
             is_new_session = False
 
             if session_id:
-                # 继续已有session
+                # 明确指定了session_id，继续已有session
                 session = session_manager.get_session(session_id)
                 if not session:
                     return {
@@ -197,42 +200,62 @@ class CallSubAgentTool(LLMTool):
                         "summary": "Session模式不匹配"
                     }
                 conversation_history = session.conversation_history
-                logger.info(f"继续子Agent session: {session_id}, 历史消息数: {len(conversation_history)}")
-            else:
-                # 创建新session
+                logger.info(f"继续指定session: {session_id}, 历史消息数: {len(conversation_history)}")
+            elif force_new_session:
+                # 强制创建新session
                 session_id = self._generate_session_id(parent_mode, target_mode)
                 is_new_session = True
-                logger.info(f"创建新子Agent session: {session_id}")
+                logger.info(f"强制创建新session: {session_id}")
+            else:
+                # 自动查找并复用最近的session（默认行为）
+                logger.info(f"尝试自动查找最近的session: parent_mode={parent_mode}, child_mode={target_mode}")
+                session = session_manager.find_latest_session(
+                    parent_mode=parent_mode,
+                    child_mode=target_mode
+                )
+                if session:
+                    # 找到可复用的session
+                    session_id = session.session_id
+                    conversation_history = session.conversation_history
+                    logger.info(
+                        f"✅ 自动复用最近session: {session_id}, "
+                        f"历史消息数: {len(conversation_history)}, "
+                        f"最后更新: {session.updated_at}"
+                    )
+                else:
+                    # 没有找到可复用的session，创建新的
+                    session_id = self._generate_session_id(parent_mode, target_mode)
+                    is_new_session = True
+                    logger.info(f"❌ 未找到可复用session，创建新session: {session_id}")
 
             # 2. 动态导入（避免循环导入）
-            from app.agent.core.loop import ReActLoop
-            from app.agent.prompts.prompt_builder import build_react_system_prompt
+            from app.agent.react_agent import ReActAgent
 
-            # 3. 构建子Agent的系统提示词
-            sub_agent_prompt = build_react_system_prompt(mode=target_mode)
-
-            # 4. 创建子Agent实例（不限制迭代次数，由子Agent自行决定）
-            sub_agent_loop = ReActLoop(
-                memory_manager=memory_manager,
-                llm_planner=llm_planner,
-                tool_executor=tool_executor,
-                stream_enabled=False,  # 子Agent不需要流式输出
-                enable_reasoning=False  # 子Agent无需详细reasoning
-            )
-
-            # 5. 构建增强的查询（携带上下文）
+            # 3. 构建增强的查询（不包含系统提示，由 ReActAgent.analyze() 处理）
             enhanced_query = self._build_enhanced_query(
                 task_description,
-                context_data or {},
-                target_mode
+                target_mode,
+                context_supplement
             )
 
-            # 6. 执行子Agent（传入对话历史）
+            # 4. 创建临时子Agent实例（复用父Agent的配置）
+            # ⚠️ 关键：使用 ReActAgent.analyze() 以获得完整的记忆增强功能
+            # ⚠️ 不传递 memory_manager，让子Agent自己创建 UnifiedMemoryManager
+            sub_agent = ReActAgent(
+                max_iterations=30,  # 子Agent默认30次迭代
+                enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
+                tool_registry=tool_executor.tool_registry if tool_executor else None  # ✅ 传递工具注册表
+            )
+
+            # 5. 执行子Agent（传入所有必要参数）
             result_events = []
-            async for event in sub_agent_loop.run(
+            async for event in sub_agent.analyze(
                 user_query=enhanced_query,
-                manual_mode=target_mode,  # 强制使用指定模式
-                initial_messages=conversation_history if conversation_history else None  # ✅ 传入历史
+                session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
+                manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
+                enhance_with_history=True,  # ✅ 启用记忆增强
+                initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
+                user_identifier=None  # ⚠️ 使用模式专属记忆（不跨模式共享）
             ):
                 result_events.append(event)
 
@@ -243,15 +266,16 @@ class CallSubAgentTool(LLMTool):
                 "sub_agent_completed",
                 target_mode=target_mode,
                 status=final_result["status"],
+                answer_length=len(final_result.get("answer", "")),
                 iterations=len([e for e in result_events if e.get("type") == "tool_call"]),
                 session_id=session_id
             )
 
-            # 提取结构化数据（data_ids、chart_urls、statistics、tool_calls）
+            # 提取结构化数据
             structured_data = {
                 "data_ids": self._extract_data_ids(result_events),
-                "chart_urls": self._extract_chart_urls(result_events),
-                "statistics": self._extract_statistics(result_events),
+                "chart_urls": self._extract_chart_urls(result_events),  # 图片URL（前端渲染）
+                "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
 
@@ -265,22 +289,32 @@ class CallSubAgentTool(LLMTool):
                 result_events=result_events
             )
 
+            # ✅ 构建增强的metadata（包含子Agent的思考过程）
+            enhanced_metadata = {
+                "schema_version": "v2.0",
+                "generator": "call_sub_agent",
+                "sub_agent_mode": target_mode,
+                "iterations": len([e for e in result_events if e.get("type") == "tool_call"]),
+                "data_ids_count": len(structured_data["data_ids"]),
+                "chart_urls_count": len(structured_data["chart_urls"]),
+                "image_paths_count": len(structured_data["image_paths"]),
+                # ✅ 返回session_id给父Agent
+                "session_id": session_id,
+                "is_new_session": is_new_session
+            }
+
+            # ✅ 添加思考过程到metadata（父Agent可以使用）
+            if "thought" in final_result.get("data", {}):
+                enhanced_metadata["thought"] = final_result["data"]["thought"]
+            if "reasoning" in final_result.get("data", {}):
+                enhanced_metadata["reasoning"] = final_result["data"]["reasoning"]
+
             return {
                 "status": "success",
                 "success": True,
-                "result": final_result["answer"],
+                "result": final_result["answer"],  # ✅ LLM的最终答案（最重要）
                 "data": structured_data,
-                "metadata": {
-                    "schema_version": "v2.0",
-                    "generator": "call_sub_agent",
-                    "sub_agent_mode": target_mode,
-                    "iterations": len(result_events),
-                    "data_ids_count": len(structured_data["data_ids"]),
-                    "chart_urls_count": len(structured_data["chart_urls"]),
-                    # ✅ 返回session_id给父Agent
-                    "session_id": session_id,
-                    "is_new_session": is_new_session
-                },
+                "metadata": enhanced_metadata,
                 "summary": f"{self._get_mode_name(target_mode)}已完成任务"
             }
 
@@ -306,53 +340,74 @@ class CallSubAgentTool(LLMTool):
     def _build_enhanced_query(
         self,
         task_description: str,
-        context_data: Dict,
-        target_mode: str
+        target_mode: str,
+        context_supplement: Optional[str] = None
     ) -> str:
-        """构建增强的查询（携带上下文）"""
-        query_parts = [task_description]
+        """
+        构建增强的查询
 
-        if context_data:
-            query_parts.append("\n\n【上下文数据】")
-            for key, value in context_data.items():
-                if isinstance(value, (dict, list)):
-                    query_parts.append(f"- {key}: {str(value)[:300]}...")
-                else:
-                    query_parts.append(f"- {key}: {value}")
+        Args:
+            task_description: 用户原始查询（原封不动）
+            target_mode: 目标Agent模式
+            context_supplement: 上下文补充说明（可选）
 
-        # 根据目标模式添加提示
+        Returns:
+            增强后的查询字符串
+        """
+        query_parts = []
+
+        # 1. 添加用户原始查询（原封不动）
+        query_parts.append(task_description)
+
+        # 2. 添加上下文补充（如果有）
+        if context_supplement:
+            query_parts.append(f"\n\n【上下文补充】\n{context_supplement}")
+
+        # 3. 根据目标模式添加提示
         mode_hints = {
-            "assistant": "注意：你是作为子Agent被调用，专注完成上述办公任务即可。",
-            "expert": "注意：你是作为子Agent被调用，专注完成上述数据分析任务即可。",
-            "social": "注意：你是作为子Agent被调用，专注完成上述社交平台任务即可。",
-            "query": "注意：你是作为子Agent被调用，专注完成上述数据查询任务即可。",
-            "report": "注意：你是作为子Agent被调用，专注完成上述报告生成任务即可。",
-            "code": "注意：你是作为子Agent被调用，专注完成上述编程任务即可。",
+            "assistant": "你是作为子Agent被调用，专注完成上述办公任务即可。",
+            "social": "你是作为子Agent被调用，专注完成上述社交平台任务即可。",
+            "query": "你是作为子Agent被调用，专注完成上述数据查询任务即可。请解析用户的自然语言描述，选择合适的工具和参数。",
+            "report": "你是作为子Agent被调用，专注完成上述报告生成任务即可。",
+            "code": "你是作为子Agent被调用，专注完成上述编程任务即可。",
         }
-        query_parts.append(f"\n{mode_hints.get(target_mode, '')}")
+        query_parts.append(f"\n\n【系统提示】\n{mode_hints.get(target_mode, '')}")
 
         return "\n".join(query_parts)
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""
-        # 查找agent_finish事件
+        # ✅ 优先查找agent_finish事件（包含完整的answer）
         for event in reversed(events):
             if event.get("type") == "agent_finish":
-                return {
+                result = {
                     "status": "success",
                     "answer": event.get("answer", ""),
                     "data": event.get("data", {})
                 }
+                logger.info(
+                    "agent_finish_event_found",
+                    answer_length=len(result["answer"]),
+                    has_data=bool(event.get("data"))
+                )
+                return result
 
-        # 查找最后一个observation事件
+        # 回退：查找最后一个observation事件
         for event in reversed(events):
             if event.get("type") == "observation":
-                return {
+                result = {
                     "status": "success",
                     "answer": event.get("content", ""),
                     "data": event.get("data", {})
                 }
+                logger.warning(
+                    "agent_finish_event_not_found_using_observation",
+                    answer_length=len(result["answer"]),
+                    observation_keys=list(event.get("data", {}).keys()) if isinstance(event.get("data"), dict) else []
+                )
+                return result
 
+        logger.error("no_result_event_found_in_sub_agent_events")
         return {
             "status": "failed",
             "answer": "子Agent未返回结果",
@@ -363,7 +418,6 @@ class CallSubAgentTool(LLMTool):
         """获取模式的友好名称"""
         mode_names = {
             "assistant": "助手Agent",
-            "expert": "专家Agent",
             "social": "社交Agent",
             "query": "问数Agent",
             "report": "报告Agent",
@@ -389,52 +443,78 @@ class CallSubAgentTool(LLMTool):
         return list(set(data_ids))  # 去重
 
     def _extract_chart_urls(self, events: list) -> list:
-        """从事件流中提取所有图表URL"""
+        """从事件流中提取所有图表URL（用于前端渲染）"""
+        import re
         chart_urls = []
         for event in events:
             if event.get("type") == "observation":
                 # 从markdown_image中提取
                 content = event.get("content", "")
                 if "![" in content:
-                    import re
                     urls = re.findall(r'\(/api/image/[^\)]+\)', content)
                     chart_urls.extend([url[1:-1] for url in urls])
-                # 从visuals字段中提取
+
+                # 从visuals字段中提取（支持多种嵌套结构）
+                # 1. 直接在event的visuals字段
                 if "visuals" in event and isinstance(event["visuals"], list):
                     for visual in event["visuals"]:
                         if isinstance(visual, dict):
                             if "payload" in visual and isinstance(visual["payload"], dict):
                                 if "image_url" in visual["payload"]:
                                     chart_urls.append(visual["payload"]["image_url"])
+
+                # 2. 在observation.visuals字段
+                obs_data = event.get("data", {})
+                observation = obs_data.get("observation", {})
+                if "visuals" in observation and isinstance(observation["visuals"], list):
+                    for visual in observation["visuals"]:
+                        if isinstance(visual, dict):
+                            if "payload" in visual and isinstance(visual["payload"], dict):
+                                if "image_url" in visual["payload"]:
+                                    chart_urls.append(visual["payload"]["image_url"])
+
                 # 从data字段中的chart_urls数组提取
                 if "data" in event and isinstance(event["data"], dict):
                     if "chart_urls" in event["data"] and isinstance(event["data"]["chart_urls"], list):
                         chart_urls.extend(event["data"]["chart_urls"])
         return list(set(chart_urls))  # 去重
 
-    def _extract_statistics(self, events: list) -> dict:
-        """从事件流中提取统计摘要"""
-        statistics = {}
+    def _extract_image_paths(self, events: list) -> list:
+        """从事件流中提取所有图片本地路径（用于文件操作）"""
+        image_paths = []
         for event in events:
             if event.get("type") == "observation":
-                # 从result字段提取统计信息
-                if "result" in event and isinstance(event["result"], dict):
-                    for city, data in event["result"].items():
-                        if isinstance(data, dict):
-                            # 提取关键统计指标
-                            stats = {
-                                "composite_index": data.get("composite_index"),
-                                "exceed_days": data.get("exceed_days") or data.get("total_exceed_days"),
-                                "compliance_rate": data.get("compliance_rate"),
-                                "statistical_concentrations": data.get("statistical_concentrations")
-                            }
-                            # 过滤None值
-                            statistics[city] = {k: v for k, v in stats.items() if v is not None}
-                # 从data字段中的statistics提取
-                if "data" in event and isinstance(event["data"], dict):
-                    if "statistics" in event["data"] and isinstance(event["data"]["statistics"], dict):
-                        statistics.update(event["data"]["statistics"])
-        return statistics
+                obs_data = event.get("data", {})
+                observation = obs_data.get("observation", {})
+
+                # 1. 从observation的image_path字段提取
+                if isinstance(observation, dict):
+                    if "image_path" in observation:
+                        image_paths.append(observation["image_path"])
+                    # 从visuals字段中提取本地路径
+                    if "visuals" in observation and isinstance(observation["visuals"], list):
+                        for visual in observation["visuals"]:
+                            if isinstance(visual, dict):
+                                # 从payload中提取image_path
+                                if "payload" in visual and isinstance(visual["payload"], dict):
+                                    payload = visual["payload"]
+                                    if "image_path" in payload:
+                                        image_paths.append(payload["image_path"])
+                                    # 同时提取file_path（有些工具用这个字段）
+                                    if "file_path" in payload:
+                                        image_paths.append(payload["file_path"])
+
+                # 2. 从data字段的根级别提取
+                if isinstance(obs_data, dict):
+                    if "image_path" in obs_data:
+                        image_paths.append(obs_data["image_path"])
+                    if "file_path" in obs_data:
+                        # 判断是否为图片文件（.png/.jpg/.jpeg等）
+                        file_path = obs_data["file_path"]
+                        if file_path and any(ext in file_path.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg']):
+                            image_paths.append(file_path)
+
+        return list(set(image_paths))  # 去重
 
     def _extract_tool_calls(self, events: list) -> list:
         """从事件流中提取工具调用记录"""
@@ -498,20 +578,14 @@ class CallSubAgentTool(LLMTool):
             "timestamp": datetime.now().isoformat()
         })
 
-        # 提取并添加data_ids和visual_ids
+        # 提取并添加data_ids（visual_ids不再提取，社交模式用chart_urls渲染图片）
         data_ids = self._extract_data_ids(result_events)
-        visual_ids = self._extract_visual_ids(result_events)
 
         # 去重后添加
         existing_data_ids = set(session.data_ids)
         for data_id in data_ids:
             if data_id not in existing_data_ids:
                 session.data_ids.append(data_id)
-
-        existing_visual_ids = set(session.visual_ids)
-        for visual_id in visual_ids:
-            if visual_id not in existing_visual_ids:
-                session.visual_ids.append(visual_id)
 
         # 保存session（更新时间戳）
         session_manager.save_session(session, update_timestamp=True)
@@ -520,24 +594,5 @@ class CallSubAgentTool(LLMTool):
             "session_updated",
             session_id=session_id,
             conversation_length=len(session.conversation_history),
-            data_count=len(session.data_ids),
-            visual_count=len(session.visual_ids)
+            data_count=len(session.data_ids)
         )
-
-    def _extract_visual_ids(self, events: list) -> list:
-        """从事件流中提取visual_ids"""
-        visual_ids = []
-        for event in events:
-            if event.get("type") == "observation":
-                # 从visuals字段中提取
-                if "visuals" in event and isinstance(event["visuals"], list):
-                    for visual in event["visuals"]:
-                        if isinstance(visual, dict) and "id" in visual:
-                            visual_ids.append(visual["id"])
-                # 从data字段中的visuals提取
-                if "data" in event and isinstance(event["data"], dict):
-                    if "visuals" in event["data"] and isinstance(event["data"]["visuals"], list):
-                        for visual in event["data"]["visuals"]:
-                            if isinstance(visual, dict) and "id" in visual:
-                                visual_ids.append(visual["id"])
-        return list(set(visual_ids))  # 去重

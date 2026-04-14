@@ -205,46 +205,6 @@ class AgentBridge:
                            error=str(e),
                            exc_info=True)
 
-    def _is_preferences_response(self, content: str) -> bool:
-        """
-        检测消息是否为偏好配置响应
-
-        Args:
-            content: 消息内容
-
-        Returns:
-            是否为偏好配置响应
-        """
-        import re
-
-        # 检测模式：
-        # 1. 包含数字+字母的组合（如 "1A 2B 3C 4B"）
-        # 2. 包含"默认"或"default"
-        # 3. 包含风格关键词（如"轻松随意"、"正式专业"等）
-
-        content_upper = content.strip().upper()
-
-        # 检查数字+字母模式
-        if re.search(r'\d[ABCD]', content_upper):
-            return True
-
-        # 检查"默认"
-        if "默认" in content or "DEFAULT" in content_upper:
-            return True
-
-        # 检查风格关键词
-        style_keywords = [
-            "轻松随意", "正式专业", "技术专业", "通俗易懂",
-            "纯文本", "Markdown", "结构化",
-            "简洁", "适中", "详细",
-            "表情", "Emoji"
-        ]
-        for keyword in style_keywords:
-            if keyword in content:
-                return True
-
-        return False
-
     async def _process_message(self, msg: InboundMessage) -> None:
         """
         Process an inbound message through the agent.
@@ -298,17 +258,17 @@ class AgentBridge:
             if self.mode == "social":
                 preferences_manager = UserPreferences(social_user_id)
 
-                # ⚠️ 重要：先检查是否是偏好配置响应（即使是新用户也可能在回复偏好）
-                if self._is_preferences_response(msg.content):
-                    logger.info("preferences_response_detected",
+                # ⚠️ 检查是否在等待偏好配置响应（仅新用户首次对话时触发）
+                if preferences_manager.is_waiting_preferences():
+                    logger.info("waiting_preferences_response_detected",
                                user_id=social_user_id,
                                content_preview=msg.content[:50])
 
-                    # 解析用户响应
+                    # 尝试解析用户响应
                     parsed_prefs = preferences_manager.parse_preferences_response(msg.content)
 
                     if parsed_prefs:
-                        # 保存用户偏好
+                        # 保存用户偏好（会自动清除等待状态）
                         preferences_manager.set_preferences(**parsed_prefs)
 
                         # 发送确认消息
@@ -337,11 +297,14 @@ class AgentBridge:
                                       content=msg.content)
                         return  # 结束处理
 
-                # 检查是否为新用户（只有在不是偏好响应的情况下才检查）
+                # 检查是否为新用户
                 if preferences_manager.is_new_user():
                     logger.info("new_user_detected",
                                user_id=social_user_id,
                                channel=msg.channel)
+
+                    # 设置等待偏好配置状态
+                    preferences_manager.set_waiting_preferences()
 
                     # 发送欢迎消息
                     welcome_msg = OutboundMessage(
@@ -811,9 +774,11 @@ class AgentBridge:
             start_offset: 起始偏移量
         """
         from app.social.memory_store import ImprovedMemoryStore
+        from pathlib import Path
 
-        # 1. 创建改进版 MemoryStore
-        memory_store = ImprovedMemoryStore(user_id=social_user_id)
+        # 1. 创建改进版 MemoryStore（传递正确的 workspace）
+        social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+        memory_store = ImprovedMemoryStore(user_id=social_user_id, workspace=social_workspace)
 
         # 2. 提取要合并的消息（从 start_offset 开始）
         messages_to_consolidate = messages[start_offset:] if start_offset > 0 else messages

@@ -170,13 +170,13 @@ def _sanitize_floats(obj):
 
 
 @router.post("/{session_id}/restore")
-async def restore_session(session_id: str, message_limit: int = 5):
+async def restore_session(session_id: str, message_limit: int = 100):
     """
     恢复会话（数据库层分页加载：只返回最新N条消息）
 
     Args:
         session_id: 会话ID
-        message_limit: 首次加载的最新消息数量，默认5
+        message_limit: 首次加载的最新消息数量，默认100
 
     Returns:
         会话元数据 + 最新N条消息 + 分页状态

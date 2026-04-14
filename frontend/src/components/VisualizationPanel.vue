@@ -101,7 +101,7 @@
 
           <!-- 图表 -->
           <ChartPanel
-            v-else-if="['chart', 'pie', 'bar', 'line', 'timeseries', 'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries', 'facet_timeseries', 'radar', 'wind_rose', 'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes((viz.type || '').toLowerCase())"
+            v-else-if="isChartType(viz)"
             :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
             :key="viz.id || viz.title || `chart_${index}`"
             :data="viz"
@@ -119,7 +119,7 @@
           <ImagePanel
             v-else-if="viz.type === 'image'"
             :ref="el => setChartRef(viz.id || `viz_${index}`, el)"
-            :src="viz.image_url || viz.markdown_image?.match(/]\((.+?)\)/)?.[1] || viz.data"
+            :src="viz.image_url || viz.markdown_image?.match(/]\((.+?)\)/)?.[1] || (typeof viz.data === 'string' ? viz.data : viz.data?.url)"
             @ready="onPanelReady"
           />
 
@@ -161,7 +161,6 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
-import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
 import KnowledgeSourcePanel from './visualization/panels/KnowledgeSourcePanel.vue'
 import MapPanel from './visualization/MapPanel.vue'
 import TrajectoryMapPanel from './visualization/TrajectoryMapPanel.vue'
@@ -211,11 +210,8 @@ const mapRefs = ref({})                    // 地图组件引用
 // ==================== 清理函数（需要在defineExpose之前定义）================
 const clearChartRefs = () => {
   const chartIds = Object.keys(chartRefs.value)
-  for (const chartId of chartIds) {
-    chartScreenshotManager.unregisterChart(chartId)
-  }
   chartRefs.value = {}
-  console.log('[VisualizationPanel] 清理所有图表引用并注销截图管理器')
+  console.log('[VisualizationPanel] 清理所有图表引用')
 }
 
 // ==================== 图表刷新方法 ====================
@@ -418,7 +414,6 @@ const setChartRef = (vizId, el) => {
       width: el?.$el?.clientWidth || el?.clientWidth || null,
       height: el?.$el?.clientHeight || el?.clientHeight || null
     })
-    // 注意：图表注册现在由 ChartPanel 组件自己处理（通过 chartScreenshotManager）
   }
 }
 
@@ -503,13 +498,6 @@ const handleExportComplete = () => {
   showExportPreview.value = false
   exportMode.value = false
   selectedChartIds.value = []
-}
-
-// 判断是否为图表类型（需要获取状态）
-const isChartType = (type) => {
-  const normalizedType = (type || '').toLowerCase()
-  return ['chart', 'pie', 'bar', 'line', 'timeseries', 'radar', 'wind_rose',
-          'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d', 'profile', 'heatmap'].includes(normalizedType)
 }
 
 // 判断是否为多专家模式
@@ -672,10 +660,9 @@ const visualizations = computed(() => {
     })
     console.log('[VisualizationPanel] 转换后可视化类型:', allVisualizations.map(v => ({id: v.id, type: v.type})))
   }
-  // 普通模式：从 props.content 获取可视化对象
+  // 普通模式：从 props.content 和 props.history 获取所有可视化对象
   else {
-    // props.history 只用于 hasKnowledgeSources 和 knowledgeSources 检查 sources 字段
-
+    // 1. 从当前消息的 visuals 获取
     if (props.content) {
       if (props.content?.visuals && Array.isArray(props.content.visuals)) {
         console.log('[VisualizationPanel] 普通模式 - 从content.visuals获取，数量:', props.content.visuals.length)
@@ -697,12 +684,49 @@ const visualizations = computed(() => {
         allVisualizations = allVisualizations.concat([props.content])
       }
     }
+
+    // 2. 从历史消息中收集所有图表（按时间顺序）
+    if (props.history && Array.isArray(props.history)) {
+      console.log('[VisualizationPanel] 开始从历史消息收集图表，历史消息数量:', props.history.length)
+
+      let foundCount = 0
+      props.history.forEach((msg, msgIndex) => {
+        // 只处理 observation 类型的消息（图表在observation中）
+        const msgType = msg.role || msg.type
+        if (msgType !== 'observation') return
+
+        // 检查消息的 data.observation.visuals（正确路径）
+        const obs = msg.data?.observation
+        if (!obs) return
+
+        const visuals = obs.visuals
+        if (visuals && Array.isArray(visuals) && visuals.length > 0) {
+          console.log(`[VisualizationPanel] 从历史消息[${msgIndex}]获取图表，数量:`, visuals.length, '消息ID:', msg.id)
+          foundCount += visuals.length
+          const historyVisuals = visuals.map((v) => {
+            if (v.payload) {
+              return { ...v.payload, meta: v.meta }
+            } else {
+              return v
+            }
+          })
+          allVisualizations = allVisualizations.concat(historyVisuals)
+        }
+      })
+      console.log('[VisualizationPanel] 历史消息收集完成，找到图表数量:', foundCount, '当前图表总数:', allVisualizations.length)
+    } else {
+      console.log('[VisualizationPanel] 历史消息不可用:', {
+        hasHistory: !!props.history,
+        isArray: Array.isArray(props.history),
+        length: props.history?.length
+      })
+    }
   }
 
   console.log('[VisualizationPanel] 过滤前的可视化数量:', allVisualizations.length)
 
-  // 【关键修复】过滤掉已经通过URL直接渲染的图片（在对话区已显示）
-  allVisualizations = allVisualizations.filter(viz => !isDirectUrlImage(viz))
+  // 注释掉过滤逻辑，允许所有图片在右侧面板显示
+  // allVisualizations = allVisualizations.filter(viz => !isDirectUrlImage(viz))
 
   // 【关键修复】优先保留 type=image 的去重逻辑
   const seen = new Map()  // key -> viz (存储保留的可视化)
@@ -895,9 +919,75 @@ const typeLabelMap = {
   ec_oc_scatter: 'EC/OC散点图',
   ion_timeseries: '离子时序图',
   crustal_boxplot: '地壳元素箱线图',
+  polar_line: '极坐标折线图',
+  polar_heatmap: '极坐标热力图',
 }
 
 const getTypeLabel = (type) => typeLabelMap[type] || '可视化'
+
+// 判断是否为图表类型（支持动态检测 ECharts 配置）
+const isChartType = (viz) => {
+  // 确保 viz 是有效对象
+  if (!viz || typeof viz !== 'object') {
+    return false
+  }
+
+  // 安全地获取类型字符串
+  const type = String(viz.type || '').toLowerCase()
+
+  // 已知图表类型白名单
+  const knownChartTypes = [
+    'chart', 'pie', 'bar', 'polar_bar', 'line', 'timeseries',
+    'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries',
+    'facet_timeseries', 'radar', 'wind_rose', 'scatter',
+    'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d',
+    'profile', 'heatmap', 'polar_line', 'polar_heatmap'
+  ]
+
+  // 如果类型在白名单中，直接返回 true
+  if (knownChartTypes.includes(type)) {
+    return true
+  }
+
+  // 动态检测：检查 data 是否包含有效的 ECharts 配置
+  const chartData = viz.data
+  if (!chartData || typeof chartData !== 'object') {
+    return false
+  }
+
+  // 检测标准 ECharts 配置特征
+  const hasSeries = 'series' in chartData && Array.isArray(chartData.series)
+
+  // 极坐标图表检测（polar + angleAxis + radiusAxis + series）
+  const hasPolarConfig = 'polar' in chartData &&
+                        'angleAxis' in chartData &&
+                        'radiusAxis' in chartData &&
+                        hasSeries
+
+  // 标准图表检测（xAxis + yAxis + series）
+  const hasStandardConfig = ('xAxis' in chartData || 'xAxis3D' in chartData) &&
+                           ('yAxis' in chartData || 'yAxis3D' in chartData) &&
+                           hasSeries
+
+  // 雷达图检测
+  const hasRadarConfig = 'radar' in chartData && hasSeries
+
+  // 3D图表检测
+  const has3DConfig = 'grid3D' in chartData && hasSeries
+
+  // 饼图检测
+  const hasPieConfig = hasSeries && chartData.series.some(s => s.type === 'pie')
+
+  // 如果包含任何有效配置特征，认为是图表类型
+  if (hasPolarConfig || hasStandardConfig || hasRadarConfig || has3DConfig || hasPieConfig) {
+    console.log('[VisualizationPanel] 动态检测到图表类型:', type, '配置特征:', {
+      hasPolarConfig, hasStandardConfig, hasRadarConfig, has3DConfig, hasPieConfig
+    })
+    return true
+  }
+
+  return false
+}
 
 // 判断是否为轨迹地图
 const isTrajectoryMap = (viz) => {

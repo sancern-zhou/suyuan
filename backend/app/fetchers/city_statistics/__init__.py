@@ -5,6 +5,13 @@ City Statistics Fetcher Module
 """
 
 from app.fetchers.city_statistics.city_statistics_fetcher import CityStatisticsFetcher
+from app.fetchers.city_statistics.city_statistics_old_standard_fetcher import CityStatisticsOldStandardFetcher
 from app.fetchers.city_statistics.province_statistics_fetcher import ProvinceStatisticsFetcher
+from app.fetchers.city_statistics.province_statistics_old_standard_fetcher import ProvinceStatisticsOldStandardFetcher
 
-__all__ = ['CityStatisticsFetcher', 'ProvinceStatisticsFetcher']
+__all__ = [
+    'CityStatisticsFetcher',
+    'CityStatisticsOldStandardFetcher',
+    'ProvinceStatisticsFetcher',
+    'ProvinceStatisticsOldStandardFetcher'
+]

@@ -1107,6 +1107,21 @@ class QueryGDSuncereDataTool:
                 standardized_count=len(standardized_records)
             )
 
+            # 补充站点类型信息
+            for record in standardized_records:
+                code = record.get("station_code", "")
+                station_meta = cls.geo_resolver.get_station_meta(code)
+                if station_meta:
+                    type_id = station_meta.get("type_id")
+                    if type_id:
+                        # 将 type_id 转换为中文名称
+                        type_name = cls.geo_resolver._get_type_name(type_id)
+                        record["station_type"] = type_name
+                    else:
+                        record["station_type"] = "未知"
+                else:
+                    record["station_type"] = "未知"
+
             # 对日数据浓度值应用修约规则（按原始监测数据规则：CO保留1位小数，其他取整）
             def safe_float(value, default=0.0):
                 if value is None or value == '' or value == '-':
@@ -1205,7 +1220,12 @@ class QueryGDSuncereDataTool:
             # 保存到数据上下文
             data_id = context.save_data(
                 data=standardized_records,
-                schema="air_quality_unified"
+                schema="air_quality_unified",
+                metadata={
+                    "field_mapping_applied": True,
+                    "source": "gd_suncere_api",
+                    "query_type": "station_day"
+                }
             )
 
             # 智能采样：如果记录数超过24条，进行采样
@@ -2146,16 +2166,30 @@ def execute_query_gd_suncere_station_hour_real(
                 "gd_suncere_station_hour_real_weather_fields_included"
             )
 
-        # 补充 station_name 字段（优先使用 API 返回的 name 字段）
+        # 补充 station_name 和 station_type 字段
         for record in standardized_records:
             # 优先使用 API 返回的 name 字段（站点中文名称）
             station_name = record.get("name", "")
+            code = record.get("station_code", "")
+
             if station_name:
                 record["station_name"] = station_name
             else:
                 # 降级：通过 station_code 解析站点名称
-                code = record.get("station_code", "")
                 record["station_name"] = GeoMappingResolver.resolve_station_name(code)
+
+            # 补充站点类型信息
+            station_meta = GeoMappingResolver.get_station_meta(code)
+            if station_meta:
+                type_id = station_meta.get("type_id")
+                if type_id:
+                    # 将 type_id 转换为中文名称
+                    type_name = GeoMappingResolver._get_type_name(type_id)
+                    record["station_type"] = type_name
+                else:
+                    record["station_type"] = "未知"
+            else:
+                record["station_type"] = "未知"
 
         # 对小时数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
         def safe_float(value, default=0.0):
@@ -2948,6 +2982,18 @@ ROUNDING_PRECISION = {
     'other': {
         'composite_index': 3,      # 综合指数，保留3位
         'single_index': 3,         # 单项质量指数，保留3位（中间计算值）
+    },
+    # 旧标准统计数据（HJ 633-2013）- 与新标准不同
+    # CO保留1位小数，其他污染物取整
+    'statistical_data_old': {
+        'PM2_5': 0,      # μg/m³，取整
+        'PM10': 0,       # μg/m³，取整
+        'SO2': 0,        # μg/m³，取整
+        'NO2': 0,        # μg/m³，取整
+        'O3_8h': 0,      # μg/m³，取整
+        'CO': 1,         # mg/m³，保留1位
+        'NO': 0,         # μg/m³，取整
+        'NOx': 0,        # μg/m³，取整
     }
 }
 

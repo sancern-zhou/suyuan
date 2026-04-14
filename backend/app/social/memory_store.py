@@ -74,7 +74,18 @@ class MemoryStore(BaseMemoryStore):
         # 社交模式使用特殊的工作空间路径（向后兼容）
         # 旧格式：{workspace}/{safe_user_id}/
         # 新格式（其他模式）：{workspace}/{mode}/{safe_user_id}/
-        social_workspace = workspace or Path("backend_data_registry/social/memory")
+
+        # 解析相对路径为绝对路径（避免工作目录问题）
+        if workspace is None:
+            # 默认使用绝对路径
+            social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+        elif not workspace.is_absolute():
+            # 如果是相对路径，转换为绝对路径（相对于backend目录）
+            current_file = Path(__file__).resolve()
+            backend_dir = current_file.parent.parent  # app/social -> app -> backend
+            social_workspace = (backend_dir / workspace).resolve()
+        else:
+            social_workspace = workspace
 
         # 调用父类构造函数，传递 mode="social"
         super().__init__(
@@ -129,12 +140,47 @@ class ImprovedMemoryStore(BaseImprovedMemoryStore):
         if 'mode' not in kwargs:
             kwargs['mode'] = 'social'
 
+        # ✅ 提取参数用于路径覆盖
+        user_id = kwargs.get('user_id')
+        workspace = kwargs.get('workspace')
+
+        # 解析社交模式专用工作空间
+        if workspace is None:
+            from pathlib import Path
+            social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+        elif not workspace.is_absolute():
+            from pathlib import Path
+            current_file = Path(__file__).resolve()
+            backend_dir = current_file.parent.parent
+            social_workspace = (backend_dir / workspace).resolve()
+        else:
+            social_workspace = workspace
+
+        # ✅ 更新 kwargs 中的 workspace，确保父类使用正确的路径
+        kwargs['workspace'] = social_workspace
+
+        # 调用父类构造函数
         super().__init__(*args, **kwargs)
+
+        # ✅ 路径覆盖逻辑（与 MemoryStore 一致）
+        # 父类会创建 {workspace}/social/{safe_user_id}/
+        # 我们需要修改为 {workspace}/{safe_user_id}/（用户隔离格式）
+        if user_id and user_id != "global":
+            safe_user_id = user_id.replace(":", "_")
+            # 重新设置工作空间为用户隔离格式
+            self.workspace = social_workspace / safe_user_id
+            self.workspace.mkdir(parents=True, exist_ok=True)
+            # 重新设置文件路径
+            self.memory_file = self.workspace / "MEMORY.md"
+            self.history_file = self.workspace / "HISTORY.md"
+            # 重新初始化文件（如果不存在）
+            self._init_files()
 
         logger.debug(
             "social_improved_memory_store_initialized",
             user_id=self.user_id,
-            mode=self.mode
+            mode=self.mode,
+            workspace=str(self.workspace)
         )
 
 

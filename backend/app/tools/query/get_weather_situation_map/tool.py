@@ -10,6 +10,7 @@ LLM可调用的天气形势图解读工具
 """
 from typing import Dict, Any, Optional
 from datetime import datetime
+import os
 import structlog
 import httpx
 
@@ -25,10 +26,10 @@ class GetWeatherSituationMapTool(LLMTool):
     获取中央气象台天气形势图并使用AI进行专业解读
     """
 
-    # 通义千问VL API配置（硬编码）
-    QWEN_VL_API_KEY = "sk-6b11fe1b4ed64504990e8ace35f976fb"
-    QWEN_VL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    QWEN_VL_MODEL = "qwen-vl-max-latest"
+    # 通义千问VL API配置（从环境变量读取）
+    QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
+    QWEN_VL_BASE_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    QWEN_VL_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")
 
     # 天气形势图URL模板
     WEATHER_MAP_BASE_URL = "http://data.suncereltd.cn:8313/1001"

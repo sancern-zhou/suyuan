@@ -785,7 +785,7 @@ class ImprovedMemoryStore(MemoryStore):
         cleaned_content = '\n'.join(valid_lines)
 
         # 硬性长度限制
-        max_length = 1500
+        max_length = 5000
         if len(cleaned_content) > max_length:
             logger.warning(
                 "memory_too_long_truncated",

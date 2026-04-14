@@ -291,6 +291,14 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids  # ✅ 传递知识库ID列表
             )
 
+            # ✅ 设置记忆文件路径到上下文构建器（用于系统提示词）
+            if 'memory_file_path' in locals():
+                react_loop.context_builder.memory_file_path = memory_file_path
+                logger.debug(
+                    "memory_file_path_set_to_context_builder",
+                    memory_file_path=memory_file_path
+                )
+
             async for event in react_loop.run(
                 user_query=enhanced_query,  # ✅ 传递增强查询给LLM（包含记忆和附件）
                 original_query=original_query,  # ✅ 传递原始查询用于保存到历史

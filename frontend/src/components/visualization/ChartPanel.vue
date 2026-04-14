@@ -9,7 +9,31 @@
         class="chart-canvas"
         ref="chartContainer"
         :style="{ width: chartWidth }"
+        @contextmenu="handleChartContextMenu"
       ></div>
+    </div>
+
+    <!-- 自定义右键菜单 -->
+    <div
+      v-if="contextMenu.visible"
+      class="chart-context-menu"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+    >
+      <div class="context-menu-item" @click="copyImageToClipboard">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+        <span>复制图片</span>
+      </div>
+      <div class="context-menu-item" @click="saveImageAsPNG">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <span>保存图片</span>
+      </div>
     </div>
   </div>
 </template>
@@ -18,7 +42,6 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
-import { chartScreenshotManager } from '@/utils/chartScreenshotManager'
 
 const props = defineProps({
   data: {
@@ -35,6 +58,14 @@ const emit = defineEmits(['ready'])
 
 const chartContainer = ref(null)
 
+// 右键菜单状态
+const contextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  imageData: null
+})
+
 // 动态计算图表高度：根据图表类型返回不同高度
 const dynamicHeight = computed(() => {
   // 如果外部设置了自定义高度，优先使用
@@ -47,7 +78,8 @@ const dynamicHeight = computed(() => {
 
   const heightMap = {
     'pie': '320px',
-    'bar': '380px',
+    'bar': '450px',  // 增加高度，为极坐标柱状图（污染玫瑰图）预留空间
+    'polar_bar': '500px',  // 极坐标柱状图（风玫瑰图）
     'line': '380px',
     'timeseries': '420px',
     'stacked_timeseries': '480px',  // 堆叠时序图（多离子堆叠+PM2.5双Y轴）
@@ -56,7 +88,7 @@ const dynamicHeight = computed(() => {
     'facet_timeseries': '600px',  // 分面时序图（多污染物×多站点）
     'heatmap': '480px',
     'radar': '420px',
-    'wind_rose': '380px',
+    'wind_rose': '480px',  // 增加高度，为标题、轴名称、图例预留空间
     'profile': '550px',
     'map': '600px',
     'scatter3d': '520px',
@@ -91,37 +123,31 @@ const getChartIdForLog = () => {
 const isContainerVisible = () => {
   const el = chartContainer.value
   if (!el) return false
+
   const { clientWidth, clientHeight } = el
-  const ok = clientWidth > 0 && clientHeight > 0
-  if (!ok) {
-    logContainerMetrics(el, 'check_visible_fail')
+  if (clientWidth <= 0 || clientHeight <= 0) {
+    return false
   }
-  return ok
+
+  // 检查父容器是否被v-show隐藏
+  let parent = el.parentElement
+  let depth = 0
+  const maxDepth = 5
+
+  while (parent && depth < maxDepth) {
+    const style = window.getComputedStyle(parent)
+    if (style.display === 'none') {
+      return false
+    }
+    parent = parent.parentElement
+    depth++
+  }
+
+  return true
 }
 
 const logContainerMetrics = (el, label = 'container') => {
-  if (!el) {
-    console.log('[ChartPanel] logContainerMetrics: 无容器', { label })
-    return
-  }
-  const parent = el.parentElement
-  const grand = parent?.parentElement
-  const rect = el.getBoundingClientRect()
-  console.log('[ChartPanel] logContainerMetrics', {
-    label,
-    chartId: getChartIdForLog(),
-    title: props.data?.title,
-    width: el.clientWidth,
-    height: el.clientHeight,
-    rectWidth: rect?.width,
-    rectHeight: rect?.height,
-    parentDisplay: parent ? getComputedStyle(parent).display : null,
-    parentWidth: parent?.clientWidth,
-    parentHeight: parent?.clientHeight,
-    grandDisplay: grand ? getComputedStyle(grand).display : null,
-    grandWidth: grand?.clientWidth,
-    grandHeight: grand?.clientHeight
-  })
+  // 调试用，生产环境可忽略
 }
 const handleWindowResize = () => {
   updateChartWidth()
@@ -129,25 +155,14 @@ const handleWindowResize = () => {
 
 // 检查是否有有效数据（v3.0格式）
 const hasValidData = computed(() => {
-  if (!props.data) {
-    console.log('[ChartPanel] hasValidData: false, props.data is null')
-    return false
-  }
+  if (!props.data) return false
 
   const chartType = props.data.type
-  if (!chartType) {
-    console.log('[ChartPanel] hasValidData: false, missing chart type')
-    return false
-  }
+  if (!chartType) return false
 
-  // v3.0格式：数据统一在data字段中
   const chartData = props.data.data
-  if (!chartData) {
-    console.log('[ChartPanel] hasValidData: false, missing data field')
-    return false
-  }
+  if (!chartData) return false
 
-  console.log('[ChartPanel] hasValidData: true', chartType)
   return true
 })
 
@@ -284,35 +299,55 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
     return null
   }
 
-  // 特殊图表类型检测（饼图、雷达图、3D图表）
+  console.log('[detectAndOptimizeEChartsConfig] chartType:', chartType, 'has polar:', 'polar' in chartData)
+
+  // 特殊图表类型检测 - 检测是否为完整配置
+  let isCompleteConfig = false
   if (chartType) {
-    // 饼图检测：包含 title 和 series 字段
     if (chartType === 'pie' && 'title' in chartData && 'series' in chartData) {
-      console.log('[ChartPanel] 检测到完整饼图配置')
-      return chartData
+      isCompleteConfig = true
     }
 
-    // 雷达图检测：包含 radar 和 series 字段
     if (chartType === 'radar' && 'radar' in chartData && 'series' in chartData) {
-      console.log('[ChartPanel] 检测到完整雷达图配置')
-      return chartData
+      isCompleteConfig = true
     }
 
-    // 3D图表检测：包含 grid3D 或 xAxis3D/yAxis3D/zAxis3D
+    if (chartType === 'scatter' && 'series' in chartData) {
+      isCompleteConfig = true
+    }
+
     if (chartType.includes('3d') &&
         ('grid3D' in chartData ||
          ('xAxis3D' in chartData && 'yAxis3D' in chartData && 'zAxis3D' in chartData))) {
-      console.log('[ChartPanel] 检测到完整3D图表配置')
-      return chartData
+      isCompleteConfig = true
+    }
+
+    // bar 类型的极坐标图表（污染玫瑰图）
+    if (chartType === 'bar' && 'polar' in chartData && 'series' in chartData) {
+      isCompleteConfig = true
+    }
+
+    // polar_bar 类型的极坐标图表（风玫瑰图）
+    if (chartType === 'polar_bar' && 'polar' in chartData && 'series' in chartData) {
+      isCompleteConfig = true
     }
   }
 
-  // 标准图表检测：包含 xAxis、yAxis、series
+  // 极坐标图表检测
+  if ('polar' in chartData && 'angleAxis' in chartData && 'radiusAxis' in chartData && 'series' in chartData) {
+    isCompleteConfig = true
+  }
+
+  // 如果是完整配置，返回它（会在 buildOption 最后通过 optimizeChartLayout 统一优化）
+  if (isCompleteConfig) {
+    console.log('[detectAndOptimizeEChartsConfig] 识别为完整配置')
+    return chartData
+  }
+
+  // 标准图表检测
   if (!('xAxis' in chartData) || !('yAxis' in chartData) || !('series' in chartData)) {
     return null
   }
-
-  console.log('[ChartPanel] 检测到完整 ECharts 配置格式')
 
   // 优化配置
   const optimized = { ...chartData }
@@ -329,11 +364,6 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
       nameGap: optimized.yAxis.nameGap || 35,
       nameLocation: optimized.yAxis.nameLocation || 'middle'
     }
-    console.log('[ChartPanel] 优化 yAxis.name 配置:', {
-      name: optimized.yAxis.name,
-      nameLocation: optimized.yAxis.nameLocation,
-      nameGap: optimized.yAxis.nameGap
-    })
   }
 
   // 优化 grid.left
@@ -346,8 +376,160 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
           ...optimized.grid,
           left: '6%'
         }
-        console.log('[ChartPanel] 优化 grid.left 配置:', '6%')
       }
+    }
+  }
+
+  return optimized
+}
+
+/**
+ * 统一优化图表布局
+ * 确保标题、图例、图表内容之间有合适的间距
+ * @param {Object} option - ECharts 配置
+ * @returns {Object} 优化后的配置
+ */
+const optimizeChartLayout = (option) => {
+  const optimized = { ...option }
+
+  console.log('[optimizeChartLayout] 开始优化，图表类型:', option.series?.[0]?.type || 'unknown', '有极坐标:', !!option.polar)
+
+  // 标题高度估算（包含 padding）- 增加间距
+  const TITLE_HEIGHT = 50
+  const LEGEND_HEIGHT = 35
+  const TITLE_PADDING = 20
+
+  // 优化标题位置：确保标题与图表内容有间距
+  if (optimized.title) {
+    // 强制设置标题 top 值，覆盖原有设置
+    optimized.title = {
+      ...optimized.title,
+      top: 15,  // 容器变大后，可以稍微增加
+      textStyle: {
+        ...(optimized.title.textStyle || {}),
+        fontSize: 15  // 恢复正常字体
+      }
+    }
+  }
+
+  // 优化图例位置：确保图例不与标题重叠
+  if (optimized.legend) {
+    const legend = optimized.legend
+
+    // 如果图例在顶部，强制调整位置
+    if (legend.top && typeof legend.top === 'string' && legend.top.includes('%')) {
+      const topValue = parseInt(legend.top)
+      if (topValue < 15) {
+        // 图例位置太靠上，容易与标题重叠
+        optimized.legend = {
+          ...legend,
+          top: '18%'
+        }
+      }
+    } else if (legend.top && typeof legend.top === 'number' && legend.top < 60) {
+      // 图例位置数值太小，调整到 65
+      optimized.legend = {
+        ...legend,
+        top: 65
+      }
+    }
+    // 如果图例在底部，确保有足够空间
+    else if (legend.bottom) {
+      // 强制设置底部图例位置
+      optimized.legend = {
+        ...legend,
+        bottom: '15%'  // 容器变大后，使用百分比更合适
+      }
+    }
+    // 如果图例没有设置位置，默认放底部
+    else if (!legend.top && !legend.bottom && !legend.left && !legend.right) {
+      optimized.legend = {
+        ...legend,
+        bottom: '15%'
+      }
+    }
+  }
+
+  // 优化 grid 位置：为标题和图例预留空间
+  if (optimized.grid) {
+    const grid = optimized.grid
+    const minTop = TITLE_HEIGHT + TITLE_PADDING
+
+    // 强制调整 grid.top
+    if (typeof grid.top === 'string' && grid.top.includes('%')) {
+      const topValue = parseInt(grid.top)
+      if (topValue < 15) {
+        optimized.grid = {
+          ...grid,
+          top: '18%'
+        }
+      }
+    } else {
+      // 强制设置数值
+      optimized.grid = {
+        ...grid,
+        top: minTop
+      }
+    }
+  }
+
+  // 优化极坐标图表：调整中心位置和半径
+  if (optimized.polar) {
+    // 强制设置 polar 半径，为轴名称预留空间
+    optimized.polar = {
+      ...optimized.polar,
+      radius: '50%'  // 容器变大后，可以稍微增加半径
+    }
+
+    // 优化 radiusAxis 名称显示
+    if (optimized.radiusAxis) {
+      optimized.radiusAxis = {
+        ...optimized.radiusAxis,
+        nameTextStyle: {
+          ...(optimized.radiusAxis.nameTextStyle || {}),
+          fontSize: 11,
+          padding: [0, 0, 8, 0]  // 下边距
+        },
+        nameGap: 10  // 轴名称与轴线的距离
+      }
+    }
+
+    // 优化 angleAxis 标签显示
+    if (optimized.angleAxis) {
+      optimized.angleAxis = {
+        ...optimized.angleAxis,
+        axisLabel: {
+          ...(optimized.angleAxis.axisLabel || {}),
+          fontSize: 10,
+          margin: 5
+        }
+      }
+    }
+  }
+
+  // 优化饼图：调整中心位置为标题留出空间
+  if (optimized.series && Array.isArray(optimized.series)) {
+    for (const serie of optimized.series) {
+      if (serie.type === 'pie' && serie.center) {
+        const [x, y] = serie.center
+        // 强制调整中心位置向下
+        if (typeof y === 'string' && y.includes('%')) {
+          serie.center = [x, '65%']
+        } else {
+          serie.center = [x, '65%']
+        }
+      }
+    }
+  }
+
+  // 优化雷达图：调整中心位置为标题留出空间
+  if (optimized.radar && optimized.radar.center) {
+    const [x, y] = optimized.radar.center
+    // 强制调整中心位置向下
+    if (typeof y === 'string' && y.includes('%')) {
+      optimized.radar.center = [x, '65%']
+    } else {
+      optimized.radar.center = [x, '65%']
     }
   }
 
@@ -358,24 +540,18 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
 const buildOption = () => {
   try {
     if (!hasValidData.value) {
-      console.log('[ChartPanel] buildOption: hasValidData is false, return empty option')
       return {}
     }
 
-    // v3.0格式：直接从data.data获取图表类型、数据和元数据
-    const chartType = (props.data.type || '').toLowerCase()  // 统一转换为小写，避免大小写不匹配
+    const chartType = (props.data.type || '').toLowerCase()
     const title = props.data.title || ''
     const meta = props.data.meta || {}
     const chartData = props.data.data
 
-    // 适配v3.0格式：如果chartData是对象且包含type字段，说明是嵌套格式
     let actualData = chartData
     if (typeof chartData === 'object' && chartData.type) {
-      // v3.0格式：{ type: "pie", data: [...] }
       actualData = chartData.data
     }
-
-    console.log('[ChartPanel] buildOption: chartType:', chartType, 'actualData:', actualData, 'title:', title)
 
     let option = {}
     switch (chartType) {
@@ -383,7 +559,22 @@ const buildOption = () => {
         option = buildPieOption(actualData, title, meta)
         break
       case 'bar':
-        option = buildBarOption(actualData, title, meta)
+        // 检查是否为完整的 ECharts 配置（如污染玫瑰图）
+        const barOptimized = detectAndOptimizeEChartsConfig(actualData, 'bar')
+        if (barOptimized) {
+          option = barOptimized
+        } else {
+          option = buildBarOption(actualData, title, meta)
+        }
+        break
+      case 'polar_bar':
+        // 极坐标柱状图（风玫瑰图），通常是完整的 ECharts 配置
+        const polarBarOptimized = detectAndOptimizeEChartsConfig(actualData, 'polar_bar')
+        if (polarBarOptimized) {
+          option = polarBarOptimized
+        } else {
+          option = buildBarOption(actualData, title, meta)
+        }
         break
       case 'line':
       case 'timeseries':
@@ -407,6 +598,14 @@ const buildOption = () => {
       case 'stacked_timeseries':
         option = buildStackedTimeseriesOption(actualData, title, meta)
         break
+      case 'scatter':
+        const scatterOptimized = detectAndOptimizeEChartsConfig(actualData, 'scatter')
+        if (scatterOptimized) {
+          option = scatterOptimized
+        } else {
+          option = buildGenericOption(actualData, title, meta)
+        }
+        break
       case 'scatter3d':
         option = buildScatter3dOption(actualData, title, meta)
         break
@@ -429,8 +628,6 @@ const buildOption = () => {
         option = buildFacetTimeseriesOption(actualData, title, meta)
         break
       default:
-        // 【关键修复】智能识别类型：当type为"chart"或其他未知类型时，根据数据格式判断
-        // 如果数据包含x和series字段，视为时序图
         const hasTimeseriesFormat = actualData &&
           actualData.x && actualData.series &&
           Array.isArray(actualData.x) && Array.isArray(actualData.series)
@@ -439,24 +636,57 @@ const buildOption = () => {
           Array.isArray(actualData.x) && Array.isArray(actualData.y)
 
         if (hasTimeseriesFormat || hasLineFormat) {
-          console.log('[ChartPanel] 智能识别为时序图格式，使用buildLineOption渲染')
           option = buildLineOption(actualData, title, meta)
         } else {
-          console.log('[ChartPanel] 使用通用配置buildGenericOption')
           option = buildGenericOption(actualData, title, meta)
         }
     }
 
-    // 验证option不为空
     if (!option || Object.keys(option).length === 0) {
-      console.error('[ChartPanel] buildOption 生成空配置')
       return {}
     }
 
-    return option
+    // 统一优化图表配置：标题和图例间距
+    const optimized = optimizeChartLayout(option)
+    console.log('[ChartPanel] 优化后的标题位置:', optimized.title?.top)
+    console.log('[ChartPanel] 优化后的图例位置:', optimized.legend?.top || optimized.legend?.bottom)
+    if (optimized.polar) {
+      console.log('[ChartPanel] 极坐标半径:', optimized.polar?.radius)
+    }
+    if (optimized.radiusAxis?.name) {
+      console.log('[ChartPanel] radiusAxis名称:', optimized.radiusAxis.name)
+    }
+    return optimized
   } catch (error) {
     console.error('[ChartPanel] buildOption 错误:', error)
     return {}
+  }
+}
+
+
+/**
+ * 创建统一的 toolbox 配置
+ * @param {string} chartName - 图表名称，用于保存图片时的文件名
+ * @returns {Object} ECharts toolbox 配置
+ */
+const createToolboxConfig = (chartName = '图表') => {
+  return {
+    show: true,
+    right: 20,
+    top: 10,
+    feature: {
+      saveAsImage: {
+        show: true,
+        title: '保存为图片',
+        type: 'png',
+        pixelRatio: 2,
+        name: chartName
+      },
+      dataView: { show: false },
+      restore: { show: false },
+      dataZoom: { show: false },
+      magicType: { show: false }
+    }
   }
 }
 
@@ -478,6 +708,7 @@ const buildPieOption = (payload, title, meta) => {
     },
     tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     legend: { orient: 'vertical', left: 'left', top: '10%' },
+    toolbox: createToolboxConfig(title || '饼图'),
     series: [{
       type: 'pie',
       radius: ['40%', '70%'],
@@ -512,9 +743,6 @@ const buildBarOption = (chartData, title, meta) => {
   const yData = chartData.y || []
   const series = chartData.series || []
 
-  console.log('[ChartPanel] buildBarOption: xData.length:', xData.length, 'series.length:', series.length, 'hasYData:', yData.length > 0)
-
-  // 支持两种格式：series（多序列）或y（单序列）
   let chartSeries = []
   let hasLegend = false
 
@@ -557,6 +785,7 @@ const buildBarOption = (chartData, title, meta) => {
     },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     legend,
+    toolbox: createToolboxConfig(title || '柱状图'),
     grid: { top: gridTop, left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
       type: 'category',
@@ -587,8 +816,6 @@ const preprocessO3DualData = (chartData) => {
     const hasO3_8h = 'O3_8h' in firstItem
 
     if (hasTimestamp && (hasO3 || hasO3_8h)) {
-      console.log('[ChartPanel] 检测到O3双数据源格式，合并数据中...')
-
       // 按时间戳分组合并
       const timeMap = new Map()
 
@@ -654,18 +881,10 @@ const preprocessO3DualData = (chartData) => {
         series.push({ name: 'O3_8h(8H平均)', data: o3_8hSeries })
       }
 
-      console.log('[ChartPanel] 合并完成:', {
-        xDataCount: xData.length,
-        o3SeriesCount: o3Series.filter(v => v !== null).length,
-        o3_8hSeriesCount: o3_8hSeries.filter(v => v !== null).length,
-        seriesNames: series.map(s => s.name)
-      })
-
       return { x: xData, series }
     }
   }
 
-  // 默认返回原数据
   return chartData
 }
 
@@ -695,14 +914,12 @@ const buildLineOption = (chartData, title, meta) => {
     if (firstData?.length > 0) {
       const first = firstData[0]
       if (Array.isArray(first) && first.length >= 2) {
-        // [[time, value], ...] 格式
         xData = firstData.map(d => d[0])
         series = series.map(s => ({
           ...s,
           data: s.data.map(d => (Array.isArray(d) ? d[1] : d) ?? null)
         }))
       } else if (typeof first === 'object' && first !== null && 'time' in first) {
-        // [{time, value}, ...] 格式
         xData = firstData.map(d => d.time)
         series = series.map(s => ({
           ...s,
@@ -712,9 +929,6 @@ const buildLineOption = (chartData, title, meta) => {
     }
   }
 
-  console.log('[ChartPanel] buildLineOption: xData.length:', xData.length, 'series.length:', series.length, 'hasYData:', yData.length > 0)
-
-  // 支持两种格式：series（多序列）或y（单序列）
   let chartSeries = []
   let hasLegend = false
 
@@ -806,6 +1020,7 @@ const buildLineOption = (chartData, title, meta) => {
     },
     tooltip: { trigger: 'axis' },
     legend: hasLegend ? { data: series.map(s => s.name), top: legendTop } : { show: false },
+    toolbox: createToolboxConfig(title || '折线图'),
     grid: { top: gridTop, left: '3%', right: '4%', bottom: gridBottom, containLabel: true },
     xAxis: {
       type: 'category',
@@ -894,6 +1109,7 @@ const buildRadarOption = (chartData, title, meta) => {
       top: '10%',
       show: seriesData.length > 1
     },
+    toolbox: createToolboxConfig(title || '雷达图'),
     radar: {
       indicator: indicators,
       center: ['50%', '60%'],
@@ -1003,6 +1219,7 @@ const buildHeatmapOption = (chartData, title, meta) => {
         fontSize: 12
       }
     },
+    toolbox: createToolboxConfig(title || '热力图'),
     series: [{
       name: title || '浓度',
       type: 'heatmap',
@@ -1026,7 +1243,7 @@ const buildHeatmapOption = (chartData, title, meta) => {
 
 // 通用配置（v3.0格式）
 const buildGenericOption = (chartData, title, meta) => {
-  // 检测完整ECharts配置（包括3D图表）
+  // 检测完整ECharts配置（包括3D图表和极坐标图表）
   if (chartData && typeof chartData === 'object') {
     // 3D图表检测：包含 grid3D 或 xAxis3D/yAxis3D/zAxis3D
     if ('grid3D' in chartData ||
@@ -1036,9 +1253,27 @@ const buildGenericOption = (chartData, title, meta) => {
       return chartData
     }
 
+    // 极坐标图表检测：包含 polar、angleAxis、radiusAxis、series
+    if ('polar' in chartData && 'angleAxis' in chartData && 'radiusAxis' in chartData && 'series' in chartData) {
+      console.log('[ChartPanel] buildGenericOption 检测到完整极坐标图表配置，直接返回')
+      return chartData
+    }
+
+    // 雷达图检测：包含 radar、series
+    if ('radar' in chartData && 'series' in chartData) {
+      console.log('[ChartPanel] buildGenericOption 检测到完整雷达图配置，直接返回')
+      return chartData
+    }
+
     // 标准图表检测：包含 xAxis、yAxis、series
     if ('xAxis' in chartData && 'yAxis' in chartData && 'series' in chartData) {
       console.log('[ChartPanel] buildGenericOption 检测到完整ECharts配置，直接返回')
+      return chartData
+    }
+
+    // 通用 series 检测：任何包含有效 series 的配置
+    if ('series' in chartData && Array.isArray(chartData.series) && chartData.series.length > 0) {
+      console.log('[ChartPanel] buildGenericOption 检测到包含 series 的配置，直接返回')
       return chartData
     }
   }
@@ -1085,6 +1320,7 @@ const buildWindRoseOption = (chartData, title, meta) => {
       data: sectors.map(s => legend[s.direction] || s.direction),
       top: '10%'
     },
+    toolbox: createToolboxConfig(title || '风向玫瑰图'),
     series: [{
       name: '风速分布',
       type: 'pie',
@@ -2204,7 +2440,7 @@ const buildFacetTimeseriesOption = (chartData, title, meta) => {
   }
 }
 
-const MAX_INIT_RETRY = 50 // 增加到50次，总时间约4秒
+const MAX_INIT_RETRY = 100 // 增加到100次，总时间约8秒（处理v-show切换延迟）
 const INIT_RETRY_DELAY = 80 // ms
 
 let deferredInitTimer = null
@@ -2222,21 +2458,14 @@ const scheduleDeferredInit = () => {
   clearDeferredInitTimer()
   deferredInitTimer = setTimeout(() => {
     if (waitingForVisible && chartContainer.value && !chartInstance) {
-      const { clientWidth, clientHeight } = chartContainer.value
-      if (clientWidth > 0 && clientHeight > 0) {
-        console.log('[ChartPanel] 延迟检查发现容器已可见，重新初始化', {
-          clientWidth,
-          clientHeight,
-          chartId: getChartIdForLog()
-        })
+      if (isContainerVisible()) {
         waitingForVisible = false
-        initChart(0) // 从0开始重试
+        initChart(0)
       } else {
-        // 继续等待
         scheduleDeferredInit()
       }
     }
-  }, 200) // 减少到200ms，更快响应容器尺寸变化
+  }, 200)
 }
 
 // 等待容器具备尺寸后再初始化，避免 clientWidth/clientHeight 为 0
@@ -2244,38 +2473,16 @@ const initChart = (retry = 0) => {
   const el = chartContainer.value
 
   if (!el || !hasValidData.value) {
-    console.log('[ChartPanel] initChart: 跳过初始化，', {
-      hasContainer: !!el,
-      hasValidData: hasValidData.value
-    })
     return
   }
 
   const { clientWidth, clientHeight } = el
   if (!clientWidth || !clientHeight) {
-    // 父容器可能处于折叠或未渲染完成，稍后重试
     if (retry >= MAX_INIT_RETRY) {
-      console.warn('[ChartPanel] 容器尺寸始终为0，放弃初始化，等待容器变为可见', {
-        retry,
-        clientWidth,
-        clientHeight,
-        chartId: getChartIdForLog(),
-        title: props.data?.title
-      })
-      logContainerMetrics(el, 'init_fail')
       waitingForVisible = true
-      scheduleDeferredInit() // 启动延迟检查
+      scheduleDeferredInit()
       return
     }
-    console.log('[ChartPanel] 容器尺寸为0，等待可见后重试', {
-      retry,
-      clientWidth,
-      clientHeight,
-      chartId: getChartIdForLog(),
-      title: props.data?.title
-    })
-    logContainerMetrics(el, 'init_retry_zero_size')
-    // 强行撑开本层与父层，避免高度被折叠
     if (!el.style.minHeight) el.style.minHeight = '360px'
     if (!el.style.width) el.style.width = '100%'
     const parent = el.parentElement
@@ -2288,7 +2495,6 @@ const initChart = (retry = 0) => {
       if (!grand.style.minHeight) grand.style.minHeight = '360px'
       if (!grand.style.width) grand.style.width = '100%'
     }
-    // 尝试设置最小高度，帮助占位撑开
     el.style.minHeight = el.style.minHeight || '320px'
     el.style.width = el.style.width || '100%'
     setTimeout(() => initChart(retry + 1), INIT_RETRY_DELAY)
@@ -2296,46 +2502,40 @@ const initChart = (retry = 0) => {
   }
 
   try {
-    // 清除延迟初始化定时器（如果存在）
     clearDeferredInitTimer()
 
-    // 如果已存在实例，先销毁再重建，避免 "already initialized" 警告
     if (chartInstance) {
-      // 注销旧实例
-      const chartId = props.data?.id || getChartIdForLog()
-      chartScreenshotManager.unregisterChart(chartId)
       chartInstance.dispose()
       chartInstance = null
     }
 
     updateChartWidth()
-    chartInstance = echarts.init(el)
+    chartInstance = echarts.init(el, null, {
+      renderer: 'canvas',
+      useDirtyRect: false
+    })
     const option = buildOption()
 
     if (!option || Object.keys(option).length === 0) {
-      console.error('[ChartPanel] buildOption 返回空配置:', option)
       return
     }
 
-    console.log('[ChartPanel] setOption:', option)
-    console.log('[ChartPanel] initChart success', {
-      width: el.clientWidth,
-      height: el.clientHeight,
-      chartId: getChartIdForLog(),
-      title: props.data?.title
+    // 详细日志：确认最终配置
+    console.log('[ChartPanel] ===== setOption 前的配置详情 =====')
+    console.log('[ChartPanel] 标题配置:', JSON.stringify(option.title))
+    console.log('[ChartPanel] 图例配置:', JSON.stringify(option.legend))
+    console.log('[ChartPanel] 极坐标配置:', JSON.stringify(option.polar))
+    console.log('[ChartPanel] radiusAxis配置:', JSON.stringify(option.radiusAxis))
+    console.log('[ChartPanel] 图表容器尺寸:', JSON.stringify({ clientWidth, clientHeight }))
+    console.log('[ChartPanel] 计算后的布局:', {
+      标题高度: 30,
+      可用图表高度: clientHeight - 30 - 80,
+      极坐标半径: option.polar?.radius,
+      图例距离: option.legend?.bottom
     })
-    logContainerMetrics(el, 'init_success')
+    console.log('[ChartPanel] ===== 配置详情结束 =====')
 
-    chartInstance.setOption(option)
-
-    // 注册到截图管理器（图表创建完成后立即注册）
-    chartScreenshotManager.registerChart({
-      id: props.data?.id || getChartIdForLog(),
-      type: props.data?.type || 'chart',
-      title: props.data?.title || '',
-      instance: chartInstance,
-      meta: props.data?.meta || {}
-    })
+    chartInstance.setOption(option, { notMerge: true })
 
     emit('ready')
   } catch (error) {
@@ -2348,19 +2548,12 @@ onMounted(() => {
 
   if ('ResizeObserver' in window) {
     resizeObserver = new ResizeObserver(() => {
-      // 使用 requestAnimationFrame 避免在主渲染过程中执行
       requestAnimationFrame(() => {
         updateChartWidth()
-        // 如果之前因为尺寸为0放弃了初始化，尺寸变化后再尝试一次
         if (waitingForVisible && chartContainer.value) {
           const { clientWidth, clientHeight } = chartContainer.value
           if (clientWidth > 0 && clientHeight > 0) {
-            console.log('[ChartPanel] 容器尺寸变化，重新初始化', {
-              clientWidth,
-              clientHeight,
-              chartId: getChartIdForLog()
-            })
-            clearDeferredInitTimer() // 清除延迟检查，因为已经手动触发了
+            clearDeferredInitTimer()
             waitingForVisible = false
             initChart()
           }
@@ -2370,20 +2563,16 @@ onMounted(() => {
     if (scrollContainer.value) {
       resizeObserver.observe(scrollContainer.value)
     }
-    // 也观察 chartContainer，确保能检测到尺寸变化
     if (chartContainer.value) {
       resizeObserver.observe(chartContainer.value)
     }
   }
 
   window.addEventListener('resize', handleWindowResize)
+  document.addEventListener('click', handleGlobalClick)
 })
 
 onBeforeUnmount(() => {
-  // 注销截图管理器中的图表
-  const chartId = props.data?.id || getChartIdForLog()
-  chartScreenshotManager.unregisterChart(chartId)
-
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
@@ -2392,29 +2581,13 @@ onBeforeUnmount(() => {
     chartInstance.dispose()
     chartInstance = null
   }
-  clearDeferredInitTimer() // 清除延迟初始化定时器
+  clearDeferredInitTimer()
   window.removeEventListener('resize', handleWindowResize)
+  document.removeEventListener('click', handleGlobalClick)
 })
 
-const getDataPointCount = () => {
-  const chartData = props.data?.data
-  if (!chartData) return 0
-  if (Array.isArray(chartData?.x)) {
-    return chartData.x.length
-  }
-  if (Array.isArray(chartData?.data)) {
-    return chartData.data.length
-  }
-  if (Array.isArray(chartData)) {
-    return chartData.length
-  }
-  return 0
-}
-
 const updateChartWidth = () => {
-  // 固定100%宽度，通过dataZoom滑块查看更多数据，避免横向滚动
   chartWidth.value = '100%'
-  // 使用 requestAnimationFrame 避免在主渲染过程中调用 resize
   requestAnimationFrame(() => {
     if (chartInstance) {
       chartInstance.resize()
@@ -2423,71 +2596,48 @@ const updateChartWidth = () => {
 }
 
 watch(() => props.data, (newData, oldData) => {
-  try {
-    // 记录数据变化
-    console.log('[ChartPanel] data变化:', {
-      newData: newData,
-      oldData: oldData,
-      hasChartInstance: !!chartInstance,
-      hasValidData: hasValidData.value
-    })
+  nextTick(() => {
+    try {
+      if (chartInstance && hasValidData.value) {
+        updateChartWidth()
+        const option = buildOption()
 
-    // 使用 nextTick 确保数据更新后 DOM 同步
-    nextTick(() => {
-      try {
-        if (chartInstance && hasValidData.value) {
-          updateChartWidth()
-          const option = buildOption()
+        if (!option || Object.keys(option).length === 0) {
+          return
+        }
 
-          if (!option || Object.keys(option).length === 0) {
-            console.error('[ChartPanel] buildOption 返回空配置:', option)
-            return
-          }
+        const newType = newData?.type
+        const oldType = oldData?.type
 
-          console.log('[ChartPanel] 更新图表:', option)
-
-          // v3.0格式：使用type字段检查图表类型变化
-          const newType = newData?.type
-          const oldType = oldData?.type
-
-          if (newType !== oldType) {
-            console.log('[ChartPanel] 图表类型变化，销毁重建实例:', { oldType, newType })
+        if (newType !== oldType) {
           if (!isContainerVisible()) {
-            console.warn('[ChartPanel] 类型变化但容器不可见，延迟重建', {
-              chartId: getChartIdForLog(),
-              title: props.data?.title
-            })
             waitingForVisible = true
-            scheduleDeferredInit() // ✅ 添加：启动延迟检查
+            scheduleDeferredInit()
             return
           }
           chartInstance.dispose()
           chartInstance = null
           initChart()
-          } else {
-            chartInstance.setOption(option, true)
-          }
-        } else if (!chartInstance && hasValidData.value) {
-          // 实例不存在但有数据，重新初始化
-          console.log('[ChartPanel] 重新初始化图表')
-        if (!isContainerVisible()) {
-          console.warn('[ChartPanel] 重新初始化但容器不可见，延迟重建', {
-            chartId: getChartIdForLog(),
-            title: props.data?.title
+        } else {
+          console.log('[ChartPanel] watch更新图表，配置:', {
+            titleTop: option.title?.top,
+            legendBottom: option.legend?.bottom,
+            polarRadius: option.polar?.radius
           })
+          chartInstance.setOption(option, true)
+        }
+      } else if (!chartInstance && hasValidData.value) {
+        if (!isContainerVisible()) {
           waitingForVisible = true
-          scheduleDeferredInit() // ✅ 添加：启动延迟检查
+          scheduleDeferredInit()
           return
         }
         initChart()
-        }
-      } catch (error) {
-        console.error('[ChartPanel] nextTick 回调错误:', error)
       }
-    })
-  } catch (error) {
-    console.error('[ChartPanel] watch 回调错误:', error)
-  }
+    } catch (error) {
+      console.error('[ChartPanel] watch 回调错误:', error)
+    }
+  })
 }, { deep: true, immediate: true })
 
 // ==================== 导出功能：状态暴露方法 ====================
@@ -2602,12 +2752,8 @@ const getChartImage = async (options = {}) => {
 
     let dataUrl = await tryUseInstance()
 
-    // 如果实例不可用或容器尺寸为0，则使用离屏容器渲染一次截图
+    // 如果实例不可用，使用离屏容器渲染
     if (!dataUrl && hasValidData.value) {
-      console.warn('[ChartPanel] getChartImage: 使用离屏容器获取截图', {
-        chartId: getChartIdForLog(),
-        title: props.data?.title
-      })
       const tempDiv = document.createElement('div')
       tempDiv.style.position = 'absolute'
       tempDiv.style.left = '-9999px'
@@ -2617,29 +2763,19 @@ const getChartImage = async (options = {}) => {
       tempDiv.style.zIndex = '-1'
       document.body.appendChild(tempDiv)
       try {
-        const tempInstance = echarts.init(tempDiv)
+        const tempInstance = echarts.init(tempDiv, null, {
+          renderer: 'canvas'
+        })
         const option = buildOption()
         if (option && Object.keys(option).length > 0) {
           tempInstance.setOption(option, { notMerge: true, lazyUpdate: false })
-          
-          // 【关键修复】等待离屏图表渲染完成
           await waitForChartRender(tempInstance, 2000)
-          // 额外等待确保渲染稳定
           await new Promise(resolve => setTimeout(resolve, 200))
-          
           dataUrl = tempInstance.getDataURL({
             type,
             pixelRatio,
             backgroundColor
           })
-          
-          console.log('[ChartPanel] 离屏容器截图完成', {
-            chartId: getChartIdForLog(),
-            hasDataUrl: !!dataUrl,
-            dataUrlLength: dataUrl ? dataUrl.length : 0
-          })
-        } else {
-          console.error('[ChartPanel] getChartImage 离屏构建option为空', { option })
         }
         tempInstance.dispose()
       } catch (err) {
@@ -2648,28 +2784,6 @@ const getChartImage = async (options = {}) => {
         tempDiv.remove()
       }
     }
-
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: 'debug-session',
-        runId: 'pre-fix',
-        hypothesisId: 'H3',
-        location: 'ChartPanel.vue:getChartImage',
-        message: 'get_chart_image',
-        data: {
-          hasInstance: !!chartInstance,
-          hasDataUrl: !!dataUrl,
-          usedOffscreen: !chartInstance || !isContainerVisible(),
-          dataUrlPrefix: typeof dataUrl === 'string' ? dataUrl.substring(0, 32) : null,
-          dataUrlLength: dataUrl ? dataUrl.length : 0
-        },
-        timestamp: Date.now()
-      })
-    }).catch(() => {})
-    // #endregion agent log
 
     return dataUrl
   } catch (error) {
@@ -2693,6 +2807,151 @@ const getChartData = () => {
   return props.data
 }
 
+/**
+ * 处理右键菜单
+ */
+const handleContextMenu = async (event) => {
+  const imageData = await getChartImage({ pixelRatio: 2, waitForRender: true })
+
+  if (!imageData) {
+    return
+  }
+
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    imageData: imageData
+  }
+}
+
+/**
+ * 复制图片到剪贴板
+ */
+const copyImageToClipboard = async () => {
+  try {
+    const imageData = contextMenu.value.imageData
+    if (!imageData) return
+
+    const img = new Image()
+
+    await new Promise((resolve, reject) => {
+      img.onload = resolve
+      img.onerror = reject
+      img.src = imageData
+    })
+
+    const canvas = document.createElement('canvas')
+    canvas.width = img.width
+    canvas.height = img.height
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(img, 0, 0)
+
+    if (navigator.clipboard?.write && window.ClipboardItem) {
+      try {
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ])
+        hideContextMenu()
+        return
+      } catch (e) {
+        console.warn('[ChartPanel] Clipboard API 不可用:', e.message)
+      }
+    }
+
+    try {
+      img.style.position = 'fixed'
+      img.style.left = '-9999px'
+      img.style.top = '-9999px'
+      document.body.appendChild(img)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      const range = document.createRange()
+      range.selectNode(img)
+      selection.addRange(range)
+
+      const success = document.execCommand('copy')
+      selection.removeAllRanges()
+      document.body.removeChild(img)
+
+      if (success) {
+        hideContextMenu()
+        return
+      }
+    } catch (e) {
+      console.warn('[ChartPanel] execCommand 失败:', e.message)
+    }
+
+    // 降级：下载 PNG
+    const base64Data = imageData.split(',')[1]
+    const byteString = atob(base64Data)
+    const ab = new ArrayBuffer(byteString.length)
+    const ia = new Uint8Array(ab)
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i)
+    }
+    const blob = new Blob([ab], { type: 'image/png' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${props.data?.title || '图表'}_${Date.now()}.png`
+    link.click()
+    URL.revokeObjectURL(url)
+
+  } catch (error) {
+    console.error('[ChartPanel] 复制失败:', error)
+  } finally {
+    hideContextMenu()
+  }
+}
+
+/**
+ * 保存图片为 PNG 文件
+ */
+const saveImageAsPNG = () => {
+  try {
+    const imageData = contextMenu.value.imageData
+    if (!imageData) return
+
+    const base64Data = imageData.split(',')[1]
+    const byteString = atob(base64Data)
+    const ab = new ArrayBuffer(byteString.length)
+    const ia = new Uint8Array(ab)
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i)
+    }
+    const blob = new Blob([ab], { type: 'image/png' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${props.data?.title || '图表'}_${Date.now()}.png`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    console.error('[ChartPanel] 保存图片失败:', error)
+  } finally {
+    hideContextMenu()
+  }
+}
+
+/**
+ * 隐藏右键菜单
+ */
+const hideContextMenu = () => {
+  contextMenu.value.visible = false
+  contextMenu.value.imageData = null
+}
+
+// 点击其他地方关闭右键菜单
+const handleGlobalClick = (event) => {
+  if (contextMenu.value.visible) {
+    hideContextMenu()
+  }
+}
+
 // 暴露方法给父组件
 defineExpose({
   getChartState,
@@ -2701,43 +2960,16 @@ defineExpose({
   getChartData,
   // 重新初始化图表（当容器从不可见变为可见时调用）
   reinitChart: () => {
-    console.log('[ChartPanel] reinitChart 调用', {
-      chartId: getChartIdForLog(),
-      hasContainer: !!chartContainer.value,
-      hasInstance: !!chartInstance,
-      waitingForVisible
-    })
-
-    // 如果之前在等待可见性，现在可以尝试初始化
     if (waitingForVisible && chartContainer.value && !chartInstance) {
       const { clientWidth, clientHeight } = chartContainer.value
       if (clientWidth > 0 && clientHeight > 0) {
-        console.log('[ChartPanel] 容器已可见，重新初始化', {
-          clientWidth,
-          clientHeight,
-          chartId: getChartIdForLog()
-        })
         clearDeferredInitTimer()
         waitingForVisible = false
         initChart(0)
-      } else {
-        console.log('[ChartPanel] 容器仍然不可见，继续等待', {
-          clientWidth,
-          clientHeight,
-          chartId: getChartIdForLog()
-        })
       }
     } else if (chartInstance) {
-      // 如果已经有实例，调整大小
-      console.log('[ChartPanel] 图表已存在，调整大小', {
-        chartId: getChartIdForLog()
-      })
       chartInstance.resize()
     } else {
-      // 尝试初始化
-      console.log('[ChartPanel] 尝试初始化图表', {
-        chartId: getChartIdForLog()
-      })
       initChart(0)
     }
   }
@@ -2789,5 +3021,57 @@ defineExpose({
 
 .chart-canvas {
   height: 100%;
+}
+
+// 自定义右键菜单样式
+.chart-context-menu {
+  position: fixed;
+  z-index: 100000;  // 非常高的 z-index，确保在浏览器原生菜单之上
+  min-width: 160px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 6px 0;
+  animation: contextMenuFadeIn 0.15s ease-out;
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    transition: all 0.15s;
+
+    svg {
+      flex-shrink: 0;
+      color: #666;
+    }
+
+    &:hover {
+      background: #f5f5f5;
+      color: #1976d2;
+
+      svg {
+        color: #1976d2;
+      }
+    }
+
+    &:active {
+      background: #e8e8e8;
+    }
+  }
+}
+
+@keyframes contextMenuFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 </style>

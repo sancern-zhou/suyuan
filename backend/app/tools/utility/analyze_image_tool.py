@@ -38,10 +38,10 @@ class AnalyzeImageTool(LLMTool):
     配置：使用项目中已配置的通义千问 VL API
     """
 
-    # 通义千问VL API配置（与天气形势图工具保持一致）
-    QWEN_VL_API_KEY = "sk-6b11fe1b4ed64504990e8ace35f976fb"
-    QWEN_VL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    QWEN_VL_MODEL = "qwen-vl-max-latest"
+    # 通义千问VL API配置（从环境变量读取）
+    QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
+    QWEN_VL_BASE_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    QWEN_VL_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")
 
     def __init__(self):
         super().__init__(

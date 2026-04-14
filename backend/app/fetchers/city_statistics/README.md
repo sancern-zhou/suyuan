@@ -16,9 +16,18 @@
 
 ## 架构设计
 
+### 两张表架构
+
+系统采用两张独立表分别存储新旧标准的综合指数：
+
+| 表名 | 用途 | 存储的综合指数 |
+|------|------|---------------|
+| `city_168_statistics_new_standard_new_standard` | 新标准（HJ 663-2026） | 新限值+新算法、新限值+旧算法 |
+| `city_168_statistics_new_standard_old_standard` | 旧标准（HJ 663-2013） | 旧限值+新算法、旧限值+旧算法 |
+
 ### 数据库表结构
 
-表名：`city_168_statistics`（在XcAiDb数据库中）
+表名：`city_168_statistics_new_standard_new_standard`（在XcAiDb数据库中）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -39,8 +48,10 @@
 | pm2_5_index | DECIMAL(10,3) | PM₂.₅单项指数 |
 | co_index | DECIMAL(10,3) | CO单项指数 |
 | o3_8h_index | DECIMAL(10,3) | O₃_8h单项指数 |
-| comprehensive_index | DECIMAL(10,3) | 综合指数 |
+| comprehensive_index | DECIMAL(10,3) | 综合指数（新限值+新算法） |
 | comprehensive_index_rank | INT | 综合指数排名 |
+| comprehensive_index_new_limit_old_algo | DECIMAL(10,3) | 综合指数（新限值+旧算法） |
+| comprehensive_index_rank_new_limit_old_algo | INT | 综合指数排名 |
 | data_days | INT | 数据天数 |
 | sample_coverage | DECIMAL(5,2) | 样本覆盖率（%） |
 | region | NVARCHAR(50) | 区域 |
@@ -81,7 +92,7 @@ sqlcmd -S 180.184.30.94,1433 -U sa -P "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR" -d XcAi
 ### 2. 验证表创建
 
 ```sql
-SELECT * FROM information_schema.tables WHERE table_name = 'city_168_statistics';
+SELECT * FROM information_schema.tables WHERE table_name = 'city_168_statistics_new_standard';
 ```
 
 ### 3. 回填历史数据（可选）
@@ -103,7 +114,7 @@ python app/fetchers/city_statistics/backfill_2024.py
 
 ```sql
 SELECT city_name, comprehensive_index, comprehensive_index_rank
-FROM city_168_statistics
+FROM city_168_statistics_new_standard
 WHERE stat_type = 'monthly'
   AND stat_date = '2024-03-01'
   AND city_name IN ('广州', '深圳', '珠海', '佛山', '江门', '肇庆', '惠州', '东莞', '中山')
@@ -114,7 +125,7 @@ ORDER BY comprehensive_index_rank;
 
 ```sql
 SELECT TOP 10 city_name, pm2_5_concentration, comprehensive_index_rank
-FROM city_168_statistics
+FROM city_168_statistics_new_standard
 WHERE stat_type = 'monthly'
   AND stat_date = '2024-03-01'
 ORDER BY pm2_5_concentration ASC;
@@ -124,7 +135,7 @@ ORDER BY pm2_5_concentration ASC;
 
 ```sql
 SELECT city_name, comprehensive_index, comprehensive_index_rank, data_days
-FROM city_168_statistics
+FROM city_168_statistics_new_standard
 WHERE stat_type = 'annual_ytd'
   AND stat_date = '2024-01-01'
   AND city_name = '深圳';
@@ -234,7 +245,7 @@ logger = structlog.get_logger()
 ```sql
 -- 检查每月记录数
 SELECT stat_date, stat_type, COUNT(*) as count
-FROM city_168_statistics
+FROM city_168_statistics_new_standard
 GROUP BY stat_date, stat_type
 ORDER BY stat_date DESC;
 
@@ -242,7 +253,7 @@ ORDER BY stat_date DESC;
 SELECT stat_date, stat_type, MIN(comprehensive_index_rank) as min_rank,
        MAX(comprehensive_index_rank) as max_rank,
        COUNT(*) as city_count
-FROM city_168_statistics
+FROM city_168_statistics_new_standard
 WHERE comprehensive_index_rank IS NOT NULL
 GROUP BY stat_date, stat_type
 ORDER BY stat_date DESC;
@@ -254,7 +265,7 @@ ORDER BY stat_date DESC;
 
 ```sql
 -- 删除旧数据
-DELETE FROM city_168_statistics
+DELETE FROM city_168_statistics_new_standard
 WHERE stat_type = 'monthly'
   AND stat_date = '2024-03-01';
 
@@ -262,7 +273,7 @@ WHERE stat_type = 'monthly'
 from app.fetchers import create_scheduler
 
 scheduler = create_scheduler()
-fetcher = scheduler.get_fetcher('city_168_statistics_fetcher')
+fetcher = scheduler.get_fetcher('city_168_statistics_new_standard_fetcher')
 await fetcher.run_now()
 ```
 
@@ -271,7 +282,7 @@ await fetcher.run_now()
 ### 常见问题
 
 1. **表不存在**
-   - 检查表是否创建：`SELECT * FROM information_schema.tables WHERE table_name = 'city_168_statistics'`
+   - 检查表是否创建：`SELECT * FROM information_schema.tables WHERE table_name = 'city_168_statistics_new_standard'`
    - 重新执行`create_table.sql`
 
 2. **数据不更新**
@@ -283,7 +294,7 @@ await fetcher.run_now()
    - 验证综合指数是否为NULL
 
 4. **SQL查询失败**
-   - 检查`sql_validator.py`中是否添加了`city_168_statistics`到白名单
+   - 检查`sql_validator.py`中是否添加了`city_168_statistics_new_standard`到白名单
    - 验证表名拼写
 
 ## 联系方式

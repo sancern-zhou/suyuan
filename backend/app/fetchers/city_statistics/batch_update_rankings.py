@@ -44,12 +44,12 @@ def update_rankings():
             stat_type,
             stat_date,
             ROW_NUMBER() OVER (PARTITION BY stat_type, stat_date ORDER BY comprehensive_index_new_limit_old_algo ASC) as rank_num
-        FROM city_168_statistics
+        FROM city_168_statistics_new_standard
         WHERE comprehensive_index_new_limit_old_algo IS NOT NULL
     )
     UPDATE c
     SET c.comprehensive_index_rank_new_limit_old_algo = r.rank_num
-    FROM city_168_statistics c
+    FROM city_168_statistics_new_standard c
     INNER JOIN Ranked r ON c.city_name = r.city_name AND c.stat_type = r.stat_type AND c.stat_date = r.stat_date
     """
     cursor.execute(sql)
@@ -64,12 +64,12 @@ def update_rankings():
             stat_type,
             stat_date,
             ROW_NUMBER() OVER (PARTITION BY stat_type, stat_date ORDER BY comprehensive_index_old_limit_new_algo ASC) as rank_num
-        FROM city_168_statistics
+        FROM city_168_statistics_new_standard
         WHERE comprehensive_index_old_limit_new_algo IS NOT NULL
     )
     UPDATE c
     SET c.comprehensive_index_rank_old_limit_new_algo = r.rank_num
-    FROM city_168_statistics c
+    FROM city_168_statistics_new_standard c
     INNER JOIN Ranked r ON c.city_name = r.city_name AND c.stat_type = r.stat_type AND c.stat_date = r.stat_date
     """
     cursor.execute(sql)

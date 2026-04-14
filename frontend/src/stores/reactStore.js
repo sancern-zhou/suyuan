@@ -463,6 +463,15 @@ export const useReactStore = defineStore('react', {
     },
 
     /**
+     * 设置最近一次Office文档（用于会话恢复）
+     */
+    setLastOfficeDocument(doc) {
+      if (!doc) return
+      this.currentState.lastOfficeDocument = doc
+      console.log(`[setLastOfficeDocument] Set office document for mode ${this.currentMode}`)
+    },
+
+    /**
      * 设置当前模式的专家结果（用于会话恢复）
      */
     setLastExpertResults(results) {
@@ -528,9 +537,84 @@ export const useReactStore = defineStore('react', {
      */
     prependMessages(messages) {
       if (!messages || messages.length === 0) return
+
+      // 【修复】过滤掉与现有消息重复内容的消息
+      const existingContents = new Set()
+      this.currentState.messages.forEach(m => {
+        if (m.content) {
+          existingContents.add(m.content.substring(0, 100)) // 使用前100个字符作为内容指纹
+        }
+      })
+
+      const beforeCount = messages.length
+      messages = messages.filter(m => {
+        if (!m.content) return true
+        const contentFingerprint = m.content.substring(0, 100)
+        const isDuplicate = existingContents.has(contentFingerprint)
+        if (isDuplicate) {
+          console.warn(`[prependMessages] 过滤重复消息: ${m.id}`, { content: m.content.substring(0, 50) })
+        } else {
+          existingContents.add(contentFingerprint)
+        }
+        return !isDuplicate
+      })
+
+      if (messages.length !== beforeCount) {
+        console.log(`[prependMessages] 过滤了 ${beforeCount - messages.length} 条重复消息`)
+      }
+
       this.currentState.messages = [...messages, ...this.currentState.messages]
       if (messages.length > 0) {
         this.currentState.pagination.oldestSequence = messages[0].sequence_number
+      }
+    },
+
+    /**
+     * 加载更多历史消息
+     */
+    async loadMoreMessages() {
+      const sessionId = this.currentState.sessionId
+      const oldestSequence = this.currentState.pagination.oldestSequence
+      const hasMore = this.currentState.pagination.hasMoreMessages
+
+      if (!sessionId || !hasMore) {
+        console.log('[loadMoreMessages] 没有更多消息可加载')
+        return
+      }
+
+      if (this.currentState.pagination.loadingMore) {
+        console.log('[loadMoreMessages] 正在加载中，跳过')
+        return
+      }
+
+      try {
+        this.currentState.pagination.loadingMore = true
+        console.log(`[loadMoreMessages] 开始加载更多消息，sessionId: ${sessionId}, oldestSequence: ${oldestSequence}`)
+
+        // 调用 API 获取更多消息
+        const { getSessionMessages } = await import('@/api/session')
+        const result = await getSessionMessages(sessionId, oldestSequence, 30)
+
+        console.log('[loadMoreMessages] API返回:', result)
+
+        // 后端直接返回数据，不是 {success, data} 格式
+        const messages = result.messages || []
+        console.log(`[loadMoreMessages] 加载了 ${messages.length} 条消息`)
+
+        if (messages.length > 0) {
+          this.prependMessages(messages)
+        }
+
+        // 更新分页状态（注意字段名映射）
+        this.currentState.pagination.hasMoreMessages = result.has_more || false
+        this.currentState.pagination.totalMessageCount = result.total_count || this.currentState.pagination.totalMessageCount
+
+        console.log(`[loadMoreMessages] 加载完成，hasMore: ${this.currentState.pagination.hasMoreMessages}, total: ${this.currentState.pagination.totalMessageCount}`)
+      } catch (error) {
+        console.error('[loadMoreMessages] 加载消息失败:', error)
+        // 不抛出错误，避免中断用户体验
+      } finally {
+        this.currentState.pagination.loadingMore = false
       }
     },
 
@@ -1508,6 +1592,12 @@ export const useReactStore = defineStore('react', {
 
       this.currentState.hasResults = true
     },
+
+    // ✅ 向后兼容别名：analyze -> startAnalysis
+    async analyze(query, options = {}) {
+      return await this.startAnalysis(query, options)
+    },
+
     // 开始分析
     async startAnalysis(query, options = {}) {
       const {

@@ -1,19 +1,19 @@
 """
-省级空气质量统计数据抓取器
+省级空气质量统计数据抓取器（新标准限值版本）
 
-定时从XcAiDb数据库提取数据，计算31个省级行政区的空气质量评价指标（按HJ663标准），
-并将结果缓存回XcAiDb数据库的province_statistics表。
+定时从XcAiDb数据库提取数据，计算31个省级行政区的空气质量评价指标（按HJ663新标准限值），
+并将结果缓存回XcAiDb数据库的province_statistics_new_standard表。
 
 核心功能：
-- 每天上午9点自动运行（在城市统计之后）
+- 每天上午8点自动运行
 - 计算月度统计、年度累计、当月累计三种统计类型
-- 按HJ663标准计算综合指数和单项指数
+- 按HJ663新标准限值计算综合指数和单项指数
 - 支持多城市数据合并统计
 - 自动排名计算
 
 作者：Claude Code
 版本：1.0.0
-日期：2026-04-05
+日期：2026-04-09
 """
 
 from typing import List, Dict, Tuple, Optional
@@ -28,7 +28,6 @@ from app.fetchers.city_statistics.city_statistics_fetcher import (
     safe_round,
     calculate_percentile,
     calculate_statistics,
-    ANNUAL_STANDARD_LIMITS_2026,
     WEIGHTS_2026,
     WEIGHTS_2013
 )
@@ -42,9 +41,11 @@ logger = structlog.get_logger()
 
 def calculate_province_rankings(statistics: List[Dict]) -> List[Dict]:
     """
-    计算省份排名（按综合指数）
+    计算省份排名（按综合指数）- 新标准版本
 
-    同时计算4套标准组合的排名
+    同时计算2套标准组合的排名：
+    - 新限值+新算法
+    - 新限值+旧算法
 
     Args:
         statistics: 统计数据列表
@@ -52,37 +53,23 @@ def calculate_province_rankings(statistics: List[Dict]) -> List[Dict]:
     Returns:
         添加了排名的统计数据列表
     """
-    # 计算新标准排名（新限值+新算法）
-    valid_stats = [s for s in statistics if s.get('comprehensive_index') is not None]
-    sorted_stats = sorted(valid_stats, key=lambda x: x['comprehensive_index'])
+    # 计算新限值+新算法排名
+    valid_stats_new_algo = [s for s in statistics if s.get('comprehensive_index') is not None]
+    sorted_stats_new_algo = sorted(valid_stats_new_algo, key=lambda x: x['comprehensive_index'])
 
-    for rank, stat in enumerate(sorted_stats, start=1):
+    for rank, stat in enumerate(sorted_stats_new_algo, start=1):
         stat['comprehensive_index_rank'] = rank
 
-    # 计算旧标准排名（旧限值+旧算法）
-    valid_stats_old = [s for s in statistics if s.get('comprehensive_index_old') is not None]
-    sorted_stats_old = sorted(valid_stats_old, key=lambda x: x['comprehensive_index_old'])
-
-    for rank, stat in enumerate(sorted_stats_old, start=1):
-        stat['comprehensive_index_rank_old'] = rank
-
     # 计算新限值+旧算法排名
-    valid_stats_new_limit_old_algo = [s for s in statistics if s.get('comprehensive_index_new_limit_old_algo') is not None]
-    sorted_stats_new_limit_old_algo = sorted(valid_stats_new_limit_old_algo, key=lambda x: x['comprehensive_index_new_limit_old_algo'])
+    valid_stats_old_algo = [s for s in statistics if s.get('comprehensive_index_new_limit_old_algo') is not None]
+    sorted_stats_old_algo = sorted(valid_stats_old_algo, key=lambda x: x['comprehensive_index_new_limit_old_algo'])
 
-    for rank, stat in enumerate(sorted_stats_new_limit_old_algo, start=1):
+    for rank, stat in enumerate(sorted_stats_old_algo, start=1):
         stat['comprehensive_index_rank_new_limit_old_algo'] = rank
-
-    # 计算旧限值+新算法排名
-    valid_stats_old_limit_new_algo = [s for s in statistics if s.get('comprehensive_index_old_limit_new_algo') is not None]
-    sorted_stats_old_limit_new_algo = sorted(valid_stats_old_limit_new_algo, key=lambda x: x['comprehensive_index_old_limit_new_algo'])
-
-    for rank, stat in enumerate(sorted_stats_old_limit_new_algo, start=1):
-        stat['comprehensive_index_rank_old_limit_new_algo'] = rank
 
     # 返回完整列表（包括无效数据）
     result = []
-    ranked_dict = {s['province_name']: s for s in sorted_stats}
+    ranked_dict = {s['province_name']: s for s in sorted_stats_new_algo}
 
     for stat in statistics:
         if stat['province_name'] in ranked_dict:
@@ -376,11 +363,11 @@ def validate_province_statistics(
 # =============================================================================
 
 class ProvinceSQLServerClient(SQLServerClient):
-    """扩展的SQL Server客户端，支持省级统计数据插入"""
+    """扩展的SQL Server客户端，支持省级新标准统计数据插入"""
 
     def insert_province_statistics(self, statistics: List[Dict], stat_type: str, stat_date: str):
         """
-        插入省级统计数据到province_statistics表
+        插入省级新标准统计数据到province_statistics_new_standard表
 
         Args:
             statistics: 统计数据列表
@@ -396,26 +383,24 @@ class ProvinceSQLServerClient(SQLServerClient):
 
             # 删除旧数据（如果存在）
             delete_sql = """
-            DELETE FROM province_statistics
+            DELETE FROM province_statistics_new_standard
             WHERE stat_type = ? AND stat_date = ?
             """
             cursor.execute(delete_sql, [stat_type, stat_date])
 
             # 插入新数据
             insert_sql = """
-            INSERT INTO province_statistics (
+            INSERT INTO province_statistics_new_standard (
                 stat_date, stat_type, province_name,
                 so2_concentration, no2_concentration, pm10_concentration, pm2_5_concentration,
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
-                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 standard_version,
                 data_days, sample_coverage, city_count, city_names,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for stat in statistics:
@@ -436,14 +421,8 @@ class ProvinceSQLServerClient(SQLServerClient):
                     stat.get('o3_8h_index'),
                     stat.get('comprehensive_index'),
                     stat.get('comprehensive_index_rank'),
-                    stat.get('pm10_index_old'),
-                    stat.get('pm2_5_index_old'),
-                    stat.get('comprehensive_index_old'),
-                    stat.get('comprehensive_index_rank_old'),
                     stat.get('comprehensive_index_new_limit_old_algo'),
                     stat.get('comprehensive_index_rank_new_limit_old_algo'),
-                    stat.get('comprehensive_index_old_limit_new_algo'),
-                    stat.get('comprehensive_index_rank_old_limit_new_algo'),
                     'HJ663-2026',
                     stat.get('data_days'),
                     stat.get('sample_coverage'),
@@ -457,7 +436,7 @@ class ProvinceSQLServerClient(SQLServerClient):
             conn.close()
 
             logger.info(
-                "province_statistics_inserted",
+                "province_statistics_new_standard_inserted",
                 stat_type=stat_type,
                 stat_date=stat_date,
                 count=len(statistics)
@@ -465,11 +444,11 @@ class ProvinceSQLServerClient(SQLServerClient):
 
         except pyodbc.Error as e:
             logger.error(
-                "province_statistics_insert_error",
+                "province_statistics_new_standard_insert_error",
                 error=str(e),
                 sqlstate=e.args[0] if e.args else None
             )
-            raise Exception(f"省级统计数据插入失败: {str(e)}")
+            raise Exception(f"省级新标准统计数据插入失败: {str(e)}")
 
 
 # =============================================================================
@@ -477,13 +456,13 @@ class ProvinceSQLServerClient(SQLServerClient):
 # =============================================================================
 
 class ProvinceStatisticsFetcher(DataFetcher):
-    """省级空气质量统计数据抓取器"""
+    """省级空气质量统计数据抓取器（新标准限值版本）"""
 
     def __init__(self):
         super().__init__(
-            name="province_statistics_fetcher",
-            description="省级空气质量统计预计算",
-            schedule="0 9 * * *",  # 每天上午9点（在城市统计之后）
+            name="province_statistics_new_standard_fetcher",
+            description="省级空气质量统计预计算（新标准限值）",
+            schedule="0 8 * * *",  # 每天上午8点
             version="1.0.0"
         )
         self.sql_client = ProvinceSQLServerClient()
@@ -737,11 +716,9 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
-                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 data_days, sample_coverage, city_count, city_names
-            FROM province_statistics
+            FROM province_statistics_new_standard
             WHERE stat_type = 'current_month' AND stat_date = ?
             """
 
@@ -766,26 +743,24 @@ class ProvinceStatisticsFetcher(DataFetcher):
 
             # 2. 删除已有的monthly数据（如果存在）
             delete_sql = """
-            DELETE FROM province_statistics
+            DELETE FROM province_statistics_new_standard
             WHERE stat_type = 'monthly' AND stat_date = ?
             """
             cursor.execute(delete_sql, [stat_date])
 
             # 3. 插入monthly数据
             insert_sql = """
-            INSERT INTO province_statistics (
+            INSERT INTO province_statistics_new_standard (
                 stat_date, stat_type, province_name,
                 so2_concentration, no2_concentration, pm10_concentration, pm2_5_concentration,
                 co_concentration, o3_8h_concentration,
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
-                pm10_index_old, pm2_5_index_old, comprehensive_index_old, comprehensive_index_rank_old,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                comprehensive_index_old_limit_new_algo, comprehensive_index_rank_old_limit_new_algo,
                 standard_version,
                 data_days, sample_coverage, city_count, city_names,
                 created_at, updated_at
-            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for row in current_data:
@@ -796,9 +771,7 @@ class ProvinceStatisticsFetcher(DataFetcher):
                     row.co_concentration, row.o3_8h_concentration,
                     row.so2_index, row.no2_index, row.pm10_index, row.pm2_5_index, row.co_index, row.o3_8h_index,
                     row.comprehensive_index, row.comprehensive_index_rank,
-                    row.pm10_index_old, row.pm2_5_index_old, row.comprehensive_index_old, row.comprehensive_index_rank_old,
                     row.comprehensive_index_new_limit_old_algo, row.comprehensive_index_rank_new_limit_old_algo,
-                    row.comprehensive_index_old_limit_new_algo, row.comprehensive_index_rank_old_limit_new_algo,
                     'HJ663-2026',
                     row.data_days, row.sample_coverage, row.city_count, row.city_names
                 ]

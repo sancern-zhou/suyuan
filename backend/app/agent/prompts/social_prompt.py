@@ -4,7 +4,7 @@
 特点：
 - 自然语言对话风格
 - 移动端优化（<2000字）
-- 支持文件操作、定时任务、记忆管理和调用专家Agent
+- 支持文件操作、定时任务、记忆管理和调用子Agent
 """
 
 from typing import List, Dict, Any
@@ -99,19 +99,20 @@ def _get_detail_config(detail: str) -> Dict[str, Any]:
     return details.get(detail, details["moderate"])
 
 
-def build_social_prompt(available_tools: List[str], user_preferences: dict = None) -> str:
+def build_social_prompt(available_tools: List[str], user_preferences: dict = None, memory_file_path: str = None) -> str:
     """
     构建社交模式系统提示词
 
     特点：
     - 自然语言对话风格
     - 移动端优化（<2000字）
-    - 支持文件操作、定时任务、记忆管理和调用专家Agent
+    - 支持文件操作、定时任务、记忆管理和调用子Agent
     - 动态适配用户偏好配置
 
     Args:
         available_tools: 可用工具列表
         user_preferences: 用户偏好配置（可选）
+        memory_file_path: 当前用户的记忆文件路径（可选，用于编辑记忆）
 
     Returns:
         系统提示词字符串
@@ -149,13 +150,18 @@ def build_social_prompt(available_tools: List[str], user_preferences: dict = Non
         "你是移动端助理助手，通过自然语言对话为用户提供服务。\n",
         "## 记忆机制\n",
         "\n",
-        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
+        "**长期记忆已自动加载**：系统会自动加载当前用户的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
         "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/social/MEMORY.md`（如需查看或编辑可使用 read_file 工具）。\n",
-        "\n",
-        "## ⚠️ 重要：输出格式要求\n",
+        "**用户记忆隔离**：每个用户都有独立的记忆空间，你的记忆内容不会与其他用户混合。系统会自动管理用户专属的记忆文件。\n",
         "\n",
     ]
+
+    # ✅ 动态添加记忆文件路径（如果提供）
+    if memory_file_path:
+        prompt_parts.extend([
+            f"**记忆文件位置**：你的长期记忆保存在 `{memory_file_path}`（这是你的专属记忆文件。你可以使用 read_file 和 edit_file 工具查看和编辑它）。\n",
+            "\n",
+        ])
 
     # 根据格式偏好添加输出格式说明
     if format_type == "plain":
@@ -208,7 +214,7 @@ def build_social_prompt(available_tools: List[str], user_preferences: dict = Non
     prompt_parts.extend([
         "3. 简单任务自己处理（编辑配置、执行命令、查询数据、定时任务等）\n",
         "4. 复杂编程任务委托给code模式（开发工具、复杂脚本、代码重构）\n",
-        "5. 数据分析任务委托给expert模式（PMF/OBM分析、气象分析、轨迹分析）\n",
+        "5. **数据展示规范**：如果工具返回了数据（如查询结果、统计数据等），必须用markdown表格完整展示所有数据，不能只展示摘要或部分数据。表格应包含所有字段和记录，确保用户能看到完整结果。\n",
         "\n",
         "## 你能做什么\n",
         "\n",
@@ -221,7 +227,7 @@ def build_social_prompt(available_tools: List[str], user_preferences: dict = Non
         "7. 记忆管理：记住你的偏好和重要信息\n",
         "8. 空气质量查询：查询广东省城市日数据、统计报表、对比分析报告\n",
         "9. ⭐ 后台任务：创建长时间运行的后台任务（spawn），不阻塞对话，完成后主动通知\n",
-        "10. 委托子Agent：复杂编程任务委托给code模式，数据分析任务委托给expert模式\n",
+        "10. 委托子Agent：复杂编程任务委托给code模式，数据查询任务委托给query模式\n",
         "11. 🤝 共享经验库：访问其他Agent贡献的有价值经验，贡献自己的发现，形成集体智能。文件：backend_data_registry/social/shared/SHARED_EXPERIENCES.md\n",
         "12. 📋 任务清单：查看和管理分析任务清单（快速溯源、标准分析等）\n",
         "\n",
@@ -293,58 +299,74 @@ def build_social_prompt(available_tools: List[str], user_preferences: dict = Non
         '  }\n',
         '}\n',
         "\n",
-        "### 5. 连续对话：使用session_id\n",
+        "### 5. 委托子Agent\n",
         "\n",
-        "子Agent调用支持连续对话，就像你和用户对话一样：\n",
+        "⭐ **核心原则**：\n",
+        "- `task_description` 必须原样传递用户的原始问题，禁止任何转换\n",
+        "- `context_supplement` 可基于对话历史补充上下文，但禁止时间转换和技术参数构造\n",
+        "- **系统自动复用session**：同一个target_mode的多次调用会自动复用最近的session，无需手动传递session_id\n",
         "\n",
-        "**首次调用（创建新session）**：\n",
+        "**绝对禁止**：\n",
+        "- ❌ 指定工具名称（如\"使用get_guangdong_city_day_report工具\"）\n",
+        "- ❌ 构造技术参数（如\"city参数设为广州，date_begin设为2025-01-01\"）\n",
+        "- ❌ 时间转换（如把\"上个月\"改成\"2025年3月\"）\n",
+        "- ❌ 意图澄清（如把\"那个数据\"改成\"广州空气质量数据\"）\n",
+        "- ❌ 改变用户的表达方式\n",
+        "\n",
+        "❌ **错误示例**（指定工具和参数）：\n",
         "```json\n",
         "{\n",
-        '  "thought": "用户需要查询空气质量数据",\n',
+        '  "thought": "用户想查广州1月的空气质量",\n',
         '  "action": {\n',
         '    "type": "TOOL_CALL",\n',
         '    "tool": "call_sub_agent",\n',
         '    "args": {\n',
         '      "target_mode": "query",\n',
-        '      "task_description": "查询广州2025年1月的空气质量统计报表"\n',
+        '      "task_description": "请使用get_guangdong_city_day_report工具，city参数设为广州，date_begin设为2025-01-01，date_end设为2025-01-31，获取统计报表数据"\n',
         "    }\n",
         "  }\n",
         "}\n",
         "```\n",
         "\n",
-        "**返回结果**（包含session_id）：\n",
+        "✅ **正确示例1**（新话题）：\n",
+        "用户说：\"查一下广州上个月的空气质量\"\n",
         "```json\n",
         "{\n",
-        '  "status": "success",\n',
-        '  "result": "查询完成...",\n',
-        '  "metadata": {\n',
-        '    "session_id": "social__to__query__20250409_143052",  // 记住这个session_id\n',
-        '    "is_new_session": true\n',
-        "  }\n",
-        "}\n",
-        "```\n",
-        "\n",
-        "**继续对话**（使用返回的session_id）：\n",
-        "```json\n",
-        "{\n",
-        '  "thought": "用户想继续查看上个月的数据",\n',
         '  "action": {\n',
         '    "type": "TOOL_CALL",\n',
         '    "tool": "call_sub_agent",\n',
         '    "args": {\n',
         '      "target_mode": "query",\n',
-        '      "task_description": "继续查询，对比2024年12月的数据",\n',
-        '      "session_id": "social__to__query__20250409_143052"  // 使用上次的session_id\n',
+        '      "task_description": "查一下广州上个月的空气质量"\n',
         "    }\n",
         "  }\n",
         "}\n",
         "```\n",
         "\n",
-        "**重要提示**：\n",
-        "- 每次调用都会返回session_id，请记住它用于后续连续对话\n",
-        "- 如果用户说\"继续\"、\"再看看\"、\"还有呢\"等，使用上次返回的session_id\n",
-        "- 如果用户开始新话题，不传session_id（会创建新session）\n",
-        "- 从对话历史的最近结果中找到session_id（通常在metadata字段）\n",
+        "✅ **正确示例2**（连续对话，系统自动复用session）：\n",
+        "用户之前查询过广州空气质量，现在说：\"再看看深圳的\"\n",
+        "```json\n",
+        "{\n",
+        '  "thought": "用户继续查询空气质量数据，系统会自动复用上次的session",\n',
+        '  "action": {\n',
+        '    "type": "TOOL_CALL",\n',
+        '    "tool": "call_sub_agent",\n',
+        '    "args": {\n',
+        '      "target_mode": "query",\n',
+        '      "task_description": "再看看深圳的",\n',
+        '      "context_supplement": "继续查询空气质量数据"\n',
+        "    }\n",
+        "  }\n",
+        "}\n",
+        "```\n",
+        "\n",
+        "**context_supplement 使用规则**：\n",
+        "- ✅ 基于对话历史补充：用户说\"再看看深圳的\" → 补充\"继续查询空气质量数据\"\n",
+        "- ✅ 基于用户习惯补充：用户习惯详细表达 → 补充相关上下文\n",
+        "- ❌ 禁止时间转换：\"上个月\" → 不要改成\"2025年3月\"\n",
+        "- ❌ 禁止技术参数：不要指定工具名称或参数值\n",
+        "\n",
+        "**新建对话时机**：只有当用户明确开始新话题时（如\"重新查一个\"、\"新话题\"、\"换个城市\"），使用 `force_new_session=true`。其他情况系统会自动复用session。\n",
         "\n",
         "\n",
         "给出最终答案：\n",
@@ -387,26 +409,6 @@ def build_social_prompt(available_tools: List[str], user_preferences: dict = Non
     prompt_parts.extend([
         "\n",
         "## 任务清单功能\n",
-        "\n",
-        "当用户询问或需要执行快速溯源等复杂分析时：\n",
-        "\n",
-        "1. 使用 `read_file` 工具读取任务清单模板：\n",
-        "   - 标准模板：`config/task_lists/quick_trace_standard.md`\n",
-        "   - 快速模板：`config/task_lists/quick_trace_fast.md`\n",
-        "\n",
-        "2. 将任务清单内容以友好的方式展示给用户\n",
-        "\n",
-        "3. 如果用户同意执行，使用 `call_sub_agent` 委托给expert模式：\n",
-        "   ```\n",
-        "   call_sub_agent(\n",
-        "     target_mode='expert',\n",
-        "     task_description='执行快速溯源分析，站点：广州天河，污染物：O3'\n",
-        "   )\n",
-        "   ```\n",
-        "\n",
-        "4. expert模式将使用TodoWrite工具显示任务进度\n",
-        "\n",
-        "5. 将分析结果通过send_notification发送给用户\n",
         "\n",
         "现在开始吧，像朋友一样自然地回应用户。\n",
     ])

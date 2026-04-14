@@ -682,8 +682,8 @@ class ParsePDFTool(LLMTool):
 
     async def _detect_ocr_engine(self) -> str:
         """检测可用的OCR引擎"""
-        # 优先使用Qwen（有默认API key）
-        api_key = os.getenv("OCR_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "sk-6b11fe1b4ed64504990e8ace35f976fb"
+        # 优先使用Qwen（从环境变量读取API key）
+        api_key = os.getenv("QWEN_VL_API_KEY", "")
         if api_key:
             return "qwen"
 
@@ -717,14 +717,14 @@ class ParsePDFTool(LLMTool):
                 last_page=max(page_numbers)
             )
 
-            # API配置（使用与document_processor相同的默认值）
-            api_url = os.getenv("OCR_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
-            api_key = os.getenv("OCR_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "sk-6b11fe1b4ed64504990e8ace35f976fb"
+            # API配置（从环境变量读取）
+            api_url = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            api_key = os.getenv("QWEN_VL_API_KEY", "")
 
             if not api_key:
                 return {
                     "success": False,
-                    "data": {"error": "未配置OCR_API_KEY或DASHSCOPE_API_KEY"},
+                    "data": {"error": "未配置QWEN_VL_API_KEY"},
                     "summary": "Qwen OCR API密钥未配置"
                 }
 

@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.utility.file_read_state import get_file_read_state
 import structlog
 
 logger = structlog.get_logger()
@@ -59,6 +60,9 @@ class ReadFileTool(LLMTool):
 
     # 支持的 Markdown 格式
     MARKDOWN_EXTENSIONS = {'.md', '.markdown'}
+
+    # 支持的 Jupyter Notebook 格式
+    NOTEBOOK_EXTENSIONS = {'.ipynb'}
 
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
@@ -233,6 +237,7 @@ PDF 智能解析：
             is_image = file_ext in self.IMAGE_EXTENSIONS
             is_pdf = file_ext in self.PDF_EXTENSIONS
             is_docx = file_ext in self.DOCX_EXTENSIONS
+            is_notebook = file_ext in self.NOTEBOOK_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
 
             if is_image:
@@ -251,6 +256,20 @@ PDF 智能解析：
                 return await self._read_word_xml(
                     resolved_path, file_size, raw_mode, include_formatting, max_paragraphs
                 )
+            elif is_notebook:
+                # 读取 Jupyter Notebook（作为文本文件处理）
+                result = await self._read_text(
+                    resolved_path, encoding, file_size, offset, limit, max_size
+                )
+                # 标记为已读取（用于 notebook_edit 的 Read-Before-Edit 机制）
+                if result.get("success"):
+                    try:
+                        from app.tools.utility.notebook_edit_tool import mark_notebook_as_read
+                        full_content = resolved_path.read_text(encoding=encoding)
+                        mark_notebook_as_read(str(resolved_path), full_content)
+                    except ImportError:
+                        pass
+                return result
             else:
                 # 读取文本文件（支持分页）
                 return await self._read_text(
@@ -383,6 +402,19 @@ PDF 智能解析：
             else:
                 # 完整读取
                 summary = f"读取成功: {file_path.name} ({file_size} bytes, {total_lines} 行)"
+
+            # 记录读取状态（用于edit_file预读验证）
+            is_full_read = not is_truncated
+            read_state = get_file_read_state()
+            read_state.set(
+                str(file_path),
+                content=full_content if is_full_read else None,
+                offset=offset if not is_full_read else None,
+                limit=limit if not is_full_read else None,
+                is_partial_view=not is_full_read,
+                file_size=file_size,
+                encoding=encoding
+            )
 
             return {
                 "success": True,
