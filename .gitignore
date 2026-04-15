@@ -137,7 +137,8 @@ playwright-*/
 报告模板/
 doc/
 docs/
-# scripts/  # 临时启用：提交批量处理脚本
+scripts/
+backend/scripts/
 tests/
 models--*/
 hub/
