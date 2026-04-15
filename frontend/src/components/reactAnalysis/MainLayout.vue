@@ -28,6 +28,8 @@
         :total-message-count="totalMessageCount"
         :loading-more="loadingMore"
         :show-management-panel="!!managementPanel"
+        :right-panel-expanded="rightPanelExpanded"
+        :has-viz-content="hasVizContent"
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
@@ -37,6 +39,7 @@
         @drop="handleChatAreaDrop"
         @select-message="handleSelectMessage"
         @load-more="handleLoadMore"
+        @toggle-viz-panel="handleToggleVizPanel"
       >
         <template #management-panels>
           <!-- 管理面板插槽 -->
@@ -303,11 +306,6 @@ const props = defineProps({
   }
 })
 
-// 监听 managementPanel 变化
-watch(() => props.managementPanel, (newVal) => {
-  console.log('[MainLayout] managementPanel changed to:', newVal)
-}, { immediate: true })
-
 const emit = defineEmits([
   'update:activeModule',
   'update:leftSidebarCollapsed',
@@ -329,6 +327,7 @@ const emit = defineEmits([
   'chat-area-drag-over',
   'chat-area-drag-leave',
   'chat-area-drop',
+  'toggle-viz-panel',
   'update:era5HistoricalDate',
   'close-management-panel',
   'show-kb-create-dialog',
@@ -353,10 +352,24 @@ const emit = defineEmits([
 
 const layoutRef = ref(null)
 
+// 右侧面板展开状态（用于ChatArea的展开/隐藏按钮）
+const rightPanelExpanded = ref(true)
+
+// 计算是否有可视化内容（用于显示/隐藏ChatArea中的按钮）
+const hasVizContent = computed(() => {
+  // 只要有右侧面板可见，就显示按钮
+  return props.vizPanelVisible || props.officePanelVisible
+})
+
 // 监听 layoutRef 变化并通知父组件
 watch(layoutRef, (newEl) => {
   emit('update:layout-ref', newEl)
 })
+
+// 同步右侧面板展开状态
+watch(() => props.rightPanelVisible, (newValue) => {
+  rightPanelExpanded.value = newValue
+}, { immediate: true })
 
 // 事件处理
 const handleCollapseChange = (value) => {
@@ -421,6 +434,13 @@ const handleTabChange = (tab) => {
 
 const handleOfficeEditSubmit = (data) => {
   emit('office-edit-submit', data)
+}
+
+// 处理右侧面板展开/隐藏
+const handleToggleVizPanel = () => {
+  rightPanelExpanded.value = !rightPanelExpanded.value
+  // 通知父组件切换右侧面板状态
+  emit('toggle-viz-panel')
 }
 
 const handleChatAreaDragOver = (e) => {

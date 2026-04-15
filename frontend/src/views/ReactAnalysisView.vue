@@ -84,6 +84,7 @@
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestore"
+      @toggle-viz-panel="toggleVizPanel"
     />
 
     <!-- 知识库创建对话框 -->

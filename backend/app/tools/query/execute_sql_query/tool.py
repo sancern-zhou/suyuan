@@ -101,6 +101,7 @@ class ExecuteSQLQueryTool(LLMTool):
 - quality_control_records：质控例行检查记录
 - working_orders：运维工单
 - analysis_history：分析历史记录
+- BSD_STATION：站点信息表（包含站点ID、名称、代码、区域ID、经纬度、地址、状态等，支持按区域查询站点列表）
 
 **安全限制**：
 - 只允许SELECT查询

@@ -26,6 +26,7 @@ from ..context.simplified_context_builder import SimplifiedContextBuilder
 
 # 守卫模块（任务完成守卫）
 from .guards import TaskCompletionGuard
+from .schema_injection import SchemaInjector
 
 logger = structlog.get_logger()
 
@@ -109,6 +110,9 @@ class ReActLoop:
 
         # ✅ 初始化当前模式（默认expert）
         self.current_mode = "expert"
+
+        # ✅ 初始化Schema注入器（检测连续工具错误并自动注入schema）
+        self.schema_injector = SchemaInjector(consecutive_error_threshold=2)
 
         logger.info(
             "react_loop_initialized",
@@ -1482,6 +1486,30 @@ class ReActLoop:
             iteration=iteration
         )
 
+        # ✅ 记录工具执行结果到Schema注入器
+        self.schema_injector.record_tool_result(tool_name, observation)
+
+        # ✅ 检查是否需要注入工具schema
+        if self.schema_injector.should_inject_schema(tool_name):
+            schema_text = self.schema_injector.get_tool_schema(
+                tool_name,
+                self.executor.tool_registry
+            )
+
+            if schema_text:
+                # 将schema注入到observation中
+                observation["schema_injection"] = schema_text
+                observation["schema_injection_notice"] = (
+                    f"⚠️ 你连续{self.schema_injector.consecutive_error_threshold}次调用工具{tool_name}失败。"
+                    f"已自动注入该工具的完整schema，请仔细阅读参数要求后再试。"
+                )
+
+                logger.info(
+                    "schema_injected",
+                    tool_name=tool_name,
+                    error_count=self.schema_injector.tool_error_counts[tool_name]
+                )
+
         logger.info(
             "tool_executed",
             tool=tool_name,
@@ -1613,6 +1641,21 @@ class ReActLoop:
             return ""
 
         try:
+            # ✅ 如果有schema注入，优先显示schema（放在observation前面）
+            if "schema_injection" in observation:
+                schema_notice = observation.get("schema_injection_notice", "")
+                schema_text = observation["schema_injection"]
+
+                # 构建带schema的observation
+                formatted = f"{schema_notice}\n\n{schema_text}\n\n---\n\n"
+
+                # 序列化原始observation（移除schema相关字段避免重复）
+                obs_copy = {k: v for k, v in observation.items()
+                           if k not in ["schema_injection", "schema_injection_notice"]}
+                formatted += json.dumps(obs_copy, ensure_ascii=False, indent=2, default=str)
+
+                return formatted
+
             # 直接序列化为JSON，保持完整信息
             # 使用 ensure_ascii=False 支持中文
             # 使用 indent=2 提高可读性

@@ -90,6 +90,9 @@ click_*.py
 start_*.py
 auto_*.py
 
+# Standalone executors (not for version control)
+backend/app/agent/executors/quick_trace_executor.py
+
 # Temporary analysis files
 *_analysis.md
 *_summary.md
@@ -134,7 +137,7 @@ playwright-*/
 报告模板/
 doc/
 docs/
-scripts/
+# scripts/  # 临时启用：提交批量处理脚本
 tests/
 models--*/
 hub/

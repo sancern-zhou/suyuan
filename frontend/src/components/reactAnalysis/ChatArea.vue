@@ -224,33 +224,45 @@ defineExpose({
   top: 50%;
   right: 0;
   transform: translateY(-50%);
-  z-index: 10;
-  width: 24px;
-  height: 60px;
-  background: #1890ff;
-  color: white;
-  border: none;
+  z-index: 1000;
+  width: 20px;
+  height: 80px;
+  background: #f5f5f5;
+  color: #666;
+  border: 1px solid #d9d9d9;
   border-radius: 4px 0 0 4px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+  font-weight: bold;
 }
 
 .viz-toggle-btn:hover {
-  background: #40a9ff;
-  width: 28px;
+  background: #e6e6e6;
+  transform: translateY(-50%) scale(1.05);
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.15);
+  border-color: #bbb;
 }
 
 .viz-toggle-btn.expanded {
-  right: auto;
-  left: 0;
+  right: 0;
+  border-radius: 4px 0 0 4px;
+}
+
+.viz-toggle-btn:not(.expanded) {
+  right: -18px;
   border-radius: 0 4px 4px 0;
 }
 
+.viz-toggle-btn:not(.expanded):hover {
+  right: -5px;
+}
+
 .toggle-icon {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: bold;
 }
 

@@ -176,11 +176,7 @@ export function useSessionManagement(store) {
         if (officeDocs.length === 0) {
           const extractedDocs = extractOfficeDocuments(messages)
           if (extractedDocs.length > 0) {
-            officeDocs = extractedDocs.map(pdf => ({
-              pdf_preview: pdf,
-              file_path: pdf.pdf_path,
-              generator: 'session_restore'
-            }))
+            officeDocs = extractedDocs
           }
         }
 
@@ -264,8 +260,22 @@ export function useSessionManagement(store) {
         if (!obs) continue
 
         const obsData = obs.data
-        if (obsData && obsData.pdf_preview) {
-          docs.push(obsData.pdf_preview)
+        if (!obsData) continue
+
+        // 提取 pdf_preview 或 markdown_preview
+        // 注意：数据结构需要符合 reactStore.setLastOfficeDocument 的期望格式
+        if (obsData.pdf_preview) {
+          docs.push({
+            pdf_preview: obsData.pdf_preview,
+            file_path: obsData.file_path || obsData.pdf_preview.pdf_path,
+            generator: obsData.generator || 'word_processor'
+          })
+        } else if (obsData.markdown_preview) {
+          docs.push({
+            markdown_preview: obsData.markdown_preview,
+            file_path: obsData.file_path,
+            generator: obsData.generator || 'read_file'
+          })
         }
       }
     }
@@ -294,15 +304,11 @@ export function useSessionManagement(store) {
    */
   const handleLoadSession = async (sessionId) => {
     const result = await doRestoreSession(sessionId, {
-      messageLimit: 100,  // 增加默认加载消息数量，确保能加载到包含图表的历史消息
+      messageLimit: 100,
       restoreOfficeDocs: true
     })
 
-    if (result.success) {
-      console.log(`[快速加载会话] 已加载会话，消息数: ${result.messageCount}, 图表数: ${result.visualCount}`)
-      return true
-    }
-    return false
+    return result.success
   }
 
   // ========== 会话历史管理 ==========

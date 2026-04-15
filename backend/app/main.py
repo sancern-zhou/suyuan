@@ -97,10 +97,6 @@ app.include_router(admin.router)
 # Include ReAct Agent router (new architecture)
 app.include_router(react_agent_router.router)
 
-# Include Export router (report export functionality)
-from app.routers import export as export_router
-app.include_router(export_router.router)
-
 # Include API routes (streaming support)
 from app.api import routes as api_routes
 app.include_router(api_routes.router, prefix="/api")

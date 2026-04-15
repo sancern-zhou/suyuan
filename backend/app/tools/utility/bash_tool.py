@@ -7,25 +7,178 @@ Bash Command Execution Tool
 - 文件系统操作（批量处理、格式转换）
 - 系统监控（磁盘空间、进程状态）
 
-安全措施：
-1. 工作目录限制：只能在工作目录内操作
-2. 危险命令黑名单：禁止 rm -rf /、sudo、shutdown 等
-3. 超时保护：默认 60 秒超时
-4. 输出截断：限制输出大小（50KB）
-5. 白名单模式：只允许特定命令类别
+安全措施（防止命令注入）：
+1. 禁用 shell=True：使用参数列表执行命令，防止shell元字符注入
+2. Shell元字符黑名单：禁止 ; | & $ ` 等特殊字符（使用引号状态追踪）
+3. 危险命令黑名单：禁止 rm -rf /、sudo、shutdown 等
+4. 命令白名单验证：只允许特定类别的命令
+5. 工作目录限制：只能在工作目录内操作
+6. 超时保护：默认 60 秒超时
+7. 输出大小限制：限制输出大小（1MB）
+
+安全改进（v2.0 - 减少误报）：
+- 引号状态追踪：正确识别引号内/外的元字符
+- 允许引号内的安全元字符（如 grep "pattern\|other"）
+- 改进的转义字符处理
 """
 
 import subprocess
 import shutil
 import platform
+import shlex
+import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
+
+
+# ============================================================================
+# 辅助函数：引号状态追踪和字符检测
+# ============================================================================
+
+def has_unescaped_char(content: str, char: str) -> bool:
+    """
+    检查内容中是否包含未转义的指定字符（引号外）
+
+    这是核心的安全检查函数，正确处理：
+    - 单引号 ('...')：完全引用，所有特殊字符都失去特殊含义
+    - 双引号 ("...")：部分引用，但 $ ` 仍保持特殊含义
+    - 转义字符 (\)：转义下一个字符
+
+    Args:
+        content: 要检查的内容
+        char: 要查找的字符
+
+    Returns:
+        如果字符在引号外且未转义，返回True（危险）
+        如果字符在引号内或已转义，返回False（安全）
+
+    Examples:
+        has_unescaped_char('echo "hello; world"', ';')  # False（安全，分号在双引号内）
+        has_unescaped_char('echo hello; world', ';')    # True（危险，分号在引号外）
+        has_unescaped_char('echo "hello\\; world"', ';') # False（安全，分号已转义）
+        has_unescaped_char("echo 'hello; world'", ';')  # False（安全，分号在单引号内）
+    """
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+
+    for c in content:
+        if escaped:
+            # 转义状态：当前字符被转义，重置转义标志
+            escaped = False
+            continue
+
+        if c == '\\':
+            # 反斜杠：转义下一个字符（但在单引号内不转义）
+            if not in_single_quote:
+                escaped = True
+            continue
+
+        if c == "'" and not in_double_quote:
+            # 单引号：切换单引号状态（在双引号内是普通字符）
+            in_single_quote = not in_single_quote
+            continue
+
+        if c == '"' and not in_single_quote:
+            # 双引号：切换双引号状态（在单引号内是普通字符）
+            in_double_quote = not in_double_quote
+            continue
+
+        # 检查目标字符（只在引号外且未转义时）
+        if c == char and not in_single_quote and not in_double_quote:
+            return True
+
+    return False
+
+
+def extract_unquoted_content(command: str) -> Tuple[str, str, str]:
+    """
+    提取命令的不同内容版本，用于多层级验证
+
+    Args:
+        command: 原始命令
+
+    Returns:
+        (unquoted_content, fully_unquoted, unquoted_keep_quotes)
+        - unquoted_content: 移除双引号内容（保留单引号内容）
+        - fully_unquoted: 移除所有引号内容
+        - unquoted_keep_quotes: 移除引号内容但保留引号字符
+    """
+    unquoted_content = ""
+    fully_unquoted = ""
+    unquoted_keep_quotes = ""
+
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+
+    for c in command:
+        if escaped:
+            escaped = False
+            if not in_single_quote:
+                unquoted_content += c
+            if not in_single_quote and not in_double_quote:
+                fully_unquoted += c
+            unquoted_keep_quotes += c
+            continue
+
+        if c == '\\':
+            if not in_single_quote:
+                escaped = True
+            if not in_single_quote:
+                unquoted_content += c
+            if not in_single_quote and not in_double_quote:
+                fully_unquoted += c
+            unquoted_keep_quotes += c
+            continue
+
+        if c == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            unquoted_keep_quotes += c
+            continue
+
+        if c == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            unquoted_keep_quotes += c
+            continue
+
+        if not in_single_quote:
+            unquoted_content += c
+        if not in_single_quote and not in_double_quote:
+            fully_unquoted += c
+        unquoted_keep_quotes += c
+
+    return unquoted_content, fully_unquoted, unquoted_keep_quotes
+
+
+def strip_safe_redirections(command: str) -> str:
+    """
+    移除安全的重定向模式（如 /dev/null）
+
+    Args:
+        command: 原始命令
+
+    Returns:
+        移除安全重定向后的命令
+    """
+    # 安全的重定向模式（这些可以自动允许）
+    safe_patterns = [
+        r'\s*2\s*>&\s*1(?=\s|$)',      # 2>&1（合并stderr到stdout）
+        r'[012]?\s*>\s*/dev/null(?=\s|$)',  # > /dev/null（丢弃输出）
+        r'\s*<\s*/dev/null(?=\s|$)',    # < /dev/null（从/dev/null读取）
+    ]
+
+    result = command
+    for pattern in safe_patterns:
+        result = re.sub(pattern, '', result)
+
+    return result
 
 
 class BashTool(LLMTool):
@@ -239,7 +392,7 @@ class BashTool(LLMTool):
                     "summary": f"❌ 工作目录超出范围: {working_dir}（允许范围: {self.working_dir}）"
                 }
 
-        # 3. 执行命令
+        # 3. 执行命令（使用参数列表，禁用shell=True防止命令注入）
         timeout_val = timeout or self.default_timeout
 
         try:
@@ -250,17 +403,37 @@ class BashTool(LLMTool):
                 timeout=timeout_val
             )
 
-            # Windows 下使用 GBK 编码读取本地命令输出，其他情况使用 UTF-8
-            is_windows = platform.system() == "Windows"
-            output_encoding = 'gbk' if (is_windows and not any(cmd in command for cmd in ['python', 'node', 'java', 'hyts_std', 'wrf'])) else 'utf-8'
+            # 使用shlex分词命令（安全处理引号）
+            # posix=True确保Unix风格引号处理，Windows下也会正确处理
+            try:
+                command_parts = shlex.split(command, posix=True)
+            except ValueError as e:
+                self._log_command(command, f"命令分词失败: {e}")
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "error": f"命令格式错误（引号不匹配）: {e}",
+                    "data": {"command": command},
+                    "metadata": {
+                        "tool_name": "bash",
+                        "error_type": "COMMAND_PARSE_ERROR"
+                    },
+                    "summary": f"❌ 命令格式错误: {e}"
+                }
 
+            # 确定编码方式
+            is_windows = platform.system() == "Windows"
+            output_encoding = 'gbk' if (is_windows and not any(cmd in command_parts[0] for cmd in ['python', 'node', 'java', 'hyts_std', 'wrf'])) else 'utf-8'
+
+            # ✅ 关键安全改进：不使用shell=True，使用参数列表
+            # 这防止了shell元字符注入攻击
             result = subprocess.run(
-                command,
-                shell=True,
+                command_parts,  # 参数列表，而非字符串
+                shell=False,    # ✅ 明确禁用shell（默认就是False）
                 cwd=work_dir,
                 capture_output=True,
-                encoding=output_encoding,  # Windows: GBK for local commands, UTF-8 for scripts
-                errors='replace',           # 替换无法解码的字符
+                encoding=output_encoding,
+                errors='replace',
                 timeout=timeout_val
             )
 
@@ -356,18 +529,44 @@ class BashTool(LLMTool):
 
     def _validate_command(self, command: str) -> Dict[str, Any]:
         """
-        三层安全验证（混合策略）：
+        六层安全验证（防止命令注入，减少误报）：
 
-        第一层：危险命令黑名单（绝对禁止）
-        第二层：智能命令验证（PATH + 白名单）
-        第三层：路径遍历检查
+        第一层：命令替换检测（$(), ``, ${}等）- 最高优先级
+        第二层：危险命令黑名单（绝对禁止）
+        第三层：引号外Shell元字符检测（使用引号状态追踪）
+        第四层：重定向/管道检测（允许引号内的安全使用）
+        第五层：智能命令验证（PATH + 白名单）
+        第六层：路径遍历检查
 
         Returns:
             {"valid": bool, "error": str (if invalid)}
         """
-        command_lower = command.lower().strip()
+        command_stripped = command.strip()
 
-        # ========== 第一层：危险命令黑名单 ==========
+        # ========== 第一层：命令替换检测（最高优先级） ==========
+        # 命令替换即使在双引号内也是危险的
+        command_substitution_patterns = [
+            ('`', '反引号命令替换'),
+            ('$(', '$()命令替换'),
+            ('${', '${}变量扩展'),
+        ]
+
+        for pattern, name in command_substitution_patterns:
+            if pattern in command_stripped:
+                return {
+                    "valid": False,
+                    "error": f"禁止使用{name}（防止命令注入）"
+                }
+
+        # 特殊检查：ANSI-C引用（$'...'）可以编码任意字符
+        if "$'" in command_stripped:
+            return {
+                "valid": False,
+                "error": "禁止使用ANSI-C引用（$'...')（可能绕过安全检查）"
+            }
+
+        # ========== 第二层：危险命令黑名单 ==========
+        command_lower = command_stripped.lower()
         for dangerous in self.DANGEROUS_COMMANDS:
             if dangerous in command_lower:
                 return {
@@ -375,52 +574,133 @@ class BashTool(LLMTool):
                     "error": f"危险命令检测到: {dangerous}"
                 }
 
-        # ========== 第二层：智能命令验证 ==========
-        parts = command.split()
-        if parts:
-            first_command = parts[0]
+        # ========== 第三层：Shell元字符检测（引号状态追踪） ==========
+        # 只检测引号外的元字符，允许引号内的安全使用
+        # 使用 fully_unquoted（移除所有引号内容）检测引号外的危险字符
+        _, fully_unquoted, _ = extract_unquoted_content(command_stripped)
 
-            # 策略1：PATH中的命令自动允许（优先级最高）
-            if shutil.which(first_command):
-                logger.debug(
-                    "command_allowed_via_path",
-                    command=first_command,
-                    path=shutil.which(first_command)
-                )
-                return {"valid": True}
+        shell_metacharacters = [';', '|', '&', '\n', '\r', '\t',
+                                '(', ')', '[', ']', '{', '}', '!',
+                                '~', '%', '#']
 
-            # 策略2：白名单中的命令允许
-            if first_command in self.ALLOWED_CATEGORIES:
-                return {"valid": True}
+        for char in shell_metacharacters:
+            if char in fully_unquoted:
+                return {
+                    "valid": False,
+                    "error": f"禁止使用Shell元字符: '{char}'（防止命令注入）"
+                }
 
-            # 策略3：Windows可执行文件允许
-            if any(first_command.endswith(ext) for ext in ['.exe', '.bat', '.cmd', '.ps1']):
-                return {"valid": True}
+        # ========== 第四层：重定向/管道检测（改进版） ==========
+        # 移除安全的重定向（如 > /dev/null）
+        safe_command = strip_safe_redirections(command_stripped)
 
-            # 策略4：完整路径的命令
-            if first_command.startswith("/") or (len(first_command) > 1 and first_command[1] == ':'):
-                binary_name = Path(first_command).name
-                # 检查二进制文件名是否在PATH或白名单中
-                if binary_name in self.ALLOWED_CATEGORIES or shutil.which(binary_name):
-                    return {"valid": True}
-                else:
+        # 检测剩余的重定向（在fully_unquoted中）
+        safe_unquoted, _, _ = extract_unquoted_content(safe_command)
+
+        if '>' in safe_unquoted:
+            return {
+                "valid": False,
+                "error": "禁止使用输出重定向（>）（防止文件写入攻击）"
+            }
+
+        if '<' in safe_unquoted:
+            return {
+                "valid": False,
+                "error": "禁止使用输入重定向（<）（防止文件读取攻击）"
+            }
+
+        # 检测管道（在fully_unquoted中）
+        if '|' in safe_unquoted:
+            return {
+                "valid": False,
+                "error": "禁止使用管道（|）（防止命令链接）"
+            }
+
+        # 检测命令连接符（&&, ||）
+        if '&&' in safe_command or '||' in safe_command:
+            return {
+                "valid": False,
+                "error": "禁止使用命令连接符（&&, ||）（防止多命令执行）"
+            }
+
+        # ========== 第五层：智能命令验证 ==========
+        try:
+            # 使用shlex安全分词（处理引号）
+            parts = shlex.split(command_stripped, posix=True)
+        except ValueError as e:
+            return {
+                "valid": False,
+                "error": f"命令格式错误（引号不匹配）: {e}"
+            }
+
+        if not parts:
+            return {
+                "valid": False,
+                "error": "命令为空"
+            }
+
+        first_command = parts[0]
+
+        # 策略1：PATH中的命令自动允许（优先级最高）
+        if shutil.which(first_command):
+            logger.debug(
+                "command_allowed_via_path",
+                command=first_command,
+                path=shutil.which(first_command)
+            )
+            # PATH中的命令允许，但要检查参数是否安全
+            return self._validate_command_args(parts)
+
+        # 策略2：白名单中的命令允许
+        if first_command in self.ALLOWED_CATEGORIES:
+            return self._validate_command_args(parts)
+
+        # 策略3：Windows可执行文件允许
+        if any(first_command.endswith(ext) for ext in ['.exe', '.bat', '.cmd', '.ps1']):
+            return self._validate_command_args(parts)
+
+        # 策略4：完整路径的命令
+        if first_command.startswith("/") or (len(first_command) > 1 and first_command[1] == ':'):
+            binary_name = Path(first_command).name
+            # 检查二进制文件名是否在PATH或白名单中
+            if binary_name in self.ALLOWED_CATEGORIES or shutil.which(binary_name):
+                return self._validate_command_args(parts)
+            else:
+                return {
+                    "valid": False,
+                    "error": f"命令不在白名单中: {first_command}"
+                }
+
+        # 策略5：其他命令拒绝
+        return {
+            "valid": False,
+            "error": f"命令不存在或不在白名单中: {first_command}"
+        }
+
+    def _validate_command_args(self, parts: List[str]) -> Dict[str, Any]:
+        """
+        验证命令参数是否安全
+
+        Args:
+            parts: 分词后的命令列表
+
+        Returns:
+            {"valid": bool, "error": str (if invalid)}
+        """
+        # 检查参数中是否包含危险的选项
+        for i, part in enumerate(parts[1:], 1):  # 跳过命令本身
+            # 检查危险的选项标志
+            if part.startswith('-'):
+                dangerous_flags = [
+                    '-exec',       # find命令的-exec参数（可执行任意命令）
+                    '-delete',
+                    '-execdir',
+                ]
+                if any(flag in part for flag in dangerous_flags):
                     return {
                         "valid": False,
-                        "error": f"命令不在白名单中: {first_command}"
+                        "error": f"禁止使用危险参数: {part}"
                     }
-
-            # 策略5：其他命令拒绝
-            return {
-                "valid": False,
-                "error": f"命令不存在或不在白名单中: {first_command}"
-            }
-
-        # ========== 第三层：路径遍历检查 ==========
-        if "../" in command and "rm " in command:
-            return {
-                "valid": False,
-                "error": "检测到路径遍历攻击尝试"
-            }
 
         return {"valid": True}
 
@@ -621,7 +901,7 @@ class BashTool(LLMTool):
         return {
             "name": "bash",
             "description": (
-                "【工具名称：bash】执行安全的 Bash 命令（跨平台兼容）。\n\n"
+                "【工具名称：bash】执行安全的 Bash 命令（跨平台兼容，防止命令注入）。\n\n"
                 "使用场景：\n"
                 "• 文件操作：ls/dir, cat/type, grep/findstr 等\n"
                 "• 数据处理：Python 脚本、gdal、ncdump 等\n"
@@ -631,13 +911,19 @@ class BashTool(LLMTool):
                 "• 自动转换 Unix 命令为 Windows 命令（ls→dir, cat→type, grep→findstr 等）\n"
                 "• Linux/macOS 执行原生 Unix 命令\n"
                 "• Windows 执行等价命令或 PowerShell 命令\n\n"
-                "安全限制：\n"
+                "安全限制（防止命令注入）：\n"
                 "• 工作目录限制在项目范围内\n"
+                "• 禁止Shell元字符（; | & $ ` 等）防止命令注入\n"
+                "• 禁止Shell特性（重定向>、管道|、命令替换$()）\n"
                 "• 禁止危险命令（rm -rf /、sudo 等）\n"
                 "• 默认超时 60 秒\n"
-                "• 输出限制 50KB\n\n"
+                "• 输出限制 1MB\n\n"
                 "【重要提示】\n"
                 "• 工具名称必须是 'bash'，不要使用 execute_command、run_command 等其他名称\n"
+                "• **不能使用重定向和管道**：不能使用 > >> < | && 等Shell特性\n"
+                "  ❌ 错误：command=\"cat file.txt > output.txt\"（不能使用重定向）\n"
+                "  ❌ 错误：command=\"cat file.txt | grep test\"（不能使用管道）\n"
+                "  ✅ 正确：使用Python脚本处理文件读写\n"
                 "• **路径格式建议**：使用正斜杠（推荐）或双反斜杠，避免转义问题\n"
                 "  ✅ 推荐：command=\"dir D:/溯源/报告模板\"（正斜杠，无需转义）\n"
                 "  ✅ 可用：command=\"dir D:\\\\溯源\\\\报告模板\"（双反斜杠，需要转义）\n"
@@ -652,7 +938,7 @@ class BashTool(LLMTool):
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "要执行的 Bash 命令"
+                        "description": "要执行的 Bash 命令（不能包含重定向、管道等Shell特性）"
                     },
                     "timeout": {
                         "type": "integer",

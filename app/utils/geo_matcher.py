@@ -89,19 +89,19 @@ class GeoMatcher:
         )
 
     def _load_stations(self):
-        """Load stations and cities from station_info.json."""
-        station_file = Path(__file__).parent.parent.parent.parent / "station_info.json"
+        """Load stations and cities from station_district_results_with_type_id.json."""
+        station_file = Path(__file__).parent.parent.parent / "backend" / "config" / "station_district_results_with_type_id.json"
 
         try:
             with open(station_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            results = data.get("results", [])
+            results = data.get("data", [])
             for station in results:
                 station_name = station.get("站点名称", "")
                 city_name = station.get("城市名称", "")
 
-                if station_name and station.get("站点状态"):
+                if station_name:
                     station_data = {
                         "name": station_name,
                         "code": station.get("唯一编码", ""),
