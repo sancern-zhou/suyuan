@@ -7,6 +7,7 @@
 """
 
 from typing import List, Tuple, Dict, Any, Optional
+from datetime import datetime
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -152,6 +153,7 @@ def generate_pollution_rose_contour(
     # 新增：支持 data_id 模式（推荐，简化 LLM 调用）
     data_id: str = None,
     time_resolution: str = "hour",  # 新增：时间分辨率（5min/hour/day）
+    use_gd_met_bureau_weather: bool = False,  # 新增：是否使用气象局气象数据
 
     # 保留：支持直接传数据模式（向后兼容）
     wind_directions: List[float] = None,
@@ -187,6 +189,9 @@ def generate_pollution_rose_contour(
                         - 5min：使用原始5分钟数据
                         - hour：按小时聚合（风向矢量平均，风速/浓度算术平均）
                         - day：按日聚合（统计方法同hour）
+        use_gd_met_bureau_weather: 是否使用气象局气象数据（默认False）
+                                  - False：使用数据自带的气象字段（wind_direction_10m, wind_speed_10m）
+                                  - True：自动查询气象局气象数据（更准确，推荐用于精确分析）
 
         # ========== 保留：直接传数据模式（向后兼容） ==========
         wind_directions: 风向列表（度数，0-360），仅在 data_id=None 时使用
@@ -219,12 +224,26 @@ def generate_pollution_rose_contour(
         6色阶模式下强制显示完整的6色阶图例，即使数据没有覆盖所有浓度范围。
         这确保了图表的可比性和标准化。
 
+        气象局数据模式（use_gd_met_bureau_weather=True）：
+        - 工具自动从data_id中提取站点信息和时间范围
+        - 查询站点对应的区县
+        - 调用气象局API查询气象数据
+        - 按时间匹配污染物数据和气象数据
+        - 如果气象局API失败，自动回退到数据自带气象字段
+
     Examples:
-        # 推荐用法：使用 data_id
+        # 推荐用法：使用 data_id（默认模式，数据自带气象字段）
         img = generate_pollution_rose_contour(
             data_id="air_quality_5min:v1:xxx",
             pollutant_name="PM10",
             time_resolution="hour"
+        )
+
+        # 气象局数据模式（精确分析）
+        img = generate_pollution_rose_contour(
+            data_id="air_quality_5min:v1:xxx",
+            pollutant_name="PM10",
+            use_gd_met_bureau_weather=True
         )
 
         # 传统用法：直接传数据
@@ -249,39 +268,118 @@ def generate_pollution_rose_contour(
             "using_data_id_mode",
             data_id=data_id,
             time_resolution=time_resolution,
-            pollutant_name=pollutant_name
+            pollutant_name=pollutant_name,
+            use_gd_met_bureau_weather=use_gd_met_bureau_weather
         )
 
-        # 1. 加载数据
-        data = load_data_from_id(data_id)
+        # 1. 加载污染物数据
+        pollutant_data = load_data_from_id(data_id)
 
-        # 2. 自动提取字段
-        try:
-            timestamps = [record['timestamp'] for record in data]
-            wind_dirs_extracted = [float(record['wind_direction_10m']) for record in data]
-            wind_speeds_extracted = [float(record['wind_speed_10m']) for record in data]
-            concs_extracted = [float(record[pollutant_name]) for record in data]
-        except KeyError as e:
-            raise ValueError(
-                f"数据文件中缺少必要字段：{e}。"
-                f"请确认 pollutant_name='{pollutant_name}' 是否正确。"
-                f"可用字段：{list(data[0].keys()) if data else 'N/A'}"
-            )
+        if use_gd_met_bureau_weather:
+            # ========== 气象局数据模式 ==========
+            logger.info("pollution_rose_using_gd_met_bureau_weather")
 
-        # 3. 时间聚合（如果需要）
-        if time_resolution in ["hour", "day"]:
-            wind_dirs_extracted, wind_speeds_extracted, concs_extracted = aggregate_by_time(
-                timestamps=timestamps,
-                wind_directions=wind_dirs_extracted,
-                wind_speeds=wind_speeds_extracted,
-                concentrations=concs_extracted,
-                resolution=time_resolution
-            )
+            # 2. 提取站点信息和时间范围
+            station_info = _extract_station_info(pollutant_data)
+            time_range = _extract_time_range(pollutant_data)
 
-        # 赋值给后续变量
-        wind_dirs = np.array(wind_dirs_extracted)
-        wind_speeds = np.array(wind_speeds_extracted)
-        concs = np.array(concs_extracted)
+            if not station_info or not time_range:
+                logger.warning(
+                    "pollution_rose_station_info_extraction_failed",
+                    message="无法从数据中提取站点信息或时间范围，回退到数据自带气象字段"
+                )
+                # 回退到单数据源模式
+                use_gd_met_bureau_weather = False
+            else:
+                logger.info(
+                    "pollution_rose_station_info_extracted",
+                    station_info=station_info,
+                    time_range=time_range
+                )
+
+                # 3. 查询站点对应的区县
+                district_name = _get_station_district(station_info['station_code'])
+
+                # 4. 调用气象局API
+                from app.services.gd_met_bureau_api_client import GDMetBureauAPIClient
+
+                weather_data = GDMetBureauAPIClient.query_weather(
+                    city_name=station_info['city_name'],
+                    begin_time=time_range['start'],
+                    end_time=time_range['end'],
+                    district_name=district_name
+                )
+
+                if not weather_data:
+                    logger.warning(
+                        "gd_met_bureau_weather_empty",
+                        message="气象局API未返回数据，回退到数据自带气象字段"
+                    )
+                    # 回退到单数据源模式
+                    use_gd_met_bureau_weather = False
+                else:
+                    # 5. 合并数据
+                    merged_data = _merge_pollutant_weather_data(
+                        pollutant_data=pollutant_data,
+                        weather_data=weather_data,
+                        pollutant_name=pollutant_name
+                    )
+
+                    if len(merged_data) == 0:
+                        raise ValueError(
+                            f"数据合并后无有效记录。请检查：\n"
+                            f"1. 站点：{station_info['station_name']}（{station_info['station_code']}）\n"
+                            f"2. 区县：{district_name or '未知'}\n"
+                            f"3. 时间范围：{time_range['start']} ~ {time_range['end']}\n"
+                            f"4. 气象局API返回记录数：{len(weather_data)}"
+                        )
+
+                    # 提取合并后的数据
+                    wind_dirs = np.array([r['wind_direction'] for r in merged_data])
+                    wind_speeds = np.array([r['wind_speed'] for r in merged_data])
+                    concs = np.array([r['concentration'] for r in merged_data])
+
+                    logger.info(
+                        "pollution_rose_data_merged_success",
+                        pollutant_count=len(pollutant_data),
+                        weather_count=len(weather_data),
+                        merged_count=len(merged_data),
+                        station=station_info['station_name'],
+                        district=district_name or '未知',
+                        match_rate=f"{len(merged_data) / len(pollutant_data) * 100:.1f}%"
+                    )
+
+        if not use_gd_met_bureau_weather:
+            # ========== 单数据源模式（使用数据自带气象字段） ==========
+            logger.info("pollution_rose_using_embedded_weather")
+
+            # 从数据中提取风向、风速、浓度
+            try:
+                timestamps = [record['timestamp'] for record in pollutant_data]
+                wind_dirs_extracted = [float(record['wind_direction_10m']) for record in pollutant_data]
+                wind_speeds_extracted = [float(record['wind_speed_10m']) for record in pollutant_data]
+                concs_extracted = [float(record[pollutant_name]) for record in pollutant_data]
+            except KeyError as e:
+                raise ValueError(
+                    f"数据文件中缺少必要字段：{e}。\n"
+                    f"请确认 pollutant_name='{pollutant_name}' 是否正确。\n"
+                    f"可用字段：{list(pollutant_data[0].keys()) if pollutant_data else 'N/A'}"
+                )
+
+            # 时间聚合（如果需要）
+            if time_resolution in ["hour", "day"]:
+                wind_dirs_extracted, wind_speeds_extracted, concs_extracted = aggregate_by_time(
+                    timestamps=timestamps,
+                    wind_directions=wind_dirs_extracted,
+                    wind_speeds=wind_speeds_extracted,
+                    concentrations=concs_extracted,
+                    resolution=time_resolution
+                )
+
+            # 赋值给后续变量
+            wind_dirs = np.array(wind_dirs_extracted)
+            wind_speeds = np.array(wind_speeds_extracted)
+            concs = np.array(concs_extracted)
 
     else:
         # 使用直接传数据模式（向后兼容）
@@ -930,3 +1028,291 @@ def generate_from_data_id(
         )
     else:
         raise ValueError(f"不支持的生成方法：{method}（支持：matplotlib/echarts）")
+
+
+# ========== 辅助函数：气象局数据查询相关 ==========
+
+def _extract_station_info(data: List[Dict]) -> Optional[Dict]:
+    """
+    从数据中提取站点信息
+
+    Args:
+        data: 污染物数据列表
+
+    Returns:
+        站点信息字典，包含：
+        - station_code: 站点编码
+        - station_name: 站点名称
+        - city_name: 城市名称
+        如果提取失败返回None
+    """
+    if not data:
+        return None
+
+    first_record = data[0]
+
+    # 提取站点编码（支持多种字段名）
+    station_code = (
+        first_record.get('station_code') or
+        first_record.get('stationCode') or
+        first_record.get('station_id') or
+        first_record.get('stationId')
+    )
+
+    # 提取站点名称（支持多种字段名）
+    station_name = (
+        first_record.get('station_name') or
+        first_record.get('stationName') or
+        first_record.get('station') or
+        first_record.get('站点名称')
+    )
+
+    # 提取城市名称（支持多种字段名）
+    city_name = (
+        first_record.get('city_name') or
+        first_record.get('cityName') or
+        first_record.get('city') or
+        first_record.get('城市名称')
+    )
+
+    if not station_code:
+        logger.warning(
+            "station_code_not_found_in_data",
+            available_fields=list(first_record.keys())
+        )
+        return None
+
+    return {
+        'station_code': station_code,
+        'station_name': station_name or station_code,
+        'city_name': city_name or '广州'  # 默认广州
+    }
+
+
+def _extract_time_range(data: List[Dict]) -> Optional[Dict]:
+    """
+    从数据中提取时间范围
+
+    Args:
+        data: 污染物数据列表
+
+    Returns:
+        时间范围字典，包含：
+        - start: 开始时间（格式：YYYY-MM-DD）
+        - end: 结束时间（格式：YYYY-MM-DD）
+        如果提取失败返回None
+    """
+    if not data:
+        return None
+
+    timestamps = []
+    for record in data:
+        ts = (
+            record.get('timestamp') or
+            record.get('time') or
+            record.get('timePoint') or
+            record.get('time_point')
+        )
+        if ts:
+            timestamps.append(ts)
+
+    if not timestamps:
+        logger.warning(
+            "timestamp_not_found_in_data",
+            sample_record=data[0] if data else None
+        )
+        return None
+
+    # 排序并提取首尾
+    timestamps_sorted = sorted(timestamps)
+
+    # 转换为气象局API需要的格式（YYYY-MM-DD）
+    def format_date(ts):
+        try:
+            # 尝试ISO格式解析
+            if 'T' in ts:
+                dt = datetime.fromisoformat(ts.replace('T', ' ').replace('Z', ''))
+            else:
+                dt = datetime.fromisoformat(ts)
+            return dt.strftime('%Y-%m-%d')
+        except:
+            # fallback: 直接取日期部分
+            parts = ts.split()
+            if parts:
+                return parts[0].split()[0]
+            return ts
+
+    try:
+        start_date = format_date(timestamps_sorted[0])
+        end_date = format_date(timestamps_sorted[-1])
+
+        return {
+            'start': start_date,
+            'end': end_date
+        }
+    except Exception as e:
+        logger.error(
+            "time_range_format_failed",
+            error=str(e)
+        )
+        return None
+
+
+def _get_station_district(station_code: str) -> Optional[str]:
+    """
+    查询站点对应的区县
+
+    Args:
+        station_code: 站点编码
+
+    Returns:
+        区县名称（如"天河"），如果未找到返回None
+    """
+    # 加载站点-区县映射文件
+    possible_paths = [
+        Path(__file__).parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json",
+        Path(__file__).parent.parent.parent / "config" / "station_district_results_with_type_id.json",
+    ]
+
+    station_file = None
+    for path in possible_paths:
+        if path.exists():
+            station_file = path
+            break
+
+    if not station_file:
+        logger.warning("station_district_file_not_found", message="station_district_results_with_type_id.json 文件未找到")
+        return None
+
+    try:
+        with open(station_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        for item in data.get('data', []):
+            if item.get('唯一编码') == station_code:
+                district = item.get('区县', '')
+                if district and isinstance(district, str) and district.strip():
+                    # 去除"区"、"市"、"县"等后缀
+                    district_clean = district.rstrip('区县市').strip()
+                    logger.info(
+                        "station_district_found",
+                        station_code=station_code,
+                        district=district,
+                        district_clean=district_clean
+                    )
+                    return district_clean
+
+        logger.warning(
+            "station_district_not_found",
+            station_code=station_code,
+            total_stations=len(data.get('data', []))
+        )
+        return None
+
+    except Exception as e:
+        logger.error(
+            "station_district_query_failed",
+            station_code=station_code,
+            error=str(e),
+            exc_info=True
+        )
+        return None
+
+
+def _merge_pollutant_weather_data(
+    pollutant_data: List[Dict],
+    weather_data: List[Dict],
+    pollutant_name: str
+) -> List[Dict]:
+    """
+    合并污染物数据和气象数据
+
+    按时间匹配污染物数据和气象数据，提取风向、风速、浓度字段
+
+    Args:
+        pollutant_data: 污染物数据列表
+        weather_data: 气象数据列表（来自气象局API）
+        pollutant_name: 污染物名称
+
+    Returns:
+        合并后的数据列表，每条记录包含：
+        - wind_direction: 风向（度）
+        - wind_speed: 风速（m/s）
+        - concentration: 污染物浓度
+    """
+    # 构建气象数据索引：按时间匹配
+    weather_index = {}
+    for w in weather_data:
+        time_key = w.get('timePoint')
+        if time_key:
+            # 转换为小时级别的时间键
+            try:
+                dt = datetime.fromisoformat(time_key.replace('T', ' '))
+                hour_key = dt.strftime('%Y-%m-%d %H:00:00')
+                weather_index[hour_key] = w
+            except:
+                # 如果解析失败，使用原始时间键
+                weather_index[time_key] = w
+
+    merged = []
+    matched_count = 0
+    unmatched_count = 0
+
+    for p in pollutant_data:
+        p_time = p.get('timestamp')
+        if not p_time:
+            unmatched_count += 1
+            continue
+
+        # 转换为小时级别的时间键
+        try:
+            dt = datetime.fromisoformat(p_time.replace('T', ' '))
+            hour_key = dt.strftime('%Y-%m-%d %H:00:00')
+        except:
+            # 如果解析失败，使用原始时间键
+            hour_key = p_time
+
+        # 查找匹配的气象数据
+        w = weather_index.get(hour_key)
+        if not w:
+            unmatched_count += 1
+            continue
+
+        try:
+            # 提取浓度
+            conc = float(p.get(pollutant_name, 0))
+
+            # 提取气象字段（支持多种字段名）
+            wd = w.get('windDirection')
+            ws = w.get('windSpeed')
+
+            if wd is not None and ws is not None and conc > 0:
+                merged.append({
+                    'wind_direction': float(wd),
+                    'wind_speed': float(ws),
+                    'concentration': conc
+                })
+                matched_count += 1
+            else:
+                unmatched_count += 1
+
+        except (ValueError, TypeError) as e:
+            logger.debug(
+                "merge_record_failed",
+                pollutant_time=p_time,
+                error=str(e)
+            )
+            unmatched_count += 1
+            continue
+
+    logger.info(
+        "pollution_weather_data_merge_summary",
+        pollutant_count=len(pollutant_data),
+        weather_count=len(weather_data),
+        matched_count=matched_count,
+        unmatched_count=unmatched_count,
+        merged_count=len(merged),
+        match_rate=f"{matched_count / len(pollutant_data) * 100:.1f}%" if pollutant_data else "N/A"
+    )
+
+    return merged

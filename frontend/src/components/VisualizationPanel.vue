@@ -16,54 +16,18 @@
           <span v-if="visualizations.length" class="viz-count">共 {{ visualizations.length }} 个结果</span>
         </div>
         <div class="header-actions">
-          <!-- 导出模式按钮 -->
-          <button
-            v-if="visualizations.length"
-            @click="toggleExportMode"
-            class="export-mode-btn"
-            :class="{ active: exportMode }"
-            :title="exportMode ? '取消选择' : '选择导出图表'"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            {{ exportMode ? '取消' : '导出' }}
-          </button>
-          <button
-            v-if="visualizations.length && !exportMode"
-            @click="toggleExpand"
-            class="expand-btn"
-          >
-            {{ expanded ? '收起' : '展开' }}
-          </button>
+          <!-- 右侧面板不需要操作按钮 -->
         </div>
       </div>
 
       <!-- 可视化内容列表 -->
-      <div v-if="expanded" class="panel-body">
+      <div class="panel-body">
         <div
           v-for="(viz, index) in visualizations"
           :key="viz.id || `${viz.type || 'viz'}_${index}`"
           class="viz-item"
-          :class="[
-            getLayoutClass(viz.meta?.layout_hint),
-            { 'export-selected': exportMode && isChartSelected(viz.id || `viz_${index}`) }
-          ]"
+          :class="getLayoutClass(viz.meta?.layout_hint)"
         >
-          <!-- 导出模式勾选框 -->
-          <div v-if="exportMode" class="export-checkbox-wrapper">
-            <label class="export-checkbox">
-              <input
-                type="checkbox"
-                :checked="isChartSelected(viz.id || `viz_${index}`)"
-                @change="toggleChartSelection(viz.id || `viz_${index}`)"
-              />
-              <span class="checkmark"></span>
-            </label>
-          </div>
-
           <div class="viz-item-header">
             <div class="viz-title">
               <span class="viz-type-tag">{{ getTypeLabel(viz.type) }}</span>
@@ -146,15 +110,6 @@
       <p class="empty-title">暂无内容</p>
       <p class="empty-tip">当生成可视化图表或检索到知识文档时，将在此处显示</p>
     </div>
-
-    <!-- 导出预览弹窗 -->
-    <ExportPreviewModal
-      v-if="showExportPreview"
-      :selected-charts="selectedChartsData"
-      :report-content="reportContent"
-      @close="closeExportPreview"
-      @export-complete="handleExportComplete"
-    />
   </div>
 </template>
 
@@ -168,7 +123,6 @@ import ChartPanel from './visualization/ChartPanel.vue'
 import DataTable from './visualization/DataTable.vue'
 import ImagePanel from './visualization/ImagePanel.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import ExportPreviewModal from './ExportPreviewModal.vue'
 
 const store = useReactStore()
 
@@ -197,15 +151,11 @@ const props = defineProps({
 
 defineEmits([])
 
-const expanded = ref(true)
 const expandedGroups = ref(['weather', 'component'])
 
-// ==================== 导出功能状态 ====================
-const exportMode = ref(false)              // 是否处于导出选择模式
-const selectedChartIds = ref([])           // 选中的图表ID列表
-const showExportPreview = ref(false)       // 是否显示导出预览弹窗
-const chartRefs = ref({})                  // 图表组件引用（用于获取状态）
-const mapRefs = ref({})                    // 地图组件引用
+// 图表组件引用（用于刷新和截图）
+const chartRefs = ref({})
+const mapRefs = ref({})
 
 // ==================== 清理函数（需要在defineExpose之前定义）================
 const clearChartRefs = () => {
@@ -372,38 +322,6 @@ defineExpose({
   refreshAllCharts: refreshAllChartsInternal
 })
 
-// 切换导出模式
-const toggleExportMode = () => {
-  exportMode.value = !exportMode.value
-  if (!exportMode.value) {
-    selectedChartIds.value = []
-  }
-}
-
-// 图表选择切换
-const toggleChartSelection = (vizId) => {
-  const index = selectedChartIds.value.indexOf(vizId)
-  if (index > -1) {
-    selectedChartIds.value.splice(index, 1)
-  } else {
-    selectedChartIds.value.push(vizId)
-  }
-}
-
-// 检查图表是否被选中
-const isChartSelected = (vizId) => {
-  return selectedChartIds.value.includes(vizId)
-}
-
-// 全选/取消全选
-const toggleSelectAll = () => {
-  if (selectedChartIds.value.length === visualizations.value.length) {
-    selectedChartIds.value = []
-  } else {
-    selectedChartIds.value = visualizations.value.map((v, i) => v.id || `viz_${i}`)
-  }
-}
-
 // 保存图表组件引用
 const setChartRef = (vizId, el) => {
   if (el) {
@@ -422,82 +340,6 @@ const setMapRef = (vizId, el) => {
   if (el) {
     mapRefs.value[vizId] = el
   }
-}
-
-// 收集选中图表的完整数据（包含用户交互状态）- 异步版本支持地图截图
-const selectedChartsData = ref([])
-
-// 异步收集所有选中图表的数据和截图
-const collectChartsData = async () => {
-  const results = []
-  
-  for (const vizId of selectedChartIds.value) {
-    const index = visualizations.value.findIndex((v, i) => (v.id || `viz_${i}`) === vizId)
-    if (index === -1) continue
-    
-    const viz = visualizations.value[index]
-    
-    // 获取图表当前用户状态和截图
-    let chartState = null
-    let chartImage = null
-    
-    const chartRef = chartRefs.value[vizId]
-    if (chartRef) {
-      // 获取状态
-      if (typeof chartRef.getChartState === 'function') {
-        chartState = chartRef.getChartState()
-      }
-      // 获取截图（支持异步，如地图）
-      if (typeof chartRef.getChartImage === 'function') {
-        const imageResult = chartRef.getChartImage()
-        // 如果是 Promise，等待结果
-        if (imageResult instanceof Promise) {
-          chartImage = await imageResult
-        } else {
-          chartImage = imageResult
-        }
-      }
-    }
-    
-    results.push({
-      ...viz,
-      vizId: vizId,
-      userState: chartState,
-      previewImage: chartImage
-    })
-  }
-  
-  selectedChartsData.value = results
-}
-
-// 获取报告内容（从expertResults中提取）
-const reportContent = computed(() => {
-  if (props.expertResults?.expert_results?.report) {
-    const reportResult = props.expertResults.expert_results.report
-    if (reportResult.tool_results && reportResult.tool_results.length > 0) {
-      return reportResult.tool_results[0].result
-    }
-  }
-  return null
-})
-
-// 打开导出预览（异步收集图表截图后再显示）
-const openExportPreview = async () => {
-  // 先收集所有图表数据和截图（包括地图的异步截图）
-  await collectChartsData()
-  showExportPreview.value = true
-}
-
-// 关闭导出预览
-const closeExportPreview = () => {
-  showExportPreview.value = false
-}
-
-// 导出完成后的处理
-const handleExportComplete = () => {
-  showExportPreview.value = false
-  exportMode.value = false
-  selectedChartIds.value = []
 }
 
 // 判断是否为多专家模式
@@ -1029,10 +871,6 @@ const formatTimestamp = (ts) => {
 
 // 已移除脱敏限制
 
-const toggleExpand = () => {
-  expanded.value = !expanded.value
-}
-
 const onPanelReady = () => {
   // 子面板渲染完成时的占位函数
 }
@@ -1213,92 +1051,6 @@ const debugUnknownViz = (viz) => {
   }
 }
 
-// ==================== 导出功能样式 ====================
-.export-mode-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  border: 1px solid #e0e0e0;
-  background: white;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: #666;
-
-  &:hover {
-    border-color: #1976d2;
-    color: #1976d2;
-    background: #e3f2fd;
-  }
-
-  &.active {
-    border-color: #f44336;
-    color: #f44336;
-    background: #ffebee;
-  }
-}
-
-.select-all-btn {
-  padding: 4px 12px;
-  border: 1px solid #e0e0e0;
-  background: white;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    border-color: #1976d2;
-    color: #1976d2;
-  }
-}
-
-.export-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 14px;
-  border: none;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &.primary {
-    background: #1976d2;
-    color: white;
-
-    &:hover {
-      background: #1565c0;
-    }
-  }
-}
-
-.export-checkbox-wrapper {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 10;
-}
-
-.export-checkbox {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  cursor: pointer;
-
-  input {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-    accent-color: #1976d2;
-  }
-}
-
 .panel-body {
   flex: 1;
   overflow-y: auto;
@@ -1320,12 +1072,6 @@ const debugUnknownViz = (viz) => {
   box-shadow: none;
   flex: 0 0 auto;
   min-height: 320px;
-
-  &.export-selected {
-    border-color: #1976d2;
-    background: #f3f8ff;
-    box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
-  }
 }
 
 // v3.1: 布局系统classes

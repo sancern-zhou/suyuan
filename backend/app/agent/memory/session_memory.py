@@ -880,20 +880,37 @@ class SessionMemory:
         messages = []
         for turn in all_turns:
             if turn.role == "assistant":
-                # ✅ 区分两种格式：
-                # 1. 工具调用（有 thought/reasoning）→ JSON 格式
-                # 2. 纯文本回复（无 thought/reasoning）→ 保持纯文本
+                # ✅ 在 content 中保留 type 信息，避免 LLM 混淆
+                # 根据 type 添加前缀，使 LLM 能区分不同类型的消息
+                type_prefix_map = {
+                    "thought": "[思考]",
+                    "action": "[调用]",
+                    "observation": "[结果]",
+                    "final": "[结论]",
+                }
+
+                # 获取类型前缀
+                type_prefix = type_prefix_map.get(turn.type, "")
+
+                # 构建内容
                 if turn.thought or turn.reasoning:
-                    # 有思考过程：使用 JSON 格式
+                    # 有推理过程：使用增强的 JSON 格式（保留 type 信息）
                     json_obj = {
+                        "type": turn.type or "assistant",
                         "thought": turn.thought or "",
                         "reasoning": turn.reasoning or turn.thought or "",
-                        "observation": turn.content
+                        "content": turn.content
                     }
                     content = json.dumps(json_obj, ensure_ascii=False, indent=2)
+
+                    # 如果有类型前缀，添加到 JSON 外部（便于 LLM 快速识别）
+                    if type_prefix:
+                        content = f"{type_prefix}\n{content}"
                 else:
-                    # 纯文本回复：保持原样，不包装
+                    # 无推理过程：纯文本 + 类型前缀
                     content = turn.content
+                    if type_prefix:
+                        content = f"{type_prefix} {content}"
             else:
                 content = turn.content
 

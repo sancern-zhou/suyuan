@@ -12,6 +12,8 @@
 6. get_weather_situation_map - 中央气象台天气形势图AI解读(通义千问VL)
 
 总耗时: 3-5分钟 (轨迹分析超时则2-3分钟)
+
+定时任务: 每天早上8:30自动生成报告
 """
 
 from typing import Dict, Any, List, Optional
@@ -20,8 +22,67 @@ import structlog
 import asyncio
 import time
 import uuid
+import os
+import sys
+from pathlib import Path
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# 添加项目根目录到路径
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# 加载环境变量（从.env文件）
+def load_env_vars():
+    """加载环境变量（支持多个.env文件）"""
+    env_files = [
+        project_root / ".env",
+        project_root / "backend" / ".env"
+    ]
+
+    loaded_count = 0
+    for env_file in env_files:
+        if env_file.exists():
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, value = line.split('=', 1)
+                            # 去除注释和多余空格
+                            key = key.strip()
+                            value = value.strip()
+                            # 处理值中的注释（如 # options: ...）
+                            if '#' in value:
+                                value = value.split('#')[0].strip()
+                            os.environ[key] = value
+                loaded_count += 1
+                print(f"[INFO] 环境变量已加载: {env_file}")
+            except Exception as e:
+                print(f"[WARNING] 加载环境变量失败: {env_file}, 错误: {e}")
+
+    # 验证关键环境变量
+    qwen_key = os.getenv("QWEN_VL_API_KEY")
+    if qwen_key:
+        print(f"[INFO] QWEN_VL_API_KEY已设置: {qwen_key[:10]}...")
+    else:
+        print("[WARNING] QWEN_VL_API_KEY未设置，天气形势图解读可能失败")
+
+    # 验证LLM配置
+    llm_provider = os.getenv("LLM_PROVIDER", "openai")
+    print(f"[INFO] LLM_PROVIDER已设置: {llm_provider}")
+
+    if llm_provider == "mimo":
+        mimo_key = os.getenv("MIMO_API_KEY")
+        if mimo_key:
+            print(f"[INFO] MIMO_API_KEY已设置: {mimo_key[:10]}...")
+        else:
+            print("[WARNING] MIMO_API_KEY未设置")
+
+    return loaded_count > 0
+
+# 在导入其他模块前加载环境变量
+load_env_vars()
 
 logger = structlog.get_logger()
 
@@ -180,6 +241,7 @@ class QuickTraceExecutor:
                     end_time=end_time_hist.strftime("%Y-%m-%d %H:%M:%S")
                 ),
                 "forecast": self.tools["weather_forecast"].execute(
+                    context=context,  # 添加必需的context参数
                     lat=coords["lat"],
                     lon=coords["lon"],
                     location_name=city,
@@ -196,9 +258,11 @@ class QuickTraceExecutor:
                     lat=coords["lat"],
                     lon=coords["lon"],
                     start_time=alert_time,
-                    timeout_seconds=180
+                    timeout_seconds=180,
+                    meteo_source="gfs0p25"  # 强制使用GFS数据源
                 ),
                 "weather_situation_map": self.tools["weather_situation_map"].execute(
+                    context=context,  # 添加必需的context参数
                     date=alert_dt.strftime("%Y%m%d"),  # 使用告警日期
                     analysis_focus="污染扩散条件"
                 )
@@ -481,10 +545,29 @@ class QuickTraceExecutor:
         lat: float,
         lon: float,
         start_time: str,
-        timeout_seconds: int = 90
+        timeout_seconds: int = 90,
+        meteo_source: str = "gfs0p25"  # 默认使用GFS数据源
     ) -> Dict[str, Any]:
-        """获取轨迹分析 (带超时控制)"""
+        """获取轨迹分析 (带超时控制)
+
+        Args:
+            context: 执行上下文
+            lat: 纬度
+            lon: 经度
+            start_time: 开始时间
+            timeout_seconds: 超时时间（秒）
+            meteo_source: 气象数据源（默认gfs0p25，推荐使用GFS避免GDAS1多文件问题）
+        """
         try:
+            logger.info(
+                "trajectory_analysis_start",
+                lat=lat,
+                lon=lon,
+                start_time=start_time,
+                meteo_source=meteo_source,
+                timeout=timeout_seconds
+            )
+
             result = await asyncio.wait_for(
                 self.tools["trajectory_analysis"].execute(
                     context=context,  # 使用传入的context
@@ -493,7 +576,8 @@ class QuickTraceExecutor:
                     start_time=start_time,
                     hours=72,
                     heights=[100, 500, 1000],
-                    direction="Backward"
+                    direction="Backward",
+                    meteo_source=meteo_source  # 传递气象数据源参数
                 ),
                 timeout=timeout_seconds
             )
@@ -545,18 +629,54 @@ class QuickTraceExecutor:
                 max_tokens=4096
             )
 
+            # 处理不同类型的响应对象
+            response_text = ""
+            if hasattr(response, 'text'):
+                # 如果响应对象有text方法，调用它
+                response_text = response.text
+            elif isinstance(response, str):
+                # 如果响应是字符串，直接使用
+                response_text = response
+            elif hasattr(response, 'content'):
+                # 如果响应对象有content属性
+                response_text = response.content
+            elif hasattr(response, '__str__'):
+                # 尝试转换为字符串
+                response_text = str(response)
+            else:
+                # 未知类型，尝试强制转换
+                try:
+                    response_text = str(response)
+                except Exception as e:
+                    logger.error("response_conversion_failed", error=str(e))
+                    response_text = f"响应转换失败: {type(response)}"
+
             return {
-                "summary_text": response.strip(),
+                "summary_text": response_text.strip() if response_text else "LLM返回空响应",
                 "visuals": []  # 快速溯源不需要可视化，直接返回空列表
             }
 
         except Exception as e:
+            error_msg = str(e)
             logger.error(
                 "summary_generation_failed",
-                error=str(e)
+                error=error_msg,
+                exc_info=True
             )
+
+            # LLM调用失败时，生成简单的文本报告作为备用
+            logger.info("generating_fallback_report")
+            fallback_report = self._generate_fallback_report(
+                results=results,
+                city=city,
+                pollutant=pollutant,
+                alert_value=alert_value,
+                alert_time=alert_time,
+                error=error_msg
+            )
+
             return {
-                "summary_text": f"报告生成失败: {str(e)}",
+                "summary_text": fallback_report,
                 "visuals": []
             }
 
@@ -1285,3 +1405,355 @@ class QuickTraceExecutor:
             "has_trajectory": False,
             "warning_message": error_message
         }
+
+    def _generate_fallback_report(
+        self,
+        results: Dict[str, Any],
+        city: str,
+        pollutant: str,
+        alert_value: float,
+        alert_time: str,
+        error: str
+    ) -> str:
+        """
+        生成备用报告（当LLM调用失败时）
+
+        Args:
+            results: 各工具的执行结果
+            city: 城市名称
+            pollutant: 污染物类型
+            alert_value: 告警浓度值
+            alert_time: 告警时间
+            error: LLM调用失败的错误信息
+
+        Returns:
+            str: 简单的文本报告
+        """
+        from datetime import datetime
+
+        now = datetime.now()
+        alert_dt = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S")
+
+        # 统计工具执行结果
+        success_tools = []
+        failed_tools = []
+
+        for tool_name, result in results.items():
+            if isinstance(result, dict) and result.get("success"):
+                success_tools.append(tool_name)
+            else:
+                failed_tools.append(tool_name)
+
+        # 构建报告
+        report_lines = [
+            f"# {city}污染溯源分析报告（备用报告）",
+            f"",
+            f"**污染物**: {pollutant}",
+            f"**告警时间**: {alert_time}",
+            f"**告警浓度**: {alert_value} μg/m³",
+            f"**生成时间**: {now.strftime('%Y年%m月%d日 %H:%M')}",
+            f"",
+            f"---",
+            f"",
+            f"## ⚠️ 报告说明",
+            f"",
+            f"由于LLM服务调用失败（{error}），本报告为自动生成的简化版本。",
+            f"以下为各工具的执行结果摘要：",
+            f"",
+            f"### ✅ 成功执行的工具 ({len(success_tools)}个)",
+        ]
+
+        for tool_name in success_tools:
+            result = results.get(tool_name, {})
+            summary = result.get("summary", "执行成功") if isinstance(result, dict) else "执行成功"
+            report_lines.append(f"- **{tool_name}**: {summary}")
+
+        report_lines.extend([
+            f"",
+            f"### ❌ 执行失败的工具 ({len(failed_tools)}个)",
+        ])
+
+        for tool_name in failed_tools:
+            result = results.get(tool_name, {})
+            error_msg = result.get("error", "未知错误") if isinstance(result, dict) else "未知错误"
+            report_lines.append(f"- **{tool_name}**: {error_msg}")
+
+        # 添加数据统计
+        report_lines.extend([
+            f"",
+            f"---",
+            f"",
+            f"## 数据统计",
+            f"",
+            f"- 总工具数: {len(results)}",
+            f"- 成功: {len(success_tools)}",
+            f"- 失败: {len(failed_tools)}",
+            f"",
+            f"---",
+            f"",
+            f"*本报告由QuickTraceExecutor自动生成*",
+        ])
+
+        return "\n".join(report_lines)
+
+    def save_report(self, summary_text: str, city: str, alert_time: str) -> str:
+        """
+        保存报告到文件
+
+        Args:
+            summary_text: 报告内容
+            city: 城市名称
+            alert_time: 告警时间
+
+        Returns:
+            str: 保存的文件路径
+        """
+        # 创建报告目录
+        report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        # 生成文件名（添加时间戳避免冲突）
+        date_str = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d")
+        time_str = datetime.now().strftime("%H%M%S")
+        filename = f"{city}_快速溯源报告_{date_str}_{time_str}.md"
+        filepath = report_dir / filename
+
+        # 保存报告
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(summary_text)
+        except PermissionError:
+            # 如果文件存在且只读，先删除再创建
+            if filepath.exists():
+                filepath.unlink()
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(summary_text)
+
+        logger.info(
+            "report_saved",
+            filepath=str(filepath),
+            city=city,
+            alert_time=alert_time
+        )
+
+        return str(filepath)
+
+
+# ============================================================================
+# 定时任务配置
+# ============================================================================
+
+class DailyQuickTraceScheduler:
+    """每日快速溯源定时任务调度器"""
+
+    def __init__(self):
+        """初始化调度器"""
+        self.executor = QuickTraceExecutor()
+        self.scheduler = None
+        self.report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
+        self.report_dir.mkdir(parents=True, exist_ok=True)
+
+    async def run_daily_report(self):
+        """执行每日报告生成任务"""
+        try:
+            logger.info("daily_quick_trace_task_started")
+
+            # 获取当前时间
+            now = datetime.now()
+            alert_time = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            # 默认参数（可从配置文件读取）
+            city = "济宁市"
+            pollutant = "PM2.5"
+            alert_value = 75.0  # 默认值，实际应从监测数据获取
+
+            logger.info(
+                "executing_daily_quick_trace",
+                city=city,
+                alert_time=alert_time,
+                pollutant=pollutant
+            )
+
+            # 执行分析
+            result = await self.executor.execute(
+                city=city,
+                alert_time=alert_time,
+                pollutant=pollutant,
+                alert_value=alert_value
+            )
+
+            # 保存报告
+            if result.get("summary_text"):
+                filepath = self.executor.save_report(
+                    summary_text=result["summary_text"],
+                    city=city,
+                    alert_time=alert_time
+                )
+
+                # 记录结果
+                logger.info(
+                    "daily_quick_trace_completed",
+                    report_path=filepath,
+                    has_trajectory=result.get("has_trajectory", False),
+                    warning_message=result.get("warning_message")
+                )
+
+                return {
+                    "success": True,
+                    "report_path": filepath,
+                    "has_trajectory": result.get("has_trajectory", False),
+                    "warning_message": result.get("warning_message")
+                }
+            else:
+                logger.error("daily_quick_trace_failed", error="No summary text generated")
+                return {"success": False, "error": "No summary text generated"}
+
+        except Exception as e:
+            logger.error(
+                "daily_quick_trace_exception",
+                error=str(e),
+                exc_info=True
+            )
+            return {"success": False, "error": str(e)}
+
+    def start_scheduler(self):
+        """启动定时调度器（每天8:30执行）"""
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+            from apscheduler.triggers.cron import CronTrigger
+
+            # 创建调度器（北京时区）
+            self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+
+            # 添加定时任务：每天8:30执行
+            self.scheduler.add_job(
+                func=lambda: asyncio.create_task(self.run_daily_report()),
+                trigger=CronTrigger(hour=8, minute=30, timezone="Asia/Shanghai"),
+                id="daily_quick_trace",
+                name="每日快速溯源报告",
+                replace_existing=True,
+                misfire_grace_time=300  # 允许5分钟延迟
+            )
+
+            # 启动调度器
+            self.scheduler.start()
+            logger.info("scheduler_started", schedule="每天8:30")
+
+            # 显示下次运行时间
+            job = self.scheduler.get_job("daily_quick_trace")
+            if job:
+                logger.info("next_run_time", next_run=job.next_run_time)
+
+            return True
+
+        except ImportError:
+            logger.error("apscheduler_not_installed", error="请安装: pip install apscheduler")
+            return False
+        except Exception as e:
+            logger.error("scheduler_start_failed", error=str(e), exc_info=True)
+            return False
+
+    def stop_scheduler(self):
+        """停止调度器"""
+        if self.scheduler:
+            self.scheduler.shutdown(wait=False)
+            logger.info("scheduler_stopped")
+
+
+# ============================================================================
+# 独立运行入口
+# ============================================================================
+
+async def run_once(city: str = "济宁市", pollutant: str = "PM2.5", alert_value: float = 75.0):
+    """
+    单次执行快速溯源分析
+
+    Args:
+        city: 城市名称
+        pollutant: 污染物类型
+        alert_value: 告警浓度值
+    """
+    executor = QuickTraceExecutor()
+
+    # 使用当前时间作为告警时间
+    alert_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    logger.info(
+        "quick_trace_manual_run",
+        city=city,
+        pollutant=pollutant,
+        alert_value=alert_value,
+        alert_time=alert_time
+    )
+
+    result = await executor.execute(
+        city=city,
+        alert_time=alert_time,
+        pollutant=pollutant,
+        alert_value=alert_value
+    )
+
+    # 保存报告
+    if result.get("summary_text"):
+        filepath = executor.save_report(
+            summary_text=result["summary_text"],
+            city=city,
+            alert_time=alert_time
+        )
+
+        print(f"\n{'='*60}")
+        print(f"报告已保存到: {filepath}")
+        print(f"{'='*60}\n")
+
+        # 打印报告摘要
+        print(result["summary_text"][:500] + "..." if len(result["summary_text"]) > 500 else result["summary_text"])
+
+        if result.get("warning_message"):
+            print(f"\n⚠️  {result['warning_message']}")
+
+    return result
+
+
+def main():
+    """主函数"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="快速溯源执行器")
+    parser.add_argument("--mode", choices=["once", "schedule"], default="once", help="运行模式: once(单次执行) 或 schedule(定时调度)")
+    parser.add_argument("--city", default="济宁市", help="城市名称")
+    parser.add_argument("--pollutant", default="PM2.5", help="污染物类型")
+    parser.add_argument("--alert-value", type=float, default=75.0, help="告警浓度值")
+
+    args = parser.parse_args()
+
+    if args.mode == "once":
+        # 单次执行
+        asyncio.run(run_once(
+            city=args.city,
+            pollutant=args.pollutant,
+            alert_value=args.alert_value
+        ))
+    elif args.mode == "schedule":
+        # 定时调度模式
+        print("启动定时调度器（每天8:30自动生成报告）...")
+        print("按 Ctrl+C 停止\n")
+
+        scheduler = DailyQuickTraceScheduler()
+
+        # 启动调度器
+        if scheduler.start_scheduler():
+            try:
+                # 保持运行
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n\n停止调度器...")
+                scheduler.stop_scheduler()
+                print("调度器已停止")
+        else:
+            print("调度器启动失败")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

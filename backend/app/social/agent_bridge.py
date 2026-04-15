@@ -731,7 +731,7 @@ class AgentBridge:
         max_tokens = int(token_budget_manager.max_context_tokens * 0.8)
         should_consolidate = (
             total_tokens > max_tokens or  # Token 超限
-            new_message_count >= 10  # 新增 10 条以上消息
+            new_message_count >= 20  # 新增 20 条以上消息（从10调整为20，约5-8轮对话）
         )
 
         if should_consolidate and new_message_count > 0:

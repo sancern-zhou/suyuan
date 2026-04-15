@@ -180,11 +180,21 @@ const hasOfficeDocuments = computed(() => {
 })
 
 // 监听 store.lastOfficeDocument，直接更新文档列表
-watch(() => reactStore.lastOfficeDocument, (doc) => {
-  if (!doc?.pdf_preview && !doc?.markdown_preview) return
+watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
+  if (!doc?.pdf_preview && !doc?.markdown_preview) {
+    return
+  }
 
   const filePath = doc.file_path
   const fileName = filePath ? filePath.split(/[/\\]/).pop() : 'unknown'
+
+  // 检测是否切换到了不同的文档（会话切换）
+  if (oldDoc?.file_path && oldDoc.file_path !== filePath) {
+    officeDocuments.value = []
+    editHistory.value = []
+    showHistory.value = false
+    isEditMode.value = false
+  }
 
   // 查找现有文档
   const existingDoc = officeDocuments.value.find(d =>
@@ -232,6 +242,20 @@ watch(() => reactStore.lastOfficeDocument, (doc) => {
     timestamp: doc.timestamp || new Date()
   })
 }, { immediate: true })
+
+// 监听 sessionId 变化，切换会话时清空文档列表
+watch(() => props.sessionId, (newSessionId, oldSessionId) => {
+  if (newSessionId && newSessionId !== oldSessionId) {
+    // 如果store中没有新的office document，说明是切换到空会话，需要清空
+    // 如果store中有新的office document，会在lastOfficeDocument的watch中处理，这里不清空
+    if (!reactStore.lastOfficeDocument) {
+      officeDocuments.value = []
+      editHistory.value = []
+      showHistory.value = false
+      isEditMode.value = false
+    }
+  }
+})
 
 // Trigger PDF refresh animation
 function triggerPdfRefresh(doc) {

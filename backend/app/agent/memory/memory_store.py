@@ -831,6 +831,137 @@ class ImprovedMemoryStore(MemoryStore):
             messages_count=len(messages)
         )
 
+    def append_fact(self, category: str, fact: str) -> None:
+        """
+        快速追加事实到对应章节
+
+        Args:
+            category: 事实类别（用户偏好/领域知识/历史结论/环境信息）
+            fact: 事实内容
+        """
+        content = self.memory_file.read_text(encoding="utf-8")
+
+        # 查找章节位置
+        section_header = f"## {category}"
+
+        if section_header in content:
+            # 在章节末尾追加
+            section_start = content.index(section_header)
+            section_end = content.find("\n##", section_start + 1)
+            if section_end == -1:
+                section_end = len(content)
+
+            before = content[:section_end]
+            after = content[section_end:]
+            new_content = f"{before}\n- {fact}{after}"
+        else:
+            # 章节不存在，创建新章节
+            new_content = f"{content}\n## {category}\n\n- {fact}\n"
+
+        self.memory_file.write_text(new_content, encoding="utf-8")
+        logger.debug(
+            "memory_fact_appended",
+            category=category,
+            fact_length=len(fact)
+        )
+
+    def replace_fact(self, old_text: str, new_text: str, category: str = None) -> bool:
+        """
+        替换记忆条目
+
+        Args:
+            old_text: 要替换的旧内容
+            new_text: 新的内容
+            category: 事实类别（可选，用于过滤）
+
+        Returns:
+            是否成功替换
+        """
+        content = self.memory_file.read_text(encoding="utf-8")
+
+        # 如果指定category，只在该章节内搜索
+        if category:
+            section_header = f"## {category}"
+            if section_header not in content:
+                return False
+            section_start = content.index(section_header)
+            section_end = content.find("\n##", section_start + 1)
+            if section_end == -1:
+                section_end = len(content)
+            section_content = content[section_start:section_end]
+
+            if old_text in section_content:
+                new_section_content = section_content.replace(old_text, new_text)
+                new_content = content[:section_start] + new_section_content + content[section_end:]
+                self.memory_file.write_text(new_content, encoding="utf-8")
+                logger.debug(
+                    "memory_fact_replaced",
+                    category=category,
+                    old_text_length=len(old_text),
+                    new_text_length=len(new_text)
+                )
+                return True
+            return False
+        else:
+            # 全文搜索
+            if old_text in content:
+                new_content = content.replace(old_text, new_text)
+                self.memory_file.write_text(new_content, encoding="utf-8")
+                logger.debug(
+                    "memory_fact_replaced_global",
+                    old_text_length=len(old_text),
+                    new_text_length=len(new_text)
+                )
+                return True
+            return False
+
+    def remove_fact(self, text: str, category: str = None) -> bool:
+        """
+        删除记忆条目
+
+        Args:
+            text: 要删除的内容
+            category: 事实类别（可选，用于过滤）
+
+        Returns:
+            是否成功删除
+        """
+        content = self.memory_file.read_text(encoding="utf-8")
+        lines = content.split('\n')
+
+        if category:
+            # 只在指定章节内删除
+            section_header = f"## {category}"
+            in_section = False
+            filtered_lines = []
+            for line in lines:
+                if line.startswith(section_header):
+                    in_section = True
+                    filtered_lines.append(line)
+                elif line.startswith("## ") and in_section:
+                    in_section = False
+                    filtered_lines.append(line)
+                elif in_section and text in line:
+                    continue  # 跳过包含text的行
+                else:
+                    filtered_lines.append(line)
+        else:
+            # 全文删除
+            filtered_lines = [line for line in lines if text not in line]
+
+        new_content = '\n'.join(filtered_lines)
+        self.memory_file.write_text(new_content, encoding="utf-8")
+
+        removed = len(filtered_lines) < len(lines)
+        if removed:
+            logger.debug(
+                "memory_fact_removed",
+                category=category,
+                text_length=len(text),
+                lines_removed=len(lines) - len(filtered_lines)
+            )
+        return removed
+
 
 class MemoryConsolidator:
     """

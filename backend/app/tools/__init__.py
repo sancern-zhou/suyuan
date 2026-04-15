@@ -269,6 +269,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="compare_standard_reports", error=str(e))
 
     try:
+        from app.tools.query.compare_old_standard_reports.tool import CompareOldStandardReportsTool
+        registry.register(CompareOldStandardReportsTool(), priority=421)
+        logger.info("tool_loaded", tool="compare_old_standard_reports")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="compare_old_standard_reports", error=str(e))
+
+    try:
         from app.tools.query.query_station_new_standard_report.tool import QueryStationNewStandardReportTool
         registry.register(QueryStationNewStandardReportTool(), priority=43)
         logger.info("tool_loaded", tool="query_station_new_standard_report")
@@ -653,6 +660,27 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="search_history")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_history", error=str(e))
+
+    try:
+        from app.tools.social.remember_fact.tool import RememberFactTool
+        registry.register(RememberFactTool(), priority=720)
+        logger.info("tool_loaded", tool="remember_fact")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="remember_fact", error=str(e))
+
+    try:
+        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+        registry.register(ReplaceMemoryTool(), priority=721)
+        logger.info("tool_loaded", tool="replace_memory")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="replace_memory", error=str(e))
+
+    try:
+        from app.tools.social.remove_memory.tool import RemoveMemoryTool
+        registry.register(RemoveMemoryTool(), priority=722)
+        logger.info("tool_loaded", tool="remove_memory")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="remove_memory", error=str(e))
 
     try:
         from app.tools.social.web_search.tool import WebSearchTool

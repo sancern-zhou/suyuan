@@ -223,28 +223,6 @@ class GeoMappingResolver:
     # 城市→站点代码列表映射（从 geo_mappings.json 动态加载）
     CITY_STATIONS_MAP = {}
 
-    # 广东省区域代码映射
-    REGION_CODE_MAP = {
-        # 标准名称
-        "广东省": "440001",
-        "全省": "440001",
-        "粤东": "440003",
-        "粤西": "440004",
-        "粤北": "440005",
-        "珠三角": "440002",
-        "非珠三角": "440006",
-        "粤东西北": "440006",
-        # 别名
-        "广东": "440001",
-        "广东省全省": "440001",
-        "粤东地区": "440003",
-        "粤西地区": "440004",
-        "粤北地区": "440005",
-        "珠三角地区": "440002",
-        "非珠三角地区": "440006",
-        "粤东西北地区": "440006",
-    }
-
     @classmethod
     def resolve_city_codes(cls, city_names: List[str]) -> List[str]:
         """
@@ -260,11 +238,6 @@ class GeoMappingResolver:
 
         for city_name in city_names:
             city_name = city_name.strip()
-
-            # 优先查找区域编码
-            if city_name in cls.REGION_CODE_MAP:
-                city_codes.append(cls.REGION_CODE_MAP[city_name])
-                continue
 
             # 直接查找城市编码
             if city_name in cls.CITY_CODE_MAP:
@@ -285,8 +258,7 @@ class GeoMappingResolver:
             logger.warning(
                 "city_code_not_found",
                 city_name=city_name,
-                available_cities=list(cls.CITY_CODE_MAP.keys()),
-                available_regions=list(cls.REGION_CODE_MAP.keys())
+                available_cities=list(cls.CITY_CODE_MAP.keys())
             )
 
         logger.info(
@@ -671,18 +643,14 @@ class QueryGDSuncereDataTool:
     @classmethod
     def get_city_code(cls, city_name: str) -> str:
         """
-        城市名称转代码（支持城市和区域编码）
+        城市名称转代码
 
         Args:
-            city_name: 城市名称或区域名称
+            city_name: 城市名称
 
         Returns:
-            城市代码或区域代码
+            城市代码
         """
-        # 优先查找区域编码
-        if city_name in cls.geo_resolver.REGION_CODE_MAP:
-            return cls.geo_resolver.REGION_CODE_MAP[city_name]
-        # 查找城市编码
         return cls.geo_resolver.CITY_CODE_MAP.get(city_name, "")
 
     @classmethod
@@ -1107,11 +1075,14 @@ class QueryGDSuncereDataTool:
                 standardized_count=len(standardized_records)
             )
 
-            # 补充站点类型信息
+            # 补充站点类型信息和站点名称
             for record in standardized_records:
                 code = record.get("station_code", "")
                 station_meta = cls.geo_resolver.get_station_meta(code)
                 if station_meta:
+                    # 强制使用本地 JSON 的站点名称（覆盖 API 返回的可能错误的值）
+                    record["name"] = station_meta.get("name", "")
+
                     type_id = station_meta.get("type_id")
                     if type_id:
                         # 将 type_id 转换为中文名称
@@ -1120,6 +1091,9 @@ class QueryGDSuncereDataTool:
                     else:
                         record["station_type"] = "未知"
                 else:
+                    # 找不到站点元数据，尝试通过编码解析名称
+                    resolved_name = cls.geo_resolver.resolve_station_name(code)
+                    record["name"] = resolved_name
                     record["station_type"] = "未知"
 
             # 对日数据浓度值应用修约规则（按原始监测数据规则：CO保留1位小数，其他取整）

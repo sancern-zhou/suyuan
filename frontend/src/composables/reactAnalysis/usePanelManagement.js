@@ -226,6 +226,16 @@ export function usePanelManagement(store = null) {
       }
     }, { immediate: true })
 
+    // 监听图表历史变化，当有图表时且当前在document标签，切换回visualization标签
+    if (store) {
+      watch(() => store.currentState.visualizationHistory, (newHistory) => {
+        const hasCharts = newHistory?.length > 0
+        if (hasCharts && activeRightTab.value === 'document' && !officePanelVisible.value) {
+          activeRightTab.value = 'visualization'
+        }
+      }, { immediate: true })
+    }
+
     // 监听右侧面板显示状态
     watch([vizPanelVisible, officePanelVisible], ([viz, office]) => {
       const shouldShow = viz || office

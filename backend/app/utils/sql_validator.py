@@ -54,6 +54,7 @@ class SQLValidator:
         'quality_control_records',  # 质控例行检查记录
         'working_orders',  # 运维工单
         'analysis_history',  # 分析历史记录
+        'BSD_STATION',  # 站点信息表（包含站点ID、名称、代码、区域、经纬度、地址等信息）
         # 系统视图（用于动态查询表结构）
         'information_schema.columns',
         'information_schema.tables',

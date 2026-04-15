@@ -63,6 +63,37 @@ logger = structlog.get_logger()
 
 
 # =============================================================================
+# 广东省区域划分
+# =============================================================================
+
+GUANGDONG_REGIONS = {
+    # 珠三角（9市）
+    "珠三角": ["广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆"],
+    # 粤东（4市）
+    "粤东": ["汕头", "汕尾", "潮州", "揭阳"],
+    # 粤西（3市）
+    "粤西": ["湛江", "茂名", "阳江"],
+    # 粤北（5市）
+    "粤北": ["韶关", "河源", "梅州", "清远", "云浮"],
+}
+
+# 非珠三角 = 粤东 + 粤西 + 粤北
+GUANGDONG_REGIONS["非珠三角"] = (
+    GUANGDONG_REGIONS["粤东"] +
+    GUANGDONG_REGIONS["粤西"] +
+    GUANGDONG_REGIONS["粤北"]
+)
+
+# 城市到区域的反向映射（用于快速查找）
+CITY_TO_REGION = {}
+for region, cities in GUANGDONG_REGIONS.items():
+    for city in cities:
+        if city not in CITY_TO_REGION:
+            CITY_TO_REGION[city] = []
+        CITY_TO_REGION[city].append(region)
+
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
@@ -347,6 +378,12 @@ async def execute_query_old_standard_report(
             from app.tools.query.query_new_standard_report.tool import calculate_province_wide_stats
             province_wide_stats = calculate_province_wide_stats(city_stats)
 
+        # 计算各区域汇总统计（多城市查询时）
+        regional_stats = None
+        if len(cities) > 1:
+            # 计算各区域汇总统计（珠三角、粤东、粤西、粤北、非珠三角）
+            regional_stats = calculate_regional_stats(city_stats)
+
         # 步骤7: 保存完整日报数据到数据注册表
         # ⚠️ 已禁用：统计报表工具不返回 data_id，避免 LLM 尝试从 data_id 读取统计字段
         saved_data = None
@@ -376,9 +413,13 @@ async def execute_query_old_standard_report(
         else:
             result_summary_data = city_stats
             result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
-            # 添加全省汇总到结果
+            # 合并全省和各区域汇总到结果（按顺序：粤东、粤西、粤北、珠三角、非珠三角、全省）
+            if regional_stats:
+                result_summary_data["regional_stats"] = regional_stats
             if province_wide_stats:
-                result_summary_data["province_wide"] = province_wide_stats
+                if "regional_stats" not in result_summary_data:
+                    result_summary_data["regional_stats"] = {}
+                result_summary_data["regional_stats"]["全省"] = province_wide_stats
 
         # 添加数据存储信息到摘要
         # if data_id_str:
@@ -799,3 +840,198 @@ def calculate_old_standard_city_stats(
         # 首要污染物超标天统计（某污染物既是首要污染物又超标）
         "primary_pollutant_exceed_days": {k: int(v) for k, v in primary_pollutant_exceed_days.items()}
     }
+
+
+def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
+    """
+    计算各区域汇总统计指标（珠三角、粤东、粤西、粤北、非珠三角）
+
+    汇总规则：
+    - **均值类指标**（各城市均值）：composite_index, single_indexes.*, SO2, NO2, PM10, PM2_5, CO_P95, O3_8h_P90等
+    - **累加类指标**（各城市累加）：exceed_days, valid_days, exceed_days_by_pollutant.*, primary_pollutant_days.*, total_primary_days
+    - **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
+
+    Args:
+        city_stats: 各城市统计数据字典
+
+    Returns:
+        各区域汇总统计数据字典，key为区域名称，value为该区域的统计数据
+    """
+    if not city_stats:
+        return {}
+
+    logger.info("calculating_regional_stats", cities_count=len(city_stats))
+
+    # 过滤有效城市数据
+    valid_cities = {k: v for k, v in city_stats.items() if v and isinstance(v, dict)}
+    if not valid_cities:
+        return {}
+
+    # 按区域分组城市
+    regional_cities = {}
+    for city_name in valid_cities.keys():
+        # 查找城市所属区域（城市可能属于多个区域，如非珠三角）
+        for region_name, region_cities in GUANGDONG_REGIONS.items():
+            if city_name in region_cities:
+                if region_name not in regional_cities:
+                    regional_cities[region_name] = []
+                regional_cities[region_name].append(city_name)
+                # 不break，因为一个城市可能属于多个区域（如汕头属于粤东和非珠三角）
+
+    # 计算各区域统计
+    regional_stats = {}
+    for region_name, region_city_list in regional_cities.items():
+        if not region_city_list:
+            continue
+
+        # 获取该区域的城市统计数据
+        region_city_stats = {city: valid_cities[city] for city in region_city_list}
+        num_cities = len(region_city_stats)
+
+        # ========== 累加类指标 ==========
+        total_exceed_days = sum(s.get("exceed_days", 0) for s in region_city_stats.values())
+        total_valid_days = sum(s.get("valid_days", 0) for s in region_city_stats.values())
+        total_primary_days = sum(s.get("total_primary_days", 0) for s in region_city_stats.values())
+
+        # 各污染物超标天累加
+        exceed_days_by_pollutant = {
+            'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_exceed = city_stats_data.get("exceed_days_by_pollutant", {})
+            for pollutant in exceed_days_by_pollutant.keys():
+                exceed_days_by_pollutant[pollutant] += int(city_exceed.get(pollutant, 0))
+
+        # 首要污染物天数累加
+        primary_pollutant_days = {
+            'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_primary = city_stats_data.get("primary_pollutant_days", {})
+            for pollutant in primary_pollutant_days.keys():
+                primary_pollutant_days[pollutant] += int(city_primary.get(pollutant, 0))
+
+        # 首要污染物超标天累加
+        primary_pollutant_exceed_days = {
+            'PM2_5': 0, 'PM10': 0, 'SO2': 0, 'NO2': 0, 'CO': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_primary_exceed = city_stats_data.get("primary_pollutant_exceed_days", {})
+            if city_primary_exceed:
+                for pollutant in primary_pollutant_exceed_days.keys():
+                    primary_pollutant_exceed_days[pollutant] += int(city_primary_exceed.get(pollutant, 0))
+
+        # ========== 均值类指标 ==========
+        # 综合指数均值
+        composite_index_sum = sum(s.get("composite_index", 0) for s in region_city_stats.values())
+        avg_composite_index = safe_round(composite_index_sum / num_cities, 3) if num_cities > 0 else 0
+
+        # 各污染物浓度均值（旧标准使用 statistical_data_old 修约规则）
+        so2_sum = sum(s.get("SO2", 0) for s in region_city_stats.values())
+        no2_sum = sum(s.get("NO2", 0) for s in region_city_stats.values())
+        pm10_sum = sum(s.get("PM10", 0) for s in region_city_stats.values())
+        pm25_sum = sum(s.get("PM2_5", 0) for s in region_city_stats.values())
+        co_p95_sum = sum(s.get("CO_P95", 0) for s in region_city_stats.values())
+        o3_8h_p90_sum = sum(s.get("O3_8h_P90", 0) for s in region_city_stats.values())
+
+        so2_percentile_98_sum = sum(s.get("SO2_P98", 0) for s in region_city_stats.values())
+        no2_percentile_98_sum = sum(s.get("NO2_P98", 0) for s in region_city_stats.values())
+        pm10_percentile_95_sum = sum(s.get("PM10_P95", 0) for s in region_city_stats.values())
+        pm25_percentile_95_sum = sum(s.get("PM2_5_P95", 0) for s in region_city_stats.values())
+
+        # 计算均值并应用旧标准修约规则
+        avg_so2 = apply_rounding(so2_sum / num_cities if num_cities > 0 else 0, 'SO2', 'statistical_data_old')
+        avg_no2 = apply_rounding(no2_sum / num_cities if num_cities > 0 else 0, 'NO2', 'statistical_data_old')
+        avg_pm10 = apply_rounding(pm10_sum / num_cities if num_cities > 0 else 0, 'PM10', 'statistical_data_old')
+        avg_pm25 = apply_rounding(pm25_sum / num_cities if num_cities > 0 else 0, 'PM2_5', 'statistical_data_old')
+        avg_co_p95 = apply_rounding(co_p95_sum / num_cities if num_cities > 0 else 0, 'CO', 'statistical_data_old')
+        avg_o3_8h_p90 = apply_rounding(o3_8h_p90_sum / num_cities if num_cities > 0 else 0, 'O3_8h', 'statistical_data_old')
+
+        avg_so2_p98 = apply_rounding(so2_percentile_98_sum / num_cities if num_cities > 0 else 0, 'SO2', 'statistical_data_old')
+        avg_no2_p98 = apply_rounding(no2_percentile_98_sum / num_cities if num_cities > 0 else 0, 'NO2', 'statistical_data_old')
+        avg_pm10_p95 = apply_rounding(pm10_percentile_95_sum / num_cities if num_cities > 0 else 0, 'PM10', 'statistical_data_old')
+        avg_pm25_p95 = apply_rounding(pm25_percentile_95_sum / num_cities if num_cities > 0 else 0, 'PM2_5', 'statistical_data_old')
+
+        # 单项质量指数均值
+        single_indexes_sums = {
+            'SO2': 0, 'NO2': 0, 'PM10': 0, 'CO': 0, 'PM2_5': 0, 'O3_8h': 0
+        }
+        for city_stats_data in region_city_stats.values():
+            city_indexes = city_stats_data.get("single_indexes", {})
+            for pollutant in single_indexes_sums.keys():
+                single_indexes_sums[pollutant] += city_indexes.get(pollutant, 0)
+
+        single_indexes = {
+            pollutant: safe_round(single_indexes_sums[pollutant] / num_cities, 3)
+            for pollutant in single_indexes_sums.keys()
+        } if num_cities > 0 else {p: 0 for p in single_indexes_sums.keys()}
+
+        # ========== 计算类指标 ==========
+        # 超标率和达标率
+        exceed_rate = safe_round(total_exceed_days / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+        compliance_rate = safe_round((total_valid_days - total_exceed_days) / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+
+        # 各污染物超标率
+        exceed_rate_by_pollutant = {}
+        for pollutant, days in exceed_days_by_pollutant.items():
+            exceed_rate_by_pollutant[pollutant] = safe_round(days / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+
+        # 首要污染物比例
+        primary_pollutant_ratio = {}
+        for pollutant, days in primary_pollutant_days.items():
+            primary_pollutant_ratio[pollutant] = safe_round(days / total_primary_days * 100, 1) if total_primary_days > 0 else 0
+
+        # 总天数累计
+        total_days_sum = sum(s.get("total_days", 0) for s in region_city_stats.values())
+        total_total_days = int(total_days_sum) if num_cities > 0 else 0
+
+        # 构建区域汇总结果
+        regional_stats[region_name] = {
+            "composite_index": avg_composite_index,
+            "exceed_days": int(total_exceed_days),
+            "valid_days": int(total_valid_days),
+            "exceed_rate": exceed_rate,
+            "compliance_rate": compliance_rate,
+            "total_days": int(total_total_days),
+            # 六参数统计指标
+            "SO2": avg_so2,
+            "SO2_P98": avg_so2_p98,
+            "NO2": avg_no2,
+            "NO2_P98": avg_no2_p98,
+            "PM10": avg_pm10,
+            "PM10_P95": avg_pm10_p95,
+            "PM2_5": avg_pm25,
+            "PM2_5_P95": avg_pm25_p95,
+            "CO_P95": avg_co_p95,
+            "O3_8h_P90": avg_o3_8h_p90,
+            # 单项质量指数
+            "single_indexes": single_indexes,
+            # 首要污染物统计
+            "primary_pollutant_days": {k: int(v) for k, v in primary_pollutant_days.items()},
+            "primary_pollutant_ratio": primary_pollutant_ratio,
+            "total_primary_days": int(total_primary_days),
+            # 各污染物超标统计
+            "exceed_days_by_pollutant": {k: int(v) for k, v in exceed_days_by_pollutant.items()},
+            "exceed_rate_by_pollutant": exceed_rate_by_pollutant,
+            # 首要污染物超标天统计
+            "primary_pollutant_exceed_days": primary_pollutant_exceed_days,
+        }
+
+        logger.info(
+            "regional_stats_calculated",
+            region=region_name,
+            cities_count=num_cities,
+            composite_index=avg_composite_index,
+            exceed_days=total_exceed_days,
+            valid_days=total_valid_days
+        )
+
+    # 按照指定顺序重新排列区域统计结果
+    # 顺序：粤东、粤西、粤北、珠三角、非珠三角
+    region_order = ["粤东", "粤西", "粤北", "珠三角", "非珠三角"]
+    ordered_regional_stats = {}
+    for region in region_order:
+        if region in regional_stats:
+            ordered_regional_stats[region] = regional_stats[region]
+
+    return ordered_regional_stats
