@@ -1496,26 +1496,43 @@ class QuickTraceExecutor:
 
         return "\n".join(report_lines)
 
-    def save_report(self, summary_text: str, city: str, alert_time: str) -> str:
+    async def save_report(
+        self,
+        summary_text: str,
+        city: str,
+        alert_time: str,
+        pollutant: str,
+        alert_value: float,
+        visuals: list = None,
+        execution_time_seconds: float = None,
+        has_trajectory: bool = False,
+        warning_message: str = None,
+    ) -> dict:
         """
-        保存报告到文件
+        保存报告到文件和数据库
 
         Args:
             summary_text: 报告内容
             city: 城市名称
             alert_time: 告警时间
+            pollutant: 污染物类型
+            alert_value: 告警浓度值
+            visuals: 可视化图表列表
+            execution_time_seconds: 执行耗时
+            has_trajectory: 是否包含轨迹分析
+            warning_message: 警告信息
 
         Returns:
-            str: 保存的文件路径
+            dict: {"filepath": "...", "db_id": ...}
         """
-        # 创建报告目录
+        # 1. 保存到本地文件
         report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
         report_dir.mkdir(parents=True, exist_ok=True)
 
         # 生成文件名（添加时间戳避免冲突）
-        date_str = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d")
+        file_date_str = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d")
         time_str = datetime.now().strftime("%H%M%S")
-        filename = f"{city}_快速溯源报告_{date_str}_{time_str}.md"
+        filename = f"{city}_快速溯源报告_{file_date_str}_{time_str}.md"
         filepath = report_dir / filename
 
         # 保存报告
@@ -1523,20 +1540,73 @@ class QuickTraceExecutor:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(summary_text)
         except PermissionError:
-            # 如果文件存在且只读，先删除再创建
-            if filepath.exists():
-                filepath.unlink()
+            # 如果文件存在且只读，生成新的文件名（添加随机后缀）
+            import uuid
+            unique_suffix = uuid.uuid4().hex[:6]
+            filename = f"{city}_快速溯源报告_{file_date_str}_{time_str}_{unique_suffix}.md"
+            filepath = report_dir / filename
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(summary_text)
 
         logger.info(
-            "report_saved",
+            "report_saved_to_file",
             filepath=str(filepath),
             city=city,
             alert_time=alert_time
         )
 
-        return str(filepath)
+        # 2. 保存到数据库
+        db_id = None
+        try:
+            from app.db.repositories.quick_trace_repo import QuickTraceRepository
+
+            repo = QuickTraceRepository()
+
+            # 根据污染物类型确定单位
+            unit = None
+            if pollutant in ["PM2.5", "PM10", "O3", "NO2", "SO2"]:
+                unit = "μg/m³"
+            elif pollutant == "CO":
+                unit = "mg/m³"
+
+            # 生成数据库需要的日期格式 (YYYY-MM-DD)
+            db_date_str = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+
+            db_id = await repo.save_analysis(
+                analysis_date=db_date_str,
+                alert_time=alert_time,
+                pollutant=pollutant,
+                alert_value=alert_value,
+                unit=unit,
+                summary_text=summary_text,
+                visuals=visuals,
+                execution_time_seconds=execution_time_seconds,
+                has_trajectory=has_trajectory,
+                warning_message=warning_message,
+            )
+
+            logger.info(
+                "report_saved_to_database",
+                db_id=db_id,
+                city=city,
+                pollutant=pollutant,
+                alert_value=alert_value,
+            )
+
+        except Exception as e:
+            logger.error(
+                "report_database_save_failed",
+                city=city,
+                pollutant=pollutant,
+                error=str(e),
+                exc_info=True
+            )
+            # 数据库保存失败不影响文件保存
+
+        return {
+            "filepath": str(filepath),
+            "db_id": db_id
+        }
 
 
 # ============================================================================
@@ -1584,23 +1654,31 @@ class DailyQuickTraceScheduler:
 
             # 保存报告
             if result.get("summary_text"):
-                filepath = self.executor.save_report(
+                save_result = await self.executor.save_report(
                     summary_text=result["summary_text"],
                     city=city,
-                    alert_time=alert_time
+                    alert_time=alert_time,
+                    pollutant=pollutant,
+                    alert_value=alert_value,
+                    visuals=result.get("visuals", []),
+                    execution_time_seconds=result.get("execution_time_seconds"),
+                    has_trajectory=result.get("has_trajectory", False),
+                    warning_message=result.get("warning_message"),
                 )
 
                 # 记录结果
                 logger.info(
                     "daily_quick_trace_completed",
-                    report_path=filepath,
+                    report_path=save_result.get("filepath"),
+                    db_id=save_result.get("db_id"),
                     has_trajectory=result.get("has_trajectory", False),
                     warning_message=result.get("warning_message")
                 )
 
                 return {
                     "success": True,
-                    "report_path": filepath,
+                    "report_path": save_result.get("filepath"),
+                    "db_id": save_result.get("db_id"),
                     "has_trajectory": result.get("has_trajectory", False),
                     "warning_message": result.get("warning_message")
                 }

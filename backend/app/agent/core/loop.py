@@ -128,18 +128,16 @@ class ReActLoop:
         user_query: str,
         enhance_with_history: bool = True,
         initial_messages: Optional[List[Dict[str, Any]]] = None,  # ✅ 新增：历史消息注入
-        manual_mode: Optional[str] = None,  # ✅ 新增：手动指定模式（"assistant" | "expert"）
-        original_query: Optional[str] = None  # ✅ 新增：原始查询（用于保存到历史，不包含记忆增强）
+        manual_mode: Optional[str] = None  # ✅ 新增：手动指定模式（"assistant" | "expert"）
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行单步模式 ReAct 循环（V4版）
 
         Args:
-            user_query: 用户查询（可能包含记忆增强，用于LLM推理）
+            user_query: 用户查询（原始问题，不包含记忆增强）
             enhance_with_history: 是否使用长期记忆增强
             initial_messages: 历史消息列表（用于会话恢复）
             manual_mode: 手动指定Agent模式（"assistant" | "expert"，默认expert）
-            original_query: 原始查询（不包含记忆增强，用于保存到对话历史）
 
         Yields:
             流式事件
@@ -157,8 +155,7 @@ class ReActLoop:
         async for event in self._run_react_loop(
             user_query,
             enhance_with_history,
-            initial_messages,  # ✅ 传递历史消息
-            original_query  # ✅ 传递原始查询
+            initial_messages  # ✅ 传递历史消息
         ):
             # 附加模式信息到事件
             event["mode"] = self.current_mode
@@ -168,8 +165,7 @@ class ReActLoop:
         self,
         user_query: str,
         enhance_with_history: bool = True,
-        initial_messages: Optional[List[Dict[str, Any]]] = None,  # ✅ 新增：历史消息注入
-        original_query: Optional[str] = None  # ✅ 新增：原始查询（用于保存到历史）
+        initial_messages: Optional[List[Dict[str, Any]]] = None  # ✅ 新增：历史消息注入
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         ReAct 循环（Thought + Action + Observation）
@@ -186,10 +182,9 @@ class ReActLoop:
         - 工具执行失败重试
 
         Args:
-            user_query: 用户查询（可能包含记忆增强，用于LLM推理）
+            user_query: 用户查询（已包含记忆和附件信息）
             enhance_with_history: 是否使用长期记忆增强
             initial_messages: 历史消息列表（用于会话恢复）
-            original_query: 原始查询（不包含记忆增强，用于保存到对话历史）
 
         Yields:
             流式事件
@@ -221,49 +216,16 @@ class ReActLoop:
                     hint="会话已在 _get_or_create_session 中从 SessionManager 恢复"
                 )
 
-            # Step 0: 记录用户消息（使用原始查询，不包含记忆增强）
-            query_to_save = original_query if original_query is not None else user_query
-            self.memory.session.add_user_message(query_to_save)
+            # Step 0: 记录用户消息（原始查询，不包含记忆增强内容）
+            self.memory.session.add_user_message(user_query)
 
-            # ✅ 调试日志：验证原始查询和增强查询
-            if original_query is not None:
-                logger.info(
-                    "query_separation_verified",
-                    original_length=len(original_query),
-                    enhanced_length=len(user_query),
-                    original_preview=original_query[:100],
-                    has_memory_enhancement=user_query != original_query,
-                    saved_to_history="original_query",
-                    used_for_llm="enhanced_query"
-                )
-
-            # Step 1: 使用增强查询（已在 react_agent.py 中加载记忆）
-            # user_query 参数已经是增强后的查询（包含记忆上下文）
-            enhanced_query = user_query
-
-            # 检测是否有记忆增强（通过比较原始查询和增强查询）
-            has_memory = (
-                original_query is not None and
-                len(user_query) > len(original_query) and
-                "长期记忆" in user_query
-            )
-
+            # ✅ 调试日志：记录查询信息
             logger.info(
                 "query_processing",
                 query_length=len(user_query),
-                original_length=len(original_query) if original_query else 0,
-                has_memory_enhancement=has_memory,
-                longterm_memory_disabled=not has_memory
+                has_memory="长期记忆" in user_query,
+                has_attachments="用户上传的附件" in user_query
             )
-
-            # ✅ 调试日志：显示增强查询的前400字符
-            if has_memory:
-                logger.debug(
-                    "enhanced_query_with_memory",
-                    preview=enhanced_query[:400],
-                    contains_memory_marker="长期记忆" in enhanced_query,
-                    contains_file_path="记忆文件路径" in enhanced_query
-                )
 
             # Step 2: 初始化循环状态
             iteration_count = 0
@@ -311,7 +273,7 @@ class ReActLoop:
 
                     # 使用SimplifiedContextBuilder构建上下文
                     context_result = await self.context_builder.build_for_thought_action(
-                        query=enhanced_query,
+                        query=user_query,
                         iteration=iteration_count,
                         latest_observation=latest_observation_str,
                         conversation_history=conversation_history,
@@ -328,7 +290,7 @@ class ReActLoop:
                     think_action_result = None  # 初始化变量，避免后续引用错误
 
                     async for event in self.planner.think_and_action_v2_streaming(
-                        query=enhanced_query,
+                        query=user_query,
                         system_prompt=context_result["system_prompt"],
                         user_conversation=context_result["user_conversation"],
                         iteration=iteration_count,
@@ -389,7 +351,7 @@ class ReActLoop:
                     if not action:
                         logger.warning("no_action_from_streaming_planner", iteration=iteration_count)
                         think_action_result = await self.planner.think_and_action_v2(
-                            query=enhanced_query,
+                            query=user_query,
                             system_prompt=context_result["system_prompt"],
                             user_conversation=context_result["user_conversation"],
                             iteration=iteration_count,

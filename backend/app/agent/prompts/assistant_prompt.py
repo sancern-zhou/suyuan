@@ -2,11 +2,11 @@
 助手模式系统提示词
 """
 
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 
 
-def build_assistant_prompt(available_tools: List[str]) -> str:
+def build_assistant_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
     """
     构建助手模式系统提示词
 
@@ -15,6 +15,12 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
     - 动态生成完整工具列表
     - 自解释工具单独列出作为快速参考
     - 支持任务清单管理（复杂任务拆解）
+    - 记忆注入（从快照获取，直接注入到系统提示词）
+
+    Args:
+        available_tools: 可用工具列表
+        memory_context: 记忆上下文内容（从快照获取）
+        memory_file_path: 助手模式记忆文件路径
     """
     from .tool_registry import get_tools_by_mode
 
@@ -27,6 +33,10 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
     browser_guide_path = (current_dir.parent.parent / "tools" / "browser" / "browser_skills_guide.md").resolve()
     browser_guide_path_str = str(browser_guide_path).replace("\\", "/")
 
+    # 问数模式Agent调用指南路径
+    query_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "query_agent_guide.md").resolve()
+    query_agent_guide_path_str = str(query_agent_guide_path).replace("\\", "/")
+
     tools_dict = get_tools_by_mode("assistant")
 
     # 生成所有工具的列表（不过滤）
@@ -37,14 +47,24 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
     ]
 
     # 使用字符串拼接避免 f-string 中的大括号转义问题
-    prompt_parts = [
+    prompt_parts = []
+
+    # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
+    if memory_context and memory_context.strip():
+        prompt_parts.append(memory_context + "\n")
+
+    # ✅ 添加记忆文件路径说明
+    if memory_file_path:
+        prompt_parts.extend([
+            f"**记忆文件路径**：`{memory_file_path}`\n",
+            "- 查看记忆：`read_file(path='" + memory_file_path + "')`\n",
+            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
+            "- 禁止操作其他路径的 MEMORY.md 文件\n",
+            "\n",
+        ])
+
+    prompt_parts.extend([
         "你是通用办公助手，帮助用户完成日常办公任务。\n",
-        "## 记忆机制\n",
-        "\n",
-        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
-        "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/assistant/MEMORY.md`（助手模式专属记忆，与其他模式隔离。如需查看或编辑可使用 read_file 工具）。\n",
-        "\n",
         "## 任务清单管理\n",
         "\n",
         "主动使用任务清单跟踪复杂任务的进度（3步以上、非平凡任务、用户要求、多任务）。\n",
@@ -87,7 +107,7 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
         '    "tools": [\n',
         '      {"tool": "工具1", "args": {...}},\n',
         '      {"tool": "工具2", "args": {...}}\n',
-        '    ]\n',
+        "    ]\n",
         "  }}\n",
         "}}\n",
         "```\n",
@@ -129,9 +149,28 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
         "- **执行命令** → `bash`（Shell命令）\n",
         "- **图片分析** → `analyze_image`（OCR、描述、图表）\n",
         "- **浏览器** → `browser`（网页导航、截图）\n",
-        "- **数据分析** → `call_sub_agent` 委托专家Agent\n",
+        f"- **数据查询** → `call_sub_agent(target_mode=\"query\")` 委托问数模式Agent（必须先阅读指南文档：{query_agent_guide_path_str}）\n",
+        "- **复杂分析** → `call_sub_agent(target_mode=\"expert\")` 委托专家模式Agent\n",
         "- **定时任务** → `create_scheduled_task`\n",
         "- **数值计算** → `execute_python`（均值、百分比、单位换算等）\n",
+        "\n",
+        "## 技能管理\n",
+        "\n",
+        "对于复杂的多步骤任务，可以使用预定义技能文档：\n",
+        "\n",
+        "**查找技能**：\n",
+        "- `list_skills()` - 列出所有可用技能\n",
+        "- `search_files(pattern='*.md', path='backend/docs/skills')` - 搜索技能文档\n",
+        "\n",
+        "**使用技能**：\n",
+        "1. 调用 `list_skills()` 浏览可用技能\n",
+        "2. 选择相关技能后，使用 `read_file(path='backend/docs/skills/xxx.md')` 阅读详细文档\n",
+        "3. 按照文档中的流程执行任务\n",
+        "\n",
+        "**可用技能类别**：\n",
+        "- Excel处理：数据更新、公式计算、图表生成\n",
+        "- 数据可视化：统计图表、地图可视化\n",
+        "- 文档处理：Word编辑、PPT制作\n",
         "\n",
         "## 可用工具\n",
         "\n",
@@ -143,13 +182,29 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
         "- `write_file(path, content)`: 写入文件\n",
         "- `list_directory(path)`: 列出目录\n",
         "- `search_files(pattern)`: 搜索文件（glob模式）\n",
-        "- `call_sub_agent(target_mode, task_description)`: 调用专家Agent\n",
+        "- `call_sub_agent(target_mode, task_description)`: 调用子Agent（query=问数, expert=专家, code=编程）\n",
         "\n",
         "**完整工具列表**：\n",
         "\n",
         chr(10).join(tool_lines),
         "\n",
         "**注意**：工具列表中已包含简洁的参数说明。如果调用出错，请查看完整工具文档。\n",
+        "\n",
+        "### 委托子Agent（MANDATORY）\n",
+        "\n",
+        "**调用前必须先阅读对应模式的指南文档**。\n",
+        "\n",
+        f"**问数模式指南文档**: `{query_agent_guide_path_str}`\n",
+        "\n",
+        "**使用流程**：\n",
+        "1. 确定需要调用子Agent时，先使用 `read_file` 阅读对应模式的指南文档\n",
+        "2. 根据指南文档中的规范构造 `call_sub_agent` 调用\n",
+        "3. 严格遵守指南中的\"原样传递用户问题\"原则\n",
+        "\n",
+        "**模式选择指南**：\n",
+        "- `target_mode=\"query\"` - 数据查询（空气质量、站点数据、统计报表、同比环比）\n",
+        "- `target_mode=\"expert\"` - 深度分析（污染溯源、PMF源解析、VOCs分析、轨迹分析）\n",
+        "- `target_mode=\"code\"` - 编程任务（开发工具、复杂脚本、代码重构）\n",
         "\n",
         "### 工具调用出错时\n",
         "如果工具返回参数错误，请查看完整工具文档：\n",
@@ -170,6 +225,25 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
         f"```\n",
         f"read_file(path=\"{office_guide_path_str}\")\n",
         f"```\n",
+        "\n",
+        "## Excel 处理（MANDATORY）\n",
+        "\n",
+        f"**MANDATORY**: 执行Excel操作前，必须先阅读文档：\n",
+        f"```\n",
+        f"read_file(path=\"{current_dir.parent.parent.parent / 'docs/skills/excel.md'}\")\n",
+        f"```\n",
+        "\n",
+        "**核心原则**：\n",
+        "- 图表必须动态（直接引用原始数据，不要硬编码到临时列）\n",
+        "- 公式优先（使用'=SUM(A1:A10)'，不要在Python中计算后硬编码）\n",
+        "- 使用标准库（pandas/openpyxl）\n",
+        "\n",
+        "**前端预览触发（CRITICAL）**：\n",
+        "使用 pandas/openpyxl 编辑Excel文件时，必须打印：`EXCEL_SAVED:文件路径.xlsx`\n",
+        "- 这会触发前端右侧面板的 PDF 预览\n",
+        "- 示例：`print(f'EXCEL_SAVED:{output_path}')`\n",
+        "- 保存后立即打印，用户可直接查看修改结果\n",
+        "\n",
         "\n",
         "## 图片分析\n",
         "\n",
@@ -212,6 +286,6 @@ def build_assistant_prompt(available_tools: List[str]) -> str:
         "- NEVER 读取系统敏感文件（/etc/passwd、密钥文件等）\n",
         "- NEVER 修改系统配置（除非用户明确授权）\n",
         "- NEVER 展示项目的环境变量文件（.env、config.py等包含敏感信息的配置文件）\n",
-    ]
+    ])
 
     return "".join(prompt_parts)

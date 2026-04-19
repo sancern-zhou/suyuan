@@ -58,6 +58,9 @@ class ReadFileTool(LLMTool):
     # 支持的 DOCX 格式
     DOCX_EXTENSIONS = {'.docx'}
 
+    # 支持的 Excel 格式
+    EXCEL_EXTENSIONS = {'.xlsx', '.xls', '.xlsm'}
+
     # 支持的 Markdown 格式
     MARKDOWN_EXTENSIONS = {'.md', '.markdown'}
 
@@ -85,6 +88,7 @@ class ReadFileTool(LLMTool):
 - PDF 文件：智能PDF解析（自动检测文本型/扫描型，支持OCR、表格、图片提取）
 - DOCX 文件：读取Word文档（支持PDF预览、表格、图片提取）
 - Word XML：智能分层读取（根据文件大小自动选择模式）
+- Excel 文件：提示使用 execute_python 工具读取（支持数据分析和图表提取）
 - 目录列表：查看目录中的文件和子目录
 
 分页使用场景：
@@ -105,6 +109,14 @@ PDF/DOCX 预览功能：
 - DOCX：通过 LibreOffice 转换为 PDF
 - 预览失败不影响文件内容读取
 
+Excel 文件处理：
+- Excel 文件需要使用 execute_python 工具读取
+- read_file 会自动识别并提示使用 execute_python
+- execute_python 提供以下函数：
+  * read_excel(file_path): 读取 Excel 数据和结构
+  * analyze_excel_template(file_path): 分析模板和图表
+  * create_excel_report(data, config, output_name): 生成报告
+
 PDF 智能解析：
 - 自动检测PDF类型（文本型/扫描型）
 - 文本型PDF：直接提取文本和表格
@@ -119,6 +131,7 @@ PDF 智能解析：
 - read_file(path="report.pdf", pages="1-5")               # PDF文件（指定页面）
 - read_file(path="report.pdf", extract_images=True)      # PDF文件（提取图片）
 - read_file(path="document.docx")                         # DOCX文件（自动生成预览）
+- read_file(path="data.xlsx")                             # Excel文件（提示使用execute_python）
 - read_file(path="doc.xml", raw_mode=True)                # Word XML（完整 XML）
 - read_file(path="D:/work_dir")                           # 查看目录内容
 
@@ -142,6 +155,7 @@ PDF 智能解析：
 - 图片大小限制：5MB
 - PDF 大小限制：50MB
 - DOCX 大小限制：20MB
+- Excel 大小限制：50MB
 - PDF 页面限制：最多 20 页
 - 工作目录限制：D:/溯源/ 及其子目录
 - 文本文件默认大小限制：100KB
@@ -151,6 +165,7 @@ PDF 智能解析：
 - 建议先用 grep 搜索定位行号，再用 offset/limit 精确读取
 - 图片文件会自动进行内容分析
 - PDF/DOCX 自动生成预览，可在前端查看
+- Excel 文件请使用 execute_python 工具读取
 - 不返回 base64 数据（避免 token 浪费）
 """,
             category=ToolCategory.QUERY,
@@ -237,6 +252,7 @@ PDF 智能解析：
             is_image = file_ext in self.IMAGE_EXTENSIONS
             is_pdf = file_ext in self.PDF_EXTENSIONS
             is_docx = file_ext in self.DOCX_EXTENSIONS
+            is_excel = file_ext in self.EXCEL_EXTENSIONS
             is_notebook = file_ext in self.NOTEBOOK_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
 
@@ -252,6 +268,9 @@ PDF 智能解析：
                 return await self._read_docx_delegated(
                     resolved_path, file_size, pages, max_paragraphs, enable_preview
                 )
+            elif is_excel:
+                # Excel 文件需要使用 execute_python 工具
+                return await self._handle_excel_file(resolved_path)
             elif is_word_xml:
                 return await self._read_word_xml(
                     resolved_path, file_size, raw_mode, include_formatting, max_paragraphs
@@ -1371,6 +1390,55 @@ PDF 智能解析：
                 },
                 "required": ["path"]
             }
+        }
+
+    async def _handle_excel_file(self, file_path: Path) -> Dict[str, Any]:
+        """
+        处理 Excel 文件，提示用户使用 execute_python 工具
+
+        Args:
+            file_path: Excel 文件路径
+
+        Returns:
+            提示信息和 Excel 处理函数说明
+        """
+        file_name = file_path.name
+        file_size = file_path.stat().st_size
+        size_mb = file_size / (1024 * 1024)
+
+        return {
+            "success": False,
+            "data": {
+                "error": "Excel 文件需要使用 execute_python 工具读取",
+                "file_type": "Excel",
+                "file_name": file_name,
+                "file_size_mb": round(size_mb, 2),
+                "suggested_tool": "execute_python",
+                "available_functions": {
+                    "read_excel": "读取 Excel 文件的数据和结构信息",
+                    "analyze_excel_template": "分析 Excel 模板的结构和图表配置",
+                    "create_excel_report": "创建 Excel 报告（支持数据和图表）"
+                },
+                "usage_example": f'''
+# 使用 execute_python 读取 Excel 文件
+
+# 方法1：读取数据和结构
+result = read_excel("{file_path}")
+print(result['sheets'])  # 工作表列表
+print(result['data']['Sheet1'])  # 数据
+
+# 方法2：分析模板结构
+template = analyze_excel_template("{file_path}")
+print(template['sheets'])  # 工作表结构
+print(template['charts'])  # 图表配置
+
+# 方法3：生成新报告
+data = [{{"列1": "值1", "列2": "值2"}}]
+report = create_excel_report(data, output_name="new_report.xlsx")
+print(report['file_path'])  # 生成的文件路径
+'''
+            },
+            "summary": f"📊 Excel 文件: {file_name} ({round(size_mb, 2)} MB) - 请使用 execute_python 工具读取"
         }
 
     def is_available(self) -> bool:

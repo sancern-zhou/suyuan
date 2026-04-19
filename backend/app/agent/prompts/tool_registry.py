@@ -14,12 +14,13 @@ ASSISTANT_TOOLS = {
     "bash": "执行Shell命令。参数: command(str)",
 
     # 文件操作
-    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "list_directory": "列出目录内容。参数: path(str)",
     "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
+    "list_skills": "列出可用的技能文档（支持关键词过滤）。参数: keyword(str, 可选, 过滤关键词), category(str, 可选, 分类过滤)",
 
     # Office工具（⚠️ **必须先阅读 Office 技能指导文档**：read_file(file_path='backend/app/tools/office/office_skills_guide.md')）
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
@@ -35,7 +36,7 @@ ASSISTANT_TOOLS = {
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 
     # 代码执行
-    "execute_python": "执行 Python 代码（数值计算、数据处理、文件操作）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析、可视化生成、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 其他工具
     "create_scheduled_task": "创建定时任务。参数: user_request(str)",
@@ -55,7 +56,7 @@ EXPERT_TOOLS = {
 
     # 全国城市历史数据查询工具
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、province_statistics_new_standard(省级空气质量统计-新标准限值)、province_statistics_old_standard(省级空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、province_statistics_new_standard(省级空气质量统计-新标准限值)、province_statistics_old_standard(省级空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。⚠️ **统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)",
     # 广东省数据查询工具（⚠️ 注意区分城市级别和站点级别工具）
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点小时数据，请使用 query_gd_suncere_station_hour_new）。⚠️ 必需参数: cities(list, 城市名称列表), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_city_day": "查询广东省【城市级别】日空气质量数据（旧标准 HJ 633-2013，⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点日数据，请使用 query_gd_suncere_station_day_new）。参数: cities(list, 城市名称列表), start_date(str), end_date(str)",
@@ -68,7 +69,6 @@ EXPERT_TOOLS = {
     "compare_standard_reports": "【第一优先级】新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 同比环比查询必须使用此工具，禁止手动计算。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
     "compare_old_standard_reports": "【第一优先级】旧标准报表对比分析（基于 HJ 633-2013 旧标准，对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 旧标准同比环比查询必须使用此工具，禁止手动计算。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
-    "aggregate_data": "【第二优先级】数据聚合分析工具（⚠️ 仅当统计查询工具无法满足需求时使用。前置条件：必须先使用查询工具获取data_id。使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
 
     # 分析工具（需先获取数据）
     "calculate_pm_pmf": "PM2.5 PMF源解析（需先调用get_pm25_ionic和get_pm25_carbon获取数据）。参数: data_ids(list), n_factors(int, 可选, 默认5)",
@@ -86,8 +86,6 @@ EXPERT_TOOLS = {
     "predict_air_quality": "空气质量预测（需先获取历史空气质量数据）。参数: city(str), days(int, 可选, 默认7)",
 
     # 可视化工具
-    "generate_chart": "生成标准图表（15种类型：pie/bar/line/timeseries/wind_rose/profile/scatter3d/surface3d/heatmap/radar/map等）。⚠️ 必需参数: chart_type(str), data(list或dict)。可选: title(str), x_field(str), y_field(str), meta(dict)",
-    "smart_chart_generator": "智能图表生成（自动选择图表类型和数据可视化）。⚠️ 必需参数: data_id(str, 数据ID)",
     "revise_chart": "修订已生成图表（基于用户反馈调整图表）。⚠️ 必需参数: chart_id(str), revision_instruction(str, 修订说明)",
     "generate_map": "生成地图可视化（高德地图，展示站点位置和污染分布）。⚠️ 必需参数: locations(list, 站点列表, 每个站点包含lat/lon)。可选: map_type(str, 地图类型: scatter/heatmap/bubble, 默认scatter), center_lat/center_lon(float, 地图中心), zoom(int, 缩放级别, 默认10)",
 
@@ -95,10 +93,10 @@ EXPERT_TOOLS = {
     "TodoWrite": "更新任务清单（完整替换）。⚠️ 溯源分析任务必须使用: TodoWrite(task_list_file='backend/config/task_lists/quick_trace_standard_multi_agent.md')，不要手动输入items（会丢失详细信息）",
 
     # 代码执行
-    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析、可视化生成、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 文件操作（保存分析结果、读取配置文件）
-    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
@@ -117,7 +115,7 @@ QUERY_TOOLS = {
 
     # === 源码查看工具（了解工具实现细节） ===
     "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
-    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "list_directory": "列出目录内容。参数: path(str)",
@@ -129,7 +127,7 @@ QUERY_TOOLS = {
     "get_pm25_crustal": "查询PM2.5地壳元素。参数: start_time(str), end_time(str), locations(可选)",
     "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、province_statistics_new_standard(省级空气质量统计-新标准限值)、province_statistics_old_standard(省级空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、province_statistics_new_standard(省级空气质量统计-新标准限值)、province_statistics_old_standard(省级空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。⚠️ **统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)",
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点小时数据，请使用 query_gd_suncere_station_hour_new）。参数: cities(list, 城市名称列表), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS'), include_weather(bool, 可选, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_station_hour_new": "查询广东省【站点级别】小时空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物。⚠️ 适用场景：当用户提到具体站点名称（如'广雅中学'、'市监测站'、'天河职防'）或需要站点级别数据时必须使用此工具，不要使用 query_gd_suncere_city_hour）。⚠️ 必需参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: station_type(str, 站点类型, 默认'国控'。⚠️ 仅在使用cities参数时有效，用于过滤该城市下的指定类型站点。如果使用stations参数，则不需要此参数), cities(list, 城市名自动展开该城市下所有站点，与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个。使用stations时不需要提供station_type), include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_station_day_new": "查询广东省站点级别日空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。⚠️ 必需参数: station_type(str, 站点类型, 如'国控'/'省控'/'市控'或'1.0'/'2.0'/'3.0'), start_date(str, 'YYYY-MM-DD'), end_date(str, 'YYYY-MM-DD')。可选: cities(list, 城市名自动展开站点, 与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个)",
@@ -147,19 +145,13 @@ QUERY_TOOLS = {
      # === 新增：数据注册表工具 ===
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
 
-    # === 数据分析工具 ===
-    "aggregate_data": "数据聚合分析工具（使用前请先阅读使用指南：read_file(file_path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')）",
-
     # === 知识库检索（预报会商场景） ===
     "search_knowledge_base": "检索会商记录、模型参数、历史案例等知识库内容。参数: query(str), knowledge_base_ids(list, 可选, 指定会商知识库ID), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5), filters(dict, 可选, 元数据过滤), use_reranker(bool, 可选, 默认true)",
 
     # === 可视化工具 ===
-    "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_gd_suncere_city_day_new等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
-    "generate_chart": "生成标准图表（15种类型：pie/bar/line/timeseries/wind_rose/profile/scatter3d/surface3d/heatmap/radar/map等）。参数: chart_type(str), data(list或dict) [其他参数详见工具文档]",
-    "smart_chart_generator": "智能图表生成（需data_id，自动选择图表类型）。参数: data_id(str)",
 
     # === 数值计算工具 ===
-    "execute_python": "【第三优先级】执行 Python 代码进行数值计算（均值、中位数、百分比、单位换算等）。⚠️ **最后手段：仅当统计查询工具和aggregate_data都无法满足需求时才使用**。禁止用于同环比、超标率等常见统计计算（应使用compare_standard_reports或query_new_standard_report）。❌ **禁止用来校验统计查询工具返回的结果，统计查询工具的结果是最准确的**。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "【第二优先级】执行 Python 代码进行数值计算（均值、中位数、百分比、单位换算等）、可视化生成（AQI日历图、极坐标污染玫瑰图）或Excel文件处理。⚠️ **计算场景：仅当统计查询工具无法满足需求时才使用（如自定义聚合、复杂计算等）。禁止用于同环比、超标率等常见统计计算（应使用compare_standard_reports或query_new_standard_report）。❌ 禁止用来校验统计查询工具返回的结果。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。可视化场景：⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 任务管理 ===
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -178,7 +170,7 @@ REPORT_TOOLS = {
 
     # 数据查询工具（直接调用，支持并发）
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、province_statistics_new_standard(省级空气质量统计-新标准限值)、province_statistics_old_standard(省级空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)",
+    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、province_statistics_new_standard(省级空气质量统计-新标准限值)、province_statistics_old_standard(省级空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。⚠️ **统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)",
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2026）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选)",
     "query_new_standard_report": "查询HJ 633-2026新标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true), use_old_composite_algorithm(bool, 可选, 默认false, 使用旧综合指数算法。false=新算法(PM2.5权重3,NO2权重2,O3权重2),true=旧算法(所有权重均为1))",
     "query_old_standard_report": "查询HJ 633-2013旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true), use_new_composite_algorithm(bool, 可选, 默认false, 使用新综合指数算法。false=旧算法(所有权重均为1),true=新算法(PM2.5权重3,NO2权重2,O3权重2))",
@@ -192,7 +184,7 @@ REPORT_TOOLS = {
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list)",
 
     # 文件操作
-    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
@@ -203,7 +195,7 @@ REPORT_TOOLS = {
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 
     # 代码执行
-    "execute_python": "执行 Python 代码（数值计算、文档生成、数据处理、可视化）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、文档生成、数据处理、可视化生成、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 模式互调
     "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
@@ -221,7 +213,7 @@ CHART_TOOLS = {
     "read_data_registry": "读取已保存的数据结构。⚠️ **list_fields 必须为 true（必选）**——图表模式只需了解字段名称和类型，不需要获取具体数据内容；实际数据在 execute_python 中通过 data_id 对应的 JSON 文件路径自行读取。参数: data_id(str), list_fields(bool=true, 必选)",
 
     # 文件操作
-    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "grep": "搜索文件内容（支持 Glob 模式、分页、多行模式、上下文控制）。参数: pattern(str, 正则表达式), path(str, 可选, 相对于backend/), glob(str, 可选, 文件模式如*.{py,ts}), output_mode(str, 可选, content/files_with_matches/count), context_lines(int, 可选, 上下文行数), context_lines_before/context_lines_after(int, 可选), show_line_numbers(bool, 可选), multiline(bool, 可选, 多行模式), case_insensitive(bool, 可选), head_limit(int, 可选, 最多返回条数, 默认250), offset(int, 可选, 跳过前N条, 用于分页)",
@@ -230,7 +222,7 @@ CHART_TOOLS = {
     "bash": "执行Shell命令（谨慎使用，用于删除/移动文件等操作）。参数: command(str), timeout(int, 可选, 默认60), working_dir(str, 可可选)",
 
     # 代码执行
-    "execute_python": "执行 Python 代码（数值计算、生成 Matplotlib 图表）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、生成 Matplotlib 图表、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -245,7 +237,7 @@ SOCIAL_TOOLS = {
     "bash": "执行Shell命令（谨慎使用）。参数: command(str), timeout(int, 可选, 默认60), working_dir(str, 可选)",
 
     # === 文件操作 ===
-    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
+    "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",
     "edit_file": "精确编辑文件（V2版本：支持引号规范化、Trailing空格处理、文件修改检查）。⚠️ 必须先使用read_file读取文件。参数: path(str), old_string(str, 要替换的原内容), new_string(str, 替换后的新内容), replace_all(bool, 可选, 是否替换所有匹配项, 默认false), encoding(str, 可选, 文件编码, 默认自动检测)",
     "read_docx": "读取DOCX文档内容（直接读取，无需解包）。参数: path(str), max_paragraphs(int, 可选, 默认100), include_tables(bool, 可选, 默认true)",
     "parse_pdf": "解析PDF文件并提取内容（支持文本提取、OCR识别、表格提取、元数据提取）。⚠️ 必需参数: path(str, PDF文件路径)。可选: mode(str, 解析模式: auto=自动检测/text=文本提取/ocr=OCR识别/table=表格提取/image=图片信息/meta=元数据, 默认auto), pages(str, 页面范围如'1-5', 可选), extract_tables(bool, 是否提取表格, 默认false), extract_images(bool, 是否提取图片信息, 默认false), ocr_engine(str, OCR引擎: auto/qwen/paddleocr/tesseract, 默认auto)",
@@ -253,6 +245,7 @@ SOCIAL_TOOLS = {
     "write_file": "写入文件内容。参数: path(str), content(str)",
     "list_directory": "列出目录内容。参数: path(str)",
     "search_files": "搜索文件名（glob模式，支持递归搜索）。⚠️ 参数: pattern(str, glob模式), path(str, 可选, 搜索路径, 默认当前目录)。重要：递归搜索子目录必须使用 **（如'**/*.json'），否则只在指定目录的顶层搜索。示例: search_files(pattern='**/*.json', path='backend/config') 递归搜索所有JSON文件; search_files(pattern='*.py', path='backend/app') 只在backend/app目录搜索Python文件",
+    "list_skills": "列出可用的技能文档（支持关键词过滤）。参数: keyword(str, 可选, 过滤关键词), category(str, 可选, 分类过滤)",
 
     # === 图片分析 ===
     "analyze_image": "分析图片内容。参数: path(str), operation(str, 可选, 默认analyze), prompt(str, 可选)",
@@ -273,10 +266,9 @@ SOCIAL_TOOLS = {
     "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
 
     # === 可视化 ===
-    "generate_aqi_calendar": "生成AQI日历热力图（需先使用query_gd_suncere_city_day_new等查询工具获取数据并得到data_id）。参数: data_id(str), year(int), month(int), pollutant(str, 可选, 默认AQI, 支持AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10), cities(list, 可选, 默认广东省21个城市)",
 
     # === 代码执行 ===
-    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析）。参数: code(str), timeout(int, 可选, 默认30)",
+    "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析、可视化生成、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 模式互调 ===
     "call_sub_agent": "调用子Agent（code=编程, expert=数据分析, query=数据查询）。⚠️ 用自然语言描述任务，不要传递结构化参数或指定工具名称。参数: target_mode(str), task_description(str)",
@@ -315,9 +307,17 @@ CODE_TOOLS = {
     "call_sub_agent": "调用Agent。参数: target_mode(str), task_description(str)",
 }
 
+# ===== 记忆整合器工具（后台专用） =====
+MEMORY_CONSOLIDATOR_TOOLS = {
+    "remember_fact": "添加重要事实到长期记忆。⚠️ **字符限制**：记忆文件上限3000字符，当前使用率会显示在提示词中。当接近上限（>80%）时，优先删除旧内容。参数：fact(str, 要记住的事实，简洁明确，一句话), category(str, 事实类别：用户偏好/领域知识/历史结论/环境信息), priority(int, 优先级1-5，5最高，默认3，用于记忆满时的删除决策)",
+    "replace_memory": "替换现有记忆条目。⚠️ **字符限制**：替换操作不会改变总字符数，但可以提高记忆质量。参数：old_text(str, 要替换的旧内容，支持子串匹配), new_text(str, 新的内容), category(str, 可选，用于精确匹配，提高替换准确性)",
+    "remove_memory": "删除过时或错误记忆。⚠️ **使用场景**：当记忆文件接近上限（>80%）或已满（100%）时使用。删除优先级：环境信息（临时）> 历史结论（可能过时）> 领域知识（相对稳定）> 用户偏好（最重要）。参数：text(str, 要删除的内容，支持子串匹配), category(str, 可选，用于精确匹配)",
+}
+
 # ===== 工具排序（影响展示顺序） =====
 ASSISTANT_TOOL_ORDER = [
     "bash", "read_file", "edit_file", "grep", "write_file", "list_directory", "search_files",
+    "list_skills",  # 技能管理工具
     "read_docx",  # 读取DOCX文档（优先使用）
     "parse_pdf",  # 解析PDF文件
     "unpack_office", "pack_office", "word_edit", "accept_word_changes",
@@ -344,7 +344,6 @@ EXPERT_TOOL_ORDER = [
     "query_xcai_city_history",  # 全国城市历史数据（XcAiDb SQL Server）
     "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics_new_standard表）
     "read_data_registry",
-    "aggregate_data",
 
     # 分析工具
     "calculate_pm_pmf", "calculate_vocs_pmf", "calculate_pmf",
@@ -354,7 +353,7 @@ EXPERT_TOOL_ORDER = [
     "predict_air_quality",
 
     # 可视化
-    "generate_chart", "smart_chart_generator", "revise_chart", "generate_map",
+    "revise_chart", "generate_map",
 
     # 任务管理
     "TodoWrite",  # 任务管理工具
@@ -413,16 +412,10 @@ QUERY_TOOL_ORDER = [
     "query_station_new_standard_report",  # 站点级新标准统计报表
     "compare_station_standard_reports",  # 站点级新标准报表对比分析
 
-    # 数据分析工具
-    "aggregate_data",
-
     # 知识库检索（预报会商场景）
     "search_knowledge_base",
 
     # 可视化工具
-    "generate_aqi_calendar",
-    "generate_chart",
-    "smart_chart_generator",
 
     # 数值计算工具
     "execute_python",
@@ -515,6 +508,7 @@ SOCIAL_TOOL_ORDER = [
     "write_file",
     "list_directory",
     "search_files",
+    "list_skills",  # 技能管理工具
 
     # 图片分析
     "analyze_image",
@@ -526,7 +520,6 @@ SOCIAL_TOOL_ORDER = [
     "get_weather_forecast",
 
     # 可视化
-    "generate_aqi_calendar",  # AQI日历热力图
 
     # 代码执行
     "execute_python",
@@ -557,7 +550,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具列表
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart"
+        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart" | "memory_consolidator"
 
     Returns:
         工具字典 {tool_name: description}
@@ -576,6 +569,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return SOCIAL_TOOLS
     elif mode == "chart":
         return CHART_TOOLS
+    elif mode == "memory_consolidator":
+        return MEMORY_CONSOLIDATOR_TOOLS
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -585,7 +580,7 @@ def get_tool_order(mode: str) -> List[str]:
     根据模式获取工具排序
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart"
+        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart" | "memory_consolidator"
 
     Returns:
         工具名称列表（按展示顺序）
@@ -604,5 +599,7 @@ def get_tool_order(mode: str) -> List[str]:
         return SOCIAL_TOOL_ORDER
     elif mode == "chart":
         return CHART_TOOL_ORDER
+    elif mode == "memory_consolidator":
+        return ["remember_fact", "replace_memory", "remove_memory"]
     else:
         raise ValueError(f"Unknown mode: {mode}")

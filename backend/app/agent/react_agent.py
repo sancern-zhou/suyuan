@@ -131,7 +131,13 @@ class ReActAgent:
         initial_messages: Optional[List[Dict[str, Any]]] = None,
         manual_mode: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
-        user_identifier: Optional[str] = None  # ✅ 新增：用户标识（可选）
+        user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
+        social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
+        social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）
+        social_soul_file_path: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 文件路径
+        social_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
+        social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
+        social_user_context: Optional[str] = None  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -149,6 +155,12 @@ class ReActAgent:
             manual_mode: 双模式架构（assistant | expert，None则使用默认expert模式）
             attachments: 附件列表 [{file_id, name, type, url}]
             user_identifier: 用户标识（用于跨会话记忆，可选）
+            social_memory_store: 社交模式外部传入的memory_store（已含用户隔离），避免社交模式走UnifiedMemoryManager的共享路径
+            social_user_preferences: 社交模式用户偏好配置（仅social模式使用，用于动态提示词）
+            social_soul_file_path: 社交模式 soul.md 文件路径（仅social模式使用）
+            social_user_file_path: 社交模式 USER.md 文件路径（仅social模式使用）
+            social_soul_context: 社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
+            social_user_context: 社交模式用户上下文内容（USER.md，仅social模式使用，包含用户档案信息）
 
         Yields:
             流式事件：
@@ -160,15 +172,14 @@ class ReActAgent:
         memory_context = ""
         unified_user_id = None
 
-        # ✅ 保存原始查询（用于保存到对话历史，不包含任何增强）
-        original_query = user_query
-
-        # ✅ 增强查询（用于传递给LLM，包含记忆和附件）
-        enhanced_query = user_query
-
-        if self.enable_memory and manual_mode:
-            if user_identifier:
-                # 有user_identifier：跨模式共享记忆（同一用户在所有模式下共享同一个记忆文件）
+        # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
+        if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
+            memory_store = social_memory_store
+            memory_context = social_memory_store.get_memory_context()
+            unified_user_id = None  # 社交模式不走通用记忆整合
+        elif self.enable_memory and manual_mode:
+            if user_identifier and manual_mode != "social":
+                # 有user_identifier且非社交模式：跨模式共享记忆（同一用户在所有模式下共享同一个记忆文件）
                 unified_user_id = f"{user_identifier}:shared"
                 memory_mode = "shared"  # ✅ 使用特殊的 shared 模式，实现跨模式共享
             else:
@@ -177,40 +188,28 @@ class ReActAgent:
                 unified_user_id = "global"
                 memory_mode = manual_mode or "expert"  # ✅ 使用当前模式，实现模式内共享
 
-            # 加载记忆上下文
+            # ✅ 加载记忆上下文（用于系统提示词注入，不修改user_query）
+            memory_context = None
             if unified_user_id:
                 memory_store = await self.memory_manager.get_user_memory(
                     user_id=unified_user_id,
                     mode=memory_mode
                 )
-                memory_context = memory_store.get_memory_context()
-                memory_file_path = str(memory_store.memory_file.resolve())  # ✅ 转换为绝对路径
+                memory_context = memory_store.get_memory_context()  # 从快照获取记忆
 
-                # 增强查询（仅用于传递给LLM，不保存到历史）
-                if memory_context:
-                    memory_info = f"{memory_context}\n\n**记忆文件路径**：{memory_file_path}"
-                    enhanced_query = f"{memory_info}\n\n用户问题：{enhanced_query}"  # ✅ 只增强传递给LLM的查询
+        # ✅ 统一：记录记忆注入日志
+        if memory_context:
+            memory_file_path = str(memory_store.memory_file.resolve()) if memory_store else ""
+            logger.info(
+                "memory_context_prepared",
+                user_id=unified_user_id or "social_external",
+                mode=manual_mode,
+                context_length=len(memory_context),
+                memory_file_path=memory_file_path,
+                memory_preview=memory_context[:200] if memory_context else ""
+            )
 
-                    # ✅ 详细日志：显示记忆增强详情
-                    logger.info(
-                        "memory_context_loaded",
-                        user_id=unified_user_id,
-                        mode=manual_mode,
-                        context_length=len(memory_context),
-                        memory_file_path=memory_file_path,
-                        original_query_length=len(original_query),
-                        enhanced_query_length=len(enhanced_query),
-                        memory_preview=memory_context[:200] if memory_context else ""
-                    )
-
-                    # ✅ 调试日志：显示增强后的查询前300字符
-                    logger.debug(
-                        "enhanced_query_preview",
-                        preview=enhanced_query[:300],
-                        total_length=len(enhanced_query)
-                    )
-
-        # ✅ 如果有附件，添加到查询中告知LLM（仅用于传递给LLM，不保存到历史）
+        # ✅ 如果有附件，添加到查询中（保存到对话历史，确保后续能访问文件）
         if attachments and len(attachments) > 0:
             attachment_info = "\n\n**用户上传的附件**：\n"
             for i, att in enumerate(attachments, 1):
@@ -244,7 +243,7 @@ class ReActAgent:
                 else:
                     attachment_info += f"{i}. 文件: {att_name}\n"
                     attachment_info += f"   路径: {att_url}\n"
-            enhanced_query = enhanced_query + attachment_info  # ✅ 只修改增强查询
+            user_query = user_query + attachment_info  # ✅ 添加到查询中（保存到对话历史）
 
             logger.info(
                 "attachments_added_to_query",
@@ -260,6 +259,15 @@ class ReActAgent:
 
         # Update executor's memory_manager and task_list to enable DataContextManager
         self.executor.set_memory_manager(memory_manager, task_list=self.task_list)
+
+        # ✅ 创建记忆快照
+        # 社交模式：使用外部传入的 social_memory_store
+        # 其他模式：通过 UnifiedMemoryManager 获取
+        if self.enable_memory and memory_store:
+            try:
+                memory_store.create_snapshot()  # 创建独立副本
+            except Exception as e:
+                logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
         iteration_limit = max_iterations or self.max_iterations
 
@@ -291,17 +299,54 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids  # ✅ 传递知识库ID列表
             )
 
-            # ✅ 设置记忆文件路径到上下文构建器（用于系统提示词）
-            if 'memory_file_path' in locals():
-                react_loop.context_builder.memory_file_path = memory_file_path
+            # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
+            if memory_context:
+                react_loop.context_builder.memory_context = memory_context
+                logger.debug(
+                    "memory_context_set_to_context_builder",
+                    context_length=len(memory_context)
+                )
+
+            # ✅ 设置记忆文件路径到上下文构建器（所有模式）
+            if memory_store:
+                react_loop.context_builder.memory_file_path = str(memory_store.memory_file.resolve())
                 logger.debug(
                     "memory_file_path_set_to_context_builder",
-                    memory_file_path=memory_file_path
+                    memory_file_path=react_loop.context_builder.memory_file_path,
+                    mode=manual_mode
+                )
+
+            # ✅ 设置用户偏好到上下文构建器（仅social模式使用）
+            # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
+            if manual_mode == "social" and social_user_preferences:
+                react_loop.context_builder.user_preferences = social_user_preferences
+                react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
+                react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
+                react_loop.context_builder.soul_context = social_soul_context  # ✅ 传递 soul.md 内容
+                react_loop.context_builder.user_context = social_user_context  # ✅ 传递用户上下文（USER.md）
+
+                # ✅ 设置记忆工具的用户上下文（确保写入正确的用户隔离路径）
+                from app.tools.social.remember_fact.tool import RememberFactTool
+                from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+                from app.tools.social.remove_memory.tool import RemoveMemoryTool
+                social_user_id = user_identifier  # social_user_id 即 user_identifier
+                RememberFactTool.set_memory_context("social", social_user_id)
+                ReplaceMemoryTool.set_memory_context("social", social_user_id)
+                RemoveMemoryTool.set_memory_context("social", social_user_id)
+
+                logger.debug(
+                    "social_memory_context_set",
+                    memory_file_path=react_loop.context_builder.memory_file_path,
+                    soul_file_path=react_loop.context_builder.soul_file_path,  # ✅ 新增日志
+                    user_file_path=react_loop.context_builder.user_file_path,  # ✅ 新增日志
+                    has_user_preferences=social_user_preferences is not None,
+                    has_soul_context=social_soul_context is not None,  # ✅ 新增日志
+                    has_user_context=social_user_context is not None,  # ✅ 新增日志
+                    social_user_id=social_user_id
                 )
 
             async for event in react_loop.run(
-                user_query=enhanced_query,  # ✅ 传递增强查询给LLM（包含记忆和附件）
-                original_query=original_query,  # ✅ 传递原始查询用于保存到历史
+                user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
                 enhance_with_history=enhance_with_history,
                 initial_messages=initial_messages,
                 manual_mode=manual_mode
@@ -400,22 +445,44 @@ class ReActAgent:
                         error=str(e)
                     )
 
-            # ✅ 检查并整合记忆（所有模式通用）
-            if unified_user_id and manual_mode:
+            # ✅ 后台记忆整合（新增，与上下文压缩完全分离）
+            # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 social_memory_store），
+            #    此处只为非社交模式触发整合
+            if unified_user_id and manual_mode and manual_mode != "social":
                 try:
-                    await self._check_and_consolidate_memory(
-                        actual_session_id,
-                        unified_user_id,
-                        manual_mode
+                    asyncio.create_task(
+                        self._background_memory_consolidation(
+                            actual_session_id,
+                            unified_user_id,
+                            manual_mode
+                        )
                     )
                 except Exception as e:
                     logger.warning(
-                        "memory_consolidation_failed",
-                        session_id=actual_session_id,
-                        user_id=unified_user_id,
-                        mode=manual_mode,
+                        "failed_to_schedule_memory_consolidation",
                         error=str(e)
                     )
+
+            # ✅ 清理记忆快照
+            # 社交模式：使用外部传入的 social_memory_store
+            # 其他模式：通过 UnifiedMemoryManager 获取
+            if memory_store:
+                try:
+                    memory_store.cleanup_snapshot()
+                except Exception as e:
+                    logger.warning("failed_to_cleanup_snapshot", error=str(e))
+
+            # ✅ 清理记忆工具的用户上下文（社交模式）
+            if manual_mode == "social":
+                try:
+                    from app.tools.social.remember_fact.tool import RememberFactTool
+                    from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+                    from app.tools.social.remove_memory.tool import RemoveMemoryTool
+                    RememberFactTool.clear_memory_context()
+                    ReplaceMemoryTool.clear_memory_context()
+                    RemoveMemoryTool.clear_memory_context()
+                except Exception as e:
+                    logger.warning("failed_to_clear_social_memory_context", error=str(e))
 
             await self._mark_session_used(actual_session_id)
 
@@ -472,122 +539,243 @@ class ReActAgent:
         return self.executor.get_tool_info(tool_name)
 
     # ========================================================================
-    # 记忆整合方法（统一记忆系统）
+    # 记忆整合方法（统一记忆系统 - Agent模式）
     # ========================================================================
 
-    async def _check_and_consolidate_memory(
+    async def _background_memory_consolidation(
         self,
         session_id: str,
         unified_user_id: str,
-        manual_mode: str
-    ) -> bool:
+        mode: str
+    ) -> None:
         """
-        检查并执行记忆整合（所有模式通用）
+        后台记忆整合任务（不阻塞主对话）
+
+        核心特性：
+        - 异步执行，不阻塞主对话
+        - 只基于消息数量触发（与上下文压缩完全分离）
+        - 使用Agent模式调用工具更新记忆
+        - 快照隔离：后台更新不影响当前对话
 
         Args:
             session_id: 会话ID
             unified_user_id: 统一用户ID（格式：{mode}:{user_identifier}:{shared|unique}）
-            manual_mode: 模式标识
-
-        Returns:
-            是否执行了整合
-        """
-        # 1. 获取session历史
-        if session_id not in self._session_store:
-            return False
-
-        session_data = self._session_store[session_id]
-        memory_manager = session_data.get("memory")
-        if not memory_manager:
-            return False
-
-        messages = memory_manager.session.get_messages_for_llm()
-        if not messages:
-            return False
-
-        # 2. 计算token数
-        from app.utils.token_budget import token_budget_manager
-
-        total_tokens = sum(
-            token_budget_manager.count_tokens(msg.get("content", ""))
-            for msg in messages
-        )
-
-        # 3. 获取偏移量
-        offset = await self.memory_manager.get_consolidation_offset(unified_user_id)
-        new_message_count = len(messages) - offset
-
-        # 4. 触发条件检查
-        max_tokens = int(token_budget_manager.max_context_tokens * 0.8)
-        should_consolidate = (
-            total_tokens > max_tokens or
-            new_message_count >= 20  # 从10调整为20（约5-8轮对话）
-        )
-
-        if should_consolidate and new_message_count > 0:
-            await self._consolidate_memory(
-                unified_user_id,
-                messages,
-                offset,
-                manual_mode
-            )
-            return True
-
-        return False
-
-    async def _consolidate_memory(
-        self,
-        unified_user_id: str,
-        messages: List[Dict[str, Any]],
-        offset: int,
-        mode: str
-    ) -> None:
-        """
-        执行记忆整合
-
-        Args:
-            unified_user_id: 统一用户ID
-            messages: 消息列表
-            offset: 起始偏移量
             mode: 模式标识
         """
-        # 获取记忆存储
-        memory_store = await self.memory_manager.get_user_memory(
-            user_id=unified_user_id,
-            mode=mode
-        )
+        # 预先导入工具类，确保 finally 块中可以访问
+        from app.tools.social.remember_fact.tool import RememberFactTool
+        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+        from app.tools.social.remove_memory.tool import RemoveMemoryTool
 
-        # 只整合从 offset 之后的新消息
-        new_messages = messages[offset:] if offset > 0 else messages
+        try:
+            # 1. 获取会话历史
+            if session_id not in self._session_store:
+                return
 
-        if not new_messages:
-            return
+            session_data = self._session_store[session_id]
+            memory_manager = session_data.get("memory")
+            if not memory_manager:
+                return
 
-        # 调用记忆整合（使用改进版）
-        success = await memory_store.consolidate_improved(
-            messages=new_messages,
-            model="mimo-v2-flash"
-        )
+            messages = memory_manager.session.get_messages_for_llm()
+            if not messages:
+                return
 
-        if success:
-            # 更新偏移量
-            await self.memory_manager.set_consolidation_offset(
-                unified_user_id,
-                len(messages)
-            )
+            # 2. 检查是否需要整合（只基于消息数量，不检查token）
+            offset = await self.memory_manager.get_consolidation_offset(unified_user_id)
+            new_message_count = len(messages) - offset
+
+            # ⚠️ 关键：只检查消息数量，与上下文压缩完全分离
+            should_consolidate = new_message_count >= 20
+
+            if not should_consolidate:
+                return
+
             logger.info(
-                "memory_consolidation_completed",
-                user_id=unified_user_id,
-                mode=mode,
-                messages_consolidated=len(new_messages),
-                total_messages=len(messages)
+                "memory_consolidation_triggered",
+                session_id=session_id,
+                messages_to_consolidate=new_message_count
             )
-        else:
-            logger.warning(
-                "memory_consolidation_failed",
+
+            # 3. 获取现有记忆内容和文件路径
+            memory_store = await self.memory_manager.get_user_memory(
                 user_id=unified_user_id,
                 mode=mode
             )
+            existing_memory = memory_store.read_long_term() if memory_store.memory_file.exists() else ""
+            memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
+
+            # 计算记忆文件字符数
+            current_size = len(existing_memory)
+            max_size = 3000  # 与工具中的限制一致
+            size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
+
+            # 4. 构建整合提示词（包含现有记忆、文件路径和字符限制）
+            consolidation_prompt = self._build_consolidation_prompt(
+                messages[offset:] if offset > 0 else messages,
+                mode,
+                existing_memory,
+                memory_file_path
+            )
+
+            # 5. 设置记忆上下文（供记忆工具使用）
+            # 解析unified_user_id获取模式信息
+            # unified_user_id格式：{mode}:{user_identifier}:{shared|unique}
+            user_id = unified_user_id.split(':')[1] if ':' in unified_user_id else None
+
+            # 设置记忆上下文（类变量）
+            RememberFactTool.set_memory_context(mode, user_id)
+            ReplaceMemoryTool.set_memory_context(mode, user_id)
+            RemoveMemoryTool.set_memory_context(mode, user_id)
+
+            # 6. 创建记忆整合Agent
+            from .memory_consolidator_factory import create_memory_consolidator_agent
+            consolidator_agent = create_memory_consolidator_agent()
+
+            # 7. 异步执行整合
+            async for event in consolidator_agent.analyze(
+                user_query=consolidation_prompt,
+                session_id=f"{session_id}_consolidation",
+                manual_mode="memory_consolidator"
+            ):
+                if event.get("type") == "complete":
+                    await self.memory_manager.set_consolidation_offset(
+                        unified_user_id,
+                        len(messages)
+                    )
+                    logger.info(
+                        "background_memory_consolidation_completed",
+                        session_id=session_id,
+                        mode=mode,
+                        messages_processed=new_message_count
+                    )
+                    break
+                elif event.get("type") == "error":
+                    logger.warning(
+                        "background_memory_consolidation_failed",
+                        session_id=session_id,
+                        error=event.get("data", {}).get("error")
+                    )
+                    break
+
+        except Exception as e:
+            logger.exception(
+                "background_memory_consolidation_error",
+                session_id=session_id,
+                mode=mode,
+                error=str(e)
+            )
+        finally:
+            # 8. 清除记忆上下文（无论成功或失败）
+            try:
+                RememberFactTool.clear_memory_context()
+                ReplaceMemoryTool.clear_memory_context()
+                RemoveMemoryTool.clear_memory_context()
+                logger.debug("memory_context_cleared")
+            except Exception as e:
+                logger.warning("failed_to_clear_memory_context", error=str(e))
+
+    def _build_consolidation_prompt(
+        self,
+        messages: List[Dict[str, Any]],
+        mode: str,
+        existing_memory: str = "",
+        memory_file_path: str = ""
+    ) -> str:
+        """
+        构建记忆整合提示词
+
+        Args:
+            messages: 消息列表
+            mode: 模式标识
+            existing_memory: 现有记忆内容
+            memory_file_path: 记忆文件路径
+
+        Returns:
+            整合提示词
+        """
+        conversation_text = "\n".join([
+            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for msg in messages[-10:]  # 只使用最近10条
+        ])
+
+        # 计算记忆文件字符数
+        current_size = len(existing_memory) if existing_memory else 0
+        max_size = 3000  # 与工具中的限制一致
+        size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
+
+        # 构建提示词
+        prompt_parts = [
+            "请分析以下对话内容，提取重要信息并更新长期记忆。",
+            "",
+            "## 模式",
+            mode,
+            ""
+        ]
+
+        # 添加现有记忆内容（如果有）
+        if existing_memory and existing_memory.strip():
+            prompt_parts.extend([
+                "## 现有记忆",
+                f"**当前记忆大小**：{size_info}",
+                "",
+                "```",
+                existing_memory,  # 完整记忆，不限制字符
+                "```",
+                "",
+                "**⚠️ 重要限制**：",
+                f"- 记忆文件上限：{max_size}字符",
+                f"- 当前使用：{current_size}字符（{current_size/max_size*100:.1f}%）",
+                "- 当接近上限（>80%）时，优先使用 remove_memory 删除旧内容",
+                "- 当已满（100%）时，必须先删除才能添加新内容",
+                ""
+            ])
+        else:
+            # 空记忆文件
+            prompt_parts.extend([
+                "## 现有记忆",
+                "**当前记忆大小**：0/3000字符（0.0%）",
+                "",
+                "记忆文件为空，可以开始添加记忆。",
+                ""
+            ])
+
+        # 添加记忆文件路径
+        if memory_file_path:
+            prompt_parts.extend([
+                "## 记忆文件路径",
+                memory_file_path,
+                ""
+            ])
+
+        # 添加对话内容和任务
+        prompt_parts.extend([
+            "## 对话内容",
+            conversation_text,
+            "",
+            "**任务**：",
+            "1. 阅读现有记忆，了解已记住的内容",
+            "2. 分析对话内容，识别需要记住的新信息",
+            "3. 使用工具更新记忆：",
+            "   - remember_fact: 添加新记忆",
+            "   - replace_memory: 替换现有记忆",
+            "   - remove_memory: 删除过时记忆",
+            "4. 给出简洁总结（不超过50字）",
+            "",
+            "**⚠️ 记忆管理策略**（基于字符限制）：",
+            f"- 当记忆使用率 < 80%：可以正常添加新记忆",
+            f"- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
+            f"- 当记忆使用率 = 100%：必须先删除才能添加（工具会返回错误）",
+            "",
+            "**注意事项**：",
+            "- 避免重复记忆（先检查现有记忆）",
+            "- 更新偏好设置时使用replace_memory",
+            "- 删除临时或错误记忆时使用remove_memory",
+            "- 优先保留高价值信息（用户偏好 > 领域知识 > 历史结论 > 环境信息）",
+            "- 记忆文件路径已在上方提供，工具会自动使用"
+        ])
+
+        return "\n".join(prompt_parts)
 
     # ========================================================================
     # 简单查询方法

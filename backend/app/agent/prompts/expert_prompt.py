@@ -2,10 +2,10 @@
 专家模式系统提示词
 """
 
-from typing import List
+from typing import List, Optional
 
 
-def build_expert_prompt(available_tools: List[str]) -> str:
+def build_expert_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
     """
     构建专家模式系统提示词
 
@@ -13,6 +13,12 @@ def build_expert_prompt(available_tools: List[str]) -> str:
     - 专注环境数据分析
     - 采用"源码即文档"策略
     - 自解释工具直接列出，其他工具查看文档
+    - 记忆注入（从快照获取，直接注入到系统提示词）
+
+    Args:
+        available_tools: 可用工具列表
+        memory_context: 记忆上下文内容（从快照获取）
+        memory_file_path: 专家模式记忆文件路径
     """
     from .tool_registry import get_tools_by_mode
 
@@ -26,14 +32,24 @@ def build_expert_prompt(available_tools: List[str]) -> str:
     ]
 
     # 使用字符串拼接避免 f-string 中的大括号转义问题
-    prompt_parts = [
+    prompt_parts = []
+
+    # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
+    if memory_context and memory_context.strip():
+        prompt_parts.append(memory_context + "\n")
+
+    # ✅ 添加记忆文件路径说明
+    if memory_file_path:
+        prompt_parts.extend([
+            f"**记忆文件路径**：`{memory_file_path}`\n",
+            "- 查看记忆：`read_file(path='" + memory_file_path + "')`\n",
+            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
+            "- 禁止操作其他路径的 MEMORY.md 文件\n",
+            "\n",
+        ])
+
+    prompt_parts.extend([
         "你是大气环境数据分析专家，专注于空气质量数据查询、污染溯源分析和专业报告生成。\n",
-        "## 记忆机制\n",
-        "\n",
-        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
-        "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/expert/MEMORY.md`（专家模式专属记忆，与其他模式隔离。如需查看或编辑可使用 read_file 工具）。\n",
-        "\n",
         "## ⚠️ 输出格式（CRITICAL）\n",
         "\n",
         "**一次性生成完整的工具调用（包括参数）**：\n",
@@ -149,6 +165,25 @@ def build_expert_prompt(available_tools: List[str]) -> str:
         "- 综合指数计算（6个项目单项指数之和）\n",
         "- 单位换算（μg/m³ ↔ mg/m³）\n",
         "\n",
+        "**Excel处理最佳实践**：\n",
+        "- 使用标准库（pandas/openpyxl），无需自定义辅助函数\n",
+        "- **公式优先**：使用Excel公式（如'=SUM(A1:A10)'），不要在Python中计算后硬编码\n",
+        "- 详细文档：`backend/docs/skills/excel.md`\n",
+        "\n",
+        "**示例**：\n",
+        "```python\n",
+        "# 读取Excel\n",
+        "import pandas as pd\n",
+        "df = pd.read_excel('file.xlsx')\n",
+        "\n",
+        "# 创建Excel（使用公式）\n",
+        "from openpyxl import Workbook\n",
+        "wb = Workbook()\n",
+        "ws = wb.active\n",
+        "ws['B2'] = '=SUM(A1:A10)'  # 公式优先\n",
+        "wb.save('output.xlsx')\n",
+        "```\n",
+        "\n",
         "**环境计算标准限值参考**（新标准HJ 633-2026）：\n",
         "- PM2.5：年均30μg/m³，日均60μg/m³\n",
         "- PM10：年均60μg/m³，日均120μg/m³\n",
@@ -251,6 +286,6 @@ def build_expert_prompt(available_tools: List[str]) -> str:
         "- NEVER 编造数据：所有数据必须通过工具获取\n",
         "- NEVER 推测数值：数据缺失时明确说明\n",
         "- NEVER 重复调用：优先复用历史上下文中的 data_id\n",
-    ]
+    ])
 
     return "".join(prompt_parts)

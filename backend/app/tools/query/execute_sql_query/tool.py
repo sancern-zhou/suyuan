@@ -84,12 +84,18 @@ class ExecuteSQLQueryTool(LLMTool):
 **可用数据表**：
 【XcAiDb数据库（默认）】
 168城市统计（城市名不带'市'后缀，省份名不带'省'后缀）：
-- city_168_statistics_new_standard：168城市空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今）
-- city_168_statistics_old_standard：168城市空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整）
+- city_168_statistics_new_standard：168城市空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。数据周期2024-01至今）
+
+  **stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)
+
+- city_168_statistics_old_standard：168城市空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整。stat_type字段说明同上）
 
 省级统计（省份名不带'省'后缀）：
-- province_statistics_new_standard：省级空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今）
-- province_statistics_old_standard：省级空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整）
+- province_statistics_new_standard：省级空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。数据周期2024-01至今）
+
+  **stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)
+
+- province_statistics_old_standard：省级空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整。stat_type字段说明同上）
 
 原始数据表：
 - CityDayAQIPublishHistory：城市日空气质量发布历史（24小时均值）

@@ -2,10 +2,10 @@
 报告模式系统提示词
 """
 
-from typing import List
+from typing import List, Optional
 
 
-def build_report_prompt(available_tools: List[str]) -> str:
+def build_report_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
     """
     构建报告模式系统提示词
 
@@ -15,15 +15,30 @@ def build_report_prompt(available_tools: List[str]) -> str:
     1. 读取模板（read_docx）
     2. 查询数据（直接调用查询工具）
     3. 生成报告（execute_python + python-docx）
+
+    Args:
+        available_tools: 可用工具列表
+        memory_context: 记忆上下文内容（从快照获取）
+        memory_file_path: 报告模式记忆文件路径
     """
-    prompt_parts = [
+    prompt_parts = []
+
+    # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
+    if memory_context and memory_context.strip():
+        prompt_parts.append(memory_context + "\n")
+
+    # ✅ 添加记忆文件路径说明
+    if memory_file_path:
+        prompt_parts.extend([
+            f"**记忆文件路径**：`{memory_file_path}`\n",
+            "- 查看记忆：`read_file(path='" + memory_file_path + "')`\n",
+            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
+            "- 禁止操作其他路径的 MEMORY.md 文件\n",
+            "\n",
+        ])
+
+    prompt_parts.extend([
         "你是报告生成专家，擅长基于模板和数据生成专业DOCX报告。\n",
-        "## 记忆机制\n",
-        "\n",
-        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
-        "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/report/MEMORY.md`（报告模式专属记忆，与其他模式隔离。如需查看或编辑可使用 read_file 工具）。\n",
-        "\n",
         "## 报告模板系统\n",
         "\n",
         "**计划模板位置**：`backend_data_registry/report_templates/`（纯Markdown文件，包含查询计划和报告生成计划）\n",
@@ -168,6 +183,6 @@ def build_report_prompt(available_tools: List[str]) -> str:
         "- ⚠️ **避免生成超长代码**：如果代码超过500字符，JSON可能被截断，建议拆分为多个步骤\n",
         "- ⚠️ **使用绝对路径**：保存文件时使用绝对路径（如 `/home/xckj/suyuan/backend_data_registry/文件名.docx`）\n",
         "- ⚠️ **打印保存路径**：代码中添加 print 语句输出文件保存路径\n",
-    ]
+    ])
 
     return "".join(prompt_parts)

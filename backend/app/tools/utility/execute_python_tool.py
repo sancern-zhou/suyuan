@@ -74,7 +74,7 @@ class ExecutePythonTool(LLMTool):
 - 图表保存目录：{self.CHARTS_DIR}
 - 生成文件时请使用相对路径（如：'report.docx'），不要使用绝对路径（如：/root/xxx.docx）
 - 工具会自动将生成的文件保存到永久目录，并返回完整路径
-- 支持 python-docx, matplotlib, pandas 等所有 Python 库
+- 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
 - 超时时间：30秒（可调整）
 
 📊 数据访问功能（自动注入）：
@@ -91,6 +91,34 @@ print(f"数据点数: {{len(data)}}")
 wind_dirs = [float(record['wind_direction_10m']) for record in data]
 concentrations = [float(record['PM2_5']) for record in data]
 ```
+
+📈 Excel 处理最佳实践：
+使用 pandas 和 openpyxl 标准库（无需自定义辅助函数）：
+```python
+# 读取 Excel
+import pandas as pd
+df = pd.read_excel('file.xlsx')  # 第一个工作表
+all_sheets = pd.read_excel('file.xlsx', sheet_name=None)  # 所有工作表
+
+# 创建 Excel（使用公式）
+from openpyxl import Workbook, load_workbook
+wb = Workbook()
+ws = wb.active
+ws['A1'] = '标题'
+ws['B2'] = '=SUM(A1:A10)'  # ✅ 使用公式，不要硬编码计算结果
+wb.save('output.xlsx')
+
+# 编辑现有 Excel
+wb = load_workbook('existing.xlsx')
+ws = wb.active
+ws['A1'] = '新值'
+wb.save('modified.xlsx')
+```
+
+核心原则：
+- ✅ 使用标准库（pandas/openpyxl），不要依赖自定义辅助函数
+- ✅ 公式优先：使用 Excel 公式（如 '=SUM(A1:A10)'），不要在 Python 中计算后硬编码
+- ✅ 详细文档：backend/docs/skills/excel.md
 
 中文字体设置（matplotlib图表）：
 ```python
@@ -208,6 +236,7 @@ doc.save('/root/report.docx')
                     code_modified=(code != original_code),
                     has_matplotlib_import='import matplotlib' in original_code or 'from matplotlib' in original_code,
                     has_chinese_font_setup='FontProperties' in original_code or 'font.sans-serif' in original_code or 'Noto' in original_code,
+                    has_excel_usage='openpyxl' in original_code or 'pandas' in original_code and 'read_excel' in original_code,
                     has_context=context is not None,
                     available_data_count=len(context.available_data_ids) if context and hasattr(context, 'available_data_ids') else 0
                 )
@@ -227,7 +256,7 @@ doc.save('/root/report.docx')
                 code = self._inject_chinese_font_support(code)
 
                 logger.info(
-                    "chinese_font_injection",
+                    "code_injection_completed",
                     original_code_length=len(original_code),
                     injected_code_length=len(code),
                     code_modified=(code != original_code),
@@ -297,25 +326,27 @@ doc.save('/root/report.docx')
                 if result.get("success", False):
                     result["summary"] = "✅ 工具已执行完成，计算任务已完成"
 
-            # ✅ 检测图表输出（CHART_SAVED:xxx.png）
-            chart_paths = self._extract_chart_paths(result["data"].get("output", ""))
+            # ✅ 检测图表输出（CHART_SAVED:xxx.png 或 CHART_SAVED:data:image/png;base64,...）
+            chart_data = self._extract_chart_paths(result["data"].get("output", ""))
 
             # ✅ 新增：检测 ECharts 标准格式 JSON 输出
             echarts_data = self._extract_echarts_format(result["data"].get("output", ""))
 
             logger.info(
                 "chart_paths_extracted",
-                chart_paths=chart_paths,
+                chart_paths=chart_data.get("paths", []),
+                base64_count=len(chart_data.get("base64_data", [])),
                 echarts_found=echarts_data is not None,
                 output_preview=result["data"].get("output", "")[:200]
             )
 
             # 如果检测到图表，自动缓存到 ImageCache
-            if chart_paths:
+            if chart_data.get("paths") or chart_data.get("base64_data"):
                 from app.services.image_cache import ImageCache
                 image_cache = ImageCache()
 
-                for chart_path in chart_paths:
+                # 处理文件路径格式的图表
+                for chart_path in chart_data.get("paths", []):
                     # ✅ 修复：将相对路径转换为绝对路径（因为工作目录已切换到temp_dir）
                     # Python代码在backend_dir执行，所以相对路径需要基于backend_dir解析
                     if not os.path.isabs(chart_path):
@@ -409,7 +440,68 @@ doc.save('/root/report.docx')
                                     "cache_failed": True
                                 }
                             })
-                            result["summary"] = f"✅ 工具已执行完成，图表生成成功（缓存失败）：{abs_chart_path}"
+
+                # 处理 base64 格式的图表
+                for base64_data_url in chart_data.get("base64_data", []):
+                    try:
+                        # 解析 data:image/png;base64,... 格式
+                        if "," in base64_data_url:
+                            mime_type, base64_data = base64_data_url.split(",", 1)
+
+                            # 生成唯一的 chart_id
+                            chart_id = f"matplotlib_{time.time_ns()}"
+
+                            logger.info(
+                                "saving_base64_to_image_cache",
+                                chart_id=chart_id,
+                                mime_type=mime_type,
+                                cache_dir=image_cache.cache_dir
+                            )
+
+                            image_info = image_cache.save(
+                                base64_data=base64_data,
+                                chart_id=chart_id
+                            )
+
+                            logger.info(
+                                "base64_chart_cached",
+                                chart_id=chart_id,
+                                image_url=image_info["url"],
+                                image_id=image_info["image_id"]
+                            )
+
+                            # ✅ 添加到 visuals 字段
+                            result.setdefault("visuals", []).append({
+                                "id": chart_id,
+                                "type": "image",
+                                "title": f"图表 {chart_id}",
+                                "data": {
+                                    "url": image_info["url"],
+                                    "image_id": image_info["image_id"]
+                                },
+                                "meta": {
+                                    "generator": "execute_python",
+                                    "schema_version": "3.1",
+                                    "source": "base64_output"
+                                }
+                            })
+
+                            # 更新摘要
+                            result["summary"] = f"✅ 工具已执行完成，图表生成成功：![Chart]({image_info['url']})"
+
+                            # ✅ 从输出中移除 base64 字符串（太长，LLM不需要）
+                            output = result["data"].get("output", "")
+                            output = output.replace(base64_data_url, "[图表已生成，详见visuals字段]")
+                            result["data"]["output"] = output
+
+                    except Exception as e:
+                        logger.error(
+                            "base64_chart_cache_failed",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            exc_info=True
+                        )
+                        result["summary"] = "✅ 工具已执行完成，图表生成成功（缓存失败）"
 
             # ✅ 新增：处理 ECharts 标准格式 JSON 数据
             if echarts_data:
@@ -680,28 +772,37 @@ doc.save('/root/report.docx')
 
         return final_files
 
-    def _extract_chart_paths(self, output: str) -> list:
+    def _extract_chart_paths(self, output: str) -> dict:
         """
-        从 Python 代码输出中提取图表路径
+        从 Python 代码输出中提取图表路径和base64数据
 
-        检测格式：CHART_SAVED:/path/to/chart.png
+        检测格式：
+        1. CHART_SAVED:/path/to/chart.png (文件路径)
+        2. CHART_SAVED:data:image/png;base64,... (base64数据)
 
         Args:
             output: Python 代码输出
 
         Returns:
-            图表路径列表
+            {"paths": [文件路径列表], "base64_data": [base64数据列表]}
         """
-        chart_paths = []
+        result = {"paths": [], "base64_data": []}
         output_lines = output.split('\n')
 
         for line in output_lines:
             line = line.strip()
             if line.startswith("CHART_SAVED:"):
-                chart_path = line.split("CHART_SAVED:")[1].strip()
-                chart_paths.append(chart_path)
+                chart_data = line.split("CHART_SAVED:")[1].strip()
 
-        return chart_paths
+                # 判断是文件路径还是base64数据
+                if chart_data.startswith("data:image/"):
+                    # base64格式: data:image/png;base64,...
+                    result["base64_data"].append(chart_data)
+                else:
+                    # 文件路径格式
+                    result["paths"].append(chart_data)
+
+        return result
 
     def _extract_echarts_format(self, output: str) -> dict:
         """
@@ -897,21 +998,35 @@ def get_raw_data(data_id: str):
         logger.info("font_injection_started", has_matplotlib_import=has_matplotlib_import)
 
         # 步骤1：在代码开头注册字体文件并设置为默认字体
+        # 使用与 calendar_renderer.py 相同的字体优先级
         font_registration_code = """# ===== 自动注入中文字体支持 =====
 from matplotlib import font_manager
 import matplotlib.pyplot as plt
 import os
-_font_path = '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'
-if os.path.exists(_font_path):
-    try:
-        font_manager.fontManager.addfont(_font_path)
-        # 获取字体名称并设置为默认
-        _font_prop = font_manager.FontProperties(fname=_font_path)
-        _font_name = _font_prop.get_name()
-        plt.rcParams['font.family'] = _font_name
-        plt.rcParams['axes.unicode_minus'] = False
-    except Exception:
-        pass
+from pathlib import Path
+
+# 字体优先级（与 calendar_renderer.py 一致）
+_font_configs = [
+    # 1. 方正小标宋简体 - 最高优先级
+    Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
+    # 2. Noto Sans CJK - 系统字体
+    Path('/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'),
+]
+
+_font_registered = False
+for _font_path in _font_configs:
+    if _font_path.exists():
+        try:
+            font_manager.fontManager.addfont(str(_font_path))
+            _font_prop = font_manager.FontProperties(fname=str(_font_path))
+            _font_name = _font_prop.get_name()
+            plt.rcParams['font.family'] = _font_name
+            plt.rcParams['axes.unicode_minus'] = False
+            _font_registered = True
+            break
+        except Exception:
+            pass
+
 # ===== 字体注册完成 =====
 
 """
@@ -963,7 +1078,7 @@ if os.path.exists(_font_path):
 
         # 常见的文件保存模式
         patterns = [
-            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
+            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved|EXCEL_SAVED)[:：]\s*([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
             r'([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
         ]
 

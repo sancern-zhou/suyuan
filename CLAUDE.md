@@ -67,6 +67,10 @@ backend/app/
 
 **记忆系统路径** (2026-04-05): 各模式使用模式专属记忆路径 `backend_data_registry/memory/{mode}/MEMORY.md`（当前无用户登录时使用全局记忆，未来用户登录系统后支持用户专属记忆路径）。
 
+**记忆机制** (2026-04-18): 双层记忆（MEMORY.md长期记忆 + HISTORY.md对话历史），社交模式与其他模式记忆隔离：社交模式由 `agent_bridge` 管理用户隔离记忆（路径 `backend_data_registry/social/memory/{user_id}/`），其他模式由 `react_agent` 管理模式共享记忆（路径 `backend_data_registry/memory/{mode}/`）。快照机制：会话开始时 `create_snapshot()` 复制 MEMORY.md 为独立副本，当前对话始终读取快照（不受后台整合影响），会话结束时 `cleanup_snapshot()` 清理。记忆整合触发条件为 session 历史 token 超 80% 上下文窗口或新增 >= 20 条消息，所有模式统一使用 ReAct Agent 循环（`memory_consolidator` 模式）通过 `remember_fact`/`replace_memory`/`remove_memory` 工具逐步更新记忆（最多5次迭代），避免单次 LLM 调用失败导致记忆被清空。
+
+**技能管理** (2026-04-19): 采用"MD文档即技能"的轻量级设计，Agent通过 `list_skills()` 工具主动发现和阅读 `backend/docs/skills/` 目录下的技能文档，修改MD文档即生效，无需注册机制，支持动态更新和关键词过滤。
+
 ## 核心架构原则
 
 ### 1. ReAct Agent架构

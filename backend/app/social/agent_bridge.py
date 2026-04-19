@@ -244,133 +244,78 @@ class AgentBridge:
                 heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(social_user_id)
                 logger.debug("user_heartbeat_started", user_id=social_user_id)
 
-            # ✅ 加载用户专属记忆上下文（social模式）
-            memory_context = ""
+            # ✅ 记忆上下文由 react_agent.py 通过 social_memory_store 管理，此处不再加载
+            # （避免双重注入：之前是 agent_bridge 拼接到 query + react_agent 注入到系统提示词）
             user_preferences = None
-            if self.user_memory_manager and self.mode == "social":
-                memory_store = await self.user_memory_manager.get_user_memory(social_user_id)
-                memory_context = memory_store.get_memory_context()
-                logger.debug("memory_context_loaded",
-                           user_id=social_user_id,
-                           length=len(memory_context))
 
-            # ✅ 检查是否为新用户并引导偏好配置（social模式）
+            # ✅ 加载 soul.md 和 USER.md（social模式）
+            # Agent 将自主管理这些文件，检测到 soul.md 为空时会引导用户
+            social_soul_file_path = None
+            social_user_file_path = None
+            social_soul_context = None
+            social_user_context = None
             if self.mode == "social":
                 preferences_manager = UserPreferences(social_user_id)
 
-                # ⚠️ 检查是否在等待偏好配置响应（仅新用户首次对话时触发）
-                if preferences_manager.is_waiting_preferences():
-                    logger.info("waiting_preferences_response_detected",
-                               user_id=social_user_id,
-                               content_preview=msg.content[:50])
+                # 获取文件路径
+                social_soul_file_path = str(preferences_manager.soul_file) if preferences_manager.soul_file else None
+                social_user_file_path = str(preferences_manager.user_file) if preferences_manager.user_file else None
 
-                    # 尝试解析用户响应
-                    parsed_prefs = preferences_manager.parse_preferences_response(msg.content)
+                # 加载 soul.md（助理灵魂档案，Agent 自主管理）
+                social_soul_context = preferences_manager.load_soul_md()
+                has_soul = len(social_soul_context.strip()) > 0 if social_soul_context else False
 
-                    if parsed_prefs:
-                        # 保存用户偏好（会自动清除等待状态）
-                        preferences_manager.set_preferences(**parsed_prefs)
+                # 加载 USER.md（用户档案，Agent 自主管理）
+                social_user_context = preferences_manager.load_user_md()
 
-                        # 发送确认消息
-                        confirmation_msg = OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
-                            content=preferences_manager.generate_confirmation_message(parsed_prefs),
-                            reply_to=msg.sender_id
-                        )
-                        await self.message_bus.publish_outbound(confirmation_msg)
-                        logger.info("preferences_saved_and_confirmed",
-                                   user_id=social_user_id,
-                                   preferences=parsed_prefs)
-                        return  # 结束处理
-                    else:
-                        # 解析失败，提示重新输入
-                        error_msg = OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
-                            content="抱歉，无法理解你的选择。请按照格式输入，例如：1A 2B 3C 4B\n\n或者回复'默认'使用默认配置。",
-                            reply_to=msg.sender_id
-                        )
-                        await self.message_bus.publish_outbound(error_msg)
-                        logger.warning("preferences_parse_failed",
-                                      user_id=social_user_id,
-                                      content=msg.content)
-                        return  # 结束处理
-
-                # 检查是否为新用户
-                if preferences_manager.is_new_user():
-                    logger.info("new_user_detected",
-                               user_id=social_user_id,
-                               channel=msg.channel)
-
-                    # 设置等待偏好配置状态
-                    preferences_manager.set_waiting_preferences()
-
-                    # 发送欢迎消息
-                    welcome_msg = OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content=preferences_manager.generate_welcome_message(),
-                        reply_to=msg.sender_id
-                    )
-                    await self.message_bus.publish_outbound(welcome_msg)
-                    logger.info("welcome_message_sent", user_id=social_user_id)
-                    return  # 结束处理，等待用户响应
-
-                # 加载用户偏好（用于动态提示词）
-                user_preferences = preferences_manager.get_preferences()
-                logger.debug("user_preferences_loaded",
-                           user_id=social_user_id,
-                           preferences=user_preferences)
-
-                # ✅ 将用户偏好信息注入到记忆上下文中（用于动态提示词）
-                if user_preferences:
-                    from app.agent.prompts.social_prompt import (
-                        _get_style_config,
-                        _get_format_config,
-                        _get_detail_config
-                    )
-
-                    style = user_preferences.get("style", "casual")
-                    format_type = user_preferences.get("format", "plain")
-                    detail = user_preferences.get("detail", "moderate")
-                    use_emoji = user_preferences.get("use_emoji", False)
-
-                    style_info = _get_style_config(style)
-                    format_info = _get_format_config(format_type)
-                    detail_info = _get_detail_config(detail)
-
-                    # 构建偏好信息
-                    preference_info = f"""
-## 用户偏好配置
-
-- 回答风格：{style_info['tone']}（{style_info['principle']}）
-- 输出格式：{format_info['description']}
-- 详细程度：{detail_info['description']}（最多{detail_info['max_length']}字）
-- 表情符号：{'使用' if use_emoji else '不使用'}
-"""
-
-                    # 将偏好信息注入到记忆上下文前面
-                    if memory_context:
-                        memory_context = f"{preference_info}\n{memory_context}"
-                    else:
-                        memory_context = preference_info
-
-                    logger.debug("user_preferences_injected_to_memory",
-                               user_id=social_user_id,
-                               preference_info=preference_info[:200])
+                logger.info(
+                    "soul_and_user_context_loaded",
+                    user_id=social_user_id,
+                    soul_file_path=social_soul_file_path,
+                    user_file_path=social_user_file_path,
+                    has_soul=has_soul,
+                    soul_length=len(social_soul_context) if social_soul_context else 0,
+                    has_user_context=social_user_context is not None,
+                    user_context_length=len(social_user_context) if social_user_context else 0
+                )
 
             # Aggregate events from agent
             logger.info("Calling agent.analyze",
                        session_id=session_id,
                        content_preview=msg.content[:100])
 
+            # ✅ 获取用户隔离的memory_store和用户偏好（社交模式专用）
+            social_memory_store = None
+            social_user_prefs = None
+            social_user_context = None  # ✅ 新增：用户上下文（USER.md内容）
+            if self.user_memory_manager and self.mode == "social":
+                social_memory_store = await self.user_memory_manager.get_user_memory(social_user_id)
+
+                # ✅ 加载USER.md内容（用户档案）
+                social_user_context = preferences_manager.load_user_md() if self.mode == "social" else None
+                logger.debug(
+                    "user_context_loaded",
+                    user_id=social_user_id,
+                    has_context=social_user_context is not None,
+                    context_length=len(social_user_context) if social_user_context else 0
+                )
+
+            # ✅ 获取用户偏好（用于动态提示词）
+            if self.mode == "social" and user_preferences:
+                social_user_prefs = user_preferences
+
             final_answer = await self._aggregate_agent_events(
                 content=msg.content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
                 channel=msg.channel,  # ✅ 传递渠道信息
-                memory_context=memory_context  # ✅ 传递记忆上下文
+                social_user_id=social_user_id if self.mode == "social" else None,  # ✅ 传递用户标识
+                social_memory_store=social_memory_store,  # ✅ 传递用户隔离的memory_store
+                social_user_preferences=social_user_prefs,  # ✅ 传递用户偏好
+                social_soul_file_path=social_soul_file_path,  # ✅ 传递 soul.md 文件路径
+                social_user_file_path=social_user_file_path,  # ✅ 传递 USER.md 文件路径
+                social_soul_context=social_soul_context,  # ✅ 传递 soul.md 内容
+                social_user_context=social_user_context  # ✅ 传递 USER.md 内容
             )
 
             logger.info("Agent analysis completed",
@@ -433,7 +378,14 @@ class AgentBridge:
         session_id: str,
         chat_id: str,
         channel: str = None,  # ✅ 新增：渠道信息
-        memory_context: str = ""
+        memory_context: str = "",  # ⚠️ 保留参数兼容但不再使用（记忆由react_agent通过social_memory_store注入）
+        social_user_id: str = None,  # ✅ 新增：社交用户标识
+        social_memory_store = None,  # ✅ 新增：社交模式用户隔离的memory_store
+        social_user_preferences: dict = None,  # ✅ 新增：社交模式用户偏好（用于动态提示词）
+        social_soul_file_path: str = None,  # ✅ 新增：社交模式 soul.md 文件路径
+        social_user_file_path: str = None,  # ✅ 新增：社交模式 USER.md 文件路径
+        social_soul_context: str = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案）
+        social_user_context: str = None  # ✅ 新增：社交模式 USER.md 内容（用户档案）
     ) -> str:
         """
         Aggregate streaming events from ReActAgent into final response.
@@ -443,7 +395,14 @@ class AgentBridge:
             session_id: Agent session ID
             chat_id: Chat ID for progress tracking
             channel: Channel name (weixin/qq/dingtalk/wecom)
-            memory_context: Memory context (social mode)
+            memory_context: ⚠️ 保留兼容但不再使用（记忆由react_agent通过social_memory_store注入）
+            social_user_id: Social platform user ID (for social mode memory isolation)
+            social_memory_store: 社交模式用户隔离的memory_store（由agent_bridge传入）
+            social_user_preferences: 社交模式用户偏好配置（用于动态提示词）
+            social_soul_file_path: 社交模式 soul.md 文件路径（由agent_bridge传入）
+            social_user_file_path: 社交模式 USER.md 文件路径（由agent_bridge传入）
+            social_soul_context: 社交模式 soul.md 内容（助理灵魂档案，由agent_bridge传入）
+            social_user_context: 社交模式 USER.md 内容（用户档案，由agent_bridge传入）
 
         Returns:
             Aggregated final response in Markdown format
@@ -455,16 +414,21 @@ class AgentBridge:
         current_buffer = []  # ✅ 当前缓冲区
 
         try:
-            # ✅ 增强查询（携带记忆上下文）
-            enhanced_query = content
-            if memory_context:
-                enhanced_query = f"{memory_context}\n\n用户问题：{content}"
+            # ✅ 记忆上下文由 react_agent.py 通过 social_memory_store 注入到系统提示词
+            # 不再在 query 中拼接记忆（避免双重注入）
 
             # Call agent and collect events
             async for event in self.agent.analyze(
-                user_query=enhanced_query,  # ✅ 使用增强查询
+                user_query=content,  # ✅ 直接使用原始查询（记忆由react_agent通过social_memory_store管理）
                 session_id=session_id,
-                manual_mode=self.mode
+                manual_mode=self.mode,
+                user_identifier=social_user_id if self.mode == "social" else None,  # ✅ 传递用户标识
+                social_memory_store=social_memory_store if self.mode == "social" else None,  # ✅ 传递用户隔离的memory_store
+                social_user_preferences=social_user_preferences if self.mode == "social" else None,  # ✅ 传递用户偏好
+                social_soul_file_path=social_soul_file_path if self.mode == "social" else None,  # ✅ 传递 soul.md 文件路径
+                social_user_file_path=social_user_file_path if self.mode == "social" else None,  # ✅ 传递 USER.md 文件路径
+                social_soul_context=social_soul_context if self.mode == "social" else None,  # ✅ 传递 soul.md 内容
+                social_user_context=social_user_context if self.mode == "social" else None  # ✅ 传递 USER.md 内容
             ):
                 events_buffer.append(event)
 
@@ -765,7 +729,10 @@ class AgentBridge:
         start_offset: int
     ) -> None:
         """
-        执行 session 记忆整合（使用改进版）
+        执行 session 记忆整合（使用 ReAct Agent 循环方式）
+
+        与非社交模式统一：通过 remember_fact/replace_memory/remove_memory 工具
+        逐步更新记忆，避免单次 LLM 调用失败导致记忆被清空。
 
         Args:
             session_id: Session ID
@@ -774,53 +741,192 @@ class AgentBridge:
             start_offset: 起始偏移量
         """
         from app.social.memory_store import ImprovedMemoryStore
+        from app.tools.social.remember_fact.tool import RememberFactTool
+        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+        from app.tools.social.remove_memory.tool import RemoveMemoryTool
         from pathlib import Path
-
-        # 1. 创建改进版 MemoryStore（传递正确的 workspace）
-        social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
-        memory_store = ImprovedMemoryStore(user_id=social_user_id, workspace=social_workspace)
-
-        # 2. 提取要合并的消息（从 start_offset 开始）
-        messages_to_consolidate = messages[start_offset:] if start_offset > 0 else messages
-
-        if not messages_to_consolidate:
-            logger.debug("no_messages_to_consolidate", session_id=session_id, start_offset=start_offset)
-            return
-
-        # 3. 添加时间戳（如果没有）
         from datetime import datetime
-        for msg in messages_to_consolidate:
-            if "timestamp" not in msg:
-                msg["timestamp"] = datetime.now().isoformat()
 
-        # 4. 执行改进版整合（使用 JSON 响应，不需要工具调用）
-        success = await memory_store.consolidate_improved(
-            messages=messages_to_consolidate,
-            model="mimo-v2-flash"
-        )
+        try:
+            # 1. 获取现有记忆内容和文件路径
+            social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+            memory_store = ImprovedMemoryStore(user_id=social_user_id, workspace=social_workspace)
 
-        if success:
-            # 5. 更新 session 映射偏移量
-            await self.session_mapper.update_consolidation_offset(
-                social_user_id=social_user_id,
-                new_offset=len(messages),
-                total_count=len(messages)
+            existing_memory = memory_store.read_long_term()
+            memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
+
+            # 2. 提取要合并的消息（从 start_offset 开始）
+            messages_to_consolidate = messages[start_offset:] if start_offset > 0 else messages
+
+            if not messages_to_consolidate:
+                logger.debug("no_messages_to_consolidate", session_id=session_id, start_offset=start_offset)
+                return
+
+            # 3. 添加时间戳（如果没有）
+            for msg in messages_to_consolidate:
+                if "timestamp" not in msg:
+                    msg["timestamp"] = datetime.now().isoformat()
+
+            # 4. 构建整合提示词
+            consolidation_prompt = self._build_social_consolidation_prompt(
+                messages=messages_to_consolidate,
+                existing_memory=existing_memory,
+                memory_file_path=memory_file_path
             )
 
-            logger.info(
-                "memory_consolidation_completed",
+            # 5. 设置记忆工具上下文（社交模式用户隔离）
+            safe_user_id = social_user_id.replace(":", "_")
+            RememberFactTool.set_memory_context("social", safe_user_id)
+            ReplaceMemoryTool.set_memory_context("social", safe_user_id)
+            RemoveMemoryTool.set_memory_context("social", safe_user_id)
+
+            # 6. 创建记忆整合 Agent 并执行
+            from app.agent.memory_consolidator_factory import create_memory_consolidator_agent
+            consolidator_agent = create_memory_consolidator_agent()
+
+            async for event in consolidator_agent.analyze(
+                user_query=consolidation_prompt,
+                session_id=f"{session_id}_consolidation",
+                manual_mode="memory_consolidator"
+            ):
+                if event.get("type") == "complete":
+                    # 更新 session 映射偏移量
+                    await self.session_mapper.update_consolidation_offset(
+                        social_user_id=social_user_id,
+                        new_offset=len(messages),
+                        total_count=len(messages)
+                    )
+
+                    logger.info(
+                        "memory_consolidation_completed",
+                        session_id=session_id,
+                        social_user_id=social_user_id,
+                        old_offset=start_offset,
+                        new_offset=len(messages),
+                        method="react_agent"
+                    )
+                    break
+                elif event.get("type") == "error":
+                    logger.warning(
+                        "memory_consolidation_failed",
+                        session_id=session_id,
+                        social_user_id=social_user_id,
+                        error=event.get("data", {}).get("error")
+                    )
+                    break
+
+        except Exception as e:
+            logger.exception(
+                "memory_consolidation_error",
                 session_id=session_id,
                 social_user_id=social_user_id,
-                old_offset=start_offset,
-                new_offset=len(messages),
-                method="improved"
+                error=str(e)
             )
+        finally:
+            # 7. 清除记忆工具上下文
+            try:
+                RememberFactTool.clear_memory_context()
+                ReplaceMemoryTool.clear_memory_context()
+                RemoveMemoryTool.clear_memory_context()
+            except Exception as e:
+                logger.warning("failed_to_clear_memory_context", error=str(e))
+
+    def _build_social_consolidation_prompt(
+        self,
+        messages: List[Dict[str, Any]],
+        existing_memory: str = "",
+        memory_file_path: str = ""
+    ) -> str:
+        """
+        构建社交模式记忆整合提示词
+
+        Args:
+            messages: 消息列表
+            existing_memory: 现有记忆内容
+            memory_file_path: 记忆文件路径
+
+        Returns:
+            整合提示词
+        """
+        conversation_text = "\n".join([
+            f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
+            for msg in messages[-10:]  # 只使用最近10条
+        ])
+
+        # 计算记忆文件字符数
+        current_size = len(existing_memory) if existing_memory else 0
+        max_size = 3000
+        size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
+
+        prompt_parts = [
+            "请分析以下对话内容，提取重要信息并更新长期记忆。",
+            "",
+            "## 模式",
+            "social",
+            ""
+        ]
+
+        # 添加现有记忆内容
+        if existing_memory and existing_memory.strip():
+            prompt_parts.extend([
+                "## 现有记忆",
+                f"**当前记忆大小**：{size_info}",
+                "",
+                "```",
+                existing_memory,
+                "```",
+                "",
+                "**⚠️ 重要限制**：",
+                f"- 记忆文件上限：{max_size}字符",
+                f"- 当前使用：{current_size}字符（{current_size/max_size*100:.1f}%）",
+                "- 当接近上限（>80%）时，优先使用 remove_memory 删除旧内容",
+                "- 当已满（100%）时，必须先删除才能添加新内容",
+                ""
+            ])
         else:
-            logger.warning(
-                "memory_consolidation_failed",
-                session_id=session_id,
-                social_user_id=social_user_id
-            )
+            prompt_parts.extend([
+                "## 现有记忆",
+                "**当前记忆大小**：0/3000字符（0.0%）",
+                "",
+                "记忆文件为空，可以开始添加记忆。",
+                ""
+            ])
+
+        # 添加记忆文件路径
+        if memory_file_path:
+            prompt_parts.extend([
+                "## 记忆文件路径",
+                memory_file_path,
+                ""
+            ])
+
+        # 添加对话内容和任务
+        prompt_parts.extend([
+            "## 对话内容",
+            conversation_text,
+            "",
+            "**任务**：",
+            "1. 阅读现有记忆，了解已记住的内容",
+            "2. 分析对话内容，识别需要记住的新信息",
+            "3. 使用工具更新记忆：",
+            "   - remember_fact: 添加新记忆",
+            "   - replace_memory: 替换现有记忆",
+            "   - remove_memory: 删除过时记忆",
+            "",
+            "**⚠️ 记忆管理策略**（基于字符限制）：",
+            f"- 当记忆使用率 < 80%：可以正常添加新记忆",
+            f"- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
+            f"- 当记忆使用率 = 100%：必须先删除才能添加",
+            "",
+            "**注意事项**：",
+            "- 避免重复记忆（先检查现有记忆）",
+            "- 更新偏好设置时使用replace_memory",
+            "- 删除临时或错误记忆时使用remove_memory",
+            "- 优先保留高价值信息（用户偏好 > 领域知识 > 历史结论）",
+            "- 记忆文件路径已在上方提供，工具会自动使用"
+        ])
+
+        return "\n".join(prompt_parts)
 
     async def _on_heartbeat_execute(self, tasks: list, user_id: str) -> dict:
         """

@@ -79,6 +79,29 @@ async def trigger_pollution_alert_analysis(request: AlertRequest):
         if rounded_time <= 0:
             rounded_time = 0.01  # 最小10毫秒
 
+        # 保存到数据库
+        db_id = None
+        if result.get("summary_text"):
+            try:
+                save_result = await executor.save_report(
+                    summary_text=result["summary_text"],
+                    city=request.city,
+                    alert_time=request.alert_time,
+                    pollutant=request.pollutant,
+                    alert_value=request.alert_value,
+                    visuals=result.get("visuals", []),
+                    execution_time_seconds=rounded_time,
+                    has_trajectory=result.get("has_trajectory", False),
+                    warning_message=result.get("warning_message"),
+                )
+                db_id = save_result.get("db_id")
+            except Exception as save_error:
+                logger.warning(
+                    "quick_trace_database_save_failed",
+                    error=str(save_error)
+                )
+                # 数据库保存失败不影响API响应
+
         response = AlertResponse(
             summary_text=result["summary_text"],
             visuals=result.get("visuals", []),
@@ -96,7 +119,8 @@ async def trigger_pollution_alert_analysis(request: AlertRequest):
             "quick_trace_alert_completed",
             city=request.city,
             execution_time=execution_time,
-            has_trajectory=response.has_trajectory
+            has_trajectory=response.has_trajectory,
+            db_id=db_id
         )
 
         return response

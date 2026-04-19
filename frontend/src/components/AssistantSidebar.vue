@@ -120,23 +120,31 @@ const modules = [
   },
   {
     id: 'knowledge-base',
-    name: '知识库管理',
-    abbr: '知识库',
+    name: '知识管理',
+    abbr: '知识',
     desc: '管理文档与知识检索',
     badge: '管理',
     isAction: true
   },
   {
     id: 'tools-management',
-    name: '工具/技能管理',
+    name: '工具管理',
     abbr: '工具',
     desc: '查看和管理分析工具',
     badge: '管理',
     isAction: true
   },
   {
+    id: 'skills-management',
+    name: '技能管理',
+    abbr: '技能',
+    desc: '查看和管理技能文档',
+    badge: '管理',
+    isAction: true
+  },
+  {
     id: 'fetchers',
-    name: '数据抓取管理',
+    name: '数据管理',
     abbr: '数据',
     desc: '管理数据源和Fetchers',
     badge: '管理',

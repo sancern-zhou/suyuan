@@ -75,74 +75,9 @@ class ChannelManager:
         # ✅ 多实例渠道（微信）
         weixin_config = getattr(self.config, 'weixin', None)
         if weixin_config and getattr(weixin_config, 'enabled', False):
-            # 清理无效状态（在初始化之前）
-            self._cleanup_orphaned_weixin_states(weixin_config)
             self._init_weixin_channels(weixin_config)
 
         self._validate_allow_from()
-
-    def _cleanup_orphaned_weixin_states(self, weixin_config: Any) -> None:
-        """
-        清理没有配置文件但有状态文件的微信账户
-
-        Args:
-            weixin_config: WeixinConfig object
-        """
-        # 获取配置文件中的所有账户 ID
-        configured_accounts = set()
-        accounts = getattr(weixin_config, 'accounts', [])
-        for account in accounts:
-            account_id = getattr(account, 'id', None)
-            if account_id:
-                configured_accounts.add(account_id)
-
-        logger.info(
-            "cleanup_weixin_states_start",
-            configured_count=len(configured_accounts),
-            configured_ids=list(configured_accounts)
-        )
-
-        # 扫描状态目录
-        weixin_state_dir = Path(settings.data_registry_dir) / "social" / "weixin"
-
-        if not weixin_state_dir.exists():
-            logger.debug("cleanup_weixin_states_dir_not_found", path=str(weixin_state_dir))
-            return
-
-        # 遍历所有子目录（每个账户一个子目录）
-        cleaned_count = 0
-        for item in weixin_state_dir.iterdir():
-            if not item.is_dir():
-                continue
-
-            # 跳过特殊目录
-            if item.name in ['media', 'qrcode', 'default']:
-                continue
-
-            # 检查是否在配置中
-            if item.name not in configured_accounts:
-                try:
-                    # 删除整个账户目录
-                    import shutil
-                    shutil.rmtree(item)
-                    cleaned_count += 1
-                    logger.info(
-                        "cleanup_weixin_states_removed",
-                        account_id=item.name,
-                        path=str(item)
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "cleanup_weixin_states_failed",
-                        account_id=item.name,
-                        error=str(e)
-                    )
-
-        logger.info(
-            "cleanup_weixin_states_completed",
-            cleaned_count=cleaned_count,
-            remaining_count=len(configured_accounts)
-        )
 
     def _init_weixin_channels(self, weixin_config: Any) -> None:
         """

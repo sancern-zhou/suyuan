@@ -13,10 +13,10 @@
 - 保留核心决策逻辑和业务特定规则
 """
 
-from typing import List
+from typing import List, Optional
 
 
-def build_query_prompt(available_tools: List[str]) -> str:
+def build_query_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
     """
     构建问数模式系统提示词
 
@@ -26,6 +26,12 @@ def build_query_prompt(available_tools: List[str]) -> str:
     - 支持数据聚合分析
     - 可调用专家模式进行深度分析
     - 四层金字塔架构，决策清晰无歧义
+    - 记忆注入（从快照获取，直接注入到系统提示词）
+
+    Args:
+        available_tools: 可用工具列表
+        memory_context: 记忆上下文内容（从快照获取）
+        memory_file_path: 问数模式记忆文件路径
     """
     from .tool_registry import get_tools_by_mode
 
@@ -46,15 +52,27 @@ def build_query_prompt(available_tools: List[str]) -> str:
         "第一层：角色定位（WHAT & WHO）",
         "=" * 80,
         "",
+    ]
 
+    # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
+    if memory_context and memory_context.strip():
+        layer_1.append(memory_context)
+        layer_1.append("")
+
+    # ✅ 添加记忆文件路径说明
+    if memory_file_path:
+        layer_1.extend([
+            f"**记忆文件路径**：`{memory_file_path}`\n",
+            "- 查看记忆：`read_file(path='" + memory_file_path + "')`\n",
+            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
+            "- 禁止操作其他路径的 MEMORY.md 文件\n",
+            "",
+        ])
+
+    layer_1.extend([
         "## 角色定义",
         "你是数据查询专家，专注于本地PostgreSQL/TimescaleDB数据库的结构化数据查询和聚合分析。",
         "",
-
-        "## 记忆机制",
-        "系统自动加载长期记忆（用户偏好、历史结论、重要数据），保存在 `/home/xckj/suyuan/backend_data_registry/memory/query/MEMORY.md`（问数模式专属记忆，与其他模式隔离）",
-        "",
-
         "## 核心能力",
         "1. 参数化查询（气象、空气质量、颗粒物组分）",
         "2. SQL生成与执行",
@@ -63,7 +81,7 @@ def build_query_prompt(available_tools: List[str]) -> str:
         "5. 模式互调（专家/助手Agent）",
         "",
         "",
-    ]
+    ])
 
     # ========================================
     # 第二层：决策框架（核心）
@@ -103,15 +121,11 @@ def build_query_prompt(available_tools: List[str]) -> str:
         "- `compare_standard_reports`：同比环比对比分析",
         "- `query_standard_comparison`：新旧标准对比",
         "",
-        "### 第二优先级：aggregate_data",
-        "- 前置条件：必须先使用查询工具获取 data_id",
-        "- 限制：只能聚合原始数据字段（PM2_5、O3_8h等），不能聚合统计字段（exceed_days_by_pollutant、composite_index）",
-        "",
-        "### 第三优先级：execute_python",
-        "- 仅当前两者无法满足需求时使用",
+        "### 第二优先级：execute_python",
+        "- 仅当统计查询工具无法满足需求时使用（如自定义聚合、复杂计算等）",
         "",
         "### ⚠️ 禁止行为",
-        "- 禁止跳过统计查询工具直接使用 aggregate_data 或 execute_python",
+        "- 禁止跳过统计查询工具直接使用 execute_python",
         "- 禁止使用 execute_python 校验统计查询工具返回的结果",
         "- 禁止使用 execute_python 手动计算同比环比（必须用 compare_standard_reports）",
         "",

@@ -103,6 +103,11 @@
             v-else-if="managementPanel === 'tools-management'"
             @close="$emit('close-management-panel')"
           />
+
+          <SkillsManagementPanel
+            v-else-if="managementPanel === 'skills-management'"
+            @close="$emit('close-management-panel')"
+          />
         </template>
       </ChatArea>
 
@@ -149,6 +154,7 @@ import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
+import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
 
 const props = defineProps({
   // Store状态

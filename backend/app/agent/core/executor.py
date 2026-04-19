@@ -75,7 +75,12 @@ class ToolExecutor:
                 session_id=memory_manager.session_id
             )
 
-        self._register_builtin_tools()
+        # 只在未提供 tool_registry 时才注册内置工具
+        if not tool_registry:
+            self._register_builtin_tools()
+        else:
+            # 注册特殊工具（FINISH_SUMMARY）
+            self._register_special_tools()
 
         logger.info(
             "tool_executor_initialized",

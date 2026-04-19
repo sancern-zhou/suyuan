@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Dict, Any
 import structlog
 
-from app.tools.base.base_tool import BaseTool
+from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger(__name__)
 
 
-class ReplaceMemoryTool(BaseTool):
+class ReplaceMemoryTool(LLMTool):
     """
     记忆替换工具
 
@@ -25,8 +25,30 @@ class ReplaceMemoryTool(BaseTool):
     - 修正不再准确的结论
     """
 
-    name = "replace_memory"
-    description = "替换MEMORY.md中的现有条目"
+    # 类变量：用于存储当前的模式和用户信息（由记忆整合Agent设置）
+    _current_mode = None
+    _current_user_id = None
+
+    def __init__(self):
+        super().__init__(
+            name="replace_memory",
+            description="替换MEMORY.md中的现有条目",
+            category=ToolCategory.TASK_MANAGEMENT,
+            version="1.0.0",
+            requires_context=False
+        )
+
+    @classmethod
+    def set_memory_context(cls, mode: str, user_id: str = None):
+        """设置当前的记忆上下文（由记忆整合Agent调用）"""
+        cls._current_mode = mode
+        cls._current_user_id = user_id
+
+    @classmethod
+    def clear_memory_context(cls):
+        """清除记忆上下文"""
+        cls._current_mode = None
+        cls._current_user_id = None
 
     def _build_schema(self) -> Dict[str, Any]:
         """构建工具schema"""
@@ -121,14 +143,41 @@ class ReplaceMemoryTool(BaseTool):
             }
 
     def _get_memory_file_path(self) -> str:
-        """获取当前用户的记忆文件路径"""
+        """
+        获取当前用户的记忆文件路径
+
+        路径规则（与 social/memory_store.py 对齐）：
+        - 社交模式用户隔离：backend_data_registry/social/memory/{safe_user_id}/MEMORY.md
+        - 非社交模式：backend_data_registry/memory/{mode}/MEMORY.md
+        """
         try:
-            mode = "social"
-            base_path = Path("/home/xckj/suyuan/backend_data_registry/memory")
-            memory_dir = base_path / mode
+            # 使用类变量中存储的上下文
+            mode = self._current_mode or 'social'
+            user_id = self._current_user_id
+
+            # 社交模式：使用与 social/memory_store.py 一致的用户隔离路径
+            if mode == 'social':
+                base_path = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+                if user_id and user_id != 'global':
+                    safe_user_id = user_id.replace(":", "_")
+                    memory_dir = base_path / safe_user_id
+                else:
+                    memory_dir = base_path / "social"
+            else:
+                base_path = Path("/home/xckj/suyuan/backend_data_registry/memory")
+                memory_dir = base_path / mode
+
             memory_dir.mkdir(parents=True, exist_ok=True)
 
             memory_file = memory_dir / "MEMORY.md"
+
+            logger.debug(
+                "memory_file_path_resolved",
+                mode=mode,
+                user_id=user_id,
+                path=str(memory_file)
+            )
+
             return str(memory_file)
 
         except Exception as e:

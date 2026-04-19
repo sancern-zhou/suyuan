@@ -48,8 +48,26 @@ class SimplifiedContextBuilder:
         # ✅ 新增：当前模式（默认expert）
         self.current_mode = "expert"
 
+        # ✅ 新增：记忆上下文内容（从快照获取，用于系统提示词注入）
+        self.memory_context = None
+
         # ✅ 新增：用户记忆文件路径（仅social模式使用）
         self.memory_file_path = None
+
+        # ✅ 新增：用户偏好配置（仅social模式使用）
+        self.user_preferences = None
+
+        # ✅ 新增：用户上下文内容（从USER.md获取，仅social模式使用）
+        self.user_context = None
+
+        # ✅ 新增：soul上下文内容（从soul.md获取，仅social模式使用）
+        self.soul_context = None
+
+        # ✅ 新增：soul文件路径（仅social模式使用）
+        self.soul_file_path = None
+
+        # ✅ 新增：USER文件路径（仅social模式使用）
+        self.user_file_path = None
 
         logger.info(
             "simplified_context_builder_initialized",
@@ -183,13 +201,21 @@ class SimplifiedContextBuilder:
 
         包括：
         1. 根据模式选择的系统提示词（assistant or expert）
-        2. 回退到简单工具列表（旧版本兼容）
+        2. 记忆上下文（从快照获取，直接注入）
+        3. 用户上下文（从USER.md获取，仅social模式）
+        4. 回退到简单工具列表（旧版本兼容）
         """
-        # ✅ 使用新的提示词构建器
+        # ✅ 使用新的提示词构建器，传递记忆上下文、soul上下文和用户上下文
         from ..prompts.prompt_builder import build_react_system_prompt
         return build_react_system_prompt(
             mode=self.current_mode,
-            memory_file_path=self.memory_file_path  # ✅ 传递记忆文件路径
+            user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
+            memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅social模式使用）
+            soul_file_path=self.soul_file_path,  # ✅ 传递 soul.md 文件路径
+            user_file_path=self.user_file_path,  # ✅ 传递 USER.md 文件路径
+            memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
+            soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
+            user_context=self.user_context  # ✅ 传递用户上下文内容（USER.md）
         )
 
     def _get_simple_tool_list(self) -> str:
@@ -269,8 +295,10 @@ class SimplifiedContextBuilder:
 
         # ✅ 检测记忆增强内容
         has_memory_enhancement = "长期记忆" in query and "用户问题：" in query
+        has_attachments = "**用户上传的附件**" in query
         memory_section = ""
         user_question_section = ""
+        attachment_section = ""
 
         if has_memory_enhancement:
             # 提取记忆部分（在"用户问题："之前）
@@ -280,8 +308,14 @@ class SimplifiedContextBuilder:
                 # 提取用户问题和附件信息（在"用户问题："之后的所有内容）
                 user_question_and_attachments = parts[1].strip() if len(parts) > 1 else ""
                 memory_section = f"\n\n{memory_part}\n\n"
-                # ✅ 用户问题部分：包含用户问题和可能的附件信息
-                user_question_section = f"\n\n{user_question_and_attachments}\n\n"
+
+                # ✅ 分离用户问题和附件信息
+                if "**用户上传的附件**" in user_question_and_attachments:
+                    question_parts = user_question_and_attachments.split("**用户上传的附件**", 1)
+                    user_question_section = f"\n\n{question_parts[0].strip()}\n\n"
+                    attachment_section = f"\n\n**用户上传的附件**{question_parts[1]}"
+                else:
+                    user_question_section = f"\n\n{user_question_and_attachments}\n\n"
 
                 # ✅ 调试日志：确认用户问题和附件信息
                 logger.debug(
@@ -289,6 +323,18 @@ class SimplifiedContextBuilder:
                     section_length=len(user_question_section),
                     has_attachments="**用户上传的附件**" in user_question_section,
                     preview=user_question_section[:200]
+                )
+        elif has_attachments:
+            # ✅ 没有记忆增强但有附件（直接从query中提取）
+            if "**用户上传的附件**" in query:
+                parts = query.split("**用户上传的附件**", 1)
+                user_question_section = f"\n\n{parts[0].strip()}\n\n"
+                attachment_section = f"\n\n**用户上传的附件**{parts[1]}"
+                logger.debug(
+                    "attachment_section_extracted_without_memory",
+                    user_question_length=len(user_question_section),
+                    attachment_length=len(attachment_section),
+                    preview=attachment_section[:200]
                 )
 
         if conversation_history:
@@ -298,7 +344,8 @@ class SimplifiedContextBuilder:
                 f"## 当前状态\n"
                 f"**迭代次数**: {iteration} | **当前时间**: {current_time}\n\n"
                 f"{memory_section}"  # ✅ 添加记忆增强内容
-                f"{user_question_section}"  # ✅ 添加用户问题和附件信息
+                f"{user_question_section}"  # ✅ 添加用户问题
+                f"{attachment_section}"  # ✅ 添加附件信息（关键修复）
                 f"请根据上方对话历史中的工具执行结果，判断用户任务是否已完成。\n"
                 f"- 如果已完成：直接使用 FINAL_ANSWER 回复用户\n"
                 f"- 如果未完成：继续调用必要的工具，但**不要重复执行已经成功过的工具调用**"
@@ -306,12 +353,14 @@ class SimplifiedContextBuilder:
             sections.append(status_section)
 
             # ✅ 调试日志：确认记忆和用户问题内容已添加
-            if has_memory_enhancement:
+            if has_memory_enhancement or has_attachments:
                 logger.debug(
-                    "memory_context_added_to_status",
+                    "context_added_to_status",
                     memory_length=len(memory_section),
                     user_question_length=len(user_question_section),
-                    has_attachments="**用户上传的附件**" in user_question_section,
+                    attachment_length=len(attachment_section),
+                    has_memory=has_memory_enhancement,
+                    has_attachments=has_attachments,
                     iteration=iteration
                 )
         else:

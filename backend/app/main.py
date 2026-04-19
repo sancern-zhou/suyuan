@@ -1,6 +1,22 @@
 """
 Main FastAPI application for Air Pollution Source Traceability System.
 """
+import sys
+import os
+
+# DEBUG: Log Python path and module location
+print(f"[DEBUG] Python version: {sys.version}")
+print(f"[DEBUG] Current working directory: {os.getcwd()}")
+print(f"[DEBUG] sys.path[0]: {sys.path[0] if sys.path else 'EMPTY'}")
+print(f"[DEBUG] __file__: {__file__}")
+
+# Check which app module will be loaded
+try:
+    import app
+    print(f"[DEBUG] app module location: {app.__file__}")
+except Exception as e:
+    print(f"[DEBUG] app module import error: {e}")
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -154,9 +170,33 @@ from app.routers import social_routes
 app.include_router(social_routes.router)
 
 # Include Social Account Management routes (多微信账号管理)
-from app.api import social_account_routes
-app.include_router(social_account_routes.router)
+print(f"[DEBUG] Before importing social_account_routes")
+try:
+    from app.api import social_account_routes
+    print(f"[DEBUG] social_account_routes module location: {social_account_routes.__file__}")
+    print(f"[DEBUG] social_account_routes router prefix: {social_account_routes.router.prefix}")
+    app.include_router(social_account_routes.router)
+    print(f"[DEBUG] social_account_routes router registered successfully")
+except Exception as e:
+    print(f"[DEBUG] Failed to register social_account_routes: {e}")
+    import traceback
+    traceback.print_exc()
 
+# Include Skills Management routes (技能管理)
+try:
+    from app.api import skills_routes
+    app.include_router(skills_routes.router)
+    logger.info("skills_routes_router_registered")
+except Exception as e:
+    logger.warning("skills_routes_import_failed", error=str(e))
+
+# DEBUG: Print all registered routes
+print("[DEBUG] === All Registered Routes ===")
+for route in app.routes:
+    if hasattr(route, 'methods') and hasattr(route, 'path'):
+        for method in route.methods:
+            if method != 'HEAD':
+                print(f"[DEBUG] {method} {route.path}")
 
 # 全局异常处理器：捕获请求验证错误
 @app.exception_handler(RequestValidationError)

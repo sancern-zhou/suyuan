@@ -449,6 +449,7 @@ class ImprovedMemoryStore(MemoryStore):
     2. 失败重试机制（最多3次）
     3. 原始归档降级
     4. 更好的错误处理
+    5. 快照隔离机制（避免后台更新影响当前对话）
     """
 
     _MAX_FAILURES_BEFORE_RAW_ARCHIVE = 3
@@ -456,6 +457,93 @@ class ImprovedMemoryStore(MemoryStore):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._consecutive_failures = 0
+        self._snapshot: Optional[str] = None  # 会话快照（独立副本）
+        self._snapshot_file: Optional[Path] = None  # 快照文件路径（临时）
+
+    def create_snapshot(self) -> None:
+        """
+        会话开始时创建快照（复制当前记忆文件）
+
+        快照机制说明：
+        - 会话开始时创建MEMORY.md的独立副本
+        - 当前对话始终使用快照内容（固定不变）
+        - 后台Agent直接更新原始MEMORY.md（不影响快照）
+        - 会话结束时清理快照文件
+        - 下次会话重新创建快照（包含后台的所有更新）
+        """
+        if self.memory_file.exists():
+            try:
+                # 读取当前记忆内容
+                current_content = self.memory_file.read_text(encoding="utf-8")
+
+                # 创建临时快照文件
+                import tempfile
+                fd, snapshot_path = tempfile.mkstemp(
+                    suffix=".md",
+                    prefix=f"memory_snapshot_{self.mode}_",
+                    dir=self.workspace
+                )
+                self._snapshot_file = Path(snapshot_path)
+
+                # 写入快照内容
+                with open(fd, 'w', encoding='utf-8') as f:
+                    f.write(current_content)
+
+                self._snapshot = current_content
+
+                logger.info(
+                    "memory_snapshot_created",
+                    mode=self.mode,
+                    snapshot_path=str(self._snapshot_file),
+                    snapshot_size=len(current_content)
+                )
+            except Exception as e:
+                logger.warning(
+                    "failed_to_create_snapshot",
+                    mode=self.mode,
+                    error=str(e)
+                )
+
+    def get_memory_context(self) -> str:
+        """
+        获取记忆上下文（使用快照，不读取原始文件）
+
+        当前对话始终使用会话开始时的快照，不受后台更新影响
+
+        Returns:
+            记忆内容字符串
+        """
+        # 优先使用快照内容
+        if self._snapshot and self._snapshot.strip():
+            if self._snapshot.strip() in ["", "# 长期记忆 (MEMORY.md)", "# 长期记忆 (MEMORY.md)\n"]:
+                return ""
+            return f"## 长期记忆\n{self._snapshot}"
+
+        # 降级到原始文件读取
+        return super().get_memory_context()
+
+    def cleanup_snapshot(self) -> None:
+        """
+        会话结束时清理快照文件
+        """
+        try:
+            if self._snapshot_file and self._snapshot_file.exists():
+                self._snapshot_file.unlink()
+                logger.debug(
+                    "memory_snapshot_cleaned",
+                    mode=self.mode,
+                    snapshot_path=str(self._snapshot_file)
+                )
+        except Exception as e:
+            logger.warning(
+                "failed_to_cleanup_snapshot",
+                mode=self.mode,
+                error=str(e)
+            )
+        finally:
+            # 无论如何都清理快照引用
+            self._snapshot = None
+            self._snapshot_file = None
 
     @staticmethod
     def _format_messages(messages: List[Dict[str, Any]]) -> str:
