@@ -3,6 +3,7 @@ import ReactAnalysisView from '@/views/ReactAnalysisView.vue'
 import FetchersView from '@/views/FetchersView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import ToolsManagementView from '@/views/ToolsManagementView.vue'
+import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
 
 const router = createRouter({
@@ -34,7 +35,13 @@ const router = createRouter({
       path: '/tools-management',
       name: 'tools-management',
       component: ToolsManagementView,
-      meta: { title: '工具/技能管理' }
+      meta: { title: '工具管理' }
+    },
+    {
+      path: '/skills-management',
+      name: 'skills-management',
+      component: SkillsManagementView,
+      meta: { title: '技能管理' }
     },
     {
       path: '/social-accounts',

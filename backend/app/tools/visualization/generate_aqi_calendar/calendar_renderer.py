@@ -575,3 +575,254 @@ class AQICalendarRenderer:
             'PM10': 'PM10'
         }
         return name_map.get(pollutant, pollutant)
+
+
+# ============================================
+# 便捷函数：通过 execute_python 调用（统一接口）
+# ============================================
+
+def generate_calendar_from_data_id(
+    data_id: str,
+    year: int,
+    month: int,
+    pollutant: str = "AQI",
+    cities: Optional[List[str]] = None
+) -> str:
+    """
+    从 data_id 生成 AQI 日历图（返回 base64）
+
+    专为 execute_python 工具设计，提供与 polar_contour_generator 一致的调用接口。
+
+    参数：
+    ---
+    data_id : str
+        数据ID（如：air_quality_unified:v1:xxx）
+    year : int
+        年份（如2026）
+    month : int
+        月份（1-12）
+    pollutant : str
+        污染物指标（AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10）
+    cities : List[str], optional
+        城市列表（默认为广东省21个城市）
+
+    返回：
+    ---
+    str : base64 编码的 PNG 图片
+
+    异常：
+    ---
+    ValueError : 数据不存在、格式错误或参数无效
+
+    示例：
+    ---
+    >>> # 在 execute_python 中调用
+    >>> from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+    >>>
+    >>> img_base64 = generate_calendar_from_data_id(
+    ...     data_id="air_quality_unified:v1:xxx",
+    ...     year=2026,
+    ...     month=4,
+    ...     pollutant="PM10"
+    ... )
+    >>>
+    >>> print("CHART_SAVED:data:image/png;base64," + img_base64)
+    """
+    import json
+    from pathlib import Path
+    from datetime import datetime
+
+    # 默认使用广东省21个城市
+    if cities is None:
+        cities = GUANGDONG_CITIES
+
+    # 限制城市数量
+    if len(cities) > 21:
+        cities = cities[:21]
+
+    # ========== 阶段1：加载数据 ==========
+    try:
+        # 解析 data_id，格式：schema:v1:hash
+        parts = data_id.split(":")
+        if len(parts) < 3:
+            raise ValueError(f"无效的 data_id 格式：{data_id}")
+
+        # 构建文件路径
+        safe_id = f"{parts[0]}_v1_{parts[2]}"
+
+        # 尝试多个可能的路径
+        possible_paths = [
+            Path("backend_data_registry/datasets") / f"{safe_id}.json",
+            Path("/home/xckj/suyuan/backend/backend_data_registry/datasets") / f"{safe_id}.json"
+        ]
+
+        data_file = None
+        for path in possible_paths:
+            if path.exists():
+                data_file = path
+                break
+
+        if data_file is None:
+            # 最后尝试：使用 data_registry
+            try:
+                from app.services.data_registry import data_registry
+                data_file = data_registry.datasets_dir / f"{safe_id}.json"
+            except:
+                pass
+
+        if data_file is None or not data_file.exists():
+            raise ValueError(f"数据文件不存在：{safe_id}.json")
+
+        # 读取 JSON 文件
+        with data_file.open("r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+
+        # 处理数据格式
+        if not isinstance(raw_data, list):
+            if isinstance(raw_data, dict) and "records" in raw_data:
+                raw_data = raw_data["records"]
+            else:
+                raise ValueError(f"不支持的数据格式：期望列表或包含 records 的字典，实际得到 {type(raw_data)}")
+
+    except Exception as e:
+        raise ValueError(f"数据 ID {data_id} 不存在或无法加载：{str(e)}")
+
+    if not raw_data:
+        raise ValueError(f"数据 ID {data_id} 无数据")
+
+    # ========== 阶段2：处理数据 ==========
+    city_data_map = _process_city_data_impl(raw_data, cities, year, month, pollutant)
+
+    logger.info(
+        "calendar_data_prepared",
+        total_cities=len(city_data_map),
+        city_names=list(city_data_map.keys()),
+        year=year,
+        month=month,
+        pollutant=pollutant
+    )
+
+    # ========== 阶段3：渲染日历图 ==========
+    renderer = AQICalendarRenderer()
+    image_base64 = renderer.render_calendar(
+        city_data_map, year, month, pollutant
+    )
+
+    logger.info(
+        "calendar_generated",
+        data_id=data_id,
+        year=year,
+        month=month,
+        pollutant=pollutant,
+        image_size_kb=len(image_base64) / 1024
+    )
+
+    return image_base64
+
+
+def _process_city_data_impl(
+    raw_data: List[Dict],
+    cities: List[str],
+    year: int,
+    month: int,
+    pollutant: str
+) -> Dict[str, Dict[int, int]]:
+    """
+    处理数据：按城市分组，构建日期→值映射（内部实现）
+
+    Args:
+        raw_data: 原始数据列表
+        cities: 城市列表
+        year: 年份
+        month: 月份
+        pollutant: 污染物指标
+
+    Returns:
+        {city_name: {day: aqi_value}} 字典
+    """
+    city_data_map = {}
+
+    # 初始化城市数据
+    for city in cities:
+        city_data_map[city] = {}
+
+    # 污染物字段映射
+    POLLUTANT_FIELD_MAP = {
+        'AQI': 'aqi',
+        'SO2': 'so2',
+        'NO2': 'no2',
+        'CO': 'co',
+        'O3_8h': 'o3_8h',
+        'PM2_5': 'pm2_5',
+        'PM10': 'pm10'
+    }
+
+    # 处理每条数据
+    for record in raw_data:
+        # 提取城市名（支持多种字段名）
+        city = (record.get('name') or record.get('city') or
+               record.get('city_name') or record.get('station_name'))
+        if not city:
+            continue
+
+        # 只处理指定的城市
+        if city not in cities:
+            continue
+
+        # 提取日期（支持多种字段名）
+        date_str = record.get('date') or record.get('time') or record.get('timestamp')
+        if not date_str:
+            continue
+
+        try:
+            # 解析日期（支持多种格式）
+            if isinstance(date_str, str):
+                if len(date_str) == 10:  # YYYY-MM-DD
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                elif len(date_str) == 19:  # YYYY-MM-DD HH:MM:SS
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                else:
+                    continue
+            else:
+                continue
+
+            # 检查年份和月份
+            if date_obj.year != year or date_obj.month != month:
+                continue
+
+            day = date_obj.day
+
+            # 提取污染物浓度
+            concentration = None
+            value = None
+
+            # 尝试从 measurements 获取
+            measurements = record.get('measurements', {})
+            if measurements and isinstance(measurements, dict):
+                pollutant_key = pollutant if pollutant in measurements else pollutant.lower()
+                concentration = measurements.get(pollutant_key)
+
+            # 如果 measurements 中没有，尝试从顶层获取
+            if concentration is None:
+                field_name = POLLUTANT_FIELD_MAP.get(pollutant, pollutant.lower())
+                concentration = record.get(field_name)
+
+            # 处理 AQI（直接使用）或污染物（计算 IAQI）
+            if pollutant == 'AQI':
+                if concentration is not None:
+                    value = concentration
+            else:
+                if concentration is None or concentration <= 0:
+                    continue
+                # 计算 IAQI
+                value = calculate_iaqi(float(concentration), pollutant)
+
+            # 存储数据
+            if value is not None and value >= 0:
+                city_data_map[city][day] = int(value)
+
+        except (ValueError, TypeError) as e:
+            logger.warning("date_parse_failed", date_str=date_str, error=str(e))
+            continue
+
+    return city_data_map

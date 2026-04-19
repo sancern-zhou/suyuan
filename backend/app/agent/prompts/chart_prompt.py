@@ -2,25 +2,48 @@
 图表模式系统提示词 - LLM 驱动的灵活图表生成
 """
 
-from typing import List
+from typing import List, Optional
 
 
-def build_chart_prompt(available_tools: List[str]) -> str:
-    """构建图表模式系统提示词"""
+def build_chart_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
+    """
+    构建图表模式系统提示词
 
-    prompt_parts = [
+    Args:
+        available_tools: 可用工具列表
+        memory_context: 记忆上下文内容（从快照获取）
+        memory_file_path: 图表模式记忆文件路径
+    """
+    from .tool_registry import get_tools_by_mode
+
+    tools_dict = get_tools_by_mode("chart")
+
+    # 生成所有工具的列表
+    tool_lines = [
+        f"- `{tool}` - {desc}"
+        for tool, desc in tools_dict.items()
+        if tool in available_tools
+    ]
+
+    prompt_parts = []
+
+    # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
+    if memory_context and memory_context.strip():
+        prompt_parts.append(memory_context + "\n")
+
+    # ✅ 添加记忆文件路径说明
+    if memory_file_path:
+        prompt_parts.extend([
+            f"**记忆文件路径**：`{memory_file_path}`\n",
+            "- 查看记忆：`read_file(path='" + memory_file_path + "')`\n",
+            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
+            "- 禁止操作其他路径的 MEMORY.md 文件\n",
+            "\n",
+        ])
+
+    prompt_parts.extend([
         "你是数据可视化专家，擅长基于 ECharts 模板生成灵活的图表代码。\n",
-        "## 记忆机制\n",
-        "\n",
-        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
-        "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/chart/MEMORY.md`（图表模式专属记忆，与其他模式隔离。如需查看或编辑可使用 read_file 工具）。\n",
-        "\n",
         "## 核心工作流程\n\n",
-        "**重要提示：用户记忆自动加载**：\n",
-        "系统已自动加载 MEMORY.md 中的用户偏好和历史结论。\n",
-        "在生成图表前，请检查记忆中是否有「图表交互偏好」或「极坐标图」相关的偏好设置。\n",
-        "如果有，优先遵循用户偏好选择 matplotlib 或 ECharts 方案。\n\n",
         "**场景1：用户已有 data_id**\n",
         "1. **分析数据**：使用 `read_data_registry(data_id, list_fields=true)` 查看字段\n",
         "2. **参考模板样式**（可选，三种来源）：\n",
@@ -50,25 +73,14 @@ def build_chart_prompt(available_tools: List[str]) -> str:
         "5. **生成图表**：使用 `execute_python` 生成与参考图片相同风格的图表\n\n",
 
         "## 可用工具\n\n",
-        "**数据查询**：\n",
-        "- `get_5min_data` - 查询站点5分钟数据（高精度，支持风玫瑰图）\n",
-        "- `query_gd_suncere_city_hour` - 查询城市级别小时数据\n",
-        "- `query_gd_suncere_station_hour_new` - 查询站点级别小时数据\n",
-        "- `query_gd_suncere_city_day_new` - 查询城市级别日数据\n\n",
-        "**数据操作**：\n",
-        "- `read_data_registry` - 分析数据结构（参数：data_id, list_fields=true）\n",
-        "- `execute_python` - 执行 Python 代码生成图表（参数：code）\n\n",
-        "**图片分析**：\n",
-        "- `read_file(path, analysis_type=\"chart\")` - 读取并分析参考图表图片\n\n",
-        "**样式参考检索**：\n",
-        "- `grep` - 搜索 config/chart_templates/ 自定义模板\n",
-        "- `search_files` - 检索 echarts-examples 官方示例\n",
-        "- `list_directory` - 查看目录结构\n",
-        "- `read_file` - 读取模板文件\n\n",
-        "**模板管理**：\n",
-        "- `write_file` - 保存新模板\n",
-        "- `bash` - 删除/移动模板文件（谨慎使用）\n\n",
+    ])
 
+    # 添加工具列表
+    prompt_parts.extend(tool_lines)
+    prompt_parts.append("\n")
+
+    # 继续添加后续内容
+    remaining_parts = [
         "## 内置样式参考库（v3.3）\n\n",
         "**总样式数**：37种（原有14种 + 新增23种 ECharts 官方样式）\n\n",
         "**查找方法**：\n",
@@ -304,142 +316,36 @@ def build_chart_prompt(available_tools: List[str]) -> str:
         "- 饼图：pie_rose_type, pie_nest, pie_doughnut\n",
         "- 仪表盘：gauge_progress, gauge_stage, gauge_ring\n",
         "- 关系图：graph_force, graph_circular\n",
-        "- 日历图：calendar_heatmap, calendar_pie\n",
+        "- 日历图：aqi_calendar（静态图）, calendar_heatmap（ECharts）, calendar_pie（ECharts）\n",
         "- 矩形树图：treemap_simple, treemap_drill_down\n",
         "- 桑基图：sankey_simple, sankey_vertical\n\n",
         "**总计**：37种内置样式（使用 read_file 读取模板文件参考样式）\n",
         "\n",
-        "## 极坐标热力型污染玫瑰图（风场-污染物浓度等值线玫瑰图）\n",
-        "\n",
-        "**图表定义**：\n",
-        "极坐标热力型污染玫瑰图是传统堆叠式污染玫瑰图的进阶可视化形式，\n",
-        "用于精细化展示风向、风速与PM₁₀浓度的三维关联特征，适合大气污染溯源分析。\n",
-        "\n",
-        "**两种技术方案**：\n",
-        "- **Matplotlib 方案**（平滑优先）：使用 contourf 实现完全平滑的等值线图，无扇区边界，适合报告生成\n",
-        "- **ECharts 方案**（交互优先）：使用 polar + heatmap 实现交互式图表，支持缩放和工具提示，适合数据探索\n",
-        "\n",
-        "**LLM 决策流程**（优先级从高到低）：\n",
-        "1. **显式关键词**：\n",
-        "   - 「平滑」「渐变」「无扇区」「报告」「导出」→ 选择 matplotlib\n",
-        "   - 「交互」「可缩放」「可操作」「探索」→ 选择 ECharts\n",
-        "2. **场景推断**：\n",
-        "   - 「生成报告」「导出图片」「打印」→ matplotlib\n",
-        "   - 「探索数据」「在线分析」「实时查看」→ ECharts\n",
-        "3. **用户记忆**：检查 MEMORY.md 中的「图表交互偏好」条目\n",
-        "4. **默认策略**：极坐标图默认使用 matplotlib（平滑优先）\n",
-        "\n",
-        "**Matplotlib 方案使用方法（推荐：data_id 模式）**：\n",
-        "```python\n",
-        "from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour\n",
-        "import tempfile\n",
-        "import base64\n",
-        "\n",
-        "# 默认模式：使用数据自带的气象字段\n",
-        "img_base64 = generate_pollution_rose_contour(\n",
-        "    data_id=\"{data_id}\",              # 数据ID\n",
-        "    pollutant_name=\"PM10\",             # 污染物名称\n",
-        "    time_resolution=\"hour\",            # 时间分辨率：5min/hour/day（默认hour）\n",
-        "    title=\"PM10浓度极坐标热力型污染玫瑰图（广雅中学，2026-03-01）\"\n",
-        ")\n",
-        "\n",
-        "# ⭐ 气象局模式：使用气象局气象数据（更准确，推荐）\n",
-        "img_base64 = generate_pollution_rose_contour(\n",
-        "    data_id=\"{data_id}\",              # 数据ID\n",
-        "    pollutant_name=\"PM10\",             # 污染物名称\n",
-        "    use_gd_met_bureau_weather=True,     # ⭐ 启用气象局数据\n",
-        "    title=\"PM10浓度极坐标热力型污染玫瑰图（气象局数据）\"\n",
-        ")\n",
-        "\n",
-        "# 保存到临时文件（触发自动缓存）\n",
-        "with tempfile.NamedTemporaryFile(suffix=\".png\", delete=False) as f:\n",
-        "    f.write(base64.b64decode(img_base64))\n",
-        "    print(f\"CHART_SAVED:{f.name}\")\n",
-        "```\n",
-        "\n",
-        "**参数说明**：\n",
-        "- `use_gd_met_bureau_weather`：是否使用气象局气象数据（默认False）\n",
-        "  - False：使用数据自带气象字段，快速分析\n",
-        "  - True：使用气象局数据，精确分析（推荐）\n",
-        "\n",
-        "**时间分辨率说明**：\n",
-        "- `5min`：使用原始5分钟数据（数据点多，分布散）\n",
-        "- `hour`（默认）：按小时聚合（风向矢量平均，风速/浓度算术平均）\n",
-        "- `day`：按日聚合（长期趋势分析）\n",
-        "\n",
-        "**ECharts 方案使用方法**：\n",
-        "```python\n",
-        "from app.tools.visualization.polar_contour_generator import generate_pollution_rose_echarts\n",
-        "import json\n",
-        "\n",
-        "# 从 data_id 加载数据\n",
-        "data_file = '/home/xckj/suyuan/backend_data_registry/data_registry/{data_id}.json'\n",
-        "with open(data_file, 'r') as f:\n",
-        "    data = json.load(f)\n",
-        "\n",
-        "wind_dirs = [record['WD'] for record in data]\n",
-        "wind_speeds = [record['WS'] for record in data]\n",
-        "concentrations = [record['PM10'] for record in data]\n",
-        "\n",
-        "# 生成交互式图表\n",
-        "echarts_option = generate_pollution_rose_echarts(\n",
-        "    wind_directions=wind_dirs,\n",
-        "    wind_speeds=wind_speeds,\n",
-        "    concentrations=concentrations,\n",
-        "    title=\"PM10浓度极坐标热力型污染玫瑰图（交互式）\",\n",
-        "    color_range=(31, 49),\n",
-        "    grid_angles=360,\n",
-        "    grid_radii=50,\n",
-        "    blur=10\n",
-        ")\n",
-        "\n",
-        "# 输出 ECharts 配置（系统自动识别）\n",
-        "print(json.dumps(echarts_option, ensure_ascii=False))\n",
-        "```\n",
-        "\n",
-        "**⚠️ 重要提示**：\n",
-        "- Matplotlib 方案必须输出 `CHART_SAVED:/path/to/file.png` 触发缓存\n",
-        "- ECharts 方案必须直接输出 JSON 配置（包含 series 字段）\n",
-        "- **时间分辨率推荐**：\n",
-        "  - 5分钟数据点密集（~3000点/天），建议使用 `time_resolution=\"hour\"` 聚合（~72点/天）\n",
-        "  - 风向采用矢量平均（分解u/v分量），确保统计准确性\n",
-        "  - 小时/日聚合可大幅减少数据点，提升绘图性能和可视化效果\n",
-        "- **性能**：matplotlib contourf 可处理 100-10000 个数据点\n",
-        "\n",
-        "## 6色阶模式\n\n",
-        "6色阶模式默认启用（use_six_level=True），基于新标准日平均浓度限值自动分级。\n",
-        "系统根据污染物名称自动选择对应阈值和固定颜色映射。\n\n",
-        "**使用方法（推荐：data_id 模式）**：\n",
-        "```python\n",
-        "from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour\n",
-        "import tempfile\n",
-        "import base64\n",
-        "\n",
-        "# 6色阶模式：内部固定参数，简化调用\n",
-        "img_base64 = generate_pollution_rose_contour(\n",
-        "    data_id=\"{data_id}\",              # 数据ID\n",
-        "    pollutant_name=\"PM2.5\",            # 污染物名称\n",
-        "    time_resolution=\"hour\",            # 时间分辨率（默认hour）\n",
-        "    title=\"PM2.5浓度6色阶污染玫瑰图（广雅中学）\"\n",
-        "    # use_six_level=True 默认启用，以下参数内部固定：\n",
-        "    # - value_range: 自动使用污染物标准范围（如PM2.5: 0-250）\n",
-        "    # - color_map: 6色阶固定映射\n",
-        "    # - grid_resolution: 100\n",
-        "    # - interpolation_method: cubic\n",
-        "    # - dpi: 150\n",
-        ")\n",
-        "\n",
-        "# 保存并触发缓存\n",
-        "with tempfile.NamedTemporaryFile(suffix=\".png\", delete=False) as f:\n",
-        "    f.write(base64.b64decode(img_base64))\n",
-        "    print(f\"CHART_SAVED:{f.name}\")\n",
-        "```\n",
-        "\n",
-        "**⚠️ 6色阶模式注意事项**：\n",
-        "- 参数内部固定（value_range、color_map、grid_resolution、interpolation_method、dpi），用户传入的值会被忽略\n",
-        "- 强制显示完整图例，即使数据未覆盖所有浓度范围\n",
-        "- 建议使用 hour 或 day 聚合，避免5分钟数据过于分散\n",
+        "## 高级图表技能文档\n\n",
+        "**⚠️ 重要**：当需要生成以下高级图表时，**必须先查阅对应技能文档**：\n\n",
+        "| 图表类型 | 技能文档路径 | 触发关键词 |\n",
+        "|---------|-------------|-----------|\n",
+        "| 极坐标污染玫瑰图 | `app/tools/visualization/polar_contour_guide.md` | 污染玫瑰、极坐标、风向玫瑰、风场图、风场-污染物浓度 |\n",
+        "| AQI日历热力图 | `app/tools/visualization/generate_aqi_calendar/aqi_calendar_guide.md` | AQI日历、日历热力图、月度日历、月度回顾 |\n",
+        "| ECharts示例检索 | `app/tools/visualization/generate_chart/echarts_search_guide.md` | ECharts示例、官方示例、查找示例、参考样式 |\n\n",
+        "**使用方法**：\n",
+        "```json\n",
+        "{\n",
+        "  \"thought\": \"用户需要生成极坐标污染玫瑰图，查阅技能文档\",\n",
+        "  \"action\": {\n",
+        "    \"type\": \"TOOL_CALL\",\n",
+        "    \"tool\": \"read_file\",\n",
+        "    \"args\": {\"path\": \"app/tools/visualization/polar_contour_guide.md\"}\n",
+        "  }\n",
+        "}\n",
+        "```\n\n",
+        "**⚠️ 查阅时机**：\n",
+        "- 用户明确提到上述关键词时，必须先查阅文档\n",
+        "- 不确定如何生成某种图表时，查阅对应文档\n",
+        "- 需要了解最佳实践和参数说明时，查阅对应文档\n",
         "\n",
     ]
+
+    prompt_parts.extend(remaining_parts)
 
     return "".join(prompt_parts)

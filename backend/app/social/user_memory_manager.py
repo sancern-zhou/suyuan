@@ -12,7 +12,7 @@ from typing import Dict
 import asyncio
 import structlog
 
-from app.social.memory_store import MemoryStore
+from app.social.memory_store import ImprovedMemoryStore
 
 logger = structlog.get_logger(__name__)
 
@@ -45,7 +45,7 @@ class UserMemoryManager:
         self.base_workspace = base_workspace
         self.base_workspace.mkdir(parents=True, exist_ok=True)
 
-        self._memory_cache: Dict[str, MemoryStore] = {}
+        self._memory_cache: Dict[str, ImprovedMemoryStore] = {}
         self._lock = asyncio.Lock()
         self._max_cache_size = max_cache_size
 
@@ -55,7 +55,7 @@ class UserMemoryManager:
             max_cache_size=max_cache_size
         )
 
-    async def get_user_memory(self, user_id: str) -> MemoryStore:
+    async def get_user_memory(self, user_id: str) -> ImprovedMemoryStore:
         """
         获取或创建用户 MemoryStore
 
@@ -73,7 +73,7 @@ class UserMemoryManager:
                     del self._memory_cache[oldest_key]
                     logger.debug("memory_cache_evicted", user_id=oldest_key)
 
-                self._memory_cache[user_id] = MemoryStore(user_id=user_id)
+                self._memory_cache[user_id] = ImprovedMemoryStore(user_id=user_id)
                 logger.info("user_memory_created", user_id=user_id)
 
             return self._memory_cache[user_id]

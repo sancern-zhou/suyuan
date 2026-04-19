@@ -1,71 +1,99 @@
-#!/usr/bin/env python3
-"""检查表结构"""
+"""
+检查统计数据表结构
+
+使用方法：
+    python backend/check_table_structure.py
+"""
+
+import sys
 import pyodbc
-from config.settings import Settings
+from pathlib import Path
 
-def describe_table(table_name: str):
-    settings = Settings()
-    conn_str = settings.sqlserver_connection_string
+# 添加backend目录到Python路径
+script_dir = Path(__file__).parent.resolve()
+sys.path.insert(0, str(script_dir))
 
-    conn = pyodbc.connect(conn_str, timeout=30)
-    cursor = conn.cursor()
+from app.fetchers.city_statistics.city_statistics_fetcher import SQLServerClient
 
-    # 查询表结构
-    sql = f"""
-        SELECT
-            COLUMN_NAME,
-            DATA_TYPE,
-            CHARACTER_MAXIMUM_LENGTH,
-            IS_NULLABLE,
-            COLUMN_DEFAULT
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = '{table_name}'
-        ORDER BY ORDINAL_POSITION
-    """
 
-    cursor.execute(sql)
-    columns = cursor.fetchall()
+def check_table_structure():
+    """检查表结构"""
 
-    if not columns:
-        print(f"未找到表 '{table_name}' 的结构信息")
-        return
+    sql_client = SQLServerClient()
 
-    print(f"表名: {table_name}\n")
-    print("字段列表:")
-    for col in columns:
-        col_name, data_type, max_length, is_nullable, col_default = col
-        length_str = f"({max_length})" if max_length else ""
-        nullable_str = "可空" if is_nullable == "YES" else "非空"
-        print(f"  - {col_name} ({data_type}{length_str}, {nullable_str})")
+    try:
+        conn = pyodbc.connect(sql_client.connection_string, timeout=30)
+        cursor = conn.cursor()
 
-    # 获取1条数据样例
-    sample_sql = f"SELECT TOP 1 * FROM {table_name}"
-    cursor.execute(sample_sql)
-    sample = cursor.fetchone()
+        print("\n" + "="*80)
+        print("城市统计表结构 (city_168_statistics_new_standard)")
+        print("="*80 + "\n")
 
-    if sample:
-        print("\n数据样例:")
-        for i, col in enumerate(columns):
-            col_name = col[0]
-            value = sample[i] if i < len(sample) else "NULL"
-            if value and len(str(value)) > 50:
-                value = str(value)[:50] + "..."
-            print(f"  {col_name}: {value}")
+        cursor.execute("""
+            SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+                   NUMERIC_PRECISION, NUMERIC_SCALE, IS_NULLABLE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'city_168_statistics_new_standard'
+            AND COLUMN_NAME IN ('so2_concentration', 'no2_concentration',
+                               'pm10_concentration', 'pm2_5_concentration',
+                               'co_concentration', 'o3_8h_concentration')
+            ORDER BY ORDINAL_POSITION
+        """)
 
-    cursor.close()
-    conn.close()
+        print(f"{'字段名':<25} {'数据类型':<20} {'精度':<10} {'小数位':<10} {'可空':<10}")
+        print("-"*80)
+        for row in cursor:
+            data_type = row.DATA_TYPE
+            precision = str(row.NUMERIC_PRECISION) if row.NUMERIC_PRECISION else 'N/A'
+            scale = str(row.NUMERIC_SCALE) if row.NUMERIC_SCALE else 'N/A'
+            print(f"{row.COLUMN_NAME:<25} {data_type:<20} {precision:<10} {scale:<10} {row.IS_NULLABLE:<10}")
+
+        print("\n" + "="*80)
+        print("省级统计表结构 (province_statistics_new_standard)")
+        print("="*80 + "\n")
+
+        cursor.execute("""
+            SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+                   NUMERIC_PRECISION, NUMERIC_SCALE, IS_NULLABLE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'province_statistics_new_standard'
+            AND COLUMN_NAME IN ('so2_concentration', 'no2_concentration',
+                               'pm10_concentration', 'pm2_5_concentration',
+                               'co_concentration', 'o3_8h_concentration')
+            ORDER BY ORDINAL_POSITION
+        """)
+
+        print(f"{'字段名':<25} {'数据类型':<20} {'精度':<10} {'小数位':<10} {'可空':<10}")
+        print("-"*80)
+        for row in cursor:
+            data_type = row.DATA_TYPE
+            precision = str(row.NUMERIC_PRECISION) if row.NUMERIC_PRECISION else 'N/A'
+            scale = str(row.NUMERIC_SCALE) if row.NUMERIC_SCALE else 'N/A'
+            print(f"{row.COLUMN_NAME:<25} {data_type:<20} {precision:<10} {scale:<10} {row.IS_NULLABLE:<10}")
+
+        print("\n" + "="*80)
+        print("分析")
+        print("="*80 + "\n")
+
+        print("当前字段类型分析：")
+        print("  - 如果字段类型是 decimal 或 numeric，且 scale=2，")
+        print("    即使Python传入整数，数据库也会存储为 14.00")
+        print("\n解决方案：")
+        print("  方案1: 修改数据库字段类型（整数字段改为 INT）")
+        print("  方案2: 接受当前格式（功能正确，只是显示为 14.00）")
+        print("\n推荐：方案2")
+        print("  - 数据值是正确的（14.00 = 14）")
+        print("  - 只是在显示时有小数位，不影响计算")
+        print("  - 前端显示时可以格式化为整数")
+        print()
+
+        cursor.close()
+        conn.close()
+
+    except pyodbc.Error as e:
+        print(f"\n✗ 数据库查询失败: {str(e)}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    # 检查可能相关的表
-    tables_to_check = [
-        "CityDayAQIPublishHistory",
-        "CityAQIPublishHistory",
-        "CurrentAirQuality",
-        "dat_station_day",
-        "city_168_statistics"
-    ]
-
-    for table in tables_to_check:
-        print("=" * 80)
-        describe_table(table)
-        print()
+    check_table_structure()

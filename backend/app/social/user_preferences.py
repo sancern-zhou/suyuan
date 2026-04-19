@@ -1,11 +1,9 @@
 """
-用户偏好配置管理
+用户偏好配置管理（助理定义模式）
 
-管理社交模式用户的风格偏好配置，支持：
-- 回答风格（正式/随意/专业/通俗）
-- 输出格式（纯文本/Markdown/结构化）
-- 详细程度（简洁/适中/详细）
-- Emoji使用（是/否）
+管理社交模式用户的助理定义配置，支持：
+- 助理名称（assistant_name）
+- 助理性格（assistant_personality）
 """
 
 import json
@@ -18,70 +16,7 @@ logger = structlog.get_logger(__name__)
 
 
 class UserPreferences:
-    """用户偏好配置"""
-
-    # 预设的回复风格选项
-    STYLE_OPTIONS = {
-        "casual": {
-            "name": "轻松随意",
-            "description": "像朋友聊天一样，口语化表达，可以使用表情符号",
-            "tone": "轻松、友好、亲切",
-            "example": "好的，没问题！今天天气真不错~"
-        },
-        "formal": {
-            "name": "正式专业",
-            "description": "专业、严谨的表达方式，适合工作场景",
-            "tone": "正式、专业、礼貌",
-            "example": "您好，根据数据分析结果，建议采取以下措施..."
-        },
-        "professional": {
-            "name": "技术专业",
-            "description": "使用专业术语，适合技术人员交流",
-            "tone": "专业、技术性强",
-            "example": "根据PMF源解析结果，O3主要来源于..."
-        },
-        "simple": {
-            "name": "通俗易懂",
-            "description": "用简单的语言解释复杂概念，适合非专业人士",
-            "tone": "简单、易懂、耐心",
-            "example": "简单来说，就像做饭时火太大容易糊一样..."
-        }
-    }
-
-    # 输出格式选项
-    FORMAT_OPTIONS = {
-        "plain": {
-            "name": "纯文本",
-            "description": "简单文本，不使用任何格式化"
-        },
-        "markdown": {
-            "name": "Markdown格式",
-            "description": "使用Markdown格式，支持标题、列表、加粗等"
-        },
-        "structured": {
-            "name": "结构化",
-            "description": "使用分段和列表，结构清晰"
-        }
-    }
-
-    # 详细程度选项
-    DETAIL_OPTIONS = {
-        "concise": {
-            "name": "简洁",
-            "description": "只说重点，一句话概括",
-            "max_length": 200
-        },
-        "moderate": {
-            "name": "适中",
-            "description": "适量信息，适中篇幅",
-            "max_length": 1000
-        },
-        "detailed": {
-            "name": "详细",
-            "description": "提供完整信息和背景",
-            "max_length": 2000
-        }
-    }
+    """用户偏好配置（助理定义模式）"""
 
     def __init__(
         self,
@@ -104,18 +39,26 @@ class UserPreferences:
         self.preferences_file = self.data_dir / f"{safe_user_id}.json"
         self.waiting_preferences_file = self.data_dir / f"{safe_user_id}_waiting.flag"  # 状态标记文件
 
-        # 默认偏好
+        # 默认偏好（助理定义模式）
         self._preferences = {
-            "style": "casual",  # 默认轻松随意
-            "format": "plain",  # 默认纯文本
-            "detail": "moderate",  # 默认适中
-            "use_emoji": False,  # 默认不使用emoji
+            "assistant_name": "智能助手",
+            "assistant_personality": "友善、专业、简洁",
             "created_at": None,
             "updated_at": None
         }
 
         # 加载已有偏好
         self._load()
+
+        # ✅ 新增：记忆文件路径（用于soul.md和USER.md）
+        self.memory_dir = Path("backend_data_registry/social/memory")
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        safe_user_id_for_memory = user_id.replace(":", "_")
+        self.user_memory_path = self.memory_dir / safe_user_id_for_memory
+        self.user_memory_path.mkdir(parents=True, exist_ok=True)
+
+        self.soul_file = self.user_memory_path / "soul.md"
+        self.user_file = self.user_memory_path / "USER.md"
 
     def _load(self) -> None:
         """从文件加载用户偏好"""
@@ -166,12 +109,12 @@ class UserPreferences:
 
     def set_preferences(self, **kwargs) -> None:
         """
-        设置用户偏好
+        设置用户偏好（助理定义模式）
 
         Args:
-            **kwargs: 偏好键值对（style/format/detail/use_emoji）
+            **kwargs: 偏好键值对（assistant_name/assistant_personality）
         """
-        valid_keys = {"style", "format", "detail", "use_emoji"}
+        valid_keys = {"assistant_name", "assistant_personality"}
         for key, value in kwargs.items():
             if key in valid_keys:
                 self._preferences[key] = value
@@ -182,214 +125,125 @@ class UserPreferences:
 
         self._save()
 
-        # ✅ 保存偏好后清除等待状态
+        # ✅ 保存偏好后生成soul.md
+        self._generate_soul_md()
+
+        # ✅ 确保USER.md存在（空白模板）
+        self._ensure_user_md_exists()
+
+        # ✅ 清除等待状态
         self.clear_waiting_preferences()
 
-    def get_style_description(self) -> str:
+    def _generate_soul_md(self) -> None:
         """
-        获取当前风格的描述
+        从 user_preferences 生成 soul.md
 
-        Returns:
-            风格描述字符串
-        """
-        style = self._preferences["style"]
-        style_info = self.STYLE_OPTIONS.get(style, self.STYLE_OPTIONS["casual"])
-
-        return (
-            f"{style_info['tone']}，{style_info['description']}\n"
-            f"示例：{style_info['example']}"
-        )
-
-    def get_format_description(self) -> str:
-        """
-        获取当前输出格式的描述
-
-        Returns:
-            格式描述字符串
-        """
-        format_type = self._preferences["format"]
-        format_info = self.FORMAT_OPTIONS.get(format_type, self.FORMAT_OPTIONS["plain"])
-
-        return format_info['description']
-
-    def get_max_length(self) -> int:
-        """
-        获取最大回答长度
-
-        Returns:
-            最大字数
-        """
-        detail = self._preferences["detail"]
-        detail_info = self.DETAIL_OPTIONS.get(detail, self.DETAIL_OPTIONS["moderate"])
-
-        return detail_info['max_length']
-
-    def generate_welcome_message(self) -> str:
-        """
-        生成欢迎消息（首次对话引导）
-
-        Returns:
-            欢迎消息字符串
-        """
-        return """欢迎使用智能分析助手！
-
-为了更好地为你服务，请选择你的偏好配置：
-
-**1. 回答风格**
-A. 轻松随意 - 像朋友聊天一样
-B. 正式专业 - 适合工作场景
-C. 技术专业 - 使用专业术语
-D. 通俗易懂 - 简单解释复杂概念
-
-**2. 输出格式**
-A. 纯文本 - 简单直接
-B. Markdown格式 - 支持格式化
-C. 结构化 - 清晰分段
-
-**3. 详细程度**
-A. 简洁 - 一句话概括
-B. 适中 - 适量信息
-C. 详细 - 完整信息
-
-**4. 是否使用表情符号**
-A. 是
-B. 否
-
-请直接回复你的选择，例如：1A 2B 3C 4B
-或者回复"默认"使用默认配置（轻松随意+纯文本+适中+无表情）"""
-
-    def parse_preferences_response(self, response: str) -> Optional[Dict[str, Any]]:
-        """
-        解析用户的偏好选择响应
-
-        Args:
-            response: 用户响应字符串
-
-        Returns:
-            解析后的偏好配置，失败返回None
+        助理灵魂档案，从用户偏好配置生成（已弃用，保留向后兼容）
         """
         try:
-            # 标准化输入
-            response = response.strip().upper()
+            name = self._preferences.get("assistant_name", "智能助手")
+            personality = self._preferences.get("assistant_personality", "友善、专业")
 
-            # 默认配置
-            if response == "默认" or response == "DEFAULT":
-                return {
-                    "style": "casual",
-                    "format": "plain",
-                    "detail": "moderate",
-                    "use_emoji": False
-                }
+            content = f"""# 助理灵魂档案
 
-            # 解析选择（格式：1A 2B 3C 4B）
-            choices = {}
+## 基本信息
+- 名称：{name}
+- 性格：{personality}
 
-            # 构建字母到选项的映射
-            style_keys = list(self.STYLE_OPTIONS.keys())
-            format_keys = list(self.FORMAT_OPTIONS.keys())
-            detail_keys = list(self.DETAIL_OPTIONS.keys())
+## 能力范围
+- 空气质量查询和分析（广东省城市日数据、统计报表、对比分析）
+- 数据可视化（图表生成、AQI日历图等）
+- 文件操作（读取、编辑、搜索）
+- 系统管理（执行命令、定时任务）
+- 记忆管理（记住你的偏好和重要信息）
 
-            for part in response.split():
-                if len(part) >= 2:
-                    question = part[0]
-                    answer = part[1].upper()  # 确保大写
+## 沟通风格
+- 保持对话性但专业
+- 根据你的专业水平调整技术深度
+- 需求不明确时主动提出澄清性问题
+- 不知道时诚实承认，不编造答案
+"""
 
-                    if question == "1" and answer in ["A", "B", "C", "D"]:
-                        # 将字母映射到实际的风格值
-                        index = ord(answer) - ord('A')
-                        if 0 <= index < len(style_keys):
-                            choices["style"] = style_keys[index]
-                    elif question == "2" and answer in ["A", "B", "C"]:
-                        # 将字母映射到实际的格式值
-                        index = ord(answer) - ord('A')
-                        if 0 <= index < len(format_keys):
-                            choices["format"] = format_keys[index]
-                    elif question == "3" and answer in ["A", "B", "C"]:
-                        # 将字母映射到实际的详细程度值
-                        index = ord(answer) - ord('A')
-                        if 0 <= index < len(detail_keys):
-                            choices["detail"] = detail_keys[index]
-                    elif question == "4" and answer in ["A", "B"]:
-                        choices["use_emoji"] = (answer == "A")
-
-            # 验证是否完整
-            required_keys = {"style", "format", "detail", "use_emoji"}
-            if not required_keys.issubset(choices.keys()):
-                return None
-
-            return choices
-
+            self.soul_file.write_text(content, encoding='utf-8')
+            logger.info("soul_md_generated",
+                       user_id=self.user_id,
+                       path=str(self.soul_file))
         except Exception as e:
-            logger.error("failed_to_parse_preferences",
-                        user_id=self.user_id,
-                        response=response,
-                        error=str(e))
-            return None
-
-    def generate_confirmation_message(self, preferences: Dict[str, Any]) -> str:
-        """
-        生成偏好确认消息
-
-        Args:
-            preferences: 偏好配置
-
-        Returns:
-            确认消息字符串
-        """
-        style_info = self.STYLE_OPTIONS.get(preferences["style"])
-        format_info = self.FORMAT_OPTIONS.get(preferences["format"])
-        detail_info = self.DETAIL_OPTIONS.get(preferences["detail"])
-        emoji_text = "使用" if preferences["use_emoji"] else "不使用"
-
-        return f"""配置已保存！
-
-你的偏好设置：
-- 回答风格：{style_info['name']} - {style_info['description']}
-- 输出格式：{format_info['name']} - {format_info['description']}
-- 详细程度：{detail_info['name']} - {detail_info['description']}
-- 表情符号：{emoji_text}
-
-现在你可以开始提问了！有什么可以帮助你的吗？"""
-
-    def set_waiting_preferences(self) -> None:
-        """
-        设置等待偏好配置响应状态
-
-        新用户收到欢迎消息后调用，标记为等待用户回复偏好配置
-        """
-        try:
-            self.waiting_preferences_file.write_text(
-                datetime.now().isoformat(),
-                encoding='utf-8'
-            )
-            logger.info("waiting_preferences_state_set",
-                       user_id=self.user_id)
-        except Exception as e:
-            logger.error("failed_to_set_waiting_preferences",
+            logger.error("failed_to_generate_soul_md",
                         user_id=self.user_id,
                         error=str(e))
 
-    def is_waiting_preferences(self) -> bool:
+    def _ensure_user_md_exists(self) -> None:
         """
-        检查是否在等待偏好配置响应
+        确保 USER.md 存在（空白模板）
 
-        Returns:
-            是否在等待偏好配置响应
-        """
-        return self.waiting_preferences_file.exists()
-
-    def clear_waiting_preferences(self) -> None:
-        """
-        清除等待偏好配置响应状态
-
-        用户成功配置偏好后调用
+        用户档案文件，助理通过文件工具主动学习和管理
         """
         try:
-            if self.waiting_preferences_file.exists():
-                self.waiting_preferences_file.unlink()
-                logger.info("waiting_preferences_state_cleared",
-                           user_id=self.user_id)
+            if not self.user_file.exists():
+                content = """# 用户档案
+
+## 基本信息
+- 姓名：（暂未了解）
+- 称呼：您
+- 代词：你
+- 时区：UTC+8
+
+## 专业背景
+- 职业：（待学习）
+- 技术水平：（待学习）
+- 专业领域：（待学习）
+
+## 沟通偏好
+- 详细程度：（待学习）
+- 格式偏好：（待学习）
+- 对话风格：（待学习）
+
+## 学习历史
+*助理通过对话逐步了解你的偏好*
+
+---
+最后更新：（自动记录）
+"""
+                self.user_file.write_text(content, encoding='utf-8')
+                logger.info("user_md_template_created",
+                           user_id=self.user_id,
+                           path=str(self.user_file))
         except Exception as e:
-            logger.error("failed_to_clear_waiting_preferences",
+            logger.error("failed_to_create_user_md_template",
                         user_id=self.user_id,
                         error=str(e))
+
+    def load_soul_md(self) -> str:
+        """
+        加载 soul.md 内容
+
+        Returns:
+            soul.md 文件内容，如果文件不存在返回空字符串
+        """
+        try:
+            if self.soul_file.exists():
+                return self.soul_file.read_text(encoding='utf-8')
+            return ""
+        except Exception as e:
+            logger.error("failed_to_load_soul_md",
+                        user_id=self.user_id,
+                        error=str(e))
+            return ""
+
+    def load_user_md(self) -> str:
+        """
+        加载 USER.md 内容
+
+        Returns:
+            USER.md 文件内容，如果文件不存在返回空字符串
+        """
+        try:
+            if self.user_file.exists():
+                return self.user_file.read_text(encoding='utf-8')
+            return ""
+        except Exception as e:
+            logger.error("failed_to_load_user_md",
+                        user_id=self.user_id,
+                        error=str(e))
+            return ""

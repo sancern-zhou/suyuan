@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from datetime import datetime
 import math
 import structlog
+import re
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 import pandas as pd
@@ -25,6 +26,83 @@ if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
+
+
+def _parse_condition(condition: str, df: pd.DataFrame) -> Optional[pd.Series]:
+    """
+    解析条件字符串并返回布尔掩码
+
+    支持的语法：
+    - measurements.O3_8h > 160
+    - measurements.PM2_5 >= 35
+    - components.Al > 1000
+
+    Args:
+        condition: 条件字符串
+        df: DataFrame对象
+
+    Returns:
+        布尔掩码Series，解析失败返回None
+    """
+    try:
+        # 使用正则表达式解析条件
+        # 匹配模式：列名 操作符 值
+        # 例如：measurements.O3_8h > 160
+        pattern = r'^([a-zA-Z_][a-zA-Z0-9_.]*)\s*(>=|<=|>|<|==|!=)\s*(.+)$'
+        match = re.match(pattern, condition.strip())
+
+        if not match:
+            logger.warning("condition_parse_failed", condition=condition, reason="invalid_format")
+            return None
+
+        column_name = match.group(1)
+        operator = match.group(2)
+        value_str = match.group(3).strip()
+
+        # 检查列是否存在
+        if column_name not in df.columns:
+            logger.warning("condition_column_not_found", column=column_name,
+                          available_columns=list(df.columns)[:20])
+            return None
+
+        # 转换值类型
+        try:
+            # 尝试转换为数字
+            if '.' in value_str:
+                value = float(value_str)
+            else:
+                value = int(value_str)
+        except ValueError:
+            # 如果不是数字，尝试去除引号
+            if (value_str.startswith("'") and value_str.endswith("'")) or \
+               (value_str.startswith('"') and value_str.endswith('"')):
+                value = value_str[1:-1]
+            else:
+                value = value_str
+
+        # 应用条件
+        column_data = df[column_name]
+
+        if operator == '>':
+            return column_data > value
+        elif operator == '>=':
+            return column_data >= value
+        elif operator == '<':
+            return column_data < value
+        elif operator == '<=':
+            return column_data <= value
+        elif operator == '==':
+            return column_data == value
+        elif operator == '!=':
+            return column_data != value
+        else:
+            logger.warning("condition_unsupported_operator", operator=operator)
+            return None
+
+    except Exception as e:
+        logger.warning("condition_parse_exception", condition=condition, error=str(e))
+        return None
+
 
 
 # =============================================================================
@@ -240,6 +318,13 @@ class AggregateDataTool(LLMTool):
                 "- 使用start_date和end_date参数可以只计算指定日期范围的数据\n"
                 "- 日期格式：YYYY-MM-DD（如2026-01-17）\n"
                 "\n"
+                "**⚠️ time_granularity（时间粒度）参数使用规则（重要）：**\n"
+                "- time_granularity会**自动创建时间分组字段**，无需在group_by中包含时间字段\n"
+                "- **错误示例**：group_by=['name', 'timestamp'], time_granularity='month' ❌\n"
+                "- **正确示例**：group_by=['name'], time_granularity='month' ✅\n"
+                "- 支持的粒度：hour（小时）、day（日）、month（月）、year（年）\n"
+                "- 工具会自动过滤group_by中的timestamp/time_point等时间字段，避免重复分组\n"
+                "\n"
                 "**⚠️ IAQI函数使用注意事项（重要）：**\n"
                 "- 使用IAQI函数时，column参数应指定**浓度字段**（如measurements.PM2_5、measurements.NO2）\n"
                 "- 不要使用已存储的IAQI字段（如measurements.PM2_5_IAQI），因为那可能是旧标准计算的值\n"
@@ -286,6 +371,10 @@ class AggregateDataTool(LLMTool):
                                 "percentile": {
                                     "type": "number",
                                     "description": "百分位数（PERCENTILE函数必需，取值0-100，如98、95、90）"
+                                },
+                                "condition": {
+                                    "type": "string",
+                                    "description": "过滤条件（可选，支持条件聚合）。语法：列名 操作符 值，如 'measurements.O3_8h > 160'、'measurements.PM2_5 >= 35'、'components.Al > 1000'。⚠️ **注意**：列名必须是展平后的完整字段名（支持点号语法，如 measurements.O3_8h）。支持运算符：>、>=、<、<=、==、!=。示例：统计臭氧超标天数用 'measurements.O3_8h > 160'（日最大8小时浓度 > 160 μg/m³）"
                                 }
                             },
                             "required": ["function"]
@@ -295,12 +384,12 @@ class AggregateDataTool(LLMTool):
                     "group_by": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "分组字段列表（可选）"
+                        "description": "分组字段列表（可选，如['name']按城市分组）。⚠️ **重要**：如果使用了time_granularity参数，不要在此列表中包含timestamp/time_point等时间字段，工具会自动处理时间分组。错误示例：group_by=['name', 'timestamp'], time_granularity='month' ❌；正确示例：group_by=['name'], time_granularity='month' ✅"
                     },
                     "time_granularity": {
                         "type": "string",
                         "enum": ["hour", "day", "month", "year"],
-                        "description": "时间粒度（可选）"
+                        "description": "时间粒度（可选）。指定后会自动创建时间分组字段，无需在group_by中手动添加时间字段。hour=按小时分组，day=按日分组，month=按月分组，year=按年分组。示例：要统计'每个月各城市的超标天数'，应使用group_by=['name'], time_granularity='month'"
                     },
                     "time_column": {
                         "type": "string",
@@ -355,6 +444,20 @@ class AggregateDataTool(LLMTool):
                 "success": False,
                 "error": "必须提供aggregations参数"
             }
+
+        # ⚠️ 参数兼容性检查：time_granularity 与 group_by
+        if time_granularity and group_by:
+            time_field_names = {"timestamp", "time_point", "time", "date", "datetime"}
+            time_fields_in_group_by = [col for col in group_by if col.lower() in time_field_names]
+
+            if time_fields_in_group_by:
+                logger.warning(
+                    "time_fields_in_group_by_detected",
+                    time_fields=time_fields_in_group_by,
+                    time_granularity=time_granularity,
+                    message="time_granularity会自动处理时间分组，group_by中不应包含时间字段",
+                    fix="工具将自动过滤这些字段"
+                )
 
         # 验证聚合函数
         for agg in aggregations:
@@ -615,8 +718,8 @@ class AggregateDataTool(LLMTool):
             if time_column not in df.columns:
                 raise ValueError(f"时间列不存在: {time_column}")
 
-            # 转换时间列
-            df[time_column] = pd.to_datetime(df[time_column])
+            # 转换时间列（支持混合格式）
+            df[time_column] = pd.to_datetime(df[time_column], format='mixed')
 
             # 创建时间分组键
             if time_granularity == "hour":
@@ -629,7 +732,17 @@ class AggregateDataTool(LLMTool):
                 df["_time_group"] = df[time_column].dt.year
 
             # 将时间分组添加到分组字段
-            group_by = list(group_by) + ["_time_group"]
+            # ⚠️ 过滤掉用户指定的 group_by 中的时间字段，避免与 _time_group 冲突
+            time_field_names = {"timestamp", "time_point", "time", "date", "datetime"}
+            filtered_group_by = [col for col in group_by if col.lower() not in time_field_names]
+
+            if len(filtered_group_by) < len(group_by):
+                removed_fields = set(group_by) - set(filtered_group_by)
+                logger.info("time_fields_removed_from_group_by",
+                           fields=removed_fields,
+                           reason="time_granularity_already_creates_time_group")
+
+            group_by = filtered_group_by + ["_time_group"]
 
         # 分组聚合
         if group_by:
@@ -643,8 +756,11 @@ class AggregateDataTool(LLMTool):
                 grouped = df.groupby(valid_group_by)
             else:
                 grouped = None
+            # 保存 valid_group_by 供后续条件过滤使用
+            saved_valid_group_by = valid_group_by
         else:
             grouped = None
+            saved_valid_group_by = []
 
         # 执行聚合计算
         agg_result = {}
@@ -660,44 +776,80 @@ class AggregateDataTool(LLMTool):
             func = agg_config["function"].upper()
             alias = agg_config.get("alias", f"{func}_{column}")
             pollutant = agg_config.get("pollutant")
+            condition = agg_config.get("condition")
 
             if column not in df.columns:
                 logger.warning("aggregation_column_missing", column=column)
                 continue
 
+            # 应用条件过滤（如果有）
+            current_df = df
+            current_grouped = grouped
+
+            if condition:
+                try:
+                    # 使用自定义条件解析器（支持点号语法）
+                    mask = _parse_condition(condition, df)
+
+                    if mask is not None:
+                        current_df = df[mask]
+                        logger.info("condition_filter_applied", condition=condition,
+                                   original_count=len(df), filtered_count=len(current_df))
+
+                        # 重新分组（如果使用了分组）
+                        if current_grouped is not None:
+                            # 使用保存的 valid_group_by 重新分组
+                            valid_group_by_for_filtered = [col for col in saved_valid_group_by if col in current_df.columns]
+                            if valid_group_by_for_filtered:
+                                current_grouped = current_df.groupby(valid_group_by_for_filtered)
+                            else:
+                                current_grouped = None
+                    else:
+                        logger.warning("condition_filter_failed", condition=condition,
+                                       error="parse_condition returned None",
+                                       fallback="using_original_data")
+                        current_df = df
+                        current_grouped = grouped
+
+                except Exception as e:
+                    logger.warning("condition_filter_failed", condition=condition,
+                                   error=str(e), fallback="using_original_data")
+                    current_df = df
+                    current_grouped = grouped
+
             # 执行聚合
-            if grouped is not None:
+            if current_grouped is not None:
                 if func == "COUNT":
-                    agg_values = grouped[column].count()
+                    agg_values = current_grouped[column].count()
                 elif func == "SUM":
-                    agg_values = grouped[column].sum()
+                    agg_values = current_grouped[column].sum()
                 elif func == "AVG":
-                    agg_values = grouped[column].mean()
+                    agg_values = current_grouped[column].mean()
                     # 应用修约规则
                     if pollutant:
                         agg_values = agg_values.apply(
                             lambda x: apply_rounding(x, pollutant, 'statistical_data') if pd.notna(x) else x
                         )
                 elif func == "MAX":
-                    agg_values = grouped[column].max()
+                    agg_values = current_grouped[column].max()
                 elif func == "MIN":
-                    agg_values = grouped[column].min()
+                    agg_values = current_grouped[column].min()
                 elif func == "STDDEV":
-                    agg_values = grouped[column].std()
+                    agg_values = current_grouped[column].std()
                     # 应用修约规则
                     if pollutant:
                         agg_values = agg_values.apply(
                             lambda x: apply_rounding(x, pollutant, 'statistical_data') if pd.notna(x) else x
                         )
                 elif func == "VAR":
-                    agg_values = grouped[column].var()
+                    agg_values = current_grouped[column].var()
                     # 应用修约规则
                     if pollutant:
                         agg_values = agg_values.apply(
                             lambda x: apply_rounding(x, pollutant, 'statistical_data') if pd.notna(x) else x
                         )
                 elif func == "MEDIAN":
-                    agg_values = grouped[column].median()
+                    agg_values = current_grouped[column].median()
                     # 应用修约规则
                     if pollutant:
                         agg_values = agg_values.apply(
@@ -705,7 +857,7 @@ class AggregateDataTool(LLMTool):
                         )
                 elif func == "PERCENTILE":
                     percentile_val = agg_config.get("percentile", 50)
-                    agg_values = grouped[column].apply(
+                    agg_values = current_grouped[column].apply(
                         lambda x: calculate_percentile(x.tolist(), percentile_val)
                     )
                     # 应用修约规则
@@ -715,7 +867,7 @@ class AggregateDataTool(LLMTool):
                         )
                 elif func == "O3_8H_MAX":
                     # 特殊处理：需要8小时滑动窗口
-                    agg_values = grouped.apply(
+                    agg_values = current_grouped.apply(
                         lambda g: calculate_o3_8h_max_for_group(g, column, time_column or 'time_point')
                     )
                     # 应用修约规则
@@ -730,7 +882,7 @@ class AggregateDataTool(LLMTool):
                         logger.warning("iaqi_missing_pollutant", column=column)
                         continue
                     # 先计算每组的平均浓度
-                    avg_concentrations = grouped[column].mean()
+                    avg_concentrations = current_grouped[column].mean()
                     # 对平均浓度计算IAQI
                     agg_values = avg_concentrations.apply(
                         lambda x: calculate_iaqi_for_aggregate(x, pollutant) if pd.notna(x) else 0
@@ -744,24 +896,24 @@ class AggregateDataTool(LLMTool):
                     if not standard_limit:
                         logger.warning("single_index_unknown_pollutant", pollutant=pollutant)
                         continue
-                    agg_values = grouped[column].mean() / standard_limit
+                    agg_values = current_grouped[column].mean() / standard_limit
                     agg_values = agg_values.apply(
                         lambda x: safe_round_for_index(x, 3) if pd.notna(x) else 0.0
                     )
                 elif func == "AQI":
                     # 计算AQI（空气质量指数）= max(IAQI_PM2.5, IAQI_PM10, IAQI_O3, IAQI_NO2, IAQI_SO2, IAQI_CO)
                     # 需要数据中包含所有六参数浓度
-                    agg_values = grouped.apply(
+                    agg_values = current_grouped.apply(
                         lambda g: self._calculate_aqi_for_group(g, time_column or 'time_point')
                     )
                 elif func == "COMPREHENSIVE_INDEX":
                     # 计算综合指数 = Σ(单项指数)
-                    agg_values = grouped.apply(
+                    agg_values = current_grouped.apply(
                         lambda g: self._calculate_comprehensive_index_for_group(g)
                     )
                 elif func == "PRIMARY_POLLUTANT":
                     # 计算首要污染物（IAQI最大的污染物）
-                    agg_values = grouped.apply(
+                    agg_values = current_grouped.apply(
                         lambda g: self._calculate_primary_pollutant_for_group(g, time_column or 'time_point')
                     )
                 else:
@@ -771,41 +923,41 @@ class AggregateDataTool(LLMTool):
             else:
                 # 全局聚合
                 if func == "COUNT":
-                    value = df[column].count()
+                    value = current_df[column].count()
                 elif func == "SUM":
-                    value = df[column].sum()
+                    value = current_df[column].sum()
                 elif func == "AVG":
-                    value = df[column].mean()
+                    value = current_df[column].mean()
                     # 应用修约规则
                     if pollutant:
                         value = apply_rounding(value, pollutant, 'statistical_data')
                 elif func == "MAX":
-                    value = df[column].max()
+                    value = current_df[column].max()
                 elif func == "MIN":
-                    value = df[column].min()
+                    value = current_df[column].min()
                 elif func == "STDDEV":
-                    value = df[column].std()
+                    value = current_df[column].std()
                     # 应用修约规则
                     if pollutant:
                         value = apply_rounding(value, pollutant, 'statistical_data')
                 elif func == "VAR":
-                    value = df[column].var()
+                    value = current_df[column].var()
                     # 应用修约规则
                     if pollutant:
                         value = apply_rounding(value, pollutant, 'statistical_data')
                 elif func == "MEDIAN":
-                    value = df[column].median()
+                    value = current_df[column].median()
                     # 应用修约规则
                     if pollutant:
                         value = apply_rounding(value, pollutant, 'statistical_data')
                 elif func == "PERCENTILE":
                     percentile_val = agg_config.get("percentile", 50)
-                    value = calculate_percentile(df[column].tolist(), percentile_val)
+                    value = calculate_percentile(current_df[column].tolist(), percentile_val)
                     # 应用修约规则
                     if pollutant:
                         value = apply_rounding(value, pollutant, 'statistical_data')
                 elif func == "O3_8H_MAX":
-                    value = calculate_o3_8h_max(df, column, time_column or 'time_point')
+                    value = calculate_o3_8h_max(current_df, column, time_column or 'time_point')
                     if not value.empty:
                         value = value.iloc[0]
                     else:
@@ -819,7 +971,7 @@ class AggregateDataTool(LLMTool):
                         logger.warning("iaqi_missing_pollutant", column=column)
                         continue
                     # 对于全局聚合，计算平均值的IAQI
-                    avg_value = df[column].mean()
+                    avg_value = current_df[column].mean()
                     value = calculate_iaqi_for_aggregate(avg_value, pollutant)
                 elif func == "SINGLE_INDEX":
                     # 计算单项指数 Ii = Ci / Si
@@ -830,17 +982,17 @@ class AggregateDataTool(LLMTool):
                     if not standard_limit:
                         logger.warning("single_index_unknown_pollutant", pollutant=pollutant)
                         continue
-                    avg_value = df[column].mean()
+                    avg_value = current_df[column].mean()
                     value = safe_round_for_index(avg_value / standard_limit, 3)
                 elif func == "AQI":
                     # 计算AQI（空气质量指数）= max(IAQI_PM2.5, IAQI_PM10, IAQI_O3, IAQI_NO2, IAQI_SO2, IAQI_CO)
-                    value = self._calculate_aqi_for_dataframe(df, time_column or 'time_point')
+                    value = self._calculate_aqi_for_dataframe(current_df, time_column or 'time_point')
                 elif func == "COMPREHENSIVE_INDEX":
                     # 计算综合指数 = Σ(单项指数)
-                    value = self._calculate_comprehensive_index_for_dataframe(df)
+                    value = self._calculate_comprehensive_index_for_dataframe(current_df)
                 elif func == "PRIMARY_POLLUTANT":
                     # 计算首要污染物（IAQI最大的污染物）
-                    value = self._calculate_primary_pollutant_for_dataframe(df, time_column or 'time_point')
+                    value = self._calculate_primary_pollutant_for_dataframe(current_df, time_column or 'time_point')
                 else:
                     continue
 

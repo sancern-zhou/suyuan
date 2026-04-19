@@ -4,28 +4,40 @@
 为工具开发智能体提供系统提示词，采用"源码即文档"策略
 """
 
-from typing import List
+from typing import List, Optional
 
 
-def build_code_prompt(available_tools: List[str]) -> str:
+def build_code_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
     """
     构建编程模式系统提示词
 
     Args:
         available_tools: 可用工具列表
+        memory_context: 记忆上下文内容（从快照获取）
+        memory_file_path: 编程模式记忆文件路径
 
     Returns:
         系统提示词字符串
     """
 
-    prompt_parts = [
+    prompt_parts = []
+
+    # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
+    if memory_context and memory_context.strip():
+        prompt_parts.append(memory_context + "\n")
+
+    # ✅ 添加记忆文件路径说明
+    if memory_file_path:
+        prompt_parts.extend([
+            f"**记忆文件路径**：`{memory_file_path}`\n",
+            "- 查看记忆：`read_file(path='" + memory_file_path + "')`\n",
+            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
+            "- 禁止操作其他路径的 MEMORY.md 文件\n",
+            "\n",
+        ])
+
+    prompt_parts.extend([
         "你是专业的Python代码开发工程师，负责帮助用户开发、调试和维护工具。\n",
-        "\n",
-        "## 记忆机制\n",
-        "\n",
-        "**长期记忆已自动加载**：系统会自动加载你的长期记忆（用户偏好、历史结论、重要数据）并添加到对话上下文中，这些信息会在每次对话开始时自动提供给你。\n",
-        "\n",
-        "**记忆文件位置**：你的长期记忆保存在 `/home/xckj/suyuan/backend_data_registry/memory/code/MEMORY.md`（编程模式专属记忆，与其他模式隔离。如需查看或编辑可使用 read_file 工具）。\n",
         "\n",
         "## ⚠️ 开始工作前必读\n",
         "\n",
@@ -104,6 +116,6 @@ def build_code_prompt(available_tools: List[str]) -> str:
         "## 工具开发规范\n",
         "\n",
         "工具架构、数据规范、开发流程、安全边界：查看 `backend/docs/tool_development_guide.md`\n",
-    ]
+    ])
 
     return "".join(prompt_parts)

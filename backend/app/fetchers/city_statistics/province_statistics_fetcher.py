@@ -1,19 +1,33 @@
 """
 省级空气质量统计数据抓取器（新标准限值版本）
 
-定时从XcAiDb数据库提取数据，计算31个省级行政区的空气质量评价指标（按HJ663新标准限值），
+定时从XcAiDb数据库提取数据，计算全国各省级行政区的空气质量评价指标（按HJ663新标准限值），
 并将结果缓存回XcAiDb数据库的province_statistics_new_standard表。
 
 核心功能：
 - 每天上午8点自动运行
-- 计算月度统计、年度累计、当月累计三种统计类型
+- 计算四种统计类型：
+  1. ytd_to_month（年初到某月累计：1-1月、1-2月、...至上月）- 避免"修约→计算→再修约"误差
+  2. month_current（当月累计）- 每天
+  3. year_to_date（年初至今累计）- 每天
+  4. month_complete（完整月统计）- 每月1日从month_current转换
 - 按HJ663新标准限值计算综合指数和单项指数
-- 支持多城市数据合并统计
+- 支持多城市数据合并统计（包含全国所有地级市、州、盟）
 - 自动排名计算
 
+数据示例（4月份时）：
+  ytd_to_month + stat_date='2026-01'  → 年初至1月累计
+  ytd_to_month + stat_date='2026-02'  → 年初至2月累计
+  ytd_to_month + stat_date='2026-03'  → 年初至3月累计
+  month_current + stat_date='2026-04' → 4月当月累计
+  year_to_date + stat_date='2026'      → 年初至今累计
+  month_complete + stat_date='2026-03' → 3月完整月
+
+注意：本抓取器统计范围为全国所有城市，不限于168重点城市。
+
 作者：Claude Code
-版本：1.0.0
-日期：2026-04-09
+版本：1.1.0
+日期：2026-04-18
 """
 
 from typing import List, Dict, Tuple, Optional
@@ -24,7 +38,6 @@ import pyodbc
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.fetchers.city_statistics.city_statistics_fetcher import (
     SQLServerClient,
-    ALL_168_CITIES,
     safe_round,
     calculate_percentile,
     calculate_statistics,
@@ -33,6 +46,21 @@ from app.fetchers.city_statistics.city_statistics_fetcher import (
 )
 
 logger = structlog.get_logger()
+
+
+# =============================================================================
+# 云南自治州名称映射（CityDayAQIPublishHistory表中的Area -> bsd_city表中的name）
+# 由于CityDayAQIPublishHistory表中云南自治州使用区县级CityCode，需要通过名称匹配
+YUNNAN_AUTONOMOUS_PREFECTURE_MAP = {
+    '楚雄彝族自治州': '楚雄彝族自治州',
+    '红河哈尼族彝族自治州': '红河哈尼族彝族自治州',
+    '文山壮族苗族自治州': '文山壮族苗族自治州',
+    '西双版纳傣族自治州': '西双版纳傣族自治州',
+    '大理白族自治州': '大理白族自治州',
+    '德宏傣族景颇族自治州': '德宏傣族景颇族自治州',
+    '怒江傈僳族自治州': '怒江傈僳族自治州',
+    '迪庆藏族自治州': '迪庆藏族自治州',
+}
 
 
 # =============================================================================
@@ -112,6 +140,20 @@ def calculate_province_statistics(city_records: Dict[str, List[Dict]]) -> Option
         result['city_count'] = len(city_names)
         result['city_names'] = ','.join(sorted(city_names))
 
+        # 修正 sample_coverage：省级统计应该计算所有城市的平均样本覆盖率
+        # 而不是用总记录数除以365（因为总记录数 = 城市数 * 365）
+        # 正确做法：先计算每个城市的样本覆盖率，再求平均
+        city_coverages = []
+        for city_name, records in city_records.items():
+            if records:
+                # 每个城市的期望天数是365（年度统计）
+                city_coverage = (len(records) / 365) * 100
+                city_coverages.append(city_coverage)
+
+        # 取所有城市的平均样本覆盖率
+        if city_coverages:
+            result['sample_coverage'] = safe_round(sum(city_coverages) / len(city_coverages), 2)
+
     return result
 
 
@@ -134,157 +176,132 @@ def normalize_city_name(city_name: str) -> str:
     return normalized
 
 
-# =============================================================================
-# 预期城市省份映射表（用于验证）
-# =============================================================================
-
-EXPECTED_CITY_PROVINCE_MAP = {
-    # 河北省（11个）
-    '石家庄': '河北', '唐山': '河北', '秦皇岛': '河北', '邯郸': '河北',
-    '邢台': '河北', '保定': '河北', '沧州': '河北', '廊坊': '河北',
-    '衡水': '河北', '张家口': '河北', '承德': '河北',
-    # 山西省（11个）
-    '太原': '山西', '阳泉': '山西', '长治': '山西', '晋城': '山西',
-    '晋中': '山西', '运城': '山西', '临汾': '山西', '吕梁': '山西',
-    '大同': '山西', '朔州': '山西', '忻州': '山西',
-    # 内蒙古自治区（2个）
-    '呼和浩特': '内蒙古', '包头': '内蒙古',
-    # 辽宁省（5个）
-    '沈阳': '辽宁', '大连': '辽宁', '朝阳': '辽宁', '锦州': '辽宁', '葫芦岛': '辽宁',
-    # 吉林省（1个）
-    '长春': '吉林',
-    # 黑龙江省（1个）
-    '哈尔滨': '黑龙江',
-    # 江苏省（13个）
-    '南京': '江苏', '无锡': '江苏', '徐州': '江苏', '常州': '江苏',
-    '苏州': '江苏', '南通': '江苏', '连云港': '江苏', '淮安': '江苏',
-    '盐城': '江苏', '扬州': '江苏', '镇江': '江苏', '泰州': '江苏', '宿迁': '江苏',
-    # 浙江省（11个）
-    '杭州': '浙江', '宁波': '浙江', '嘉兴': '浙江', '湖州': '浙江',
-    '绍兴': '浙江', '舟山': '浙江', '温州': '浙江', '金华': '浙江',
-    '衢州': '浙江', '台州': '浙江', '丽水': '浙江',
-    # 安徽省（15个）
-    '合肥': '安徽', '芜湖': '安徽', '蚌埠': '安徽', '淮南': '安徽',
-    '马鞍山': '安徽', '淮北': '安徽', '滁州': '安徽', '阜阳': '安徽',
-    '宿州': '安徽', '六安': '安徽', '亳州': '安徽', '铜陵': '安徽',
-    '安庆': '安徽', '黄山': '安徽', '宣城': '安徽', '池州': '安徽',
-    # 福建省（2个）
-    '福州': '福建', '厦门': '福建',
-    # 江西省（5个）
-    '南昌': '江西', '萍乡': '江西', '新余': '江西', '宜春': '江西', '九江': '江西',
-    # 山东省（14个）
-    '济南': '山东', '淄博': '山东', '枣庄': '山东', '东营': '山东',
-    '潍坊': '山东', '济宁': '山东', '泰安': '山东', '日照': '山东',
-    '临沂': '山东', '德州': '山东', '聊城': '山东', '滨州': '山东',
-    '菏泽': '山东', '青岛': '山东',
-    # 河南省（17个）
-    '郑州': '河南', '开封': '河南', '洛阳': '河南', '平顶山': '河南',
-    '安阳': '河南', '鹤壁': '河南', '新乡': '河南', '焦作': '河南',
-    '濮阳': '河南', '许昌': '河南', '漯河': '河南', '三门峡': '河南',
-    '商丘': '河南', '周口': '河南', '南阳': '河南', '信阳': '河南', '驻马店': '河南',
-    # 湖北省（10个）
-    '武汉': '湖北', '咸宁': '湖北', '孝感': '湖北', '黄冈': '湖北',
-    '黄石': '湖北', '鄂州': '湖北', '襄阳': '湖北', '宜昌': '湖北',
-    '荆门': '湖北', '荆州': '湖北', '随州': '湖北',
-    # 湖南省（6个）
-    '长沙': '湖南', '株洲': '湖南', '湘潭': '湖南', '岳阳': '湖南',
-    '常德': '湖南', '益阳': '湖南',
-    # 广东省（9个）
-    '广州': '广东', '深圳': '广东', '珠海': '广东', '佛山': '广东',
-    '江门': '广东', '肇庆': '广东', '惠州': '广东', '东莞': '广东', '中山': '广东',
-    # 广西壮族自治区（1个）
-    '南宁': '广西',
-    # 海南省（1个）
-    '海口': '海南',
-    # 四川省（14个）
-    '成都': '四川', '自贡': '四川', '泸州': '四川', '德阳': '四川',
-    '绵阳': '四川', '遂宁': '四川', '内江': '四川', '乐山': '四川',
-    '眉山': '四川', '宜宾': '四川', '雅安': '四川', '资阳': '四川',
-    '南充': '四川', '广安': '四川', '达州': '四川',
-    # 贵州省（1个）
-    '贵阳': '贵州',
-    # 云南省（1个）
-    '昆明': '云南',
-    # 西藏自治区（1个）
-    '拉萨': '西藏',
-    # 陕西省（5个）
-    '西安': '陕西', '铜川': '陕西', '宝鸡': '陕西', '咸阳': '陕西', '渭南': '陕西',
-    # 甘肃省（1个）
-    '兰州': '甘肃',
-    # 青海省（1个）
-    '西宁': '青海',
-    # 宁夏回族自治区（1个）
-    '银川': '宁夏',
-    # 新疆维吾尔自治区（1个）
-    '乌鲁木齐': '新疆',
-    # 直辖市（4个）
-    '北京': '北京', '天津': '天津', '上海': '上海', '重庆': '重庆'
-}
-
-EXPECTED_PROVINCE_CITY_COUNT = {}
-for city, province in EXPECTED_CITY_PROVINCE_MAP.items():
-    EXPECTED_PROVINCE_CITY_COUNT[province] = EXPECTED_PROVINCE_CITY_COUNT.get(province, 0) + 1
-
 
 # =============================================================================
-# 验证函数
+# 验证函数（使用bsd_city表动态查询）
 # =============================================================================
 
 def validate_province_mapping(city_data: Dict[str, List[Dict]]) -> List[str]:
-    """验证所有城市都能正确映射到省份"""
+    """验证所有城市都能正确映射到省份（使用bsd_city表）"""
     warnings = []
 
-    from app.fetchers.city_statistics.city_statistics_fetcher import CityStatisticsFetcher
-    city_fetcher = CityStatisticsFetcher()
+    try:
+        from app.fetchers.city_statistics.province_statistics_fetcher import ProvinceSQLServerClient
+        sql_client = ProvinceSQLServerClient()
 
-    for city_name in city_data.keys():
-        province = city_fetcher._extract_province(city_name)
-        if province == '其他':
-            warnings.append(f"城市 '{city_name}' 无法映射到省份")
+        conn = pyodbc.connect(sql_client.connection_string, timeout=30)
+        cursor = conn.cursor()
+
+        # 从bsd_city表获取所有地级市的映射（省份使用level=1的简称）
+        cursor.execute("""
+            SELECT c.name as city_name, p.name as province_name
+            FROM bsd_city c
+            INNER JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
+            WHERE c.level = '2'
+        """)
+
+        city_to_province_map = {row.city_name: row.province_name for row in cursor}
+
+        cursor.close()
+        conn.close()
+
+        # 验证所有城市都能找到映射
+        for city_name in city_data.keys():
+            if city_name not in city_to_province_map:
+                warnings.append(f"城市 '{city_name}' 在bsd_city表中未找到")
+
+    except pyodbc.Error as e:
+        warnings.append(f"查询bsd_city表失败: {str(e)}")
 
     return warnings
 
 
 def validate_city_count(statistics: List[Dict]) -> List[str]:
-    """验证每个省份报告的城市数量是否正确"""
+    """验证每个省份报告的城市数量（从bsd_city表查询预期数量）"""
     warnings = []
 
-    for stat in statistics:
-        province = stat['province_name']
-        reported_count = stat.get('city_count', 0)
-        expected_count = EXPECTED_PROVINCE_CITY_COUNT.get(province, 0)
+    try:
+        from app.fetchers.city_statistics.province_statistics_fetcher import ProvinceSQLServerClient
+        sql_client = ProvinceSQLServerClient()
 
-        if expected_count > 0 and reported_count != expected_count:
-            warnings.append(
-                f"{province}: 预期{expected_count}个城市，报告{reported_count}个"
-            )
+        conn = pyodbc.connect(sql_client.connection_string, timeout=30)
+        cursor = conn.cursor()
+
+        # 从bsd_city表统计每个省份的地级市数量（省份使用level=1的简称）
+        cursor.execute("""
+            SELECT p.name as province_name, COUNT(*) as city_count
+            FROM bsd_city c
+            INNER JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
+            WHERE c.level = '2'
+            GROUP BY p.name
+        """)
+
+        expected_counts = {row.province_name: row.city_count for row in cursor}
+
+        cursor.close()
+        conn.close()
+
+        # 验证报告的城市数量
+        for stat in statistics:
+            province = stat['province_name']
+            reported_count = stat.get('city_count', 0)
+            expected_count = expected_counts.get(province, 0)
+
+            if expected_count > 0 and reported_count != expected_count:
+                warnings.append(
+                    f"{province}: 预期{expected_count}个城市，报告{reported_count}个"
+                )
+
+    except pyodbc.Error as e:
+        warnings.append(f"查询bsd_city表失败: {str(e)}")
 
     return warnings
 
 
 def validate_city_names_field(statistics: List[Dict], city_data: Dict) -> List[str]:
-    """验证 city_names 字段是否包含所有城市"""
+    """验证 city_names 字段是否包含所有城市（使用bsd_city表）"""
     warnings = []
 
-    from app.fetchers.city_statistics.city_statistics_fetcher import CityStatisticsFetcher
-    city_fetcher = CityStatisticsFetcher()
+    try:
+        from app.fetchers.city_statistics.province_statistics_fetcher import ProvinceSQLServerClient
+        sql_client = ProvinceSQLServerClient()
 
-    for stat in statistics:
-        province = stat['province_name']
-        reported_cities = set(stat.get('city_names', '').split(','))
+        conn = pyodbc.connect(sql_client.connection_string, timeout=30)
+        cursor = conn.cursor()
 
-        # 从原始数据中提取该省份的实际城市列表
-        actual_cities = set()
-        for city_name in city_data.keys():
-            if city_fetcher._extract_province(city_name) == province:
-                actual_cities.add(city_name)
+        # 从bsd_city表获取城市-省份映射（省份使用level=1的简称）
+        cursor.execute("""
+            SELECT c.name as city_name, p.name as province_name
+            FROM bsd_city c
+            INNER JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
+            WHERE c.level = '2'
+        """)
 
-        if reported_cities != actual_cities:
-            missing = actual_cities - reported_cities
-            if missing:
-                warnings.append(
-                    f"{province}: city_names缺失 {len(missing)}个城市"
-                )
+        city_to_province_map = {row.city_name: row.province_name for row in cursor}
+
+        cursor.close()
+        conn.close()
+
+        # 验证每个省份的city_names字段
+        for stat in statistics:
+            province = stat['province_name']
+            reported_cities = set(stat.get('city_names', '').split(',')) if stat.get('city_names') else set()
+
+            # 从原始数据中提取该省份的实际城市列表
+            actual_cities = set()
+            for city_name in city_data.keys():
+                if city_to_province_map.get(city_name) == province:
+                    actual_cities.add(city_name)
+
+            if reported_cities != actual_cities:
+                missing = actual_cities - reported_cities
+                if missing:
+                    warnings.append(
+                        f"{province}: city_names缺失 {len(missing)}个城市"
+                    )
+
+    except pyodbc.Error as e:
+        warnings.append(f"查询bsd_city表失败: {str(e)}")
 
     return warnings
 
@@ -371,7 +388,7 @@ class ProvinceSQLServerClient(SQLServerClient):
 
         Args:
             statistics: 统计数据列表
-            stat_type: 统计类型（monthly/annual_ytd/current_month）
+            stat_type: 统计类型（monthly/annual_ytd/current_month/cumulative_month）
             stat_date: 统计日期
         """
         if not statistics:
@@ -400,29 +417,48 @@ class ProvinceSQLServerClient(SQLServerClient):
                 standard_version,
                 data_days, sample_coverage, city_count, city_names,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
+            import math
+
             for stat in statistics:
+                # 清理数值，确保没有inf或nan，并进行最终修约
+                def clean_and_round(v, decimals=None):
+                    """清理数值并进行最终修约"""
+                    if v is None:
+                        return None
+                    if isinstance(v, (int, float)):
+                        if math.isinf(v) or math.isnan(v):
+                            return None
+                        # 进行最终修约
+                        if decimals is not None:
+                            rounded = safe_round(v, decimals)
+                            if rounded is None:
+                                return None
+                            # 保留0位小数时转换为整数，避免存储为25.00
+                            return int(rounded) if decimals == 0 else rounded
+                    return v
+
                 params = [
                     stat_date, stat_type,
                     stat.get('province_name'),
-                    stat.get('so2_concentration'),
-                    stat.get('no2_concentration'),
-                    stat.get('pm10_concentration'),
-                    stat.get('pm2_5_concentration'),
-                    stat.get('co_concentration'),
-                    stat.get('o3_8h_concentration'),
-                    stat.get('so2_index'),
-                    stat.get('no2_index'),
-                    stat.get('pm10_index'),
-                    stat.get('pm2_5_index'),
-                    stat.get('co_index'),
-                    stat.get('o3_8h_index'),
-                    stat.get('comprehensive_index'),
-                    stat.get('comprehensive_index_rank'),
-                    stat.get('comprehensive_index_new_limit_old_algo'),
-                    stat.get('comprehensive_index_rank_new_limit_old_algo'),
+                    clean_and_round(stat.get('so2_concentration'), 0),      # SO2：整数
+                    clean_and_round(stat.get('no2_concentration'), 0),      # NO2：整数
+                    clean_and_round(stat.get('pm10_concentration'), 0),     # PM10：整数
+                    clean_and_round(stat.get('pm2_5_concentration'), 1),    # PM2.5：1位小数
+                    clean_and_round(stat.get('co_concentration'), 1),       # CO：1位小数
+                    clean_and_round(stat.get('o3_8h_concentration'), 0),    # O3-8h：整数
+                    clean_and_round(stat.get('so2_index')),                 # 指数：保持3位小数（不传decimals）
+                    clean_and_round(stat.get('no2_index')),
+                    clean_and_round(stat.get('pm10_index')),
+                    clean_and_round(stat.get('pm2_5_index')),
+                    clean_and_round(stat.get('co_index')),
+                    clean_and_round(stat.get('o3_8h_index')),
+                    clean_and_round(stat.get('comprehensive_index')),       # 综合指数：保持3位小数
+                    clean_and_round(stat.get('comprehensive_index_rank')),
+                    clean_and_round(stat.get('comprehensive_index_new_limit_old_algo')),
+                    clean_and_round(stat.get('comprehensive_index_rank_new_limit_old_algo')),
                     'HJ663-2026',
                     stat.get('data_days'),
                     stat.get('sample_coverage'),
@@ -479,9 +515,10 @@ class ProvinceStatisticsFetcher(DataFetcher):
         """
         获取并存储省级统计数据（优化版）
 
-        每天只计算两种类型：
-        1. current_month（当月累计）- 每天
-        2. annual_ytd（年度累计）- 每天
+        每天计算四种类型：
+        1. cumulative_month（月度累计：1-1月、1-2月、...、至上月）- 每天
+        2. current_month（当月累计）- 每天
+        3. annual_ytd（年度累计）- 每天
 
         每月1日：将上月current_month转换为monthly
         """
@@ -494,7 +531,8 @@ class ProvinceStatisticsFetcher(DataFetcher):
             if today.day == 1:
                 await self._convert_current_to_monthly(today)
 
-            # 每天：更新current_month和annual_ytd
+            # 每天：更新cumulative_month、current_month和annual_ytd
+            await self._calculate_and_store_cumulative_months(today)
             await self._calculate_and_store_current_month(today)
             await self._calculate_and_store_annual_ytd(today)
 
@@ -534,8 +572,10 @@ class ProvinceStatisticsFetcher(DataFetcher):
         """
         将城市数据按省份分组（增强版，带验证）
 
+        数据查询时已通过citycode与bsd_city表关联，直接使用记录中的province_name
+
         Args:
-            city_data: 城市数据字典
+            city_data: 城市数据字典，每个记录包含province_name字段
 
         Returns:
             (省份分组数据, 警告信息列表)
@@ -543,16 +583,16 @@ class ProvinceStatisticsFetcher(DataFetcher):
         province_groups = {}
         warnings = []
 
-        city_fetcher = self._get_city_fetcher()
-
+        # 按省份分组（使用数据记录中已关联的省份信息）
         for city_name, records in city_data.items():
             if not records:
                 continue
 
-            province = city_fetcher._extract_province(city_name)
+            # 从第一条记录获取省份名称（所有记录应该属于同一省份）
+            province = records[0].get('province_name')
 
-            if province == '其他':
-                warnings.append(f"城市 '{city_name}' 无法映射到省份，已跳过")
+            if not province:
+                warnings.append(f"城市 '{city_name}' 没有省份信息，已跳过")
                 continue
 
             if province not in province_groups:
@@ -595,8 +635,8 @@ class ProvinceStatisticsFetcher(DataFetcher):
             end_date=end_date
         )
 
-        # 查询数据
-        city_data = self.sql_client.query_city_data(ALL_168_CITIES, start_date, end_date)
+        # 查询数据（使用所有城市，不限制168城市）
+        city_data = self.sql_client.query_all_city_data(start_date, end_date)
 
         # 按省份分组
         province_groups, grouping_warnings = self._group_by_province_enhanced(city_data)
@@ -614,13 +654,13 @@ class ProvinceStatisticsFetcher(DataFetcher):
         statistics = calculate_province_rankings(statistics)
 
         # 验证
-        stat_date = f"{year}-01-01"
+        stat_date = str(year)  # 格式：2026（年，表示年初至今）
         statistics, validation_warnings = validate_province_statistics(
             city_data, statistics, stat_date
         )
 
         # 存储数据库
-        self.sql_client.insert_province_statistics(statistics, 'annual_ytd', stat_date)
+        self.sql_client.insert_province_statistics(statistics, 'year_to_date', stat_date)
 
         logger.info(
             "province_annual_ytd_statistics_completed",
@@ -648,8 +688,8 @@ class ProvinceStatisticsFetcher(DataFetcher):
             end_date=end_date
         )
 
-        # 查询数据
-        city_data = self.sql_client.query_city_data(ALL_168_CITIES, start_date, end_date)
+        # 查询数据（使用所有城市，不限制168城市）
+        city_data = self.sql_client.query_all_city_data(start_date, end_date)
 
         # 按省份分组
         province_groups, grouping_warnings = self._group_by_province_enhanced(city_data)
@@ -667,13 +707,13 @@ class ProvinceStatisticsFetcher(DataFetcher):
         statistics = calculate_province_rankings(statistics)
 
         # 验证
-        stat_date = f"{year_month}-01"
+        stat_date = year_month  # 格式：2026-01（年-月）
         statistics, validation_warnings = validate_province_statistics(
             city_data, statistics, stat_date
         )
 
         # 存储数据库
-        self.sql_client.insert_province_statistics(statistics, 'current_month', stat_date)
+        self.sql_client.insert_province_statistics(statistics, 'month_current', stat_date)
 
         logger.info(
             "province_current_month_statistics_completed",
@@ -695,7 +735,7 @@ class ProvinceStatisticsFetcher(DataFetcher):
         first_day_of_last_month = last_day_of_last_month.replace(day=1)
 
         year_month = first_day_of_last_month.strftime('%Y-%m')
-        stat_date = f"{year_month}-01"
+        stat_date = year_month  # 格式：2026-01（年-月，表示全月数据）
 
         logger.info(
             "converting_current_to_monthly",
@@ -719,7 +759,7 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
                 data_days, sample_coverage, city_count, city_names
             FROM province_statistics_new_standard
-            WHERE stat_type = 'current_month' AND stat_date = ?
+            WHERE stat_type = 'month_current' AND stat_date = ?
             """
 
             cursor.execute(select_sql, [stat_date])
@@ -744,11 +784,11 @@ class ProvinceStatisticsFetcher(DataFetcher):
             # 2. 删除已有的monthly数据（如果存在）
             delete_sql = """
             DELETE FROM province_statistics_new_standard
-            WHERE stat_type = 'monthly' AND stat_date = ?
+            WHERE stat_type = 'month_complete' AND stat_date = ?
             """
             cursor.execute(delete_sql, [stat_date])
 
-            # 3. 插入monthly数据
+            # 3. 插入monthly数据（使用与insert_province_statistics相同的SQL结构）
             insert_sql = """
             INSERT INTO province_statistics_new_standard (
                 stat_date, stat_type, province_name,
@@ -760,12 +800,12 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 standard_version,
                 data_days, sample_coverage, city_count, city_names,
                 created_at, updated_at
-            ) VALUES (?, 'monthly', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for row in current_data:
                 params = [
-                    stat_date,
+                    stat_date, 'month_complete',
                     row.province_name,
                     row.so2_concentration, row.no2_concentration, row.pm10_concentration, row.pm2_5_concentration,
                     row.co_concentration, row.o3_8h_concentration,
@@ -796,3 +836,88 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 exc_info=True
             )
             raise
+
+    async def _calculate_and_store_cumulative_months(self, today: datetime.date):
+        """
+        计算并存储月度累计统计（从年初到各月份的累计）
+
+        例如4月份时，计算并存储：
+        - 1月累计（stat_date='2026-01'）
+        - 1-2月累计（stat_date='2026-02'）
+        - 1-3月累计（stat_date='2026-03'）
+
+        Args:
+            today: 今天日期
+        """
+        year = today.year
+        current_month = today.month
+
+        logger.info(
+            "calculating_province_cumulative_months_statistics",
+            year=year,
+            current_month=current_month
+        )
+
+        # 如果是1月份，没有累计月份需要计算
+        if current_month == 1:
+            logger.info("no_cumulative_months_to_calculate", message="1月份无需计算累计")
+            return
+
+        # 计算从1月到上个月的每一个累计月份
+        for end_month in range(1, current_month):
+            # 1月到end_month的累计
+            stat_date = f"{year}-{end_month:02d}"  # 格式：2026-01, 2026-02, ...
+            start_date = f"{year}-01-01"
+            # 最后一天是该月的最后一天
+            if end_month == 12:
+                end_date = f"{year}-12-31"
+            else:
+                # 下个月1号减1天
+                first_day_next_month = datetime(year, end_month + 1, 1).date()
+                last_day_of_month = first_day_next_month - timedelta(days=1)
+                end_date = last_day_of_month.strftime('%Y-%m-%d')
+
+            logger.debug(
+                "calculating_cumulative_month",
+                stat_date=stat_date,
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            # 查询数据
+            city_data = self.sql_client.query_all_city_data(start_date, end_date)
+
+            # 按省份分组
+            province_groups, grouping_warnings = self._group_by_province_enhanced(city_data)
+
+            # 计算统计
+            statistics = []
+            for province, cities in province_groups.items():
+                stat = calculate_province_statistics(cities)
+
+                if stat:
+                    stat['province_name'] = province
+                    statistics.append(stat)
+
+            # 计算排名
+            statistics = calculate_province_rankings(statistics)
+
+            # 验证
+            statistics, validation_warnings = validate_province_statistics(
+                city_data, statistics, stat_date
+            )
+
+            # 存储数据库（使用cumulative_month类型）
+            self.sql_client.insert_province_statistics(statistics, 'ytd_to_month', stat_date)
+
+            logger.debug(
+                "cumulative_month_completed",
+                stat_date=stat_date,
+                provinces_count=len(statistics)
+            )
+
+        logger.info(
+            "province_cumulative_months_statistics_completed",
+            year=year,
+            calculated_months=list(range(1, current_month))
+        )

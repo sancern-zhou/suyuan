@@ -570,15 +570,22 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="list_directory", error=str(e))
 
     try:
+        from app.tools.utility.skill_management.list_skills_tool import ListSkillsTool
+        registry.register(ListSkillsTool(), priority=508)
+        logger.info("tool_loaded", tool="list_skills")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="list_skills", error=str(e))
+
+    try:
         from app.tools.utility.parse_pdf_tool import create_parse_pdf_tool
-        registry.register(create_parse_pdf_tool(), priority=508)
+        registry.register(create_parse_pdf_tool(), priority=509)
         logger.info("tool_loaded", tool="parse_pdf")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
 
     try:
         from app.tools.utility.notebook_edit_tool import NotebookEditTool
-        registry.register(NotebookEditTool(), priority=509)
+        registry.register(NotebookEditTool(), priority=510)
         logger.info("tool_loaded", tool="notebook_edit")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="notebook_edit", error=str(e))

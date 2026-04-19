@@ -1072,6 +1072,13 @@ class ComplexQueryPlannerTool(LLMTool):
 - 不确定应该使用哪个工具（新vs旧标准、日报表vs统计报表、小时vs日数据）
 - 需要≥3个工具组合执行（查询+聚合+可视化+分析）
 
+【重要说明】统计报表使用限制
+- **统计报表工具（query_new_standard_report、query_old_standard_report、query_station_new_standard_report）只能查询累计统计结果**
+- 如果用户需要查询每个月的统计结果（如每个月的超标天数、综合指数等），应该：
+  1. 先使用日数据查询工具（如 query_gd_suncere_city_day_new）查询日数据
+  2. 再使用 aggregate_data 工具按月进行聚合统计
+  3. 最后使用 smart_chart_generator 工具生成月度趋势图表
+
 【返回数据说明】
 - data.plan 字段：⭐ 查询计划（直接包含在返回结果中，无需额外读取文件）
   - plan_steps：查询步骤列表（每个步骤包含工具名称和参数）
