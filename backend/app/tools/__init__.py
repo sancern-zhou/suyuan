@@ -296,6 +296,21 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_old_standard_report", error=str(e))
 
+    # 全国省份/城市空气质量查询工具（GDQFWS参考项目）
+    try:
+        from app.tools.query.query_national_air_quality.tool_wrapper import QueryNationalProvinceAirQualityTool
+        registry.register(QueryNationalProvinceAirQualityTool(), priority=46)
+        logger.info("tool_loaded", tool="query_national_province_air_quality")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_national_province_air_quality", error=str(e))
+
+    try:
+        from app.tools.query.query_national_air_quality.tool_wrapper import QueryNationalCityAirQualityTool
+        registry.register(QueryNationalCityAirQualityTool(), priority=47)
+        logger.info("tool_loaded", tool="query_national_city_air_quality")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_national_city_air_quality", error=str(e))
+
     try:
         from app.tools.query.get_satellite_data.tool import GetSatelliteDataTool
         registry.register(GetSatelliteDataTool(), priority=43)

@@ -142,7 +142,11 @@ QUERY_TOOLS = {
     "query_station_new_standard_report": "站点级新标准统计报表查询（基于 HJ 633-2026，查询站点的综合指数、超标天数、达标率、六参数统计）。⚠️ 与城市工具的差异：不支持扣沙处理，使用station_name字段，支持城市名称自动展开为站点列表。⚠️ 必需参数: start_date(str), end_date(str)。可选: station_type(str, 站点类型, 默认'国控'。⚠️ 仅在使用cities参数时有效，用于过滤该城市下的指定类型站点。如果使用stations参数，则不需要此参数), cities(list, 城市名自动展开站点, 与stations至少提供一个。如果不提供station_type，默认查询国控站点), stations(list, 站点名称, 与cities至少提供一个。使用stations时不需要提供station_type), aggregate(bool, 是否计算多站点汇总, 默认false)",
     "compare_station_standard_reports": "站点级新标准报表对比分析（对比两个时间段的站点统计数据，返回差值和变化率）。⚠️ 站点级同比环比查询必须使用此工具，禁止手动计算。参数: query_period{start_date, end_date}, comparison_period{start_date, end_date}, cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称), aggregate(bool, 可选, 是否计算多站点汇总对比, 默认false)",
 
-     # === 新增：数据注册表工具 ===
+    # === 新增：全国省份空气质量查询工具 ===
+    "query_national_province_air_quality": "查询全国各省份空气质量统计数据（六参数均值、AQI达标率、综合指数）。⚠️ 数据来源：参考项目 GDQFWS_SYS（广东省环境监测中心预报预警系统），支持31个省份。⚠️ 必需参数: start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: ns_type(str, 数据类型, 默认'NS')。返回数据: AreaCode(省份代码), AreaName(省份名称), SO2/NO2/CO/O3_8h/PM10/PM2_5(六参数均值), SumIndex(综合指数), AQIStandardRate(AQI达标率%)",
+    "query_national_city_air_quality": "查询全国各城市空气质量统计数据（六参数均值、AQI达标率、综合指数）。⚠️ 数据来源：参考项目 GDQFWS_SYS（广东省环境监测中心预报预警系统）。⚠️ 必需参数: start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: province_code(str, 省份代码, 如'440000'表示广东省, 不填则查询全国所有城市), ns_type(str, 数据类型, 默认'NS')。返回数据: AreaCode(城市代码), AreaName(城市名称), SO2/NO2/CO/O3_8h/PM10/PM2_5(六参数均值), SumIndex(综合指数), AQIStandardRate(AQI达标率%)",
+
+    # === 数据注册表工具 ===
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
 
     # === 知识库检索（预报会商场景） ===
@@ -411,6 +415,8 @@ QUERY_TOOL_ORDER = [
     "compare_old_standard_reports",  # 旧标准报表对比分析
     "query_station_new_standard_report",  # 站点级新标准统计报表
     "compare_station_standard_reports",  # 站点级新标准报表对比分析
+    "query_national_province_air_quality",  # 全国省份空气质量查询
+    "query_national_city_air_quality",  # 全国城市空气质量查询
 
     # 知识库检索（预报会商场景）
     "search_knowledge_base",
