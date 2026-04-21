@@ -416,8 +416,9 @@ class ProvinceSQLServerClient(SQLServerClient):
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
                 standard_version,
                 data_days, sample_coverage, city_count, city_names,
+                exceed_days, valid_days, compliance_rate, exceed_rate,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             import math
@@ -463,7 +464,11 @@ class ProvinceSQLServerClient(SQLServerClient):
                     stat.get('data_days'),
                     stat.get('sample_coverage'),
                     stat.get('city_count'),
-                    stat.get('city_names')
+                    stat.get('city_names'),
+                    stat.get('exceed_days'),                               # 超标天数：整数
+                    stat.get('valid_days'),                                # 有效天数：整数
+                    clean_and_round(stat.get('compliance_rate'), 1),        # 达标率：1位小数
+                    clean_and_round(stat.get('exceed_rate'), 1)             # 超标率：1位小数
                 ]
                 cursor.execute(insert_sql, params)
 
@@ -757,7 +762,8 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 so2_index, no2_index, pm10_index, pm2_5_index, co_index, o3_8h_index,
                 comprehensive_index, comprehensive_index_rank,
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
-                data_days, sample_coverage, city_count, city_names
+                data_days, sample_coverage, city_count, city_names,
+                exceed_days, valid_days, compliance_rate, exceed_rate
             FROM province_statistics_new_standard
             WHERE stat_type = 'month_current' AND stat_date = ?
             """
@@ -799,8 +805,9 @@ class ProvinceStatisticsFetcher(DataFetcher):
                 comprehensive_index_new_limit_old_algo, comprehensive_index_rank_new_limit_old_algo,
                 standard_version,
                 data_days, sample_coverage, city_count, city_names,
+                exceed_days, valid_days, compliance_rate, exceed_rate,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for row in current_data:
@@ -813,7 +820,8 @@ class ProvinceStatisticsFetcher(DataFetcher):
                     row.comprehensive_index, row.comprehensive_index_rank,
                     row.comprehensive_index_new_limit_old_algo, row.comprehensive_index_rank_new_limit_old_algo,
                     'HJ663-2026',
-                    row.data_days, row.sample_coverage, row.city_count, row.city_names
+                    row.data_days, row.sample_coverage, row.city_count, row.city_names,
+                    row.exceed_days, row.valid_days, row.compliance_rate, row.exceed_rate
                 ]
                 cursor.execute(insert_sql, params)
 

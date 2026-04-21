@@ -43,3 +43,23 @@ export async function refreshSkillsIndex() {
   }
   return response.json()
 }
+
+/**
+ * 保存技能文档
+ * @param {string} skillName - 技能文件名（如 "excel.md" 或 "excel"）
+ * @param {string} content - 新的文档内容
+ * @returns {Promise<Object>}
+ */
+export async function saveSkillDetail(skillName, content) {
+  const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ content })
+  })
+  if (!response.ok) {
+    throw new Error(`保存技能文档失败: ${response.statusText}`)
+  }
+  return response.json()
+}

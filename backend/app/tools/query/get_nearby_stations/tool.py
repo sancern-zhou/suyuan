@@ -8,6 +8,8 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 import structlog
 
+from app.tools.base.tool_interface import LLMTool, ToolCategory
+
 logger = structlog.get_logger()
 
 
@@ -22,7 +24,7 @@ class StationInfo(BaseModel):
     direction: Optional[str] = Field(None, description="相对方向（N/NE/E/SE/S/SW/W/NW）")
 
 
-class GetNearbyStationsTool:
+class GetNearbyStationsTool(LLMTool):
     """
     附近站点查询工具
 
@@ -31,12 +33,6 @@ class GetNearbyStationsTool:
     2. 计算距离和方向
     3. 支持自定义搜索半径
     """
-
-    # ✅ 工具注册所需的属性
-    name = "get_nearby_stations"
-    category = "query"
-    requires_context = False
-    version = "1.0.0"
 
     # ✅ 输入适配器规则（支持宽进严出）
     TOOL_RULES = {
@@ -55,19 +51,10 @@ class GetNearbyStationsTool:
 
     def __init__(self):
         """初始化工具"""
-        self._station_cache: Dict[str, List[Dict[str, Any]]] = {}
-
-    def get_function_schema(self) -> Dict[str, Any]:
-        """
-        获取工具的函数schema（用于工具注册）
-
-        Returns:
-            函数schema字典
-        """
-        return {
+        function_schema = {
             "type": "function",
             "function": {
-                "name": self.name,
+                "name": "get_nearby_stations",
                 "description": "查询附近的站点信息（根据坐标和半径）",
                 "parameters": {
                     "type": "object",
@@ -94,6 +81,17 @@ class GetNearbyStationsTool:
                 }
             }
         }
+
+        super().__init__(
+            name="get_nearby_stations",
+            description="查询附近的站点信息（根据坐标和半径）",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=False
+        )
+
+        self._station_cache: Dict[str, List[Dict[str, Any]]] = {}
 
     async def execute(
         self,
@@ -122,14 +120,18 @@ class GetNearbyStationsTool:
             )
 
             result = {
+                "success": True,
                 "status": "success",
-                "target_location": {
-                    "latitude": target_lat,
-                    "longitude": target_lon
+                "data": {
+                    "target_location": {
+                        "latitude": target_lat,
+                        "longitude": target_lon
+                    },
+                    "search_radius_km": radius_km,
+                    "station_count": len(nearby_stations),
+                    "stations": nearby_stations
                 },
-                "search_radius_km": radius_km,
-                "station_count": len(nearby_stations),
-                "stations": nearby_stations
+                "summary": f"查询到 {len(nearby_stations)} 个附近站点"
             }
 
             logger.info(
@@ -150,9 +152,11 @@ class GetNearbyStationsTool:
                 error=str(e)
             )
             return {
+                "success": False,
                 "status": "error",
                 "error": str(e),
-                "stations": []
+                "data": {"stations": []},
+                "summary": f"查询失败: {str(e)}"
             }
 
     async def _query_nearby_stations(

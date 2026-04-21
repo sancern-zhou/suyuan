@@ -84,6 +84,8 @@ class ListDirectoryTool(LLMTool):
         # 使用项目根目录（后端目录的父目录，动态适配实际部署路径）
         # 当前工作目录是 backend 目录，parent 是项目根目录
         self.working_dir = Path.cwd().parent  # 动态获取：D:\溯源\ 或 /opt/app/ 等
+        # 允许访问的额外目录（如临时目录）
+        self.allowed_dirs = [self.working_dir, Path("/tmp")]
 
     async def execute(
         self,
@@ -384,15 +386,18 @@ class ListDirectoryTool(LLMTool):
         return guide
 
     def _resolve_path(self, path: str) -> Optional[Path]:
-        """解析路径，确保在工作目录范围内"""
+        """解析路径，确保在允许的目录范围内"""
         try:
             p = Path(path)
             if not p.is_absolute():
                 p = self.working_dir / p
             p = p.resolve()
 
-            if not p.is_relative_to(self.working_dir):
-                logger.warning("list_directory_path_escape", requested=path, allowed=str(self.working_dir))
+            # 检查是否在允许的目录范围内
+            is_allowed = any(p.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs)
+
+            if not is_allowed:
+                logger.warning("list_directory_path_escape", requested=path, allowed_dirs=[str(d) for d in self.allowed_dirs])
                 return None
             return p
         except Exception as e:

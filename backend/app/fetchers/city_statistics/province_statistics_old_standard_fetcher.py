@@ -36,6 +36,7 @@ from app.fetchers.city_statistics.city_statistics_old_standard_fetcher import (
     WEIGHTS_NEW_ALGO,
     WEIGHTS_OLD_ALGO
 )
+from app.utils.rounding_rules import apply_rounding
 
 logger = structlog.get_logger()
 
@@ -117,7 +118,8 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
 
     result = {}
 
-    # 提取各污染物的日浓度值
+    # 提取各污染物的日浓度值（保留每天的完整数据，用于达标率计算）
+    daily_data = []  # 保存每天的完整6项数据
     so2_values = []
     no2_values = []
     pm10_values = []
@@ -137,13 +139,34 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
                         pass
             return None
 
-        so2 = safe_get(record, ['SO2', 'so2', 'SO2_24h', 'so2_24h'])
-        no2 = safe_get(record, ['NO2', 'no2', 'NO2_24h', 'no2_24h'])
-        pm10 = safe_get(record, ['PM10', 'pm10', 'PM10_24h', 'pm10_24h'])
-        pm25 = safe_get(record, ['PM2_5', 'pm2_5', 'PM2_5_24h', 'pm2_5_24h'])
-        co = safe_get(record, ['CO', 'co', 'CO_24h', 'co_24h'])
-        o3_8h = safe_get(record, ['O3_8h', 'o3_8h', 'O3_8h_24h', 'o3_8h_24h'])
+        # 提取原始数据
+        so2_raw = safe_get(record, ['SO2', 'so2', 'SO2_24h', 'so2_24h'])
+        no2_raw = safe_get(record, ['NO2', 'no2', 'NO2_24h', 'no2_24h'])
+        pm10_raw = safe_get(record, ['PM10', 'pm10', 'PM10_24h', 'pm10_24h'])
+        pm25_raw = safe_get(record, ['PM2_5', 'pm2_5', 'PM2_5_24h', 'pm2_5_24h'])
+        co_raw = safe_get(record, ['CO', 'co', 'CO_24h', 'co_24h'])
+        o3_8h_raw = safe_get(record, ['O3_8h', 'o3_8h', 'O3_8h_24h', 'o3_8h_24h'])
 
+        # 按原始监测数据规则修约日数据（参考旧标准报表工具）
+        # 日数据修约：PM2.5/PM10/SO2/NO2/O3-8h取整，CO保留1位小数
+        pm25 = apply_rounding(pm25_raw, 'PM2_5', 'raw_data') if pm25_raw is not None else None
+        pm10 = apply_rounding(pm10_raw, 'PM10', 'raw_data') if pm10_raw is not None else None
+        so2 = apply_rounding(so2_raw, 'SO2', 'raw_data') if so2_raw is not None else None
+        no2 = apply_rounding(no2_raw, 'NO2', 'raw_data') if no2_raw is not None else None
+        co = apply_rounding(co_raw, 'CO', 'raw_data') if co_raw is not None else None
+        o3_8h = apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data') if o3_8h_raw is not None else None
+
+        # 保存每天的完整修约后数据（用于达标率计算）
+        daily_data.append({
+            'PM2_5': pm25,
+            'PM10': pm10,
+            'SO2': so2,
+            'NO2': no2,
+            'CO': co,
+            'O3_8h': o3_8h
+        })
+
+        # 提取修约后的各项污染物到列表（用于统计计算）
         if so2 is not None:
             so2_values.append(so2)
         if no2 is not None:
@@ -157,12 +180,12 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
         if o3_8h is not None:
             o3_8h_values.append(o3_8h)
 
-    # 计算统计浓度并应用final_output修约规则
+    # 计算统计浓度并应用旧标准统计修约规则
     # SO2：第98百分位数（取整）
     if so2_values:
         percentile_98 = calculate_percentile(so2_values, 98)
-        result['so2_concentration'] = apply_final_output_rounding(
-            percentile_98 if percentile_98 is not None else 0, 'SO2'
+        result['so2_concentration'] = apply_rounding(
+            percentile_98 if percentile_98 is not None else 0, 'SO2', 'statistical_data_old'
         )
     else:
         result['so2_concentration'] = None
@@ -170,24 +193,24 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
     # NO2：第98百分位数（取整）
     if no2_values:
         percentile_98 = calculate_percentile(no2_values, 98)
-        result['no2_concentration'] = apply_final_output_rounding(
-            percentile_98 if percentile_98 is not None else 0, 'NO2'
+        result['no2_concentration'] = apply_rounding(
+            percentile_98 if percentile_98 is not None else 0, 'NO2', 'statistical_data_old'
         )
     else:
         result['no2_concentration'] = None
 
     # PM10：均值（取整）
     if pm10_values:
-        result['pm10_concentration'] = apply_final_output_rounding(
-            sum(pm10_values) / len(pm10_values), 'PM10'
+        result['pm10_concentration'] = apply_rounding(
+            sum(pm10_values) / len(pm10_values), 'PM10', 'statistical_data_old'
         )
     else:
         result['pm10_concentration'] = None
 
-    # PM2.5：均值（保留1位小数）
+    # PM2.5：均值（取整）
     if pm25_values:
-        result['pm2_5_concentration'] = apply_final_output_rounding(
-            sum(pm25_values) / len(pm25_values), 'PM2_5'
+        result['pm2_5_concentration'] = apply_rounding(
+            sum(pm25_values) / len(pm25_values), 'PM2_5', 'statistical_data_old'
         )
     else:
         result['pm2_5_concentration'] = None
@@ -195,8 +218,8 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
     # CO：第95百分位数（保留1位小数）
     if co_values:
         percentile_95 = calculate_percentile(co_values, 95)
-        result['co_concentration'] = apply_final_output_rounding(
-            percentile_95 if percentile_95 is not None else 0, 'CO'
+        result['co_concentration'] = apply_rounding(
+            percentile_95 if percentile_95 is not None else 0, 'CO', 'statistical_data_old'
         )
     else:
         result['co_concentration'] = None
@@ -204,8 +227,8 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
     # O3_8h：第90百分位数（取整）
     if o3_8h_values:
         percentile_90 = calculate_percentile(o3_8h_values, 90)
-        result['o3_8h_concentration'] = apply_final_output_rounding(
-            percentile_90 if percentile_90 is not None else 0, 'O3_8h'
+        result['o3_8h_concentration'] = apply_rounding(
+            percentile_90 if percentile_90 is not None else 0, 'O3_8h', 'statistical_data_old'
         )
     else:
         result['o3_8h_concentration'] = None
@@ -265,6 +288,45 @@ def calculate_province_statistics_old_standard(city_records: Dict[str, List[Dict
         comprehensive_index_old_algo, 3
     ) if valid_indices > 0 else None
 
+    # ========== 新增：达标率计算（旧标准） ==========
+    valid_days = 0
+    exceed_days = 0
+
+    for day in daily_data:
+        pm25 = day['PM2_5']
+        pm10 = day['PM10']
+        so2 = day['SO2']
+        no2 = day['NO2']
+        co = day['CO']
+        o3_8h = day['O3_8h']
+
+        # 检查是否所有6项都有数据（有效天）
+        if all(v is not None for v in [pm25, pm10, so2, no2, co, o3_8h]):
+            valid_days += 1
+
+            # 旧标准：计算单项质量指数
+            pm25_index = pm25 / ANNUAL_STANDARD_LIMITS_2013['PM2_5']
+            pm10_index = pm10 / ANNUAL_STANDARD_LIMITS_2013['PM10']
+            so2_index = so2 / ANNUAL_STANDARD_LIMITS_2013['SO2']
+            no2_index = no2 / ANNUAL_STANDARD_LIMITS_2013['NO2']
+            co_index = co / ANNUAL_STANDARD_LIMITS_2013['CO']
+            o3_index = o3_8h / ANNUAL_STANDARD_LIMITS_2013['O3_8h']
+
+            # 判断是否超标（任意单项指数 > 1）
+            max_index = max(pm25_index, pm10_index, so2_index, no2_index, co_index, o3_index)
+            if max_index > 1:
+                exceed_days += 1
+
+    # 计算达标率
+    result['valid_days'] = valid_days
+    result['exceed_days'] = exceed_days
+    result['compliance_rate'] = safe_round(
+        (valid_days - exceed_days) / valid_days * 100, 1
+    ) if valid_days > 0 else None
+    result['exceed_rate'] = safe_round(
+        exceed_days / valid_days * 100, 1
+    ) if valid_days > 0 else None
+
     # 添加元数据
     result['city_count'] = len(city_names)
     result['city_names'] = ','.join(sorted(city_names))
@@ -313,8 +375,9 @@ class ProvinceOldStandardSQLServerClient(SQLServerClient):
                 comprehensive_index_new_algo, comprehensive_index_rank_new_algo,
                 comprehensive_index_old_algo, comprehensive_index_rank_old_algo,
                 data_days, sample_coverage, city_count, city_names,
+                exceed_days, valid_days, compliance_rate, exceed_rate,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), GETDATE())
             """
 
             for stat in statistics:
@@ -322,29 +385,35 @@ class ProvinceOldStandardSQLServerClient(SQLServerClient):
                 max_days = 365 if len(statistics) > 150 else 31
                 sample_coverage = safe_round((stat.get('data_days', 0) / max_days) * 100, 2) if max_days > 0 else 0
 
+                # 27个参数
                 params = [
-                    stat_date, stat_type,
-                    stat.get('province_name'),
-                    stat.get('so2_concentration'),
-                    stat.get('no2_concentration'),
-                    stat.get('pm10_concentration'),
-                    stat.get('pm2_5_concentration'),
-                    stat.get('co_concentration'),
-                    stat.get('o3_8h_concentration'),
-                    stat.get('so2_index'),
-                    stat.get('no2_index'),
-                    stat.get('pm10_index'),
-                    stat.get('pm2_5_index'),
-                    stat.get('co_index'),
-                    stat.get('o3_8h_index'),
-                    stat.get('comprehensive_index_new_algo'),
-                    stat.get('comprehensive_index_rank_new_algo'),
-                    stat.get('comprehensive_index_old_algo'),
-                    stat.get('comprehensive_index_rank_old_algo'),
-                    stat.get('data_days'),
-                    sample_coverage,
-                    stat.get('city_count'),
-                    stat.get('city_names')
+                    stat_date,  # 1
+                    stat_type,  # 2
+                    stat.get('province_name'),  # 3
+                    stat.get('so2_concentration'),  # 4
+                    stat.get('no2_concentration'),  # 5
+                    stat.get('pm10_concentration'),  # 6
+                    stat.get('pm2_5_concentration'),  # 7
+                    stat.get('co_concentration'),  # 8
+                    stat.get('o3_8h_concentration'),  # 9
+                    stat.get('so2_index'),  # 10
+                    stat.get('no2_index'),  # 11
+                    stat.get('pm10_index'),  # 12
+                    stat.get('pm2_5_index'),  # 13
+                    stat.get('co_index'),  # 14
+                    stat.get('o3_8h_index'),  # 15
+                    stat.get('comprehensive_index_new_algo'),  # 16
+                    stat.get('comprehensive_index_rank_new_algo'),  # 17
+                    stat.get('comprehensive_index_old_algo'),  # 18
+                    stat.get('comprehensive_index_rank_old_algo'),  # 19
+                    stat.get('data_days'),  # 20
+                    sample_coverage,  # 21
+                    stat.get('city_count'),  # 22
+                    stat.get('city_names'),  # 23
+                    stat.get('exceed_days'),  # 24
+                    stat.get('valid_days'),  # 25
+                    stat.get('compliance_rate'),  # 26
+                    stat.get('exceed_rate')  # 27
                 ]
                 cursor.execute(insert_sql, params)
 

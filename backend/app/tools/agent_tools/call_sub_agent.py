@@ -44,10 +44,10 @@ class CallSubAgentTool(LLMTool):
         llm_planner=None,
         tool_executor=None
     ):
-        # 定义 function_schema
+        # 定义 function_schema（参考Hermes设计：分离goal和context）
         function_schema = {
             "name": "call_sub_agent",
-            "description": "调用另一个Agent模式作为子Agent执行任务（支持session连续对话）。⚠️ 用自然语言描述任务，不要传递结构化参数或指定工具名称。",
+            "description": "调用另一个Agent模式作为子Agent执行任务（支持session连续对话）。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -56,13 +56,29 @@ class CallSubAgentTool(LLMTool):
                         "enum": ["assistant", "code", "query", "report", "social"],
                         "description": "目标Agent模式（assistant=助手, social=社交, query=问数, report=报告, code=编程）"
                     },
+                    # ✅ 新设计：goal（必需）- 原始任务描述
+                    "goal": {
+                        "type": "string",
+                        "description": "⚠️ 任务目标（必须完整保留所有参数）：文件路径、时间范围、sheet索引、城市名称等所有具体参数。禁止摘要化或省略任何细节。\n\n示例：'更新Excel文件 /tmp/会商文件/全国各省份污染物累计平均.xlsx（第五个sheet，时间段：2026年1-3月和2025年1-3月）'"
+                    },
+                    # ✅ 新设计：context（可选）- 补充上下文
+                    "context": {
+                        "type": "string",
+                        "description": "补充上下文（可选）：技能名称、操作步骤、背景信息等。如：'按照AQI技能文档的步骤执行'或'用户之前查询过NO2数据，现在查询AQI数据'"
+                    },
+                    # ✅ 新设计：workspace_path（可选）- 工作目录
+                    "workspace_path": {
+                        "type": "string",
+                        "description": "工作目录路径（可选）：文件所在目录，用于帮助子Agent定位文件。如：'/tmp/会商文件'"
+                    },
+                    # ⚠️ 向后兼容：保留旧参数名
                     "task_description": {
                         "type": "string",
-                        "description": "⚠️ 用户原始查询（必须原封不动传递，禁止时间转换、意图澄清或改变用户表达方式）"
+                        "description": "⚠️ [向后兼容] 等同于goal参数。新代码请使用goal参数。"
                     },
                     "context_supplement": {
                         "type": "string",
-                        "description": "上下文补充说明（可选）：基于对话历史和用户习惯补充说明，如用户之前查询过'广州空气质量'后说'再看看深圳的'，可补充为'继续查看空气质量数据'。禁止时间转换和技术参数构造。"
+                        "description": "⚠️ [向后兼容] 等同于context参数。新代码请使用context参数。"
                     },
                     "session_id": {
                         "type": "string",
@@ -73,7 +89,7 @@ class CallSubAgentTool(LLMTool):
                         "description": "是否强制创建新会话（可选，默认false）：设为true时会创建新的session，而不是复用最近的session。当用户明确开始新话题时使用。"
                     }
                 },
-                "required": ["target_mode", "task_description"]
+                "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
             }
         }
 
@@ -95,10 +111,13 @@ class CallSubAgentTool(LLMTool):
         self,
         context: Optional[Any] = None,  # ✅ context放在第一位
         target_mode: AgentMode = None,
-        task_description: str = None,
-        context_supplement: Optional[str] = None,  # ✅ 新增：上下文补充
+        goal: Optional[str] = None,  # ✅ 新参数：任务目标
+        task_description: Optional[str] = None,  # ⚠️ 向后兼容
+        context_param: Optional[str] = None,  # ✅ 新参数：补充上下文
+        context_supplement: Optional[str] = None,  # ⚠️ 向后兼容
+        workspace_path: Optional[str] = None,  # ✅ 新参数：工作目录
         session_id: Optional[str] = None,
-        force_new_session: bool = False,  # ✅ 新增：是否强制创建新会话
+        force_new_session: bool = False,
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -107,9 +126,13 @@ class CallSubAgentTool(LLMTool):
         Args:
             context: ExecutionContext（包含memory_manager等依赖）
             target_mode: 目标Agent模式（"assistant" | "query" | "code" | "report" | "social"）
-            task_description: ⚠️ 用户原始查询（必须原封不动传递，禁止时间转换、意图澄清）
-            context_supplement: 上下文补充说明（可选）：基于对话历史补充，禁止技术参数构造
+            goal: ⚠️ 任务目标（推荐）：必须完整保留所有参数（文件路径、时间范围等）
+            task_description: ⚠️ [向后兼容] 等同于goal
+            context_param: 补充上下文（推荐）：技能名称、操作步骤等
+            context_supplement: ⚠️ [向后兼容] 等同于context_param
+            workspace_path: 工作目录路径（可选）
             session_id: 可选，子Agent会话ID（传入则继续已有对话）
+            force_new_session: 是否强制创建新会话
 
         Returns:
             {
@@ -117,7 +140,7 @@ class CallSubAgentTool(LLMTool):
                 "result": "子Agent的执行结果",
                 "data": {...},
                 "metadata": {
-                    "session_id": "xxx",  # ✅ 返回session_id供父Agent使用
+                    "session_id": "xxx",
                     "is_new_session": true/false
                 },
                 "summary": "简要总结"
@@ -134,15 +157,20 @@ class CallSubAgentTool(LLMTool):
                 "summary": "参数验证失败"
             }
 
-        if not task_description:
+        # ✅ 参数标准化：优先使用goal，其次task_description（向后兼容）
+        effective_goal = goal or task_description
+        if not effective_goal:
             return {
                 "status": "failed",
                 "success": False,
-                "result": "缺少必需参数：task_description",
+                "result": "缺少必需参数：goal 或 task_description",
                 "data": {},
                 "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
                 "summary": "参数验证失败"
             }
+
+        # ✅ 参数标准化：优先使用context_param，其次context_supplement
+        effective_context = context_param or context_supplement
 
         try:
             # 获取父Agent模式
@@ -152,7 +180,9 @@ class CallSubAgentTool(LLMTool):
                 "calling_sub_agent",
                 parent_mode=parent_mode,
                 target_mode=target_mode,
-                task=task_description[:100] if task_description else "",
+                goal=effective_goal[:100] if effective_goal else "",
+                context=effective_context[:50] if effective_context else "",
+                workspace_path=workspace_path,
                 provided_session_id=session_id,
                 force_new_session=force_new_session,
                 will_attempt_auto_reuse=session_id is None and not force_new_session
@@ -231,11 +261,19 @@ class CallSubAgentTool(LLMTool):
             # 2. 动态导入（避免循环导入）
             from app.agent.react_agent import ReActAgent
 
-            # 3. 构建增强的查询（不包含系统提示，由 ReActAgent.analyze() 处理）
-            enhanced_query = self._build_enhanced_query(
-                task_description,
-                target_mode,
-                context_supplement
+            # 3. 构建子Agent系统提示（参考Hermes设计：分离goal和context）
+            # 注意：当前 ReActAgent.analyze 不支持 system_prompt_override 参数
+            # 关键要求已添加到 assistant_prompt.py 中
+            child_system_prompt = self._build_child_system_prompt(
+                goal=effective_goal,
+                context=effective_context,
+                workspace_path=workspace_path,
+                target_mode=target_mode
+            )
+            logger.debug(
+                "child_system_prompt_built",
+                target_mode=target_mode,
+                prompt_preview=child_system_prompt[:200] if child_system_prompt else ""
             )
 
             # 4. 创建临时子Agent实例（复用父Agent的配置）
@@ -248,9 +286,12 @@ class CallSubAgentTool(LLMTool):
             )
 
             # 5. 执行子Agent（传入所有必要参数）
+            # ✅ 双重保障机制（参考Hermes）：
+            #   - 系统提示（assistant_prompt.py已包含关键要求）
+            #   - 用户消息（effective_goal）仍是纯净的原始任务
             result_events = []
             async for event in sub_agent.analyze(
-                user_query=enhanced_query,
+                user_query=effective_goal,  # ✅ 纯净的原始任务（Hermes方案）
                 session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
                 manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
                 enhance_with_history=True,  # ✅ 启用记忆增强
@@ -284,7 +325,7 @@ class CallSubAgentTool(LLMTool):
                 session_id=session_id,
                 parent_mode=parent_mode,
                 child_mode=target_mode,
-                user_query=task_description,
+                user_query=effective_goal,  # ✅ 使用effective_goal
                 assistant_answer=final_result["answer"],
                 result_events=result_events
             )
@@ -323,7 +364,7 @@ class CallSubAgentTool(LLMTool):
                 "sub_agent_failed",
                 target_mode=target_mode,
                 error=str(e),
-                task=task_description[:100]
+                goal=effective_goal[:100] if effective_goal else ""
             )
             return {
                 "status": "failed",
@@ -337,43 +378,58 @@ class CallSubAgentTool(LLMTool):
                 "summary": "任务执行失败"
             }
 
-    def _build_enhanced_query(
+    def _build_child_system_prompt(
         self,
-        task_description: str,
-        target_mode: str,
-        context_supplement: Optional[str] = None
+        goal: str,
+        context: Optional[str] = None,
+        workspace_path: Optional[str] = None,
+        target_mode: str = "assistant"
     ) -> str:
         """
-        构建增强的查询
+        构建子Agent系统提示（参考Hermes设计：分离goal和context）
 
         Args:
-            task_description: 用户原始查询（原封不动）
+            goal: 任务目标（完整的原始任务，包含所有参数）
+            context: 补充上下文（可选）
+            workspace_path: 工作目录路径（可选）
             target_mode: 目标Agent模式
-            context_supplement: 上下文补充说明（可选）
 
         Returns:
-            增强后的查询字符串
+            子Agent系统提示字符串
         """
-        query_parts = []
+        parts = [
+            "你是作为子Agent被调用，专注完成指定的任务。\n",
+            f"**任务目标**:\n{goal}\n"
+        ]
 
-        # 1. 添加用户原始查询（原封不动）
-        query_parts.append(task_description)
+        # 添加补充上下文（如果有）
+        if context and context.strip():
+            parts.append(f"**补充上下文**:\n{context}\n")
 
-        # 2. 添加上下文补充（如果有）
-        if context_supplement:
-            query_parts.append(f"\n\n【上下文补充】\n{context_supplement}")
+        # 添加工作目录（如果有）
+        if workspace_path and workspace_path.strip():
+            parts.append(f"**工作目录**:\n{workspace_path}\n")
 
-        # 3. 根据目标模式添加提示
+        # 根据目标模式添加特定提示
         mode_hints = {
-            "assistant": "你是作为子Agent被调用，专注完成上述办公任务即可。",
-            "social": "你是作为子Agent被调用，专注完成上述社交平台任务即可。",
-            "query": "你是作为子Agent被调用，专注完成上述数据查询任务即可。请解析用户的自然语言描述，选择合适的工具和参数。",
-            "report": "你是作为子Agent被调用，专注完成上述报告生成任务即可。",
-            "code": "你是作为子Agent被调用，专注完成上述编程任务即可。",
+            "assistant": (
+                "\n⚠️ **关键要求**（办公任务）：\n"
+                "- 生成任务清单时，必须在每个任务的content中保留所有原始参数\n"
+                "- 禁止摘要化或省略文件路径、时间范围、sheet索引等关键信息\n"
+                "- 正确示例：'更新Excel文件 /tmp/会商文件/全国各省份污染物累计平均.xlsx "
+                "（第五个sheet，时间段：2026年1-3月和2025年1-3月）'\n"
+                "- 错误示例：❌ '更新Excel文件'\n"
+            ),
+            "social": "\n专注完成上述社交平台任务。\n",
+            "query": "\n专注完成上述数据查询任务，请解析用户的自然语言描述，选择合适的工具和参数。\n",
+            "report": "\n专注完成上述报告生成任务。\n",
+            "code": "\n专注完成上述编程任务。\n",
         }
-        query_parts.append(f"\n\n【系统提示】\n{mode_hints.get(target_mode, '')}")
 
-        return "\n".join(query_parts)
+        hint = mode_hints.get(target_mode, "")
+        parts.append(hint)
+
+        return "\n".join(parts)
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""

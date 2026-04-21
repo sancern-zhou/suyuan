@@ -137,7 +137,7 @@ class Settings(BaseSettings):
         description="Xiaomi Mimo API base URL"
     )
     mimo_model: str = Field(
-        default="mimo-v2-flash",
+        default="mimo-v2-pro",
         description="Xiaomi Mimo model name"
     )
 

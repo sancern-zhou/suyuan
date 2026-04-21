@@ -70,7 +70,9 @@ class ReActAgent:
         self.large_data_threshold = large_data_threshold
         self._session_ttl = timedelta(hours=session_ttl_hours) if session_ttl_hours > 0 else None
         self._session_store: Dict[str, Dict[str, Any]] = {}
-        self._session_lock = asyncio.Lock()
+        # ✅ 改用细粒度锁（按 session_id 分组），不同 session 可以并发
+        self._session_locks: Dict[str, asyncio.Lock] = {}
+        self._global_lock = asyncio.Lock()  # 用于保护 _session_locks 字典本身
 
         # ✅ 新增：记忆管理器
         self.enable_memory = enable_memory
@@ -821,8 +823,13 @@ class ReActAgent:
         return final_answer
 
     async def _mark_session_used(self, session_id: str):
-        """刷新会话的最后访问时间"""
-        async with self._session_lock:
+        """刷新会话的最后访问时间（使用细粒度锁）"""
+        # 获取该 session 的锁（如果不存在则说明 session 未创建，无需处理）
+        session_lock = self._session_locks.get(session_id)
+        if not session_lock:
+            return
+
+        async with session_lock:
             if session_id in self._session_store:
                 self._session_store[session_id]["last_used"] = datetime.utcnow()
 
@@ -835,12 +842,24 @@ class ReActAgent:
         获取或创建会话记忆管理器
 
         ✅ 修复：从 SessionManager 恢复历史会话状态，确保历史对话上下文不丢失
+        ✅ 性能优化：使用细粒度锁（按 session_id），不同 session 可以并发
 
         返回:
             (session_id, memory_manager, created_new)
         """
-        async with self._session_lock:
-            self._cleanup_expired_sessions_locked()
+        # 确定实际的 session_id
+        actual_session_id = session_id or self._generate_session_id()
+
+        # 获取或创建该 session_id 对应的锁
+        async with self._global_lock:
+            if actual_session_id not in self._session_locks:
+                self._session_locks[actual_session_id] = asyncio.Lock()
+            session_lock = self._session_locks[actual_session_id]
+
+        # 使用该 session 的锁（允许不同 session 并发）
+        async with session_lock:
+            # 清理过期会话
+            self._cleanup_expired_sessions()
 
             # ✅ 优先重用内存中的会话
             if not reset_session and session_id and session_id in self._session_store:
@@ -932,8 +951,8 @@ class ReActAgent:
             logger.info("react_session_created", session_id=actual_session_id)
             return actual_session_id, memory_manager, True
 
-    def _cleanup_expired_sessions_locked(self):
-        """在已加锁的情况下清理过期会话"""
+    def _cleanup_expired_sessions(self):
+        """清理过期会话（需要在细粒度锁内调用）"""
         if not self._session_store or not self._session_ttl:
             return
 
@@ -956,6 +975,9 @@ class ReActAgent:
                     error=str(cleanup_error)
                 )
             logger.info("react_session_expired", session_id=sid)
+
+            # 清理对应的锁（直接删除，无需额外锁保护）
+            self._session_locks.pop(sid, None)
 
     def _generate_session_id(self) -> str:
         """生成唯一的会话ID"""
