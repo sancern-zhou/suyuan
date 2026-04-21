@@ -175,6 +175,8 @@ PDF 智能解析：
 
         # 工作目录限制
         self.working_dir = Path.cwd().parent
+        # 允许访问的额外目录（如临时目录）
+        self.allowed_dirs = [self.working_dir, Path("/tmp")]
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB
@@ -1209,7 +1211,7 @@ PDF 智能解析：
             return "[表格解析失败]"
 
     def _resolve_path(self, path: str) -> Optional[Path]:
-        """解析文件路径，确保在工作目录范围内"""
+        """解析文件路径，确保在允许的目录范围内"""
         try:
             file_path = Path(path)
 
@@ -1218,11 +1220,14 @@ PDF 智能解析：
 
             file_path = file_path.resolve()
 
-            if not file_path.is_relative_to(self.working_dir):
+            # 检查是否在允许的目录范围内
+            is_allowed = any(file_path.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs)
+
+            if not is_allowed:
                 logger.warning(
                     "path_escape_attempt",
                     requested_path=path,
-                    allowed_dir=str(self.working_dir)
+                    allowed_dirs=[str(d) for d in self.allowed_dirs]
                 )
                 return None
 

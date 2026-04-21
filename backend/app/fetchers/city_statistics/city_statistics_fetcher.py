@@ -36,6 +36,7 @@ import structlog
 import pyodbc
 
 from app.fetchers.base.fetcher_interface import DataFetcher
+from app.utils.rounding_rules import apply_rounding
 
 logger = structlog.get_logger()
 
@@ -295,7 +296,8 @@ def calculate_statistics(records: List[Dict]) -> Dict:
     if not records:
         return None
 
-    # 提取各项污染物浓度数据
+    # 提取各项污染物浓度数据（保留每天的完整数据，用于达标率计算）
+    daily_data = []  # 保存每天的完整6项数据
     so2_values = []
     no2_values = []
     pm10_values = []
@@ -303,91 +305,97 @@ def calculate_statistics(records: List[Dict]) -> Dict:
     co_values = []
     o3_8h_values = []
 
+    def extract_value(value):
+        """安全提取数值"""
+        if value is None or value == '' or value == '-':
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
     for record in records:
-        # 提取PM2.5
-        pm25 = record.get('PM2_5_24h') or record.get('PM2_5')
-        if pm25 is not None and pm25 != '' and pm25 != '-':
-            try:
-                pm25_values.append(float(pm25))
-            except (ValueError, TypeError):
-                pass
+        # 提取当天的6项污染物原始数据
+        pm25_raw = extract_value(record.get('PM2_5_24h') or record.get('PM2_5'))
+        pm10_raw = extract_value(record.get('PM10_24h') or record.get('PM10'))
+        so2_raw = extract_value(record.get('SO2_24h') or record.get('SO2'))
+        no2_raw = extract_value(record.get('NO2_24h') or record.get('NO2'))
+        co_raw = extract_value(record.get('CO_24h') or record.get('CO'))
+        o3_8h_raw = extract_value(record.get('O3_8h_24h') or record.get('O3_8h'))
 
-        # 提取PM10
-        pm10 = record.get('PM10_24h') or record.get('PM10')
-        if pm10 is not None and pm10 != '' and pm10 != '-':
-            try:
-                pm10_values.append(float(pm10))
-            except (ValueError, TypeError):
-                pass
+        # 按原始监测数据规则修约日数据（参考新标准报表工具）
+        # 日数据修约：PM2.5/PM10/SO2/NO2/O3-8h取整，CO保留1位小数
+        pm25 = apply_rounding(pm25_raw, 'PM2_5', 'raw_data') if pm25_raw is not None else None
+        pm10 = apply_rounding(pm10_raw, 'PM10', 'raw_data') if pm10_raw is not None else None
+        so2 = apply_rounding(so2_raw, 'SO2', 'raw_data') if so2_raw is not None else None
+        no2 = apply_rounding(no2_raw, 'NO2', 'raw_data') if no2_raw is not None else None
+        co = apply_rounding(co_raw, 'CO', 'raw_data') if co_raw is not None else None
+        o3_8h = apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data') if o3_8h_raw is not None else None
 
-        # 提取SO2
-        so2 = record.get('SO2_24h') or record.get('SO2')
-        if so2 is not None and so2 != '' and so2 != '-':
-            try:
-                so2_values.append(float(so2))
-            except (ValueError, TypeError):
-                pass
+        # 保存每天的完整修约后数据（用于达标率计算）
+        daily_data.append({
+            'PM2_5': pm25,
+            'PM10': pm10,
+            'SO2': so2,
+            'NO2': no2,
+            'CO': co,
+            'O3_8h': o3_8h
+        })
 
-        # 提取NO2
-        no2 = record.get('NO2_24h') or record.get('NO2')
-        if no2 is not None and no2 != '' and no2 != '-':
-            try:
-                no2_values.append(float(no2))
-            except (ValueError, TypeError):
-                pass
+        # 提取修约后的各项污染物到列表（用于统计计算）
+        if pm25 is not None:
+            pm25_values.append(pm25)
+        if pm10 is not None:
+            pm10_values.append(pm10)
+        if so2 is not None:
+            so2_values.append(so2)
+        if no2 is not None:
+            no2_values.append(no2)
+        if co is not None:
+            co_values.append(co)
+        if o3_8h is not None:
+            o3_8h_values.append(o3_8h)
 
-        # 提取CO
-        co = record.get('CO_24h') or record.get('CO')
-        if co is not None and co != '' and co != '-':
-            try:
-                co_values.append(float(co))
-            except (ValueError, TypeError):
-                pass
-
-        # 提取O3_8h
-        o3_8h = record.get('O3_8h_24h') or record.get('O3_8h')
-        if o3_8h is not None and o3_8h != '' and o3_8h != '-':
-            try:
-                o3_8h_values.append(float(o3_8h))
-            except (ValueError, TypeError):
-                pass
-
-    # 计算统计值
+    # 计算统计值（使用修约后的日数据累加）
     result = {}
 
-    # 计算六参数均值（按照HJ 663-2026标准，中间计算过程保留更高精度）
-    # SO2、NO2、PM10、PM2.5：算术平均值，保留2位小数（中间计算精度）
+    # 计算六参数均值（按统计修约规则）
+    # 先计算均值，再按统计数据规则修约
     if so2_values:
-        result['so2_concentration'] = safe_round(sum(so2_values) / len(so2_values), 2)
+        avg_so2 = sum(so2_values) / len(so2_values)
+        result['so2_concentration'] = apply_rounding(avg_so2, 'SO2', 'statistical_data')
     else:
         result['so2_concentration'] = None
 
     if no2_values:
-        result['no2_concentration'] = safe_round(sum(no2_values) / len(no2_values), 2)
+        avg_no2 = sum(no2_values) / len(no2_values)
+        result['no2_concentration'] = apply_rounding(avg_no2, 'NO2', 'statistical_data')
     else:
         result['no2_concentration'] = None
 
     if pm10_values:
-        result['pm10_concentration'] = safe_round(sum(pm10_values) / len(pm10_values), 2)
+        avg_pm10 = sum(pm10_values) / len(pm10_values)
+        result['pm10_concentration'] = apply_rounding(avg_pm10, 'PM10', 'statistical_data')
     else:
         result['pm10_concentration'] = None
 
     if pm25_values:
-        result['pm2_5_concentration'] = safe_round(sum(pm25_values) / len(pm25_values), 2)
+        avg_pm25 = sum(pm25_values) / len(pm25_values)
+        result['pm2_5_concentration'] = apply_rounding(avg_pm25, 'PM2_5', 'statistical_data')
     else:
         result['pm2_5_concentration'] = None
 
-    # CO：第95百分位数，保留3位小数（中间计算精度）
+    # CO：第95百分位数，按统计修约规则
     if co_values:
         percentile_95 = calculate_percentile(co_values, 95)
-        result['co_concentration'] = safe_round(percentile_95, 3) if percentile_95 is not None else None
+        result['co_concentration'] = apply_rounding(percentile_95, 'CO', 'statistical_data') if percentile_95 is not None else None
     else:
         result['co_concentration'] = None
 
-    # O3_8h：第90百分位数，保留2位小数（中间计算精度）
+    # O3_8h：第90百分位数，按统计修约规则
     if o3_8h_values:
         percentile_90 = calculate_percentile(o3_8h_values, 90)
-        result['o3_8h_concentration'] = safe_round(percentile_90, 2) if percentile_90 is not None else None
+        result['o3_8h_concentration'] = apply_rounding(percentile_90, 'O3_8h', 'statistical_data') if percentile_90 is not None else None
     else:
         result['o3_8h_concentration'] = None
 
@@ -443,6 +451,74 @@ def calculate_statistics(records: List[Dict]) -> Dict:
             valid_indices_new_limit_old_algo += 1
 
     result['comprehensive_index_new_limit_old_algo'] = safe_round(comprehensive_index_new_limit_old_algo, 3) if valid_indices_new_limit_old_algo > 0 else None
+
+    # ========== 新增：达标率计算 ==========
+    # 计算新标准达标率（HJ 663-2026）
+    valid_days_new = 0
+    exceed_days_new = 0
+
+    # 计算旧标准达标率（HJ 663-2013）
+    valid_days_old = 0
+    exceed_days_old = 0
+
+    for day in daily_data:
+        pm25 = day['PM2_5']
+        pm10 = day['PM10']
+        so2 = day['SO2']
+        no2 = day['NO2']
+        co = day['CO']
+        o3_8h = day['O3_8h']
+
+        # 检查是否所有6项都有数据（有效天）
+        if all(v is not None for v in [pm25, pm10, so2, no2, co, o3_8h]):
+            valid_days_new += 1
+            valid_days_old += 1
+
+            # 新标准：计算单项质量指数
+            pm25_index_new = pm25 / ANNUAL_STANDARD_LIMITS_2026['PM2_5']
+            pm10_index_new = pm10 / ANNUAL_STANDARD_LIMITS_2026['PM10']
+            so2_index_new = so2 / ANNUAL_STANDARD_LIMITS_2026['SO2']
+            no2_index_new = no2 / ANNUAL_STANDARD_LIMITS_2026['NO2']
+            co_index_new = co / ANNUAL_STANDARD_LIMITS_2026['CO']
+            o3_index_new = o3_8h / ANNUAL_STANDARD_LIMITS_2026['O3_8h']
+
+            # 判断是否超标（任意单项指数 > 1）
+            max_index_new = max(pm25_index_new, pm10_index_new, so2_index_new, no2_index_new, co_index_new, o3_index_new)
+            if max_index_new > 1:
+                exceed_days_new += 1
+
+            # 旧标准：计算单项质量指数
+            pm25_index_old = pm25 / ANNUAL_STANDARD_LIMITS_2013['PM2_5']
+            pm10_index_old = pm10 / ANNUAL_STANDARD_LIMITS_2013['PM10']
+            so2_index_old = so2 / ANNUAL_STANDARD_LIMITS_2013['SO2']
+            no2_index_old = no2 / ANNUAL_STANDARD_LIMITS_2013['NO2']
+            co_index_old = co / ANNUAL_STANDARD_LIMITS_2013['CO']
+            o3_index_old = o3_8h / ANNUAL_STANDARD_LIMITS_2013['O3_8h']
+
+            # 判断是否超标（任意单项指数 > 1）
+            max_index_old = max(pm25_index_old, pm10_index_old, so2_index_old, no2_index_old, co_index_old, o3_index_old)
+            if max_index_old > 1:
+                exceed_days_old += 1
+
+    # 计算达标率（新标准）
+    result['valid_days'] = valid_days_new
+    result['exceed_days'] = exceed_days_new
+    result['compliance_rate'] = safe_round(
+        (valid_days_new - exceed_days_new) / valid_days_new * 100, 1
+    ) if valid_days_new > 0 else None
+    result['exceed_rate'] = safe_round(
+        exceed_days_new / valid_days_new * 100, 1
+    ) if valid_days_new > 0 else None
+
+    # 计算达标率（旧标准）
+    result['valid_days_old_standard'] = valid_days_old
+    result['exceed_days_old_standard'] = exceed_days_old
+    result['compliance_rate_old_standard'] = safe_round(
+        (valid_days_old - exceed_days_old) / valid_days_old * 100, 1
+    ) if valid_days_old > 0 else None
+    result['exceed_rate_old_standard'] = safe_round(
+        exceed_days_old / valid_days_old * 100, 1
+    ) if valid_days_old > 0 else None
 
     # 计算数据天数
     result['data_days'] = len(records)
@@ -781,92 +857,81 @@ class SQLServerClient:
             main_records_count = sum(len(records) for records in city_data.values())
 
             # 2. 处理省直辖县级行政区划（如济源市、石河子市、五家渠市）
-            cursor.execute(sql_direct_administered, [start_date, end_date])
+            # 暂时关闭 - 2026-04-20
             direct_administered_count = 0
             direct_administered_records = 0
-
-            for row in cursor.fetchall():
-                city_name = row.city_name
-                if city_name not in city_data:
-                    city_data[city_name] = []
-                    direct_administered_count += 1
-
-                city_data[city_name].append({
-                    'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
-                    'city_code': row.CityCode,
-                    'province_name': row.province_name,
-                    'PM2_5_24h': row.PM2_5_24h,
-                    'PM10_24h': row.PM10_24h,
-                    'O3_8h_24h': row.O3_8h_24h,
-                    'NO2_24h': row.NO2_24h,
-                    'SO2_24h': row.SO2_24h,
-                    'CO_24h': row.CO_24h
-                })
-                direct_administered_records += 1
+            # cursor.execute(sql_direct_administered, [start_date, end_date])
+            # for row in cursor.fetchall():
+            #     city_name = row.city_name
+            #     if city_name not in city_data:
+            #         city_data[city_name] = []
+            #         direct_administered_count += 1
+            #     city_data[city_name].append({
+            #         'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
+            #         'city_code': row.CityCode,
+            #         'province_name': row.province_name,
+            #         'PM2_5_24h': row.PM2_5_24h,
+            #         'PM10_24h': row.PM10_24h,
+            #         'O3_8h_24h': row.O3_8h_24h,
+            #         'NO2_24h': row.NO2_24h,
+            #         'SO2_24h': row.SO2_24h,
+            #         'CO_24h': row.CO_24h
+            #     })
+            #     direct_administered_records += 1
 
             # 3. 处理CityCode匹配但parentid=0的城市（如吐鲁番、哈密）
-            # 使用名称关联来获取正确的省份信息
-            cursor.execute(sql_name_matched, [start_date, end_date])
+            # 暂时关闭 - 2026-04-20
             name_matched_count = 0
             name_matched_records = 0
-
-            for row in cursor.fetchall():
-                city_name = row.city_name
-                if city_name not in city_data:
-                    city_data[city_name] = []
-                    name_matched_count += 1
-
-                city_data[city_name].append({
-                    'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
-                    'city_code': row.CityCode,
-                    'province_name': row.province_name,
-                    'PM2_5_24h': row.PM2_5_24h,
-                    'PM10_24h': row.PM10_24h,
-                    'O3_8h_24h': row.O3_8h_24h,
-                    'NO2_24h': row.NO2_24h,
-                    'SO2_24h': row.SO2_24h,
-                    'CO_24h': row.CO_24h
-                })
-                name_matched_records += 1
+            # cursor.execute(sql_name_matched, [start_date, end_date])
+            # for row in cursor.fetchall():
+            #     city_name = row.city_name
+            #     if city_name not in city_data:
+            #         city_data[city_name] = []
+            #         name_matched_count += 1
+            #     city_data[city_name].append({
+            #         'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
+            #         'city_code': row.CityCode,
+            #         'province_name': row.province_name,
+            #         'PM2_5_24h': row.PM2_5_24h,
+            #         'PM10_24h': row.PM10_24h,
+            #         'O3_8h_24h': row.O3_8h_24h,
+            #         'NO2_24h': row.NO2_24h,
+            #         'SO2_24h': row.SO2_24h,
+            #         'CO_24h': row.CO_24h
+            #     })
+            #     name_matched_records += 1
 
             # 4. 处理云南自治州（使用编码前缀匹配，避免中文编码问题）
-            # 4.1 获取云南所有城市（使用编码过滤）
-            cursor.execute(sql_yunnan_prefectures)
-            yunnan_prefectures = {}
-            for row in cursor.fetchall():
-                # SQL已经提取了前4位作为code_prefix
-                yunnan_prefectures[row.code_prefix] = row
-
-            # 4.2 获取云南所有数据（53开头的CityCode）
-            cursor.execute(sql_yunnan_data, [start_date, end_date])
+            # 暂时关闭 - 2026-04-20
             yunnan_cities_count = 0
             yunnan_records_count = 0
-
-            for row in cursor.fetchall():
-                city_code = row.CityCode
-                # 使用CityCode前4位匹配（如532301 -> 5323）
-                code_prefix = str(city_code)[:4] if len(str(city_code)) >= 4 else str(city_code)
-
-                matched_prefecture = yunnan_prefectures.get(code_prefix)
-
-                if matched_prefecture:
-                    city_name = matched_prefecture.city_name
-                    if city_name not in city_data:
-                        city_data[city_name] = []
-                        yunnan_cities_count += 1
-
-                    city_data[city_name].append({
-                        'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
-                        'city_code': row.CityCode,
-                        'province_name': '云南',
-                        'PM2_5_24h': row.PM2_5_24h,
-                        'PM10_24h': row.PM10_24h,
-                        'O3_8h_24h': row.O3_8h_24h,
-                        'NO2_24h': row.NO2_24h,
-                        'SO2_24h': row.SO2_24h,
-                        'CO_24h': row.CO_24h
-                    })
-                    yunnan_records_count += 1
+            # cursor.execute(sql_yunnan_prefectures)
+            # yunnan_prefectures = {}
+            # for row in cursor.fetchall():
+            #     yunnan_prefectures[row.code_prefix] = row
+            # cursor.execute(sql_yunnan_data, [start_date, end_date])
+            # for row in cursor.fetchall():
+            #     city_code = row.CityCode
+            #     code_prefix = str(city_code)[:4] if len(str(city_code)) >= 4 else str(city_code)
+            #     matched_prefecture = yunnan_prefectures.get(code_prefix)
+            #     if matched_prefecture:
+            #         city_name = matched_prefecture.city_name
+            #         if city_name not in city_data:
+            #             city_data[city_name] = []
+            #             yunnan_cities_count += 1
+            #         city_data[city_name].append({
+            #             'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
+            #             'city_code': row.CityCode,
+            #             'province_name': '云南',
+            #             'PM2_5_24h': row.PM2_5_24h,
+            #             'PM10_24h': row.PM10_24h,
+            #             'O3_8h_24h': row.O3_8h_24h,
+            #             'NO2_24h': row.NO2_24h,
+            #             'SO2_24h': row.SO2_24h,
+            #             'CO_24h': row.CO_24h
+            #         })
+            #         yunnan_records_count += 1
 
             cursor.close()
             conn.close()
@@ -879,7 +944,8 @@ class SQLServerClient:
                 direct_administered=direct_administered_count,
                 name_matched=name_matched_count,
                 yunnan_autonomous_prefectures=yunnan_cities_count,
-                total_records=sum(len(records) for records in city_data.values())
+                total_records=sum(len(records) for records in city_data.values()),
+                note="第2、3、4类查询已临时关闭"
             )
 
             return city_data

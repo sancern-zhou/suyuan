@@ -69,17 +69,17 @@ def drop_and_recreate_tables():
         create_province_sql = """
         CREATE TABLE province_statistics_new_standard (
             id INT IDENTITY(1,1) PRIMARY KEY,
-            stat_date VARCHAR(7) NOT NULL,  -- 格式：2026-01（月度），2026（年度）
-            stat_type VARCHAR(20) NOT NULL,  -- monthly | current_month | annual_ytd
+            stat_date VARCHAR(7) NOT NULL,
+            stat_type VARCHAR(20) NOT NULL,
             province_name NVARCHAR(50) NOT NULL,
 
-            -- 浓度值（保留2位小数，中间计算精度）
-            so2_concentration DECIMAL(5,2),
-            no2_concentration DECIMAL(5,2),
-            pm10_concentration DECIMAL(5,2),
-            pm2_5_concentration DECIMAL(5,2),
-            co_concentration DECIMAL(6,3),  -- CO保留3位小数
-            o3_8h_concentration DECIMAL(5,2),
+            -- 浓度值（按最终修约规则设置字段类型）
+            so2_concentration INT,
+            no2_concentration INT,
+            pm10_concentration INT,
+            pm2_5_concentration DECIMAL(5,1),
+            co_concentration DECIMAL(5,1),
+            o3_8h_concentration INT,
 
             -- 单项指数（保留3位小数）
             so2_index DECIMAL(6,3),
@@ -103,6 +103,12 @@ def drop_and_recreate_tables():
             sample_coverage DECIMAL(5,2),
             city_count INT,
             city_names NVARCHAR(MAX),
+
+            -- 达标率字段
+            exceed_days INT,
+            valid_days INT,
+            compliance_rate DECIMAL(5,1),
+            exceed_rate DECIMAL(5,1),
 
             -- 时间戳
             created_at DATETIME DEFAULT GETDATE(),

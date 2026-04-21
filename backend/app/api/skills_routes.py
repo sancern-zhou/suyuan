@@ -117,6 +117,50 @@ async def get_skill_detail(skill_name: str):
         raise HTTPException(status_code=500, detail=f"Failed to get skill detail: {str(e)}")
 
 
+@router.put("/{skill_name}")
+async def update_skill(skill_name: str, content: dict):
+    """
+    更新技能文档内容
+
+    参数:
+        skill_name: 技能名称（如 "excel.md" 或 "excel"）
+        content: {"content": "新的文档内容"}
+
+    返回:
+        {
+            "success": true,
+            "message": "技能文档保存成功"
+        }
+    """
+    try:
+        # 标准化文件名
+        if not skill_name.endswith('.md'):
+            skill_name = f"{skill_name}.md"
+
+        skill_file = SKILLS_DIR / skill_name
+
+        if not skill_file.exists():
+            raise HTTPException(status_code=404, detail=f"Skill not found: {skill_name}")
+
+        # 获取新的内容
+        new_content = content.get("content")
+        if not new_content:
+            raise HTTPException(status_code=400, detail="Content is required")
+
+        # 写入文件
+        skill_file.write_text(new_content, encoding='utf-8')
+
+        return {
+            "success": True,
+            "message": "技能文档保存成功"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update skill: {str(e)}")
+
+
 @router.post("/refresh-index")
 async def refresh_skills_index():
     """

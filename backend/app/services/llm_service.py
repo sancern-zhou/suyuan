@@ -228,6 +228,27 @@ class LLMService:
                 f"这表明 API 响应格式可能与预期不符"
             )
 
+    async def _extract_response_text(self, response: httpx.Response) -> str:
+        """安全地从httpx响应中提取文本内容
+
+        处理流式和非流式响应，避免 ResponseNotRead 错误
+
+        Args:
+            response: httpx响应对象
+
+        Returns:
+            str: 响应文本（最多500字符）
+        """
+        try:
+            # 尝试直接访问text属性（非流式响应）
+            if hasattr(response, '_content') and response._content is not None:
+                return response.text[:500]
+            # 流式响应需要先读取
+            content = await response.aread()
+            return content.decode('utf-8', errors='ignore')[:500]
+        except Exception as e:
+            return f"Status {response.status_code} (unable to read: {str(e)[:50]})"
+
     async def _call_llm_with_retry(
         self,
         request_func: callable,
@@ -258,10 +279,13 @@ class LLMService:
                 last_error = e
                 status_code = e.response.status_code
 
+                # 安全地提取响应文本
+                response_text = await self._extract_response_text(e.response)
+
                 # 检查是否是429速率限制错误
                 is_rate_limit = status_code == 429 or (
                     status_code == 400 and
-                    "rate limit" in e.response.text.lower()
+                    "rate limit" in response_text.lower()
                 )
 
                 if is_rate_limit and attempt < max_retries - 1:
@@ -273,7 +297,7 @@ class LLMService:
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         wait_seconds=wait_time,
-                        response_text=e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+                        response_text=response_text[:200]
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -282,7 +306,7 @@ class LLMService:
                     logger.error(
                         "llm_http_error",
                         status_code=status_code,
-                        response_text=e.response.text[:500] if hasattr(e.response, 'text') else "N/A",
+                        response_text=response_text[:500],
                         attempt=attempt + 1,
                         max_retries=max_retries
                     )
@@ -676,10 +700,17 @@ class LLMService:
                 last_error = e
                 status_code = e.response.status_code
 
+                # 读取响应内容（流式响应需要先读取）
+                response_text = "N/A"
+                try:
+                    response_text = (await e.response.aread()).decode('utf-8', errors='ignore')[:500]
+                except Exception:
+                    response_text = f"Status {status_code} (unable to read response)"
+
                 # 检查是否是429速率限制错误
                 is_rate_limit = status_code == 429 or (
                     status_code == 400 and
-                    "rate limit" in e.response.text.lower()
+                    "rate limit" in response_text.lower()
                 )
 
                 if is_rate_limit and attempt < max_retries - 1:
@@ -691,7 +722,7 @@ class LLMService:
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         wait_seconds=wait_time,
-                        response_text=e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+                        response_text=response_text[:200]
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -700,7 +731,7 @@ class LLMService:
                     logger.error(
                         "llm_http_error",
                         status_code=status_code,
-                        response_text=e.response.text[:500] if hasattr(e.response, 'text') else "N/A",
+                        response_text=response_text[:500],
                         url=url,
                         provider=self.provider,
                         model=self.model,
@@ -775,10 +806,13 @@ class LLMService:
                 last_error = e
                 status_code = e.response.status_code
 
+                # 安全地提取响应文本
+                response_text = await self._extract_response_text(e.response)
+
                 # 检查是否是429速率限制错误
                 is_rate_limit = status_code == 429 or (
                     status_code == 400 and
-                    "rate limit" in e.response.text.lower()
+                    "rate limit" in response_text.lower()
                 )
 
                 if is_rate_limit and attempt < max_retries - 1:
@@ -790,6 +824,7 @@ class LLMService:
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         wait_seconds=wait_time,
+                        response_text=response_text[:200]
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -797,6 +832,7 @@ class LLMService:
                     logger.error(
                         "llm_streaming_http_error",
                         status_code=status_code,
+                        response_text=response_text[:500],
                         attempt=attempt + 1,
                         max_retries=max_retries
                     )
@@ -908,10 +944,13 @@ class LLMService:
                 last_error = e
                 status_code = e.response.status_code
 
+                # 安全地提取响应文本
+                response_text = await self._extract_response_text(e.response)
+
                 # 检查是否是429速率限制错误
                 is_rate_limit = status_code == 429 or (
                     status_code == 400 and
-                    "rate limit" in e.response.text.lower()
+                    "rate limit" in response_text.lower()
                 )
 
                 if is_rate_limit and attempt < max_retries - 1:
@@ -923,6 +962,7 @@ class LLMService:
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         wait_seconds=wait_time,
+                        response_text=response_text[:200]
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -930,6 +970,7 @@ class LLMService:
                     logger.error(
                         "llm_streaming_with_status_http_error",
                         status_code=status_code,
+                        response_text=response_text[:500],
                         attempt=attempt + 1,
                         max_retries=max_retries
                     )
@@ -1049,10 +1090,13 @@ class LLMService:
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
 
+                # 安全地提取响应文本
+                response_text = await self._extract_response_text(e.response)
+
                 # 检查是否是429速率限制错误
                 is_rate_limit = status_code == 429 or (
                     status_code == 400 and
-                    "rate limit" in e.response.text.lower()
+                    "rate limit" in response_text.lower()
                 )
 
                 if is_rate_limit and attempt < max_retries - 1:
@@ -1064,7 +1108,7 @@ class LLMService:
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         wait_seconds=wait_time,
-                        response_text=e.response.text[:200] if hasattr(e.response, 'text') else "N/A"
+                        response_text=response_text[:200]
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -1073,6 +1117,7 @@ class LLMService:
                     logger.error(
                         "llm_json_http_error",
                         status_code=status_code,
+                        response_text=response_text[:500],
                         attempt=attempt + 1,
                         error=str(e)
                     )
@@ -1293,16 +1338,20 @@ class LLMService:
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code
 
+                # 安全地提取响应文本
+                response_text = await self._extract_response_text(e.response)
+
                 # 检查是否是429速率限制错误
                 is_rate_limit = status_code == 429 or (
                     status_code == 400 and
-                    "rate limit" in e.response.text.lower()
+                    "rate limit" in response_text.lower()
                 )
 
                 logger.error(
                     "llm_messages_http_error",
                     provider=self.provider,
                     status_code=status_code,
+                    response_text=response_text[:500],
                     error=str(e),
                     is_rate_limit=is_rate_limit
                 )

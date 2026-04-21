@@ -139,6 +139,12 @@ BEGIN
         city_count INT,
         city_names NVARCHAR(500),
 
+        -- 达标率字段（新增）
+        exceed_days INT,                          -- 超标天数（基于旧标准限值）
+        valid_days INT,                           -- 有效天数
+        compliance_rate DECIMAL(5,1),             -- 达标率（%）
+        exceed_rate DECIMAL(5,1),                 -- 超标率（%）
+
         -- 时间戳
         created_at DATETIME DEFAULT GETDATE(),
         updated_at DATETIME DEFAULT GETDATE(),
