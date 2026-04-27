@@ -173,6 +173,14 @@ const modules = [
     desc: '管理QQ、微信等社交机器人',
     badge: '管理',
     isAction: true
+  },
+  {
+    id: 'file-manager',
+    name: '文件管理',
+    abbr: '文件',
+    desc: '浏览和下载/tmp目录文件',
+    badge: '工具',
+    isAction: true
   }
 ]
 

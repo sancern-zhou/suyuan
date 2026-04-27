@@ -22,14 +22,11 @@ class LLMService:
 
     @staticmethod
     def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """剥离消息中的 thinking blocks
+        """剥离消息中的 thinking blocks（包括 thinking 和 redacted_thinking）
 
-        DeepSeek 等 Anthropic 兼容 API 支持 thinking content block，
-        但 Anthropic Python SDK 不支持传递 thinking 参数，
-        导致无法启用 thinking mode 来回传 thinking blocks。
-
-        解决方案：在发送前剥离 thinking blocks，
-        使 API 不触发 thinking mode 要求。
+        用于新用户轮次开始时清理历史中的 thinking blocks。
+        DeepSeek 要求：同一次工具调用链路必须保留 thinking blocks，
+        但新一轮用户问题开始时需要清理。
 
         参考 Claude Code 的 stripSignatureBlocks 策略。
 
@@ -76,6 +73,53 @@ class LLMService:
             )
 
         return stripped
+
+    @staticmethod
+    def _filter_redacted_thinking_for_deepseek(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """过滤 DeepSeek 不支持的 redacted_thinking blocks
+
+        DeepSeek API 不支持 redacted_thinking 类型，只支持 thinking。
+        在保留 thinking blocks 时（同一次工具调用链路），需要过滤掉 redacted_thinking。
+
+        Args:
+            messages: Anthropic 格式消息列表
+
+        Returns:
+            过滤后的消息列表（深拷贝，不修改原列表）
+        """
+        import copy
+        filtered = []
+        redacted_count = 0
+
+        for msg in messages:
+            content = msg.get("content", [])
+
+            if isinstance(content, list):
+                # 过滤掉 redacted_thinking blocks，保留 thinking blocks
+                new_blocks = [
+                    block for block in content
+                    if not (isinstance(block, dict) and block.get("type") == "redacted_thinking")
+                ]
+                redacted_count += len(content) - len(new_blocks)
+
+                if new_blocks:
+                    new_msg = copy.copy(msg)
+                    new_msg["content"] = new_blocks
+                    filtered.append(new_msg)
+                else:
+                    # 所有 blocks 都被过滤了，保留空消息（不应该发生）
+                    filtered.append(msg)
+            else:
+                filtered.append(msg)
+
+        if redacted_count > 0:
+            logger.info(
+                "redacted_thinking_filtered",
+                filtered_count=redacted_count,
+                messages_count=len(messages)
+            )
+
+        return filtered
 
     async def _parse_sse_stream(
         self,
@@ -1570,8 +1614,8 @@ class LLMService:
                         block_type = block.get("type") if isinstance(block, dict) else "unknown"
                         msg_info["content_types"].append(block_type)
 
-                        # 检测 thinking 和 redacted_thinking blocks
-                        # DeepSeek 返回 redacted_thinking，需要在启用 thinking mode 时回传
+                        # 检测 thinking blocks（DeepSeek 只支持 thinking，不支持 redacted_thinking）
+                        # 注意：DeepSeek 分支会在 continuation 时过滤掉 redacted_thinking
                         if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
                             has_thinking_blocks_in_history = True
                             thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
@@ -1650,10 +1694,12 @@ class LLMService:
                             is_continuation = True
 
                 if is_continuation and has_thinking_blocks_in_history:
-                    # 同一轮工具调用链路：保留 thinking blocks，启用 thinking mode
+                    # 同一轮工具调用链路：保留 thinking blocks，但过滤掉 redacted_thinking
+                    # DeepSeek 只支持 thinking 类型，不支持 redacted_thinking
+                    messages = self._filter_redacted_thinking_for_deepseek(messages)
+                    api_params["messages"] = messages
                     logger.info("deepseek_thinking_blocks_preserved", provider=self.provider, model=self.model,
-                               reason="Same tool call continuation, preserving thinking blocks")
-                    # 不剥离 thinking blocks，不显式禁用 thinking mode
+                               reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)")
                 else:
                     # 新用户轮次：禁用 thinking mode，剥离 thinking blocks
                     api_params["thinking"] = {"type": "disabled"}
@@ -1767,8 +1813,8 @@ class LLMService:
                     block_type = block.get("type") if isinstance(block, dict) else "unknown"
                     msg_info["content_types"].append(block_type)
 
-                    # 检测 thinking 和 redacted_thinking blocks
-                    # DeepSeek 返回 redacted_thinking，需要在启用 thinking mode 时回传
+                    # 检测 thinking blocks（DeepSeek 只支持 thinking，不支持 redacted_thinking）
+                    # 注意：DeepSeek 分支会在 continuation 时过滤掉 redacted_thinking
                     if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
                         has_thinking_blocks_in_history = True
                         thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
@@ -1846,10 +1892,12 @@ class LLMService:
                         is_continuation = True
 
             if is_continuation and has_thinking_blocks_in_history:
-                # 同一轮工具调用链路：保留 thinking blocks，启用 thinking mode
+                # 同一轮工具调用链路：保留 thinking blocks，但过滤掉 redacted_thinking
+                # DeepSeek 只支持 thinking 类型，不支持 redacted_thinking
+                messages = self._filter_redacted_thinking_for_deepseek(messages)
+                api_params["messages"] = messages
                 logger.info("deepseek_thinking_blocks_preserved", provider=self.provider, model=self.model,
-                           reason="Same tool call continuation, preserving thinking blocks")
-                # 不剥离 thinking blocks，不显式禁用 thinking mode
+                           reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)")
             else:
                 # 新用户轮次：禁用 thinking mode，剥离 thinking blocks
                 api_params["thinking"] = {"type": "disabled"}
