@@ -334,8 +334,8 @@ const updatePendingEvents = (messages) => {
 
   if (totalPending !== pendingEventsCount.value) {
     console.log(`[ReActMessageList] 待处理事件变化: ${pendingEventsCount.value} -> ${totalPending}`, {
-      actions: actionCount,
-      observations: observationCount,
+      actions: toolUseCount,
+      observations: toolResultCount,
       thoughts: thoughtCount
     })
     pendingEventsCount.value = totalPending
