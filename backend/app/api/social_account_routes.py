@@ -60,15 +60,44 @@ def get_channel_manager():
     """
     获取ChannelManager实例
 
+    如果main.py未初始化（社交平台未启用），则延迟创建
+    一个最小化的ChannelManager，用于账号管理API。
+
     Returns:
         ChannelManager实例或None
     """
     try:
         # 从FastAPI app.state获取
         from app.main import app
-        return getattr(app.state, 'channel_manager', None)
+        manager = getattr(app.state, 'channel_manager', None)
+        if manager is not None:
+            return manager
+
+        # 延迟初始化：创建最小化的ChannelManager
+        from app.social.config import SocialConfig
+        from app.social.message_bus import MessageBus
+        from app.channels.manager import ChannelManager
+
+        social_config = SocialConfig.load_from_yaml(
+            getattr(app.state, 'social_config_path', 'config/social_config.yaml')
+        )
+        message_bus = MessageBus()
+        manager = ChannelManager(
+            config=social_config,
+            bus=message_bus,
+            agent_bridge=None
+        )
+
+        # 保存到app.state，供后续复用
+        app.state.channel_manager = manager
+        app.state.message_bus = message_bus
+        app.state.social_config = social_config
+
+        logger.info("channel_manager_lazy_initialized")
+        return manager
+
     except Exception as e:
-        logger.error("failed_to_get_channel_manager", error=str(e))
+        logger.error("failed_to_get_channel_manager", error=str(e), exc_info=True)
         return None
 
 

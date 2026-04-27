@@ -37,6 +37,64 @@ async def get_notebook_html(html_id: str):
     )
 
 
+@router.get("/html/{html_id}/{filename}")
+async def get_notebook_image(html_id: str, filename: str):
+    """
+    获取Notebook HTML预览中引用的关联图片文件
+
+    Notebook中的图表图片以相对路径存储在notebook同目录下，
+    该路由根据html_id定位notebook原始目录，返回对应图片文件。
+
+    Args:
+        html_id: HTML预览的唯一标识
+        filename: 图片文件名（如 chart_01_timeseries_O3_PM25.png）
+
+    Returns:
+        图片文件作为FileResponse
+    """
+    if not notebook_converter.html_exists(html_id):
+        raise HTTPException(status_code=404, detail="Notebook HTML not found")
+
+    notebook_dir = notebook_converter.get_notebook_dir(html_id)
+    if not notebook_dir:
+        raise HTTPException(status_code=404, detail="Notebook source directory not found")
+
+    # 防止路径遍历攻击：确保文件名不包含路径分隔符
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # 仅允许图片文件类型
+    allowed_extensions = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
+    file_ext = Path(filename).suffix.lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="File type not allowed")
+
+    image_path = notebook_dir / filename
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail=f"Image file not found: {filename}")
+
+    # 确保解析后的路径仍在notebook目录内（双重防护）
+    try:
+        image_path.resolve().relative_to(notebook_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".webp": "image/webp",
+    }
+
+    return FileResponse(
+        path=str(image_path),
+        media_type=media_types.get(file_ext, "application/octet-stream"),
+        headers={"Cache-Control": "public, max-age=3600"}
+    )
+
+
 @router.get("/html/{html_id}/info")
 async def get_notebook_info(html_id: str):
     """

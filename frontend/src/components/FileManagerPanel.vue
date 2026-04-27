@@ -1,5 +1,11 @@
 <template>
-  <div class="file-manager-panel">
+  <div class="management-panel file-management-panel">
+    <div class="panel-header">
+      <h3>文件管理</h3>
+      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
+    </div>
+
+    <div class="file-manager-content">
     <!-- 面包屑导航 -->
     <div class="breadcrumb-bar">
       <div class="breadcrumb-path">
@@ -82,6 +88,7 @@
           </div>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </template>
@@ -168,11 +175,47 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.file-manager-panel {
+.management-panel {
+  height: 100%;
+  overflow: hidden;
+  background: white;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+}
+
+.panel-btn {
+  padding: 6px 12px;
+  border: 1px solid #1976d2;
+  background: white;
+  color: #1976d2;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.panel-btn:hover {
+  background: #1976d2;
+  color: white;
+}
+
+.file-manager-content {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: white;
+  height: calc(100% - 57px);
   overflow: hidden;
 }
 
