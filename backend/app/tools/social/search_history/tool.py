@@ -1,8 +1,8 @@
 """
-搜索历史对话工具
+搜索 daily notes 工具
 
 核心功能：
-- 搜索HISTORY.md历史对话
+- 搜索 memory/YYYY-MM-DD.md daily notes
 - 支持关键词搜索
 - 返回匹配的历史条目
 """
@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 
 class SearchHistoryTool(LLMTool):
     """
-    搜索历史对话工具
+    搜索 daily notes 工具
 
     用途：
     - 查找之前的对话内容
@@ -29,7 +29,7 @@ class SearchHistoryTool(LLMTool):
         # 定义 function_schema
         function_schema = {
             "name": "search_history",
-            "description": "搜索历史对话（从HISTORY.md中查找相关内容）",
+            "description": "搜索历史对话（从 memory/YYYY-MM-DD.md daily notes 中查找相关内容）",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -52,7 +52,7 @@ class SearchHistoryTool(LLMTool):
         # 初始化基类
         super().__init__(
             name="search_history",
-            description="搜索历史对话（从HISTORY.md中查找相关内容）",
+            description="搜索历史对话（从 memory/YYYY-MM-DD.md daily notes 中查找相关内容）",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0"
@@ -152,7 +152,8 @@ class SearchHistoryTool(LLMTool):
                 formatted_results.append({
                     "match": result.get("match", ""),
                     "context": result.get("context", ""),
-                    "line_number": result.get("line_number", 0)
+                    "line_number": result.get("line_number", 0),
+                    "source": result.get("source", "")
                 })
 
             return {

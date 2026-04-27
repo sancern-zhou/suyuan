@@ -206,7 +206,7 @@ def build_social_prompt(
         "\n",
         "不使用时机：\n",
         "- ❌ 临时信息（如'用户今天问了一个问题'）\n",
-        "- ❌ 对话内容（由HISTORY.md记录）\n",
+        "- ❌ 对话内容（由 memory/YYYY-MM-DD.md daily notes 记录）\n",
         "- ❌ 不稳定的事实（可能频繁变化）\n",
         "\n",
         "**2. replace_memory** - 替换现有记忆\n",

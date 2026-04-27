@@ -1,12 +1,13 @@
 """
-社交模式双层记忆系统（兼容层）
+社交模式分层记忆系统（兼容层）
 
 ⚠️ 此文件为兼容层，实际逻辑已迁移到 app/agent/memory/memory_store.py
 
 核心功能：
-- MEMORY.md：长期事实（用户偏好、历史结论、重要数据）
-- HISTORY.md：可搜索日志（完整对话历史）
-- 自动整合对话内容到记忆
+- MEMORY.md：根级长期记忆（用户偏好、领域知识、历史结论）
+- memory/YYYY-MM-DD.md：日志型/观察型长期记忆库
+- memory/.dreams/：待晋升候选目录
+- 自动整合对话内容到 daily notes，并将稳定事实晋升到 MEMORY.md
 - 提供记忆上下文给LLM
 
 改进版（参考 nanobot）：
@@ -40,7 +41,7 @@ from app.agent.memory.memory_store import (
 
 class MemoryStore(BaseMemoryStore):
     """
-    社交模式双层记忆系统（兼容层）
+    社交模式分层记忆系统（兼容层）
 
     ⚠️ 此类为兼容层，内部委托给通用MemoryStore（mode="social"）
 
@@ -49,10 +50,9 @@ class MemoryStore(BaseMemoryStore):
     - 持久化存储
     - 自动整合到上下文
 
-    HISTORY.md：
-    - 可搜索日志（完整对话历史）
-    - 按时间倒序
-    - 用于回溯和查找
+    memory/YYYY-MM-DD.md：
+    - 可搜索日志型 daily notes
+    - 用于回溯、检索和长期记忆晋升
     """
 
     def __init__(
@@ -60,7 +60,7 @@ class MemoryStore(BaseMemoryStore):
         user_id: Optional[str] = None,  # 用户ID（格式：{channel}:{bot_account}:{sender_id}）
         workspace: Optional[Path] = None,  # ⚠️ 已弃用：保留用于向后兼容
         max_memory_size: int = 10000,  # 最大记忆字符数
-        max_history_size: int = 50000  # 最大历史字符数
+        max_history_size: int = 50000  # daily note 单文件最大字符数（保留参数名兼容旧调用）
     ):
         """
         初始化社交模式记忆存储（兼容层）
@@ -69,7 +69,7 @@ class MemoryStore(BaseMemoryStore):
             user_id: 用户ID（格式：{channel}:{bot_account}:{sender_id}）
             workspace: ⚠️ 已弃用：保留用于向后兼容（现在使用 backend_data_registry/social/memory）
             max_memory_size: MEMORY.md 最大字符数
-            max_history_size: HISTORY.md 最大字符数
+            max_history_size: daily note 单文件最大字符数
         """
         # 社交模式使用特殊的工作空间路径（向后兼容）
         # 旧格式：{workspace}/{safe_user_id}/
@@ -106,7 +106,9 @@ class MemoryStore(BaseMemoryStore):
             self.workspace.mkdir(parents=True, exist_ok=True)
             # 重新设置文件路径
             self.memory_file = self.workspace / "MEMORY.md"
-            self.history_file = self.workspace / "HISTORY.md"
+            self.daily_memory_dir = self.workspace / "memory"
+            self.dreams_dir = self.daily_memory_dir / ".dreams"
+            self.memory_index_file = self.daily_memory_dir / "index.json"
             # 重新初始化文件（如果不存在）
             self._init_files()
 
@@ -172,7 +174,9 @@ class ImprovedMemoryStore(BaseImprovedMemoryStore):
             self.workspace.mkdir(parents=True, exist_ok=True)
             # 重新设置文件路径
             self.memory_file = self.workspace / "MEMORY.md"
-            self.history_file = self.workspace / "HISTORY.md"
+            self.daily_memory_dir = self.workspace / "memory"
+            self.dreams_dir = self.daily_memory_dir / ".dreams"
+            self.memory_index_file = self.daily_memory_dir / "index.json"
             # 重新初始化文件（如果不存在）
             self._init_files()
 

@@ -1,13 +1,14 @@
 """
-通用双层记忆系统
+通用分层记忆系统
 
 从 app/social/memory_store.py 迁移，支持所有7种模式（社交、助手、专家、问数、编程、报告、图表）
 
 核心功能：
-- MEMORY.md：长期事实（用户偏好、历史结论、重要数据）
-- HISTORY.md：可搜索日志（完整对话历史）
-- 自动整合对话内容到记忆
-- 提供记忆上下文给LLM
+- MEMORY.md：根级长期记忆（用户偏好、领域知识、历史结论）
+- memory/YYYY-MM-DD.md：日志型/观察型长期记忆库
+- memory/.dreams/：待晋升候选目录
+- 自动整合对话内容到 daily notes，并将稳定事实晋升到 MEMORY.md
+- 提供记忆上下文给 LLM
 
 改进版（参考 nanobot）：
 - 使用JSON响应方式（更可靠）
@@ -29,17 +30,16 @@ logger = structlog.get_logger(__name__)
 
 class MemoryStore:
     """
-    通用双层记忆系统（支持所有模式）
+    通用分层记忆系统（支持所有模式）
 
     MEMORY.md：
     - 长期事实（用户偏好、历史结论、重要数据）
     - 持久化存储
     - 自动整合到上下文
 
-    HISTORY.md：
-    - 可搜索日志（完整对话历史）
-    - 按时间倒序
-    - 用于回溯和查找
+    memory/YYYY-MM-DD.md：
+    - 可搜索日志型 daily notes
+    - 用于回溯、检索和长期记忆晋升
     """
 
     def __init__(
@@ -48,7 +48,7 @@ class MemoryStore:
         mode: str = "expert",  # ✅ 新增：模式标识（social/assistant/expert/query/code/report/chart）
         workspace: Optional[Path] = None,
         max_memory_size: int = 10000,  # 最大记忆字符数
-        max_history_size: int = 50000  # 最大历史字符数
+        max_history_size: int = 50000  # daily note 单文件最大字符数（保留参数名兼容旧调用）
     ):
         """
         初始化记忆存储
@@ -58,7 +58,7 @@ class MemoryStore:
             mode: 模式标识（social/assistant/expert/query/code/report/chart）
             workspace: 工作空间目录，默认 backend_data_registry/memory
             max_memory_size: MEMORY.md 最大字符数
-            max_history_size: HISTORY.md 最大字符数
+            max_history_size: daily note 单文件最大字符数
         """
         self.user_id = user_id or "global"  # 默认全局记忆（向后兼容）
         self.mode = mode
@@ -68,7 +68,9 @@ class MemoryStore:
         # ✅ 模式专属工作空间
         self.workspace = self._init_workspace(workspace, user_id, mode)
         self.memory_file = self.workspace / "MEMORY.md"
-        self.history_file = self.workspace / "HISTORY.md"
+        self.daily_memory_dir = self.workspace / "memory"
+        self.dreams_dir = self.daily_memory_dir / ".dreams"
+        self.memory_index_file = self.daily_memory_dir / "index.json"
 
         # 初始化文件
         self._init_files()
@@ -103,7 +105,15 @@ class MemoryStore:
         return mode_dir
 
     def _init_files(self) -> None:
-        """初始化MEMORY.md和HISTORY.md文件"""
+        """初始化 MEMORY.md 和 OpenClaw 风格 memory/ 分层目录"""
+        self.daily_memory_dir.mkdir(parents=True, exist_ok=True)
+        self.dreams_dir.mkdir(parents=True, exist_ok=True)
+
+        legacy_history_file = self.workspace / "HISTORY.md"
+        if legacy_history_file.exists():
+            legacy_history_file.unlink()
+            logger.info("legacy_history_file_removed", path=str(legacy_history_file))
+
         if not self.memory_file.exists():
             initial_memory = """# 长期记忆 (MEMORY.md)
 
@@ -117,16 +127,6 @@ class MemoryStore:
 """
             self.memory_file.write_text(initial_memory, encoding="utf-8")
             logger.info("memory_file_created", path=str(self.memory_file))
-
-        if not self.history_file.exists():
-            initial_history = """# 对话历史 (HISTORY.md)
-
-此文件按时间倒序记录完整的对话历史，用于回溯和查找。
-
----
-"""
-            self.history_file.write_text(initial_history, encoding="utf-8")
-            logger.info("history_file_created", path=str(self.history_file))
 
     def get_memory_context(self) -> str:
         """
@@ -164,7 +164,7 @@ class MemoryStore:
         流程：
         1. 当前MEMORY.md + 新对话内容 → LLM分析
         2. 生成新的MEMORY.md（提取重要信息）
-        3. 追加到HISTORY.md（完整对话）
+        3. 追加到 memory/YYYY-MM-DD.md（daily notes）
 
         Args:
             messages: 对话消息列表
@@ -184,8 +184,8 @@ class MemoryStore:
             return True
 
         try:
-            # 1. 追加到HISTORY.md
-            await self._append_to_history(new_messages)
+            # 1. 追加到 daily notes
+            await self._append_to_daily_notes(new_messages)
 
             # 2. 整合到MEMORY.md（如果有LLM服务）
             if llm_service:
@@ -210,44 +210,67 @@ class MemoryStore:
             )
             return False
 
-    async def _append_to_history(self, messages: List[Dict[str, Any]]) -> None:
+    async def _append_to_daily_notes(self, messages: List[Dict[str, Any]]) -> None:
         """
-        追加对话到HISTORY.md
+        追加对话到 memory/YYYY-MM-DD.md
 
         Args:
             messages: 对话消息列表
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        note_date = datetime.now().strftime("%Y-%m-%d")
 
-        # 构建历史条目
-        history_entry = f"\n## {timestamp}\n\n"
+        # 构建 daily note 条目
+        note_entry = f"\n## {timestamp}\n\n"
 
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
 
             if role == "user":
-                history_entry += f"**用户**: {content}\n\n"
+                note_entry += f"**用户**: {content}\n\n"
             elif role == "assistant":
-                # 只保留前500个字符，避免历史过长
                 preview = content[:500] + "..." if len(content) > 500 else content
-                history_entry += f"**助手**: {preview}\n\n"
+                note_entry += f"**助手**: {preview}\n\n"
 
-        history_entry += "---\n"
+        note_entry += "---\n"
+        self.append_daily_note(note_entry, note_date=note_date)
 
-        # 追加到文件
-        current_content = self.history_file.read_text(encoding="utf-8")
+    def append_daily_note(self, entry: str, note_date: Optional[str] = None) -> Path:
+        """追加条目到 memory/YYYY-MM-DD.md。"""
+        note_date = note_date or datetime.now().strftime("%Y-%m-%d")
+        note_file = self.daily_memory_dir / f"{note_date}.md"
 
-        # 检查文件大小，超过限制则清理旧内容
-        if len(current_content) + len(history_entry) > self.max_history_size:
-            # 保留最新的80%
+        if not note_file.exists():
+            note_file.write_text(
+                f"# Daily Memory {note_date}\n\n此文件记录当天对话摘要、观察和可检索上下文。\n",
+                encoding="utf-8",
+            )
+
+        current_content = note_file.read_text(encoding="utf-8")
+        normalized_entry = entry.rstrip() + "\n\n"
+
+        if len(current_content) + len(normalized_entry) > self.max_history_size:
             keep_size = int(self.max_history_size * 0.8)
             current_content = current_content[-keep_size:]
+            if not current_content.startswith("#"):
+                current_content = f"# Daily Memory {note_date}\n\n... (older entries truncated)\n\n{current_content}"
 
-        new_content = current_content + history_entry
-        self.history_file.write_text(new_content, encoding="utf-8")
+        note_file.write_text(current_content + normalized_entry, encoding="utf-8")
+        logger.debug("daily_note_updated", path=str(note_file), entry_length=len(normalized_entry))
+        return note_file
 
-        logger.debug("history_updated", entry_length=len(history_entry))
+    def list_daily_notes(self) -> List[Path]:
+        """列出 daily note 文件，按日期倒序。"""
+        if not self.daily_memory_dir.exists():
+            return []
+        return sorted(
+            [
+                path for path in self.daily_memory_dir.glob("*.md")
+                if path.is_file() and path.parent == self.daily_memory_dir
+            ],
+            reverse=True,
+        )
 
     async def _update_memory(
         self,
@@ -351,7 +374,7 @@ class MemoryStore:
         limit: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        搜索HISTORY.md历史对话
+        兼容旧接口：搜索 memory/YYYY-MM-DD.md daily notes
 
         Args:
             query: 搜索关键词
@@ -360,31 +383,46 @@ class MemoryStore:
         Returns:
             匹配的历史条目列表
         """
+        return self.search_daily_notes(query=query, limit=limit)
+
+    def search_daily_notes(
+        self,
+        query: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """搜索 memory/YYYY-MM-DD.md daily notes。"""
         try:
-            history_content = self.history_file.read_text(encoding="utf-8")
-
-            # 简单的文本搜索（按行匹配）
             results = []
-            lines = history_content.split("\n")
+            lowered_query = query.lower()
 
-            for i, line in enumerate(lines):
-                if query.lower() in line.lower():
-                    # 获取上下文（前后各2行）
-                    context_start = max(0, i - 2)
-                    context_end = min(len(lines), i + 3)
-                    context = "\n".join(lines[context_start:context_end])
+            for note_file in self.list_daily_notes():
+                note_content = note_file.read_text(encoding="utf-8")
+                lines = note_content.split("\n")
 
-                    results.append({
-                        "match": line.strip(),
-                        "context": context,
-                        "line_number": i + 1
-                    })
+                for i, line in enumerate(lines):
+                    if lowered_query in line.lower():
+                        context_start = max(0, i - 2)
+                        context_end = min(len(lines), i + 3)
+                        context = "\n".join(lines[context_start:context_end])
 
-                    if len(results) >= limit:
-                        break
+                        results.append({
+                            "match": line.strip(),
+                            "context": context,
+                            "line_number": i + 1,
+                            "source": f"memory/{note_file.name}"
+                        })
+
+                        if len(results) >= limit:
+                            logger.info(
+                                "daily_notes_searched",
+                                mode=self.mode,
+                                query=query,
+                                results_found=len(results)
+                            )
+                            return results
 
             logger.info(
-                "history_searched",
+                "daily_notes_searched",
                 mode=self.mode,
                 query=query,
                 results_found=len(results)
@@ -393,7 +431,7 @@ class MemoryStore:
 
         except Exception as e:
             logger.error(
-                "failed_to_search_history",
+                "failed_to_search_daily_notes",
                 error=str(e),
                 exc_info=True
             )
@@ -600,8 +638,8 @@ class ImprovedMemoryStore(MemoryStore):
 
 **任务**：
 1. 分析对话内容，提取重要信息
-2. 生成 history_entry：一段简洁的对话摘要（格式：[YYYY-MM-DD HH:MM] 摘要内容，包含关键事件、决策、主题，便于 grep 搜索）
-3. 生成 memory_update：更新后的长期记忆（Markdown格式，包含所有原有记忆+新信息）
+2. 生成 daily_note_entry：一段简洁的 daily note 条目（格式：[YYYY-MM-DD HH:MM] 摘要内容，包含关键事件、决策、主题，便于检索）
+3. 生成 memory_update：更新后的根级长期记忆（Markdown格式，只包含稳定、可长期复用的信息）
 
 **⚠️ 长期记忆内容限制（CRITICAL - 必须严格遵守）**：
 
@@ -647,7 +685,7 @@ class ImprovedMemoryStore(MemoryStore):
 **返回格式（必须严格遵守）**：
 ```json
 {{
-    "history_entry": "对话摘要（可包含具体任务细节）",
+    "daily_note_entry": "对话摘要（可包含具体任务细节，用于写入 memory/YYYY-MM-DD.md）",
     "memory_update": "更新后的长期记忆（只包含三个固定章节，删除所有任务细节和技术架构信息）"
 }}
 ```
@@ -677,12 +715,12 @@ class ImprovedMemoryStore(MemoryStore):
                 user_id=self.user_id,
                 mode=self.mode,
                 response_keys=list(response.keys()),
-                has_history_entry="history_entry" in response,
+                has_daily_note_entry="daily_note_entry" in response,
                 has_memory_update="memory_update" in response
             )
 
             # 验证字段
-            if "history_entry" not in response or "memory_update" not in response:
+            if "daily_note_entry" not in response or "memory_update" not in response:
                 logger.warning(
                     "memory_consolidation_missing_fields",
                     user_id=self.user_id,
@@ -692,7 +730,7 @@ class ImprovedMemoryStore(MemoryStore):
                 )
                 return self._fail_or_raw_archive(messages)
 
-            entry = response["history_entry"]
+            entry = response["daily_note_entry"]
             update = response["memory_update"]
 
             if not entry or not update:
@@ -715,8 +753,8 @@ class ImprovedMemoryStore(MemoryStore):
                 )
                 return self._fail_or_raw_archive(messages)
 
-            # 追加到历史
-            self.append_history(entry)
+            # 追加到 daily notes
+            self.append_daily_note(entry)
 
             # 更新长期记忆
             if update != current_memory:
@@ -744,24 +782,8 @@ class ImprovedMemoryStore(MemoryStore):
             return self._fail_or_raw_archive(messages)
 
     def append_history(self, entry: str) -> None:
-        """追加到历史记录"""
-        try:
-            with open(self.history_file, "a", encoding="utf-8") as f:
-                f.write(entry.rstrip() + "\n\n")
-            logger.debug(
-                "history_appended",
-                user_id=self.user_id,
-                mode=self.mode,
-                entry_length=len(entry)
-            )
-        except Exception as e:
-            logger.error(
-                "failed_to_append_history",
-                user_id=self.user_id,
-                mode=self.mode,
-                error=str(e)
-            )
-            raise
+        """兼容旧接口：追加到 daily notes。"""
+        self.append_daily_note(entry)
 
     def read_long_term(self) -> str:
         """读取长期记忆内容"""
@@ -905,13 +927,13 @@ class ImprovedMemoryStore(MemoryStore):
         return True
 
     def _raw_archive(self, messages: List[Dict[str, Any]]) -> None:
-        """原始归档：直接将消息转存到 HISTORY.md"""
+        """原始归档：直接将消息转存到 daily notes"""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         formatted_messages = self._format_messages(messages)
 
         entry = f"[{ts}] [原始归档] {len(messages)} 条消息\n{formatted_messages}\n\n"
 
-        self.append_history(entry)
+        self.append_daily_note(entry)
         logger.warning(
             "memory_consolidation_raw_archive",
             user_id=self.user_id,
