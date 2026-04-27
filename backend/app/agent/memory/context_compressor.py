@@ -138,7 +138,7 @@ class ContextCompressor:
             # 压缩操作处理大量上下文，需要更长的超时时间（300秒）
             chat_params = {
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 8000,
+                "max_tokens": 16384,  # ✅ 增加到 16384，避免压缩响应被截断
                 "timeout": 300.0  # 5分钟超时，处理大量上下文
             }
 

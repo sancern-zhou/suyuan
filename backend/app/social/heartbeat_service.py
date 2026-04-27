@@ -170,6 +170,13 @@ class HeartbeatService:
                 # 2. 计算最近的唤醒时间
                 next_wake_ms = self._get_next_wake_ms(all_tasks)
 
+                logger.debug(
+                    "heartbeat_loop_checking_tasks",
+                    total_tasks=len(all_tasks),
+                    next_wake_ms=next_wake_ms,
+                    next_wake_time=datetime.fromtimestamp(next_wake_ms / 1000, tz=self.timezone).strftime("%Y-%m-%d %H:%M:%S") if next_wake_ms else None
+                )
+
                 if next_wake_ms is None:
                     # 没有即将执行的任务，使用默认间隔
                     logger.debug("no_upcoming_tasks", interval_s=self.interval_s)
@@ -332,8 +339,9 @@ class HeartbeatService:
         import re
 
         tasks = []
-        # 更新模式以匹配next_run_at字段（可选）
-        task_pattern = r'-\s*name:\s*(.+?)\s+schedule:\s*["\'](.+?)["\'].*?description:\s*(.+?)\s+enabled:\s*(true|false)(?:\s+next_run_at:\s*["\'](.+?)["\'])?'
+        # 修复：支持多行description（使用[\s\S]+?代替.+?）
+        # 修复：允许enabled和next_run_at之间有其他字段（如channels）
+        task_pattern = r'-\s*name:\s*(.+?)\s+schedule:\s*["\'](.+?)["\'].*?description:\s*([\s\S]+?)\s+enabled:\s*(true|false)(?:[\s\S]*?next_run_at:\s*["\'](.+?)["\'])?'
 
         matches = re.findall(task_pattern, content, re.DOTALL)
         for match in matches:
@@ -348,10 +356,22 @@ class HeartbeatService:
                 # 如果文件中有next_run_at，使用它；否则稍后计算
                 if next_run_at:
                     task["next_run_at"] = next_run_at.strip()
+                    logger.debug(
+                        "task_parsed_with_next_run",
+                        name=name.strip()[:50],
+                        schedule=schedule,
+                        next_run_at=next_run_at.strip()
+                    )
+                else:
+                    logger.debug(
+                        "task_parsed_without_next_run",
+                        name=name.strip()[:50],
+                        schedule=schedule
+                    )
 
                 tasks.append(task)
 
-        logger.debug("tasks_parsed", count=len(tasks))
+        logger.info("tasks_parsed", count=len(tasks), with_next_run=sum(1 for t in tasks if t.get("next_run_at")))
         return tasks
 
     def _filter_due_tasks(self, tasks: List[Dict[str, Any]], current_time: datetime) -> List[Dict[str, Any]]:

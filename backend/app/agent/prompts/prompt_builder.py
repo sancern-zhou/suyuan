@@ -27,6 +27,7 @@ def build_react_system_prompt(
     memory_file_path: Optional[str] = None,
     soul_file_path: Optional[str] = None,  # ✅ 新增：soul.md 文件路径
     user_file_path: Optional[str] = None,  # ✅ 新增：USER.md 文件路径
+    heartbeat_file_path: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 文件路径
     memory_context: Optional[str] = None,  # ✅ 记忆上下文内容（MEMORY.md）
     soul_context: Optional[str] = None,  # ✅ 新增：soul.md 内容（助理灵魂档案）
     user_context: Optional[str] = None  # ✅ 新增：用户上下文内容（USER.md）
@@ -41,6 +42,7 @@ def build_react_system_prompt(
         memory_file_path: 用户记忆文件路径（仅social模式使用）
         soul_file_path: soul.md 文件路径（仅social模式使用）
         user_file_path: USER.md 文件路径（仅social模式使用）
+        heartbeat_file_path: HEARTBEAT.md 文件路径（仅social模式使用）
         memory_context: 记忆上下文内容（从快照获取，直接注入到系统提示词）
         soul_context: soul.md 内容（助理灵魂档案，仅social模式使用）
         user_context: 用户上下文内容（从USER.md获取，仅social模式使用）
@@ -53,13 +55,17 @@ def build_react_system_prompt(
         tools_dict = get_tools_by_mode(mode)
         available_tools = list(tools_dict.keys())
 
-    # 过滤：只保留该模式支持的工具
-    mode_tools = get_tools_by_mode(mode)
-    filtered_tools = [t for t in available_tools if t in mode_tools]
+    # ⚠️ memory_consolidator模式不过滤工具，使用完整工具列表
+    if mode == "memory_consolidator":
+        filtered_tools = available_tools
+    else:
+        # 过滤：只保留该模式支持的工具
+        mode_tools = get_tools_by_mode(mode)
+        filtered_tools = [t for t in available_tools if t in mode_tools]
 
-    # 确保call_sub_agent工具在列表中
-    if "call_sub_agent" not in filtered_tools:
-        filtered_tools.append("call_sub_agent")
+        # 确保call_sub_agent工具在列表中
+        if "call_sub_agent" not in filtered_tools:
+            filtered_tools.append("call_sub_agent")
 
     logger.info(
         "building_prompt",
@@ -86,7 +92,7 @@ def build_react_system_prompt(
     elif mode == "report":
         return build_report_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "social":
-        return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, memory_context, soul_context, user_context)
+        return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, heartbeat_file_path, memory_context, soul_context, user_context)
     elif mode == "chart":
         return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "memory_consolidator":

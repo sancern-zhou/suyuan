@@ -70,6 +70,9 @@ class SimplifiedContextBuilder:
         # ✅ 新增：USER文件路径（仅social模式使用）
         self.user_file_path = None
 
+        # ✅ 新增：HEARTBEAT文件路径（仅social模式使用）
+        self.heartbeat_file_path = None
+
         logger.info(
             "simplified_context_builder_initialized",
             max_context=self.max_context_tokens,

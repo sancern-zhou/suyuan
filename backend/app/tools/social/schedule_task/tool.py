@@ -105,6 +105,15 @@ class ScheduleTaskTool(LLMTool):
                 "summary": "简要总结"
             }
         """
+        # ✅ 延迟获取依赖（解决时序问题）
+        if not self.user_heartbeat_manager:
+            try:
+                from app.social.user_heartbeat_singleton import get_user_heartbeat_manager
+                self.user_heartbeat_manager = get_user_heartbeat_manager()
+                logger.debug("user_heartbeat_manager_loaded_at_runtime")
+            except Exception as e:
+                logger.debug("failed_to_load_user_heartbeat_manager_at_runtime", error=str(e))
+
         # 参数验证
         if not task_description:
             return {
@@ -281,7 +290,19 @@ class ScheduleTaskTool(LLMTool):
         user_id: str = "global"
     ) -> None:
         """降级方案：直接写入HEARTBEAT.md文件"""
-        workspace = Path("backend_data_registry/social/heartbeat")
+        # ✅ 使用 backend 目录下的 backend_data_registry
+        import os
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        current_dir = Path(os.getcwd())
+
+        # 如果当前在 backend 目录，直接使用
+        if current_dir.name == "backend":
+            workspace = current_dir / "backend_data_registry/social/heartbeat"
+        else:
+            # 否则假设在项目根目录
+            workspace = current_dir / "backend" / "backend_data_registry/social/heartbeat"
 
         # 如果是用户专属任务，使用用户专属目录
         if user_id and user_id != "global":
@@ -291,12 +312,27 @@ class ScheduleTaskTool(LLMTool):
         workspace.mkdir(parents=True, exist_ok=True)
         heartbeat_file = workspace / "HEARTBEAT.md"
 
+        # ✅ 处理多行 description：替换换行符为空格
+        clean_description = description.replace("\n", " ").replace("\r", "").strip()
+
+        # ✅ 计算 next_run_at（使用 croniter）
+        try:
+            from croniter import croniter
+            current_time = datetime.now(ZoneInfo("Asia/Shanghai"))
+            cron = croniter(schedule, current_time)
+            next_run = cron.get_next(datetime)
+            next_run_at_str = next_run.isoformat()
+        except Exception as e:
+            logger.warning("compute_next_run_failed", schedule=schedule, error=str(e))
+            next_run_at_str = ""
+
         new_task = f"""
 - name: {task_name}
   schedule: "{schedule}"
-  description: {description}
+  description: {clean_description}
   enabled: true
   channels: {channels}
+  next_run_at: "{next_run_at_str}"
 """
 
         # 追加到文件
@@ -311,6 +347,8 @@ class ScheduleTaskTool(LLMTool):
         logger.info(
             "task_written_to_heartbeat_file",
             task_name=task_name,
+            schedule=schedule,
+            next_run_at=next_run_at_str,
             path=str(heartbeat_file),
             user_id=user_id
         )
