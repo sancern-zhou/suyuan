@@ -49,12 +49,14 @@ class ConversationTurn:
     """Simple structure that stores a conversation message."""
 
     role: str  # "user" or "assistant"
-    content: str
+    content: str | List[Dict[str, Any]]  # ✅ 支持 Anthropic content blocks 格式
     timestamp: str
-    type: Optional[str] = None  # "user"/"thought"/"action"/"observation"/"final"
+    type: Optional[str] = None  # "user"/"thought"/"tool_use"/"tool_result"/"final"
     thought: Optional[str] = None  # LLM thought for this assistant turn
     reasoning: Optional[str] = None  # LLM reasoning process (detailed reasoning)
-    data: Optional[Dict[str, Any]] = None  # Additional data (for action/observation)
+    data: Optional[Dict[str, Any]] = None  # Additional data (for tool_use/tool_result)
+    tool_use_id: Optional[str] = None  # ✅ Anthropic: tool_use.id 或 tool_result.tool_use_id
+    is_error: Optional[bool] = None  # ✅ Anthropic: tool_result is_error 标记
 
 
 class SessionMemory:
@@ -101,11 +103,16 @@ class SessionMemory:
         self.data_registry_refs: Dict[str, str] = {}
         self.conversation_history: List[ConversationTurn] = []
 
+        # ✅ 修复：初始化 data_registry 引用（溯源模式需要）
+        # 使用全局单例，确保所有模式兼容
+        self.data_registry = data_registry
+
         logger.info(
             "session_memory_initialized",
             session_id=session_id,
             directory=str(self.session_dir),
             use_llm_compression=use_llm_compression,
+            has_data_registry=True,
         )
 
     # ------------------------------------------------------------------ #
@@ -580,86 +587,215 @@ class SessionMemory:
             history_length=len(self.conversation_history)
         )
 
-    def add_assistant_message(self, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None) -> None:
-        """Record an assistant response."""
-        self._append_conversation_turn("assistant", content, thought=thought, reasoning=reasoning, type="final")
+    def add_assistant_message(self, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None, thinking_blocks: Optional[List[Dict[str, Any]]] = None) -> None:
+        """Record an assistant response.
+
+        Args:
+            content: 助手回复文本
+            thought: 思考摘要
+            reasoning: 推理过程
+            thinking_blocks: LLM 返回的原始 thinking content blocks（DeepSeek 等兼容 API
+                           要求在后续请求中回传这些 blocks，不传则按普通字符串存储）
+        """
+        if thinking_blocks:
+            # ✅ 使用 Anthropic content blocks 格式存储（保留 thinking blocks）
+            # DeepSeek 等兼容 API 要求：assistant 消息必须原样回传 thinking blocks
+            content_blocks = list(thinking_blocks) + [{"type": "text", "text": content}]
+
+            # ✅ 调试日志：打印 thinking blocks 的内容
+            logger.info(
+                "add_assistant_message_with_thinking_blocks",
+                session_id=self.session_id,
+                thinking_blocks_count=len(thinking_blocks),
+                thinking_blocks_types=[b.get("type") for b in thinking_blocks],
+                thinking_blocks_preview=[str(b)[:200] for b in thinking_blocks[:2]],
+                content_blocks_count=len(content_blocks),
+                content_blocks_types=[b.get("type") for b in content_blocks]
+            )
+
+            self.conversation_history.append(
+                ConversationTurn(
+                    role="assistant",
+                    content=content_blocks,
+                    timestamp=datetime.utcnow().isoformat(),
+                    type="final",
+                    thought=thought,
+                    reasoning=reasoning
+                )
+            )
+        else:
+            self._append_conversation_turn("assistant", content, thought=thought, reasoning=reasoning, type="final")
+
         logger.debug(
             "add_assistant_message_called",
             session_id=self.session_id,
             content_preview=content[:100],
             history_length=len(self.conversation_history),
             has_thought=thought is not None,
-            has_reasoning=reasoning is not None
+            has_reasoning=reasoning is not None,
+            has_thinking_blocks=thinking_blocks is not None and len(thinking_blocks) > 0
         )
 
     # 向后兼容旧接口
     def add_assistant_response(self, content: str) -> None:
         self.add_assistant_message(content)
 
-    def add_thought_message(self, thought: str, reasoning: Optional[str] = None) -> None:
-        """添加思考消息到对话历史"""
-        self.conversation_history.append(
-            ConversationTurn(
-                role="assistant",
-                content=thought,
-                timestamp=datetime.utcnow().isoformat(),
-                type="thought",
-                reasoning=reasoning
-            )
-        )
-        logger.debug(
-            "add_thought_message_called",
-            session_id=self.session_id,
-            thought_preview=thought[:100],
-            history_length=len(self.conversation_history)
-        )
-
-    def add_action_message(self, action: Dict[str, Any]) -> None:
-        """添加行动消息到对话历史"""
-        tool_name = action.get("tool", action.get("name", ""))
-        content = f"调用 {tool_name}"
-        self.conversation_history.append(
-            ConversationTurn(
-                role="assistant",
-                content=content,
-                timestamp=datetime.utcnow().isoformat(),
-                type="action",
-                data={"action": action}
-            )
-        )
-        logger.debug(
-            "add_action_message_called",
-            session_id=self.session_id,
-            tool_name=tool_name,
-            history_length=len(self.conversation_history)
-        )
-
-    def add_observation_message(self, observation: Dict[str, Any]) -> None:
+    def add_tool_result_message(
+        self,
+        tool_use_id: str,
+        result: Dict[str, Any],
+        is_error: bool = False
+    ) -> None:
         """
-        添加观察消息到对话历史
-
-        简化设计：直接存储完整的JSON observation，而不是只存储摘要。
-        这样LLM能够访问完整的工具返回数据，避免信息丢失。
+        添加 Anthropic 格式的 tool_result 消息
 
         Args:
-            observation: 观察结果字典
+            tool_use_id: 关联的 tool_use.id
+            result: 工具执行结果
+            is_error: 是否为错误结果
         """
-        # 直接存储完整的JSON observation
-        observation_json = json.dumps(observation, ensure_ascii=False, indent=2, default=str)
+        # 序列化结果为 JSON 字符串
+        result_json = json.dumps(result, ensure_ascii=False, indent=2, default=str)
+
+        # 构建 Anthropic content block 格式
+        content_block = {
+            "type": "tool_result",
+            "content": result_json,
+            "is_error": is_error,
+            "tool_use_id": tool_use_id
+        }
+
+        self.conversation_history.append(
+            ConversationTurn(
+                role="user",  # Anthropic: tool_result 使用 user 角色
+                content=[content_block],  # 存储为 content block 列表
+                timestamp=datetime.utcnow().isoformat(),
+                type="tool_result",
+                tool_use_id=tool_use_id,
+                is_error=is_error,
+                data={"result": result}
+            )
+        )
+
+        logger.debug(
+            "add_tool_result_message_called",
+            session_id=self.session_id,
+            tool_use_id=tool_use_id,
+            is_error=is_error,
+            history_length=len(self.conversation_history)
+        )
+
+    def add_streaming_tool_results(
+        self,
+        tool_executions: List[Dict[str, Any]],
+        thinking_blocks: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """
+        批量添加流式工具执行结果到对话历史（Anthropic 格式）
+
+        当 LLM 在流式输出过程中并行调用多个工具时，所有 tool_use blocks
+        属于同一个 assistant 消息，所有 tool_result blocks 属于同一个 user 消息。
+        这是 Anthropic Messages API 的标准格式。
+
+        Args:
+            tool_executions: 工具执行列表，每项包含:
+                {
+                    "tool_name": str,
+                    "tool_use_id": str,
+                    "tool_input": Dict,
+                    "result": Dict,
+                    "is_error": bool,
+                }
+            thinking_blocks: LLM 返回的原始 thinking content blocks（DeepSeek 等兼容 API
+                           要求在后续请求中回传这些 blocks）
+        """
+        if not tool_executions:
+            return
+
+        # ✅ 调试日志：检查 thinking_blocks 参数
+        logger.info(
+            "add_streaming_tool_results_check",
+            session_id=self.session_id,
+            tool_count=len(tool_executions),
+            has_thinking_blocks=thinking_blocks is not None,
+            thinking_blocks_count=len(thinking_blocks) if thinking_blocks else 0,
+            thinking_blocks_types=[b.get("type") for b in thinking_blocks] if thinking_blocks else []
+        )
+
+        # ✅ 如果 thinking_blocks 是空列表，当作 None 处理
+        # DeepSeek 可能不返回 thinking blocks，即使启用了 thinking mode
+        if thinking_blocks and len(thinking_blocks) == 0:
+            logger.info(
+                "add_streaming_tool_results_empty_thinking",
+                session_id=self.session_id,
+                reason="thinking_blocks is empty list, treating as None"
+            )
+            thinking_blocks = None
+
+        # 1. 构建 assistant 消息：thinking blocks + 所有 tool_use content blocks
+        # ✅ DeepSeek 等兼容 API 要求：如果 LLM 返回了 thinking blocks，
+        # 后续请求必须将它们原样回传，否则报 400 错误
+        assistant_content_blocks = []
+
+        # 先添加 thinking blocks（必须在 tool_use 之前，符合 Anthropic 规范）
+        if thinking_blocks:
+            logger.info(
+                "add_streaming_tool_results_adding_thinking",
+                session_id=self.session_id,
+                thinking_count=len(thinking_blocks)
+            )
+            assistant_content_blocks.extend(thinking_blocks)
+
+        for te in tool_executions:
+            assistant_content_blocks.append({
+                "type": "tool_use",
+                "id": te["tool_use_id"],
+                "name": te["tool_name"],
+                "input": te["tool_input"],
+            })
+
         self.conversation_history.append(
             ConversationTurn(
                 role="assistant",
-                content=observation_json,
+                content=assistant_content_blocks,
                 timestamp=datetime.utcnow().isoformat(),
-                type="observation",
-                data={"observation": observation}
+                type="tool_use",
+                tool_use_id=tool_executions[0]["tool_use_id"] if len(tool_executions) == 1 else None,
+                data={"tool_use": {
+                    "type": "TOOL_CALLS" if len(tool_executions) > 1 else "TOOL_CALL",
+                    "tools": [{"tool": te["tool_name"], "args": te["tool_input"], "tool_call_id": te["tool_use_id"]} for te in tool_executions],
+                }},
             )
         )
+
+        # 2. 构建 user 消息：包含所有 tool_result content blocks
+        user_content_blocks = []
+        for te in tool_executions:
+            result_json = json.dumps(te["result"], ensure_ascii=False, indent=2, default=str)
+            user_content_blocks.append({
+                "type": "tool_result",
+                "content": result_json,
+                "is_error": te.get("is_error", False),
+                "tool_use_id": te["tool_use_id"],
+            })
+
+        self.conversation_history.append(
+            ConversationTurn(
+                role="user",
+                content=user_content_blocks,
+                timestamp=datetime.utcnow().isoformat(),
+                type="tool_result",
+                tool_use_id=tool_executions[0]["tool_use_id"] if len(tool_executions) == 1 else None,
+                is_error=any(te.get("is_error", False) for te in tool_executions),
+                data={"results": [te["result"] for te in tool_executions]},
+            )
+        )
+
         logger.debug(
-            "add_observation_message_called",
+            "add_streaming_tool_results_called",
             session_id=self.session_id,
-            observation_type=observation.get("metadata", {}).get("generator", "unknown"),
-            history_length=len(self.conversation_history)
+            tool_count=len(tool_executions),
+            history_length=len(self.conversation_history),
         )
 
     def load_history_messages(self, messages: List[Dict[str, Any]]) -> None:
@@ -708,10 +844,10 @@ class SessionMemory:
                             loaded_count += 1
                         else:
                             skipped_count += 1
-                    elif msg_type == "action":
+                    elif msg_type == "tool_use":
                         tool_calls = data.get("tool_calls", [])
                         if tool_calls:
-                            content = f"[行动] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
+                            content = f"[工具调用] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
                             self.conversation_history.append(
                                 ConversationTurn(
                                     role="assistant",
@@ -722,15 +858,15 @@ class SessionMemory:
                             loaded_count += 1
                         else:
                             skipped_count += 1
-                    elif msg_type == "observation":
+                    elif msg_type == "tool_result":
                         result = data.get("result", "")
                         if result:
                             # 截断过长的结果
                             summary = result[:500] + "..." if len(str(result)) > 500 else result
                             self.conversation_history.append(
                                 ConversationTurn(
-                                    role="assistant",
-                                    content=f"[观察] {summary}",
+                                    role="user",
+                                    content=f"[工具结果] {summary}",
                                     timestamp=data.get("timestamp", datetime.utcnow().isoformat())
                                 )
                             )
@@ -849,21 +985,19 @@ class SessionMemory:
 
     def get_messages_for_llm(self) -> List[Dict[str, Any]]:
         """
-        Return conversation history in LLM API format for token management.
+        Return conversation history in Anthropic Messages API format.
 
-        Converts internal ConversationTurn objects to OpenAI-compatible message format:
-        [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-
-        ✅ 同时传递 reasoning（详细推理）和 thought（简洁思考），提供层次化信息
+        V3 架构：输出 Anthropic 原生 content blocks 格式。
+        - assistant 消息的 action 类型：输出 tool_use content blocks
+        - user 消息的 tool_result 类型：输出 tool_result content blocks
+        - 其他消息：纯文本
 
         缓存友好策略（参考 learn-claude-code）：
         - 只追加：所有历史消息完整传递，不删除、不修改
-        - 缓存优化：保持前缀不变，实现 KV Cache 命命
-        - 成本节省：避免破坏缓存可节省 80-90% 成本
-        - 参考：https://github.com/anthropics/learn-claude-code
+        - 缓存优化：保持前缀不变，实现 KV Cache 命中
 
         Returns:
-            List of message dictionaries in LLM API format
+            List of message dictionaries in Anthropic API format
         """
         if not self.conversation_history:
             logger.warning(
@@ -874,27 +1008,47 @@ class SessionMemory:
             )
             return []
 
-        # ✅ 返回所有历史消息，采用只追加策略（缓存友好）
         all_turns = self.conversation_history
-
         messages = []
+
         for turn in all_turns:
+            # tool_result 消息（Anthropic content block 格式）
+            if turn.type == "tool_result" and isinstance(turn.content, list):
+                messages.append({
+                    "role": turn.role,
+                    "content": turn.content
+                })
+                continue
+
+            # tool_use 消息（Anthropic tool_use content block 格式）
+            if turn.type == "tool_use" and isinstance(turn.content, list):
+                messages.append({
+                    "role": turn.role,
+                    "content": turn.content
+                })
+                continue
+
+            # ✅ assistant 消息内容为 content blocks 列表（含 thinking blocks）
+            # DeepSeek 等兼容 API 要求原样回传 thinking blocks
+            if turn.role == "assistant" and isinstance(turn.content, list):
+                messages.append({
+                    "role": turn.role,
+                    "content": turn.content
+                })
+                continue
+
+            # assistant 消息（纯文本，包含推理过程）
             if turn.role == "assistant":
-                # ✅ 在 content 中保留 type 信息，避免 LLM 混淆
-                # 根据 type 添加前缀，使 LLM 能区分不同类型的消息
+                # 对于有 thought/reasoning 的消息，输出为文本
                 type_prefix_map = {
                     "thought": "[思考]",
-                    "action": "[调用]",
-                    "observation": "[结果]",
+                    "tool_result": "[结果]",
                     "final": "[结论]",
                 }
 
-                # 获取类型前缀
                 type_prefix = type_prefix_map.get(turn.type, "")
 
-                # 构建内容
                 if turn.thought or turn.reasoning:
-                    # 有推理过程：使用增强的 JSON 格式（保留 type 信息）
                     json_obj = {
                         "type": turn.type or "assistant",
                         "thought": turn.thought or "",
@@ -902,29 +1056,31 @@ class SessionMemory:
                         "content": turn.content
                     }
                     content = json.dumps(json_obj, ensure_ascii=False, indent=2)
-
-                    # 如果有类型前缀，添加到 JSON 外部（便于 LLM 快速识别）
                     if type_prefix:
                         content = f"{type_prefix}\n{content}"
                 else:
-                    # 无推理过程：纯文本 + 类型前缀
                     content = turn.content
                     if type_prefix:
                         content = f"{type_prefix} {content}"
-            else:
-                content = turn.content
 
-            messages.append({
-                "role": turn.role,
-                "content": content,
-            })
+                messages.append({
+                    "role": turn.role,
+                    "content": content,
+                })
+            else:
+                # user 消息
+                messages.append({
+                    "role": turn.role,
+                    "content": turn.content,
+                })
 
         logger.info(
             "get_messages_for_llm_success",
             session_id=self.session_id,
             total_history_length=len(self.conversation_history),
             messages_count=len(messages),
-            strategy="append_only_cache_friendly"
+            content_block_count=sum(1 for m in messages if isinstance(m.get("content"), list)),
+            strategy="append_only_anthropic_native"
         )
 
         return messages

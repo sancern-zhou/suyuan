@@ -590,6 +590,69 @@ def _smart_sample_data_for_load(data: List[Dict], max_records: int) -> Tuple[Lis
     }
 
 
+# ========================================
+# Anthropic Format Support (Phase 1.2)
+# ========================================
+
+def convert_openai_to_anthropic_schema(tool_schema: Dict) -> Dict:
+    """将 OpenAI Function Calling 格式转换为 Anthropic 格式
+
+    OpenAI 格式:
+    {
+        "name": "tool_name",
+        "description": "...",
+        "parameters": {
+            "type": "object",
+            "properties": {...},
+            "required": [...]
+        }
+    }
+
+    Anthropic 格式:
+    {
+        "name": "tool_name",
+        "description": "...",
+        "input_schema": {
+            "type": "object",
+            "properties": {...}
+        }
+    }
+
+    Args:
+        tool_schema: 工具 schema（OpenAI 或 Anthropic 格式）
+
+    Returns:
+        Anthropic 格式的工具 schema（如果已经是 Anthropic 格式则直接返回）
+    """
+    # 如果已经是 Anthropic 格式（有 input_schema 字段），直接返回
+    if "input_schema" in tool_schema:
+        return tool_schema
+
+    # 如果是 OpenAI 格式（有 parameters 字段），进行转换
+    if "parameters" in tool_schema:
+        return {
+            "name": tool_schema["name"],
+            "description": tool_schema["description"],
+            "input_schema": {
+                "type": tool_schema["parameters"]["type"],
+                "properties": tool_schema["parameters"]["properties"],
+                # 可选：保留 required 字段
+                **({"required": tool_schema["parameters"].get("required", [])}
+                   if "required" in tool_schema.get("parameters", {}) else {})
+            }
+        }
+
+    # 如果格式未知，返回基础 Anthropic 格式
+    return {
+        "name": tool_schema.get("name", "unknown"),
+        "description": tool_schema.get("description", ""),
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    }
+
+
 def get_react_agent_tool_registry() -> Dict[str, Callable]:
     """
     获取ReAct Agent可用的工具注册表（单一注册源）
@@ -697,37 +760,6 @@ def get_tool_schemas() -> List[Dict[str, Any]]:
                 schemas.append(schema)
             else:
                 schemas.append(tool.get_function_schema())
-
-    # ========================================
-    # 2. 添加天气观测工具 schema（特殊工具）
-    # ========================================
-    schemas.append({
-        "name": "get_observed_weather",
-        "description": "获取指定位置的实时天气观测数据（原始观测数据，非预报），包括温度、湿度、风速、风向、气压等信息",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "lat": {
-                    "type": "number",
-                    "description": "纬度，范围 -90 到 90"
-                },
-                "lon": {
-                    "type": "number",
-                    "description": "经度，范围 -180 到 180"
-                },
-                "station_id": {
-                    "type": "string",
-                    "description": "站点ID（可选），用于标识和记录"
-                },
-                "preferred_source": {
-                    "type": "string",
-                    "description": "优先数据源（可选），如 'openmeteo_current' 或 'weatherapi_com'"
-                }
-            },
-            "required": ["lat", "lon"]
-        }
-    })
-
 
     logger.info("tool_schemas_generated", count=len(schemas))
 

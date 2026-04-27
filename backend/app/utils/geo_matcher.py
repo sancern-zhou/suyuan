@@ -198,7 +198,7 @@ class GeoMatcher:
             with open(config_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            # Only load city and district codes (stations loaded separately)
+            # Load city and district codes
             self.city_codes = data.get("cities", {})
             self.district_codes = data.get("districts", {})
 

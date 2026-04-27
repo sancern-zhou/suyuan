@@ -172,7 +172,8 @@ class ToolDependencyGraph:
                         tool_name=plan.tool,
                         index=i,
                         expert_type=self.expert_type,
-                        dependencies=plan.depends_on or []
+                        dependencies=plan.depends_on or [],
+                        role=plan.role  # ✅ 修复：传递 role 标识
                     ))
         else:
             # 没有配置时，基于ToolCallPlan创建简单节点
@@ -181,7 +182,8 @@ class ToolDependencyGraph:
                     tool_name=plan.tool,
                     index=i,
                     expert_type=self.expert_type,
-                    dependencies=plan.depends_on or []
+                    dependencies=plan.depends_on or [],
+                    role=plan.role  # ✅ 修复：传递 role 标识
                 ))
 
         # 添加到图

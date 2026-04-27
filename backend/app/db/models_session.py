@@ -2,27 +2,23 @@
 会话数据库模型
 
 使用 PostgreSQL 存储会话和消息，支持：
+- Anthropic 原生 content blocks 格式
 - 分页查询消息
 - 高效索引查询
 - 事务处理
+
+设计原则：
+- role 字段：Anthropic API 角色（user/assistant），用于 LLM 对话恢复
+- msg_type 字段：语义类型（user/thought/action/observation/tool_result/final），用于前端展示和查询过滤
+- content 字段：JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, Index, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
-import enum
 
 Base = declarative_base()
-
-
-class MessageType(str, enum.Enum):
-    """消息类型枚举"""
-    USER = "user"
-    FINAL = "final"
-    THOUGHT = "thought"
-    ACTION = "action"
-    OBSERVATION = "observation"
 
 
 class SessionDB(Base):
@@ -72,16 +68,24 @@ class SessionMessageDB(Base):
     """
     会话消息表
 
-    存储每条消息的详细信息，支持分页查询
+    存储每条消息的详细信息，完整兼容 Anthropic 原生格式：
+    - role: Anthropic 角色（user/assistant）
+    - msg_type: 语义类型（user/thought/action/observation/tool_result/final）
+    - content: JSONB，支持纯文本字符串和 Anthropic content blocks 列表
     """
     __tablename__ = "session_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(255), ForeignKey('sessions.session_id', ondelete='CASCADE'), nullable=False, index=True)
 
-    # 消息类型和内容
-    message_type = Column(SQLEnum(MessageType), nullable=False, index=True)
-    content = Column(Text, nullable=True)
+    # Anthropic 角色：user / assistant
+    role = Column(String(20), nullable=False, index=True)
+
+    # 语义类型：user / thought / action / observation / tool_result / final
+    msg_type = Column(String(30), nullable=False, index=True)
+
+    # 消息内容：JSONB 支持纯文本 (str) 和 Anthropic content blocks (list[dict])
+    content = Column(JSON, nullable=True)
 
     # 消息数据（JSON 格式，存储完整的 data 字段）
     data = Column(JSON, nullable=True)
@@ -102,5 +106,6 @@ class SessionMessageDB(Base):
     # 索引
     __table_args__ = (
         Index('ix_session_messages_session_sequence', 'session_id', 'sequence_number'),
-        Index('ix_session_messages_type_timestamp', 'message_type', 'timestamp'),
+        Index('ix_session_messages_role_timestamp', 'role', 'timestamp'),
+        Index('ix_session_messages_type_timestamp', 'msg_type', 'timestamp'),
     )

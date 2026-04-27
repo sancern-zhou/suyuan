@@ -7,6 +7,7 @@
 """
 
 from typing import Dict, Any, List, Optional
+import json
 import structlog
 from datetime import datetime
 
@@ -381,6 +382,7 @@ class SimplifiedContextBuilder:
 
         Args:
             history: LLM消息格式的历史 [{"role": "user", "content": "..."}, ...]
+                     content 可能是字符串，也可能是 Anthropic content blocks 列表
 
         Returns:
             格式化的文本
@@ -399,7 +401,33 @@ class SimplifiedContextBuilder:
             }.get(role, role)
 
             lines.append(f"\n### {role_name} {i}")
-            lines.append(content)
+
+            # 处理 Anthropic content blocks 格式
+            # content 可能是 str 或 List[Dict]（Anthropic content blocks）
+            if isinstance(content, list):
+                formatted_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get("type", "")
+                        if block_type == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            tool_input = block.get("input", {})
+                            tool_input_str = json.dumps(tool_input, ensure_ascii=False, indent=2, default=str)
+                            formatted_parts.append(f"[调用工具: {tool_name}]\n{tool_input_str}")
+                        elif block_type == "tool_result":
+                            tool_result_content = block.get("content", "")
+                            is_error = block.get("is_error", False)
+                            prefix = "[工具结果(错误)]" if is_error else "[工具结果]"
+                            formatted_parts.append(f"{prefix}\n{tool_result_content}")
+                        elif block_type == "text":
+                            formatted_parts.append(block.get("text", ""))
+                        else:
+                            formatted_parts.append(json.dumps(block, ensure_ascii=False, default=str))
+                    else:
+                        formatted_parts.append(str(block))
+                lines.append("\n".join(formatted_parts))
+            else:
+                lines.append(str(content))
 
         return "\n".join(lines)
 

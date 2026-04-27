@@ -8,7 +8,7 @@ import asyncio
 import json
 import html
 import os
-from typing import Dict, Any, Optional, Tuple, AsyncGenerator
+from typing import Dict, Any, Optional, Tuple, AsyncGenerator, List
 import structlog
 from config.settings import settings
 import httpx
@@ -19,6 +19,63 @@ logger = structlog.get_logger()
 
 class LLMService:
     """LLM服务类 - 支持多provider配置"""
+
+    @staticmethod
+    def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """剥离消息中的 thinking blocks
+
+        DeepSeek 等 Anthropic 兼容 API 支持 thinking content block，
+        但 Anthropic Python SDK 不支持传递 thinking 参数，
+        导致无法启用 thinking mode 来回传 thinking blocks。
+
+        解决方案：在发送前剥离 thinking blocks，
+        使 API 不触发 thinking mode 要求。
+
+        参考 Claude Code 的 stripSignatureBlocks 策略。
+
+        Args:
+            messages: Anthropic 格式消息列表
+
+        Returns:
+            剥离 thinking blocks 后的消息列表（深拷贝，不修改原列表）
+        """
+        import copy
+        stripped = []
+        thinking_count = 0
+
+        for msg in messages:
+            content = msg.get("content", [])
+
+            if isinstance(content, list):
+                # 过滤掉 thinking 和 redacted_thinking blocks
+                new_blocks = [
+                    block for block in content
+                    if not (isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"))
+                ]
+                thinking_count += len(content) - len(new_blocks)
+
+                if new_blocks:
+                    # 还有剩余 blocks，保留消息
+                    new_msg = copy.copy(msg)
+                    new_msg["content"] = new_blocks
+                    stripped.append(new_msg)
+                else:
+                    # 所有 blocks 都是 thinking，替换为空 text block
+                    # Anthropic API 不允许 assistant 消息 content 为空列表
+                    new_msg = copy.copy(msg)
+                    new_msg["content"] = [{"type": "text", "text": ""}]
+                    stripped.append(new_msg)
+            else:
+                stripped.append(msg)
+
+        if thinking_count > 0:
+            logger.info(
+                "thinking_blocks_stripped",
+                stripped_count=thinking_count,
+                messages_count=len(messages)
+            )
+
+        return stripped
 
     async def _parse_sse_stream(
         self,
@@ -370,22 +427,25 @@ class LLMService:
     def __init__(self):
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
-        
+        self.temperature = settings.llm_temperature
+
         # 调试信息：检查配置是否正确
         logger.debug(
             "llm_provider_config_check",
             provider_from_settings=self.provider,
             qwen_base_url=settings.qwen_base_url,
-            qwen_model=settings.qwen_model
+            qwen_model=settings.qwen_model,
+            temperature=self.temperature
         )
-        
+
         self._load_provider_config()
-        
+
         logger.info(
             "llm_service_initialized",
             provider=self.provider,
             model=self.model,
-            base_url=self.base_url
+            base_url=self.base_url,
+            temperature=self.temperature
         )
 
     def _load_provider_config(self):
@@ -531,6 +591,33 @@ class LLMService:
         if not self.api_key and self.provider not in ["qwen"]:  # qwen 本地部署通常不需要 API key
             logger.warning("llm_api_key_not_configured", provider=self.provider)
 
+        # Anthropic Native Client (always initialized for V3 architecture)
+        self.anthropic_client = None
+        if self.provider in settings.anthropic_compatible_endpoints:
+            try:
+                from anthropic import AsyncAnthropic
+
+                anthropic_base_url = settings.anthropic_compatible_endpoints[self.provider]
+                self.anthropic_client = AsyncAnthropic(
+                    api_key=self.api_key,
+                    base_url=anthropic_base_url
+                )
+                logger.info(
+                    "llm_anthropic_client_initialized",
+                    provider=self.provider,
+                    base_url=anthropic_base_url
+                )
+            except ImportError:
+                logger.error(
+                    "llm_anthropic_import_failed",
+                    message="anthropic package not installed, install with: pip install anthropic>=0.18.0"
+                )
+            except Exception as e:
+                logger.error(
+                    "llm_anthropic_client_init_failed",
+                    error=str(e)
+                )
+
     def _get_request_config(self) -> Tuple[str, Dict[str, str]]:
         """获取请求配置（URL, headers）"""
         # 🔍 调试日志：验证 base_url
@@ -563,7 +650,7 @@ class LLMService:
     async def chat(
         self,
         messages: list,
-        temperature: float = 0.7,
+        temperature: float = None,
         timeout: float = 120.0,
         max_tokens: int = None
     ) -> str:
@@ -579,6 +666,10 @@ class LLMService:
         Returns:
             LLM响应的文本内容
         """
+        # 如果未指定temperature，使用settings中的默认值
+        if temperature is None:
+            temperature = self.temperature
+
         import httpx
 
         # 🔍 调试日志：记录 chat 方法调用
@@ -746,7 +837,7 @@ class LLMService:
     async def chat_streaming(
         self,
         messages: list,
-        temperature: float = 0.7,
+        temperature: float = None,
         timeout: float = 600.0,
         max_tokens: int = None,
     ):
@@ -762,6 +853,10 @@ class LLMService:
         Yields:
             str: 每次返回一个文本块（chunk）
         """
+        # 如果未指定temperature，使用settings中的默认值
+        if temperature is None:
+            temperature = self.temperature
+
         url, headers = self._get_request_config()
 
         payload = {
@@ -844,7 +939,7 @@ class LLMService:
     async def chat_streaming_with_status(
         self,
         messages: list,
-        temperature: float = 0.7,
+        temperature: float = None,
         timeout: float = 600.0,
         max_tokens: int = None,
     ):
@@ -864,6 +959,10 @@ class LLMService:
         Yields:
             dict: {"chunk": str, "is_complete": bool}
         """
+        # 如果未指定temperature，使用settings中的默认值
+        if temperature is None:
+            temperature = self.temperature
+
         url, headers = self._get_request_config()
 
         payload = {
@@ -1018,7 +1117,7 @@ class LLMService:
                     "content": prompt
                 }
             ],
-            "temperature": 0.1
+            "temperature": self.temperature
         }
 
         # 千问3特殊处理：禁用思考模式
@@ -1207,7 +1306,7 @@ class LLMService:
     async def call_llm_with_messages(
         self,
         messages: list,
-        temperature: float = 0.7,
+        temperature: float = None,
         max_retries: int = 2
     ) -> Dict[str, Any]:
         """
@@ -1221,6 +1320,10 @@ class LLMService:
         Returns:
             解析后的JSON响应（Dict格式）
         """
+        # 如果未指定temperature，使用settings中的默认值
+        if temperature is None:
+            temperature = self.temperature
+
         import httpx
 
         url, headers = self._get_request_config()
@@ -1388,6 +1491,385 @@ class LLMService:
                     "error": str(e),
                     "raw_content": ""
                 }
+
+    async def chat_anthropic(
+        self,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict]] = None,
+        max_tokens: Optional[int] = None,
+        temperature: float = 0.3,
+        system: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Anthropic 格式聊天，支持原生工具调用
+
+        使用 Anthropic 的 Messages API，支持原生工具调用（tool_use blocks）。
+
+        Args:
+            messages: 消息列表 [{"role": "user", "content": "..."}]
+            tools: 工具列表（Anthropic 格式）
+            max_tokens: 最大输出 token 数
+            temperature: 温度参数
+            system: 系统提示词（Anthropic API 使用单独的 system 参数）
+
+        Returns:
+            {
+                "content": List[ContentBlock],  # text 和 tool_use 块
+                "model": str,
+                "usage": {...}
+            }
+        """
+        if not self.anthropic_client:
+            raise RuntimeError(
+                "Anthropic client not initialized. "
+                "Set USE_ANTHROPIC_FORMAT=true in environment and ensure "
+                "the provider is in anthropic_compatible_endpoints."
+            )
+
+        # 调试日志
+        logger.info(
+            "llm_anthropic_chat_request",
+            provider=self.provider,
+            model=self.model,
+            messages_count=len(messages),
+            has_tools=tools is not None,
+            has_system=system is not None,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+
+        try:
+            is_real_anthropic = (
+                self.provider in ["anthropic", "claude"] or
+                "claude" in self.model.lower() or
+                "anthropic" in self.model.lower()
+            )
+            # DeepSeek 的 deepseek-v4-flash 默认开启 thinking，Anthropic API 文档确认 thinking 参数 Supported
+            is_deepseek = (
+                self.provider == "deepseek" or
+                "deepseek" in self.model.lower()
+            )
+
+            # ✅ 检测消息历史中是否包含 thinking blocks
+            # DeepSeek 等兼容 API 要求：如果历史中有 thinking blocks，
+            # 后续请求必须启用 thinking mode 并原样回传，否则报 400 错误
+            has_thinking_blocks_in_history = False
+            thinking_blocks_found = []  # 调试信息
+            messages_structure = []  # ✅ 新增：记录消息结构
+
+            for msg in messages:
+                content = msg.get("content", [])
+                msg_info = {
+                    "role": msg.get("role"),
+                    "content_type": type(content).__name__,
+                    "content_length": len(content) if isinstance(content, list) else 0,
+                    "content_types": []
+                }
+
+                if isinstance(content, list):
+                    for block in content:
+                        block_type = block.get("type") if isinstance(block, dict) else "unknown"
+                        msg_info["content_types"].append(block_type)
+
+                        # 检测 thinking 和 redacted_thinking blocks
+                        # DeepSeek 返回 redacted_thinking，需要在启用 thinking mode 时回传
+                        if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
+                            has_thinking_blocks_in_history = True
+                            thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
+                            break
+                messages_structure.append(msg_info)
+
+                if has_thinking_blocks_in_history:
+                    break
+
+            logger.info(
+                "thinking_blocks_detection",
+                provider=self.provider,
+                model=self.model,
+                has_thinking_blocks=has_thinking_blocks_in_history,
+                is_deepseek=is_deepseek,
+                found_blocks=thinking_blocks_found,
+                messages_count=len(messages),
+                messages_structure=messages_structure  # ✅ 打印消息结构
+            )
+
+            # 构建 API 调用参数
+            api_params = {
+                "model": self.model,
+                "messages": messages,
+                "tools": tools or [],
+                "max_tokens": max_tokens or 4096,
+                "temperature": temperature
+            }
+
+            logger.debug(
+                "thinking_mode_decision",
+                provider=self.provider,
+                model=self.model,
+                is_real_anthropic=is_real_anthropic,
+                is_deepseek=is_deepseek,
+                has_thinking_blocks_in_history=has_thinking_blocks_in_history
+            )
+
+            if is_real_anthropic:
+                api_params["thinking"] = {
+                    "type": "extended",
+                    "budget_tokens": 20000
+                }
+                logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
+            elif is_deepseek:
+                # ⚠️ DeepSeek 特殊处理：完全不使用 thinking mode
+                # DeepSeek API 要求：启用 thinking mode 时必须原样传回 thinking blocks
+                # 但 DeepSeek 返回的是 redacted_thinking（已被删除的内容），无法原样传回
+                # 解决方案：剥离所有 thinking blocks，不启用 thinking mode
+                # 参考：https://api-docs.deepseek.com/zh-cn/guides/anthropic_api
+                messages = self._strip_thinking_blocks(messages)
+                api_params["messages"] = messages
+                logger.info("deepseek_thinking_blocks_stripped", provider=self.provider, model=self.model,
+                           reason="DeepSeek does not support thinking mode with redacted_thinking")
+            else:
+                # ✅ 其他非 Anthropic API：剥离 thinking blocks，避免兼容 API 触发 thinking mode 要求
+                # 参考 Claude Code 的 stripSignatureBlocks 策略
+                messages = self._strip_thinking_blocks(messages)
+                api_params["messages"] = messages
+                logger.info("extended_thinking_skipped", provider=self.provider, model=self.model, reason="Not a real Anthropic API")
+
+            # 添加 system 参数（如果提供）
+            if system:
+                api_params["system"] = system
+
+            # 调用 Anthropic API
+            response = await self.anthropic_client.messages.create(**api_params)
+
+            # 提取响应数据
+            result = {
+                "content": response.content,
+                "model": response.model,
+                "usage": {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens
+                },
+                "stop_reason": response.stop_reason
+            }
+
+            logger.info(
+                "llm_anthropic_chat_success",
+                model=result["model"],
+                input_tokens=result["usage"]["input_tokens"],
+                output_tokens=result["usage"]["output_tokens"],
+                stop_reason=result["stop_reason"],
+                content_blocks=len(result["content"])
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(
+                "llm_anthropic_chat_failed",
+                provider=self.provider,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            raise
+
+    async def chat_anthropic_streaming(
+        self,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict]] = None,
+        max_tokens: Optional[int] = None,
+        temperature: float = 0.3,
+        system: Optional[str] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Anthropic 格式流式聊天，支持原生工具调用
+
+        使用 Anthropic 的 Messages API 流式模式，按事件类型逐步 yield。
+        参考 Claude Code 的 QueryEngine 事件序列：
+        message_start -> content_block_start -> content_block_delta -> content_block_stop
+        -> message_delta -> message_stop
+
+        Yields:
+            流式事件字典，类型包括：
+            - {"type": "message_start", "data": {"usage": {...}}}
+            - {"type": "content_block_start", "data": {"index": int, "block": ContentBlock}}
+            - {"type": "content_block_delta", "data": {"index": int, "delta": ...}}
+            - {"type": "content_block_stop", "data": {"index": int}}
+            - {"type": "message_delta", "data": {"stop_reason": str, "usage": {...}}}
+            - {"type": "message_stop", "data": {}}
+        """
+        if not self.anthropic_client:
+            raise RuntimeError(
+                "Anthropic client not initialized. "
+                "Ensure the provider is in anthropic_compatible_endpoints."
+            )
+
+        is_real_anthropic = (
+            self.provider in ["anthropic", "claude"] or
+            "claude" in self.model.lower() or
+            "anthropic" in self.model.lower()
+        )
+        # DeepSeek 的 deepseek-v4-flash 默认开启 thinking，Anthropic API 文档确认 thinking 参数 Supported
+        is_deepseek = (
+            self.provider == "deepseek" or
+            "deepseek" in self.model.lower()
+        )
+
+        # ✅ 检测消息历史中是否包含 thinking blocks
+        # DeepSeek 要求：如果历史中有 thinking blocks，后续请求必须启用 thinking mode
+        has_thinking_blocks_in_history = False
+        thinking_blocks_found = []  # 调试信息
+        messages_structure = []  # ✅ 新增：记录消息结构
+
+        for msg in messages:
+            content = msg.get("content", [])
+            msg_info = {
+                "role": msg.get("role"),
+                "content_type": type(content).__name__,
+                "content_length": len(content) if isinstance(content, list) else 0,
+                "content_types": []
+            }
+
+            if isinstance(content, list):
+                for block in content:
+                    block_type = block.get("type") if isinstance(block, dict) else "unknown"
+                    msg_info["content_types"].append(block_type)
+
+                    # 检测 thinking 和 redacted_thinking blocks
+                    # DeepSeek 返回 redacted_thinking，需要在启用 thinking mode 时回传
+                    if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
+                        has_thinking_blocks_in_history = True
+                        thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
+                        break
+            messages_structure.append(msg_info)
+
+            if has_thinking_blocks_in_history:
+                break
+
+        logger.info(
+            "thinking_blocks_detection_streaming",
+            provider=self.provider,
+            model=self.model,
+            has_thinking_blocks=has_thinking_blocks_in_history,
+            is_deepseek=is_deepseek,
+            found_blocks=thinking_blocks_found,
+            messages_count=len(messages),
+            messages_structure=messages_structure  # ✅ 打印消息结构
+        )
+
+        api_params = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools or [],
+            "max_tokens": max_tokens or 4096,
+            "temperature": temperature
+        }
+
+        logger.debug(
+            "thinking_mode_decision_streaming",
+            provider=self.provider,
+            model=self.model,
+            is_real_anthropic=is_real_anthropic,
+            is_deepseek=is_deepseek,
+            has_thinking_blocks_in_history=has_thinking_blocks_in_history
+        )
+
+        if is_real_anthropic:
+            api_params["thinking"] = {
+                "type": "extended",
+                "budget_tokens": 20000
+            }
+            logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
+        elif is_deepseek:
+            # ⚠️ DeepSeek 特殊处理：完全不使用 thinking mode
+            # DeepSeek API 要求：启用 thinking mode 时必须原样传回 thinking blocks
+            # 但 DeepSeek 返回的是 redacted_thinking（已被删除的内容），无法原样传回
+            # 解决方案：剥离所有 thinking blocks，不启用 thinking mode
+            # 参考：https://api-docs.deepseek.com/zh-cn/guides/anthropic_api
+            messages = self._strip_thinking_blocks(messages)
+            api_params["messages"] = messages
+            logger.info("deepseek_thinking_blocks_stripped", provider=self.provider, model=self.model,
+                       reason="DeepSeek does not support thinking mode with redacted_thinking")
+        else:
+            # ✅ 其他非 Anthropic API：剥离 thinking blocks，避免兼容 API 触发 thinking mode 要求
+            # 参考 Claude Code 的 stripSignatureBlocks 策略
+            messages = self._strip_thinking_blocks(messages)
+            api_params["messages"] = messages
+            logger.info("extended_thinking_skipped", provider=self.provider, model=self.model, reason="Not a real Anthropic API")
+
+        if system:
+            api_params["system"] = system
+
+        logger.info(
+            "llm_anthropic_streaming_request",
+            provider=self.provider,
+            model=self.model,
+            messages_count=len(messages),
+            has_tools=tools is not None,
+        )
+
+        try:
+            async with self.anthropic_client.messages.stream(**api_params) as stream:
+                async for event in stream:
+                    event_type = event.type
+
+                    if event_type == "message_start":
+                        yield {
+                            "type": "message_start",
+                            "data": {
+                                "usage": {
+                                    "input_tokens": event.message.usage.input_tokens,
+                                    "output_tokens": event.message.usage.output_tokens,
+                                }
+                            }
+                        }
+
+                    elif event_type == "content_block_start":
+                        yield {
+                            "type": "content_block_start",
+                            "data": {
+                                "index": event.index,
+                                "block": event.content_block,
+                            }
+                        }
+
+                    elif event_type == "content_block_delta":
+                        yield {
+                            "type": "content_block_delta",
+                            "data": {
+                                "index": event.index,
+                                "delta": event.delta,
+                            }
+                        }
+
+                    elif event_type == "content_block_stop":
+                        yield {
+                            "type": "content_block_stop",
+                            "data": {"index": event.index}
+                        }
+
+                    elif event_type == "message_delta":
+                        yield {
+                            "type": "message_delta",
+                            "data": {
+                                "stop_reason": event.delta.stop_reason,
+                                "usage": {
+                                    "output_tokens": event.usage.output_tokens,
+                                }
+                            }
+                        }
+
+                    elif event_type == "message_stop":
+                        yield {
+                            "type": "message_stop",
+                            "data": {}
+                        }
+
+        except Exception as e:
+            logger.error(
+                "llm_anthropic_streaming_failed",
+                provider=self.provider,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise
 
 
 # 全局LLM服务实例

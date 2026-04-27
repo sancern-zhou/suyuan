@@ -10,7 +10,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.particulate_api_client import get_particulate_api_client
-from app.utils.geo_matcher import get_geo_matcher
+from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
 from app.utils.particulate_city_mapper import get_particulate_city_mapper
 
 if TYPE_CHECKING:
@@ -172,13 +172,22 @@ class GetPM25CarbonTool(LLMTool):
                         location=location
                     )
 
-            # 步骤2：站点名→站点编码映射
-            geo_matcher = get_geo_matcher()
-            station_codes = geo_matcher.stations_to_codes(station_names)
+            # 步骤2：站点名→站点编码映射（使用组分站点映射器）
+            particulate_geo_matcher = get_particulate_geo_matcher()
+            try:
+                station_codes = particulate_geo_matcher.stations_to_codes(station_names)
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "locations": locations,
+                    "station_names": station_names
+                }
+
             if not station_codes:
                 return {
                     "success": False,
-                    "error": f"无法将站点名称映射到站点编码: {station_names}（原始输入: {locations}）",
+                    "error": f"无法将站点名称映射到组分站点编码: {station_names}（原始输入: {locations}）",
                     "locations": locations,
                     "station_names": station_names
                 }

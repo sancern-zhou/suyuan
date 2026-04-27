@@ -32,64 +32,61 @@ class TodoWriteTool(LLMTool):
 
     def __init__(self):
         function_schema = {
-            "type": "function",
-            "function": {
-                "name": "TodoWrite",
-                "description": (
-                    "更新任务清单（完整替换模式）。用于跟踪复杂任务的执行进度。\n\n"
-                    "使用场景：\n"
-                    "- 当你意识到需要多个步骤完成用户请求时（3步以上）\n"
-                    "- 需要按顺序执行多个子任务时\n"
-                    "- 需要跟踪长期任务的进度时\n\n"
-                    "工作流程：\n"
-                    "1. 创建任务清单：TodoWrite(items=[...])\n"
-                    "2. 开始任务时：将status改为in_progress\n"
-                    "3. 完成任务时：将status改为completed\n\n"
-                    "约束规则：\n"
-                    "- 最多20个任务\n"
-                    "- 同时只能有一个in_progress状态的任务\n"
-                    "- 必须包含content、status两个字段\n\n"
-                    "示例：\n"
-                    'TodoWrite(items=[\n'
-                    '  {"content": "获取气象数据", "status": "completed"},\n'
-                    '  {"content": "分析VOCs组分", "status": "in_progress"},\n'
-                    '  {"content": "生成溯源报告", "status": "pending"}\n'
-                    '])'
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task_list_file": {
-                            "type": "string",
-                            "description": "任务清单文件路径（可选）。如果提供，将从文件中解析任务清单。支持的文件：backend/config/task_lists/*.md。注意：从文件加载的任务是通用模板，建议手动指定items以包含具体参数（如城市、日期）"
-                        },
-                        "items": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "content": {
-                                        "type": "string",
-                                        "description": "任务描述（简短明确），如'获取气象数据'"
-                                    },
-                                    "status": {
-                                        "type": "string",
-                                        "enum": ["pending", "in_progress", "completed"],
-                                        "description": (
-                                            "任务状态：\n"
-                                            "- pending: 待执行\n"
-                                            "- in_progress: 执行中\n"
-                                            "- completed: 已完成"
-                                        )
-                                    }
-                                },
-                                "required": ["content", "status"]
-                            },
-                            "description": "任务列表（完整替换，不是增量更新）"
-                        }
+            "name": "TodoWrite",
+            "description": (
+                "更新任务清单（完整替换模式）。用于跟踪复杂任务的执行进度。\n\n"
+                "使用场景：\n"
+                "- 当你意识到需要多个步骤完成用户请求时（3步以上）\n"
+                "- 需要按顺序执行多个子任务时\n"
+                "- 需要跟踪长期任务的进度时\n\n"
+                "工作流程：\n"
+                "1. 创建任务清单：TodoWrite(items=[...])\n"
+                "2. 开始任务时：将status改为in_progress\n"
+                "3. 完成任务时：将status改为completed\n\n"
+                "约束规则：\n"
+                "- 最多20个任务\n"
+                "- 同时只能有一个in_progress状态的任务\n"
+                "- 必须包含content、status两个字段\n\n"
+                "示例：\n"
+                'TodoWrite(items=[\n'
+                '  {"content": "获取气象数据", "status": "completed"},\n'
+                '  {"content": "分析VOCs组分", "status": "in_progress"},\n'
+                '  {"content": "生成溯源报告", "status": "pending"}\n'
+                '])'
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_list_file": {
+                        "type": "string",
+                        "description": "任务清单文件路径（可选）。如果提供，将从文件中解析任务清单。支持的文件：backend/config/task_lists/*.md。注意：从文件加载的任务是通用模板，建议手动指定items以包含具体参数（如城市、日期）"
                     },
-                    "required": ["items"]
-                }
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "description": "任务描述（简短明确），如'获取气象数据'"
+                                },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed"],
+                                    "description": (
+                                        "任务状态：\n"
+                                        "- pending: 待执行\n"
+                                        "- in_progress: 执行中\n"
+                                        "- completed: 已完成"
+                                    )
+                                }
+                            },
+                            "required": ["content", "status"]
+                        },
+                        "description": "任务列表（完整替换，不是增量更新）"
+                    }
+                },
+                "required": ["items"]
             }
         }
 

@@ -35,6 +35,12 @@ class Settings(BaseSettings):
         description="Frontend API base URL (for callback URLs, overrides auto-detection)"
     )
 
+    # Frontend URL Configuration (用于生成分享链接)
+    frontend_base_url: str = Field(
+        default="http://localhost:5174",
+        description="Frontend base URL (for generating share links)"
+    )
+
     # CORS Configuration
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://localhost:5177",
@@ -111,7 +117,7 @@ class Settings(BaseSettings):
         description="DeepSeek API base URL"
     )
     deepseek_model: str = Field(
-        default="deepseek-reasoner",
+        default="deepseek-v4-flash",
         description="DeepSeek model name"
     )
 
@@ -145,6 +151,18 @@ class Settings(BaseSettings):
     report_mode_max_tokens: int = Field(
         default=8000,
         description="Max tokens for report mode (generate DOCX reports)"
+    )
+
+    # Anthropic Format Configuration (V3 - Anthropic native only)
+    anthropic_compatible_endpoints: Dict[str, str] = Field(
+        default={"deepseek": "https://api.deepseek.com/anthropic"},
+        description="Providers with Anthropic-compatible endpoints"
+    )
+
+    # LLM Temperature Configuration
+    llm_temperature: float = Field(
+        default=0.3,
+        description="Default temperature for LLM generation"
     )
 
     # 千问3配置

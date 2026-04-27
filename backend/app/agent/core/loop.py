@@ -281,100 +281,392 @@ class ReActLoop:
                         is_interruption=self.is_interruption  # ✅ 传递中断标志
                     )
 
-                    # Phase 3: think_and_action（流式LLM调用）
-                    # ✅ 使用流式版本，支持纯文本回复的实时流式输出
+                    # Phase 3: think_and_action（Anthropic 原生流式调用）
+                    from app.agent.tool_adapter import get_react_agent_tool_registry, get_tool_schemas
+
                     thought = None
                     reasoning = None
                     action = None
-                    streaming_buffer = ""  # 流式文本缓冲区
-                    think_action_result = None  # 初始化变量，避免后续引用错误
+                    streaming_buffer = ""
+                    think_action_result = None
+                    streamed_text_chunks = []  # ✅ 新增：记录流式输出的 text chunks
 
-                    async for event in self.planner.think_and_action_v2_streaming(
+                    # 获取工具列表（Anthropic 格式）
+                    tool_schemas = get_tool_schemas()
+
+                    # V4: 创建 StreamingToolExecutor，在流中立即启动工具执行
+                    from .streaming_tool_executor import StreamingToolExecutor
+                    streaming_tool_executor = StreamingToolExecutor(
+                        tool_executor=self.executor,
+                        tool_registry=self.executor.tool_registry if hasattr(self.executor, 'tool_registry') else {},
+                    )
+
+                    # 使用 Anthropic 原生流式 API
+                    logger.info(
+                        "using_anthropic_native_streaming_v4",
+                        iteration=iteration_count,
+                        provider=self.planner.llm_service.provider
+                    )
+
+                    yielded_tool_use_count = 0  # 初始化：跟踪流中已 yield 的 tool_use 数量
+
+                    async for event in self.planner.think_and_action_streaming(
                         query=user_query,
                         system_prompt=context_result["system_prompt"],
                         user_conversation=context_result["user_conversation"],
+                        tools=tool_schemas,
                         iteration=iteration_count,
-                        latest_observation=latest_observation
+                        mode=self.current_mode,
+                        conversation_history=conversation_history
                     ):
-                        if event["type"] == "streaming_text":
-                            # ✅ 流式文本：立即转发给前端
+                        event_type = event["type"]
+
+                        if event_type == "streaming_text":
                             chunk = event["data"]["chunk"]
                             is_complete = event["data"]["is_complete"]
 
-                            if chunk:  # 只在有内容时才发送
+                            if chunk:
                                 streaming_buffer += chunk
-                                yield {
-                                    "type": "streaming_text",
-                                    "data": {
-                                        "chunk": chunk,
-                                        "is_complete": is_complete,
-                                        "timestamp": datetime.now().isoformat()
-                                    },
-                                    "session_id": self.memory.session_id  # 【修复】添加session_id确保事件路由到正确模式
-                                }
 
-                            if is_complete:
-                                # 流式完成，创建 FINAL_ANSWER action
+                                # ✅ 检查：如果已经有 tool_use，说明这不是最终答案，而是工具调用的"计划"
+                                # 不应该流式输出给前端（避免显示"好的，我来查看..."这样的内容）
+                                if yielded_tool_use_count > 0:
+                                    logger.debug(
+                                        "ignoring_text_after_tool_use",
+                                        text_length=len(chunk),
+                                        text_preview=chunk[:100],
+                                        reason="Text after tool_use is not the final answer"
+                                    )
+                                else:
+                                    yield {
+                                        "type": "streaming_text",
+                                        "data": {
+                                            "chunk": chunk,
+                                            "is_complete": is_complete,
+                                            "timestamp": datetime.now().isoformat()
+                                        },
+                                        "session_id": self.memory.session_id
+                                    }
+
+                        elif event_type == "thought":
+                            thought = event["data"].get("thought")
+                            reasoning = event["data"].get("reasoning")
+
+                            yield {
+                                "type": "thought",
+                                "data": {
+                                    "iteration": iteration_count,
+                                    "thought": thought,
+                                    "reasoning": reasoning,
+                                    "session_id": self.memory.session_id,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            }
+                            # thinking blocks 由 add_streaming_tool_results 统一存储
+
+                        elif event_type == "tool_use":
+                            # V4: 工具调用事件 — 在流中立即启动工具执行
+                            tool_data = event["data"]
+                            tool_use_id = tool_data.get("tool_use_id", "")
+                            tool_name = tool_data.get("tool_name", "")
+                            tool_input = tool_data.get("input", {})
+
+                            # ✅ 自动注入 knowledge_base_ids（如果存在）
+                            if self.knowledge_base_ids and tool_name == "knowledge_qa_workflow":
+                                tool_input = dict(tool_input)
+                                tool_input["knowledge_base_ids"] = self.knowledge_base_ids
+                                logger.info(
+                                    "knowledge_base_ids_injected_streaming",
+                                    tool_name=tool_name,
+                                    knowledge_base_ids_count=len(self.knowledge_base_ids)
+                                )
+
+                            # 立即启动工具执行（不等待流式结束）
+                            streaming_tool_executor.addTool(
+                                tool_use_id=tool_use_id,
+                                tool_name=tool_name,
+                                tool_input=tool_input,
+                                iteration=iteration_count,
+                            )
+
+                            # 记录 action（供后续使用）
+                            action = {
+                                "type": "TOOL_CALL",
+                                "tool": tool_name,
+                                "tool_call_id": tool_use_id,
+                                "args": tool_input
+                            }
+                            yield {
+                                "type": "tool_use",
+                                "data": {
+                                    "tool_use_id": tool_use_id,
+                                    "tool_name": tool_name,
+                                    "input": tool_input,
+                                    "iteration": iteration_count,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            }
+
+                            # V4: 在流中持续获取已完成的工具结果
+                            for completed_result in streaming_tool_executor.getCompletedResults():
+                                result_msg = completed_result["message"]
+                                yield result_msg
+
+                        elif event_type == "action":
+                            # 最终 action 事件
+                            think_action_result = event["data"]
+                            # V4: 如果 planner 返回 TOOL_CALLS（多工具），
+                            # 使用 planner 的 action（包含完整的 tools 列表）
+                            planner_action = event["data"].get("action")
+
+                            # ✅ 调试日志：打印 planner 返回的内容
+                            logger.info(
+                                "planner_action_received",
+                                planner_action_type=planner_action.get("type") if planner_action else None,
+                                planner_action_preview=str(planner_action)[:300] if planner_action else None,
+                                current_action_type=action.get("type") if action else None,
+                                yielded_tool_use_count=yielded_tool_use_count
+                            )
+
+                            if not action:
+                                thought = event["data"].get("thought", thought)
+                                reasoning = event["data"].get("reasoning", reasoning)
+                                action = planner_action
+                            elif planner_action and planner_action.get("type") == "TOOL_CALLS":
+                                # 已有 action（来自最后一个 tool_use 事件），
+                                # 但 planner 提供了完整的 TOOL_CALLS 信息，优先使用
+                                action = planner_action
+
+                            # ✅ 新增：如果 planner 返回 PLAIN_TEXT_REPLY，转换为 FINAL_ANSWER
+                            # 这样可以复用现有的 FINAL_ANSWER 处理逻辑
+                            if planner_action and planner_action.get("type") == "PLAIN_TEXT_REPLY":
                                 action = {
                                     "type": "FINAL_ANSWER",
-                                    "answer": streaming_buffer.strip()
+                                    "answer": planner_action.get("answer", "")
                                 }
-                                # ✅ 关闭流式完成日志
-                                # logger.info("streaming_text_complete", length=len(streaming_buffer))
+                                logger.info(
+                                    "plain_text_reply_converted_to_final_answer",
+                                    answer_length=len(action.get("answer", "")),
+                                    answer_preview=action.get("answer", "")[:200]
+                                )
 
-                        elif event["type"] == "action":
-                            # 最终 action（thought + action）
-                            thought = event["data"]["thought"]
-                            reasoning = event["data"].get("reasoning")
-                            action = event["data"]["action"]
-
-                            # ✅ 保存 think_action_result 供后续使用
-                            think_action_result = event["data"]
-
-                            # Yield thought事件（FINAL_ANSWER 除外）
-                            action_type = action.get("type", "TOOL_CALL")
-                            if action_type != "FINAL_ANSWER":
-                                thought_event = {
-                                    "type": "thought",
-                                    "data": {
-                                        "iteration": iteration_count,
-                                        "thought": thought,
-                                        "reasoning": reasoning,
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                }
-                                yield thought_event
-                                # ✅ 保存到对话历史
-                                self.memory.session.add_thought_message(thought, reasoning)
-
-                    # 如果没有 action（异常情况），降级处理
+                    # 如果没有 action（异常情况），降级到非流式
                     if not action:
                         logger.warning("no_action_from_streaming_planner", iteration=iteration_count)
-                        think_action_result = await self.planner.think_and_action_v2(
+                        think_action_result = await self.planner.think_and_action(
                             query=user_query,
                             system_prompt=context_result["system_prompt"],
                             user_conversation=context_result["user_conversation"],
+                            tools=tool_schemas,
                             iteration=iteration_count,
-                            latest_observation=latest_observation
+                            mode=self.current_mode,
+                            conversation_history=conversation_history
                         )
                         thought = think_action_result["thought"]
                         reasoning = think_action_result.get("reasoning")
                         action = think_action_result["action"]
 
-                        thought_event = {
+                        yield {
                             "type": "thought",
                             "data": {
                                 "iteration": iteration_count,
                                 "thought": thought,
                                 "reasoning": reasoning,
+                                "session_id": self.memory.session_id,
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
-                        yield thought_event
-                        # ✅ 保存到对话历史
-                        self.memory.session.add_thought_message(thought, reasoning)
+                        # 注意：不再单独 add_thought_message，因为 thinking blocks
+                        # 已包含在 add_streaming_tool_results / add_assistant_message 中
+
+                    # 从 action 字典获取 action_type
+                    action_type = action.get("type", "ERROR") if action else "ERROR"
 
                     logger.info("action_decided", action_type=action_type, iteration=iteration_count)
+
+                    # V4: 流式工具执行结果处理
+                    # 如果工具在流中已通过 StreamingToolExecutor 执行，直接收集结果
+                    # 跳过传统的 TOOL_CALL/TOOL_CALLS 执行（避免重复执行）
+                    yielded_tool_use_count = think_action_result.get("yielded_tool_use_count", 0) if think_action_result else 0
+
+                    if yielded_tool_use_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
+                        logger.info(
+                            "streaming_tool_results_handling",
+                            yielded_count=yielded_tool_use_count,
+                            streaming_total=streaming_tool_executor.total_count,
+                            iteration=iteration_count,
+                        )
+
+                        # 1. 等待尚未完成的工具并 yield 结果事件
+                        async for remaining_result in streaming_tool_executor.getRemainingResults():
+                            yield remaining_result["message"]
+
+                        # 2. 获取流式循环后新完成的结果
+                        for completed_result in streaming_tool_executor.getCompletedResults():
+                            yield completed_result["message"]
+
+                        # 3. 收集所有执行结果，构建观察并添加到对话历史
+                        from .streaming_tool_executor import ToolStatus as _ToolStatus
+                        all_results = []
+                        all_visuals = []
+                        all_data_ids = []
+                        all_tool_results = []
+                        tool_execution_records = []  # 用于批量添加到对话历史
+
+                        for execution in streaming_tool_executor._executions:
+                            if execution.status == _ToolStatus.COMPLETED:
+                                result_data = execution.result
+                            else:
+                                result_data = {
+                                    "success": False,
+                                    "error": execution.error or "工具执行被取消",
+                                    "summary": f"工具 {execution.tool_name} 执行失败",
+                                }
+                            is_error = execution.status in (_ToolStatus.FAILED, _ToolStatus.CANCELLED)
+
+                            # 收集工具执行记录（用于批量添加到对话历史）
+                            tool_execution_records.append({
+                                "tool_name": execution.tool_name,
+                                "tool_use_id": execution.tool_use_id,
+                                "tool_input": execution.tool_input,
+                                "result": result_data,
+                                "is_error": is_error,
+                            })
+
+                            all_results.append(result_data)
+                            all_tool_results.append({
+                                "tool_call_id": execution.tool_use_id,
+                                "tool_name": execution.tool_name,
+                                "result": result_data,
+                                "metadata": result_data.get("metadata", {}) if isinstance(result_data, dict) else {},
+                            })
+
+                            if isinstance(result_data, dict):
+                                if result_data.get("visuals"):
+                                    all_visuals.extend(result_data["visuals"])
+                                if result_data.get("data_id"):
+                                    all_data_ids.append(result_data["data_id"])
+
+                        # 批量添加到对话历史（Anthropic 格式：一个 assistant + 一个 user 消息）
+                        # ✅ 传递 thinking blocks（DeepSeek 等兼容 API 要求回传）
+                        raw_thinking_blocks = think_action_result.get("raw_thinking_blocks") if think_action_result else None
+                        self.memory.session.add_streaming_tool_results(tool_execution_records, thinking_blocks=raw_thinking_blocks)
+
+                        # 4. 构建观察结果
+                        if len(streaming_tool_executor._executions) == 1:
+                            observation = all_results[0] if all_results else {"success": False, "error": "无工具结果"}
+                            action = {
+                                "type": "TOOL_CALL",
+                                "tool": streaming_tool_executor._executions[0].tool_name,
+                                "tool_call_id": streaming_tool_executor._executions[0].tool_use_id,
+                                "args": streaming_tool_executor._executions[0].tool_input,
+                            }
+                        else:
+                            observation = {
+                                "success": any(r.get("success", False) for r in all_results if isinstance(r, dict)),
+                                "partial_success": any(r.get("success", False) for r in all_results if isinstance(r, dict)) and not all(r.get("success", False) for r in all_results if isinstance(r, dict)),
+                                "data": [r.get("data") for r in all_results if isinstance(r, dict) and r.get("data")],
+                                "visuals": all_visuals,
+                                "data_ids": all_data_ids,
+                                "tool_results": all_tool_results,
+                                "summary": "; ".join(r.get("summary", "") for r in all_results if isinstance(r, dict) and r.get("summary")),
+                                "parallel": True,
+                                "success_count": sum(1 for r in all_results if isinstance(r, dict) and r.get("success", False)),
+                                "total_count": len(all_results),
+                            }
+                            action = {
+                                "type": "TOOL_CALLS",
+                                "tools": [
+                                    {"tool": e.tool_name, "args": e.tool_input, "tool_call_id": e.tool_use_id}
+                                    for e in streaming_tool_executor._executions
+                                ],
+                            }
+
+                        # 5. 观察结果已通过 add_streaming_tool_results 以 Anthropic 格式存储
+                        # 不再调用 add_observation_message，避免创建重复的 assistant 消息
+                        # 导致连续 assistant 消息打破 Anthropic API 的交替要求
+
+                        # 6. 处理 visuals 结果事件
+                        if observation.get("visuals") and isinstance(observation.get("visuals"), list):
+                            workflow_visuals.extend(observation["visuals"])
+                            yield {
+                                "type": "result",
+                                "data": {
+                                    "status": observation.get("status", "success"),
+                                    "success": observation.get("success", True),
+                                    "visuals": observation["visuals"],
+                                    "metadata": observation.get("metadata", {}),
+                                    "summary": observation.get("summary", ""),
+                                },
+                            }
+
+                        # 7. 检查 office_document / notebook_document 事件
+                        for tr in all_tool_results:
+                            rd = tr.get("result", {})
+                            if not isinstance(rd, dict):
+                                continue
+                            inner = rd.get("data", {})
+                            if not isinstance(inner, dict):
+                                inner = {}
+
+                            pdf_preview = rd.get("pdf_preview") or inner.get("pdf_preview")
+                            markdown_preview = rd.get("markdown_preview") or inner.get("markdown_preview")
+                            html_preview = rd.get("html_preview") or inner.get("html_preview")
+
+                            if pdf_preview or markdown_preview:
+                                file_path = (
+                                    rd.get("file_path") or rd.get("path") or
+                                    rd.get("source_file") or rd.get("output_file") or
+                                    inner.get("file_path") or inner.get("path")
+                                )
+                                yield {
+                                    "type": "office_document",
+                                    "data": {
+                                        "file_path": file_path,
+                                        "generator": tr.get("metadata", {}).get("generator"),
+                                        "summary": rd.get("summary", ""),
+                                        "timestamp": datetime.now().isoformat(),
+                                        **({"pdf_preview": pdf_preview} if pdf_preview else {}),
+                                        **({"markdown_preview": markdown_preview} if markdown_preview else {}),
+                                    },
+                                }
+
+                            if html_preview:
+                                yield {
+                                    "type": "notebook_document",
+                                    "data": {
+                                        "file_path": rd.get("file_path") or inner.get("file_path"),
+                                        "file_type": inner.get("file_type", "notebook"),
+                                        "generator": tr.get("metadata", {}).get("generator"),
+                                        "summary": rd.get("summary", ""),
+                                        "timestamp": datetime.now().isoformat(),
+                                        "html_preview": html_preview,
+                                    },
+                                }
+
+                        # 8. 检查特殊工具（FINISH_SUMMARY）
+                        if isinstance(observation, dict) and observation.get("action_type") == "FINISH_SUMMARY":
+                            logger.info(
+                                "streaming_tool_finish_summary_detected",
+                                tool_name=all_tool_results[0].get("tool_name") if all_tool_results else None,
+                                iteration=iteration_count,
+                            )
+                            # 重置 action_type 让下方 FINISH_SUMMARY 分支处理
+                            action_type = "FINISH_SUMMARY"
+                            # 不 continue，让 FINISH_SUMMARY 分支处理
+                        else:
+                            # 9. 添加到记忆
+                            self.memory.add_iteration(thought=thought, action=action, observation=observation)
+
+                            logger.info(
+                                "streaming_tool_results_handled",
+                                tool_count=len(streaming_tool_executor._executions),
+                                success_count=sum(1 for r in all_results if isinstance(r, dict) and r.get("success", False)),
+                                iteration=iteration_count,
+                            )
+
+                            # 跳过传统 TOOL_CALL/TOOL_CALLS 执行
+                            continue
 
                     # FINAL_ANSWER: 直接展示 LLM 的最终回答
                     if action_type == "FINAL_ANSWER":
@@ -392,10 +684,12 @@ class ReActLoop:
                             }
 
                             yield {
-                                "type": "observation",
+                                "type": "tool_result",
                                 "data": {
                                     "iteration": iteration_count,
-                                    "observation": observation,
+                                    "tool_use_id": "task_guard",
+                                    "result": observation,
+                                    "is_error": True,
                                     "timestamp": datetime.now().isoformat()
                                 }
                             }
@@ -412,7 +706,8 @@ class ReActLoop:
                             self.memory.session.add_assistant_message(
                                 warning_message,
                                 thought=thought,
-                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
+                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                                thinking_blocks=think_action_result.get("raw_thinking_blocks") if think_action_result else None
                             )
 
                             logger.info(
@@ -436,10 +731,11 @@ class ReActLoop:
                         self.memory.session.add_assistant_message(
                             final_answer,
                             thought=thought,
-                            reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
+                            reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                            thinking_blocks=think_action_result.get("raw_thinking_blocks") if think_action_result else None
                         )
 
-                        # 注意：final_answer 的流式输出已在 think_and_action_v2_streaming 阶段完成
+                        # 注意：final_answer 的流式输出已在 think_and_action_streaming 阶段完成
                         # 这里不需要再次输出
 
                         logger.info("task_completed_final_answer", iterations=iteration_count)
@@ -474,10 +770,12 @@ class ReActLoop:
                             }
 
                             yield {
-                                "type": "observation",
+                                "type": "tool_result",
                                 "data": {
                                     "iteration": iteration_count,
-                                    "observation": observation,
+                                    "tool_use_id": "task_guard",
+                                    "result": observation,
+                                    "is_error": True,
                                     "timestamp": datetime.now().isoformat()
                                 }
                             }
@@ -494,7 +792,8 @@ class ReActLoop:
                             self.memory.session.add_assistant_message(
                                 warning_message,
                                 thought=thought,
-                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
+                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                                thinking_blocks=think_action_result.get("raw_thinking_blocks") if think_action_result else None
                             )
 
                             logger.info(
@@ -551,14 +850,17 @@ class ReActLoop:
                             self.memory.session.add_assistant_message(
                                 final_answer,
                                 thought=thought,
-                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
+                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                                thinking_blocks=think_action_result.get("raw_thinking_blocks") if think_action_result else None
                             )
 
                         yield {
-                            "type": "observation",
+                            "type": "tool_result",
                             "data": {
                                 "iteration": iteration_count,
-                                "observation": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                "tool_use_id": "finish_summary",
+                                "result": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                "is_error": False,
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
@@ -646,30 +948,47 @@ class ReActLoop:
                                         "schema_version": "v2.0"
                                     })
 
-                        action_event = {
-                            "type": "action",
-                            "data": {
-                                "iteration": iteration_count,
-                                "action": {**action, "parallel_result": parallel_result},
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-                        yield action_event
-                        # ✅ 保存到对话历史
-                        self.memory.session.add_action_message(action)
+                        # 保存到对话历史（Anthropic 格式：assistant tool_use + user tool_result）
+                        raw_thinking_blocks = think_action_result.get("raw_thinking_blocks") if think_action_result else None
+                        tool_executions = []
+                        for tool in tools:
+                            tool_call_id = tool.get("tool_call_id", "")
+                            tool_name = tool.get("tool", "")
+                            tool_input = tool.get("args", {})
+                            # 从 observation.tool_results 匹配结果
+                            result = {}
+                            is_error = False
+                            for tr in observation.get("tool_results", []):
+                                if tr.get("tool_call_id") == tool_call_id:
+                                    result = tr.get("result", {})
+                                    is_error = not result.get("success", False)
+                                    break
+                            tool_executions.append({
+                                "tool_name": tool_name,
+                                "tool_use_id": tool_call_id,
+                                "tool_input": tool_input,
+                                "result": result,
+                                "is_error": is_error,
+                            })
+                        self.memory.session.add_streaming_tool_results(tool_executions, thinking_blocks=raw_thinking_blocks)
 
-                        # 发送observation事件
-                        observation_event = {
-                            "type": "observation",
-                            "data": {
-                                "iteration": iteration_count,
-                                "observation": observation,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-                        yield observation_event
-                        # ✅ 保存到对话历史
-                        self.memory.session.add_observation_message(observation)
+                        # 发送 tool_result 事件
+                        tool_results_list = observation.get("tool_results", [])
+                        for tool_result_item in tool_results_list:
+                            tool_call_id = tool_result_item.get("tool_call_id")
+                            if tool_call_id:
+                                result_data = tool_result_item.get("result", {})
+                                tool_result_event = {
+                                    "type": "tool_result",
+                                    "data": {
+                                        "tool_use_id": tool_call_id,
+                                        "result": result_data,
+                                        "is_error": not result_data.get("success", False),
+                                        "iteration": iteration_count,
+                                        "timestamp": datetime.now().isoformat()
+                                    }
+                                }
+                                yield tool_result_event
 
                         # 检查并行工具结果中是否有PDF预览或Markdown预览，发送office_document事件
                         tool_results = observation.get("tool_results", [])
@@ -751,23 +1070,23 @@ class ReActLoop:
                                 knowledge_base_ids_count=len(self.knowledge_base_ids)
                             )
 
-                        action_event = {
-                            "type": "action",
-                            "data": {
-                                "iteration": iteration_count,
-                                "action": action,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        }
-                        yield action_event
-                        # ✅ 保存到对话历史
-                        self.memory.session.add_action_message(action)
+                        # 工具调用信息（执行后与结果一起存入对话历史）
+                        raw_thinking_blocks = think_action_result.get("raw_thinking_blocks") if think_action_result else None
 
-                        observation = await self.executor.execute_tool(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            iteration=iteration_count
-                        )
+                        # 使用 Anthropic 原生方法执行工具（带事件追踪和智能重试）
+                        if "tool_call_id" in action:
+                            observation = await self.executor.execute_tool_with_retry(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                tool_call_id=action["tool_call_id"],
+                                iteration=iteration_count
+                            )
+                        else:
+                            observation = await self.executor.execute_tool(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                iteration=iteration_count
+                            )
 
                         # 检查是否是特殊工具（FINISH_SUMMARY）
                         if observation.get("action_type") == "FINISH_SUMMARY":
@@ -925,14 +1244,17 @@ class ReActLoop:
                                     self.memory.session.add_assistant_message(
                                         final_answer,
                                         thought=thought,
-                                        reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
+                                        reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                                        thinking_blocks=think_action_result.get("raw_thinking_blocks") if think_action_result else None
                                     )
 
                                 yield {
-                                    "type": "observation",
+                                    "type": "tool_result",
                                     "data": {
                                         "iteration": iteration_count,
-                                        "observation": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                        "tool_use_id": "finish_summary",
+                                        "result": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                        "is_error": False,
                                         "timestamp": datetime.now().isoformat()
                                     }
                                 }
@@ -957,6 +1279,51 @@ class ReActLoop:
                             error=error_msg,
                             iteration=iteration_count
                         )
+
+                    # PLAIN_TEXT_REPLY: 纯文本回复（无工具调用）
+                    elif action_type == "PLAIN_TEXT_REPLY":
+                        # 参考 Claude Code：当 LLM 输出纯文本时，直接作为最终答案
+                        final_answer = action.get("answer", "")
+
+                        logger.info(
+                            "plain_text_reply_detected",
+                            answer_length=len(final_answer),
+                            iteration=iteration_count
+                        )
+
+                        # 记录到记忆
+                        self.memory.add_iteration(
+                            thought=thought,
+                            action=action,
+                            observation={"success": True, "summary": "直接回复用户"}
+                        )
+
+                        # 添加助手消息
+                        # ✅ 传递 thinking blocks（DeepSeek 等兼容 API 要求回传）
+                        raw_thinking_blocks = think_action_result.get("raw_thinking_blocks") if think_action_result else None
+                        self.memory.session.add_assistant_message(
+                            final_answer,
+                            thought=thought,
+                            reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                            thinking_blocks=raw_thinking_blocks
+                        )
+
+                        # 返回最终答案
+                        yield {
+                            "type": "final_answer",
+                            "data": {
+                                "content": final_answer,
+                                "iterations": iteration_count,
+                                "session_id": self.memory.session_id,
+                                "thought": thought,
+                                "reasoning": reasoning if think_action_result is None else think_action_result.get("reasoning")
+                            }
+                        }
+
+                        # 标记任务完成
+                        task_completed = True
+                        logger.info("task_completed_plain_text_reply", iterations=iteration_count)
+                        break
 
                     else:
                         observation = {
@@ -1000,7 +1367,8 @@ class ReActLoop:
                             self.memory.session.add_assistant_message(
                                 final_answer,
                                 thought=thought,
-                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
+                                reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                                thinking_blocks=think_action_result.get("raw_thinking_blocks") if think_action_result else None
                             )
 
                             # 流式返回final answer
@@ -1034,17 +1402,38 @@ class ReActLoop:
                             }
                         }
 
-                    observation_event = {
-                        "type": "observation",
-                        "data": {
-                            "iteration": iteration_count,
-                            "observation": observation,
-                            "timestamp": datetime.now().isoformat()
+                    # 保存观察结果到对话历史（Anthropic 格式：assistant tool_use + user tool_result）
+                    tool_call_id = action.get("tool_call_id", "")
+                    if tool_call_id:
+                        tool_executions = [{
+                            "tool_name": tool_name,
+                            "tool_use_id": tool_call_id,
+                            "tool_input": tool_args,
+                            "result": observation,
+                            "is_error": not observation.get("success", False),
+                        }]
+                        self.memory.session.add_streaming_tool_results(tool_executions, thinking_blocks=raw_thinking_blocks)
+                    else:
+                        # 无 tool_call_id 的降级路径（极罕见）
+                        self.memory.session.add_tool_result_message(
+                            tool_use_id=f"fallback_{tool_name}",
+                            result=observation,
+                            is_error=not observation.get("success", False)
+                        )
+
+                    # 发送 tool_result 事件
+                    if "tool_call_id" in action:
+                        tool_result_event = {
+                            "type": "tool_result",
+                            "data": {
+                                "tool_use_id": action["tool_call_id"],
+                                "result": observation,
+                                "is_error": not observation.get("success", False),
+                                "iteration": iteration_count,
+                                "timestamp": datetime.now().isoformat()
+                            }
                         }
-                    }
-                    yield observation_event
-                    # ✅ 保存到对话历史
-                    self.memory.session.add_observation_message(observation)
+                        yield tool_result_event
 
                     # 发送office_document事件（用于前端PDF预览面板和Markdown预览面板）
                     data = observation.get("data", {})
@@ -1099,6 +1488,39 @@ class ReActLoop:
                             has_pdf_preview=has_pdf_preview,
                             has_markdown_preview=has_markdown_preview,
                             pdf_id=data["pdf_preview"].get("pdf_id") if has_pdf_preview else None,
+                            file_path=file_path
+                        )
+
+                    # 检查是否有Notebook HTML预览
+                    has_html_preview = isinstance(data, dict) and data.get("html_preview")
+
+                    if has_html_preview:
+                        metadata = observation.get("metadata", {})
+                        file_path = (
+                            data.get("file_path") or
+                            data.get("path") or
+                            data.get("source_file") or
+                            data.get("output_file")
+                        )
+
+                        event_data = {
+                            "file_path": file_path,
+                            "file_type": data.get("file_type", "notebook"),
+                            "generator": metadata.get("generator"),
+                            "summary": observation.get("summary", ""),
+                            "timestamp": datetime.now().isoformat(),
+                            "html_preview": data["html_preview"]
+                        }
+
+                        yield {
+                            "type": "notebook_document",
+                            "data": event_data
+                        }
+
+                        logger.info(
+                            "notebook_document_event_sent",
+                            generator=metadata.get("generator"),
+                            html_id=data["html_preview"].get("html_id"),
                             file_path=file_path
                         )
 
@@ -1479,6 +1901,26 @@ class ReActLoop:
             has_data="data" in observation
         )
 
+        # ✅ Anthropic Format: 构建 tool_result 消息
+        if "tool_call_id" in action:
+            tool_call_id = action["tool_call_id"]
+
+            # 构建 Anthropic tool_result 消息
+            is_error = not observation.get("success", False)
+
+            # 添加到对话历史
+            self.memory.session.add_tool_result_message(
+                tool_use_id=tool_call_id,
+                result=observation,
+                is_error=is_error
+            )
+
+            logger.debug(
+                "anthropic_tool_result_added",
+                tool_call_id=tool_call_id,
+                is_error=is_error
+            )
+
         return observation
 
     async def _guard_task_completion(
@@ -1663,4 +2105,7 @@ class ReActLoop:
                 lines.append(f"  - {key}: {value}")
 
         return "\n".join(lines)
+
+
+
 

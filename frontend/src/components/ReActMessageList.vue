@@ -89,25 +89,30 @@
           <div class="process-content">
             <div v-for="(procMsg, idx) in getUnifiedProcessMessages(message, messages)" :key="idx" class="process-item">
               <!-- 思考事件 -->
-              <div v-if="procMsg.type === 'thought'" class="process-thought">
+              <div v-if="getMessageType(procMsg) === 'thought'" class="process-thought">
                 <span class="process-icon">💭</span>
                 <span class="process-label">思考</span>
                 <div class="process-text">{{ procMsg.content }}</div>
+                <details v-if="procMsg.data?.reasoning" class="process-reasoning">
+                  <summary>详细推理</summary>
+                  <div class="reasoning-text">{{ procMsg.data.reasoning }}</div>
+                </details>
               </div>
 
-              <!-- 行动事件（工具调用） -->
-              <div v-else-if="procMsg.type === 'action'" class="process-action">
-                <span class="process-icon">⚙️</span>
+              <!-- V3: tool_use 事件 -->
+              <div v-else-if="getMessageType(procMsg) === 'tool_use'" class="process-action">
+                <span class="process-icon">🔧</span>
                 <span class="process-label">工具调用</span>
                 <div class="process-text">{{ procMsg.content }}</div>
               </div>
 
-              <!-- 观察事件（只显示摘要） -->
-              <div v-else-if="procMsg.type === 'observation' && !isOfficeToolWithPdf(procMsg)" class="process-observation">
-                <span class="process-icon">👁️</span>
+              <!-- V3: tool_result 事件 -->
+              <div v-else-if="getMessageType(procMsg) === 'tool_result'" class="process-observation">
+                <span class="process-icon">{{ procMsg.data?.is_error ? '❌' : '✅' }}</span>
                 <span class="process-label">工具结果</span>
-                <div class="process-text">{{ procMsg.data?.summary || '已完成' }}</div>
+                <div class="process-text">{{ procMsg.data?.result?.summary || procMsg.content }}</div>
               </div>
+
             </div>
           </div>
         </details>
@@ -162,29 +167,45 @@
       <div v-else-if="getMessageType(message) === 'thought' && !isMessageHidden(message)" class="react-event event-thought">
         <div class="event-content">
           <div class="event-icon">💭</div>
-          <div class="event-text">{{ message.content }}</div>
-        </div>
-      </div>
-
-      <!-- 行动事件（未被折叠时实时显示） -->
-      <div v-else-if="getMessageType(message) === 'action' && !isMessageHidden(message)" class="react-event event-action">
-        <div class="event-content">
-          <div class="event-icon">⚙️</div>
           <div class="event-text">
-            <div class="action-main">{{ message.content }}</div>
+            <div>{{ message.content }}</div>
+            <details v-if="message.data?.reasoning" class="event-reasoning">
+              <summary>详细推理</summary>
+              <div class="reasoning-text">{{ message.data.reasoning }}</div>
+            </details>
           </div>
         </div>
       </div>
 
-      <!-- 观察事件（未被折叠时实时显示） -->
-      <div v-else-if="getMessageType(message) === 'observation' && !isMessageHidden(message) && !isOfficeToolWithPdf(message)" class="react-event event-observation">
+      <!-- ✅ V3: Tool Use 事件 -->
+      <div v-else-if="getMessageType(message) === 'tool_use' && !isMessageHidden(message)" class="react-event event-tool-use">
         <div class="event-content">
-          <div class="event-icon">👁️</div>
+          <div class="event-icon">🔧</div>
           <div class="event-text">
-            <div class="observation-main">{{ message.data?.summary || '已完成' }}</div>
+            <div class="tool-use-main">{{ message.content }}</div>
+            <div v-if="message.data?.input && Object.keys(message.data.input).length > 0" class="tool-use-details">
+              <details>
+                <summary>查看参数</summary>
+                <pre>{{ JSON.stringify(message.data.input, null, 2) }}</pre>
+              </details>
+            </div>
           </div>
         </div>
       </div>
+
+      <!-- ✅ V3: Tool Result 事件 -->
+      <div v-else-if="getMessageType(message) === 'tool_result' && !isMessageHidden(message)" class="react-event event-tool-result">
+        <div class="event-content">
+          <div class="event-icon">{{ message.data?.is_error ? '❌' : '✅' }}</div>
+          <div class="event-text">
+            <div class="tool-result-main">{{ message.content }}</div>
+            <div v-if="message.data?.result?.summary" class="tool-result-summary">
+              {{ message.data.result.summary }}
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- 图片预览模态框 -->
@@ -306,10 +327,10 @@ const DEBOUNCE_DELAY = 2000 // 等待2秒确认没有新事件后开始处理
 
 // 更新待处理事件计数
 const updatePendingEvents = (messages) => {
-  const actionCount = messages.filter(m => m.type === 'action').length
-  const observationCount = messages.filter(m => m.type === 'observation').length
+  const toolUseCount = messages.filter(m => m.type === 'tool_use').length
+  const toolResultCount = messages.filter(m => m.type === 'tool_result').length
   const thoughtCount = messages.filter(m => m.type === 'thought').length
-  const totalPending = actionCount + observationCount + thoughtCount
+  const totalPending = toolUseCount + toolResultCount + thoughtCount
 
   if (totalPending !== pendingEventsCount.value) {
     console.log(`[ReActMessageList] 待处理事件变化: ${pendingEventsCount.value} -> ${totalPending}`, {
@@ -425,8 +446,8 @@ watch(
       消息类型分布: {
         user: newMessages?.filter(m => m.type === 'user').length || 0,
         thought: newMessages?.filter(m => m.type === 'thought').length || 0,
-        action: newMessages?.filter(m => m.type === 'action').length || 0,
-        observation: newMessages?.filter(m => m.type === 'observation').length || 0,
+        tool_use: newMessages?.filter(m => m.type === 'tool_use').length || 0,
+        tool_result: newMessages?.filter(m => m.type === 'tool_result').length || 0,
         final: newMessages?.filter(m => m.type === 'final').length || 0
       }
     })
@@ -610,8 +631,8 @@ const filteredMessages = computed(() => {
     过滤后类型分布: {
       user: filtered.filter(m => getType(m) === 'user').length,
       thought: filtered.filter(m => getType(m) === 'thought').length,
-      action: filtered.filter(m => getType(m) === 'action').length,
-      observation: filtered.filter(m => getType(m) === 'observation').length,
+      tool_use: filtered.filter(m => getType(m) === 'tool_use').length,
+      tool_result: filtered.filter(m => getType(m) === 'tool_result').length,
       final: filtered.filter(m => getType(m) === 'final' || getType(m) === 'assistant').length
     }
   })
@@ -672,24 +693,19 @@ const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
   const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
   if (finalIndex === -1) return
 
-  // 获取final消息之前的所有消息
-  const beforeMessages = allMessages.slice(0, finalIndex)
-
-  // 标记所有 thought/action/observation 为折叠
+  // 标记所有过程消息为折叠
+  // 包括final消息之前和之后的过程消息（因为流式事件顺序可能导致thought在final之后到达）
   const newCollapsedIds = new Set(collapsedProcessIds.value)
   let processCount = 0
-  for (const msg of beforeMessages) {
+  for (const msg of allMessages) {
+    if (msg.id === finalMessage.id) continue
     const msgType = getMessageType(msg)
-    if (msgType === 'thought' || msgType === 'action' || msgType === 'observation') {
+    if (msgType === 'thought' || msgType === 'tool_use' || msgType === 'tool_result') {
       newCollapsedIds.add(msg.id)
       processCount++
     }
   }
   collapsedProcessIds.value = newCollapsedIds
-
-  // if (processCount > 0) {
-  //   console.log(`[ReActMessageList] 折叠了 ${processCount} 个过程消息`)
-  // }
 }
 
 // 【新增】判断消息是否应该被隐藏（已被final折叠）
@@ -699,20 +715,20 @@ const isMessageHidden = (message) => {
 
 // 【新增】判断是否是带PDF预览的Office工具消息（这些消息在OfficeDocumentPanel中显示，不需要在聊天列表重复显示）
 const isOfficeToolWithPdf = (message) => {
-  if (getMessageType(message) !== 'observation') return false
+  if (getMessageType(message) !== 'tool_result') return false
 
-  const obs = message.data?.observation || message.observation
-  if (!obs) return false
+  const result = message.data?.result
+  if (!result) return false
 
-  const metadata = obs.metadata || {}
+  const metadata = result.metadata || {}
   const generator = metadata.generator
 
   // 检查是否是Office工具
-  const officeTools = ['unpack_office', 'pack_office', 'word_edit', 'find_replace_word', 'accept_word_changes', 'recalc_excel', 'add_ppt_slide']
+  const officeTools = ['unpack_office', 'pack_office', 'word_processor', 'excel_processor', 'ppt_processor', 'find_replace_word', 'accept_word_changes', 'recalc_excel', 'add_ppt_slide']
   if (!officeTools.includes(generator)) return false
 
   // 检查是否有PDF预览
-  const data = obs.data || obs
+  const data = result.data || result
   return !!(data?.pdf_preview)
 }
 
@@ -769,7 +785,7 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
       const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
       processMessages = currentRoundMessages.filter(msg => {
         const msgType = getMessageType(msg)
-        return msgType === 'thought' || msgType === 'action' || msgType === 'observation'
+        return msgType === 'thought' || msgType === 'tool_use' || msgType === 'tool_result'
       })
 
       console.log('[getUnifiedProcessMessages] 通过引用找到过程消息:', {
@@ -807,7 +823,7 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
 
       processMessages = currentRoundMessages.filter(msg => {
         const msgType = getMessageType(msg)
-        return msgType === 'thought' || msgType === 'action' || msgType === 'observation'
+        return msgType === 'thought' || msgType === 'tool_use' || msgType === 'tool_result'
       })
 
       console.log('[getUnifiedProcessMessages] 找到过程消息:', {
@@ -965,7 +981,7 @@ watch(
             // 折叠这些消息中的过程消息
             for (const procMsg of messagesBetween) {
               const procMsgType = getMessageType(procMsg)
-              if (procMsgType === 'thought' || procMsgType === 'action' || procMsgType === 'observation') {
+              if (procMsgType === 'thought' || procMsgType === 'tool_use' || procMsgType === 'tool_result') {
                 if (procMsg.id) { // 【修复】确保有id才折叠
                   collapsedProcessIds.value.add(procMsg.id)
                   totalCollapsedCount++
@@ -992,12 +1008,15 @@ watch(
         // console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
       }, 3000) // 3秒后允许用户手动展开
     } else {
-      // 非初次加载：只处理新添加的final消息
-      const lastMessage = newMessages[newMessages.length - 1]
-      // 如果最后一条消息是final消息，自动折叠之前的过程消息
-      if (lastMessage && getMessageType(lastMessage) === 'final') {
+      // 非初次加载：检查是否有新的final消息需要折叠过程消息
+      // 注意：thought消息可能在final消息之后到达（流式事件顺序问题），
+      // 所以每次消息变化都检查是否有未被折叠的过程消息
+      const hasFinalMessage = newMessages.some(m => getMessageType(m) === 'final')
+      if (hasFinalMessage) {
+        // 找到最后一个final消息
+        const lastFinalMessage = [...newMessages].reverse().find(m => getMessageType(m) === 'final')
         nextTick(() => {
-          collapsePreviousProcessMessages(lastMessage, newMessages)
+          collapsePreviousProcessMessages(lastFinalMessage, newMessages)
         })
       }
     }
@@ -2285,6 +2304,16 @@ const closeImagePreview = () => {
     background: transparent;
   }
 
+  &.event-tool-use {
+    border-left-color: #2196F3;
+    background: transparent;
+  }
+
+  &.event-tool-result {
+    border-left-color: #9C27B0;
+    background: transparent;
+  }
+
   &.event-error {
     border-left-color: #F44336;
     background: transparent;
@@ -2315,6 +2344,52 @@ const closeImagePreview = () => {
     .observation-main {
       font-weight: 500;
       color: #333;
+    }
+
+    .tool-use-main {
+      font-weight: 500;
+      color: #1976D2;
+    }
+
+    .tool-result-main {
+      font-weight: 500;
+      color: #7B1FA2;
+    }
+
+    .tool-use-details {
+      margin-top: 8px;
+
+      details {
+        summary {
+          cursor: pointer;
+          color: #666;
+          font-size: 12px;
+          user-select: none;
+          padding: 4px 8px;
+          background: transparent;
+          border-radius: 4px;
+          display: inline-flex;
+          align-items: center;
+        }
+
+        pre {
+          margin-top: 8px;
+          padding: 8px;
+          background: #f5f5f5;
+          border-radius: 4px;
+          font-size: 12px;
+          overflow-x: auto;
+        }
+      }
+    }
+
+    .tool-result-summary {
+      margin-top: 8px;
+      padding: 8px;
+      background: #f3e5f5;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #4A148C;
     }
 
     .thought-context,
@@ -2509,6 +2584,30 @@ const closeImagePreview = () => {
 
     .process-observation .process-label {
       color: #388E3C;
+    }
+
+    .process-reasoning,
+    .event-reasoning {
+      margin-top: 6px;
+      padding: 6px 10px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #555;
+      line-height: 1.5;
+
+      summary {
+        cursor: pointer;
+        font-size: 11px;
+        color: #777;
+        user-select: none;
+      }
+
+      .reasoning-text {
+        margin-top: 4px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
     }
   }
 }

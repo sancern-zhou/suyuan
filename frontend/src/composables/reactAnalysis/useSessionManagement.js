@@ -210,21 +210,21 @@ export function useSessionManagement(store) {
     const visuals = []
 
     for (const msg of messages) {
-      if (msg.type === 'observation' || msg.type === 'OBSERVATION') {
-        const obs = msg.data?.observation
-        if (!obs) continue
+      if (msg.type === 'tool_result') {
+        const result = msg.data?.result
+        if (!result) continue
 
-        // observation.visuals 在顶层
-        if (Array.isArray(obs.visuals) && obs.visuals.length > 0) {
-          visuals.push(...obs.visuals)
+        // result.visuals 在顶层
+        if (Array.isArray(result.visuals) && result.visuals.length > 0) {
+          visuals.push(...result.visuals)
         }
-        // 兼容旧路径：observation.data.visuals
-        if (Array.isArray(obs.data?.visuals) && obs.data.visuals.length > 0) {
-          visuals.push(...obs.data.visuals)
+        // result.data.visuals
+        if (Array.isArray(result.data?.visuals) && result.data.visuals.length > 0) {
+          visuals.push(...result.data.visuals)
         }
-        // 多工具结果：observation.tool_results[].result.visuals
-        if (Array.isArray(obs.tool_results)) {
-          for (const tr of obs.tool_results) {
+        // 多工具结果：result.tool_results[].result.visuals
+        if (Array.isArray(result.tool_results)) {
+          for (const tr of result.tool_results) {
             const rv = tr?.result?.visuals
             if (Array.isArray(rv) && rv.length > 0) {
               visuals.push(...rv)
@@ -255,26 +255,25 @@ export function useSessionManagement(store) {
     const docs = []
 
     for (const msg of messages) {
-      if (msg.type === 'observation' || msg.type === 'OBSERVATION') {
-        const obs = msg.data?.observation
-        if (!obs) continue
+      if (msg.type === 'tool_result') {
+        const result = msg.data?.result
+        if (!result) continue
 
-        const obsData = obs.data
-        if (!obsData) continue
+        const resultData = result.data
+        if (!resultData) continue
 
         // 提取 pdf_preview 或 markdown_preview
-        // 注意：数据结构需要符合 reactStore.setLastOfficeDocument 的期望格式
-        if (obsData.pdf_preview) {
+        if (resultData.pdf_preview) {
           docs.push({
-            pdf_preview: obsData.pdf_preview,
-            file_path: obsData.file_path || obsData.pdf_preview.pdf_path,
-            generator: obsData.generator || 'word_processor'
+            pdf_preview: resultData.pdf_preview,
+            file_path: resultData.file_path || resultData.pdf_preview.pdf_path,
+            generator: resultData.generator || 'word_processor'
           })
-        } else if (obsData.markdown_preview) {
+        } else if (resultData.markdown_preview) {
           docs.push({
-            markdown_preview: obsData.markdown_preview,
-            file_path: obsData.file_path,
-            generator: obsData.generator || 'read_file'
+            markdown_preview: resultData.markdown_preview,
+            file_path: resultData.file_path,
+            generator: resultData.generator || 'read_file'
           })
         }
       }

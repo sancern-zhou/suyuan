@@ -35,7 +35,7 @@
         :expert-results="expertResults"
       />
 
-      <!-- Office文档预览面板 -->
+      <!-- Office文档预览面板（包含 PDF/Markdown/Notebook） -->
       <OfficeDocumentPanel
         v-show="activeTab === 'document'"
         ref="officePanelRef"
@@ -137,14 +137,11 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: white;
-  border-left: 1px solid #e8e8e8;
 }
 
 .right-panel-tabs {
   display: flex;
   border-bottom: 1px solid #e8e8e8;
-  background: #fafafa;
 }
 
 .tab-btn {

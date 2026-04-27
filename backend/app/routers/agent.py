@@ -385,7 +385,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         streaming_chunk_count += 1
 
                     # 收集对话历史（转换为前端格式，添加 content 字段）
-                    if event["type"] in ["thought", "action", "observation"]:
+                    if event["type"] in ["thought", "tool_use", "tool_result"]:
                         # 创建前端格式的消息
                         frontend_message = {
                             "type": event["type"],
@@ -396,13 +396,12 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         # 提取 content 字段（前端显示用）
                         if event["type"] == "thought":
                             frontend_message["content"] = event.get("data", {}).get("thought", "思考中...")
-                        elif event["type"] == "action":
-                            action_data = event.get("data", {}).get("action", {})
-                            tool_name = action_data.get("tool", "")
+                        elif event["type"] == "tool_use":
+                            tool_name = event.get("data", {}).get("tool_name", "")
                             frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
-                        elif event["type"] == "observation":
-                            obs_data = event.get("data", {}).get("observation", {})
-                            frontend_message["content"] = obs_data.get("summary", "获得结果") if isinstance(obs_data, dict) else str(obs_data)
+                        elif event["type"] == "tool_result":
+                            result_data = event.get("data", {}).get("result", {})
+                            frontend_message["content"] = result_data.get("summary", "获得结果") if isinstance(result_data, dict) else str(result_data)
 
                         conversation_history.append(frontend_message)
                         # 防御性代码：确保 content 不为 None
@@ -420,7 +419,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         pass
 
                     # 收集数据ID
-                    if event["type"] == "observation" and "data" in event:
+                    if event["type"] == "tool_result" and "data" in event:
                         data = event.get("data", {})
                         if "data_id" in data:
                             collected_data_ids.append(data["data_id"])
@@ -491,7 +490,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         for msg in conversation_history:
                             if msg.get("type") in ["user", "final"]:
                                 compressed_history.append(msg)
-                            elif msg.get("type") in ["thought", "action", "observation"]:
+                            elif msg.get("type") in ["thought", "tool_use", "tool_result"]:
                                 compressed_history.append({
                                     "type": msg.get("type"),
                                     "content": msg.get("content", "")[:200],

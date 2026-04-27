@@ -86,7 +86,14 @@ class EditFileTool(LLMTool):
         )
 
         # 工作目录限制（与 read_file 一致）
+        # 工作目录限制（与 read_file 一致）
         self.working_dir = Path.cwd().parent  # D:\溯源\ 或 /opt/app/ 等
+
+        # 临时允许的额外目录（用于处理 /tmp 等临时文件）
+        self.allowed_dirs = [
+            self.working_dir,
+            Path("/tmp")  # 临时允许访问 /tmp 目录
+        ]
 
     async def execute(
         self,
@@ -245,7 +252,7 @@ class EditFileTool(LLMTool):
 
     def _resolve_path(self, path: str) -> Optional[Path]:
         """
-        解析文件路径，确保在工作目录范围内（与 read_file 逻辑一致）
+        解析文件路径，确保在允许的目录范围内
         """
         try:
             file_path = Path(path)
@@ -255,11 +262,15 @@ class EditFileTool(LLMTool):
 
             file_path = file_path.resolve()
 
-            if not file_path.is_relative_to(self.working_dir):
+            # 检查是否在任一允许的目录范围内
+            is_allowed = any(file_path.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs)
+
+            if not is_allowed:
+                allowed_dirs_str = ", ".join(str(d) for d in self.allowed_dirs)
                 logger.warning(
                     "edit_file_path_escape",
                     requested_path=path,
-                    allowed_dir=str(self.working_dir)
+                    allowed_dirs=allowed_dirs_str
                 )
                 return None
 

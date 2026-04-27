@@ -106,10 +106,10 @@ ns_type="NS"
 
     async def execute(
         self,
-        context: Optional[ExecutionContext],
         start_date: str,
         end_date: str,
         ns_type: str = "NS",
+        context: Optional[ExecutionContext] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -265,11 +265,11 @@ province_code="440000"
 
     async def execute(
         self,
-        context: Optional[ExecutionContext],
         start_date: str,
         end_date: str,
         province_code: Optional[str] = None,
         ns_type: str = "NS",
+        context: Optional[ExecutionContext] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """

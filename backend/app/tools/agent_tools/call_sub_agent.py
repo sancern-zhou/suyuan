@@ -496,6 +496,17 @@ class CallSubAgentTool(LLMTool):
                     # 从data字段中的data_ids数组提取
                     if "data_ids" in event["data"] and isinstance(event["data"]["data_ids"], list):
                         data_ids.extend(event["data"]["data_ids"])
+                    # ✅ 从metadata.data_id中提取（支持嵌套格式）
+                    if "metadata" in event["data"] and isinstance(event["data"]["metadata"], dict):
+                        metadata = event["data"]["metadata"]
+                        if "data_id" in metadata:
+                            # 处理字符串格式
+                            if isinstance(metadata["data_id"], str):
+                                data_ids.append(metadata["data_id"])
+                            # 处理字典格式 {"data_id": "...", "file_path": "..."}
+                            elif isinstance(metadata["data_id"], dict):
+                                if "data_id" in metadata["data_id"]:
+                                    data_ids.append(metadata["data_id"]["data_id"])
         return list(set(data_ids))  # 去重
 
     def _extract_chart_urls(self, events: list) -> list:

@@ -165,6 +165,10 @@ app.include_router(upload_router, prefix="/api/upload")
 from app.api.office_routes import router as office_router
 app.include_router(office_router)
 
+# Include Notebook routes (Notebook预览)
+from app.api.notebook_routes import router as notebook_router
+app.include_router(notebook_router)
+
 # Include Social Platform routes (社交平台管理)
 from app.routers import social_routes
 app.include_router(social_routes.router)

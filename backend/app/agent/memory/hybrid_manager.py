@@ -116,9 +116,15 @@ class HybridMemoryManager:
         if not existing_data_id:
             # 方案A：从metadata中获取data_id
             metadata = observation.get("metadata", {})
-            existing_data_id = metadata.get("data_id")
+            metadata_data_id = metadata.get("data_id")
+            # 处理字符串格式
+            if isinstance(metadata_data_id, str):
+                existing_data_id = metadata_data_id
+            # 处理字典格式 {"data_id": "...", "file_path": "..."}
+            elif isinstance(metadata_data_id, dict):
+                existing_data_id = metadata_data_id.get("data_id")
 
-        if existing_data_id and ":" in existing_data_id:
+        if existing_data_id and isinstance(existing_data_id, str) and ":" in existing_data_id:
             data_id = existing_data_id
             logger.debug(
                 "hybrid_memory_using_existing_data_id",

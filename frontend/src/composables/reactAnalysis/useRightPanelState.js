@@ -32,8 +32,8 @@ export function useRightPanelState(store = null) {
     if (!store || !store.messages) return false
 
     return store.messages.some(msg => {
-      if (msg?.type === 'observation' && msg?.data?.observation) {
-        const metadata = msg.data.observation.metadata || {}
+      if (msg?.type === 'tool_result' && msg?.data?.result) {
+        const metadata = msg.data.result.metadata || {}
         const generator = metadata.generator
 
         const isOfficeTool = [
@@ -43,8 +43,8 @@ export function useRightPanelState(store = null) {
         ].includes(generator)
 
         if (generator === 'read_file') {
-          const obs = msg.data.observation
-          return !!(obs.data?.pdf_preview || obs.data?.markdown_preview)
+          const result = msg.data.result
+          return !!(result.data?.pdf_preview || result.data?.markdown_preview)
         }
 
         return isOfficeTool

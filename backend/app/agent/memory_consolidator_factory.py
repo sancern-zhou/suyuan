@@ -24,7 +24,7 @@ def create_memory_consolidator_agent(**kwargs) -> ReActAgent:
 
     agent = ReActAgent(
         tool_registry=memory_tools,
-        max_iterations=5,  # 记忆整合最多5步
+        max_iterations=10,  # 记忆整合最多10步（增加迭代次数以提供更多尝试机会）
         enable_memory=False,  # 记忆整合Agent不需要记忆
         **kwargs
     )

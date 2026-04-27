@@ -76,8 +76,8 @@ class ContextCompressor:
 [
   {{"type": "user", "role": "user", "content": "分析广州O3污染"}},
   {{"type": "thought", "role": "assistant", "content": "决定先查询气象数据"}},
-  {{"type": "action", "role": "assistant", "content": "调用 get_weather_data，参数：城市=广州"}},
-  {{"type": "observation", "role": "assistant", "content": "成功获取 30 条记录，data_id: weather_001"}},
+  {{"type": "tool_use", "role": "assistant", "content": "调用 get_weather_data，参数：城市=广州"}},
+  {{"type": "tool_result", "role": "user", "content": "成功获取 30 条记录，data_id: weather_001"}},
   {{"type": "final", "role": "assistant", "content": "根据分析，发现..."}}
 ]
 

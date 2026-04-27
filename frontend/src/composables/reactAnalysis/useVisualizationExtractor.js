@@ -125,8 +125,8 @@ export function useVisualizationExtractor(store) {
     const visuals = []
 
     for (const msg of messages) {
-      if (msg.type === 'observation' && msg.data?.observation?.visuals) {
-        visuals.push(...msg.data.observation.visuals)
+      if (msg.type === 'tool_result' && msg.data?.result?.visuals) {
+        visuals.push(...msg.data.result.visuals)
       }
     }
 

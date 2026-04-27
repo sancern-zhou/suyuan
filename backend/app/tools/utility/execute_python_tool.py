@@ -229,6 +229,9 @@ doc.save('/root/report.docx')
                 # ✅ 自动注册中文字体（避免用户代码中字体设置错误）
                 code = self._inject_chinese_font_support(code)
 
+                # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
+                code = self._inject_excel_helpers(code)
+
                 logger.info(
                     "code_injection_completed",
                     original_code_length=len(original_code),
@@ -236,7 +239,7 @@ doc.save('/root/report.docx')
                     code_modified=(code != original_code),
                     has_matplotlib_import='import matplotlib' in original_code or 'from matplotlib' in original_code,
                     has_chinese_font_setup='FontProperties' in original_code or 'font.sans-serif' in original_code or 'Noto' in original_code,
-                    has_excel_usage='openpyxl' in original_code or 'pandas' in original_code and 'read_excel' in original_code,
+                    has_excel_usage='openpyxl' in original_code or 'pandas' in original_code and 'read_excel' in original_code or '.xlsx' in original_code,
                     has_context=context is not None,
                     available_data_count=len(context.available_data_ids) if context and hasattr(context, 'available_data_ids') else 0
                 )
@@ -254,6 +257,9 @@ doc.save('/root/report.docx')
 
                 # ✅ 自动注册中文字体
                 code = self._inject_chinese_font_support(code)
+
+                # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
+                code = self._inject_excel_helpers(code)
 
                 logger.info(
                     "code_injection_completed",
@@ -316,7 +322,37 @@ doc.save('/root/report.docx')
                     # ✅ 只在执行成功时覆盖 summary
                     if result.get("success", False):
                         result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
-            elif final_files:
+
+            # ✅ 处理 Notebook 文件：生成 HTML 预览
+            notebook_files = [f for f in final_files if f.endswith('.ipynb')]
+
+            if notebook_files and "file_path" not in result["data"]:
+                # 只处理第一个 notebook 文件
+                notebook_file = notebook_files[0]
+                try:
+                    from app.services.notebook_converter import notebook_converter
+                    html_preview = await notebook_converter.convert_to_html(notebook_file)
+                    result["data"]["html_preview"] = html_preview
+                    result["data"]["file_path"] = notebook_file
+                    result["data"]["file_type"] = "notebook"
+                    # ✅ 只在执行成功时覆盖 summary
+                    if result.get("success", False):
+                        result["summary"] = f"✅ 工具已执行完成，生成Notebook：{Path(notebook_file).name}"
+                    logger.info(
+                        "execute_python_notebook_html_generated",
+                        html_id=html_preview["html_id"],
+                        notebook_file=notebook_file,
+                        execution_success=result.get("success", False)
+                    )
+                except Exception as html_error:
+                    logger.warning("execute_python_notebook_conversion_failed", error=str(html_error))
+                    # HTML 转换失败时，仍然返回文件信息
+                    result["data"]["file_path"] = notebook_file
+                    result["data"]["file_type"] = "notebook"
+                    # ✅ 只在执行成功时覆盖 summary
+                    if result.get("success", False):
+                        result["summary"] = f"✅ 工具已执行完成，生成Notebook：{Path(notebook_file).name}"
+            elif final_files and "file_path" not in result["data"]:
                 # ✅ 只在执行成功时覆盖 summary
                 if result.get("success", False):
                     file_names = [Path(f).name for f in final_files]
@@ -1054,6 +1090,373 @@ for _font_path in _font_configs:
 
         return injected_code
 
+    def _inject_excel_helpers(self, code: str) -> str:
+        """
+        条件性注入 Excel 辅助函数（仅检测到需要时才注入）
+
+        策略：
+        - 检测代码中是否涉及 Excel 操作
+        - 检查 openpyxl 是否可用
+        - 只在需要时注入辅助函数
+        - 自动添加预览触发（即使LLM直接用openpyxl/pandas）
+        """
+        # 检测是否需要 Excel 操作
+        excel_keywords = [
+            'edit_excel_data',      # 用户调用辅助函数
+            'openpyxl',             # 用户直接用 openpyxl
+            '.xlsx',                # 操作 xlsx 文件
+            '.xls',                 # 操作 xls 文件
+            'to_excel',             # pandas to_excel
+            'read_excel',           # pandas read_excel
+        ]
+
+        need_excel = any(keyword in code for keyword in excel_keywords)
+
+        if not need_excel:
+            logger.debug("excel_injection_skipped", reason="no_excel_keywords")
+            return code
+
+        # 检查 openpyxl 是否安装
+        try:
+            import openpyxl
+            openpyxl_available = True
+        except ImportError:
+            openpyxl_available = False
+            logger.warning("excel_injection_skipped", reason="openpyxl_not_installed")
+
+        if not openpyxl_available:
+            # openpyxl 未安装，不注入辅助函数
+            # 用户代码会直接报错，错误信息更清晰
+            return code
+
+        logger.info("excel_injection_started", has_excel_keywords=need_excel)
+
+        # 注入辅助函数
+        helper_code = '''# ===== Excel 辅助函数（自动注入，保留图表和格式） =====
+def edit_excel_data(file_path, updates, sheet_name=None):
+    """
+    修改 Excel 数据，保留图表和格式
+
+    ⚠️ 重要：此函数使用 openpyxl 直接修改单元格，不会丢失图表和格式
+
+    Args:
+        file_path: Excel 文件路径（.xlsx 格式）
+        updates: 更新数据，格式：
+            - 单个单元格: {"A1": "新值"}
+            - 多个单元格: {"A1": "值1", "B2": "值2", "C3": 123}
+        sheet_name: 工作表名（可选，默认使用活动工作表）
+
+    Returns:
+        dict: {"success": True, "updated_count": N, "message": "...", "file_path": "..."}
+
+    Example:
+        # 修改单个单元格
+        edit_excel_data("data.xlsx", {"A1": "北京"})
+
+        # 批量修改
+        edit_excel_data("data.xlsx", {
+            "A2": "上海",
+            "B2": 85,
+            "C2": 45
+        })
+    """
+    import openpyxl
+    from pathlib import Path
+    import os
+
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        ws = wb[sheet_name] if sheet_name else wb.active
+
+        count = 0
+        for cell, value in updates.items():
+            ws[cell] = value
+            count += 1
+
+        wb.save(file_path)
+        wb.close()
+
+        # 规范化文件路径
+        file_path = os.path.abspath(file_path)
+
+        # ✅ 打印特殊标记，触发前端预览生成
+        print(f"EXCEL_SAVED:{file_path}")
+
+        return {
+            "success": True,
+            "updated_count": count,
+            "message": f"成功更新 {count} 个单元格，图表和格式已保留",
+            "file_path": file_path
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": f"更新失败: {str(e)}"
+        }
+
+
+def read_excel_with_preview(file_path, sheet_name=None, head_rows=20):
+    """
+    读取 Excel 文件并生成前端预览
+
+    ⚠️ 重要：读取文件也会生成前端预览，方便查看表格内容和格式
+
+    Args:
+        file_path: Excel 文件路径（.xlsx 格式）
+        sheet_name: 工作表名（可选，默认使用活动工作表）
+        head_rows: 读取前几行数据（默认20行）
+
+    Returns:
+        dict: {
+            "success": True,
+            "data": [...],  # 数据列表
+            "columns": [...],  # 列名
+            "total_rows": N,  # 总行数
+            "total_columns": N,  # 总列数
+            "file_path": "..."  # 文件路径（触发预览）
+        }
+
+    Example:
+        # 读取并预览
+        result = read_excel_with_preview("data.xlsx")
+        print(f"总行数: {result['total_rows']}")
+        print(f"数据: {result['data']}")
+    """
+    import openpyxl
+    import pandas as pd
+    import os
+
+    try:
+        # 规范化文件路径
+        file_path = os.path.abspath(file_path)
+
+        # 使用 pandas 读取数据
+        df = pd.read_excel(file_path, sheet_name=sheet_name, nrows=head_rows)
+
+        # 使用 openpyxl 获取总行数和列数
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb[sheet_name] if sheet_name else wb.active
+        total_rows = ws.max_row
+        total_columns = ws.max_column
+        wb.close()
+
+        # ✅ 打印特殊标记，触发前端预览生成
+        print(f"EXCEL_SAVED:{file_path}")
+
+        return {
+            "success": True,
+            "data": df.to_dict("records"),
+            "columns": df.columns.tolist(),
+            "total_rows": total_rows,
+            "total_columns": total_columns,
+            "preview_rows": len(df),
+            "file_path": file_path,
+            "message": f"成功读取 Excel 文件，共 {total_rows} 行 x {total_columns} 列"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": f"读取失败: {str(e)}"
+        }
+
+
+def merge_excel_with_charts(file_paths, output_path):
+    """
+    合并多个Excel文件到一个工作簿（保留图表、格式、数据）
+
+    方法：
+    1. 复制第一个文件作为基础
+    2. 逐个复制其他文件的sheet（手动复制：内容+样式+图表）
+
+    ⚠️ 重要：此方法会保留所有图表、格式和数据
+
+    Args:
+        file_paths: Excel文件路径列表
+        output_path: 输出文件路径
+
+    Returns:
+        dict: {"success": True, "merged_count": N, "file_path": "...", "message": "..."}
+
+    Example:
+        files = ['/tmp/file1.xlsx', '/tmp/file2.xlsx']
+        result = merge_excel_with_charts(files, '/tmp/merged.xlsx')
+        # 输出文件包含所有图表和格式
+    """
+    import openpyxl
+    from openpyxl import load_workbook
+    import shutil
+    import os
+
+    if not file_paths:
+        return {
+            "success": False,
+            "error": "文件列表为空",
+            "message": "请提供至少一个Excel文件"
+        }
+
+    try:
+        # 复制第一个文件作为基础（保留原文件的图表）
+        shutil.copy(file_paths[0], output_path)
+
+        # 加载输出文件
+        wb_output = load_workbook(output_path)
+
+        merged_count = 0
+
+        # 从第二个文件开始合并
+        for file_path in file_paths[1:]:
+            if not os.path.exists(file_path):
+                continue
+
+            # 加载源文件
+            wb_source = load_workbook(file_path)
+
+            for sheet_name in wb_source.sheetnames:
+                ws_source = wb_source[sheet_name]
+
+                # 处理sheet名称冲突
+                new_sheet_name = sheet_name
+                counter = 1
+                while new_sheet_name in wb_output.sheetnames:
+                    new_sheet_name = f"{sheet_name}_{counter}"
+                    counter += 1
+
+                # 创建新sheet
+                ws_new = wb_output.create_sheet(title=new_sheet_name)
+
+                # 手动复制单元格内容和样式
+                for row in ws_source.iter_rows():
+                    for cell in row:
+                        new_cell = ws_new.cell(row=cell.row, column=cell.column, value=cell.value)
+
+                        # 复制样式
+                        if cell.has_style:
+                            new_cell.font = cell.font.copy()
+                            new_cell.border = cell.border.copy()
+                            new_cell.fill = cell.fill.copy()
+                            new_cell.number_format = cell.number_format
+                            new_cell.protection = cell.protection.copy()
+                            new_cell.alignment = cell.alignment.copy()
+
+                # 手动复制图表（关键步骤！）
+                for chart in ws_source._charts:
+                    try:
+                        anchor = chart.anchor
+                        ws_new.add_chart(chart, anchor)
+                    except Exception as e:
+                        # 图表复制失败时继续，不影响其他内容
+                        pass
+
+                merged_count += 1
+
+            wb_source.close()
+
+        # 保存输出文件
+        output_path = os.path.abspath(output_path)
+        wb_output.save(output_path)
+        wb_output.close()
+
+        # 打印预览触发
+        print(f"EXCEL_SAVED:{output_path}")
+
+        return {
+            "success": True,
+            "merged_count": merged_count + 1,  # 第一个文件也算
+            "file_path": output_path,
+            "message": f"成功合并 {len(file_paths)} 个文件（图表和格式已保留）"
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": f"合并失败: {str(e)}"
+        }
+
+# ===== Excel 辅助函数注入完成 =====
+
+'''
+
+        injected_code = helper_code + code
+
+        # ✅ 新增：检测LLM是否直接使用openpyxl/pandas读取Excel，自动添加预览触发
+        import re
+        auto_preview_code = self._auto_add_excel_preview_trigger(code)
+        if auto_preview_code:
+            injected_code = helper_code + auto_preview_code
+            logger.info(
+                "excel_auto_preview_added",
+                original_length=len(code),
+                injected_length=len(injected_code),
+                auto_preview_length=len(auto_preview_code) - len(code)
+            )
+
+        logger.info(
+            "excel_injection_completed",
+            original_length=len(code),
+            injected_length=len(injected_code),
+            injection_type="excel_helpers"
+        )
+
+        return injected_code
+
+    def _auto_add_excel_preview_trigger(self, code: str) -> str:
+        """
+        自动检测Excel文件路径并添加预览触发
+
+        检测模式：
+        - file_path = 'xxx.xlsx'
+        - file_path = "xxx.xlsx"
+        - load_workbook('xxx.xlsx')
+        - read_excel('xxx.xlsx')
+        """
+        import re
+        import os
+
+        # 正则模式：提取Excel文件路径
+        patterns = [
+            # file_path = 'xxx.xlsx' 或 file_path = "xxx.xlsx"
+            r"file_path\s*=\s*['\"]([^'\"]+\.(xlsx|xls))['\"]",
+            # load_workbook('xxx.xlsx') 或 load_workbook("xxx.xlsx")
+            r"load_workbook\(['\"]([^'\"]+\.(xlsx|xls))['\"]",
+            # read_excel('xxx.xlsx') 或 read_excel("xxx.xlsx")
+            r"read_excel\(['\"]([^'\"]+\.(xlsx|xls))['\"]",
+        ]
+
+        extracted_paths = set()
+        for pattern in patterns:
+            matches = re.findall(pattern, code)
+            for match in matches:
+                extracted_paths.add(match[0])
+
+        if not extracted_paths:
+            logger.debug("auto_preview_skipped", reason="no_excel_file_path_found")
+            return code
+
+        # 在代码末尾添加预览触发
+        preview_trigger_lines = [
+            "\n# ===== 自动添加：Excel预览触发 =====",
+            "import os",
+        ]
+
+        for file_path in extracted_paths:
+            # 规范化路径
+            preview_trigger_lines.append(f"print('EXCEL_SAVED:' + os.path.abspath('{file_path}'))")
+
+        preview_trigger_lines.append("# ===== 预览触发完成 =====\n")
+
+        modified_code = code + "\n" + "\n".join(preview_trigger_lines)
+
+        logger.info(
+            "auto_preview_trigger_added",
+            excel_files=list(extracted_paths),
+            lines_added=len(preview_trigger_lines)
+        )
+
+        return modified_code
+
     def _extract_file_paths_from_output(self, output: str) -> List[str]:
         """
         从 Python 代码输出中提取文件路径
@@ -1076,10 +1479,14 @@ for _font_path in _font_configs:
         if not output:
             return file_paths
 
-        # 常见的文件保存模式
+        # 常见的文件保存模式（支持中文路径）
         patterns = [
-            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved|EXCEL_SAVED)[:：]\s*([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
-            r'([/\w\-.]+\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
+            # EXCEL_SAVED:/path/to/文件名.xlsx
+            r'EXCEL_SAVED[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
+            # 报告已生成：/path/to/文件名.docx
+            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
+            # 文件名.xlsx（带中文的后缀）
+            r'(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
         ]
 
         for pattern in patterns:

@@ -240,6 +240,7 @@ class NOAAHysplitAPI:
                 # 等待计算完成
                 result_url = f"{self.BASE_URL}/hypub-bin/trajresults.pl?jobidno={job_id}"
                 model_complete = False
+                endpoints = []  # ✅ 在轮询外定义，用于跨循环访问
 
                 for poll_count in range(40):  # 最多等待2分钟
                     await asyncio.sleep(3)
@@ -268,24 +269,52 @@ class NOAAHysplitAPI:
                                    response_length=len(text),
                                    response_preview=text[:500] if text else "empty")
 
-                    # 检查模型是否完成 (必须是100%完成)
-                    if "Complete Hysplit" in text or "Percent complete: 100" in text:
-                        model_complete = True
-                        logger.info("noaa_model_complete", job_id=job_id)
-                        break
+                    # ✅ 修复1: 更准确的完成判断（检查多种标记）
+                    text_lower = text.lower()
+                    has_complete_marker = (
+                        "complete hysplit" in text_lower or
+                        "percent complete: 100" in text_lower or
+                        "100%" in text_lower
+                    )
+
+                    # ✅ 修复2: 如果显示完成，尝试获取端点数据来验证
+                    if has_complete_marker:
+                        # 尝试获取端点数据（如果有端点数据，才认为真正完成）
+                        endpoints = await self._get_endpoints(client, job_id)
+                        if endpoints:
+                            model_complete = True
+                            logger.info(
+                                "noaa_model_complete",
+                                job_id=job_id,
+                                verification_method="endpoints_data",
+                                endpoints_count=len(endpoints)
+                            )
+                            break
+                        else:
+                            # 端点数据还没准备好，继续轮询
+                            logger.info(
+                                "noaa_complete_but_no_endpoints",
+                                job_id=job_id,
+                                message="显示完成但端点数据未就绪，继续轮询"
+                            )
+                            # 继续等待，不要break
 
                 # 【修改】不再尝试下载NOAA图片，直接使用本地绘制
                 image_data = None
                 local_plot = False
-                
-                # 获取端点数据
-                endpoints = await self._get_endpoints(client, job_id)
+
+                # ✅ 修复3: 如果在轮询中没获取到端点，最后再尝试一次
+                if not endpoints:
+                    endpoints = await self._get_endpoints(client, job_id)
+                    if endpoints:
+                        logger.info("endpoints_fetched_after_polling", job_id=job_id, count=len(endpoints))
 
                 # 对轨迹数据进行抽稀（每1小时保留一个点，保证轨迹圆滑）
                 endpoints_downsampled = self._downsample_trajectory(endpoints, interval_hours=1)
 
-                # 【修改】只要有端点数据，就使用本地matplotlib绘制轨迹图
-                if model_complete and endpoints_downsampled:
+                # ✅ 修复4: 优先本地绘制 - 只要有端点数据就尝试绘制
+                # 不依赖 model_complete 判断（可能不准确）
+                if endpoints_downsampled:
                     logger.info("generating_local_plot", job_id=job_id, endpoints_count=len(endpoints_downsampled))
                     metadata_for_plot = {
                         "lat": lat,
@@ -305,8 +334,9 @@ class NOAAHysplitAPI:
                     logger.warning("cannot_generate_local_plot", job_id=job_id,
                                    model_complete=model_complete, endpoints_count=len(endpoints_downsampled))
 
-                # 确定成功状态（模型完成且有端点数据就算成功）
-                success = model_complete and len(endpoints_downsampled) > 0
+                # ✅ 修复5: 调整成功条件 - 有端点数据且本地绘制成功就算成功
+                # model_complete 只是一个参考指标
+                success = len(endpoints_downsampled) > 0 and local_plot
 
                 logger.info(
                     "noaa_trajectory_result",
@@ -315,13 +345,14 @@ class NOAAHysplitAPI:
                     local_plot=local_plot,
                     has_image=bool(image_data),
                     endpoints_count=len(endpoints_downsampled),
-                    original_endpoints_count=len(endpoints)
+                    original_endpoints_count=len(endpoints),
+                    success_criteria="endpoints_data + local_plot"
                 )
-                
-                # 如果模型未完成，返回错误
-                if not success:
-                    error_msg = "NOAA HYSPLIT model did not complete within timeout (polling 40 times, ~2min)"
-                    logger.error("noaa_trajectory_timeout", job_id=job_id, error=error_msg)
+
+                # 如果没有端点数据，返回错误
+                if not endpoints_downsampled:
+                    error_msg = "NOAA HYSPLIT: No trajectory endpoint data available"
+                    logger.error("noaa_trajectory_no_data", job_id=job_id, error=error_msg)
                     return {
                         "success": False,
                         "error": error_msg,
@@ -329,7 +360,7 @@ class NOAAHysplitAPI:
                         "trajectory_image_url": result_url,
                         "trajectory_image_base64": None,
                         "endpoints_data": [],
-                        "model_complete": False,
+                        "model_complete": model_complete,
                         "plot_success": False
                     }
                 

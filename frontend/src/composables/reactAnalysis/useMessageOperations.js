@@ -113,9 +113,9 @@ export function useMessageOperations(store) {
         content = message.content
       } else if (message.type === 'assistant') {
         content = message.content || ''
-      } else if (message.type === 'observation' && message.data?.observation) {
-        const obs = message.data.observation
-        content = obs.summary || JSON.stringify(obs.data || {})
+      } else if (message.type === 'tool_result' && message.data?.result) {
+        const result = message.data.result
+        content = result.summary || JSON.stringify(result.data || {})
       }
 
       if (content) {
@@ -180,9 +180,9 @@ export function useMessageOperations(store) {
         content = `[用户] ${message.content}`
       } else if (message.type === 'assistant') {
         content = `[助手] ${message.content || ''}`
-      } else if (message.type === 'observation') {
-        const obs = message.data?.observation
-        content = `[工具调用] ${obs?.summary || ''}`
+      } else if (message.type === 'tool_result') {
+        const result = message.data?.result
+        content = `[工具结果] ${result?.summary || ''}`
       }
 
       if (content) {
@@ -215,8 +215,8 @@ export function useMessageOperations(store) {
     return messages.value.filter(msg => {
       if (msg.type === 'user' || msg.type === 'assistant') {
         return msg.content?.toLowerCase().includes(lowerKeyword)
-      } else if (msg.type === 'observation') {
-        const summary = msg.data?.observation?.summary || ''
+      } else if (msg.type === 'tool_result') {
+        const summary = msg.data?.result?.summary || ''
         return summary.toLowerCase().includes(lowerKeyword)
       }
       return false
@@ -232,7 +232,7 @@ export function useMessageOperations(store) {
       total: messages.value.length,
       user: 0,
       assistant: 0,
-      observation: 0,
+      tool_result: 0,
       toolCalls: 0,
       errors: 0
     }
@@ -240,9 +240,9 @@ export function useMessageOperations(store) {
     for (const msg of messages.value) {
       stats[msg.type] = (stats[msg.type] || 0) + 1
 
-      if (msg.type === 'observation') {
+      if (msg.type === 'tool_result') {
         stats.toolCalls++
-        if (msg.data?.observation?.status === 'error') {
+        if (msg.data?.is_error) {
           stats.errors++
         }
       }

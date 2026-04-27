@@ -2,6 +2,12 @@
 会话数据库访问层
 
 提供会话的 CRUD 操作，使用 SQLAlchemy ORM。
+完全兼容 Anthropic 原生 content blocks 格式。
+
+数据库 schema 设计：
+- role: Anthropic 角色（user/assistant），用于 LLM 对话恢复
+- msg_type: 语义类型（user/thought/action/observation/tool_result/final），用于前端展示
+- content: JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
 import json
@@ -13,10 +19,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, update, delete, func
 
-from .models_session import SessionDB, SessionMessageDB, MessageType
+from .models_session import SessionDB, SessionMessageDB
 from .database import engine
 
 logger = structlog.get_logger()
+
+# 有效的语义类型集合
+VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
+
+# type -> role 映射表（确定每条消息的 Anthropic 角色）
+TYPE_TO_ROLE = {
+    "user": "user",
+    "tool_result": "user",
+    "thought": "assistant",
+    "tool_use": "assistant",
+    "final": "assistant",
+}
 
 
 class SessionRepository:
@@ -38,7 +56,7 @@ class SessionRepository:
             obj: 任意 Python 对象
 
         Returns:
-            转换后的对象（Decimal → float）
+            转换后的对象（Decimal -> float）
         """
         if isinstance(obj, Decimal):
             return float(obj)
@@ -50,6 +68,53 @@ class SessionRepository:
             return tuple(SessionRepository._convert_decimal_to_float(item) for item in obj)
         else:
             return obj
+
+    @staticmethod
+    def _resolve_role_and_type(msg: Dict[str, Any]) -> tuple:
+        """
+        从消息中解析 role 和 msg_type
+
+        支持多种输入格式：
+        - Anthropic 原生格式：有 role 字段（user/assistant）
+        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final）
+        - 旧格式：type 字段为 assistant
+
+        Returns:
+            (role: str, msg_type: str)
+        """
+        # 优先使用显式 role
+        explicit_role = msg.get("role")
+        msg_type = msg.get("type", "")
+
+        # 规范化 msg_type
+        if msg_type == "assistant":
+            msg_type = "final"
+
+        if msg_type not in VALID_MSG_TYPES:
+            msg_type = "final"  # 兜底
+
+        # 确定角色
+        if explicit_role in ("user", "assistant"):
+            role = explicit_role
+        else:
+            role = TYPE_TO_ROLE.get(msg_type, "assistant")
+
+        return role, msg_type
+
+    @staticmethod
+    def _serialize_content(content: Any) -> Any:
+        """
+        序列化 content 为 JSONB 兼容格式
+
+        JSONB 列原生支持 str, list, dict, None，
+        只需处理 Decimal 等不可序列化的类型
+        """
+        if content is None:
+            return None
+        if isinstance(content, (str, list, dict, bool, int, float)):
+            return content
+        # 其他类型（Decimal 等）转换为字符串
+        return str(content)
 
     async def create_session(
         self,
@@ -65,8 +130,8 @@ class SessionRepository:
                 session_id=session_id,
                 query=query,
                 mode=mode,
-                session_metadata=metadata or {},  # ✅ 修复：使用 session_metadata 而不是 metadata
-                office_documents=office_documents or []  # ✅ 添加：保存Office文档数据
+                session_metadata=metadata or {},
+                office_documents=office_documents or []
             )
             session.add(db_session)
             await session.commit()
@@ -117,7 +182,7 @@ class SessionRepository:
                 "current_expert": db_session.current_expert,
                 "data_ids": db_session.data_ids or [],
                 "visual_ids": db_session.visual_ids or [],
-                "office_documents": db_session.office_documents or [],  # ✅ 添加：加载Office文档数据
+                "office_documents": db_session.office_documents or [],
                 "error": db_session.error,
                 "metadata": db_session.session_metadata or {},
                 "conversation_history": []
@@ -135,21 +200,7 @@ class SessionRepository:
 
                 # 转换消息为前端格式
                 for msg in messages:
-                    msg_dict = {
-                        "type": msg.message_type.value,
-                        "content": msg.content,
-                        "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                        "id": f"msg_{msg.id}"
-                    }
-
-                    # 添加 data 字段（如果存在）
-                    if msg.data:
-                        msg_dict["data"] = msg.data
-
-                    # 添加 metadata 字段（如果存在）
-                    if msg.msg_metadata:
-                        msg_dict.update(msg.msg_metadata)
-
+                    msg_dict = self._msg_to_dict(msg)
                     session_dict["conversation_history"].append(msg_dict)
 
                 logger.info(
@@ -260,21 +311,16 @@ class SessionRepository:
                 try:
                     # 开始事务
                     async with conn.begin():
-                        # 先删除旧消息（使用 Core API）
-                        stmt_delete = delete(SessionMessageDB.__table__).where(SessionMessageDB.__table__.c.session_id == session_id)
+                        # 先删除旧消息
+                        stmt_delete = delete(SessionMessageDB.__table__).where(
+                            SessionMessageDB.__table__.c.session_id == session_id
+                        )
                         await conn.execute(stmt_delete)
 
-                        # 批量插入新消息（使用 Core API）
+                        # 批量插入新消息
                         for idx, msg in enumerate(conversation_history):
-                            # 提取消息类型
-                            msg_type_str = msg.get("type") or (msg.get("role") if msg.get("role") == "user" else "final")
-
-                            # 映射消息类型枚举
-                            try:
-                                msg_type = MessageType(msg_type_str)
-                            except ValueError:
-                                # 如果是 "assistant"，映射为 "final"
-                                msg_type = MessageType.FINAL if msg_type_str == "assistant" else MessageType(msg_type_str)
+                            # 解析 role 和 msg_type
+                            role, msg_type = self._resolve_role_and_type(msg)
 
                             # 解析时间戳
                             timestamp = None
@@ -292,21 +338,25 @@ class SessionRepository:
                             else:
                                 timestamp = datetime.utcnow()
 
-                            # 提取元数据
-                            msg_metadata = {k: v for k, v in msg.items() if k not in ["type", "content", "data", "timestamp"]}
+                            # 提取元数据（排除已知字段）
+                            known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
+                                          "tool_use_id", "is_error"}
+                            msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
 
-                            # 转换 Decimal 为 float（JSON 序列化兼容）
+                            # 转换 Decimal 为 float
                             msg_data = self._convert_decimal_to_float(msg.get("data"))
                             msg_metadata_converted = self._convert_decimal_to_float(msg_metadata)
+                            content = self._serialize_content(msg.get("content"))
 
-                            # 使用 Core insert（注意：使用数据库列名，不是 ORM 属性名）
+                            # 使用 Core insert（注意：使用数据库列名）
                             stmt_insert = SessionMessageDB.__table__.insert().values(
                                 session_id=session_id,
-                                message_type=msg_type,
-                                content=msg.get("content"),
+                                role=role,
+                                msg_type=msg_type,
+                                content=content,
                                 data=msg_data,
                                 timestamp=timestamp,
-                                metadata=msg_metadata_converted,  # ✅ 使用数据库列名 metadata，而不是 ORM 属性名 msg_metadata
+                                metadata=msg_metadata_converted,
                                 sequence_number=idx
                             )
                             await conn.execute(stmt_insert)
@@ -357,22 +407,23 @@ class SessionRepository:
                     max_seq = result.scalar() or 0
                     sequence_number = max_seq + 1
 
-                # 提取消息类型
-                msg_type_str = message.get("type") or (message.get("role") if message.get("role") == "user" else "final")
+                # 解析 role 和 msg_type
+                role, msg_type = self._resolve_role_and_type(message)
 
-                try:
-                    msg_type = MessageType(msg_type_str)
-                except ValueError:
-                    msg_type = MessageType.FINAL if msg_type_str == "assistant" else MessageType(msg_type_str)
-
-                # 转换 Decimal 为 float（JSON 序列化兼容）
+                # 转换 Decimal 为 float
                 msg_data = self._convert_decimal_to_float(message.get("data"))
-                msg_metadata = self._convert_decimal_to_float({k: v for k, v in message.items() if k not in ["type", "content", "data", "timestamp"]})
+                known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
+                              "tool_use_id", "is_error"}
+                msg_metadata = self._convert_decimal_to_float(
+                    {k: v for k, v in message.items() if k not in known_keys}
+                )
+                content = self._serialize_content(message.get("content"))
 
                 db_msg = SessionMessageDB(
                     session_id=session_id,
-                    message_type=msg_type,
-                    content=message.get("content"),
+                    role=role,
+                    msg_type=msg_type,
+                    content=content,
                     data=msg_data,
                     timestamp=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else datetime.utcnow(),
                     msg_metadata=msg_metadata,
@@ -403,10 +454,16 @@ class SessionRepository:
             return result.scalar() or 0
 
     def _msg_to_dict(self, msg: SessionMessageDB) -> Dict[str, Any]:
-        """将数据库消息转换为前端字典格式"""
+        """
+        将数据库消息转换为前端字典格式
+
+        同时包含 role（LLM 恢复用）和 type（前端展示用）
+        content 直接从 JSONB 读取，无需反序列化
+        """
         msg_dict: Dict[str, Any] = {
-            "type": msg.message_type.value,
-            "content": msg.content,
+            "role": msg.role,
+            "type": msg.msg_type,
+            "content": msg.content,  # JSONB 直接返回原始类型（str/list）
             "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
             "id": f"msg_{msg.id}",
             "sequence_number": msg.sequence_number
@@ -461,7 +518,6 @@ class SessionRepository:
             messages = list(reversed(result.scalars().all()))
 
             oldest_sequence = messages[0].sequence_number if messages else None
-            # 还有更早的消息：最小 sequence_number > 0
             has_more = oldest_sequence is not None and oldest_sequence > 0
 
             return {
