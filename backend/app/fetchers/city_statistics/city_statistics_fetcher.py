@@ -202,6 +202,64 @@ WEIGHTS = WEIGHTS_2026
 
 
 # =============================================================================
+# 综合指数计算函数（GDQFWS标准方法）
+# =============================================================================
+
+def calculate_comprehensive_index_gdqfws_method(statistics: Dict) -> Optional[float]:
+    """
+    计算综合指数（GDQFWS方法：简单求和）
+
+    GDQFWS系统使用的方法：综合指数 = Σ(单项指数)，不使用权重。
+
+    Args:
+        statistics: 包含各单项指数的字典
+
+    Returns:
+        综合指数，如果缺少必要数据则返回None
+    """
+    # 简单求和：SO2 + NO2 + PM10 + PM2.5 + CO + O3
+    comprehensive_index = 0.0
+    valid_indices = 0
+
+    pollutants = ['SO2', 'NO2', 'PM10', 'PM2_5', 'CO', 'O3_8h']
+
+    for pollutant in pollutants:
+        index_key = f"{pollutant.lower()}_index"
+        index_value = statistics.get(index_key)
+        if index_value is not None:
+            comprehensive_index += index_value
+            valid_indices += 1
+
+    return safe_round(comprehensive_index, 3) if valid_indices > 0 else None
+
+
+def calculate_comprehensive_index_weighted_method(statistics: Dict, weights: Dict = WEIGHTS_2026) -> Optional[float]:
+    """
+    计算综合指数（加权求和方法）
+
+    传统方法：综合指数 = Σ(单项指数 × 权重)
+
+    Args:
+        statistics: 包含各单项指数的字典
+        weights: 权重字典，默认使用新标准权重
+
+    Returns:
+        综合指数，如果缺少必要数据则返回None
+    """
+    comprehensive_index = 0.0
+    valid_indices = 0
+
+    for pollutant, weight in weights.items():
+        index_key = f"{pollutant.lower()}_index"
+        index_value = statistics.get(index_key)
+        if index_value is not None:
+            comprehensive_index += index_value * weight
+            valid_indices += 1
+
+    return safe_round(comprehensive_index, 3) if valid_indices > 0 else None
+
+
+# =============================================================================
 # 统计计算函数
 # =============================================================================
 
@@ -424,33 +482,16 @@ def calculate_statistics(records: List[Dict]) -> Dict:
         (result['o3_8h_concentration'] or 0) / ANNUAL_STANDARD_LIMITS_2026['O3_8h'], 3
     ) if result['o3_8h_concentration'] is not None else None
 
-    # 计算综合指数（新标准 HJ 663-2026）= Σ(单项指数 × 权重)
-    comprehensive_index = 0.0
-    valid_indices = 0
+    # 计算综合指数（GDQFWS方法：简单求和）
+    # 这是与GDQFWS系统对齐的默认方法
+    result['comprehensive_index'] = calculate_comprehensive_index_gdqfws_method(result)
 
-    for pollutant, weight in WEIGHTS_2026.items():
-        index_key = f"{pollutant.lower()}_index"
-        index_value = result.get(index_key)
-        if index_value is not None:
-            comprehensive_index += index_value * weight
-            valid_indices += 1
+    # 保留加权方法用于对比（新标准限值 + 加权算法）
+    result['comprehensive_index_weighted'] = calculate_comprehensive_index_weighted_method(result, WEIGHTS_2026)
 
-    result['comprehensive_index'] = safe_round(comprehensive_index, 3) if valid_indices > 0 else None
-
-    # 计算综合指数（新限值+旧算法）
-    # 使用新标准限值（PM10=60, PM2.5=30），但使用旧算法权重（所有权重均为1）
-    comprehensive_index_new_limit_old_algo = 0.0
-    valid_indices_new_limit_old_algo = 0
-
-    for pollutant, weight in WEIGHTS_2013.items():
-        # 使用新标准的指数（已计算的 *_index 字段）
-        index_key = f"{pollutant.lower()}_index"
-        index_value = result.get(index_key)
-        if index_value is not None:
-            comprehensive_index_new_limit_old_algo += index_value * weight
-            valid_indices_new_limit_old_algo += 1
-
-    result['comprehensive_index_new_limit_old_algo'] = safe_round(comprehensive_index_new_limit_old_algo, 3) if valid_indices_new_limit_old_algo > 0 else None
+    # 保留旧方法（新限值+旧算法，即简单求和，与GDQFWS方法相同）
+    # 此字段保留用于向后兼容
+    result['comprehensive_index_new_limit_old_algo'] = result['comprehensive_index']
 
     # ========== 新增：达标率计算 ==========
     # 计算新标准达标率（HJ 663-2026）
@@ -741,92 +782,24 @@ class SQLServerClient:
         Returns:
             城市 -> 数据列表的字典
         """
-        # 主查询：使用CityCode关联（适用于大多数城市）
+        # 主查询：使用City和Province表（GDQFWS标准方法）
         # 注意：不使用COLLATE，因为数据库默认排序规则与bsd_city.code字段排序规则不同
         sql_main = """
         SELECT
             r.TimePoint, r.Area, r.CityCode,
             r.PM2_5_24h, r.PM10_24h, r.O3_8h_24h, r.NO2_24h, r.SO2_24h, r.CO_24h,
-            c.name as city_name, p.name as province_name
+            c.CityName as city_name, p.ProvinceName as province_name
         FROM CityDayAQIPublishHistory r
-        JOIN bsd_city c ON CAST(r.CityCode AS nvarchar(50)) = c.code
-        JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
+        JOIN City c ON CAST(r.CityCode AS nvarchar(50)) = CAST(c.CityCode AS nvarchar(50))
+        JOIN Province p ON c.ProvinceId = p.Id
         WHERE r.TimePoint >= ?
           AND r.TimePoint <= ?
-          AND c.level = '2'
+          AND c.CityType = 1
         ORDER BY r.Area, r.TimePoint
         """
 
-        # 省直辖县级行政区划查询（如河南济源市、新疆石河子市、五家渠市）
-        # 这些城市在bsd_city中level=3，parentid指向省直辖县级行政区划
-        # 使用parentid编码列表避免中文编码问题
-        sql_direct_administered = """
-        SELECT
-            r.TimePoint, r.Area, r.CityCode,
-            r.PM2_5_24h, r.PM10_24h, r.O3_8h_24h, r.NO2_24h, r.SO2_24h, r.CO_24h,
-            c.name as city_name, p.name as province_name
-        FROM CityDayAQIPublishHistory r
-        JOIN bsd_city c ON CAST(r.CityCode AS nvarchar(50)) = c.code
-        JOIN bsd_city parent ON c.parentid = parent.code
-        JOIN bsd_city p ON parent.parentid = p.code AND p.level = '1'
-        WHERE r.TimePoint >= ?
-          AND r.TimePoint <= ?
-          AND c.level = '3'
-          AND c.parentid IN ('419000', '659000', '469000')
-        ORDER BY r.Area, r.TimePoint
-        """
-
-        # 处理CityCode匹配但parentid=0的城市（如新疆吐鲁番、哈密）
-        # 使用名称关联来获取正确的省份信息
-        sql_name_matched = """
-        SELECT
-            r.TimePoint, r.Area, r.CityCode,
-            r.PM2_5_24h, r.PM10_24h, r.O3_8h_24h, r.NO2_24h, r.SO2_24h, r.CO_24h,
-            c.name as city_name, p.name as province_name
-        FROM CityDayAQIPublishHistory r
-        JOIN bsd_city c ON r.Area = c.name COLLATE Chinese_PRC_CI_AS
-        JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
-        WHERE r.TimePoint >= ?
-          AND r.TimePoint <= ?
-          AND c.level = '2'
-          AND CAST(r.CityCode AS nvarchar(50)) NOT IN (
-              SELECT code FROM bsd_city WHERE level = '2' AND parentid != '0'
-          )
-        ORDER BY r.Area, r.TimePoint
-        """
-
-        # 云南自治州查询：使用编码映射（避免中文编码问题）
-        # 云南自治州在CityDayAQIPublishHistory中使用区县级CityCode（如532301）
-        # 在bsd_city中对应level=2的完整编码（如532300）
-        # 通过前4位编码匹配
-        # 策略：优先使用parentid=530000的记录（完整名称），对于parentid=0的只选择不在530000中的
-        sql_yunnan_prefectures = """
-        SELECT c.name as city_name, LEFT(c.code, 4) as code_prefix, p.name as province_name
-        FROM bsd_city c
-        LEFT JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
-        WHERE c.level = '2'
-          AND (
-              -- 优先选择parentid=530000的记录（完整名称）
-              c.parentid = '530000'
-              OR
-              -- 对于parentid=0的记录，只选择前4位编码不在530000记录中的
-              (c.parentid = '0' AND c.code LIKE '53%'
-               AND LEFT(c.code, 4) NOT IN (
-                   SELECT LEFT(code, 4) FROM bsd_city WHERE level = '2' AND parentid = '530000'
-               ))
-          )
-        """
-
-        sql_yunnan_data = """
-        SELECT
-            r.TimePoint, r.Area, r.CityCode,
-            r.PM2_5_24h, r.PM10_24h, r.O3_8h_24h, r.NO2_24h, r.SO2_24h, r.CO_24h
-        FROM CityDayAQIPublishHistory r
-        WHERE r.TimePoint >= ?
-          AND r.TimePoint <= ?
-          AND r.CityCode LIKE '53%'
-        ORDER BY r.Area, r.TimePoint
-        """
+        # 注意：使用新的City和Province表后，不需要复杂的省直辖县级行政区划查询
+        # 所有城市（包括省直辖县级行政区划）都应该在City表中，且有正确的ProvinceId关联
 
         try:
             conn = pyodbc.connect(self.connection_string, timeout=30)
@@ -834,7 +807,7 @@ class SQLServerClient:
 
             city_data = {}
 
-            # 1. 执行主查询（CityCode关联）
+            # 执行主查询（使用City和Province表）
             cursor.execute(sql_main, [start_date, end_date])
             for row in cursor.fetchall():
                 city_name = row.city_name
@@ -856,7 +829,11 @@ class SQLServerClient:
             main_cities_count = len(city_data)
             main_records_count = sum(len(records) for records in city_data.values())
 
-            # 2. 处理省直辖县级行政区划（如济源市、石河子市、五家渠市）
+            # 注意：使用新的City和Province表后，不再需要以下特殊处理：
+            # - 省直辖县级行政区划（如济源市、石河子市、五家渠市）
+            # - CityCode匹配但parentid=0的城市（如新疆吐鲁番、哈密）
+            # - 云南自治州查询
+            # 这些特殊情况都应该在City表中正确配置
             # 暂时关闭 - 2026-04-20
             direct_administered_count = 0
             direct_administered_records = 0
@@ -911,28 +888,6 @@ class SQLServerClient:
             # for row in cursor.fetchall():
             #     yunnan_prefectures[row.code_prefix] = row
             # cursor.execute(sql_yunnan_data, [start_date, end_date])
-            # for row in cursor.fetchall():
-            #     city_code = row.CityCode
-            #     code_prefix = str(city_code)[:4] if len(str(city_code)) >= 4 else str(city_code)
-            #     matched_prefecture = yunnan_prefectures.get(code_prefix)
-            #     if matched_prefecture:
-            #         city_name = matched_prefecture.city_name
-            #         if city_name not in city_data:
-            #             city_data[city_name] = []
-            #             yunnan_cities_count += 1
-            #         city_data[city_name].append({
-            #             'date': row.TimePoint.strftime('%Y-%m-%d') if row.TimePoint else None,
-            #             'city_code': row.CityCode,
-            #             'province_name': '云南',
-            #             'PM2_5_24h': row.PM2_5_24h,
-            #             'PM10_24h': row.PM10_24h,
-            #             'O3_8h_24h': row.O3_8h_24h,
-            #             'NO2_24h': row.NO2_24h,
-            #             'SO2_24h': row.SO2_24h,
-            #             'CO_24h': row.CO_24h
-            #         })
-            #         yunnan_records_count += 1
-
             cursor.close()
             conn.close()
 
@@ -940,12 +895,8 @@ class SQLServerClient:
                 "sql_server_query_success_all_cities",
                 table="CityDayAQIPublishHistory",
                 cities_count=len(city_data),
-                main_cities=main_cities_count,
-                direct_administered=direct_administered_count,
-                name_matched=name_matched_count,
-                yunnan_autonomous_prefectures=yunnan_cities_count,
                 total_records=sum(len(records) for records in city_data.values()),
-                note="第2、3、4类查询已临时关闭"
+                method="City+Province tables (GDQFWS standard)"
             )
 
             return city_data
