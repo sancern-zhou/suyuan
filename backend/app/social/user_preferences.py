@@ -60,6 +60,15 @@ class UserPreferences:
         self.soul_file = self.user_memory_path / "soul.md"
         self.user_file = self.user_memory_path / "USER.md"
 
+        # ✅ 新增：定时任务文件路径（HEARTBEAT.md）
+        self.heartbeat_dir = Path("backend_data_registry/social/heartbeat")
+        self.heartbeat_dir.mkdir(parents=True, exist_ok=True)
+        safe_user_id_for_heartbeat = user_id.replace(":", "_")
+        self.heartbeat_path = self.heartbeat_dir / safe_user_id_for_heartbeat
+        self.heartbeat_path.mkdir(parents=True, exist_ok=True)
+
+        self.heartbeat_file = self.heartbeat_path / "HEARTBEAT.md"
+
     def _load(self) -> None:
         """从文件加载用户偏好"""
         if self.preferences_file.exists():

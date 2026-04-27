@@ -281,6 +281,10 @@ class ReActLoop:
                         is_interruption=self.is_interruption  # ✅ 传递中断标志
                     )
 
+                    # ✅ 关键修复：重新获取压缩后的历史
+                    # build_for_thought_action() 可能触发了压缩，需要重新获取压缩后的历史
+                    conversation_history = self.memory.session.get_messages_for_llm()
+
                     # Phase 3: think_and_action（Anthropic 原生流式调用）
                     from app.agent.tool_adapter import get_react_agent_tool_registry, get_tool_schemas
 

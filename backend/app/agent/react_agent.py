@@ -138,6 +138,7 @@ class ReActAgent:
         social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）
         social_soul_file_path: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 文件路径
         social_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
+        social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -177,6 +178,7 @@ class ReActAgent:
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
             memory_store = social_memory_store
+            # ✅ 使用 ActiveMemoryRetriever 按关键词召回相关记忆（而非整块注入）
             from .memory.active_memory_retriever import ActiveMemoryRetriever
 
             memory_context = ActiveMemoryRetriever().retrieve(
@@ -330,6 +332,7 @@ class ReActAgent:
                 react_loop.context_builder.user_preferences = social_user_preferences
                 react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
                 react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
+                react_loop.context_builder.heartbeat_file_path = social_heartbeat_file_path  # ✅ 传递 HEARTBEAT.md 文件路径
                 react_loop.context_builder.soul_context = social_soul_context  # ✅ 传递 soul.md 内容
                 react_loop.context_builder.user_context = social_user_context  # ✅ 传递用户上下文（USER.md）
 

@@ -28,6 +28,7 @@
       <VisualizationPanel
         v-show="activeTab === 'visualization'"
         ref="vizPanelRef"
+        class="panel-content"
         :content="visualizationContent"
         :history="messages"
         :selected-message-id="selectedMessageId"
@@ -39,6 +40,7 @@
       <OfficeDocumentPanel
         v-show="activeTab === 'document'"
         ref="officePanelRef"
+        class="panel-content"
         :history="messages"
         :session-id="sessionId"
         @submit-edit="handleOfficeEditSubmit"
@@ -147,10 +149,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  height: 100%;
 }
 
 .right-panel-tabs {
   display: flex;
+  flex-shrink: 0;
   border-bottom: 1px solid #e8e8e8;
 }
 
@@ -176,5 +180,11 @@ defineExpose({
   border-bottom-color: #1890ff;
   background: white;
   font-weight: 500;
+}
+
+.panel-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

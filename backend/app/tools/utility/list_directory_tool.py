@@ -81,11 +81,11 @@ class ListDirectoryTool(LLMTool):
             requires_context=False
         )
 
-        # 使用项目根目录（后端目录的父目录，动态适配实际部署路径）
-        # 当前工作目录是 backend 目录，parent 是项目根目录
-        self.working_dir = Path.cwd().parent  # 动态获取：D:\溯源\ 或 /opt/app/ 等
-        # 允许访问的额外目录（如临时目录）
-        self.allowed_dirs = [self.working_dir, Path("/tmp")]
+        # 使用backend目录作为工作目录
+        # 因为 backend_data_registry 等数据目录都在 backend 目录下
+        self.working_dir = Path.cwd()  # 当前目录：/home/xckj/suyuan/backend
+        # 允许访问的额外目录（项目根目录、临时目录）
+        self.allowed_dirs = [self.working_dir, self.working_dir.parent, Path("/tmp")]
 
     async def execute(
         self,
