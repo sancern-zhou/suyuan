@@ -1,7 +1,4 @@
-"""Agent bridge for connecting message bus with ReActAgent.
-
-⚠️ 注意：默认使用social模式（移动端呼吸式Agent）
-"""
+"""社交 Agent 桥接模块，负责连接消息总线与 ReActAgent。"""
 
 import asyncio
 from typing import Optional, List, Dict, Any
@@ -44,21 +41,11 @@ class AgentBridge:
         message_bus: MessageBus,
         agent: ReActAgent,
         session_mapper: SessionMapper,
-        mode: str = "social",  # ⚠️ 默认使用social模式
-        enable_heartbeat: bool = True,  # 是否启用心跳服务
-        enable_memory: bool = True  # 是否启用记忆存储
+        mode: str = "social",  
+        enable_heartbeat: bool = True,  
+        enable_memory: bool = True  
     ):
-        """
-        Initialize the agent bridge.
-
-        Args:
-            message_bus: Message bus for communication
-            agent: ReActAgent instance
-            session_mapper: Session mapper for user-to-session mapping
-            mode: Agent mode ("social"=社交模式, "query"=问数模式, "assistant"=助手, "expert"=专家, "report"=报告)
-            enable_heartbeat: 是否启用心跳服务（仅social模式）
-            enable_memory: 是否启用记忆存储（仅social模式）
-        """
+        """初始化 AgentBridge 及社交模式需要的心跳、记忆和子 Agent 管理器。"""
         self.message_bus = message_bus
         self.agent = agent
         self.session_mapper = session_mapper
@@ -69,7 +56,8 @@ class AgentBridge:
         self._running = False
         self._consume_task: Optional[asyncio.Task] = None
 
-        # ✅ 替换全局 HeartbeatService 为 UserHeartbeatManager
+        
+        # 初始化用户心跳管理器
         from app.social.user_heartbeat_manager import UserHeartbeatManager
         from app.social.user_heartbeat_singleton import set_user_heartbeat_manager
 
@@ -79,11 +67,12 @@ class AgentBridge:
                 on_execute_callback=self._on_heartbeat_execute,
                 on_notify_callback=self._on_heartbeat_notify
             )
-            # 设置全局单例，供工具使用
+            
             set_user_heartbeat_manager(self.user_heartbeat_manager)
             logger.info("user_heartbeat_manager_initialized")
 
-        # ✅ 替换全局 MemoryStore 为 UserMemoryManager
+        
+        # 初始化用户隔离记忆管理器
         from app.social.user_memory_manager import UserMemoryManager
 
         self.user_memory_manager: Optional[UserMemoryManager] = None
@@ -91,7 +80,8 @@ class AgentBridge:
             self.user_memory_manager = UserMemoryManager()
             logger.info("user_memory_manager_initialized")
 
-        # ✅ 新增：SubagentManager（后台任务管理）
+        
+        # 初始化社交子 Agent 管理器
         from app.social.subagent_manager import SubagentManager
         from app.social.subagent_singleton import set_subagent_manager
 
@@ -103,11 +93,11 @@ class AgentBridge:
                 task_store=self.task_status_store,
                 message_bus=message_bus
             )
-            # 设置全局单例，供工具使用
+            
             set_subagent_manager(self.subagent_manager)
             logger.info("subagent_manager_initialized")
 
-        # ✅ 新增：Channel 映射（用于获取机器人账号）
+        
         self._channel_map: Dict[str, "BaseChannel"] = {}
 
     async def start(self) -> None:
@@ -119,9 +109,9 @@ class AgentBridge:
         self._running = True
         self._consume_task = asyncio.create_task(self._consume_loop())
 
-        # ✅ UserHeartbeatManager 不需要全局启动，每个用户独立启动
+        
 
-        # ✅ 启动 SubagentManager
+        
         if self.subagent_manager:
             await self.subagent_manager.start()
 
@@ -138,23 +128,18 @@ class AgentBridge:
             except asyncio.CancelledError:
                 pass
 
-        # ✅ 停止所有用户心跳服务
+        
         if self.user_heartbeat_manager:
             await self.user_heartbeat_manager.shutdown()
 
-        # ✅ 停止 SubagentManager
+        
         if self.subagent_manager:
             await self.subagent_manager.shutdown()
 
         logger.info("AgentBridge stopped")
 
     def register_channel(self, channel: "BaseChannel") -> None:
-        """
-        注册渠道（用于获取机器人账号）
-
-        Args:
-            channel: 渠道实例
-        """
+        """注册社交渠道，用于解析机器人账号和发送消息。"""
         from app.channels.base import BaseChannel
 
         if not isinstance(channel, BaseChannel):
@@ -165,15 +150,7 @@ class AgentBridge:
         logger.info("channel_registered", channel_name=channel.name)
 
     async def _get_bot_account(self, channel_name: str) -> str:
-        """
-        获取机器人账号
-
-        Args:
-            channel_name: 渠道名称
-
-        Returns:
-            机器人账号（如 wxid_abc）
-        """
+        """根据渠道名称获取机器人账号。"""
         channel = self._channel_map.get(channel_name)
         if channel:
             return channel.bot_account
@@ -218,11 +195,11 @@ class AgentBridge:
                        sender_id=msg.sender_id,
                        content_length=len(msg.content))
 
-            # ✅ 获取机器人账号并构建用户ID
+            
             bot_account = await self._get_bot_account(msg.channel)
             social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
 
-            # Get or create agent session（传递模式参数）
+            
             session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
 
             logger.info("Session obtained",
@@ -233,39 +210,39 @@ class AgentBridge:
                        chat_id=msg.chat_id,
                        mode=self.mode)
 
-            # ✅ 设置全局 chat_id 和 channel（用于工具访问）
+            
             from app.social.message_bus_singleton import set_current_chat_id, set_current_channel
             set_current_chat_id(msg.chat_id)
             set_current_channel(msg.channel)
             logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel)
 
-            # ✅ 启动用户心跳服务（social模式）
+            
             if self.user_heartbeat_manager and self.mode == "social":
                 heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(social_user_id)
                 logger.debug("user_heartbeat_started", user_id=social_user_id)
 
-            # ✅ 记忆上下文由 react_agent.py 通过 social_memory_store 管理，此处不再加载
-            # （避免双重注入：之前是 agent_bridge 拼接到 query + react_agent 注入到系统提示词）
+            
+            
+            # 加载社交用户偏好、soul.md 和 USER.md
             user_preferences = None
 
-            # ✅ 加载 soul.md 和 USER.md（social模式）
-            # Agent 将自主管理这些文件，检测到 soul.md 为空时会引导用户
+            
             social_soul_file_path = None
             social_user_file_path = None
             social_soul_context = None
             social_user_context = None
             if self.mode == "social":
                 preferences_manager = UserPreferences(social_user_id)
+                user_preferences = preferences_manager.get_preferences()
 
-                # 获取文件路径
+                
                 social_soul_file_path = str(preferences_manager.soul_file) if preferences_manager.soul_file else None
                 social_user_file_path = str(preferences_manager.user_file) if preferences_manager.user_file else None
 
-                # 加载 soul.md（助理灵魂档案，Agent 自主管理）
+                
                 social_soul_context = preferences_manager.load_soul_md()
                 has_soul = len(social_soul_context.strip()) > 0 if social_soul_context else False
 
-                # 加载 USER.md（用户档案，Agent 自主管理）
                 social_user_context = preferences_manager.load_user_md()
 
                 logger.info(
@@ -284,15 +261,13 @@ class AgentBridge:
                        session_id=session_id,
                        content_preview=msg.content[:100])
 
-            # ✅ 获取用户隔离的memory_store和用户偏好（社交模式专用）
+            
+            # 获取社交用户隔离的记忆存储
             social_memory_store = None
             social_user_prefs = None
-            social_user_context = None  # ✅ 新增：用户上下文（USER.md内容）
             if self.user_memory_manager and self.mode == "social":
                 social_memory_store = await self.user_memory_manager.get_user_memory(social_user_id)
 
-                # ✅ 加载USER.md内容（用户档案）
-                social_user_context = preferences_manager.load_user_md() if self.mode == "social" else None
                 logger.debug(
                     "user_context_loaded",
                     user_id=social_user_id,
@@ -300,7 +275,7 @@ class AgentBridge:
                     context_length=len(social_user_context) if social_user_context else 0
                 )
 
-            # ✅ 获取用户偏好（用于动态提示词）
+            
             if self.mode == "social" and user_preferences:
                 social_user_prefs = user_preferences
 
@@ -308,45 +283,46 @@ class AgentBridge:
                 content=msg.content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
-                channel=msg.channel,  # ✅ 传递渠道信息
-                social_user_id=social_user_id if self.mode == "social" else None,  # ✅ 传递用户标识
-                social_memory_store=social_memory_store,  # ✅ 传递用户隔离的memory_store
-                social_user_preferences=social_user_prefs,  # ✅ 传递用户偏好
-                social_soul_file_path=social_soul_file_path,  # ✅ 传递 soul.md 文件路径
-                social_user_file_path=social_user_file_path,  # ✅ 传递 USER.md 文件路径
-                social_soul_context=social_soul_context,  # ✅ 传递 soul.md 内容
-                social_user_context=social_user_context  # ✅ 传递 USER.md 内容
+                channel=msg.channel,  
+                social_user_id=social_user_id if self.mode == "social" else None,  
+                social_memory_store=social_memory_store,  
+                social_user_preferences=social_user_prefs,  
+                social_soul_file_path=social_soul_file_path,  
+                social_user_file_path=social_user_file_path,  
+                social_soul_context=social_soul_context,  
+                social_user_context=social_user_context  
             )
 
             logger.info("Agent analysis completed",
                        session_id=session_id,
                        response_length=len(final_answer) if final_answer else 0)
 
-            # ✅ 整合到用户专属记忆（social模式）
+            
             if self.user_memory_manager and self.mode == "social":
-                # 收集本次对话消息
+                
                 from datetime import datetime
                 messages = [
                     {"role": "user", "content": msg.content, "timestamp": datetime.now().isoformat()},
                     {"role": "assistant", "content": final_answer, "timestamp": datetime.now().isoformat()}
                 ]
 
-                # 执行整合（内部会检查触发条件）
+                
+                # 达到阈值后整理长期记忆
                 await self._check_and_consolidate_memory(session_id, social_user_id)
 
-            # ✅ 提取图片URL和文档路径
+            
             media_files = self._extract_media_files(final_answer)
 
-            # ✅ 清理内容中的媒体文件引用（去除Markdown语法）
+            
             cleaned_answer = self._clean_media_references(final_answer)
 
             # Publish outbound response
             outbound_msg = OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
-                content=cleaned_answer,  # ✅ 使用清理后的内容
+                content=cleaned_answer,  
                 reply_to=msg.sender_id,
-                media=media_files  # ✅ 添加媒体文件列表
+                media=media_files  
             )
 
             await self.message_bus.publish_outbound(outbound_msg)
@@ -367,7 +343,7 @@ class AgentBridge:
             error_msg = OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
-                content=f"处理请求时出错: {str(e)}",
+                content=f"澶勭悊璇锋眰鏃跺嚭閿? {str(e)}",
                 reply_to=msg.sender_id
             )
             await self.message_bus.publish_outbound(error_msg)
@@ -377,58 +353,39 @@ class AgentBridge:
         content: str,
         session_id: str,
         chat_id: str,
-        channel: str = None,  # ✅ 新增：渠道信息
-        memory_context: str = "",  # ⚠️ 保留参数兼容但不再使用（记忆由react_agent通过social_memory_store注入）
-        social_user_id: str = None,  # ✅ 新增：社交用户标识
-        social_memory_store = None,  # ✅ 新增：社交模式用户隔离的memory_store
-        social_user_preferences: dict = None,  # ✅ 新增：社交模式用户偏好（用于动态提示词）
-        social_soul_file_path: str = None,  # ✅ 新增：社交模式 soul.md 文件路径
-        social_user_file_path: str = None,  # ✅ 新增：社交模式 USER.md 文件路径
-        social_soul_context: str = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案）
-        social_user_context: str = None  # ✅ 新增：社交模式 USER.md 内容（用户档案）
+        channel: str = None,  
+        memory_context: str = "",  
+        social_user_id: str = None,  
+        social_memory_store = None,  
+        social_user_preferences: dict = None,  
+        social_soul_file_path: str = None,  
+        social_user_file_path: str = None,  
+        social_soul_context: str = None,  
+        social_user_context: str = None  
     ) -> str:
-        """
-        Aggregate streaming events from ReActAgent into final response.
-
-        Args:
-            content: User query
-            session_id: Agent session ID
-            chat_id: Chat ID for progress tracking
-            channel: Channel name (weixin/qq/dingtalk/wecom)
-            memory_context: ⚠️ 保留兼容但不再使用（记忆由react_agent通过social_memory_store注入）
-            social_user_id: Social platform user ID (for social mode memory isolation)
-            social_memory_store: 社交模式用户隔离的memory_store（由agent_bridge传入）
-            social_user_preferences: 社交模式用户偏好配置（用于动态提示词）
-            social_soul_file_path: 社交模式 soul.md 文件路径（由agent_bridge传入）
-            social_user_file_path: 社交模式 USER.md 文件路径（由agent_bridge传入）
-            social_soul_context: 社交模式 soul.md 内容（助理灵魂档案，由agent_bridge传入）
-            social_user_context: 社交模式 USER.md 内容（用户档案，由agent_bridge传入）
-
-        Returns:
-            Aggregated final response in Markdown format
-        """
+        """聚合 Agent 事件并生成最终回复。"""
         events_buffer = []
         streaming_text_parts = []
         tool_calls = []
-        stream_segments = []  # ✅ 流式输出分段
-        current_buffer = []  # ✅ 当前缓冲区
+        stream_segments = []  
+        current_buffer = []  
 
         try:
-            # ✅ 记忆上下文由 react_agent.py 通过 social_memory_store 注入到系统提示词
-            # 不再在 query 中拼接记忆（避免双重注入）
+            
+            
 
             # Call agent and collect events
             async for event in self.agent.analyze(
-                user_query=content,  # ✅ 直接使用原始查询（记忆由react_agent通过social_memory_store管理）
+                user_query=content,  
                 session_id=session_id,
                 manual_mode=self.mode,
-                user_identifier=social_user_id if self.mode == "social" else None,  # ✅ 传递用户标识
-                social_memory_store=social_memory_store if self.mode == "social" else None,  # ✅ 传递用户隔离的memory_store
-                social_user_preferences=social_user_preferences if self.mode == "social" else None,  # ✅ 传递用户偏好
-                social_soul_file_path=social_soul_file_path if self.mode == "social" else None,  # ✅ 传递 soul.md 文件路径
-                social_user_file_path=social_user_file_path if self.mode == "social" else None,  # ✅ 传递 USER.md 文件路径
-                social_soul_context=social_soul_context if self.mode == "social" else None,  # ✅ 传递 soul.md 内容
-                social_user_context=social_user_context if self.mode == "social" else None  # ✅ 传递 USER.md 内容
+                user_identifier=social_user_id if self.mode == "social" else None,  
+                social_memory_store=social_memory_store if self.mode == "social" else None,  
+                social_user_preferences=social_user_preferences if self.mode == "social" else None,  
+                social_soul_file_path=social_soul_file_path if self.mode == "social" else None,  
+                social_user_file_path=social_user_file_path if self.mode == "social" else None,  
+                social_soul_context=social_soul_context if self.mode == "social" else None,  
+                social_user_context=social_user_context if self.mode == "social" else None  
             ):
                 events_buffer.append(event)
 
@@ -454,11 +411,11 @@ class AgentBridge:
                         # Fallback: convert to string
                         streaming_text_parts.append(str(data))
 
-                    # ✅ 流式输出支持（social模式）
+                    
                     if self.mode == "social":
                         current_buffer.append(streaming_text_parts[-1])
 
-                        # 每500字或5个chunk发送一次中间结果
+                        
                         if len("".join(current_buffer)) > 500 or len(current_buffer) >= 5:
                             await self._send_stream_chunk(
                                 chat_id=chat_id,
@@ -488,17 +445,17 @@ class AgentBridge:
                     error_data = event.get("data", {})
                     error_msg = error_data.get("error", "Unknown error")
                     logger.warning("Agent error event", error=error_msg)
-                    return f"处理查询时出错: {error_msg}"
+                    return f"澶勭悊鏌ヨ鏃跺嚭閿? {error_msg}"
 
                 elif event_type == "fatal_error":
                     # Handle fatal error events
                     error_data = event.get("data", {})
                     if isinstance(error_data, dict):
-                        error_msg = error_data.get("error", "未知错误")
+                        error_msg = error_data.get("error", "鏈煡閿欒")
                         logger.error("Agent fatal error event", error=error_msg)
-                        return f"⚠️ 系统遇到错误：{error_msg}\n\n请稍后重试或联系技术支持。"
+                        return f"系统遇到致命错误: {error_msg}\n\n请稍后重试或联系技术支持。"
 
-                    return "⚠️ 系统遇到错误，请稍后重试。"
+                    return "系统遇到致命错误，但未提供详细信息。"
 
             # If no complete event, aggregate streaming text
             if streaming_text_parts:
@@ -511,7 +468,7 @@ class AgentBridge:
 
                 # Add tool call summary if available
                 if tool_calls:
-                    tool_summary = f"\n\n**使用的工具**: {', '.join(set(tool_calls))}"
+                    tool_summary = f"\n\n**浣跨敤鐨勫伐鍏?*: {', '.join(set(tool_calls))}"
                     full_text += tool_summary
 
                 return full_text
@@ -532,18 +489,10 @@ class AgentBridge:
                         session_id=session_id,
                         error=str(e),
                         exc_info=True)
-            return f"处理请求时出错: {str(e)}"
+            return f"澶勭悊璇锋眰鏃跺嚭閿? {str(e)}"
 
     def _extract_media_files(self, content: str) -> list[str]:
-        """
-        从Agent返回内容中提取图片URL和文档路径
-
-        Args:
-            content: Agent返回的内容
-
-        Returns:
-            媒体文件路径列表（图片URL、本地文档路径等）
-        """
+        """从回复内容中提取媒体文件路径。"""
         import re
         from pathlib import Path
         from app.services.image_cache import get_image_cache
@@ -554,15 +503,15 @@ class AgentBridge:
                     content_length=len(content),
                     content_preview=content[:200])
 
-        # 1. 提取图片URL（/api/image/{image_id}）
-        # 支持 Markdown 图片语法：![描述](/api/image/xxx) 和普通链接：[描述](/api/image/xxx)
+        
+        
         image_pattern = r'!?\[.*?\]\(/api/image/([a-zA-Z0-9_-]+)\)'
         matches = list(re.finditer(image_pattern, content))
         logger.debug("image_pattern_matches", count=len(matches))
 
         for match in matches:
             image_id = match.group(1)
-            # 使用 ImageCache 获取正确的缓存目录（绝对路径）
+            
             cache = get_image_cache()
             image_path = f"{cache.cache_dir}/{image_id}.png"
             logger.debug("checking_image_file",
@@ -578,8 +527,8 @@ class AgentBridge:
                              expected_path=image_path,
                              cache_dir=cache.cache_dir)
 
-        # 2. 提取本地文档路径
-        # 匹配常见文档格式：.docx, .xlsx, .pptx, .pdf, .md（支持 Office 文档和 Markdown）
+        
+        
         doc_pattern = r'([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf|md))'
         for match in re.finditer(doc_pattern, content):
             doc_path = match.group(1)
@@ -591,35 +540,27 @@ class AgentBridge:
         return media_files
 
     def _clean_media_references(self, content: str) -> str:
-        """
-        清理内容中的媒体文件引用，替换为友好的文本描述
-
-        Args:
-            content: 原始内容
-
-        Returns:
-            清理后的内容
-        """
+        """清理社交平台不适合直接展示的媒体引用。"""
         import re
 
-        # 1. 清理Markdown图片语法 ![alt](url)
+        
         def replace_image_markdown(match):
-            alt_text = match.group(1)  # 图片描述
-            return f"\n[图片：{alt_text}]\n"
+            alt_text = match.group(1)  
+            return f"\n[图片: {alt_text}]\n"
 
         content = re.sub(r'!\[([^\]]+)\]\([^\)]+\)', replace_image_markdown, content)
 
-        # 2. 清理裸露的图片URL（/api/image/xxx）
+        
         content = re.sub(r'\(/api/image/[a-zA-Z0-9_-]+\)', '', content)
 
-        # 3. 清理文档路径（避免显示完整路径）
+        
         def replace_doc_path(match):
             filename = Path(match.group(1)).name
-            return f"\n[文件：{filename}]\n"
+            return f"\n[文件: {filename}]\n"
 
         content = re.sub(r'\([a-zA-Z0-9_/\-\.]+\.(docx|xlsx|pptx|pdf|md)\)', replace_doc_path, content)
 
-        # 4. 清理多余的空行
+        
         content = re.sub(r'\n{3,}', '\n\n', content)
 
         return content.strip()
@@ -631,17 +572,9 @@ class AgentBridge:
         segment_id: int,
         resuming: bool = False
     ) -> None:
-        """
-        发送流式片段
-
-        Args:
-            chat_id: Chat ID
-            content: 内容片段
-            segment_id: 片段ID
-            resuming: 是否为中间片段
-        """
-        # TODO: 实现流式输出逻辑
-        # 目前只记录日志，实际发送需要通过MessageBus
+        """发送流式回复片段。"""
+        
+        
         logger.debug(
             "stream_chunk",
             chat_id=chat_id,
@@ -655,19 +588,10 @@ class AgentBridge:
         session_id: str,
         social_user_id: str
     ) -> bool:
-        """
-        检查并执行记忆整合
-
-        触发条件：
-        1. Session 历史 token 数超过 80% 上下文窗口
-        2. 距离上次整合超过 10 条消息
-
-        Returns:
-            是否执行了整合
-        """
+        """检查是否需要触发社交用户记忆整理。"""
         from app.utils.token_budget import token_budget_manager
 
-        # 1. 获取 session 历史
+        
         session_data = self.agent._session_store.get(session_id)
         if not session_data:
             return False
@@ -678,12 +602,12 @@ class AgentBridge:
 
         messages = memory_manager.session.get_messages_for_llm()
 
-        # 2. 计算 token 数
+        
         total_tokens = 0
         for msg in messages:
             total_tokens += token_budget_manager.count_tokens(msg.get("content", ""))
 
-        # 3. 获取 session 映射信息
+        
         mapping = await self.session_mapper.get_mapping_info(social_user_id)
         if not mapping:
             return False
@@ -691,11 +615,11 @@ class AgentBridge:
         last_offset = mapping.get("last_consolidated_offset", 0)
         new_message_count = len(messages) - last_offset
 
-        # 4. 触发条件检查
+        
         max_tokens = int(token_budget_manager.max_context_tokens * 0.8)
         should_consolidate = (
-            total_tokens > max_tokens or  # Token 超限
-            new_message_count >= 20  # 新增 20 条以上消息（从10调整为20，约5-8轮对话）
+            total_tokens > max_tokens or  
+            new_message_count >= 20  
         )
 
         if should_consolidate and new_message_count > 0:
@@ -709,7 +633,7 @@ class AgentBridge:
                 last_offset=last_offset
             )
 
-            # 5. 执行整合
+            
             await self._consolidate_session_memory(
                 session_id=session_id,
                 social_user_id=social_user_id,
@@ -728,18 +652,7 @@ class AgentBridge:
         messages: List[Dict[str, Any]],
         start_offset: int
     ) -> None:
-        """
-        执行 session 记忆整合（使用 ReAct Agent 循环方式）
-
-        与非社交模式统一：通过 remember_fact/replace_memory/remove_memory 工具
-        逐步更新记忆，避免单次 LLM 调用失败导致记忆被清空。
-
-        Args:
-            session_id: Session ID
-            social_user_id: 社交平台用户ID
-            messages: 完整消息列表
-            start_offset: 起始偏移量
-        """
+        """整理当前会话并更新社交用户长期记忆。"""
         from app.social.memory_store import ImprovedMemoryStore
         from app.tools.social.remember_fact.tool import RememberFactTool
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
@@ -748,39 +661,39 @@ class AgentBridge:
         from datetime import datetime
 
         try:
-            # 1. 获取现有记忆内容和文件路径
+            
             social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
             memory_store = ImprovedMemoryStore(user_id=social_user_id, workspace=social_workspace)
 
             existing_memory = memory_store.read_long_term()
             memory_file_path = str(memory_store.memory_file.resolve()) if memory_store.memory_file.exists() else ""
 
-            # 2. 提取要合并的消息（从 start_offset 开始）
+            
             messages_to_consolidate = messages[start_offset:] if start_offset > 0 else messages
 
             if not messages_to_consolidate:
                 logger.debug("no_messages_to_consolidate", session_id=session_id, start_offset=start_offset)
                 return
 
-            # 3. 添加时间戳（如果没有）
+            
             for msg in messages_to_consolidate:
                 if "timestamp" not in msg:
                     msg["timestamp"] = datetime.now().isoformat()
 
-            # 4. 构建整合提示词
+            
             consolidation_prompt = self._build_social_consolidation_prompt(
                 messages=messages_to_consolidate,
                 existing_memory=existing_memory,
                 memory_file_path=memory_file_path
             )
 
-            # 5. 设置记忆工具上下文（社交模式用户隔离）
+            
             safe_user_id = social_user_id.replace(":", "_")
             RememberFactTool.set_memory_context("social", safe_user_id)
             ReplaceMemoryTool.set_memory_context("social", safe_user_id)
             RemoveMemoryTool.set_memory_context("social", safe_user_id)
 
-            # 6. 创建记忆整合 Agent 并执行
+            
             from app.agent.memory_consolidator_factory import create_memory_consolidator_agent
             consolidator_agent = create_memory_consolidator_agent()
 
@@ -790,7 +703,7 @@ class AgentBridge:
                 manual_mode="memory_consolidator"
             ):
                 if event.get("type") == "complete":
-                    # 更新 session 映射偏移量
+                    
                     await self.session_mapper.update_consolidation_offset(
                         social_user_id=social_user_id,
                         new_offset=len(messages),
@@ -823,7 +736,7 @@ class AgentBridge:
                 error=str(e)
             )
         finally:
-            # 7. 清除记忆工具上下文
+            
             try:
                 RememberFactTool.clear_memory_context()
                 ReplaceMemoryTool.clear_memory_context()
@@ -834,191 +747,114 @@ class AgentBridge:
     def _build_social_consolidation_prompt(
         self,
         messages: List[Dict[str, Any]],
-        existing_memory: str = "",
-        memory_file_path: str = ""
+        existing_memory: str,
+        memory_file_path: str
     ) -> str:
-        """
-        构建社交模式记忆整合提示词
-
-        Args:
-            messages: 消息列表
-            existing_memory: 现有记忆内容
-            memory_file_path: 记忆文件路径
-
-        Returns:
-            整合提示词
-        """
+        """Build the prompt used by the social memory consolidator."""
         conversation_text = "\n".join([
             f"{msg.get('role', 'unknown')}: {msg.get('content', '')}"
-            for msg in messages[-10:]  # 只使用最近10条
+            for msg in messages[-10:]
         ])
 
-        # 计算记忆文件字符数
         current_size = len(existing_memory) if existing_memory else 0
         max_size = 3000
-        size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
+        usage = current_size / max_size * 100 if max_size else 0
+        size_info = f"{current_size}/{max_size} chars ({usage:.1f}%)"
 
         prompt_parts = [
-            "请分析以下对话内容，提取重要信息并更新长期记忆。",
+            "You are a social-mode memory consolidation agent.",
+            "Your job is to update long-term memory using only durable facts from the recent conversation.",
             "",
-            "## 模式",
+            "## Mode",
             "social",
-            ""
-        ]
-
-        # 添加现有记忆内容
-        if existing_memory and existing_memory.strip():
-            prompt_parts.extend([
-                "## 现有记忆",
-                f"**当前记忆大小**：{size_info}",
-                "",
-                "```",
-                existing_memory,
-                "```",
-                "",
-                "**⚠️ 重要限制**：",
-                f"- 记忆文件上限：{max_size}字符",
-                f"- 当前使用：{current_size}字符（{current_size/max_size*100:.1f}%）",
-                "- 当接近上限（>80%）时，优先使用 remove_memory 删除旧内容",
-                "- 当已满（100%）时，必须先删除才能添加新内容",
-                ""
-            ])
-        else:
-            prompt_parts.extend([
-                "## 现有记忆",
-                "**当前记忆大小**：0/3000字符（0.0%）",
-                "",
-                "记忆文件为空，可以开始添加记忆。",
-                ""
-            ])
-
-        # 添加记忆文件路径
-        if memory_file_path:
-            prompt_parts.extend([
-                "## 记忆文件路径",
-                memory_file_path,
-                ""
-            ])
-
-        # 添加对话内容和任务
-        prompt_parts.extend([
-            "## 对话内容",
+            "",
+            "## Existing Memory",
+            f"Current size: {size_info}",
+            "```",
+            existing_memory.strip() if existing_memory and existing_memory.strip() else "(empty)",
+            "```",
+            "",
+            "## Memory File",
+            memory_file_path or "(unknown)",
+            "",
+            "## Recent Conversation",
             conversation_text,
             "",
-            "**任务**：",
-            "1. 阅读现有记忆，了解已记住的内容",
-            "2. 分析对话内容，识别需要记住的新信息",
-            "3. 使用工具更新记忆：",
-            "   - remember_fact: 添加新记忆",
-            "   - replace_memory: 替换现有记忆",
-            "   - remove_memory: 删除过时记忆",
-            "",
-            "**⚠️ 记忆管理策略**（基于字符限制）：",
-            f"- 当记忆使用率 < 80%：可以正常添加新记忆",
-            f"- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
-            f"- 当记忆使用率 = 100%：必须先删除才能添加",
-            "",
-            "**注意事项**：",
-            "- 避免重复记忆（先检查现有记忆）",
-            "- 更新偏好设置时使用replace_memory",
-            "- 删除临时或错误记忆时使用remove_memory",
-            "- 优先保留高价值信息（用户偏好 > 领域知识 > 历史结论）",
-            "- 记忆文件路径已在上方提供，工具会自动使用"
-        ])
+            "## Instructions",
+            "1. Save stable user preferences, recurring needs, important facts, and long-term project context.",
+            "2. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
+            "3. Use remember_fact, replace_memory, or remove_memory to update MEMORY.md.",
+            "4. Keep memory concise. If usage is above 80%, prefer replacing or removing stale content before adding new facts.",
+            "5. Preserve the existing markdown structure when possible."
+        ]
 
         return "\n".join(prompt_parts)
-
     async def _on_heartbeat_execute(self, tasks: list, user_id: str) -> dict:
-        """
-        心跳执行回调：执行HEARTBEAT.md中的任务
-
-        Args:
-            tasks: 任务列表
-            user_id: 用户ID
-
-        Returns:
-            执行结果
-        """
+        """Execute heartbeat tasks through the agent."""
         from datetime import datetime
 
         logger.info("heartbeat_execute_callback", task_count=len(tasks), user_id=user_id)
 
         if not tasks:
-            return {"should_notify": False, "summary": "无任务执行"}
+            return {"should_notify": False, "summary": "No tasks to execute"}
 
-        # 构建任务描述
         task_description = "\n".join([
-            f"- {task.get('name', '未知任务')}: {task.get('description', '')}"
+            f"- {task.get('name', 'task')}: {task.get('description', '')}"
             for task in tasks
         ])
 
-        # 调用 Agent 执行任务
         try:
-            # 使用特殊的 session_id
             heartbeat_session_id = f"heartbeat_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            query = f"Please execute these scheduled social-mode tasks and summarize the result:\n\n{task_description}"
 
-            # 构建查询
-            query = f"""请执行以下定时任务：
-
-{task_description}
-
-请逐个执行这些任务，并返回执行结果。"""
-
-            # 调用 Agent
-            events = []
+            result_parts = []
             async for event in self.agent.analyze(
                 user_query=query,
                 session_id=heartbeat_session_id,
-                manual_mode=self.mode
+                manual_mode="social",
+                user_identifier=user_id
             ):
-                events.append(event)
-
-                # 提取最终答案
                 if event.get("type") == "complete":
-                    final_data = event.get("data", {})
-                    final_answer = final_data.get("final_answer", "")
+                    data = event.get("data", {})
+                    if isinstance(data, dict):
+                        result_parts.append(data.get("final_answer", ""))
 
-                    return {
-                        "should_notify": True,
-                        "summary": final_answer or f"执行了 {len(tasks)} 个任务"
-                    }
-
-            return {"should_notify": False, "summary": f"处理了 {len(tasks)} 个任务"}
+            summary = "\n".join(part for part in result_parts if part).strip()
+            return {
+                "should_notify": bool(summary),
+                "summary": summary or "Tasks completed",
+                "executed_at": datetime.now().isoformat()
+            }
 
         except Exception as e:
-            logger.error("heartbeat_execution_failed", error=str(e), exc_info=True, user_id=user_id)
-            return {"should_notify": False, "summary": f"任务执行失败: {str(e)}"}
-
+            logger.error("heartbeat_execute_failed", user_id=user_id, error=str(e), exc_info=True)
+            return {"should_notify": True, "summary": f"Task execution failed: {e}"}
     async def _on_heartbeat_notify(self, response: dict, user_id: str) -> None:
-        """
-        心跳通知回调：主动推送结果
-
-        Args:
-            response: 执行结果
-            user_id: 用户ID
-        """
+        """发送心跳任务通知。"""
         logger.info("heartbeat_notify_callback", summary=response.get("summary"), user_id=user_id)
 
-        # 解析 user_id: {channel}:{bot_account}:{sender_id}
+        
+        # user_id 格式：{channel}:{bot_account}:{sender_id}
         parts = user_id.split(":")
         if len(parts) < 3:
             logger.warning("invalid_user_id_format", user_id=user_id)
             return
 
         channel, bot_account, sender_id = parts[0], parts[1], parts[2]
-        chat_id = sender_id  # 微信等渠道 chat_id = sender_id
+        chat_id = sender_id  
 
         summary = response.get("summary", "")
         if not summary:
             logger.debug("empty_summary_no_notification_sent", user_id=user_id)
             return
 
-        # 发送通知
+        
+        # 发送心跳任务通知
         try:
             outbound_msg = OutboundMessage(
                 channel=channel,
                 chat_id=chat_id,
-                content=f"【定时任务通知】\n\n{summary}",
+                content=f"定时任务通知\n\n{summary}",
                 reply_to=sender_id
             )
             await self.message_bus.publish_outbound(outbound_msg)
