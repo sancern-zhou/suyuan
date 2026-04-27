@@ -235,9 +235,9 @@ class AgentBridge:
                 user_preferences = preferences_manager.get_preferences()
 
 
-                social_soul_file_path = str(preferences_manager.soul_file) if preferences_manager.soul_file else None
-                social_user_file_path = str(preferences_manager.user_file) if preferences_manager.user_file else None
-                social_heartbeat_file_path = str(preferences_manager.heartbeat_file) if preferences_manager.heartbeat_file else None  # ✅ 新增
+                social_soul_file_path = str(preferences_manager.soul_file.resolve()) if preferences_manager.soul_file else None
+                social_user_file_path = str(preferences_manager.user_file.resolve()) if preferences_manager.user_file else None
+                social_heartbeat_file_path = str(preferences_manager.heartbeat_file.resolve()) if preferences_manager.heartbeat_file else None
 
 
                 social_soul_context = preferences_manager.load_soul_md()
