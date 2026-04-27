@@ -177,7 +177,13 @@ class ReActAgent:
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
             memory_store = social_memory_store
-            memory_context = social_memory_store.get_memory_context()
+            from .memory.active_memory_retriever import ActiveMemoryRetriever
+
+            memory_context = ActiveMemoryRetriever().retrieve(
+                memory_store=social_memory_store,
+                query=user_query,
+                recent_messages=initial_messages or []
+            )
             unified_user_id = None  # 社交模式不走通用记忆整合
         elif self.enable_memory and manual_mode:
             if user_identifier and manual_mode != "social":
