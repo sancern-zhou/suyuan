@@ -147,8 +147,18 @@ export function useSessionManagement(store) {
         })
       }
 
-      // 2. 提取可视化内容
-      const visuals = extractVisualsFromMessages(messages)
+      // 2. 提取可视化内容（优先使用 metadata.visualizations）
+      let visuals = []
+
+      // 优先从 session.metadata.visualizations 获取完整可视化数据
+      if (sessionData.metadata?.visualizations && Array.isArray(sessionData.metadata.visualizations)) {
+        visuals = sessionData.metadata.visualizations
+        console.log('[会话恢复] 从 metadata.visualizations 恢复可视化数据:', visuals.length, '个')
+      } else {
+        // 降级方案：从消息中提取
+        visuals = extractVisualsFromMessages(messages)
+        console.log('[会话恢复] 从消息中提取可视化数据:', visuals.length, '个')
+      }
 
       // 3. 更新store
       store.reset()

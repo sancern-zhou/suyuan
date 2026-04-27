@@ -466,24 +466,18 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                                    collected_data_ids_count=len(collected_data_ids),
                                    collected_visuals_count=len(collected_visuals))
 
-                        # ✅ 从react_agent的_session_store中获取office_documents并保存到数据库
-                        office_docs = []
-                        if actual_session_id in multi_expert_agent_instance._session_store:
-                            session_store_data = multi_expert_agent_instance._session_store[actual_session_id]
-                            office_docs = session_store_data.get("office_documents", [])
-                            logger.info(
-                                "office_documents_found_in_session_store",
-                                session_id=actual_session_id,
-                                count=len(office_docs)
-                            )
+                        # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
+                        if actual_session_id not in multi_expert_agent_instance._session_store:
+                            multi_expert_agent_instance._session_store[actual_session_id] = {}
 
-                        # ✅ 完整保存所有消息（使用数据库存储，不需要压缩）
-                        session.conversation_history = conversation_history
-                        session.data_ids = list(set(collected_data_ids))  # 去重
-                        session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-                        session.office_documents = office_docs  # ✅ 保存Office文档数据
-                        await session_manager.save_session(session)
-                        logger.info("session_saved_on_complete", session_id=actual_session_id, data_count=len(session.data_ids), office_docs_count=len(office_docs))
+                        multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                        multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                        logger.info(
+                            "collected_data_stored",
+                            session_id=actual_session_id,
+                            data_ids_count=len(collected_data_ids),
+                            visuals_count=len(collected_visuals)
+                        )
                     elif event["type"] in ["incomplete", "fatal_error"]:
                         # ✅ 优化：压缩中间过程，只保留必要信息
                         compressed_history = []
@@ -500,21 +494,19 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         session.data_ids = list(set(collected_data_ids))
                         session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
 
-                        # ✅ 从react_agent的_session_store中获取office_documents并保存到数据库
-                        office_docs = []
-                        if actual_session_id in multi_expert_agent_instance._session_store:
-                            session_store_data = multi_expert_agent_instance._session_store[actual_session_id]
-                            office_docs = session_store_data.get("office_documents", [])
-                        session.office_documents = office_docs
+                        # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
+                        if actual_session_id not in multi_expert_agent_instance._session_store:
+                            multi_expert_agent_instance._session_store[actual_session_id] = {}
 
+                        multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                        multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                        multi_expert_agent_instance._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
+                        multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = True
+                        multi_expert_agent_instance._session_store[actual_session_id]["error_type"] = event["type"]
                         if "data" in event and "error" in event["data"]:
-                            session.error = {
-                                "type": event["type"],
-                                "message": event["data"].get("error", "Unknown error"),
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        await session_manager.save_session(session)
-                        logger.info("session_saved_on_error", session_id=actual_session_id, error_type=event["type"])
+                            multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
+
+                        logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
                     # 将事件序列化为 SSE 格式
                     event_data = json.dumps(event, ensure_ascii=False, default=str)
