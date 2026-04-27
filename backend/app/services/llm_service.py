@@ -1148,7 +1148,6 @@ class LLMService:
                 provider=self.provider,
                 model=self.model,
                 prompt_length=len(prompt),
-                prompt_full=str(prompt),  # 不再截断，输出完整上下文
             )
         except Exception as e:
             logger.warning("llm_json_request_debug_failed", error=str(e))

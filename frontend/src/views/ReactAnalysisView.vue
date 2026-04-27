@@ -348,13 +348,7 @@ const handleSidebarAction = async (actionId) => {
       break
     case 'file-manager':
       console.log('[ReactAnalysisView] Showing file-manager panel')
-      console.log('[ReactAnalysisView] Before - activeRightTab:', activeRightTab.value, 'rightPanelVisible:', rightPanelVisible.value)
-      // 显示右侧面板并切换到文件管理标签页
-      activeRightTab.value = 'files'
-      rightPanelVisible.value = true
-      leftSidebarCollapsed.value = true
-      vizWidth.value = PANEL_SIZES.COLLAPSED_VIZ_WIDTH
-      console.log('[ReactAnalysisView] After - activeRightTab:', activeRightTab.value, 'rightPanelVisible:', rightPanelVisible.value, 'vizWidth:', vizWidth.value)
+      showManagementPanel('file-manager')
       break
     case 'restart-session':
       console.log('[ReactAnalysisView] Restarting session')

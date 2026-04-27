@@ -18,6 +18,8 @@ class NotebookConverter:
     def __init__(self):
         self.output_dir = Path(tempfile.gettempdir()) / "notebook_html_cache"
         self.output_dir.mkdir(exist_ok=True)
+        # html_id -> notebook原始路径的映射，用于定位关联图片文件
+        self._notebook_paths: Dict[str, str] = {}
 
     async def convert_to_html(self, notebook_path: str) -> Dict[str, Any]:
         """
@@ -39,6 +41,9 @@ class NotebookConverter:
         try:
             html_id = f"{uuid.uuid4()}"
             html_path = self.output_dir / f"{html_id}.html"
+
+            # 记录html_id与notebook路径的映射，用于后续定位关联图片
+            self._notebook_paths[html_id] = notebook_path
 
             # 读取notebook文件
             import json
@@ -90,6 +95,10 @@ class NotebookConverter:
                 logger.warning("nbconvert_not_installed_using_simple_conversion")
                 html_content = self._simple_notebook_to_html(nb)
 
+            # 将相对路径图片引用改写为包含html_id的绝对路径
+            # 使浏览器请求 /api/notebook/html/{html_id}/{filename} 而非 /api/notebook/html/{filename}
+            html_content = self._rewrite_image_paths(html_content, html_id)
+
             # 保存HTML文件
             html_path.write_text(html_content, encoding='utf-8')
 
@@ -105,6 +114,20 @@ class NotebookConverter:
         except Exception as e:
             logger.error(f"Notebook conversion error: {e}", exc_info=True)
             raise
+
+    def _rewrite_image_paths(self, html_content: str, html_id: str) -> str:
+        """将HTML中相对路径的图片引用改写为包含html_id的绝对路径"""
+        import re
+        prefix = f"/api/notebook/html/{html_id}/"
+
+        def _replace(m):
+            quote = m.group(1)
+            src = m.group(2)
+            if src.startswith(("http://", "https://", "data:", "/")):
+                return m.group(0)
+            return f'src={quote}{prefix}{src}{quote}'
+
+        return re.sub(r'src=(["\'])([^"\']+)\1', _replace, html_content)
 
     def _wrap_with_styles(self, body: str) -> str:
         """添加响应式样式和完整HTML结构"""
@@ -416,6 +439,7 @@ class NotebookConverter:
         """清理HTML缓存文件"""
         try:
             html_path = self.output_dir / f"{html_id}.html"
+            self._notebook_paths.pop(html_id, None)
             if html_path.exists():
                 html_path.unlink()
                 return True
@@ -427,6 +451,13 @@ class NotebookConverter:
     def get_html_path(self, html_id: str) -> Path:
         """获取HTML文件路径"""
         return self.output_dir / f"{html_id}.html"
+
+    def get_notebook_dir(self, html_id: str) -> Path | None:
+        """获取notebook原始文件所在目录，用于定位关联图片等资源文件"""
+        notebook_path = self._notebook_paths.get(html_id)
+        if notebook_path:
+            return Path(notebook_path).parent
+        return None
 
     def html_exists(self, html_id: str) -> bool:
         """检查HTML文件是否存在"""

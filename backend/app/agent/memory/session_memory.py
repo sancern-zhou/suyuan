@@ -925,11 +925,30 @@ class SessionMemory:
                         skipped_count += 1
                 # 支持标准消息格式
                 elif "role" in msg and "content" in msg:
+                    content = msg["content"]
+                    role = msg["role"]
+                    msg_type = None
+
+                    # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
+                    if isinstance(content, list):
+                        content_types = {
+                            block.get("type")
+                            for block in content
+                            if isinstance(block, dict)
+                        }
+                        if "tool_result" in content_types:
+                            role = "user"
+                            msg_type = "tool_result"
+                        elif "tool_use" in content_types:
+                            role = "assistant"
+                            msg_type = "tool_use"
+
                     self.conversation_history.append(
                         ConversationTurn(
-                            role=msg["role"],
-                            content=msg["content"],
-                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                            role=role,
+                            content=content,
+                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
+                            type=msg_type,
                         )
                     )
                     loaded_count += 1
@@ -1012,25 +1031,32 @@ class SessionMemory:
         messages = []
 
         for turn in all_turns:
-            # tool_result 消息（Anthropic content block 格式）
-            if turn.type == "tool_result" and isinstance(turn.content, list):
-                messages.append({
-                    "role": turn.role,
-                    "content": turn.content
-                })
-                continue
+            # 处理列表类型的 content（Anthropic content blocks）
+            # 根据实际的 block 类型确定正确的 role，不依赖可能缺失的 turn.type
+            if isinstance(turn.content, list):
+                content_types = {
+                    block.get("type")
+                    for block in turn.content
+                    if isinstance(block, dict)
+                }
 
-            # tool_use 消息（Anthropic tool_use content block 格式）
-            if turn.type == "tool_use" and isinstance(turn.content, list):
-                messages.append({
-                    "role": turn.role,
-                    "content": turn.content
-                })
-                continue
+                # tool_result blocks 必须放在 user 消息中（Anthropic API 规范）
+                if "tool_result" in content_types:
+                    messages.append({
+                        "role": "user",
+                        "content": turn.content
+                    })
+                    continue
 
-            # ✅ assistant 消息内容为 content blocks 列表（含 thinking blocks）
-            # DeepSeek 等兼容 API 要求原样回传 thinking blocks
-            if turn.role == "assistant" and isinstance(turn.content, list):
+                # tool_use blocks 必须放在 assistant 消息中
+                if "tool_use" in content_types:
+                    messages.append({
+                        "role": "assistant",
+                        "content": turn.content
+                    })
+                    continue
+
+                # 其他 content blocks（如 thinking）按照 turn.role 输出
                 messages.append({
                     "role": turn.role,
                     "content": turn.content
@@ -1102,6 +1128,19 @@ class SessionMemory:
         for msg in compressed_messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
+
+            # Handle Anthropic content block format (list of blocks)
+            if isinstance(content, list):
+                texts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text" and "text" in block:
+                            texts.append(block["text"])
+                        elif "text" in block:
+                            texts.append(block["text"])
+                content = "\n".join(texts)
+            elif isinstance(content, dict):
+                content = content.get("text", "")
 
             # Skip empty messages
             if not content:

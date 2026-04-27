@@ -120,6 +120,9 @@ class SocialConfig:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = yaml.safe_load(f)
 
+            if data is None:
+                data = {}
+
             return cls(
                 qq=SocialChannelConfig.from_dict(data.get('qq', {})),
                 weixin=SocialChannelConfig.from_dict(data.get('weixin', {})),

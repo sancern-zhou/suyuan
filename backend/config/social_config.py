@@ -48,6 +48,53 @@ class SocialConfig(BaseModel):
     wecom: dict = Field(default_factory=lambda: {"enabled": False, "allow_from": ["*"]})
 
 
+def _merge_orphan_accounts(config: SocialConfig) -> SocialConfig:
+    """
+    扫描状态目录，将配置文件中没有但状态文件存在的账户合并进来。
+    防止进程重启或配置丢失后，状态文件变成孤儿。
+    """
+    import json
+    state_dir = Path("backend_data_registry/social/weixin")
+    if not state_dir.exists():
+        return config
+
+    existing_ids = {acc.id for acc in config.weixin.accounts}
+    merged = False
+
+    for subdir in state_dir.iterdir():
+        if not subdir.is_dir() or subdir.name in ("media", "qrcode"):
+            continue
+        account_json = subdir / "account.json"
+        if not account_json.exists():
+            continue
+        account_id = subdir.name
+        if account_id in existing_ids:
+            continue
+
+        try:
+            with open(account_json, "r", encoding="utf-8") as f:
+                state = json.load(f)
+
+            acc = WeixinAccountConfig(
+                id=account_id,
+                name=f"账号-{account_id}",
+                base_url=state.get("base_url", "https://ilinkai.weixin.qq.com"),
+                token=state.get("token", ""),
+                enabled=True,
+                allow_from=["*"],
+                auto_start=True,
+            )
+            config.weixin.accounts.append(acc)
+            merged = True
+        except Exception:
+            continue
+
+    if merged:
+        config.weixin.enabled = True
+
+    return config
+
+
 def load_social_config(config_path: str = "config/social_config.yaml") -> SocialConfig:
     """
     加载社交平台配置
@@ -61,23 +108,24 @@ def load_social_config(config_path: str = "config/social_config.yaml") -> Social
     config_file = Path(config_path)
 
     if not config_file.exists():
-        # 返回默认配置
-        return SocialConfig()
+        # 返回默认配置（并扫描孤儿账户）
+        return _merge_orphan_accounts(SocialConfig())
 
     try:
-        with open(config_file, 'r', encoding='utf-8') as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         if not data:
-            return SocialConfig()
+            return _merge_orphan_accounts(SocialConfig())
 
-        return SocialConfig(**data)
+        config = SocialConfig(**data)
+        return _merge_orphan_accounts(config)
 
     except Exception as e:
         import structlog
         logger = structlog.get_logger()
         logger.error("failed_to_load_social_config", error=str(e), path=str(config_file))
-        return SocialConfig()
+        return _merge_orphan_accounts(SocialConfig())
 
 
 def save_social_config(config: SocialConfig, config_path: str = "config/social_config.yaml") -> bool:

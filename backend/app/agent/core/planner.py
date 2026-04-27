@@ -485,7 +485,7 @@ class ReActPlanner:
             # 无工具调用 - 纯文本回复
             return {
                 "thought": thinking_text or "思考回复策略",
-                "reasoning": "Extended Thinking",
+                "reasoning": thinking_text or "Extended Thinking",
                 "action": {
                     "type": "PLAIN_TEXT_REPLY",
                     "answer": full_text
@@ -496,7 +496,7 @@ class ReActPlanner:
         tool_call = tool_use_blocks[0]
         return {
             "thought": thinking_text or f"准备调用工具: {tool_call.name}",
-            "reasoning": "Extended Thinking",
+            "reasoning": thinking_text or "Extended Thinking",
             "action": {
                 "type": "TOOL_CALL",
                 "tool": tool_call.name,
@@ -577,7 +577,7 @@ class ReActPlanner:
             )
             return {
                 "thought": thinking_text or "思考回复策略",
-                "reasoning": "Extended Thinking",
+                "reasoning": thinking_text or "Extended Thinking",
                 "action": {
                     "type": "PLAIN_TEXT_REPLY",
                     "answer": full_text
@@ -600,7 +600,7 @@ class ReActPlanner:
         tool_call = tool_use_blocks[0]
         result = {
             "thought": thinking_text or f"准备调用工具: {tool_call['name']}",
-            "reasoning": "Extended Thinking",
+            "reasoning": thinking_text or "Extended Thinking",
             "action": {
                 "type": "TOOL_CALL",
                 "tool": tool_call["name"],
