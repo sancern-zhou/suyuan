@@ -43,7 +43,7 @@ ASSISTANT_TOOLS = {
     "create_scheduled_task": "创建定时任务。参数: user_request(str)",
     "analyze_image": "分析图片内容。参数: path(str), operation(str, 可选, 默认analyze), prompt(str, 可选)",
     "browser": "浏览器自动化。[必须先阅读browser_skills_guide.md]",
-    "call_sub_agent": "调用专家Agent。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用子Agent。参数: target_mode(str), goal(str), context_str(str, 可选)",
 }
 
 # ===== 专家模式工具 =====
@@ -106,7 +106,7 @@ EXPERT_TOOLS = {
     "notebook_edit": "编辑 Jupyter Notebook (.ipynb) 文件的单元格（专家模式 - 数据分析专用）。⚠️ 必须先用read_file读取文件。自动记录任务到任务列表。参数: notebook_path(str, .ipynb文件路径), cell_id(str, 可选, 目标单元格如'cell-0'或索引号), new_source(str, 新单元格内容), cell_type(str, 可选, code/markdown, insert模式必填), edit_mode(str, 可选, replace/insert/delete, 默认replace)",
 
     # 其他
-    "call_sub_agent": "调用助手Agent。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用助手Agent。参数: target_mode(str), goal(str), context_str(str, 可选)",
     "FINISH_SUMMARY": "生成分析报告。参数: answer(str)",
 }
 
@@ -163,7 +163,7 @@ QUERY_TOOLS = {
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 
     # === 模式互调 ===
-    "call_sub_agent": "调用专家Agent（深度分析）或助手Agent（生成报告）。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用专家Agent（深度分析）或助手Agent（生成报告）。参数: target_mode(str), goal(str), context_str(str, 可选)",
 
     # === 规划工具 ===
     "complex_query_planner": "复杂查询计划工具（多数据源查询规划）。当需要同时查询多组数据、或不确定应使用哪个广东省查询工具时调用。⚠️ 必需参数: query_description(str, 详细描述查询需求，⚠️ 必须附上用户的查询输入原文，避免信息遗漏), mode(str, 固定为'query')",
@@ -204,7 +204,7 @@ REPORT_TOOLS = {
     "execute_python": "执行 Python 代码（数值计算、文档生成、数据处理、可视化生成、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # 模式互调
-    "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), goal(str), context_str(str, 可选)",
 
     # 规划工具
     "complex_query_planner": "复杂查询计划工具（报告数据准备规划）。当需要同时准备多组查询数据、或不确定应使用哪个广东省查询工具时调用。⚠️ 必需参数: query_description(str, 详细描述查询需求，⚠️ 必须附上用户的查询输入原文，避免信息遗漏), mode(str, 固定为'report')",
@@ -234,7 +234,7 @@ CHART_TOOLS = {
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
 
     # 模式互调
-    "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用问数模式查询数据。参数: target_mode(str), goal(str), context_str(str, 可选)",
 }
 
 # ===== 社交模式工具（移动端助理） =====
@@ -277,7 +277,7 @@ SOCIAL_TOOLS = {
     "execute_python": "执行 Python 代码（数值计算、数据处理、统计分析、可视化生成、Excel文件处理）。⭐ **Excel文件处理**：使用标准库pandas和openpyxl，无需自定义辅助函数。读取：import pandas as pd; df = pd.read_excel('file.xlsx')。创建：from openpyxl import Workbook; ws['B2'] = '=SUM(A1:A10)'（公式优先，不要硬编码）。详细文档：backend/docs/skills/excel.md。⭐ **AQI日历图**：from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id; img = generate_calendar_from_data_id(data_id='xxx', year=2026, month=3); print('CHART_SAVED:data:image/png;base64,' + img)。⭐ **极坐标污染玫瑰图**：from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour; img = generate_pollution_rose_contour(data_id='xxx', pollutant_name='PM10'); print('CHART_SAVED:data:image/png;base64,' + img)。参数: code(str), timeout(int, 可选, 默认30)",
 
     # === 模式互调 ===
-    "call_sub_agent": "调用子Agent（code=编程, expert=数据分析, query=数据查询）。⚠️ 用自然语言描述任务，不要传递结构化参数或指定工具名称。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用子Agent（code=编程, expert=数据分析, query=数据查询）。⚠️ 用自然语言描述任务，不要传递结构化参数或指定工具名称。参数: target_mode(str), goal(str), context_str(str, 可选)",
 
     # === 呼吸式特有工具 ===
     "schedule_task": "创建定时任务。参数: task_description(str), schedule(str, cron表达式), channels(list, 可选, 支持'weixin'|'qq')",
@@ -310,7 +310,7 @@ CODE_TOOLS = {
     "validate_tool": "验证工具定义。参数: tool_path(str)",
 
     # 模式互调
-    "call_sub_agent": "调用Agent。参数: target_mode(str), task_description(str)",
+    "call_sub_agent": "调用Agent。参数: target_mode(str), goal(str), context_str(str, 可选)",
 }
 
 # ===== 记忆整合器工具（后台专用） =====

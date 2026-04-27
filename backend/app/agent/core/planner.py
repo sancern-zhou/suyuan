@@ -277,8 +277,22 @@ class ReActPlanner:
                     index = event_data["index"]
 
                     if current_thinking_block and current_thinking_block["index"] == index:
-                        # ✅ 保存完整的 thinking block（支持 redacted_thinking）
-                        if current_thinking_block.get("is_redacted"):
+                        # ✅ 保存完整的 thinking block
+                        # ⚠️ DeepSeek 不支持 redacted_thinking，只支持 thinking
+                        # 对于 DeepSeek，即使有 signature_delta，也保存为 thinking 类型
+                        is_deepseek = (
+                            self.llm_service.provider == "deepseek" or
+                            "deepseek" in self.llm_service.model.lower()
+                        )
+
+                        if is_deepseek:
+                            # DeepSeek: 始终使用 thinking 类型，忽略 signature_delta
+                            current_blocks.append({
+                                "type": "thinking",
+                                "thinking": current_thinking_block["thinking"]
+                            })
+                        elif current_thinking_block.get("is_redacted"):
+                            # 真正的 Anthropic API: 支持 redacted_thinking
                             current_blocks.append({
                                 "type": "redacted_thinking",
                                 "data": current_thinking_block.get("signature", "")

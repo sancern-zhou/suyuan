@@ -22,6 +22,12 @@
         >
           文档预览
         </button>
+        <button
+          :class="['tab-btn', { active: activeTab === 'files' }]"
+          @click="handleTabChange('files')"
+        >
+          文件管理
+        </button>
       </div>
 
       <!-- 可视化面板 -->
@@ -43,6 +49,11 @@
         :session-id="sessionId"
         @submit-edit="handleOfficeEditSubmit"
       />
+
+      <!-- 文件管理面板 -->
+      <FileManagerPanel
+        v-show="activeTab === 'files'"
+      />
     </template>
   </div>
 </template>
@@ -52,6 +63,7 @@ import { ref, computed } from 'vue'
 import VisualizationPanel from '@/components/VisualizationPanel.vue'
 import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
+import FileManagerPanel from '@/components/FileManagerPanel.vue'
 
 const props = defineProps({
   visible: {
@@ -109,7 +121,8 @@ const vizPanelRef = ref(null)
 const officePanelRef = ref(null)
 
 const showTabs = computed(() => {
-  return props.vizPanelVisible && props.officePanelVisible
+  // 只要有任意一个面板可见，就显示标签页切换按钮
+  return props.vizPanelVisible || props.officePanelVisible
 })
 
 const handleTabChange = (tab) => {

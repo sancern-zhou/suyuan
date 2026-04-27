@@ -169,6 +169,10 @@ app.include_router(office_router)
 from app.api.notebook_routes import router as notebook_router
 app.include_router(notebook_router)
 
+# Include File Manager routes (文件管理)
+from app.api.file_manager_routes import router as file_manager_router
+app.include_router(file_manager_router, prefix="/api")
+
 # Include Social Platform routes (社交平台管理)
 from app.routers import social_routes
 app.include_router(social_routes.router)

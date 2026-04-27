@@ -61,8 +61,8 @@ class CallSubAgentTool(LLMTool):
                         "type": "string",
                         "description": "⚠️ 任务目标（必须完整保留所有参数）：文件路径、时间范围、sheet索引、城市名称等所有具体参数。禁止摘要化或省略任何细节。\n\n示例：'更新Excel文件 /tmp/会商文件/全国各省份污染物累计平均.xlsx（第五个sheet，时间段：2026年1-3月和2025年1-3月）'"
                     },
-                    # ✅ 新设计：context（可选）- 补充上下文
-                    "context": {
+                    # ✅ 新设计：context_str（可选）- 补充上下文
+                    "context_str": {
                         "type": "string",
                         "description": "补充上下文（可选）：技能名称、操作步骤、背景信息等。如：'按照AQI技能文档的步骤执行'或'用户之前查询过NO2数据，现在查询AQI数据'"
                     },
@@ -78,7 +78,7 @@ class CallSubAgentTool(LLMTool):
                     },
                     "context_supplement": {
                         "type": "string",
-                        "description": "⚠️ [向后兼容] 等同于context参数。新代码请使用context参数。"
+                        "description": "⚠️ [向后兼容] 等同于context_str参数。新代码请使用context_str参数。"
                     },
                     "session_id": {
                         "type": "string",
@@ -109,11 +109,11 @@ class CallSubAgentTool(LLMTool):
 
     async def execute(
         self,
-        context: Optional[Any] = None,  # ✅ context放在第一位
+        context: Optional[Any] = None,  # ✅ ExecutionContext（放在第一位）
         target_mode: AgentMode = None,
         goal: Optional[str] = None,  # ✅ 新参数：任务目标
         task_description: Optional[str] = None,  # ⚠️ 向后兼容
-        context_param: Optional[str] = None,  # ✅ 新参数：补充上下文
+        context_str: Optional[str] = None,  # ✅ 新参数：补充上下文
         context_supplement: Optional[str] = None,  # ⚠️ 向后兼容
         workspace_path: Optional[str] = None,  # ✅ 新参数：工作目录
         session_id: Optional[str] = None,
@@ -128,8 +128,8 @@ class CallSubAgentTool(LLMTool):
             target_mode: 目标Agent模式（"assistant" | "query" | "code" | "report" | "social"）
             goal: ⚠️ 任务目标（推荐）：必须完整保留所有参数（文件路径、时间范围等）
             task_description: ⚠️ [向后兼容] 等同于goal
-            context_param: 补充上下文（推荐）：技能名称、操作步骤等
-            context_supplement: ⚠️ [向后兼容] 等同于context_param
+            context_str: 补充上下文（推荐）：技能名称、操作步骤等
+            context_supplement: ⚠️ [向后兼容] 等同于context_str
             workspace_path: 工作目录路径（可选）
             session_id: 可选，子Agent会话ID（传入则继续已有对话）
             force_new_session: 是否强制创建新会话
@@ -169,8 +169,8 @@ class CallSubAgentTool(LLMTool):
                 "summary": "参数验证失败"
             }
 
-        # ✅ 参数标准化：优先使用context_param，其次context_supplement
-        effective_context = context_param or context_supplement
+        # ✅ 参数标准化：优先使用context_str，其次context_supplement
+        effective_context = context_str or context_supplement
 
         try:
             # 获取父Agent模式
