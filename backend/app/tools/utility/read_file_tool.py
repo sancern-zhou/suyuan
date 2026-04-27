@@ -290,6 +290,9 @@ PDF 智能解析：
                         mark_notebook_as_read(str(resolved_path), full_content)
                     except ImportError:
                         pass
+                # 生成 HTML 预览
+                if result.get("success") and enable_preview:
+                    await self._ensure_notebook_preview(resolved_path, result["data"])
                 return result
             else:
                 # 读取文本文件（支持分页）
@@ -903,6 +906,24 @@ PDF 智能解析：
 
         except Exception as e:
             logger.warning("pdf_preview_generation_failed", path=str(file_path), error=str(e))
+            # 预览失败不影响主流程
+
+    async def _ensure_notebook_preview(self, notebook_path: Path, result_data: dict):
+        """确保Notebook HTML预览已生成"""
+        if "html_preview" in result_data:
+            return  # 已有预览
+
+        try:
+            from app.services.notebook_converter import notebook_converter
+            html_preview = await notebook_converter.convert_to_html(str(notebook_path))
+            result_data["html_preview"] = html_preview
+            logger.info(
+                "notebook_preview_generated",
+                notebook_path=str(notebook_path),
+                html_id=html_preview["html_id"]
+            )
+        except Exception as e:
+            logger.warning("notebook_preview_generation_failed", path=str(notebook_path), error=str(e))
             # 预览失败不影响主流程
 
     def _get_cached_tool(self, tool_class, tool_name: str):

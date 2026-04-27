@@ -22,6 +22,7 @@ from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING, Union
 import structlog
 import traceback
 import asyncio
+import time
 
 if TYPE_CHECKING:
     from app.agent.memory.hybrid_manager import HybridMemoryManager
@@ -48,7 +49,8 @@ class ToolExecutor:
         tool_registry: Optional[Dict[str, Callable]] = None,
         memory_manager: Optional["HybridMemoryManager"] = None,
         task_list: Optional[Any] = None,
-        llm_planner: Optional[Any] = None  # ✅ 新增：用于call_sub_agent
+        llm_planner: Optional[Any] = None,  # ✅ 新增：用于call_sub_agent
+        event_bus: Optional[Any] = None  # Phase 3.1: 事件总线
     ):
         """
         初始化工具执行器
@@ -59,12 +61,14 @@ class ToolExecutor:
             memory_manager: 混合内存管理器（用于创建 DataContextManager）
             task_list: 任务列表实例（用于任务管理工具）
             llm_planner: LLM规划器（用于call_sub_agent创建子Agent）
+            event_bus: 事件总线（Phase 3.1: 用于工具生命周期事件）
         """
         self.tool_registry = tool_registry or {}
         self.memory_manager = memory_manager
         self.data_context_manager: Optional["DataContextManager"] = None
         self.task_list = task_list
         self.llm_planner = llm_planner  # ✅ 存储llm_planner
+        self.event_bus = event_bus  # Phase 3.1: 存储事件总线
 
         # Initialize DataContextManager if memory_manager provided
         if memory_manager:
@@ -402,11 +406,19 @@ class ToolExecutor:
             logger.info("="*80)
             # ========================================
 
+            # 检查是否有data_id（支持多种格式：根级别、metadata.data_id）
+            has_data_id = (
+                "data_id" in observation or
+                ("metadata" in observation and
+                 isinstance(observation.get("metadata"), dict) and
+                 "data_id" in observation["metadata"])
+            )
+
             logger.info(
                 "tool_execution_success",
                 tool_name=tool_name,
                 has_data="data" in observation,
-                has_data_id="data_id" in observation
+                has_data_id=has_data_id
             )
 
             return observation
@@ -446,6 +458,161 @@ class ToolExecutor:
                 "summary": f"❌ 工具 {tool_name} 执行失败: {str(e)[:100]}",
                 "traceback": traceback.format_exc()
             }
+
+    async def execute_tool_with_events(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        tool_call_id: str,  # ✅ Phase 3.1: 来自 Anthropic content_block.id
+        iteration: int = 0
+    ) -> Dict[str, Any]:
+        """执行工具并发射事件（OpenClaw 模式）
+
+        Phase 3.1: 工具生命周期事件追踪
+
+        Args:
+            tool_name: 工具名称
+            tool_args: 工具参数
+            tool_call_id: 工具调用 ID（来自 Anthropic content_block.id）
+            iteration: 当前迭代次数
+
+        Returns:
+            工具执行结果
+        """
+        from config.settings import settings
+
+        # 检查是否有事件总线（工具生命周期事件）
+        if not self.event_bus:
+            # 降级到普通执行
+            return await self.execute_tool(tool_name, tool_args, iteration)
+
+        # 创建执行追踪器
+        from app.agent.events.tool_lifecycle import ToolExecution, ToolState
+        execution = ToolExecution(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            args=tool_args
+        )
+
+        # 发射开始事件
+        await self.event_bus.emit_tool_execution_start(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            args=tool_args
+        )
+
+        # 转换到运行状态
+        execution.transition_to(ToolState.RUNNING)
+        execution.start_time = time.time()
+
+        try:
+            # 执行工具（复用现有逻辑）
+            result = await self.execute_tool(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                iteration=iteration
+            )
+
+            # 转换到完成状态
+            execution.transition_to(ToolState.COMPLETED)
+            execution.result = result
+            execution.end_time = time.time()
+
+            # 发射结束事件
+            await self.event_bus.emit_tool_execution_end(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                result=result,
+                duration_ms=execution.duration_ms or 0
+            )
+
+            return result
+
+        except Exception as e:
+            # 转换到失败状态
+            execution.transition_to(ToolState.FAILED)
+            execution.error = str(e)
+            execution.end_time = time.time()
+
+            # 发射错误事件
+            await self.event_bus.emit_tool_error(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                error=str(e)
+            )
+
+            raise
+
+    async def execute_tool_with_retry(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        tool_call_id: str,
+        iteration: int = 0,
+        max_retries: int = 3
+    ) -> Dict[str, Any]:
+        """执行工具并支持智能重试
+
+        Phase 4.2: 集成错误分类和重试逻辑
+
+        Args:
+            tool_name: 工具名称
+            tool_args: 工具参数
+            tool_call_id: 工具调用 ID
+            iteration: 当前迭代次数
+            max_retries: 最大重试次数
+
+        Returns:
+            工具执行结果
+        """
+        from config.settings import settings
+
+        # 检查是否启用智能重试（默认启用）
+        if not getattr(settings, 'enable_intelligent_retry', True):
+            # 降级到普通执行
+            return await self.execute_tool_with_events(
+                tool_name, tool_args, tool_call_id, iteration
+            )
+
+        from app.agent.events.error_classifier import ErrorClassifier
+        import asyncio
+
+        # 初始化错误分类器
+        error_classifier = ErrorClassifier()
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                return await self.execute_tool_with_events(
+                    tool_name, tool_args, tool_call_id, iteration
+                )
+            except Exception as e:
+                error_type = error_classifier.classify(e)
+                strategy = error_classifier.get_recovery_strategy(error_type)
+
+                # 检查是否可重试
+                if strategy["action"] == "retry" and retry_count < strategy.get("max_retries", max_retries):
+                    retry_count += 1
+                    backoff = strategy.get("backoff", "linear")
+
+                    # 计算等待时间
+                    if backoff == "exponential":
+                        wait_time = 2 ** retry_count
+                    else:
+                        wait_time = retry_count * 2
+
+                    logger.info(
+                        "tool_retry",
+                        tool_name=tool_name,
+                        retry_count=retry_count,
+                        error_type=error_type.value,
+                        wait_seconds=wait_time
+                    )
+
+                    await asyncio.sleep(wait_time)
+                else:
+                    # 无法重试或已达最大重试次数
+                    raise
 
     def _normalize_result(
         self,

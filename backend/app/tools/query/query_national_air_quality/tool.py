@@ -4,8 +4,8 @@
 从参考项目 GDQFWS_SYS 获取全国各省份的六参数均值、AQI达标率和综合指数
 """
 import requests
-import pyodbc
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import structlog
@@ -27,85 +27,30 @@ class NationalAirQualityQueryTool:
     # 参考项目配置
     BASE_URL = "http://113.108.142.147:20032"
 
-    # 数据库配置
-    DB_CONFIG = {
-        'server': '10.10.10.135',
-        'database': 'GDQFWS',
-        'user': 'Develop',
-        'password': 'Dev@996996'
-    }
+    # Token 环境变量名称
+    TOKEN_ENV_VAR = "GDQFWS_API_TOKEN"
 
     def __init__(self):
-        self._cached_token = None
-        self._token_expires_at = None
+        pass
 
-    def _get_token_from_database(self) -> Optional[str]:
+    def get_token(self) -> str:
         """
-        从参考项目数据库获取有效的API Token
-
-        Returns:
-            API Token字符串，如果获取失败则返回None
-        """
-        try:
-            conn_str = (
-                f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                f"SERVER={self.DB_CONFIG['server']};"
-                f"DATABASE={self.DB_CONFIG['database']};"
-                f"UID={self.DB_CONFIG['user']};"
-                f"PWD={self.DB_CONFIG['password']};"
-                f"TrustServerCertificate=yes;"
-            )
-
-            logger.info("connecting_to_gdqfws_database", server=self.DB_CONFIG['server'])
-
-            conn = pyodbc.connect(conn_str, timeout=10)
-            cursor = conn.cursor()
-
-            # 查询有效的API Key（优先选择没有路径限制的）
-            query = """
-            SELECT TOP 1 APIKey
-            FROM APIKeyInfo
-            WHERE State = '1'
-              AND (APIPaths IS NULL OR APIPaths = '' OR APIPaths LIKE '%GDDataApi%')
-            ORDER BY NEWID()
-            """
-
-            cursor.execute(query)
-            row = cursor.fetchone()
-
-            cursor.close()
-            conn.close()
-
-            if row:
-                token = row[0]
-                logger.info("token_retrieved_successfully", token_prefix=token[:20])
-                return token
-
-            logger.warning("no_valid_token_found_in_database")
-            return None
-
-        except pyodbc.Error as e:
-            logger.error("database_connection_failed", error=str(e))
-            return None
-        except Exception as e:
-            logger.error("token_retrieval_failed", error=str(e), error_type=type(e).__name__)
-            return None
-
-    def get_token(self, force_refresh: bool = False) -> Optional[str]:
-        """
-        获取API Token（带缓存）
-
-        Args:
-            force_refresh: 是否强制刷新token
+        从环境变量获取API Token
 
         Returns:
             API Token字符串
-        """
-        if not force_refresh and self._cached_token is not None:
-            return self._cached_token
 
-        self._cached_token = self._get_token_from_database()
-        return self._cached_token
+        Raises:
+            Exception: 如果环境变量未设置
+        """
+        token = os.getenv(self.TOKEN_ENV_VAR)
+        if not token:
+            raise Exception(
+                f"环境变量 {self.TOKEN_ENV_VAR} 未设置。"
+                f"请设置: export {self.TOKEN_ENV_VAR}='your_token_here'"
+            )
+
+        return token
 
     def query_province_data(
         self,

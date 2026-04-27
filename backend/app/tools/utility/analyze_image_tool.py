@@ -77,7 +77,7 @@ class AnalyzeImageTool(LLMTool):
 - 使用通义千问 VL 模型（qwen-vl-max-latest）
 - 支持的格式：PNG、JPG、JPEG、GIF、BMP、WEBP
 - 图片大小限制：5MB
-- 超时时间：120秒
+- 超时时间：240秒
 """,
             category=ToolCategory.QUERY,
             version="1.0.0",
@@ -233,7 +233,7 @@ class AnalyzeImageTool(LLMTool):
             data_url = f"data:image/{file_format};base64,{base64_data}"
 
             # 调用通义千问 VL API
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=240.0) as client:
                 response = await client.post(
                     f"{self.QWEN_VL_BASE_URL}/chat/completions",
                     headers={
@@ -257,7 +257,6 @@ class AnalyzeImageTool(LLMTool):
                                 ]
                             }
                         ],
-                        "max_tokens": 2000,
                         "temperature": 0.3
                     }
                 )
@@ -276,7 +275,7 @@ class AnalyzeImageTool(LLMTool):
 
         except httpx.TimeoutException:
             logger.error("qwen_vl_timeout")
-            return "图片分析超时（120秒）"
+            return "图片分析超时（240秒）"
         except httpx.HTTPStatusError as e:
             logger.error(
                 "qwen_vl_http_error",

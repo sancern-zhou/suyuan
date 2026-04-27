@@ -52,33 +52,30 @@ class GetNearbyStationsTool(LLMTool):
     def __init__(self):
         """初始化工具"""
         function_schema = {
-            "type": "function",
-            "function": {
-                "name": "get_nearby_stations",
-                "description": "查询附近的站点信息（根据坐标和半径）",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "target_lat": {
-                            "type": "number",
-                            "description": "目标站点纬度"
-                        },
-                        "target_lon": {
-                            "type": "number",
-                            "description": "目标站点经度"
-                        },
-                        "radius_km": {
-                            "type": "number",
-                            "description": "搜索半径（公里），默认50",
-                            "default": 50.0
-                        },
-                        "station_type": {
-                            "type": "string",
-                            "description": "站点类型过滤（可选）"
-                        }
+            "name": "get_nearby_stations",
+            "description": "查询附近的站点信息（根据坐标和半径）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_lat": {
+                        "type": "number",
+                        "description": "目标站点纬度"
                     },
-                    "required": ["target_lat", "target_lon"]
-                }
+                    "target_lon": {
+                        "type": "number",
+                        "description": "目标站点经度"
+                    },
+                    "radius_km": {
+                        "type": "number",
+                        "description": "搜索半径（公里），默认50",
+                        "default": 50.0
+                    },
+                    "station_type": {
+                        "type": "string",
+                        "description": "站点类型过滤（可选）"
+                    }
+                },
+                "required": ["target_lat", "target_lon"]
             }
         }
 

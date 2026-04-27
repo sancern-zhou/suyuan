@@ -67,6 +67,34 @@
               ></iframe>
             </div>
 
+            <!-- Notebook HTML preview (使用iframe显示) -->
+            <div v-else-if="doc.doc_type === 'notebook' && doc.html_url" class="notebook-wrapper">
+              <iframe
+                :src="doc.html_url"
+                class="notebook-iframe"
+                type="text/html"
+                @load="onPdfLoaded(doc)"
+              ></iframe>
+            </div>
+
+            <!-- Notebook with share button (如果有file_path) -->
+            <div v-else-if="doc.doc_type === 'notebook' && doc.file_path" class="notebook-with-share">
+              <div class="notebook-actions">
+                <button
+                  @click="handleNotebookShare(doc)"
+                  class="share-button"
+                  :disabled="doc.sharing"
+                >
+                  <span v-if="doc.sharing">生成中...</span>
+                  <span v-else>📤 分享报告</span>
+                </button>
+              </div>
+              <div class="notebook-placeholder">
+                <p>📝 Notebook文件：{{ doc.file_name }}</p>
+                <p class="hint">点击"分享报告"生成可分享的HTML链接</p>
+              </div>
+            </div>
+
             <!-- Markdown preview -->
             <div v-else-if="doc.markdown_content && doc.doc_type === 'markdown'" class="markdown-wrapper">
               <MarkdownRenderer :content="doc.markdown_content" :streaming="false" />
@@ -181,7 +209,7 @@ const hasOfficeDocuments = computed(() => {
 
 // 监听 store.lastOfficeDocument，直接更新文档列表
 watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
-  if (!doc?.pdf_preview && !doc?.markdown_preview) {
+  if (!doc?.pdf_preview && !doc?.markdown_preview && !doc?.html_preview) {
     return
   }
 
@@ -214,16 +242,26 @@ watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
       existingDoc.markdown_content = doc.markdown_preview.content
       existingDoc.file_path = filePath
     }
+    // 更新 Notebook HTML预览
+    if (doc.html_preview) {
+      existingDoc.html_url = doc.html_preview.html_url
+      existingDoc.html_id = doc.html_preview.html_id
+      existingDoc.file_path = filePath
+      existingDoc.loading = false
+    }
   } else {
     // 添加新文档
-    officeDocuments.value.push({
-      doc_type: getDocType(doc.generator, doc.markdown_preview, filePath),
+    const newDoc = {
+      doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath),
       file_name: fileName,
       file_path: filePath,
       pdf_url: doc.pdf_preview?.pdf_url,
       pdf_id: doc.pdf_preview?.pdf_id,
+      html_url: doc.html_preview?.html_url,
+      html_id: doc.html_preview?.html_id,
       markdown_content: doc.markdown_preview?.content,
       loading: false,
+      sharing: false,
       editContent: '',
       submitting: false,
       editMessage: null,
@@ -232,7 +270,9 @@ watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
         summary: doc.summary,
         timestamp: doc.timestamp || new Date()
       }
-    })
+    }
+
+    officeDocuments.value.push(newDoc)
   }
 
   // 添加到编辑历史
@@ -472,12 +512,14 @@ async function submitEdit(doc) {
   }
 }
 
-function getDocType(generator, markdownPreview, filePath) {
+function getDocType(generator, markdownPreview, htmlPreview, filePath) {
   // 先根据 generator 判断
   if (['word_edit', 'find_replace_word', 'accept_word_changes'].includes(generator)) {
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
     return 'ppt'
+  } else if (htmlPreview || filePath?.endsWith('.ipynb')) {
+    return 'notebook'
   } else if (markdownPreview) {
     return 'markdown'
   }
@@ -580,6 +622,62 @@ function loadDocuments(documents) {
 function getFileName(path) {
   if (!path) return '未命名文档'
   return path.split(/[/\\]/).pop() || '未命名文档'
+}
+
+// 处理Notebook分享
+async function handleNotebookShare(doc) {
+  if (!doc.file_path) {
+    alert('无法分享：缺少Notebook文件路径')
+    return
+  }
+
+  doc.sharing = true
+
+  try {
+    // 调用后端API生成分享HTML
+    const response = await fetch('/api/tools/execute', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tool: 'generate_shareable_notebook',
+        parameters: {
+          notebook_path: doc.file_path
+        }
+      })
+    })
+
+    const result = await response.json()
+
+    if (result.success) {
+      // 显示分享链接
+      const shareLink = result.data.share_link
+      const userCopy = confirm(`分享链接已生成：\n\n${shareLink}\n\n点击"确定"复制链接到剪贴板`)
+
+      if (userCopy) {
+        navigator.clipboard.writeText(shareLink).then(() => {
+          alert('✅ 链接已复制到剪贴板！')
+        }).catch(() => {
+          // 降级方案
+          const textarea = document.createElement('textarea')
+          textarea.value = shareLink
+          document.body.appendChild(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          document.body.removeChild(textarea)
+          alert('✅ 链接已复制到剪贴板！')
+        })
+      }
+    } else {
+      alert('❌ 生成分享链接失败：' + (result.summary || '未知错误'))
+    }
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] 生成分享链接失败:', error)
+    alert('❌ 生成分享链接失败：' + error.message)
+  } finally {
+    doc.sharing = false
+  }
 }
 
 defineExpose({
@@ -747,6 +845,52 @@ defineExpose({
   height: 750px;
   border: none;
   transition: height 0.3s ease;
+}
+
+.notebook-wrapper {
+  width: 100%;
+  height: calc(100vh - 200px);
+  min-height: 600px;
+}
+
+.notebook-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+.notebook-with-share {
+  padding: 20px;
+  text-align: center;
+  background: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  margin: 12px;
+}
+
+.notebook-actions {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.notebook-placeholder {
+  padding: 40px 20px;
+  background: white;
+  border-radius: 8px;
+  border: 2px dashed #e0e0e0;
+}
+
+.notebook-placeholder p {
+  margin: 10px 0;
+  color: #666;
+  font-size: 14px;
+}
+
+.notebook-placeholder .hint {
+  color: #999;
+  font-size: 13px;
 }
 
 .markdown-wrapper {

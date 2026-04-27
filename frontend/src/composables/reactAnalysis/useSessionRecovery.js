@@ -102,8 +102,8 @@ export function useSessionRecovery(store, options = {}) {
     const visuals = []
 
     for (const msg of messages) {
-      if (msg.type === 'observation' && msg.data?.observation?.data?.visuals) {
-        visuals.push(...msg.data.observation.data.visuals)
+      if (msg.type === 'tool_result' && msg.data?.result?.data?.visuals) {
+        visuals.push(...msg.data.result.data.visuals)
       }
     }
 
@@ -126,8 +126,8 @@ export function useSessionRecovery(store, options = {}) {
     const docs = []
 
     for (const msg of messages) {
-      if (msg.type === 'observation' && msg.data?.observation?.data?.pdf_preview) {
-        docs.push(msg.data.observation.data.pdf_preview)
+      if (msg.type === 'tool_result' && msg.data?.result?.data?.pdf_preview) {
+        docs.push(msg.data.result.data.pdf_preview)
       }
     }
 

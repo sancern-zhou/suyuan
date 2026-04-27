@@ -187,7 +187,7 @@ export const useReactStore = defineStore('react', {
     analysisLog: (state) => {
       const currentMessages = state.modeStates[state.currentMode]?.messages || []
       return currentMessages.filter(msg =>
-        msg.type === 'start' || msg.type === 'action' || msg.type === 'observation' || msg.type === 'error'
+        msg.type === 'start' || msg.type === 'tool_use' || msg.type === 'tool_result' || msg.type === 'error'
       )
     },
 
@@ -208,8 +208,8 @@ export const useReactStore = defineStore('react', {
     completedTools: (state) => {
       const currentMessages = state.modeStates[state.currentMode]?.messages || []
       return currentMessages
-        .filter(m => m.type === 'action' && m.data?.status === 'success' && m.data?.tool)
-        .map(m => m.data.tool)
+        .filter(m => m.type === 'tool_use' && m.data?.status === 'success' && m.data?.tool_name)
+        .map(m => m.data.tool_name)
     }
   },
 
@@ -696,7 +696,7 @@ export const useReactStore = defineStore('react', {
     addMessage(type, content, data = null, attachments = null, extraFields = {}) {
       const message = {
         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type, // 'user', 'agent', 'thought', 'action', 'observation', 'start', 'error', 'final'
+        type, // 'user', 'agent', 'thought', 'tool_use', 'tool_result', 'start', 'error', 'final'
         content,
         data,
         attachments, // 附件信息
@@ -827,7 +827,7 @@ export const useReactStore = defineStore('react', {
       }
 
       switch (type) {
-        case 'start':
+        case 'start': {
           // 分析开始
           addMessage('start', `开始分析: ${data?.query || ''}`)
           if (data?.session_id) {
@@ -835,11 +835,17 @@ export const useReactStore = defineStore('react', {
           }
           targetState.iterations = 0
           break
+        }
 
-        case 'thought':
+        case 'thought': {
           // LLM思考
           const thoughtContent = data?.thought || '思考中...'
-          addMessage('thought', thoughtContent, null)
+          const reasoningContent = data?.reasoning || ''
+          addMessage('thought', thoughtContent, {
+            reasoning: reasoningContent,
+            iteration: data?.iteration,
+            timestamp: data?.timestamp
+          })
 
           // 检测Reflexion
           if (data?.thought && data.thought.includes('[Reflexion 反思]')) {
@@ -847,57 +853,62 @@ export const useReactStore = defineStore('react', {
             targetState.reflexionCount++
           }
           break
+        }
 
-        case 'action':
-          // 行动（工具调用）
-          const actionData = data?.action || data
+        case 'tool_use': {
+          // ✅ V3: Anthropic tool_use 事件
+          const toolUseData = data || {}
+          const toolName = toolUseData.tool_name || 'unknown'
+          const toolUseId = toolUseData.tool_use_id
+          const toolInput = toolUseData.input || {}
 
-          // 【修复】如果本次"行动"其实是 FINISH（最终回答），不要在这里再渲染一遍，
-          // 否则会在"执行行动"步骤和最终答案里各出现一次完整回答。
-          if (actionData?.type === 'FINISH') {
-            // 仍然保留后台的日志，但前端对话不追加多余的 action 消息
-            break
+          // 格式化工具调用信息
+          let toolUseContent = `🔧 Tool Use: ${toolName}`
+          if (toolUseId) {
+            toolUseContent += ` (ID: ${toolUseId.substring(0, 8)}...)`
           }
 
-          // 【新增】支持并发工具调用显示
-          let actionContent = '执行行动'
-          const toolName = actionData?.tool
-          const tools = actionData?.tools
-
-          if (tools && Array.isArray(tools) && tools.length > 0) {
-            // 并发调用多个工具
-            const toolNames = tools.map(t => t?.tool || 'unknown').join(', ')
-            actionContent = `并发调用工具 (${tools.length}个): ${toolNames}`
-          } else if (toolName) {
-            // 单个工具调用
-            actionContent = `调用工具: ${toolName}`
-          }
-
-          addMessage('action', actionContent, actionData)
+          // 添加工具调用消息
+          addMessage('tool_use', toolUseContent, {
+            tool_use_id: toolUseId,
+            tool_name: toolName,
+            input: toolInput,
+            iteration: toolUseData.iteration,
+            timestamp: toolUseData.timestamp
+          })
           break
+        }
 
-        case 'observation':
-          // 观察结果
-          const obsData = data?.observation
-          let obsContent = '获得结果'
+        case 'tool_result': {
+          // ✅ V3: Anthropic tool_result 事件
+          const toolResultData = data || {}
+          const resultToolUseId = toolResultData.tool_use_id
+          const result = toolResultData.result || {}
+          const isError = toolResultData.is_error || false
 
-          // 处理不同类型的observation数据
-          if (typeof obsData === 'string') {
-            obsContent = obsData
-          } else if (obsData && typeof obsData === 'object') {
-            // 优先使用summary字段
-            if (obsData.summary) {
-              obsContent = obsData.summary
-            } else {
-              // 如果没有summary，序列化对象（限制长度）
-              obsContent = JSON.stringify(obsData).substring(0, 200)
-            }
+          // 格式化工具结果信息
+          let toolResultContent = isError ? '❌ Tool Error' : '✅ Tool Result'
+          if (resultToolUseId) {
+            toolResultContent += ` (ID: ${resultToolUseId.substring(0, 8)}...)`
           }
 
-          addMessage('observation', obsContent, data)
-          break
+          // 如果有summary，使用它
+          if (result.summary) {
+            toolResultContent += `: ${result.summary}`
+          }
 
-        case 'office_document':
+          // 添加工具结果消息
+          addMessage('tool_result', toolResultContent, {
+            tool_use_id: resultToolUseId,
+            result: result,
+            is_error: isError,
+            iteration: toolResultData.iteration,
+            timestamp: toolResultData.timestamp
+          })
+          break
+        }
+
+        case 'office_document': {
           // Office文档PDF预览事件（用于驱动文档预览面板）
           // 【修复】使用targetState而不是currentState
           targetState.lastOfficeDocument = {
@@ -916,8 +927,22 @@ export const useReactStore = defineStore('react', {
             targetMode: targetMode
           })
           break
+        }
 
-        case 'streaming_text':
+        case 'notebook_document': {
+          // Notebook HTML预览事件
+          targetState.lastOfficeDocument = {
+            html_preview: data?.html_preview,
+            file_path: data?.file_path,
+            file_type: data?.file_type || 'notebook',
+            generator: data?.generator,
+            summary: data?.summary,
+            timestamp: data?.timestamp
+          }
+          break
+        }
+
+        case 'streaming_text': {
           // ✅ 真正的流式文本输出
           const chunk = data?.chunk || ''
           const isComplete = data?.is_complete || false
@@ -954,6 +979,21 @@ export const useReactStore = defineStore('react', {
             // console.log(`[streaming_text] 完成！共 ${this._streamDebug.chunkCount} 个 chunks，总耗时 ${totalTime}ms`)
             // this._streamDebug = null
 
+            // 【去重】如果当前轮次已有 tool_use 消息，说明这段文本只是 LLM 在调用工具前的
+            // 中间说明（如"已找到技能文件，让我读取其内容。"），不是最终答案。
+            // 删除这个错误创建的 final 消息，避免重复显示
+            const hasToolUse = targetState.messages.some(m => m.type === 'tool_use')
+            if (hasToolUse && targetState.streamingAnswerMessageId) {
+              const msgIdx = targetState.messages.findIndex(m => m.id === targetState.streamingAnswerMessageId)
+              if (msgIdx !== -1) {
+                // 如果消息内容很短（中间说明通常很短），直接删除
+                const msg = targetState.messages[msgIdx]
+                if (msg && msg.content && msg.content.length < 200) {
+                  targetState.messages.splice(msgIdx, 1)
+                }
+              }
+            }
+
             if (targetState.streamingAnswerMessageId) {
               const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
               if (msg) {
@@ -974,8 +1014,9 @@ export const useReactStore = defineStore('react', {
             }
           }
           break
+        }
 
-        case 'complete':
+        case 'complete': {
           // 分析完成
           console.log('[event:complete] ========== 收到complete事件 ==========')
           console.log('[event:complete] 数据:', JSON.stringify(data, null, 2))
@@ -1110,8 +1151,9 @@ export const useReactStore = defineStore('react', {
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
           break
+        }
 
-        case 'pipeline_completed':
+        case 'pipeline_completed': {
           // ✅ ExpertRouterV3 旧架构多专家并行完成事件
           console.log('[event:pipeline_completed] ========== 收到 ExpertRouterV3 完成事件 ==========')
           console.log('[event:pipeline_completed] 数据:', JSON.stringify(data, null, 2))
@@ -1168,8 +1210,9 @@ export const useReactStore = defineStore('react', {
 
           targetState.streamingAnswerMessageId = null
           break
+        }
 
-        case 'pipeline_failed':
+        case 'pipeline_failed': {
           // ✅ ExpertRouterV3 旧架构多专家并行失败事件
           console.log('[event:pipeline_failed] ========== 收到 ExpertRouterV3 失败事件 ==========')
           console.log('[event:pipeline_failed] 数据:', JSON.stringify(data, null, 2))
@@ -1179,8 +1222,9 @@ export const useReactStore = defineStore('react', {
           addMessage('error', `溯源分析失败: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
           break
+        }
 
-        case 'incomplete':
+        case 'incomplete': {
           // 未完成（达到最大迭代）
           targetState.isAnalyzing = false
           targetState.isComplete = true
@@ -1229,79 +1273,90 @@ export const useReactStore = defineStore('react', {
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
           break
+        }
 
-        case 'error':
+        case 'error': {
           // 迭代错误
           addMessage('error', `错误: ${data?.error || '未知错误'}`, data)
           break
+        }
 
-        case 'fatal_error':
+        case 'fatal_error': {
           // 致命错误
           targetState.isAnalyzing = false
           targetState.error = data?.error || '致命错误'
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
           break
+        }
 
-        case 'result':
+        case 'result': {
           // 处理结果事件（原有工作流逻辑）
           this.handleResult(data)
           break
+        }
 
-        case 'pipeline_started':
+        case 'pipeline_started': {
           // 流水线开始事件
           addMessage('start', `开始多专家分析: ${data?.query || ''}`)
           break
+        }
 
-        case 'query_parsed':
+        case 'query_parsed': {
           // 查询解析完成事件
-          addMessage('observation', `查询解析完成 - 地点: ${data?.location || '未知'} | 分析类型: ${data?.analysis_type || '未知'}`, {
+          addMessage('tool_result', `查询解析完成 - 地点: ${data?.location || '未知'} | 分析类型: ${data?.analysis_type || '未知'}`, {
             query_parsed: data
           })
           break
+        }
 
-        case 'experts_selected':
+        case 'experts_selected': {
           // 专家选择完成事件
           const experts = data?.selected_experts || []
-          addMessage('observation', `已选择 ${experts.length} 个专家: ${experts.map(e => this.getExpertLabel(e)).join('、')}`, {
+          addMessage('tool_result', `已选择 ${experts.length} 个专家: ${experts.map(e => this.getExpertLabel(e)).join('、')}`, {
             selected_experts: experts
           })
           break
+        }
 
-        case 'expert_group_started':
+        case 'expert_group_started': {
           // 专家组开始事件
-          addMessage('action', `启动专家组: ${data?.group?.map(e => this.getExpertLabel(e)).join('、')}`, {
+          addMessage('tool_use', `启动专家组: ${data?.group?.map(e => this.getExpertLabel(e)).join('、')}`, {
             group: data?.group
           })
           break
+        }
 
-        case 'expert_started':
+        case 'expert_started': {
           // 单个专家开始事件
           const expertName = this.getExpertLabel(data?.expert_type)
-          addMessage('action', `执行【${expertName}】专家任务 (工具数: ${data?.tool_count || 0})`, {
+          addMessage('tool_use', `执行【${expertName}】专家任务 (工具数: ${data?.tool_count || 0})`, {
             expert_type: data?.expert_type,
             task_id: data?.task_id
           })
           break
+        }
 
-        case 'expert_completed':
+        case 'expert_completed': {
           // 专家完成事件
           const completedExpertName = this.getExpertLabel(data?.expert_type)
-          addMessage('observation', `【${completedExpertName}】专家完成 - 状态: ${data?.status} | 数据ID: ${(data?.data_ids || []).length}个`, {
+          addMessage('tool_result', `【${completedExpertName}】专家完成 - 状态: ${data?.status} | 数据ID: ${(data?.data_ids || []).length}个`, {
             expert_type: data?.expert_type,
             status: data?.status,
             data_ids: data?.data_ids
           })
           break
+        }
 
-        case 'expert_group_completed':
+        case 'expert_group_completed': {
           // 专家组完成事件
-          addMessage('observation', `专家组执行完成: ${Object.entries(data?.results || {}).map(([k, v]) => `${this.getExpertLabel(k)}(${v})`).join('、')}`, {
+          addMessage('tool_result', `专家组执行完成: ${Object.entries(data?.results || {}).map(([k, v]) => `${this.getExpertLabel(k)}(${v})`).join('、')}`, {
             group_results: data?.results
           })
           break
+        }
 
-        case 'expert_result':
+        case 'expert_result': {
           // 多专家系统结果事件
           console.log('[event:expert_result] ========== 收到expert_result事件 ==========')
           console.log('[event:expert_result] 完整数据:', JSON.stringify(data, null, 2))
@@ -1323,7 +1378,7 @@ export const useReactStore = defineStore('react', {
               .join('\n\n')
 
             // 添加到主对话框显示
-            addMessage('observation', `多专家系统阶段性结果:\n\n${expertResultsText}`, {
+            addMessage('tool_result', `多专家系统阶段性结果:\n\n${expertResultsText}`, {
               expert_results: data.expert_results,
               is_expert_result: true
             })
@@ -1343,51 +1398,23 @@ export const useReactStore = defineStore('react', {
             targetState.lastExpertResults = data
           }
           break
+        }
 
-        case 'pipeline_error':
+        case 'pipeline_error': {
           // 流水线错误事件
           addMessage('error', `多专家系统错误: ${data?.error || '未知错误'}`, data)
           break
+        }
 
-        case 'expert_error':
+        case 'expert_error': {
           // 专家错误事件
           const errorExpertName = this.getExpertLabel(data?.expert_type)
           addMessage('error', `【${errorExpertName}】专家执行失败: ${data?.error || '未知错误'}`, data)
           break
+        }
 
-        case 'answer_delta':
-          // 最终答案 token 级流式增量
-          if (!data?.delta) {
-            break
-          }
 
-          // 如果还没有为本轮回答创建消息，先创建一条最终答案消息
-          if (!targetState.streamingAnswerMessageId) {
-            const msgId = addMessage('final', data.delta, {
-              session_id: data?.session_id,
-              timestamp: data?.timestamp
-            }, null, { streaming: true })
-            targetState.streamingAnswerMessageId = msgId
-          } else {
-            // 已存在流式消息，直接在原有内容后追加
-            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
-            if (msg) {
-              msg.content = (msg.content || '') + data.delta
-            } else {
-              // 找不到消息时，退化为创建新消息，避免用户看不到内容
-              const msgId = addMessage('final', data.delta, {
-                session_id: data?.session_id,
-                timestamp: data?.timestamp
-              }, null, { streaming: true })
-              targetState.streamingAnswerMessageId = msgId
-            }
-          }
-
-          // 同步更新 finalAnswer，方便其他地方直接读取
-          targetState.finalAnswer = (targetState.finalAnswer || '') + data.delta
-          break
-
-        case 'final_answer':
+        case 'final_answer': {
           // ✅ 直接来自工作流的最终答案（无需Agent再次总结）
           console.log('[event:final_answer] 收到直接final_answer事件:', data)
 
@@ -1407,55 +1434,36 @@ export const useReactStore = defineStore('react', {
           // 更新finalAnswer
           this.currentState.finalAnswer = finalContent
           break
+        }
 
-        case 'stream_start':
-          // 流式输出开始
-          console.log('[event:stream_start] 流式输出开始')
-          if (!this.currentState.streamingAnswerMessageId) {
-            targetState.streamingAnswerMessageId = addMessage('final', '', {
-              timestamp: data?.timestamp
-            }, null, { streaming: true })
-          }
-          break
 
-        case 'stream_content':
-          // 流式内容块
-          const content = data?.content || ''
-          if (content && this.currentState.streamingAnswerMessageId) {
-            const msg = this.currentState.messages.find(m => m.id === this.currentState.streamingAnswerMessageId)
-            if (msg) {
-              msg.content += content
-              // 触发响应式更新
-              this.currentState.messages = [...this.currentState.messages]
-              // 同步更新 finalAnswer
-              this.currentState.finalAnswer = msg.content
-            }
-          }
+        case 'message_start': {
+          // 原生 Anthropic 事件：消息开始（可扩展为 token 监控）
+          console.log('[event:message_start] Anthropic 消息开始', data?.usage)
           break
+        }
 
-        case 'stream_end':
-          // 流式输出结束
-          console.log('[event:stream_end] 流式输出结束')
-          const endContent = data?.content || ''
-          if (endContent && this.currentState.streamingAnswerMessageId) {
-            const msg = this.currentState.messages.find(m => m.id === this.currentState.streamingAnswerMessageId)
-            if (msg) {
-              // 确保内容完整
-              msg.content = endContent
-              msg.streaming = false  // 标记为完成
-              this.currentState._forceRenderCount++  // 强制触发响应式更新
-              this.currentState.finalAnswer = endContent
-            }
-          }
-          this.currentState.streamingAnswerMessageId = null
+        case 'message_delta': {
+          // 原生 Anthropic 事件：消息增量（含 stop_reason 和 usage）
+          console.log('[event:message_delta] Anthropic 消息增量', {
+            stop_reason: data?.stop_reason,
+            usage: data?.usage
+          })
           break
+        }
+
+        case 'message_stop': {
+          // 原生 Anthropic 事件：消息结束
+          console.log('[event:message_stop] Anthropic 消息结束')
+          break
+        }
 
         default:
           console.warn('Unknown event type:', type)
       }
 
       // 更新迭代次数
-      if (type === 'thought' || type === 'action' || type === 'observation') {
+      if (type === 'thought' || type === 'tool_use' || type === 'tool_result') {
         this.currentState.iterations += 0.5 // 每个循环算作0.5，因为thought+action+observation是一个完整循环
       }
     },

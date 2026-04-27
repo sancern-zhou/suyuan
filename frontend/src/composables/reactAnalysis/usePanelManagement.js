@@ -62,8 +62,8 @@ export function usePanelManagement(store = null) {
     if (!store || !store.messages) return false
 
     return store.messages.some(msg => {
-      if (msg?.type === 'observation' && msg?.data?.observation) {
-        const metadata = msg.data.observation.metadata || {}
+      if (msg?.type === 'tool_result' && msg?.data?.result) {
+        const metadata = msg.data.result.metadata || {}
         const generator = metadata.generator
 
         const isOfficeTool = [
@@ -74,8 +74,8 @@ export function usePanelManagement(store = null) {
 
         // 对于 read_file，需要检查是否有 markdown_preview 或 pdf_preview
         if (generator === 'read_file') {
-          const obs = msg.data.observation
-          return !!(obs.data?.pdf_preview || obs.data?.markdown_preview)
+          const result = msg.data.result
+          return !!(result.data?.pdf_preview || result.data?.markdown_preview)
         }
 
         return isOfficeTool
@@ -254,7 +254,8 @@ export function usePanelManagement(store = null) {
     // 监听office_document事件
     if (store) {
       watch(() => store.lastOfficeDocument, (doc) => {
-        if (doc?.pdf_preview) {
+        // 支持 PDF/Markdown/Notebook 预览，统一显示在"文档预览"标签页
+        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview) {
           officePanelVisible.value = true
           activeRightTab.value = 'document'
         }

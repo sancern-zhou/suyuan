@@ -325,6 +325,9 @@ class NotebookEditTool(LLMTool):
             {"success": true/false, "cell_id": "...", "cell_type": "..."}
         """
         try:
+            # 自动替换localhost URL为外网URL
+            if new_source:
+                new_source = self._replace_localhost_urls(new_source)
             # 检查 notebook 版本（确定是否需要生成 cell_id）
             nbformat = notebook.get("nbformat", 4)
             nbformat_minor = notebook.get("nbformat_minor", 0)
@@ -426,6 +429,37 @@ class NotebookEditTool(LLMTool):
             "content": content,
             "timestamp": os.path.getmtime(file_path)
         }
+
+    def _replace_localhost_urls(self, text: str) -> str:
+        """
+        替换localhost URL为外网URL
+
+        Args:
+            text: 包含localhost URL的文本
+
+        Returns:
+            替换后的文本
+        """
+        try:
+            from config.settings import settings
+            frontend_base_url = settings.frontend_base_url
+
+            # 替换各种可能的localhost格式
+            text = text.replace('http://localhost:5174', frontend_base_url)
+            text = text.replace('http://127.0.0.1:5174', frontend_base_url)
+            text = text.replace('http://localhost:5173', frontend_base_url)
+            text = text.replace('http://127.0.0.1:5173', frontend_base_url)
+
+            logger.info(
+                "localhost_urls_replaced",
+                frontend_base_url=frontend_base_url,
+                replacements_count=text.count(frontend_base_url)
+            )
+
+            return text
+        except Exception as e:
+            logger.warning("url_replace_failed", error=str(e))
+            return text
 
 
 # 全局实例（供 read_file_tool 调用）
