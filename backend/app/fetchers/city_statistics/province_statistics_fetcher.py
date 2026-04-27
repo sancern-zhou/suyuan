@@ -49,8 +49,9 @@ logger = structlog.get_logger()
 
 
 # =============================================================================
-# 云南自治州名称映射（CityDayAQIPublishHistory表中的Area -> bsd_city表中的name）
-# 由于CityDayAQIPublishHistory表中云南自治州使用区县级CityCode，需要通过名称匹配
+# 云南自治州名称映射（CityDayAQIPublishHistory表中的Area -> City表中的CityName）
+# 注意：使用新的 City 和 Province 表后，此映射可能不再需要
+# 保留用于兼容性验证
 YUNNAN_AUTONOMOUS_PREFECTURE_MAP = {
     '楚雄彝族自治州': '楚雄彝族自治州',
     '红河哈尼族彝族自治州': '红河哈尼族彝族自治州',
@@ -110,7 +111,13 @@ def calculate_province_rankings(statistics: List[Dict]) -> List[Dict]:
 
 def calculate_province_statistics(city_records: Dict[str, List[Dict]]) -> Optional[Dict]:
     """
-    计算省级空气质量统计数据
+    计算省级空气质量统计数据（GDQFWS标准方法：先算各城市指标，再求平均）
+
+    计算方法：
+    1. 先计算每个城市的各项指标（浓度、指数、综合指数等）
+    2. 对各城市指标求算术平均值，得到省级指标
+
+    这种方法与GDQFWS系统保持一致，确保计算结果可比。
 
     Args:
         city_records: 省内各城市的数据字典 {城市名: [数据记录]}
@@ -121,38 +128,86 @@ def calculate_province_statistics(city_records: Dict[str, List[Dict]]) -> Option
     if not city_records:
         return None
 
-    # 合并省内所有城市的数据
-    all_records = []
-    city_names = []
+    # 过滤掉没有数据的城市
+    valid_cities = {name: records for name, records in city_records.items() if records}
 
-    for city_name, records in city_records.items():
-        if records:
-            all_records.extend(records)
-            city_names.append(city_name)
-
-    if not all_records:
+    if not valid_cities:
         return None
 
-    # 直接复用 calculate_statistics（已实现正确的统计方法）
-    result = calculate_statistics(all_records)
+    city_names = list(valid_cities.keys())
 
-    if result:
-        result['city_count'] = len(city_names)
-        result['city_names'] = ','.join(sorted(city_names))
+    # 第一步：计算每个城市的统计数据
+    city_statistics = {}
+    for city_name, records in valid_cities.items():
+        city_stat = calculate_statistics(records)
+        if city_stat:
+            city_statistics[city_name] = city_stat
 
-        # 修正 sample_coverage：省级统计应该计算所有城市的平均样本覆盖率
-        # 而不是用总记录数除以365（因为总记录数 = 城市数 * 365）
-        # 正确做法：先计算每个城市的样本覆盖率，再求平均
-        city_coverages = []
-        for city_name, records in city_records.items():
-            if records:
-                # 每个城市的期望天数是365（年度统计）
-                city_coverage = (len(records) / 365) * 100
-                city_coverages.append(city_coverage)
+    if not city_statistics:
+        return None
 
-        # 取所有城市的平均样本覆盖率
-        if city_coverages:
-            result['sample_coverage'] = safe_round(sum(city_coverages) / len(city_coverages), 2)
+    # 第二步：对各城市指标求平均值
+    result = {}
+
+    # 需要平均的字段列表
+    metrics_to_average = [
+        'so2_concentration', 'no2_concentration', 'pm10_concentration',
+        'pm2_5_concentration', 'co_concentration', 'o3_8h_concentration',
+        'so2_index', 'no2_index', 'pm10_index', 'pm2_5_index',
+        'co_index', 'o3_8h_index',
+        'comprehensive_index', 'comprehensive_index_new_limit_old_algo'
+    ]
+
+    # 计算各指标的平均值
+    for metric in metrics_to_average:
+        values = []
+        for city_stat in city_statistics.values():
+            value = city_stat.get(metric)
+            if value is not None:
+                values.append(value)
+
+        if values:
+            # 算术平均
+            result[metric] = safe_round(sum(values) / len(values), 3)
+
+    # 计算平均样本覆盖率
+    city_coverages = []
+    for city_name, records in valid_cities.items():
+        if records:
+            # 每个城市的期望天数是365（年度统计）
+            city_coverage = (len(records) / 365) * 100
+            city_coverages.append(city_coverage)
+
+    if city_coverages:
+        result['sample_coverage'] = safe_round(sum(city_coverages) / len(city_coverages), 2)
+
+    # 计算平均数据天数
+    data_days_list = [city_stat.get('data_days') for city_stat in city_statistics.values()
+                      if city_stat.get('data_days') is not None]
+    if data_days_list:
+        result['data_days'] = int(sum(data_days_list) / len(data_days_list))
+
+    # 计算城市总数和城市名称列表
+    result['city_count'] = len(city_names)
+    result['city_names'] = ','.join(sorted(city_names))
+
+    # 计算超标天数和达标率（求平均）
+    exceed_days_list = [city_stat.get('exceed_days') for city_stat in city_statistics.values()
+                        if city_stat.get('exceed_days') is not None]
+    if exceed_days_list:
+        result['exceed_days'] = int(sum(exceed_days_list) / len(exceed_days_list))
+
+    compliance_rates = [city_stat.get('compliance_rate') for city_stat in city_statistics.values()
+                        if city_stat.get('compliance_rate') is not None]
+    if compliance_rates:
+        result['compliance_rate'] = safe_round(sum(compliance_rates) / len(compliance_rates), 1)
+        result['exceed_rate'] = safe_round(100 - result['compliance_rate'], 1)
+
+    # 计算有效天数
+    valid_days_list = [city_stat.get('valid_days') for city_stat in city_statistics.values()
+                       if city_stat.get('valid_days') is not None]
+    if valid_days_list:
+        result['valid_days'] = int(sum(valid_days_list) / len(valid_days_list))
 
     return result
 
@@ -178,11 +233,11 @@ def normalize_city_name(city_name: str) -> str:
 
 
 # =============================================================================
-# 验证函数（使用bsd_city表动态查询）
+# 验证函数（使用 City 和 Province 表动态查询）
 # =============================================================================
 
 def validate_province_mapping(city_data: Dict[str, List[Dict]]) -> List[str]:
-    """验证所有城市都能正确映射到省份（使用bsd_city表）"""
+    """验证所有城市都能正确映射到省份（使用 City 和 Province 表）"""
     warnings = []
 
     try:
@@ -192,12 +247,12 @@ def validate_province_mapping(city_data: Dict[str, List[Dict]]) -> List[str]:
         conn = pyodbc.connect(sql_client.connection_string, timeout=30)
         cursor = conn.cursor()
 
-        # 从bsd_city表获取所有地级市的映射（省份使用level=1的简称）
+        # 从 City 和 Province 表获取所有地级市的映射
         cursor.execute("""
-            SELECT c.name as city_name, p.name as province_name
-            FROM bsd_city c
-            INNER JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
-            WHERE c.level = '2'
+            SELECT c.CityName as city_name, p.ProvinceName as province_name
+            FROM City c
+            INNER JOIN Province p ON c.ProvinceId = p.Id
+            WHERE c.CityType = 1
         """)
 
         city_to_province_map = {row.city_name: row.province_name for row in cursor}
@@ -208,16 +263,16 @@ def validate_province_mapping(city_data: Dict[str, List[Dict]]) -> List[str]:
         # 验证所有城市都能找到映射
         for city_name in city_data.keys():
             if city_name not in city_to_province_map:
-                warnings.append(f"城市 '{city_name}' 在bsd_city表中未找到")
+                warnings.append(f"城市 '{city_name}' 在 City 表中未找到")
 
     except pyodbc.Error as e:
-        warnings.append(f"查询bsd_city表失败: {str(e)}")
+        warnings.append(f"查询 City/Province 表失败: {str(e)}")
 
     return warnings
 
 
 def validate_city_count(statistics: List[Dict]) -> List[str]:
-    """验证每个省份报告的城市数量（从bsd_city表查询预期数量）"""
+    """验证每个省份报告的城市数量（从 City 表查询预期数量）"""
     warnings = []
 
     try:
@@ -227,13 +282,13 @@ def validate_city_count(statistics: List[Dict]) -> List[str]:
         conn = pyodbc.connect(sql_client.connection_string, timeout=30)
         cursor = conn.cursor()
 
-        # 从bsd_city表统计每个省份的地级市数量（省份使用level=1的简称）
+        # 从 City 表统计每个省份的地级市数量
         cursor.execute("""
-            SELECT p.name as province_name, COUNT(*) as city_count
-            FROM bsd_city c
-            INNER JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
-            WHERE c.level = '2'
-            GROUP BY p.name
+            SELECT p.ProvinceName as province_name, COUNT(*) as city_count
+            FROM City c
+            INNER JOIN Province p ON c.ProvinceId = p.Id
+            WHERE c.CityType = 1
+            GROUP BY p.ProvinceName
         """)
 
         expected_counts = {row.province_name: row.city_count for row in cursor}
@@ -253,13 +308,13 @@ def validate_city_count(statistics: List[Dict]) -> List[str]:
                 )
 
     except pyodbc.Error as e:
-        warnings.append(f"查询bsd_city表失败: {str(e)}")
+        warnings.append(f"查询 City/Province 表失败: {str(e)}")
 
     return warnings
 
 
 def validate_city_names_field(statistics: List[Dict], city_data: Dict) -> List[str]:
-    """验证 city_names 字段是否包含所有城市（使用bsd_city表）"""
+    """验证 city_names 字段是否包含所有城市（使用 City 和 Province 表）"""
     warnings = []
 
     try:
@@ -269,12 +324,12 @@ def validate_city_names_field(statistics: List[Dict], city_data: Dict) -> List[s
         conn = pyodbc.connect(sql_client.connection_string, timeout=30)
         cursor = conn.cursor()
 
-        # 从bsd_city表获取城市-省份映射（省份使用level=1的简称）
+        # 从 City 和 Province 表获取城市-省份映射
         cursor.execute("""
-            SELECT c.name as city_name, p.name as province_name
-            FROM bsd_city c
-            INNER JOIN bsd_city p ON c.parentid = p.code AND p.level = '1'
-            WHERE c.level = '2'
+            SELECT c.CityName as city_name, p.ProvinceName as province_name
+            FROM City c
+            INNER JOIN Province p ON c.ProvinceId = p.Id
+            WHERE c.CityType = 1
         """)
 
         city_to_province_map = {row.city_name: row.province_name for row in cursor}
@@ -301,7 +356,7 @@ def validate_city_names_field(statistics: List[Dict], city_data: Dict) -> List[s
                     )
 
     except pyodbc.Error as e:
-        warnings.append(f"查询bsd_city表失败: {str(e)}")
+        warnings.append(f"查询 City/Province 表失败: {str(e)}")
 
     return warnings
 
@@ -577,7 +632,7 @@ class ProvinceStatisticsFetcher(DataFetcher):
         """
         将城市数据按省份分组（增强版，带验证）
 
-        数据查询时已通过citycode与bsd_city表关联，直接使用记录中的province_name
+        数据查询时已通过 CityCode 与 City 和 Province 表关联，直接使用记录中的province_name
 
         Args:
             city_data: 城市数据字典，每个记录包含province_name字段

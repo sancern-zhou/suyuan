@@ -19,8 +19,8 @@ from .weather_models import (
 # 导入报告模板模型
 from .report_template import ReportTemplate, ReportGenerationHistory
 
-# 导入快速溯源模型
-from .quick_trace_models import QuickTraceAnalysis
+# 导入快速溯源模型（暂时注释，文件不存在）
+# from .quick_trace_models import QuickTraceAnalysis
 
 __all__ = [
     "Base",
@@ -35,7 +35,7 @@ __all__ = [
     "CityAQIPublishHistory",
     "ReportTemplate",
     "ReportGenerationHistory",
-    "QuickTraceAnalysis",
+    # "QuickTraceAnalysis",  # 暂时注释，文件不存在
 ]
 
 
