@@ -684,6 +684,9 @@ class AgentBridge:
                 if "timestamp" not in msg:
                     msg["timestamp"] = datetime.now().isoformat()
 
+            daily_note_entry = self._build_daily_note_entry(messages_to_consolidate)
+            memory_store.append_daily_note(daily_note_entry)
+
             
             consolidation_prompt = self._build_social_consolidation_prompt(
                 messages=messages_to_consolidate,
@@ -785,14 +788,38 @@ class AgentBridge:
             conversation_text,
             "",
             "## Instructions",
-            "1. Save stable user preferences, recurring needs, important facts, and long-term project context.",
-            "2. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
-            "3. Use remember_fact, replace_memory, or remove_memory to update MEMORY.md.",
-            "4. Keep memory concise. If usage is above 80%, prefer replacing or removing stale content before adding new facts.",
-            "5. Preserve the existing markdown structure when possible."
+            "1. The recent conversation has already been written to memory/YYYY-MM-DD.md as a daily note.",
+            "2. Only promote stable user preferences, recurring needs, important facts, and long-term project context to MEMORY.md.",
+            "3. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
+            "4. Use remember_fact, replace_memory, or remove_memory to update MEMORY.md.",
+            "5. Keep memory concise. If usage is above 80%, prefer replacing or removing stale content before adding new facts.",
+            "6. Preserve the existing markdown structure when possible."
         ]
 
         return "\n".join(prompt_parts)
+
+    def _build_daily_note_entry(self, messages: List[Dict[str, Any]]) -> str:
+        """Build a compact OpenClaw-style daily note entry from recent messages."""
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [f"## {timestamp}", ""]
+
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = str(msg.get("content", "")).strip()
+            if not content:
+                continue
+
+            if len(content) > 800:
+                content = content[:800].rstrip() + "..."
+
+            role_name = "用户" if role == "user" else "助手" if role == "assistant" else role
+            lines.append(f"**{role_name}**: {content}")
+            lines.append("")
+
+        lines.append("---")
+        return "\n".join(lines)
     async def _on_heartbeat_execute(self, tasks: list, user_id: str) -> dict:
         """Execute heartbeat tasks through the agent."""
         from datetime import datetime
