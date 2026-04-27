@@ -414,13 +414,16 @@ class ReActAgent:
                 }
             }
         finally:
-            # ✅ 保存会话消息到数据库（每次分析完成后）
+            # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
                     from app.agent.session import get_session_manager
                     from dataclasses import asdict
                     session_manager = get_session_manager()
+
+                    # ✅ 从数据库加载 session
                     session = await session_manager.load_session(actual_session_id)
+
                     if session:
                         # 同步 memory.session.conversation_history 到 Session 对象
                         if actual_session_id in self._session_store:
@@ -438,13 +441,52 @@ class ReActAgent:
                                     message_count=len(conversation_history_dicts)
                                 )
 
+                            # ✅ 从 _session_store 读取 agent.py 收集的数据
+                            collected_data_ids = entry.get("collected_data_ids", [])
+                            collected_visuals = entry.get("collected_visuals", [])
+                            conversation_history_compressed = entry.get("conversation_history_compressed")
+
+                            # 设置 data_ids 和 visual_ids
+                            if collected_data_ids:
+                                session.data_ids = collected_data_ids
+                                logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
+
+                            if collected_visuals:
+                                session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+                                # ✅ 保存完整的可视化数据到 metadata
+                                session.metadata["visualizations"] = collected_visuals
+                                session.metadata["visuals_count"] = len(collected_visuals)
+                                logger.info(
+                                    "visualizations_set_in_metadata",
+                                    session_id=actual_session_id,
+                                    visuals_count=len(collected_visuals)
+                                )
+
+                            # 如果有压缩的历史，使用压缩版本
+                            if conversation_history_compressed:
+                                session.conversation_history = conversation_history_compressed
+
                             # 同步 office_documents 到会话对象
                             office_docs = entry.get("office_documents", [])
                             if office_docs:
                                 session.office_documents = office_docs
 
-                        # 保存会话（包括 conversation_history）
+                            # 处理错误信息
+                            if entry.get("has_error"):
+                                session.error = {
+                                    "type": entry.get("error_type", "unknown"),
+                                    "message": entry.get("error_message", "Unknown error"),
+                                    "timestamp": datetime.now().isoformat()
+                                }
+
+                        # 保存会话
                         await session_manager.save_session(session)
+                        logger.info(
+                            "session_saved_after_analysis",
+                            session_id=actual_session_id,
+                            message_count=len(session.conversation_history),
+                            metadata_keys=list(session.metadata.keys()) if session.metadata else []
+                        )
                         logger.info(
                             "session_saved_after_analysis",
                             session_id=actual_session_id,
