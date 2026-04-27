@@ -397,12 +397,21 @@ class ToolExecutor:
             logger.info("Tool Result:")
             try:
                 # 尝试序列化结果，如果包含datetime对象会报错
-                logger.info(json.dumps(observation, ensure_ascii=False, indent=2, default=str))
+                result_str = json.dumps(observation, ensure_ascii=False, indent=2, default=str)
+                # 只显示前100个字符，避免日志过长
+                if len(result_str) > 100:
+                    logger.info(result_str[:100] + "...(truncated)")
+                else:
+                    logger.info(result_str)
             except Exception as e:
                 # 如果序列化失败，用字符串表示
                 logger.info(f"[无法JSON序列化: {str(e)}]")
                 logger.info(f"Result Type: {type(observation)}")
-                logger.info(f"Result: {observation}")
+                result_str = str(observation)
+                if len(result_str) > 100:
+                    logger.info(result_str[:100] + "...(truncated)")
+                else:
+                    logger.info(result_str)
             logger.info("="*80)
             # ========================================
 

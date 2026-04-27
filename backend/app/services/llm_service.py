@@ -1617,15 +1617,50 @@ class LLMService:
                 }
                 logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
             elif is_deepseek:
-                # ⚠️ DeepSeek 特殊处理：完全不使用 thinking mode
-                # DeepSeek API 要求：启用 thinking mode 时必须原样传回 thinking blocks
-                # 但 DeepSeek 返回的是 redacted_thinking（已被删除的内容），无法原样传回
-                # 解决方案：剥离所有 thinking blocks，不启用 thinking mode
+                # ⚠️ DeepSeek 特殊处理：根据上下文判断是否保留 thinking blocks
+                # DeepSeek 官方要求：
+                # 1. 同一次工具调用链路中，assistant 的 thinking + tool_use 必须与后续 tool_result 一起回传
+                # 2. 新一轮用户问题开始时，才移除 thinking blocks
                 # 参考：https://api-docs.deepseek.com/zh-cn/guides/anthropic_api
-                messages = self._strip_thinking_blocks(messages)
-                api_params["messages"] = messages
-                logger.info("deepseek_thinking_blocks_stripped", provider=self.provider, model=self.model,
-                           reason="DeepSeek does not support thinking mode with redacted_thinking")
+
+                # 检测是否是同一轮工具调用链路
+                is_continuation = False
+                if messages and len(messages) >= 2:
+                    last_msg = messages[-1]
+                    second_last_msg = messages[-2]
+
+                    # 如果最后一条是 user 消息（tool_result），倒数第二条是 assistant 消息（tool_use）
+                    # 说明是工具调用链路的继续
+                    if (last_msg.get("role") == "user" and
+                        second_last_msg.get("role") == "assistant"):
+                        last_content = last_msg.get("content", [])
+                        second_last_content = second_last_msg.get("content", [])
+
+                        # 检查是否包含 tool_result 和 tool_use
+                        has_tool_result = any(
+                            isinstance(block, dict) and block.get("type") == "tool_result"
+                            for block in (last_content if isinstance(last_content, list) else [])
+                        )
+                        has_tool_use = any(
+                            isinstance(block, dict) and block.get("type") == "tool_use"
+                            for block in (second_last_content if isinstance(second_last_content, list) else [])
+                        )
+
+                        if has_tool_result and has_tool_use:
+                            is_continuation = True
+
+                if is_continuation and has_thinking_blocks_in_history:
+                    # 同一轮工具调用链路：保留 thinking blocks，启用 thinking mode
+                    logger.info("deepseek_thinking_blocks_preserved", provider=self.provider, model=self.model,
+                               reason="Same tool call continuation, preserving thinking blocks")
+                    # 不剥离 thinking blocks，不显式禁用 thinking mode
+                else:
+                    # 新用户轮次：禁用 thinking mode，剥离 thinking blocks
+                    api_params["thinking"] = {"type": "disabled"}
+                    messages = self._strip_thinking_blocks(messages)
+                    api_params["messages"] = messages
+                    logger.info("deepseek_thinking_mode_disabled", provider=self.provider, model=self.model,
+                               reason="New user turn, disabling thinking mode and stripping thinking blocks")
             else:
                 # ✅ 其他非 Anthropic API：剥离 thinking blocks，避免兼容 API 触发 thinking mode 要求
                 # 参考 Claude Code 的 stripSignatureBlocks 策略
@@ -1778,15 +1813,50 @@ class LLMService:
             }
             logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
         elif is_deepseek:
-            # ⚠️ DeepSeek 特殊处理：完全不使用 thinking mode
-            # DeepSeek API 要求：启用 thinking mode 时必须原样传回 thinking blocks
-            # 但 DeepSeek 返回的是 redacted_thinking（已被删除的内容），无法原样传回
-            # 解决方案：剥离所有 thinking blocks，不启用 thinking mode
+            # ⚠️ DeepSeek 特殊处理：根据上下文判断是否保留 thinking blocks
+            # DeepSeek 官方要求：
+            # 1. 同一次工具调用链路中，assistant 的 thinking + tool_use 必须与后续 tool_result 一起回传
+            # 2. 新一轮用户问题开始时，才移除 thinking blocks
             # 参考：https://api-docs.deepseek.com/zh-cn/guides/anthropic_api
-            messages = self._strip_thinking_blocks(messages)
-            api_params["messages"] = messages
-            logger.info("deepseek_thinking_blocks_stripped", provider=self.provider, model=self.model,
-                       reason="DeepSeek does not support thinking mode with redacted_thinking")
+
+            # 检测是否是同一轮工具调用链路
+            is_continuation = False
+            if messages and len(messages) >= 2:
+                last_msg = messages[-1]
+                second_last_msg = messages[-2]
+
+                # 如果最后一条是 user 消息（tool_result），倒数第二条是 assistant 消息（tool_use）
+                # 说明是工具调用链路的继续
+                if (last_msg.get("role") == "user" and
+                    second_last_msg.get("role") == "assistant"):
+                    last_content = last_msg.get("content", [])
+                    second_last_content = second_last_msg.get("content", [])
+
+                    # 检查是否包含 tool_result 和 tool_use
+                    has_tool_result = any(
+                        isinstance(block, dict) and block.get("type") == "tool_result"
+                        for block in (last_content if isinstance(last_content, list) else [])
+                    )
+                    has_tool_use = any(
+                        isinstance(block, dict) and block.get("type") == "tool_use"
+                        for block in (second_last_content if isinstance(second_last_content, list) else [])
+                    )
+
+                    if has_tool_result and has_tool_use:
+                        is_continuation = True
+
+            if is_continuation and has_thinking_blocks_in_history:
+                # 同一轮工具调用链路：保留 thinking blocks，启用 thinking mode
+                logger.info("deepseek_thinking_blocks_preserved", provider=self.provider, model=self.model,
+                           reason="Same tool call continuation, preserving thinking blocks")
+                # 不剥离 thinking blocks，不显式禁用 thinking mode
+            else:
+                # 新用户轮次：禁用 thinking mode，剥离 thinking blocks
+                api_params["thinking"] = {"type": "disabled"}
+                messages = self._strip_thinking_blocks(messages)
+                api_params["messages"] = messages
+                logger.info("deepseek_thinking_mode_disabled", provider=self.provider, model=self.model,
+                           reason="New user turn, disabling thinking mode and stripping thinking blocks")
         else:
             # ✅ 其他非 Anthropic API：剥离 thinking blocks，避免兼容 API 触发 thinking mode 要求
             # 参考 Claude Code 的 stripSignatureBlocks 策略
