@@ -1640,7 +1640,7 @@ class LLMService:
                 "model": self.model,
                 "messages": messages,
                 "tools": tools or [],
-                "max_tokens": max_tokens or 4096,
+                "max_tokens": max_tokens or 16384,
                 "temperature": temperature
             }
 
@@ -1838,7 +1838,7 @@ class LLMService:
             "model": self.model,
             "messages": messages,
             "tools": tools or [],
-            "max_tokens": max_tokens or 4096,
+            "max_tokens": max_tokens or 16384,
             "temperature": temperature
         }
 

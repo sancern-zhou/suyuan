@@ -109,9 +109,7 @@ class AgentBridge:
         self._running = True
         self._consume_task = asyncio.create_task(self._consume_loop())
 
-        
-
-        
+        # ✅ 启动子Agent管理器
         if self.subagent_manager:
             await self.subagent_manager.start()
 
@@ -226,20 +224,22 @@ class AgentBridge:
             # 加载社交用户偏好、soul.md 和 USER.md
             user_preferences = None
 
-            
+
             social_soul_file_path = None
             social_user_file_path = None
+            social_heartbeat_file_path = None  # ✅ 新增
             social_soul_context = None
             social_user_context = None
             if self.mode == "social":
                 preferences_manager = UserPreferences(social_user_id)
                 user_preferences = preferences_manager.get_preferences()
 
-                
+
                 social_soul_file_path = str(preferences_manager.soul_file) if preferences_manager.soul_file else None
                 social_user_file_path = str(preferences_manager.user_file) if preferences_manager.user_file else None
+                social_heartbeat_file_path = str(preferences_manager.heartbeat_file) if preferences_manager.heartbeat_file else None  # ✅ 新增
 
-                
+
                 social_soul_context = preferences_manager.load_soul_md()
                 has_soul = len(social_soul_context.strip()) > 0 if social_soul_context else False
 
@@ -250,6 +250,7 @@ class AgentBridge:
                     user_id=social_user_id,
                     soul_file_path=social_soul_file_path,
                     user_file_path=social_user_file_path,
+                    heartbeat_file_path=social_heartbeat_file_path,  # ✅ 新增
                     has_soul=has_soul,
                     soul_length=len(social_soul_context) if social_soul_context else 0,
                     has_user_context=social_user_context is not None,
@@ -261,7 +262,7 @@ class AgentBridge:
                        session_id=session_id,
                        content_preview=msg.content[:100])
 
-            
+
             # 获取社交用户隔离的记忆存储
             social_memory_store = None
             social_user_prefs = None
@@ -283,14 +284,15 @@ class AgentBridge:
                 content=msg.content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
-                channel=msg.channel,  
-                social_user_id=social_user_id if self.mode == "social" else None,  
-                social_memory_store=social_memory_store,  
-                social_user_preferences=social_user_prefs,  
-                social_soul_file_path=social_soul_file_path,  
-                social_user_file_path=social_user_file_path,  
-                social_soul_context=social_soul_context,  
-                social_user_context=social_user_context  
+                channel=msg.channel,
+                social_user_id=social_user_id if self.mode == "social" else None,
+                social_memory_store=social_memory_store,
+                social_user_preferences=social_user_prefs,
+                social_soul_file_path=social_soul_file_path,
+                social_user_file_path=social_user_file_path,
+                social_heartbeat_file_path=social_heartbeat_file_path,  # ✅ 新增
+                social_soul_context=social_soul_context,
+                social_user_context=social_user_context
             )
 
             logger.info("Agent analysis completed",
@@ -343,7 +345,7 @@ class AgentBridge:
             error_msg = OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
-                content=f"澶勭悊璇锋眰鏃跺嚭閿? {str(e)}",
+                content=f"处理请求时出错: {str(e)}",
                 reply_to=msg.sender_id
             )
             await self.message_bus.publish_outbound(error_msg)
@@ -353,15 +355,16 @@ class AgentBridge:
         content: str,
         session_id: str,
         chat_id: str,
-        channel: str = None,  
-        memory_context: str = "",  
-        social_user_id: str = None,  
-        social_memory_store = None,  
-        social_user_preferences: dict = None,  
-        social_soul_file_path: str = None,  
-        social_user_file_path: str = None,  
-        social_soul_context: str = None,  
-        social_user_context: str = None  
+        channel: str = None,
+        memory_context: str = "",
+        social_user_id: str = None,
+        social_memory_store = None,
+        social_user_preferences: dict = None,
+        social_soul_file_path: str = None,
+        social_user_file_path: str = None,
+        social_heartbeat_file_path: str = None,  # ✅ 新增
+        social_soul_context: str = None,
+        social_user_context: str = None
     ) -> str:
         """聚合 Agent 事件并生成最终回复。"""
         events_buffer = []
@@ -376,16 +379,17 @@ class AgentBridge:
 
             # Call agent and collect events
             async for event in self.agent.analyze(
-                user_query=content,  
+                user_query=content,
                 session_id=session_id,
                 manual_mode=self.mode,
-                user_identifier=social_user_id if self.mode == "social" else None,  
-                social_memory_store=social_memory_store if self.mode == "social" else None,  
-                social_user_preferences=social_user_preferences if self.mode == "social" else None,  
-                social_soul_file_path=social_soul_file_path if self.mode == "social" else None,  
-                social_user_file_path=social_user_file_path if self.mode == "social" else None,  
-                social_soul_context=social_soul_context if self.mode == "social" else None,  
-                social_user_context=social_user_context if self.mode == "social" else None  
+                user_identifier=social_user_id if self.mode == "social" else None,
+                social_memory_store=social_memory_store if self.mode == "social" else None,
+                social_user_preferences=social_user_preferences if self.mode == "social" else None,
+                social_soul_file_path=social_soul_file_path if self.mode == "social" else None,
+                social_user_file_path=social_user_file_path if self.mode == "social" else None,
+                social_heartbeat_file_path=social_heartbeat_file_path if self.mode == "social" else None,  # ✅ 新增
+                social_soul_context=social_soul_context if self.mode == "social" else None,
+                social_user_context=social_user_context if self.mode == "social" else None
             ):
                 events_buffer.append(event)
 
@@ -445,13 +449,13 @@ class AgentBridge:
                     error_data = event.get("data", {})
                     error_msg = error_data.get("error", "Unknown error")
                     logger.warning("Agent error event", error=error_msg)
-                    return f"澶勭悊鏌ヨ鏃跺嚭閿? {error_msg}"
+                    return f"处理查询时出错: {error_msg}"
 
                 elif event_type == "fatal_error":
                     # Handle fatal error events
                     error_data = event.get("data", {})
                     if isinstance(error_data, dict):
-                        error_msg = error_data.get("error", "鏈煡閿欒")
+                        error_msg = error_data.get("error", "未知错误")
                         logger.error("Agent fatal error event", error=error_msg)
                         return f"系统遇到致命错误: {error_msg}\n\n请稍后重试或联系技术支持。"
 
@@ -468,7 +472,7 @@ class AgentBridge:
 
                 # Add tool call summary if available
                 if tool_calls:
-                    tool_summary = f"\n\n**浣跨敤鐨勫伐鍏?*: {', '.join(set(tool_calls))}"
+                    tool_summary = f"\n\n**使用的工具**: {', '.join(set(tool_calls))}"
                     full_text += tool_summary
 
                 return full_text
@@ -489,7 +493,7 @@ class AgentBridge:
                         session_id=session_id,
                         error=str(e),
                         exc_info=True)
-            return f"澶勭悊璇锋眰鏃跺嚭閿? {str(e)}"
+            return f"处理请求时出错: {str(e)}"
 
     def _extract_media_files(self, content: str) -> list[str]:
         """从回复内容中提取媒体文件路径。"""

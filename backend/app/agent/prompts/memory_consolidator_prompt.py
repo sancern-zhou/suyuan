@@ -31,7 +31,16 @@ def build_memory_consolidator_prompt(available_tools: List[str]) -> str:
 - 时间敏感的统计数据
 
 ## 可用工具
-{tools_list}
+你可以访问所有工具（{len(available_tools)}个），但应**优先使用以下记忆管理工具**：
+
+**核心记忆工具**：
+- `remember_fact` - 添加新记忆
+- `replace_memory` - 替换现有记忆
+- `remove_memory` - 删除过时记忆
+
+**辅助工具**（必要时使用）：
+- `read_file` - 读取记忆文件内容（在执行replace/remove前建议先读取确认精确内容）
+- `grep` - 搜索记忆文件中的关键词
 
 ## 工具详细说明与使用示例
 
