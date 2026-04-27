@@ -695,9 +695,9 @@ defineExpose({
   flex-direction: column;
   background: #fff;
   border-left: 1px solid #f0f0f0;
-  max-height: none !important;
-  overflow: visible !important;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .doc-list {
@@ -707,12 +707,17 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 0;
+  min-height: 0;
 }
 
 .doc-item {
   border: none;
   padding: 0;
   background: #fff;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .doc-preview {
@@ -721,6 +726,8 @@ defineExpose({
   min-height: 720px;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .action-buttons {
@@ -796,9 +803,6 @@ defineExpose({
   }
 }
 
-.office-panel.expanded .doc-preview {
-  min-height: calc(100vh - 120px);
-}
 
 .preview-loading,
 .preview-error {
@@ -849,13 +853,15 @@ defineExpose({
 
 .notebook-wrapper {
   width: 100%;
-  height: calc(100vh - 200px);
+  flex: 1;
   min-height: 600px;
+  display: flex;
+  flex-direction: column;
 }
 
 .notebook-iframe {
   width: 100%;
-  height: 100%;
+  flex: 1;
   border: none;
   display: block;
 }

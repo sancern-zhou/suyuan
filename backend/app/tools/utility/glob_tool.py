@@ -22,10 +22,11 @@ import structlog
 logger = structlog.get_logger()
 
 # 默认忽略的目录
+# 注意：backend_data_registry 移除此列表，因为用户需要访问上传的文件和定时任务配置
 IGNORED_DIRS = {
     "__pycache__", ".git", ".svn", "node_modules", ".venv", "venv",
     "env", ".env", "dist", "build", ".pytest_cache", ".mypy_cache",
-    "backend_data_registry", ".idea", ".vscode", ".DS_Store",
+    ".idea", ".vscode", ".DS_Store",
 }
 
 
@@ -84,10 +85,11 @@ class GlobTool(LLMTool):
             requires_context=False
         )
 
-        # 使用项目根目录（后端目录的父目录，动态适配实际部署路径）
-        self.working_dir = Path.cwd().parent  # 如 D:\溯源\ 或 /opt/app/
-        # 允许访问的额外目录（如临时目录）
-        self.allowed_dirs = [self.working_dir, Path("/tmp")]
+        # 使用backend目录作为工作目录
+        # 因为 backend_data_registry 等数据目录都在 backend 目录下
+        self.working_dir = Path.cwd()  # 当前目录：/home/xckj/suyuan/backend
+        # 允许访问的额外目录（项目根目录、临时目录）
+        self.allowed_dirs = [self.working_dir, self.working_dir.parent, Path("/tmp")]
 
     async def execute(
         self,

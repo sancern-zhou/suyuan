@@ -4,6 +4,7 @@ Token budget management for LLM context windows.
 简化版：只保留token计数和简单截断功能
 """
 import structlog
+from typing import Any
 
 logger = structlog.get_logger()
 
@@ -65,16 +66,28 @@ class TokenBudgetManager:
                 logger.warning("tiktoken_init_failed", error=str(e))
                 self.use_tiktoken = False
 
-    def count_tokens(self, text: str) -> int:
+    def count_tokens(self, text: Any) -> int:
         """
-        Count tokens in a text string.
+        Count tokens in a text string or Anthropic content blocks.
 
         Args:
-            text: Input text
+            text: Input text (str) or content blocks (list)
 
         Returns:
             Number of tokens
         """
+        if not text:
+            return 0
+
+        # Handle Anthropic content blocks (list of dicts)
+        if isinstance(text, list):
+            # Convert content blocks to string representation
+            text = self._content_blocks_to_text(text)
+        elif not isinstance(text, str):
+            # Handle other non-string types
+            logger.warning("count_tokens_non_string", type=type(text).__name__)
+            text = str(text)
+
         if not text:
             return 0
 
@@ -102,6 +115,57 @@ class TokenBudgetManager:
         # Estimated tokens: Chinese chars / 1.5 + Other chars / 4
         estimated = (chinese_chars / 1.5) + (other_chars / 4)
         return int(estimated)
+
+    def _content_blocks_to_text(self, content_blocks: list) -> str:
+        """
+        Convert Anthropic content blocks to text for token estimation.
+
+        Args:
+            content_blocks: List of content blocks (dict with type field)
+
+        Returns:
+            String representation of content blocks
+        """
+        if not isinstance(content_blocks, list):
+            return ""
+
+        text_parts = []
+        for block in content_blocks:
+            if not isinstance(block, dict):
+                continue
+
+            block_type = block.get("type", "")
+
+            if block_type == "text":
+                # Text block
+                text_parts.append(block.get("text", ""))
+            elif block_type == "tool_use":
+                # Tool use block
+                name = block.get("name", "")
+                input_data = block.get("input", {})
+                text_parts.append(f"[工具调用: {name}]")
+                # Add input as JSON for better estimation
+                if input_data:
+                    import json
+                    text_parts.append(json.dumps(input_data, ensure_ascii=False))
+            elif block_type == "tool_result":
+                # Tool result block
+                content = block.get("content", "")
+                if isinstance(content, str):
+                    text_parts.append(f"[工具结果: {content[:100]}]")
+                elif isinstance(content, list):
+                    # Handle nested content blocks
+                    text_parts.append(self._content_blocks_to_text(content))
+                else:
+                    text_parts.append(str(content))
+            elif block_type == "thinking":
+                # Thinking block
+                text_parts.append(f"[思考: {block.get('thinking', '')[:100]}]")
+            else:
+                # Unknown block type, include as string
+                text_parts.append(str(block))
+
+        return " ".join(text_parts)
 
     def _truncate_to_tokens(self, text: str, target_tokens: int) -> str:
         """

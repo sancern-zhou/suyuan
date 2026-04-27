@@ -17,6 +17,7 @@ def build_social_prompt(
     memory_file_path: str = None,
     soul_file_path: str = None,  # ✅ 新增：soul.md 文件路径
     user_file_path: str = None,  # ✅ 新增：USER.md 文件路径
+    heartbeat_file_path: str = None,  # ✅ 新增：HEARTBEAT.md 文件路径
     memory_context: Optional[str] = None,  # ✅ 记忆上下文内容（MEMORY.md）
     soul_context: Optional[str] = None,  # ✅ 新增：soul.md 内容（助理灵魂档案）
     user_context: Optional[str] = None  # ✅ 新增：用户上下文内容（USER.md）
@@ -180,6 +181,14 @@ def build_social_prompt(
     if user_file_path:
         prompt_parts.extend([
             f"**用户档案文件**：`{user_file_path}`\n",
+            "\n",
+        ])
+
+    # ✅ 动态添加 HEARTBEAT.md 文件路径（定时任务配置）
+    if heartbeat_file_path:
+        prompt_parts.extend([
+            f"**我的定时任务文件**：`{heartbeat_file_path}`\n",
+            "💡 **提示**：使用 `read_file(path='{heartbeat_file_path}')` 可以直接查看当前用户的所有定时任务配置\n",
             "\n",
         ])
 
