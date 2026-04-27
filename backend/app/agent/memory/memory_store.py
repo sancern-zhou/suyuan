@@ -272,6 +272,64 @@ class MemoryStore:
             reverse=True,
         )
 
+    def append_dream_candidate(self, entry: str, note_date: Optional[str] = None) -> Path:
+        """追加候选记忆到 memory/.dreams/YYYY-MM-DD.md。"""
+        note_date = note_date or datetime.now().strftime("%Y-%m-%d")
+        dream_file = self.dreams_dir / f"{note_date}.md"
+
+        if not dream_file.exists():
+            dream_file.write_text(
+                f"# Dream Candidates {note_date}\n\n此文件记录待观察、待晋升的候选长期记忆，不直接作为事实注入普通对话。\n",
+                encoding="utf-8",
+            )
+
+        current_content = dream_file.read_text(encoding="utf-8")
+        normalized_entry = entry.rstrip() + "\n\n"
+
+        if len(current_content) + len(normalized_entry) > self.max_history_size:
+            keep_size = int(self.max_history_size * 0.8)
+            current_content = current_content[-keep_size:]
+            if not current_content.startswith("#"):
+                current_content = f"# Dream Candidates {note_date}\n\n... (older candidates truncated)\n\n{current_content}"
+
+        dream_file.write_text(current_content + normalized_entry, encoding="utf-8")
+        logger.debug("dream_candidate_updated", path=str(dream_file), entry_length=len(normalized_entry))
+        return dream_file
+
+    def list_dream_candidates(self) -> List[Path]:
+        """列出 dream candidate 文件，按日期倒序。"""
+        if not self.dreams_dir.exists():
+            return []
+        return sorted(
+            [
+                path for path in self.dreams_dir.glob("*.md")
+                if path.is_file() and path.parent == self.dreams_dir
+            ],
+            reverse=True,
+        )
+
+    def read_recent_dreams(self, max_files: int = 5, max_chars: int = 6000) -> str:
+        """读取最近的 dreaming 候选，供 consolidator 晋升判断使用。"""
+        chunks = []
+        remaining = max_chars
+
+        for dream_file in self.list_dream_candidates()[:max_files]:
+            if remaining <= 0:
+                break
+
+            content = dream_file.read_text(encoding="utf-8").strip()
+            if not content:
+                continue
+
+            chunk = f"## {dream_file.name}\n{content}"
+            if len(chunk) > remaining:
+                chunk = chunk[:remaining].rstrip() + "\n...[truncated]"
+
+            chunks.append(chunk)
+            remaining -= len(chunk)
+
+        return "\n\n".join(chunks)
+
     async def _update_memory(
         self,
         messages: List[Dict[str, Any]],

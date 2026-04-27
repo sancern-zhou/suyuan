@@ -687,11 +687,16 @@ class AgentBridge:
             daily_note_entry = self._build_daily_note_entry(messages_to_consolidate)
             memory_store.append_daily_note(daily_note_entry)
 
+            dream_candidate_entry = self._build_dream_candidate_entry(messages_to_consolidate)
+            memory_store.append_dream_candidate(dream_candidate_entry)
+            recent_dreams = memory_store.read_recent_dreams()
+
             
             consolidation_prompt = self._build_social_consolidation_prompt(
                 messages=messages_to_consolidate,
                 existing_memory=existing_memory,
-                memory_file_path=memory_file_path
+                memory_file_path=memory_file_path,
+                recent_dreams=recent_dreams
             )
 
             
@@ -755,7 +760,8 @@ class AgentBridge:
         self,
         messages: List[Dict[str, Any]],
         existing_memory: str,
-        memory_file_path: str
+        memory_file_path: str,
+        recent_dreams: str = ""
     ) -> str:
         """Build the prompt used by the social memory consolidator."""
         conversation_text = "\n".join([
@@ -784,16 +790,24 @@ class AgentBridge:
             "## Memory File",
             memory_file_path or "(unknown)",
             "",
+            "## Recent Dream Candidates",
+            "These are candidate memories from memory/.dreams/. They are not confirmed facts yet.",
+            "```",
+            recent_dreams.strip() if recent_dreams and recent_dreams.strip() else "(empty)",
+            "```",
+            "",
             "## Recent Conversation",
+            "Use this only as evidence for the dream candidates. Do not promote one-off details directly from raw conversation.",
             conversation_text,
             "",
             "## Instructions",
             "1. The recent conversation has already been written to memory/YYYY-MM-DD.md as a daily note.",
-            "2. Only promote stable user preferences, recurring needs, important facts, and long-term project context to MEMORY.md.",
-            "3. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
-            "4. Use remember_fact, replace_memory, or remove_memory to update MEMORY.md.",
-            "5. Keep memory concise. If usage is above 80%, prefer replacing or removing stale content before adding new facts.",
-            "6. Preserve the existing markdown structure when possible."
+            "2. Candidate memories have been written to memory/.dreams/YYYY-MM-DD.md as a dreaming layer.",
+            "3. Promote only durable candidates from Recent Dream Candidates to MEMORY.md.",
+            "4. Do not save one-off chit-chat, temporary status, or sensitive data unless the user explicitly asks.",
+            "5. Use remember_fact, replace_memory, or remove_memory to update MEMORY.md.",
+            "6. Keep memory concise. If usage is above 80%, prefer replacing or removing stale content before adding new facts.",
+            "7. Preserve the existing markdown structure when possible."
         ]
 
         return "\n".join(prompt_parts)
@@ -819,6 +833,45 @@ class AgentBridge:
             lines.append("")
 
         lines.append("---")
+        return "\n".join(lines)
+
+    def _build_dream_candidate_entry(self, messages: List[Dict[str, Any]]) -> str:
+        """Build a conservative dreaming candidate entry for later promotion."""
+        from datetime import datetime
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [
+            f"## {timestamp}",
+            "",
+            "状态: candidate",
+            "说明: 以下内容是待观察候选，不是已确认长期事实；只有稳定、重复或用户明确要求记住的内容才可晋升 MEMORY.md。",
+            "",
+            "### Evidence",
+        ]
+
+        for msg in messages[-10:]:
+            role = msg.get("role", "unknown")
+            content = str(msg.get("content", "")).strip()
+            if not content:
+                continue
+
+            if len(content) > 500:
+                content = content[:500].rstrip() + "..."
+
+            role_name = "用户" if role == "user" else "助手" if role == "assistant" else role
+            lines.append(f"- {role_name}: {content}")
+
+        lines.extend([
+            "",
+            "### Promotion Criteria",
+            "- 用户明确说“记住”或纠正了长期偏好",
+            "- 多次出现的稳定偏好、长期需求或项目背景",
+            "- 可复用的领域知识或经过验证的长期结论",
+            "- 排除一次性任务、临时状态、工具过程和时效性数据",
+            "",
+            "---",
+        ])
+
         return "\n".join(lines)
     async def _on_heartbeat_execute(self, tasks: list, user_id: str) -> dict:
         """Execute heartbeat tasks through the agent."""
