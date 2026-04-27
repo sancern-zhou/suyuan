@@ -217,6 +217,7 @@ class SimplifiedContextBuilder:
             memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅social模式使用）
             soul_file_path=self.soul_file_path,  # ✅ 传递 soul.md 文件路径
             user_file_path=self.user_file_path,  # ✅ 传递 USER.md 文件路径
+            heartbeat_file_path=self.heartbeat_file_path,  # ✅ 传递 HEARTBEAT.md 文件路径
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
             user_context=self.user_context  # ✅ 传递用户上下文内容（USER.md）

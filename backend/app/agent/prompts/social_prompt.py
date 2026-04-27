@@ -183,7 +183,7 @@ def build_social_prompt(
     if heartbeat_file_path:
         prompt_parts.extend([
             f"**我的定时任务文件**：`{heartbeat_file_path}`\n",
-            "💡 **提示**：使用 `read_file(path='{heartbeat_file_path}')` 可以直接查看当前用户的所有定时任务配置\n",
+            f"提示：使用 `read_file(path='{heartbeat_file_path}')` 可以直接查看当前用户的所有定时任务配置\n",
             "\n",
         ])
 
