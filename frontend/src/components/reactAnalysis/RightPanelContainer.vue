@@ -59,7 +59,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import VisualizationPanel from '@/components/VisualizationPanel.vue'
 import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
@@ -117,12 +117,21 @@ const emit = defineEmits([
   'office-edit-submit'
 ])
 
+// 添加调试
+watch(() => props.activeTab, (newVal) => {
+  console.log('[RightPanelContainer] activeTab changed to:', newVal)
+})
+
+watch(() => props.visible, (newVal) => {
+  console.log('[RightPanelContainer] visible changed to:', newVal)
+})
+
 const vizPanelRef = ref(null)
 const officePanelRef = ref(null)
 
 const showTabs = computed(() => {
-  // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.vizPanelVisible || props.officePanelVisible
+  // 只要有任意一个面板可见，或者当前标签页是文件管理，就显示标签页切换按钮
+  return props.vizPanelVisible || props.officePanelVisible || props.activeTab === 'files'
 })
 
 const handleTabChange = (tab) => {

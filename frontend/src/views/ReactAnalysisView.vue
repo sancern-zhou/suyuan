@@ -121,6 +121,7 @@ import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import { PANEL_SIZES } from '@/utils/constants'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -344,6 +345,16 @@ const handleSidebarAction = async (actionId) => {
     case 'social-platform':
       console.log('[ReactAnalysisView] Showing social-platform panel')
       showManagementPanel('social-platform')
+      break
+    case 'file-manager':
+      console.log('[ReactAnalysisView] Showing file-manager panel')
+      console.log('[ReactAnalysisView] Before - activeRightTab:', activeRightTab.value, 'rightPanelVisible:', rightPanelVisible.value)
+      // 显示右侧面板并切换到文件管理标签页
+      activeRightTab.value = 'files'
+      rightPanelVisible.value = true
+      leftSidebarCollapsed.value = true
+      vizWidth.value = PANEL_SIZES.COLLAPSED_VIZ_WIDTH
+      console.log('[ReactAnalysisView] After - activeRightTab:', activeRightTab.value, 'rightPanelVisible:', rightPanelVisible.value, 'vizWidth:', vizWidth.value)
       break
     case 'restart-session':
       console.log('[ReactAnalysisView] Restarting session')

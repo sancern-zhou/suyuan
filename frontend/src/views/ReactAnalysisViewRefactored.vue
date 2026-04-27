@@ -118,6 +118,7 @@ import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import { PANEL_SIZES } from '@/utils/constants'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -164,6 +165,9 @@ const {
   setLayoutRef,
   setupWatchers: setupPanelWatchers
 } = usePanelManagement(store)
+
+// 定义折叠宽度
+const collapsedVizWidth = PANEL_SIZES.COLLAPSED_VIZ_WIDTH
 
 // 会话管理
 const {
@@ -333,6 +337,13 @@ const handleSidebarAction = async (actionId) => {
       break
     case 'social-platform':
       showManagementPanel('social-platform')
+      break
+    case 'file-manager':
+      // 显示右侧面板并切换到文件管理标签页
+      activeRightTab.value = 'files'
+      rightPanelVisible.value = true
+      leftSidebarCollapsed.value = true
+      vizWidth.value = collapsedVizWidth
       break
     case 'restart-session':
       store.restart()

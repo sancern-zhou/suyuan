@@ -162,6 +162,7 @@ const downloadFile = (path) => {
 
 // 生命周期
 onMounted(() => {
+  console.log('[FileManagerPanel] Component mounted, loading directory...')
   loadDirectory()
 })
 </script>
