@@ -140,8 +140,10 @@ class KnowledgeBaseService:
         elif not owner_id:
             raise ValueError("Private knowledge base requires owner_id")
 
-        # 创建Qdrant Collection
-        await self.vector_store.create_collection(collection_name)
+        # 创建Qdrant Collection。新建知识库必须使用 hybrid 结构，避免后续静默降级。
+        await self.vector_store.create_collection(collection_name, enable_hybrid=True)
+        if not self.vector_store._collection_supports_hybrid(collection_name):
+            raise RuntimeError(f"Failed to create hybrid collection: {collection_name}")
 
         # 创建数据库记录
         kb = KnowledgeBase(
@@ -348,6 +350,7 @@ class KnowledgeBaseService:
             except Exception as update_err:
                 logger.error("failed_to_update_status", doc_id=doc_id, error=str(update_err))
             logger.error("document_processing_failed", doc_id=doc_id, error=str(e))
+            raise
 
         # 返回最新状态的文档
         from app.db.database import async_session
@@ -670,25 +673,35 @@ class KnowledgeBaseService:
         )
 
         async def search_single_kb(kb: KnowledgeBase):
-            if use_hybrid:
-                # 使用混合检索（Dense + Sparse BM25）
-                kb_results = await self.vector_store.hybrid_search(
-                    collection_name=kb.qdrant_collection,
-                    query=query,
-                    top_k=recall_per_kb,
-                    score_threshold=score_threshold,
-                    alpha=alpha,
-                    filters=filters
+            try:
+                if use_hybrid:
+                    # 使用混合检索（Dense + Sparse BM25）
+                    kb_results = await self.vector_store.hybrid_search(
+                        collection_name=kb.qdrant_collection,
+                        query=query,
+                        top_k=recall_per_kb,
+                        score_threshold=score_threshold,
+                        alpha=alpha,
+                        filters=filters
+                    )
+                else:
+                    # 纯向量检索
+                    kb_results = await self.vector_store.search(
+                        collection_name=kb.qdrant_collection,
+                        query=query,
+                        top_k=recall_per_kb,
+                        score_threshold=score_threshold,
+                        filters=filters
+                    )
+            except RuntimeError as e:
+                logger.warning(
+                    "knowledge_search_kb_skipped",
+                    kb_id=kb.id,
+                    kb_name=kb.name,
+                    collection=kb.qdrant_collection,
+                    error=str(e)
                 )
-            else:
-                # 纯向量检索
-                kb_results = await self.vector_store.search(
-                    collection_name=kb.qdrant_collection,
-                    query=query,
-                    top_k=recall_per_kb,
-                    score_threshold=score_threshold,
-                    filters=filters
-                )
+                return []
             for result in kb_results:
                 result["knowledge_base"] = {
                     "id": kb.id,
