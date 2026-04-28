@@ -830,6 +830,9 @@ class DocumentProcessor:
                     llm_mode=llm_mode
                 )
 
+            # LLM偶尔会把标准/附录合成大块，入库前按条款/表格边界做确定性细拆。
+            all_chunks = self._split_large_chunks(all_chunks, max_size=max(900, chunk_size))
+
             # 添加上下文前缀增强（Contextual Chunking）
             all_chunks = self._enhance_chunks_with_context_prefix(all_chunks, filename)
 
@@ -881,7 +884,9 @@ class DocumentProcessor:
 
         ## 任务
         1. 首先分析文档，提取标题、类型、主题等信息
-        2. 然后按语义分块，每块500-1500字符
+        2. 然后按语义分块，每块300-800字符，最长不要超过1000字符
+        3. 技术标准/规范类文档必须优先按章节号、条款号、表号、公式号切分
+        4. 定义、适用范围、评价项目、分级标准、计算公式、限值表、附录应尽量独立成块
 
         ## 表格处理规则（重要）
 如果识别到表格内容（即使格式混乱），必须：
@@ -892,6 +897,7 @@ class DocumentProcessor:
 2. 表格前的说明文字（如"表1 排放限值"）与表格合并为一个chunk
         3. type字段标记为"table"
         4. 表头必须完整，不能遗漏列
+        5. 长表格可拆成多个chunk，但每个chunk必须重复表名和完整表头
 
         ## 输出要求（严格约束，务必遵守，否则系统将解析失败）
         你必须严格按照以下要求输出：
@@ -1068,6 +1074,7 @@ class DocumentProcessor:
                     })
             
             chunks = self._merge_small_chunks(chunks, min_size=150)
+            chunks = self._split_large_chunks(chunks, max_size=max(900, chunk_size))
             if not chunks:
                 raise ValueError("LLM分块结果为空，请重试")
             return chunks
@@ -1176,11 +1183,12 @@ class DocumentProcessor:
 将以下文档片段按语义分块，用于知识库检索。
 
 ## 规则
-1. 分块大小：500-1500字符，宁大勿小
+1. 分块大小：300-800字符，最长不要超过1000字符
 2. 跳过：纯目录、页眉页脚、版权声明
 3. topic要具体：结合文档信息，写明"某某法/标准的某某条款"
 4. 列表/步骤保持完整
 5. 避免重复：本段只覆盖“当前片段”内容；不要重复输出前一段/后一段已出现的整段内容（允许少量承接句用于语义完整）。
+6. 技术标准/规范类文档优先按章节号、条款号、表号、公式号切分；定义、评价项目、分级标准、计算公式、附录独立成块。
 
 ## 表格处理规则（重要）
 如果识别到表格内容（即使OCR后格式混乱），必须：
@@ -1233,7 +1241,8 @@ class DocumentProcessor:
             
             if not chunks:
                 raise ValueError(f"LLM分块结果为空（segment {segment_index + 1}），请重试")
-            return self._merge_small_chunks(chunks, min_size=150)
+            chunks = self._merge_small_chunks(chunks, min_size=150)
+            return self._split_large_chunks(chunks, max_size=900)
             
         except Exception as e:
             logger.error("llm_chunk_segment_failed", error=str(e), segment_index=segment_index)
@@ -1701,6 +1710,109 @@ class DocumentProcessor:
         except Exception as e:
             logger.error("llm_chunk_segment_failed", error=str(e), error_type=type(e).__name__)
             raise RuntimeError(f"LLM分块失败: {str(e)}")
+
+    def _split_large_chunks(self, chunks: List[Dict[str, Any]], max_size: int = 900) -> List[Dict[str, Any]]:
+        """按条款、段落和表格行拆分过大的LLM chunk，避免粗粒度影响召回。"""
+        if not chunks:
+            return chunks
+
+        split_chunks = []
+        for chunk in chunks:
+            content = (chunk.get("content") or "").strip()
+            if len(content) <= max_size:
+                split_chunks.append(chunk)
+                continue
+
+            parts = self._split_large_chunk_content(content, max_size=max_size)
+            if len(parts) <= 1:
+                split_chunks.append(chunk)
+                continue
+
+            metadata = dict(chunk.get("metadata", {}) or {})
+            for idx, part in enumerate(parts):
+                new_chunk = chunk.copy()
+                new_metadata = dict(metadata)
+                topic = new_metadata.get("topic", "")
+                if topic:
+                    new_metadata["topic"] = f"{topic}（续{idx + 1}）"
+                new_metadata["split_from"] = chunk.get("id")
+                new_metadata["split_index"] = idx
+                new_metadata["split_count"] = len(parts)
+                new_chunk["id"] = f"{chunk.get('id', 'chunk')}_part_{idx}"
+                new_chunk["content"] = part
+                new_chunk["original_content"] = part
+                new_chunk["metadata"] = new_metadata
+                split_chunks.append(new_chunk)
+
+        if len(split_chunks) != len(chunks):
+            logger.info(
+                "large_chunks_split",
+                original_count=len(chunks),
+                split_count=len(split_chunks),
+                max_size=max_size
+            )
+        return split_chunks
+
+    def _split_large_chunk_content(self, content: str, max_size: int) -> List[str]:
+        """确定性拆分单个大chunk，优先保留章节/条款/表格上下文。"""
+        lines = [line.rstrip() for line in content.splitlines()]
+        table_lines = [line for line in lines if line.strip().startswith("|") and line.strip().endswith("|")]
+        if len(table_lines) >= 4:
+            return self._split_markdown_table_chunk(content, max_size=max_size)
+
+        normalized = re.sub(
+            r'\n(?=(?:第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|\d+(?:\.\d+)*\s+|附录|附表|表\s*\d+|公式|式\s*\d+))',
+            '\n\n',
+            content
+        )
+        units = [part.strip() for part in re.split(r'\n\s*\n', normalized) if part.strip()]
+        if len(units) <= 1:
+            units = [part.strip() for part in re.split(r'(?<=[。；;])\s*', content) if part.strip()]
+
+        parts = []
+        current = ""
+        for unit in units:
+            candidate = f"{current}\n\n{unit}".strip() if current else unit
+            if len(candidate) <= max_size:
+                current = candidate
+                continue
+            if current:
+                parts.append(current)
+            if len(unit) <= max_size:
+                current = unit
+            else:
+                hard_parts = [unit[i:i + max_size] for i in range(0, len(unit), max_size)]
+                parts.extend(hard_parts[:-1])
+                current = hard_parts[-1]
+        if current:
+            parts.append(current)
+        return parts or [content]
+
+    def _split_markdown_table_chunk(self, content: str, max_size: int) -> List[str]:
+        """拆长Markdown表格；每段重复表名前缀和表头，保证单块可读。"""
+        lines = [line.rstrip() for line in content.splitlines() if line.strip()]
+        first_table_idx = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), 0)
+        prefix = "\n".join(lines[:first_table_idx]).strip()
+        table = lines[first_table_idx:]
+        if len(table) < 3:
+            return [content[i:i + max_size] for i in range(0, len(content), max_size)]
+
+        header = table[:2]
+        rows = table[2:]
+        parts = []
+        current_rows = []
+        for row in rows:
+            candidate_lines = ([prefix] if prefix else []) + header + current_rows + [row]
+            candidate = "\n".join(candidate_lines).strip()
+            if len(candidate) <= max_size:
+                current_rows.append(row)
+                continue
+            if current_rows:
+                parts.append("\n".join(([prefix] if prefix else []) + header + current_rows).strip())
+            current_rows = [row]
+        if current_rows:
+            parts.append("\n".join(([prefix] if prefix else []) + header + current_rows).strip())
+        return parts or [content]
 
     def _merge_small_chunks(self, chunks: List[Dict[str, Any]], min_size: int = 150) -> List[Dict[str, Any]]:
         """合并过小的分块"""
