@@ -151,11 +151,28 @@ class ReActLoop:
             manual_override=manual_mode is not None
         )
 
-        # ReAct 循环（默认）
-        async for event in self._run_react_loop(
-            user_query,
-            enhance_with_history,
-            initial_messages  # ✅ 传递历史消息
+        # 新 runtime：将流式输出、工具执行、会话写入、最终完成拆分到独立组件。
+        from ..runtime import AgentRuntime, AgentRuntimeConfig
+
+        runtime = AgentRuntime(AgentRuntimeConfig(
+            memory_manager=self.memory,
+            planner=self.planner,
+            tool_executor=self.executor,
+            context_builder=self.context_builder,
+            task_completion_guard=self.task_completion_guard,
+            max_iterations=self.max_iterations,
+            enhance_with_history=enhance_with_history,
+            enable_reasoning=self.enable_reasoning,
+            is_interruption=self.is_interruption,
+            knowledge_base_ids=self.knowledge_base_ids,
+            agent_logger=self.agent_logger,
+            schema_injector=self.schema_injector,
+        ))
+
+        async for event in runtime.run(
+            user_query=user_query,
+            initial_messages=initial_messages,
+            mode=self.current_mode,
         ):
             # 附加模式信息到事件
             event["mode"] = self.current_mode
