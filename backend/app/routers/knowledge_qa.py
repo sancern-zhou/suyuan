@@ -270,7 +270,6 @@ async def search_knowledge_bases(
             return route_results, route_elapsed
 
         # HyDE优化：原始问题一路立即检索；关键词一路等HyDE生成后检索，两路并行合并。
-        search_query = query
         hyde_used = False
         hyde_keywords = ""
         hyde_elapsed = 0.0
@@ -382,8 +381,7 @@ async def search_knowledge_bases(
                     "retrieval_route": r.get("retrieval_route"),
                     "retrieval_routes": r.get("retrieval_routes", []),
                     "retrieval_metadata": {
-                        "search_query": search_query,
-                        "search_queries": {
+                        "route_queries": {
                             "original": query,
                             "hyde_keywords": hyde_keywords or None
                         },

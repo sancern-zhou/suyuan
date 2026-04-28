@@ -39,6 +39,57 @@ from .workflow_tool import WorkflowTool
 logger = structlog.get_logger()
 
 
+def _build_document_read_targets(documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按文档聚合命中chunk，给Agent后续阅读相邻块或全文块的目标。"""
+    targets_by_key: Dict[tuple, Dict[str, Any]] = {}
+
+    for doc in documents:
+        kb_id = doc.get("knowledge_base_id")
+        doc_id = doc.get("document_id")
+        if not kb_id or not doc_id:
+            continue
+
+        key = (kb_id, doc_id)
+        chunk_index = doc.get("chunk_index")
+        target = targets_by_key.setdefault(key, {
+            "knowledge_base_id": kb_id,
+            "knowledge_base_name": doc.get("knowledge_base_name", ""),
+            "document_id": doc_id,
+            "document_name": doc.get("document_name", ""),
+            "matched_chunk_indices": [],
+            "matched_sections": [],
+            "matched_topics": [],
+            "best_score": doc.get("score", 0.0),
+            "suggested_reading": {
+                "default_mode": "neighbor_chunks",
+                "neighbor_window": 2,
+                "full_document_mode": "all_chunks",
+                "reader_tool": "knowledge_document_reader"
+            },
+            "read_reason": "命中chunk只是定位证据；严肃知识问答应按document_id和chunk_index读取相邻块后再回答。"
+        })
+
+        if chunk_index is not None and chunk_index not in target["matched_chunk_indices"]:
+            target["matched_chunk_indices"].append(chunk_index)
+
+        section = doc.get("section")
+        if section and section not in target["matched_sections"]:
+            target["matched_sections"].append(section)
+
+        topic = doc.get("topic")
+        if topic and topic not in target["matched_topics"]:
+            target["matched_topics"].append(topic)
+
+        target["best_score"] = max(float(target.get("best_score") or 0), float(doc.get("score") or 0))
+
+    targets = list(targets_by_key.values())
+    for target in targets:
+        target["matched_chunk_indices"].sort()
+
+    targets.sort(key=lambda item: item.get("best_score", 0), reverse=True)
+    return targets
+
+
 class KnowledgeQAWorkflow(WorkflowTool):
     """
     知识库检索工作流
@@ -171,6 +222,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             # 构建来源信息（用于data字段）
             sources = []
             retrieval_metadata = documents[0].get("retrieval_metadata", {}) if documents else {}
+            document_read_targets = _build_document_read_targets(documents)
             for doc in documents[:5]:  # 最多返回5篇参考文档
                 # 获取完整内容，不再截断
                 content = doc.get("content", "")
@@ -204,6 +256,12 @@ class KnowledgeQAWorkflow(WorkflowTool):
             data = {
                 "query": actual_query,
                 "sources": sources,
+                "document_read_targets": document_read_targets,
+                "reading_requirement": {
+                    "applies_to": "严肃知识问答、标准条款解释、计算方法、表格/公式解读、跨章节总结",
+                    "required_action": "按document_read_targets中的document_id和matched_chunk_indices，调用knowledge_document_reader读取相邻chunks；需要全文概括时读取all_chunks。",
+                    "do_not_answer_from_chunks_only": True
+                },
                 "total_retrieved": len(documents),
                 "retrieval_metadata": retrieval_metadata,
                 "retrieval_summary": f"从知识库中检索到 {len(documents)} 篇相关文档"
@@ -218,6 +276,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 extra_metadata={
                     "retrieval_only": True,  # ✅ 标记：仅检索，不生成回答
                     "documents_count": len(documents),
+                    "document_read_targets_count": len(document_read_targets),
                     "retrieval_metadata": retrieval_metadata
                 }
             )

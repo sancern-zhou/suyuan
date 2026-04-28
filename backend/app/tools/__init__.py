@@ -821,6 +821,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_qa_workflow", error=str(e))
 
+    try:
+        from app.tools.workflow.knowledge_document_reader import KnowledgeDocumentReader
+        registry.register(KnowledgeDocumentReader(), priority=49)
+        logger.info("tool_loaded", tool="knowledge_document_reader")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="knowledge_document_reader", error=str(e))
+
     # ========================================
     # Planning Tools（规划工具）
     # ========================================
