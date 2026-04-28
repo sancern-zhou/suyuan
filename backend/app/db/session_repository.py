@@ -13,7 +13,7 @@
 import json
 import structlog
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -322,21 +322,10 @@ class SessionRepository:
                             # 解析 role 和 msg_type
                             role, msg_type = self._resolve_role_and_type(msg)
 
-                            # 解析时间戳
-                            timestamp = None
-                            if msg.get("timestamp"):
-                                try:
-                                    timestamp = datetime.fromisoformat(msg["timestamp"])
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(
-                                        "invalid_timestamp_format",
-                                        session_id=session_id,
-                                        timestamp=msg.get("timestamp"),
-                                        error=str(e)
-                                    )
-                                    timestamp = datetime.utcnow()
-                            else:
-                                timestamp = datetime.utcnow()
+                            timestamp = self._normalize_db_timestamp(
+                                msg.get("timestamp"),
+                                session_id=session_id,
+                            )
 
                             # 提取元数据（排除已知字段）
                             known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
@@ -425,7 +414,10 @@ class SessionRepository:
                     msg_type=msg_type,
                     content=content,
                     data=msg_data,
-                    timestamp=datetime.fromisoformat(message["timestamp"]) if message.get("timestamp") else datetime.utcnow(),
+                    timestamp=self._normalize_db_timestamp(
+                        message.get("timestamp"),
+                        session_id=session_id,
+                    ),
                     msg_metadata=msg_metadata,
                     sequence_number=sequence_number
                 )
@@ -442,6 +434,31 @@ class SessionRepository:
                     error=str(e)
                 )
                 return False
+
+    def _normalize_db_timestamp(self, value: Any, session_id: Optional[str] = None) -> datetime:
+        """Return a naive UTC datetime for TIMESTAMP WITHOUT TIME ZONE columns."""
+        if not value:
+            return datetime.utcnow()
+
+        try:
+            if isinstance(value, datetime):
+                parsed = value
+            elif isinstance(value, str):
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            else:
+                raise TypeError(f"unsupported timestamp type: {type(value).__name__}")
+
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "invalid_timestamp_format",
+                session_id=session_id,
+                timestamp=value,
+                error=str(exc),
+            )
+            return datetime.utcnow()
 
     async def get_message_count(self, session_id: str) -> int:
         """获取会话的消息数量"""
