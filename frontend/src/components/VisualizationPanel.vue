@@ -1,14 +1,6 @@
 ﻿<template>
-  <div class="viz-panel" :class="{ 'has-content': visualizations.length || hasKnowledgeSources }">
-    <!-- 知识溯源面板（优先显示） -->
-    <KnowledgeSourcePanel
-      v-if="hasKnowledgeSources"
-      :sources="knowledgeSources"
-      :expanded="expanded"
-      @toggle-expand="toggleExpand"
-    />
-
-    <!-- 原有可视化内容 -->
+  <div class="viz-panel" :class="{ 'has-content': visualizations.length }">
+    <!-- 可视化内容 -->
     <div v-if="visualizations.length > 0" class="viz-content-section">
       <div class="panel-header">
         <div class="panel-title-group">
@@ -101,7 +93,7 @@
     </div>
 
     <!-- 空状态 -->
-    <div v-if="!hasKnowledgeSources && visualizations.length === 0" class="empty-state">
+    <div v-if="visualizations.length === 0" class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M3 9h18" />
@@ -116,7 +108,6 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
-import KnowledgeSourcePanel from './visualization/panels/KnowledgeSourcePanel.vue'
 import MapPanel from './visualization/MapPanel.vue'
 import TrajectoryMapPanel from './visualization/TrajectoryMapPanel.vue'
 import ChartPanel from './visualization/ChartPanel.vue'
@@ -152,11 +143,6 @@ const props = defineProps({
 defineEmits([])
 
 const expandedGroups = ref(['weather', 'component'])
-const expanded = ref(true)
-
-const toggleExpand = () => {
-  expanded.value = !expanded.value
-}
 
 // 图表组件引用（用于刷新和截图）
 const chartRefs = ref({})
@@ -632,98 +618,6 @@ const visualizations = computed(() => {
   return deduplicated
 })
 
-// ✅ 知识溯源相关computed属性
-const hasKnowledgeSources = computed(() => {
-  // 1. 优先检查选中消息的sources字段
-  if (props.selectedMessageId && props.history && props.history.length > 0) {
-    const selectedMsg = props.history.find(msg => msg.id === props.selectedMessageId)
-    if (selectedMsg) {
-      // 检查data.sources字段
-      if (selectedMsg?.data?.sources && Array.isArray(selectedMsg.data.sources) && selectedMsg.data.sources.length > 0) {
-        return true
-      }
-      // 兼容旧格式：直接在msg上的sources字段
-      if (selectedMsg?.sources && Array.isArray(selectedMsg.sources) && selectedMsg.sources.length > 0) {
-        return true
-      }
-    }
-  }
-
-  // 2. 检查最后一条消息的sources字段
-  if (props.history && props.history.length > 0) {
-    const lastMsg = props.history[props.history.length - 1]
-    // 检查data.sources字段
-    if (lastMsg?.data?.sources && Array.isArray(lastMsg.data.sources) && lastMsg.data.sources.length > 0) {
-      return true
-    }
-    // 兼容旧格式：直接在msg上的sources字段
-    if (lastMsg?.sources && Array.isArray(lastMsg.sources) && lastMsg.sources.length > 0) {
-      return true
-    }
-  }
-
-  // 3. 检查content.visuals中的knowledge_source类型
-  if (props.content?.visuals && Array.isArray(props.content.visuals)) {
-    const hasKnowledgeSourceVisuals = props.content.visuals.some(v => v.type === 'knowledge_source')
-    if (hasKnowledgeSourceVisuals) {
-      return true
-    }
-  }
-
-  return false
-})
-
-const knowledgeSources = computed(() => {
-  let sources = []
-
-  // 1. 优先从选中消息的data.sources获取
-  if (props.selectedMessageId && props.history && props.history.length > 0) {
-    const selectedMsg = props.history.find(msg => msg.id === props.selectedMessageId)
-    if (selectedMsg) {
-      if (selectedMsg?.data?.sources && Array.isArray(selectedMsg.data.sources)) {
-        sources = selectedMsg.data.sources
-      }
-      // 兼容旧格式：直接在msg上的sources字段
-      else if (selectedMsg?.sources && Array.isArray(selectedMsg.sources)) {
-        sources = selectedMsg.sources
-      }
-    }
-  }
-
-  // 2. 如果没有选中的消息，从最后一条消息的data.sources获取
-  if (sources.length === 0 && props.history && props.history.length > 0) {
-    const lastMsg = props.history[props.history.length - 1]
-    if (lastMsg?.data?.sources && Array.isArray(lastMsg.data.sources)) {
-      sources = lastMsg.data.sources
-    }
-    // 兼容旧格式：直接在msg上的sources字段
-    else if (lastMsg?.sources && Array.isArray(lastMsg.sources)) {
-      sources = lastMsg.sources
-    }
-  }
-
-  // 3. 如果还没有sources，尝试从content.visuals中提取knowledge_source类型
-  if (sources.length === 0 && props.content?.visuals && Array.isArray(props.content.visuals)) {
-    const knowledgeVisuals = props.content.visuals
-      .filter(v => v.type === 'knowledge_source')
-      .map((v, index) => ({
-        title: v.title || '未知标题',
-        document_name: v.title || '未知标题',
-        source: v.data?.source || '未知来源',
-        knowledge_base_name: v.data?.source || '未知来源',
-        relevance: v.data?.relevance || 0,
-        score: v.data?.relevance || 0,
-        chunk_index: v.data?.chunk_index,
-        document_id: v.data?.document_id,
-        knowledge_base_id: v.data?.knowledge_base_id,
-        content: v.data?.content || ''
-      }))
-    sources = knowledgeVisuals
-  }
-
-  return sources
-})
-
 const latestVisualization = computed(() => {
   const list = visualizations.value
   if (!list.length) return null
@@ -731,10 +625,6 @@ const latestVisualization = computed(() => {
 })
 
 const panelTitle = computed(() => {
-  // 主面板标题：优先显示知识溯源
-  if (hasKnowledgeSources.value) {
-    return '知识溯源'
-  }
   return latestVisualization.value?.title || '可视化内容'
 })
 
