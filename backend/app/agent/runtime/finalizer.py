@@ -21,12 +21,11 @@ class Finalizer:
         answer: str,
         planner_result: Optional[PlannerResult] = None,
         thought: Any = None,
-        reasoning: Any = None,
         stream_answer: bool = True,
     ) -> AsyncGenerator[dict, None]:
         state.response_text = answer or ""
         state.task_completed = True
-        self.writer.add_final_assistant_message(state, planner_result, thought=thought, reasoning=reasoning)
+        self.writer.add_final_assistant_message(state, planner_result, thought=thought)
         if self.agent_logger:
             self.agent_logger.end_run(
                 status="completed",
@@ -36,7 +35,7 @@ class Finalizer:
         if stream_answer and not state.response_streamed:
             async for event in self._stream_response(state):
                 yield event
-        yield self.events.agent_finish(state, thought=thought, reasoning=reasoning)
+        yield self.events.agent_finish(state, thought=thought)
         yield self.events.complete(state)
 
     async def _stream_response(self, state: RunState) -> AsyncGenerator[dict, None]:

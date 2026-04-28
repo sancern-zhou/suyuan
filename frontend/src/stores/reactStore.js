@@ -910,9 +910,7 @@ export const useReactStore = defineStore('react', {
         case 'thought': {
           // LLM思考
           const thoughtContent = data?.thought || '思考中...'
-          const reasoningContent = data?.reasoning || ''
           addMessage('thought', thoughtContent, {
-            reasoning: reasoningContent,
             iteration: data?.iteration,
             timestamp: data?.timestamp
           })

@@ -36,14 +36,13 @@ class RuntimeEventBus:
             "run_id": state.run_id,
         }
 
-    def thought(self, state: RunState, thought: Any, reasoning: Any) -> Dict[str, Any]:
+    def thought(self, state: RunState, thought: Any) -> Dict[str, Any]:
         return {
             "type": "thought",
             "stream": "assistant",
             "data": {
                 "iteration": state.iteration,
                 "thought": thought,
-                "reasoning": reasoning,
                 "session_id": state.session_id,
                 "timestamp": datetime.now().isoformat(),
             },
@@ -100,7 +99,7 @@ class RuntimeEventBus:
     def notebook_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
         return {"type": "notebook_document", "stream": "result", "data": data}
 
-    def agent_finish(self, state: RunState, thought: Any = None, reasoning: Any = None) -> Dict[str, Any]:
+    def agent_finish(self, state: RunState, thought: Any = None) -> Dict[str, Any]:
         return {
             "type": "agent_finish",
             "stream": "final",
@@ -109,7 +108,6 @@ class RuntimeEventBus:
                 "iterations": state.iteration,
                 "session_id": state.session_id,
                 "thought": thought,
-                "reasoning": reasoning,
             },
         }
 

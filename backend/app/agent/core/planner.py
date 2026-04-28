@@ -121,7 +121,6 @@ class ReActPlanner:
         Returns:
             {
                 "thought": str,
-                "reasoning": str,
                 "action": {
                     "type": "TOOL_CALL" | "PLAIN_TEXT_REPLY",
                     "tool": str,
@@ -183,10 +182,10 @@ class ReActPlanner:
         Yields:
             流式事件:
             - {"type": "streaming_text", "data": {"chunk": str, "is_complete": bool}}
-            - {"type": "thought", "data": {"thought": str, "reasoning": str}}
+            - {"type": "thought", "data": {"thought": str}}
             - {"type": "tool_use", "data": {"tool_use_id": str, "tool_name": str, "input": Dict}}
               ↑ V4: 在 content_block_stop 时立即 yield（支持流式工具调用）
-            - {"type": "action", "data": {"thought": str, "reasoning": str, "action": Dict}}
+            - {"type": "action", "data": {"thought": str, "action": Dict}}
         """
         from app.agent.tool_adapter import convert_openai_to_anthropic_schema
 
@@ -385,7 +384,6 @@ class ReActPlanner:
                         "type": "thought",
                         "data": {
                             "thought": result.get("thought", ""),
-                            "reasoning": result.get("reasoning", ""),
                             "text_content": text_content
                         }
                     }
@@ -430,8 +428,7 @@ class ReActPlanner:
             yield {
                 "type": "thought",
                 "data": {
-                    "thought": result.get("thought", ""),
-                    "reasoning": result.get("reasoning", "")
+                    "thought": result.get("thought", "")
                 }
             }
             yield {
@@ -485,7 +482,6 @@ class ReActPlanner:
             # 无工具调用 - 纯文本回复
             return {
                 "thought": thinking_text or "思考回复策略",
-                "reasoning": thinking_text or "Extended Thinking",
                 "action": {
                     "type": "PLAIN_TEXT_REPLY",
                     "answer": full_text
@@ -496,7 +492,6 @@ class ReActPlanner:
         tool_call = tool_use_blocks[0]
         return {
             "thought": thinking_text or f"准备调用工具: {tool_call.name}",
-            "reasoning": thinking_text or "Extended Thinking",
             "action": {
                 "type": "TOOL_CALL",
                 "tool": tool_call.name,
@@ -577,7 +572,6 @@ class ReActPlanner:
             )
             return {
                 "thought": thinking_text or "思考回复策略",
-                "reasoning": thinking_text or "Extended Thinking",
                 "action": {
                     "type": "PLAIN_TEXT_REPLY",
                     "answer": full_text
@@ -600,7 +594,6 @@ class ReActPlanner:
         tool_call = tool_use_blocks[0]
         result = {
             "thought": thinking_text or f"准备调用工具: {tool_call['name']}",
-            "reasoning": thinking_text or "Extended Thinking",
             "action": {
                 "type": "TOOL_CALL",
                 "tool": tool_call["name"],

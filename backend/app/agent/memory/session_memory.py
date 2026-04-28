@@ -53,7 +53,6 @@ class ConversationTurn:
     timestamp: str
     type: Optional[str] = None  # "user"/"thought"/"tool_use"/"tool_result"/"final"
     thought: Optional[str] = None  # LLM thought for this assistant turn
-    reasoning: Optional[str] = None  # LLM reasoning process (detailed reasoning)
     data: Optional[Dict[str, Any]] = None  # Additional data (for tool_use/tool_result)
     tool_use_id: Optional[str] = None  # ✅ Anthropic: tool_use.id 或 tool_result.tool_use_id
     is_error: Optional[bool] = None  # ✅ Anthropic: tool_result is_error 标记
@@ -587,13 +586,12 @@ class SessionMemory:
             history_length=len(self.conversation_history)
         )
 
-    def add_assistant_message(self, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None, thinking_blocks: Optional[List[Dict[str, Any]]] = None) -> None:
+    def add_assistant_message(self, content: str, thought: Optional[str] = None, thinking_blocks: Optional[List[Dict[str, Any]]] = None) -> None:
         """Record an assistant response.
 
         Args:
             content: 助手回复文本
             thought: 思考摘要
-            reasoning: 推理过程
             thinking_blocks: LLM 返回的原始 thinking content blocks（DeepSeek 等兼容 API
                            要求在后续请求中回传这些 blocks，不传则按普通字符串存储）
         """
@@ -619,12 +617,11 @@ class SessionMemory:
                     content=content_blocks,
                     timestamp=datetime.utcnow().isoformat(),
                     type="final",
-                    thought=thought,
-                    reasoning=reasoning
+                    thought=thought
                 )
             )
         else:
-            self._append_conversation_turn("assistant", content, thought=thought, reasoning=reasoning, type="final")
+            self._append_conversation_turn("assistant", content, thought=thought, type="final")
 
         logger.debug(
             "add_assistant_message_called",
@@ -632,7 +629,6 @@ class SessionMemory:
             content_preview=content[:100],
             history_length=len(self.conversation_history),
             has_thought=thought is not None,
-            has_reasoning=reasoning is not None,
             has_thinking_blocks=thinking_blocks is not None and len(thinking_blocks) > 0
         )
 
@@ -980,7 +976,7 @@ class SessionMemory:
             previous_history_length=len(self.conversation_history) - loaded_count
         )
 
-    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, reasoning: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
+    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
         self.conversation_history.append(
             ConversationTurn(
                 role=role,
@@ -988,7 +984,6 @@ class SessionMemory:
                 timestamp=datetime.utcnow().isoformat(),
                 type=type,
                 thought=thought,
-                reasoning=reasoning,
                 data=data
             )
         )
@@ -1031,9 +1026,9 @@ class SessionMemory:
         messages = []
 
         for turn in all_turns:
-            # 处理列表类型的 content（Anthropic content blocks）
-            # 根据实际的 block 类型确定正确的 role，不依赖可能缺失的 turn.type
+            # ✅ 如果 content 已经是 Anthropic content blocks 格式，直接使用
             if isinstance(turn.content, list):
+                # 提取 block 类型用于判断 role
                 content_types = {
                     block.get("type")
                     for block in turn.content
@@ -1056,49 +1051,20 @@ class SessionMemory:
                     })
                     continue
 
-                # 其他 content blocks（如 thinking）按照 turn.role 输出
+                # 其他 content blocks（thinking, text 等）按照原 role 输出
                 messages.append({
                     "role": turn.role,
                     "content": turn.content
                 })
                 continue
 
-            # assistant 消息（纯文本，包含推理过程）
-            if turn.role == "assistant":
-                # 对于有 thought/reasoning 的消息，输出为文本
-                type_prefix_map = {
-                    "thought": "[思考]",
-                    "tool_result": "[结果]",
-                    "final": "[结论]",
-                }
-
-                type_prefix = type_prefix_map.get(turn.type, "")
-
-                if turn.thought or turn.reasoning:
-                    json_obj = {
-                        "type": turn.type or "assistant",
-                        "thought": turn.thought or "",
-                        "reasoning": turn.reasoning or turn.thought or "",
-                        "content": turn.content
-                    }
-                    content = json.dumps(json_obj, ensure_ascii=False, indent=2)
-                    if type_prefix:
-                        content = f"{type_prefix}\n{content}"
-                else:
-                    content = turn.content
-                    if type_prefix:
-                        content = f"{type_prefix} {content}"
-
-                messages.append({
-                    "role": turn.role,
-                    "content": content,
-                })
-            else:
-                # user 消息
-                messages.append({
-                    "role": turn.role,
-                    "content": turn.content,
-                })
+            # ✅ 如果 content 是字符串，包装成 text block
+            # 完全忽略内部事件类型（turn.type, turn.thought, turn.reasoning）
+            # 这些是前端显示用的元数据，不应该传递给 LLM
+            messages.append({
+                "role": turn.role,
+                "content": turn.content,
+            })
 
         logger.info(
             "get_messages_for_llm_success",
@@ -1148,7 +1114,6 @@ class SessionMemory:
 
             # Parse JSON format for assistant messages
             thought = None
-            reasoning = None
             if role == "assistant":
                 # 尝试解析 JSON 格式
                 try:
@@ -1164,9 +1129,8 @@ class SessionMemory:
 
                     parsed = json.loads(parse_content)
                     if isinstance(parsed, dict) and "thought" in parsed:
-                        # 工具调用格式：提取 thought/reasoning/observation
+                        # 工具调用格式：提取 thought/observation
                         thought = parsed.get("thought")
-                        reasoning = parsed.get("reasoning")
                         content = parsed.get("observation", parsed.get("content", content))
                 except (json.JSONDecodeError, ValueError, AttributeError):
                     # 解析失败，保持原格式（向后兼容旧格式）
@@ -1175,7 +1139,8 @@ class SessionMemory:
                         obs_marker = "\n\n## 观察\n"
                         obs_idx = content.find(obs_marker)
                         if obs_idx != -1:
-                            reasoning = content[len("## 思考\n"):obs_idx]
+                            # 提取思考内容（但不单独存储 reasoning）
+                            thought = content[len("## 思考\n"):obs_idx]
                             content = content[obs_idx + len(obs_marker):]
 
             self.conversation_history.append(
@@ -1184,7 +1149,6 @@ class SessionMemory:
                     content=content,
                     timestamp=datetime.utcnow().isoformat(),
                     thought=thought,
-                    reasoning=reasoning,
                 )
             )
         
