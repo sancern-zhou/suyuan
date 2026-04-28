@@ -136,6 +136,34 @@ const props = defineProps({
   }
 })
 
+// ✅ 节流函数：减少 markdown 解析次数
+let throttleTimer = null
+let throttlePendingContent = null
+
+const updateProcessedContent = (newContent) => {
+  if (throttleTimer) {
+    // 如果已有定时器，保存待处理内容
+    throttlePendingContent = newContent
+    return
+  }
+
+  // 立即更新
+  processedContent.value = newContent
+  throttlePendingContent = null
+
+  // 根据是否 streaming 设置不同的节流时间
+  const throttleDelay = props.streaming ? 50 : 100
+
+  throttleTimer = setTimeout(() => {
+    throttleTimer = null
+    // 如果有待处理内容，立即更新
+    if (throttlePendingContent !== null) {
+      processedContent.value = throttlePendingContent
+      throttlePendingContent = null
+    }
+  }, throttleDelay)
+}
+
 // 监听content变化
 // 【简化】现在后端统一返回完整URL，不需要预处理了
 watch(() => props.content, (newContent) => {
@@ -144,8 +172,8 @@ watch(() => props.content, (newContent) => {
     return
   }
 
-  // 直接使用原内容，markdown-it会自动处理http/https图片
-  processedContent.value = newContent
+  // ✅ 使用节流更新，减少 markdown 解析次数
+  updateProcessedContent(newContent)
 }, { immediate: true })
 
 // 已移除脱敏限制

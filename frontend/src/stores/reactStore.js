@@ -178,16 +178,19 @@ export const useReactStore = defineStore('react', {
     // 对话列表（排除内部事件）
     conversation: (state) => {
       const currentMessages = state.modeStates[state.currentMode]?.messages || []
+      // ✅ 只显示用户消息、最终答案（thought 是过程，应该被折叠）
       return currentMessages.filter(msg =>
-        msg.type === 'user' || msg.type === 'agent' || msg.type === 'thought' || msg.type === 'final'
+        msg.type === 'user' || msg.type === 'agent' || msg.type === 'final'
       )
     },
 
     // 分析日志（内部事件）
     analysisLog: (state) => {
       const currentMessages = state.modeStates[state.currentMode]?.messages || []
+      // ✅ thought、tool_use、tool_result 都是过程消息
       return currentMessages.filter(msg =>
-        msg.type === 'start' || msg.type === 'tool_use' || msg.type === 'tool_result' || msg.type === 'error'
+        msg.type === 'start' || msg.type === 'thought' ||
+        msg.type === 'tool_use' || msg.type === 'tool_result' || msg.type === 'error'
       )
     },
 
@@ -908,7 +911,7 @@ export const useReactStore = defineStore('react', {
         }
 
         case 'thought': {
-          // LLM思考
+          // LLM思考（完成事件）
           const thoughtContent = data?.thought || '思考中...'
           addMessage('thought', thoughtContent, {
             iteration: data?.iteration,
@@ -919,6 +922,37 @@ export const useReactStore = defineStore('react', {
           if (data?.thought && data.thought.includes('[Reflexion 反思]')) {
             targetState.showReflexion = true
             targetState.reflexionCount++
+          }
+          break
+        }
+
+        case 'thinking_delta': {
+          // ✅ Thinking 流式更新
+          const chunk = data?.chunk || ''
+          const isComplete = data?.is_complete || false
+
+          if (chunk) {
+            // 如果是第一个块，创建新消息
+            if (!targetState.streamingThinkingMessageId) {
+              targetState.streamingThinkingMessageId = addMessage('thought', '', {
+                timestamp: data?.timestamp
+              }, null, { streaming: true })
+            }
+
+            // 找到消息并追加内容
+            const msg = targetState.messages.find(m => m.id === targetState.streamingThinkingMessageId)
+            if (msg) {
+              msg.content += chunk
+            }
+          }
+
+          // 如果是完成标记，清除 streaming 标记
+          if (isComplete && targetState.streamingThinkingMessageId) {
+            const msg = targetState.messages.find(m => m.id === targetState.streamingThinkingMessageId)
+            if (msg) {
+              msg.streaming = false
+            }
+            targetState.streamingThinkingMessageId = null
           }
           break
         }
@@ -1047,20 +1081,12 @@ export const useReactStore = defineStore('react', {
             // console.log(`[streaming_text] 完成！共 ${this._streamDebug.chunkCount} 个 chunks，总耗时 ${totalTime}ms`)
             // this._streamDebug = null
 
-            // 【去重】如果当前轮次已有 tool_use 消息，说明这段文本只是 LLM 在调用工具前的
-            // 中间说明（如"已找到技能文件，让我读取其内容。"），不是最终答案。
-            // 删除这个错误创建的 final 消息，避免重复显示
-            const hasToolUse = targetState.messages.some(m => m.type === 'tool_use')
-            if (hasToolUse && targetState.streamingAnswerMessageId) {
-              const msgIdx = targetState.messages.findIndex(m => m.id === targetState.streamingAnswerMessageId)
-              if (msgIdx !== -1) {
-                // 如果消息内容很短（中间说明通常很短），直接删除
-                const msg = targetState.messages[msgIdx]
-                if (msg && msg.content && msg.content.length < 200) {
-                  targetState.messages.splice(msgIdx, 1)
-                }
-              }
-            }
+            // ✅ 移除去重逻辑（基于内容长度的判断不准确）
+            // 理由：
+            // 1. 少于200字的最终答案会被误删（严重问题）
+            // 2. 超过200字的中间说明不会被删除（漏删）
+            // 3. 保留中间说明不是大问题（用户看到 LLM 的思考过程也挺好）
+            // 4. 如果真的需要区分，应该在后端层面解决（添加 text_type 字段）
 
             if (targetState.streamingAnswerMessageId) {
               const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)

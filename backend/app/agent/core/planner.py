@@ -260,6 +260,15 @@ class ReActPlanner:
                         if current_thinking_block and current_thinking_block["index"] == index:
                             current_thinking_block["thinking"] += thinking_chunk
 
+                            # ✅ 实时发送 thinking_delta 事件（流式显示思考过程）
+                            yield {
+                                "type": "thinking_delta",
+                                "data": {
+                                    "chunk": thinking_chunk,
+                                    "is_complete": False
+                                }
+                            }
+
                     elif delta.type == "signature_delta":
                         # ✅ 处理 redacted_thinking 签名增量
                         # 当收到 signature_delta 时，该 block 是 redacted_thinking
@@ -301,6 +310,16 @@ class ReActPlanner:
                                 "type": "thinking",
                                 "thinking": current_thinking_block["thinking"]
                             })
+
+                        # ✅ 发送 thinking 完成事件
+                        yield {
+                            "type": "thinking_delta",
+                            "data": {
+                                "chunk": "",
+                                "is_complete": True
+                            }
+                        }
+
                         current_thinking_block = None
 
                     if current_text_block and current_text_block["index"] == index:
