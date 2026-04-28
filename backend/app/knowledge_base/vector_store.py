@@ -199,6 +199,38 @@ class KnowledgeVectorStore:
             logger.warning("sparse_vector_compute_failed", error=str(e))
             return {}
 
+    def _collection_supports_hybrid(self, collection_name: str) -> bool:
+        """检查集合是否为 named dense + sparse 结构。"""
+        try:
+            collection_info = self.qdrant_client.get_collection(collection_name)
+            params = collection_info.config.params
+            vectors = getattr(params, "vectors", None)
+            sparse_vectors = getattr(params, "sparse_vectors", None)
+            return isinstance(vectors, dict) and sparse_vectors is not None
+        except Exception as e:
+            logger.warning(
+                "collection_hybrid_check_failed",
+                collection=collection_name,
+                error=str(e)
+            )
+            return False
+
+    def _collection_point_count(self, collection_name: str) -> int:
+        """获取集合点数量；失败时按非空处理，避免误删。"""
+        try:
+            result = self.qdrant_client.count(
+                collection_name=collection_name,
+                exact=True
+            )
+            return int(getattr(result, "count", 0) or 0)
+        except Exception as e:
+            logger.warning(
+                "collection_count_failed",
+                collection=collection_name,
+                error=str(e)
+            )
+            return 1
+
     async def create_collection(self, collection_name: str, enable_hybrid: bool = True) -> bool:
         """
         创建Qdrant Collection，支持混合检索
@@ -218,6 +250,35 @@ class KnowledgeVectorStore:
             existing_names = [c.name for c in collections]
 
             if collection_name in existing_names:
+                if enable_hybrid and not self._collection_supports_hybrid(collection_name):
+                    point_count = self._collection_point_count(collection_name)
+                    if point_count == 0:
+                        logger.warning(
+                            "recreate_empty_collection_for_hybrid",
+                            collection=collection_name
+                        )
+                        self.qdrant_client.delete_collection(collection_name)
+                    else:
+                        logger.warning(
+                            "collection_exists_without_hybrid",
+                            collection=collection_name,
+                            point_count=point_count
+                        )
+                        raise RuntimeError(
+                            f"Collection {collection_name} already exists without hybrid vectors "
+                            f"and contains {point_count} points"
+                        )
+                else:
+                    logger.warning(
+                        "collection_already_exists",
+                        collection=collection_name
+                    )
+                    return True
+
+            # 删除空的非hybrid集合后，重新读取集合列表
+            collections = self.qdrant_client.get_collections().collections
+            existing_names = [c.name for c in collections]
+            if collection_name in existing_names:
                 logger.warning(
                     "collection_already_exists",
                     collection=collection_name
@@ -233,7 +294,7 @@ class KnowledgeVectorStore:
                 max_indexing_threads=0   # 0=使用所有可用CPU核心
             )
 
-            if enable_hybrid and self._jieba_initialized:
+            if enable_hybrid:
                 # 创建支持混合检索的Collection
                 from qdrant_client.models import SparseVectorParams, SparseIndexParams
 
@@ -257,6 +318,7 @@ class KnowledgeVectorStore:
                     collection=collection_name,
                     dense_dim=self._embedding_dim,
                     sparse_dim=self._sparse_dim,
+                    jieba_initialized=self._jieba_initialized,
                     full_scan_threshold=100
                 )
             else:
