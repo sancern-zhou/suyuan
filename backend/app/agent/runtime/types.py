@@ -29,7 +29,6 @@ class ToolCall:
 @dataclass
 class PlannerResult:
     thought: Optional[str] = None
-    reasoning: Optional[str] = None
     action: Optional[Dict[str, Any]] = None
     text: str = ""
     raw_thinking_blocks: Optional[List[Dict[str, Any]]] = None

@@ -1942,6 +1942,11 @@ class LLMService:
             has_tools=tools is not None,
         )
 
+        # 追踪首token时间（TTFT - Time to First Token）
+        first_token_received = False
+        import time
+        start_time = time.time()
+
         try:
             async with self.anthropic_client.messages.stream(**api_params) as stream:
                 async for event in stream:
@@ -1968,6 +1973,17 @@ class LLMService:
                         }
 
                     elif event_type == "content_block_delta":
+                        # 记录首token时间
+                        if not first_token_received:
+                            first_token_received = True
+                            ttft = time.time() - start_time
+                            logger.info(
+                                "llm_first_token_received",
+                                provider=self.provider,
+                                model=self.model,
+                                ttft_seconds=round(ttft, 3),
+                            )
+
                         yield {
                             "type": "content_block_delta",
                             "data": {
@@ -1994,6 +2010,15 @@ class LLMService:
                         }
 
                     elif event_type == "message_stop":
+                        # 记录总时间
+                        total_time = time.time() - start_time
+                        logger.info(
+                            "llm_streaming_completed",
+                            provider=self.provider,
+                            model=self.model,
+                            total_seconds=round(total_time, 3),
+                            first_token_received=first_token_received,
+                        )
                         yield {
                             "type": "message_stop",
                             "data": {}

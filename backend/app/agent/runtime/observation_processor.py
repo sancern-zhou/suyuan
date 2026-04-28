@@ -46,7 +46,6 @@ class ObservationProcessor:
                 direct_response,
                 planner_result=planner_result,
                 thought=planner_result.thought,
-                reasoning=planner_result.reasoning,
             ):
                 yield event
 

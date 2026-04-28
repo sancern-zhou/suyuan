@@ -24,8 +24,8 @@
       </div>
     </div>
 
-    <!-- 消息列表 -->
-    <div v-for="(message, index) in filteredMessages" :key="message.id" class="message-wrapper"
+    <!-- 已完成的消息 -->
+    <div v-for="(message, index) in completedMessages" :key="message.id" class="message-wrapper"
       :class="{
         'has-sources': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
         'clickable': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
@@ -93,10 +93,6 @@
                 <span class="process-icon">💭</span>
                 <span class="process-label">思考</span>
                 <div class="process-text">{{ procMsg.content }}</div>
-                <details v-if="procMsg.data?.reasoning" class="process-reasoning">
-                  <summary>详细推理</summary>
-                  <div class="reasoning-text">{{ procMsg.data.reasoning }}</div>
-                </details>
               </div>
 
               <!-- V3: tool_use 事件 -->
@@ -169,10 +165,6 @@
           <div class="event-icon">💭</div>
           <div class="event-text">
             <div>{{ message.content }}</div>
-            <details v-if="message.data?.reasoning" class="event-reasoning">
-              <summary>详细推理</summary>
-              <div class="reasoning-text">{{ message.data.reasoning }}</div>
-            </details>
           </div>
         </div>
       </div>
@@ -638,8 +630,57 @@ const filteredMessages = computed(() => {
   return filtered
 })
 
-// 【新增】折叠的过程消息ID集合
-const collapsedProcessIds = ref(new Set())
+// 【新增】执行中的过程消息（最后一个final之后的消息，实时显示）
+const executingProcessMessages = computed(() => {
+  // 找到最后一个final消息的位置
+  let lastFinalIndex = -1
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    if (getMessageType(props.messages[i]) === 'final') {
+      lastFinalIndex = i
+      break
+    }
+  }
+
+  let processMessages = []
+  if (lastFinalIndex === -1) {
+    // 还没有final消息，显示所有过程消息
+    processMessages = props.messages.filter(m => {
+      const type = getMessageType(m)
+      return type === 'thought' || type === 'tool_use' || type === 'tool_result'
+    })
+  } else {
+    // 有final消息，显示该final之后的过程消息（新的一轮对话）
+    processMessages = props.messages.slice(lastFinalIndex + 1).filter(m => {
+      const type = getMessageType(m)
+      return type === 'thought' || type === 'tool_use' || type === 'tool_result'
+    })
+  }
+
+  // 【优化】过滤掉模板化的思考消息，避免重复显示
+  return processMessages.filter(m => {
+    const type = getMessageType(m)
+    if (type === 'thought') {
+      const content = m.content || ''
+      // 过滤掉模板化的思考内容
+      const isTemplateThinking =
+        content.startsWith('准备调用工具:') ||
+        content.startsWith('我需要调用') ||
+        content.startsWith('现在调用') ||
+        content.startsWith('开始执行') ||
+        content.length < 20  // 过滤掉太短的思考
+      return !isTemplateThinking
+    }
+    return true
+  })
+})
+
+// 【新增】已完成的消息（用户消息 + final消息）
+const completedMessages = computed(() => {
+  return props.messages.filter(m => {
+    const type = getMessageType(m)
+    return type === 'user' || type === 'final'
+  })
+})
 
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
@@ -684,31 +725,6 @@ const handleProcessToggle = (messageId, event) => {
   } else {
     expandedProcessIds.value.delete(messageId)
   }
-}
-
-// 【新增】检测并折叠当前final消息之前的所有过程消息
-const collapsePreviousProcessMessages = (finalMessage, allMessages) => {
-  const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
-  if (finalIndex === -1) return
-
-  // 标记所有过程消息为折叠
-  // 包括final消息之前和之后的过程消息（因为流式事件顺序可能导致thought在final之后到达）
-  const newCollapsedIds = new Set(collapsedProcessIds.value)
-  let processCount = 0
-  for (const msg of allMessages) {
-    if (msg.id === finalMessage.id) continue
-    const msgType = getMessageType(msg)
-    if (msgType === 'thought' || msgType === 'tool_use' || msgType === 'tool_result') {
-      newCollapsedIds.add(msg.id)
-      processCount++
-    }
-  }
-  collapsedProcessIds.value = newCollapsedIds
-}
-
-// 【新增】判断消息是否应该被隐藏（已被final折叠）
-const isMessageHidden = (message) => {
-  return collapsedProcessIds.value.has(message.id)
 }
 
 // 【新增】判断是否是带PDF预览的Office工具消息（这些消息在OfficeDocumentPanel中显示，不需要在聊天列表重复显示）
@@ -1005,18 +1021,6 @@ watch(
         isInitialLoad.value = false
         // console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
       }, 3000) // 3秒后允许用户手动展开
-    } else {
-      // 非初次加载：检查是否有新的final消息需要折叠过程消息
-      // 注意：thought消息可能在final消息之后到达（流式事件顺序问题），
-      // 所以每次消息变化都检查是否有未被折叠的过程消息
-      const hasFinalMessage = newMessages.some(m => getMessageType(m) === 'final')
-      if (hasFinalMessage) {
-        // 找到最后一个final消息
-        const lastFinalMessage = [...newMessages].reverse().find(m => getMessageType(m) === 'final')
-        nextTick(() => {
-          collapsePreviousProcessMessages(lastFinalMessage, newMessages)
-        })
-      }
     }
   },
   { deep: true }
@@ -1787,6 +1791,63 @@ const closeImagePreview = () => {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+// 【新增】执行中的过程消息样式
+.executing-process {
+  animation: slideIn 0.3s ease-out;
+
+  .message {
+    background: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 100%);
+    border-left: 3px solid #2196F3;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+    &.thought-message {
+      border-left-color: #9C27B0;
+    }
+
+    &.tool-use-message {
+      border-left-color: #FF9800;
+    }
+
+    &.tool-result-message {
+      border-left-color: #4CAF50;
+    }
+  }
+
+  .process-icon {
+    font-size: 16px;
+    margin-right: 8px;
+  }
+
+  .process-label {
+    font-weight: 600;
+    color: #555;
+    font-size: 13px;
+    margin-right: 8px;
+  }
+
+  .process-text {
+    color: #333;
+    font-size: 14px;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .welcome-message {
@@ -2582,30 +2643,6 @@ const closeImagePreview = () => {
 
     .process-observation .process-label {
       color: #388E3C;
-    }
-
-    .process-reasoning,
-    .event-reasoning {
-      margin-top: 6px;
-      padding: 6px 10px;
-      background: #f8f9fa;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #555;
-      line-height: 1.5;
-
-      summary {
-        cursor: pointer;
-        font-size: 11px;
-        color: #777;
-        user-select: none;
-      }
-
-      .reasoning-text {
-        margin-top: 4px;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
     }
   }
 }

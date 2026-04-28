@@ -233,9 +233,8 @@ class AgentRuntime:
 
             elif event_type == "thought":
                 planner_result.thought = event["data"].get("thought")
-                planner_result.reasoning = event["data"].get("reasoning")
                 planner_result.pop_events.append(
-                    self.events.thought(state, planner_result.thought, planner_result.reasoning)
+                    self.events.thought(state, planner_result.thought)
                 )
 
             elif event_type == "tool_use":
@@ -259,7 +258,6 @@ class AgentRuntime:
             elif event_type == "action":
                 data = event["data"]
                 planner_result.thought = data.get("thought", planner_result.thought)
-                planner_result.reasoning = data.get("reasoning", planner_result.reasoning)
                 planner_result.action = data.get("action")
                 planner_result.raw_thinking_blocks = data.get("raw_thinking_blocks")
                 planner_result.yielded_tool_use_count = data.get("yielded_tool_use_count", 0)
@@ -309,10 +307,9 @@ class AgentRuntime:
             conversation_history=conversation_history,
         )
         partial.thought = result.get("thought")
-        partial.reasoning = result.get("reasoning")
         partial.action = result.get("action")
         partial.raw_thinking_blocks = result.get("raw_thinking_blocks")
-        partial.pop_events.append(self.events.thought(state, partial.thought, partial.reasoning))
+        partial.pop_events.append(self.events.thought(state, partial.thought))
         return partial
 
     async def _handle_streamed_tools(
@@ -369,7 +366,6 @@ class AgentRuntime:
             answer,
             planner_result=planner_result,
             thought=planner_result.thought,
-            reasoning=planner_result.reasoning,
         ):
             yield event
 
@@ -420,7 +416,6 @@ class AgentRuntime:
             response_text,
             planner_result=planner_result,
             thought=planner_result.thought,
-            reasoning=planner_result.reasoning,
         ):
             yield event
 

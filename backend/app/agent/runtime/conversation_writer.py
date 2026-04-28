@@ -42,14 +42,12 @@ class ConversationWriter:
         state: RunState,
         planner_result: Optional[PlannerResult],
         thought: Any = None,
-        reasoning: Any = None,
     ) -> None:
         if state.assistant_message_written or not state.response_text:
             return
         self.session.add_assistant_message(
             state.response_text,
             thought=thought if thought is not None else (planner_result.thought if planner_result else None),
-            reasoning=reasoning if reasoning is not None else (planner_result.reasoning if planner_result else None),
             thinking_blocks=planner_result.raw_thinking_blocks if planner_result else None,
         )
         state.assistant_message_written = True
