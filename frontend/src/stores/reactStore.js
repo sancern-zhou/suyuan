@@ -1152,6 +1152,7 @@ export const useReactStore = defineStore('react', {
               // 保存到data.sources（优先）和msg.sources（兼容）
               lastMsg.data.sources = data.sources
               lastMsg.sources = data.sources
+              targetState.messages = [...targetState.messages]
               console.log('[event:complete] sources已保存到lastMsg.data.sources和lastMsg.sources')
             }
           } else {

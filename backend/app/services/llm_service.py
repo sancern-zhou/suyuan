@@ -1180,6 +1180,9 @@ class LLMService:
             "temperature": self.temperature
         }
 
+        if self.provider in {"deepseek", "openai"}:
+            payload["response_format"] = {"type": "json_object"}
+
         # 千问3特殊处理：禁用思考模式
         if self.provider == "qwen":
             payload["enable_thinking"] = False

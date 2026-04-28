@@ -648,6 +648,9 @@ class KnowledgeVectorStore:
         Returns:
             检索结果列表
         """
+        if score_threshold is None:
+            score_threshold = 0.25
+
         # 如果jieba未初始化，降级到纯向量检索
         if not self._jieba_initialized:
             logger.warning("hybrid_search_fallback_no_jieba")
@@ -761,8 +764,10 @@ class KnowledgeVectorStore:
             # 严格检查 score 是否为 None，避免类型比较错误
             score = float(hit.score) if hit.score is not None else 0.0
 
+            threshold = 0.25 if score_threshold is None else float(score_threshold)
+
             # 只添加超过阈值的结果
-            if score >= float(score_threshold):
+            if score >= threshold:
                 formatted_results.append({
                     "content": hit.payload.get("content"),
                     "score": score,
