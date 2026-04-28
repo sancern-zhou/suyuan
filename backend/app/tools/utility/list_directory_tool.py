@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.utility.project_root import get_project_root
 import structlog
 
 logger = structlog.get_logger()
@@ -81,11 +82,11 @@ class ListDirectoryTool(LLMTool):
             requires_context=False
         )
 
-        # 使用backend目录作为工作目录
-        # 因为 backend_data_registry 等数据目录都在 backend 目录下
-        self.working_dir = Path.cwd()  # 当前目录：/home/xckj/suyuan/backend
-        # 允许访问的额外目录（项目根目录、临时目录）
-        self.allowed_dirs = [self.working_dir, self.working_dir.parent, Path("/tmp")]
+        # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
+        # 所有相对路径都从项目根目录解析
+        self.working_dir = get_project_root()
+        # 允许访问的额外目录（临时目录）
+        self.allowed_dirs = [self.working_dir, Path("/tmp")]
 
     async def execute(
         self,

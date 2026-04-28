@@ -132,8 +132,9 @@ class SubagentManager:
                 "error": f"并发任务数量已达上限（{self.MAX_CONCURRENT_PER_USER}个），请等待现有任务完成"
             }
 
-        # Extract bot_account from social_user_id
-        parts = social_user_id.split(":")
+        # ✅ 修复：Extract bot_account from social_user_id
+        # user_id 格式：{channel}:{bot_account}:{sender_id}，channel 本身可能包含 ':'
+        parts = social_user_id.rsplit(":", 2)
         bot_account = parts[1] if len(parts) > 1 else "default"
 
         # Create task record

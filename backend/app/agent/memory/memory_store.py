@@ -105,7 +105,7 @@ class MemoryStore:
         return mode_dir
 
     def _init_files(self) -> None:
-        """初始化 MEMORY.md 和 OpenClaw 风格 memory/ 分层目录"""
+        """初始化 MEMORY.md、USER.md 和 OpenClaw 风格 memory/ 分层目录"""
         self.daily_memory_dir.mkdir(parents=True, exist_ok=True)
         self.dreams_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,6 +114,7 @@ class MemoryStore:
             legacy_history_file.unlink()
             logger.info("legacy_history_file_removed", path=str(legacy_history_file))
 
+        # 创建 MEMORY.md
         if not self.memory_file.exists():
             initial_memory = """# 长期记忆 (MEMORY.md)
 
@@ -127,6 +128,30 @@ class MemoryStore:
 """
             self.memory_file.write_text(initial_memory, encoding="utf-8")
             logger.info("memory_file_created", path=str(self.memory_file))
+
+        # 创建 USER.md（用户档案，由 Agent 通过对话主动维护）
+        user_file = self.workspace / "USER.md"
+        if not user_file.exists():
+            initial_user_profile = """# USER.md - About Your Human
+
+*Learn about the person you're helping. Update this as you go.*
+
+- **Name:**
+- **What to call them:** You
+- **Pronouns:** *(optional)*
+- **Timezone:** UTC+8
+- **Notes:**
+
+## Context
+
+*(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)*
+
+---
+
+The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+"""
+            user_file.write_text(initial_user_profile, encoding="utf-8")
+            logger.info("user_file_created", path=str(user_file))
 
     def get_memory_context(self) -> str:
         """

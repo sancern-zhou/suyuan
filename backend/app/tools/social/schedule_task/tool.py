@@ -28,15 +28,16 @@ class ScheduleTaskTool(LLMTool):
     - 智能建议：基于用户行为的主动建议
 
     实现：
-    - 写入HEARTBEAT.md文件
-    - HeartbeatService定期读取并执行
+    - 写入用户专属 HEARTBEAT.md 文件
+    - UserHeartbeatManager 定期读取并执行
+    - ✅ 不再支持全局路径，所有任务都必须关联用户
     """
 
-    def __init__(self, heartbeat_service=None, user_heartbeat_manager=None):
+    def __init__(self, user_heartbeat_manager=None):
         # 定义 function_schema
         function_schema = {
             "name": "schedule_task",
-            "description": "创建定时任务，系统会定期执行并主动推送结果",
+            "description": "创建定时任务，系统会定期执行并主动推送结果（仅支持社交模式）",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -62,13 +63,12 @@ class ScheduleTaskTool(LLMTool):
         # 初始化基类
         super().__init__(
             name="schedule_task",
-            description="创建定时任务，系统会定期执行并主动推送结果",
+            description="创建定时任务，系统会定期执行并主动推送结果（仅支持社交模式）",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0"
         )
 
-        self.heartbeat_service = heartbeat_service
         self.user_heartbeat_manager = user_heartbeat_manager
 
         # 如果没有传入 user_heartbeat_manager，尝试从全局单例获取
@@ -180,24 +180,38 @@ class ScheduleTaskTool(LLMTool):
                     "summary": f"无效的cron表达式: {schedule}"
                 }
 
-            # 获取当前用户ID（用于用户专属任务）
-            user_id = "global"
-            if self.user_heartbeat_manager:
-                try:
-                    from app.social.message_bus_singleton import get_current_chat_id, get_current_channel
-                    current_chat_id = get_current_chat_id()
-                    current_channel = get_current_channel()
+            # ✅ 修复：强制获取用户上下文，不允许使用全局路径
+            if not self.user_heartbeat_manager:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "summary": "定时任务功能需要用户登录才能使用"
+                }
 
-                    if current_chat_id and current_channel:
-                        user_id = f"{current_channel}:default:{current_chat_id}"
-                        logger.debug("using_user_context_for_task", user_id=user_id, channel=current_channel, chat_id=current_chat_id)
-                except Exception as e:
-                    logger.debug("failed_to_get_user_context", error=str(e))
-                    user_id = "global"
+            try:
+                from app.social.message_bus_singleton import get_current_chat_id, get_current_channel, get_current_bot_account
+                current_chat_id = get_current_chat_id()
+                current_channel = get_current_channel()
+                current_bot_account = get_current_bot_account()
 
-            # 添加到HEARTBEAT.md
-            if self.user_heartbeat_manager and user_id != "global":
-                # 使用用户专属 HeartbeatService
+                if not current_chat_id or not current_channel:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "summary": "无法获取用户上下文，请确保在社交模式下使用此功能"
+                    }
+
+                # ✅ 构造 user_id：使用真实 bot_account
+                user_id = f"{current_channel}:{current_bot_account or 'default'}:{current_chat_id}"
+                logger.debug(
+                    "using_user_context_for_task",
+                    user_id=user_id,
+                    channel=current_channel,
+                    bot_account=current_bot_account,
+                    chat_id=current_chat_id
+                )
+
+                # ✅ 使用用户专属 HeartbeatService（不允许降级到全局路径）
                 heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(user_id)
                 heartbeat.add_task(
                     name=task_name,
@@ -205,23 +219,14 @@ class ScheduleTaskTool(LLMTool):
                     description=task_description,
                     channels=channels or ["weixin"]
                 )
-            elif self.heartbeat_service:
-                # 降级：使用全局 HeartbeatService
-                self.heartbeat_service.add_task(
-                    name=task_name,
-                    schedule=schedule,
-                    description=task_description,
-                    channels=channels or ["weixin"]
-                )
-            else:
-                # 降级：直接写入文件
-                self._write_to_heartbeat_file(
-                    task_name=task_name,
-                    schedule=schedule,
-                    description=task_description,
-                    channels=channels or ["weixin"],
-                    user_id=user_id
-                )
+
+            except Exception as e:
+                logger.error("failed_to_schedule_user_task", error=str(e), exc_info=True)
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "summary": f"创建定时任务失败：{str(e)}"
+                }
 
             logger.info(
                 "task_scheduled",
@@ -280,75 +285,3 @@ class ScheduleTaskTool(LLMTool):
                 return False
 
         return True
-
-    def _write_to_heartbeat_file(
-        self,
-        task_name: str,
-        schedule: str,
-        description: str,
-        channels: list,
-        user_id: str = "global"
-    ) -> None:
-        """降级方案：直接写入HEARTBEAT.md文件"""
-        # ✅ 使用 backend 目录下的 backend_data_registry
-        import os
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        current_dir = Path(os.getcwd())
-
-        # 如果当前在 backend 目录，直接使用
-        if current_dir.name == "backend":
-            workspace = current_dir / "backend_data_registry/social/heartbeat"
-        else:
-            # 否则假设在项目根目录
-            workspace = current_dir / "backend" / "backend_data_registry/social/heartbeat"
-
-        # 如果是用户专属任务，使用用户专属目录
-        if user_id and user_id != "global":
-            safe_user_id = user_id.replace(":", "_")
-            workspace = workspace / safe_user_id
-
-        workspace.mkdir(parents=True, exist_ok=True)
-        heartbeat_file = workspace / "HEARTBEAT.md"
-
-        # ✅ 处理多行 description：替换换行符为空格
-        clean_description = description.replace("\n", " ").replace("\r", "").strip()
-
-        # ✅ 计算 next_run_at（使用 croniter）
-        try:
-            from croniter import croniter
-            current_time = datetime.now(ZoneInfo("Asia/Shanghai"))
-            cron = croniter(schedule, current_time)
-            next_run = cron.get_next(datetime)
-            next_run_at_str = next_run.isoformat()
-        except Exception as e:
-            logger.warning("compute_next_run_failed", schedule=schedule, error=str(e))
-            next_run_at_str = ""
-
-        new_task = f"""
-- name: {task_name}
-  schedule: "{schedule}"
-  description: {clean_description}
-  enabled: true
-  channels: {channels}
-  next_run_at: "{next_run_at_str}"
-"""
-
-        # 追加到文件
-        if heartbeat_file.exists():
-            content = heartbeat_file.read_text(encoding="utf-8")
-            content += "\n" + new_task
-        else:
-            content = "# 心跳任务列表\n\n" + new_task
-
-        heartbeat_file.write_text(content, encoding="utf-8")
-
-        logger.info(
-            "task_written_to_heartbeat_file",
-            task_name=task_name,
-            schedule=schedule,
-            next_run_at=next_run_at_str,
-            path=str(heartbeat_file),
-            user_id=user_id
-        )

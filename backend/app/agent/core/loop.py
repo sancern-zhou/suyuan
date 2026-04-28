@@ -565,6 +565,24 @@ class ReActLoop:
                                 "tool_call_id": streaming_tool_executor._executions[0].tool_use_id,
                                 "args": streaming_tool_executor._executions[0].tool_input,
                             }
+
+                            # 调试日志：打印 observation 结构
+                            logger.info(
+                                "single_tool_observation_structure",
+                                tool_name=streaming_tool_executor._executions[0].tool_name,
+                                observation_keys=list(observation.keys()) if isinstance(observation, dict) else "not_dict",
+                                has_metadata="metadata" in observation,
+                                metadata_can_be_final=observation.get("metadata", {}).get("can_be_final_answer") if isinstance(observation, dict) else False,
+                                observation_success=observation.get("success") if isinstance(observation, dict) else False,
+                                has_data="data" in observation,
+                                data_keys=list(observation.get("data", {}).keys()) if isinstance(observation.get("data"), dict) else []
+                            )
+
+                            # ✅ 临时保存工具结果（供 FINAL_ANSWER 分支使用）
+                            _last_single_tool_result = {
+                                "observation": observation,
+                                "tool_name": streaming_tool_executor._executions[0].tool_name
+                            }
                         else:
                             observation = {
                                 "success": any(r.get("success", False) for r in all_results if isinstance(r, dict)),
@@ -1295,6 +1313,36 @@ class ReActLoop:
                             iteration=iteration_count
                         )
 
+                        # ✅ 尝试从上一次工具结果提取 sources（如果是 knowledge_qa_workflow）
+                        if '_last_single_tool_result' in dir(self) and self._last_single_tool_result:
+                            tool_observation = self._last_single_tool_result.get("observation", {})
+                            tool_name = self._last_single_tool_result.get("tool_name", "")
+
+                            logger.info(
+                                "checking_last_tool_for_sources",
+                                tool_name=tool_name,
+                                has_observation=bool(tool_observation),
+                                observation_success=tool_observation.get("success") if isinstance(tool_observation, dict) else False,
+                                observation_data_keys=list(tool_observation.get("data", {}).keys()) if isinstance(tool_observation, dict) else []
+                            )
+
+                            # 如果是 knowledge_qa_workflow，提取 sources
+                            if tool_name == "knowledge_qa_workflow" and tool_observation.get("success"):
+                                tool_data = tool_observation.get("data", {})
+                                if tool_data.get("sources"):
+                                    workflow_sources = tool_data.get("sources", [])
+                                    workflow_visuals = tool_observation.get("visuals", [])
+
+                                    logger.info(
+                                        "knowledge_qa_sources_extracted",
+                                        sources_count=len(workflow_sources),
+                                        tool_name=tool_name,
+                                        sources_preview=workflow_sources[:2] if workflow_sources else []
+                                    )
+
+                                    # 设置 direct_from_workflow 标记（表明答案来自工作流）
+                                    direct_from_workflow = True
+
                         # 记录到记忆
                         self.memory.add_iteration(
                             thought=thought,
@@ -1317,10 +1365,12 @@ class ReActLoop:
                             "type": "final_answer",
                             "data": {
                                 "content": final_answer,
+                                "sources": workflow_sources if 'workflow_sources' in dir(self) else [],  # ✅ 包含 sources
                                 "iterations": iteration_count,
                                 "session_id": self.memory.session_id,
                                 "thought": thought,
-                                "reasoning": reasoning if think_action_result is None else think_action_result.get("reasoning")
+                                "reasoning": reasoning if think_action_result is None else think_action_result.get("reasoning"),
+                                "direct_from_workflow": direct_from_workflow if 'direct_from_workflow' in dir(self) else False
                             }
                         }
 
@@ -1343,6 +1393,16 @@ class ReActLoop:
                         # 工作流结果可直接作为final answer
                         final_answer_field = metadata.get("final_answer_field", "answer")
                         data = observation.get("data", {})
+
+                        logger.info(
+                            "checking_direct_final_answer",
+                            tool_name=tool_name,
+                            final_answer_field=final_answer_field,
+                            data_keys=list(data.keys()) if isinstance(data, dict) else "not_dict",
+                            has_sources_in_data="sources" in data,
+                            sources_count=len(data.get("sources", [])) if isinstance(data, dict) else 0
+                        )
+
                         final_answer = data.get(final_answer_field, "")
 
                         if final_answer:
@@ -1359,6 +1419,24 @@ class ReActLoop:
                             workflow_sources = data.get("sources", [])
                             # ✅ 保存 visuals 数据
                             workflow_visuals = observation.get("visuals", [])
+
+                            logger.info(
+                                "workflow_sources_extracted",
+                                sources_count=len(workflow_sources),
+                                sources_type=type(workflow_sources).__name__,
+                                data_keys=list(data.keys()),
+                                has_sources_in_data="sources" in data,
+                                sources_preview=workflow_sources[:2] if workflow_sources else []
+                            )
+
+                            logger.info(
+                                "workflow_sources_extracted",
+                                sources_count=len(workflow_sources),
+                                sources_type=type(workflow_sources).__name__,
+                                data_keys=list(data.keys()),
+                                has_sources_in_data="sources" in data,
+                                sources_preview=workflow_sources[:2] if workflow_sources else []
+                            )
 
                             # 记录到记忆
                             self.memory.add_iteration(
@@ -1593,7 +1671,9 @@ class ReActLoop:
                     visuals_count=len(workflow_visuals),
                     direct_from_workflow=direct_from_workflow,
                     sources_preview=workflow_sources[:2] if workflow_sources else [],
-                    visuals_preview=[{"id": v.get("id"), "type": v.get("type")} for v in workflow_visuals[:2]] if workflow_visuals else []
+                    visuals_preview=[{"id": v.get("id"), "type": v.get("type")} for v in workflow_visuals[:2]] if workflow_visuals else [],
+                    workflow_sources_type=type(workflow_sources).__name__,
+                    workflow_visuals_type=type(workflow_visuals).__name__
                 )
 
                 yield {

@@ -162,6 +162,8 @@ export function useKnowledgeBaseOperations() {
 
     try {
       await kbStore.deleteKnowledgeBase(currentKb.value.id)
+      // 清除所有相关数据
+      kbStore.clearCurrentDoc()
       handleKbBack()
       return true
     } catch (e) {
@@ -189,6 +191,7 @@ export function useKnowledgeBaseOperations() {
   const handleKbBack = () => {
     kbStore.currentKb = null
     kbStore.documents = []
+    kbStore.clearCurrentDoc()  // 清除当前文档和分块数据
   }
 
   // ========== 文档操作 ==========
@@ -197,8 +200,18 @@ export function useKnowledgeBaseOperations() {
    * 重试文档处理
    */
   const handleKbRetry = async (docId) => {
+    if (!docId || docId === 'undefined') {
+      alert('文档ID无效')
+      return false
+    }
+
+    if (!currentKb.value) {
+      alert('请先选择知识库')
+      return false
+    }
+
     try {
-      await kbStore.retryDocument(docId)
+      await kbStore.retryDocument(currentKb.value.id, docId)
       return true
     } catch (e) {
       alert('重试失败: ' + e.message)
@@ -210,10 +223,20 @@ export function useKnowledgeBaseOperations() {
    * 删除文档
    */
   const handleKbDeleteDoc = async (docId) => {
+    if (!docId || docId === 'undefined') {
+      alert('文档ID无效')
+      return false
+    }
+
+    if (!currentKb.value) {
+      alert('请先选择知识库')
+      return false
+    }
+
     if (!confirm('确定要删除此文档吗？')) return false
 
     try {
-      await kbStore.deleteDocument(docId)
+      await kbStore.deleteDocument(currentKb.value.id, docId)
       return true
     } catch (e) {
       alert('删除失败: ' + e.message)
@@ -225,8 +248,18 @@ export function useKnowledgeBaseOperations() {
    * 查看文档分块
    */
   const viewKbChunks = async (doc) => {
+    if (!doc || !doc.id || doc.id === 'undefined') {
+      alert('文档ID无效')
+      return false
+    }
+
+    if (!currentKb.value) {
+      alert('请先选择知识库')
+      return false
+    }
+
     try {
-      await kbStore.fetchDocumentChunks(doc.id)
+      await kbStore.fetchDocumentChunks(currentKb.value.id, doc.id)
       return true
     } catch (e) {
       alert('获取分块失败: ' + e.message)
