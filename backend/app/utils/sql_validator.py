@@ -49,6 +49,8 @@ class SQLValidator:
         'city_168_statistics_old_standard',  # 168城市空气质量统计表（旧标准 HJ 633-2013）
         'province_statistics_new_standard',  # 省级空气质量统计表（新标准 HJ 633-2026）
         'province_statistics_old_standard',  # 省级空气质量统计表（旧标准 HJ 633-2013）
+        'noise_city_compliance_monthly',  # 城市噪声昼夜达标率月汇总表
+        'noise_city_compliance_daily',  # 城市噪声昼夜达标率逐日明细表
         # 质控和分析数据表（AirPollutionAnalysis数据库）
         'qc_history',  # 自动质控历史数据表（13551条记录）
         'quality_control_records',  # 质控例行检查记录
