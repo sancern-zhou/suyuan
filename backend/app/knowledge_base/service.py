@@ -651,13 +651,23 @@ class KnowledgeBaseService:
         if not kbs:
             return []
 
-        # 根据是否使用重排序决定召回策略
-        # 开启重排序：多召回候选，让重排序有精选空间
-        # 关闭重排序：多召回，直接按向量得分排序返回
+        # 根据是否使用重排序决定召回策略。每库召回不能过小，否则多知识库场景下
+        # 相关片段很容易在粗召回阶段被截断，reranker也没有足够候选可排。
         if use_reranker:
-            recall_per_kb = 2  # 每个库取2个，5个库共10个候选，重排序精选3个
+            recall_per_kb = max(top_k * 5, 10)
         else:
-            recall_per_kb = 3  # 每个库取3个，5个库共15个候选，直接排序返回
+            recall_per_kb = max(top_k * 3, 10)
+
+        logger.info(
+            "knowledge_search_recall_plan",
+            query_preview=query[:100],
+            kb_count=len(kbs),
+            top_k=top_k,
+            recall_per_kb=recall_per_kb,
+            use_hybrid=use_hybrid,
+            use_reranker=use_reranker,
+            score_threshold=score_threshold
+        )
 
         async def search_single_kb(kb: KnowledgeBase):
             if use_hybrid:
@@ -665,7 +675,7 @@ class KnowledgeBaseService:
                 kb_results = await self.vector_store.hybrid_search(
                     collection_name=kb.qdrant_collection,
                     query=query,
-                    top_k=recall_per_kb,  # 每个库只取少量
+                    top_k=recall_per_kb,
                     score_threshold=score_threshold,
                     alpha=alpha,
                     filters=filters
@@ -675,7 +685,7 @@ class KnowledgeBaseService:
                 kb_results = await self.vector_store.search(
                     collection_name=kb.qdrant_collection,
                     query=query,
-                    top_k=recall_per_kb,  # 每个库只取少量
+                    top_k=recall_per_kb,
                     score_threshold=score_threshold,
                     filters=filters
                 )
@@ -691,6 +701,14 @@ class KnowledgeBaseService:
         results = []
         for kb_results in all_results:
             results.extend(kb_results)
+
+        logger.info(
+            "knowledge_search_candidates_collected",
+            query_preview=query[:100],
+            candidate_count=len(results),
+            kb_count=len(kbs),
+            use_reranker=use_reranker
+        )
 
         # 根据是否使用重排序决定后续逻辑
         if use_reranker and len(results) > top_k:
@@ -722,7 +740,10 @@ class KnowledgeBaseService:
             return candidates[:top_k]
 
         try:
-            pairs = [(query, c["content"]) for c in candidates]
+            pairs = [
+                (query, c.get("embedding_text") or c.get("metadata", {}).get("embedding_text") or c.get("content", ""))
+                for c in candidates
+            ]
             scores = reranker.predict(pairs)
 
             for i, score in enumerate(scores):
@@ -916,6 +937,9 @@ class KnowledgeBaseService:
                 chunks.append({
                     "chunk_index": payload.get("chunk_index", 0),
                     "content": payload.get("content", ""),
+                    "original_content": payload.get("original_content") or payload.get("content", ""),
+                    "context_prefix": payload.get("context_prefix", ""),
+                    "embedding_text": payload.get("embedding_text", ""),
                     "chunk_id": payload.get("chunk_id"),
                     "start_char": payload.get("start_char"),
                     "end_char": payload.get("end_char"),

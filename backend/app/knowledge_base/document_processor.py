@@ -1050,10 +1050,11 @@ class DocumentProcessor:
             chunks = []
             for i, item in enumerate(parsed.get("chunks", [])):
                 chunk_content = item.get("content", "").strip()
-                if chunk_content and len(chunk_content) >= 100:
+                if chunk_content:
                     chunks.append({
                         "id": f"chunk_{i}",
                         "content": chunk_content,
+                        "original_content": chunk_content,
                         "metadata": {
                             "topic": item.get("topic", ""),
                             "type": item.get("type", "paragraph"),
@@ -1530,16 +1531,21 @@ class DocumentProcessor:
             chunk_type = metadata.get("type", "paragraph")
             context_parts.append(f"类型: {type_map.get(chunk_type, chunk_type)}")
             
-            # 构建增强后的chunk
+            # 构建增强后的chunk：content保持原文，embedding_text用于检索增强
+            original_content = chunk.get("original_content") or chunk.get("content", "")
+            enhanced_chunk = chunk.copy()
+            enhanced_chunk["content"] = original_content
+            enhanced_chunk["original_content"] = original_content
+
             if context_parts:
                 context_prefix = f"[{' | '.join(context_parts)}]\n"
-                enhanced_chunk = chunk.copy()
-                enhanced_chunk["original_content"] = chunk["content"]
-                enhanced_chunk["content"] = context_prefix + chunk["content"]
                 enhanced_chunk["context_prefix"] = context_prefix
-                enhanced_chunks.append(enhanced_chunk)
+                enhanced_chunk["embedding_text"] = context_prefix + original_content
             else:
-                enhanced_chunks.append(chunk)
+                enhanced_chunk["context_prefix"] = ""
+                enhanced_chunk["embedding_text"] = original_content
+
+            enhanced_chunks.append(enhanced_chunk)
         
         return enhanced_chunks
 
@@ -1710,6 +1716,7 @@ class DocumentProcessor:
                 if buffer:
                     # 合并到buffer
                     buffer["content"] += "\n\n" + chunk["content"]
+                    buffer["original_content"] = buffer["content"]
                     # 合并topic
                     if chunk.get("metadata", {}).get("topic"):
                         existing_topic = buffer.get("metadata", {}).get("topic", "")
@@ -1726,6 +1733,7 @@ class DocumentProcessor:
                     else:
                         # buffer太小，合并到当前chunk
                         chunk["content"] = buffer["content"] + "\n\n" + chunk["content"]
+                        chunk["original_content"] = chunk["content"]
                     buffer = None
                 merged.append(chunk)
         
@@ -1734,6 +1742,7 @@ class DocumentProcessor:
             if merged and len(buffer.get("content", "")) < min_size:
                 # 合并到最后一个chunk
                 merged[-1]["content"] += "\n\n" + buffer["content"]
+                merged[-1]["original_content"] = merged[-1]["content"]
             else:
                 merged.append(buffer)
         
