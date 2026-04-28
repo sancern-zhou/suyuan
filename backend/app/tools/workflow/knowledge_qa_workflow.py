@@ -133,13 +133,13 @@ class KnowledgeQAWorkflow(WorkflowTool):
             # 导入检索函数
             from app.routers.knowledge_qa import search_knowledge_bases
 
-            # 1. 检索相关文档（使用HyDE，关闭重排序以提高速度）
+            # 1. 检索相关文档（使用HyDE和Reranker提升召回质量）
             self._record_step("knowledge_retrieval", "running")
             search_results = await search_knowledge_bases(
                 query=actual_query,
                 knowledge_base_ids=knowledge_base_ids,  # 传递知识库ID列表
                 use_hyde=True,  # 使用HyDE检索，会自动生成假设答案
-                use_reranker=False,  # 关闭重排序以提高速度
+                use_reranker=True,
                 top_k=min(top_k, 10)  # 限制最大10篇
             )
 
@@ -177,7 +177,13 @@ class KnowledgeQAWorkflow(WorkflowTool):
                     "title": doc.get("document_name", "未知标题"),
                     "source": doc.get("knowledge_base_name", "未知来源"),
                     "relevance": doc.get("score", 0.0),
+                    "rerank_score": doc.get("rerank_score"),
+                    "original_score": doc.get("original_score"),
                     "document_id": doc.get("document_id"),
+                    "document": doc.get("document", {}),
+                    "has_original_file": doc.get("has_original_file", False),
+                    "download_url": doc.get("download_url"),
+                    "preview_url": doc.get("preview_url"),
                     "knowledge_base_id": doc.get("knowledge_base_id"),
                     "chunk_index": doc.get("chunk_index"),
                     "content": content  # 返回完整内容

@@ -49,7 +49,7 @@ class KnowledgeQARequest(BaseModel):
         le=1,
         description="检索结果相似度阈值（可选）"
     )
-    use_reranker: bool = Field(default=False, description="是否使用Reranker精排（默认关闭以提高速度）")
+    use_reranker: bool = Field(default=True, description="是否使用Reranker精排（默认开启以提升召回质量）")
 
 
 class ConversationHistoryResponse(BaseModel):
@@ -234,12 +234,40 @@ async def search_knowledge_bases(
                 doc_id = r.get("document_id")
                 kb_info = r.get("knowledge_base", {})
                 doc = docs_map.get(doc_id) if doc_id else None
+                document_info = r.get("document", {}) or {}
+                if doc and not document_info:
+                    has_original_file = bool(
+                        doc.original_file_oid or
+                        (doc.file_storage_type == "local" and doc.file_path)
+                    )
+                    document_info = {
+                        "id": doc.id,
+                        "filename": doc.filename,
+                        "file_type": doc.file_type,
+                        "file_size": doc.file_size,
+                        "file_storage_type": doc.file_storage_type,
+                        "file_mime_type": doc.file_mime_type,
+                        "has_original_file": has_original_file,
+                    }
+                    kb_id = kb_info.get("id")
+                    if has_original_file and kb_id:
+                        document_info["download_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/download"
+                        document_info["preview_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/preview"
 
                 formatted_results.append({
-                    "content": r.get("content", ""),
+                    "content": r.get("original_content") or r.get("content", ""),
+                    "original_content": r.get("original_content") or r.get("content", ""),
+                    "context_prefix": r.get("context_prefix", ""),
+                    "embedding_text": r.get("embedding_text", ""),
                     "score": r.get("score", 0),
+                    "rerank_score": r.get("rerank_score"),
+                    "original_score": r.get("original_score"),
                     "document_id": doc_id,
-                    "document_name": doc.filename if doc else "",
+                    "document_name": document_info.get("filename") or (doc.filename if doc else ""),
+                    "document": document_info,
+                    "has_original_file": document_info.get("has_original_file", False),
+                    "download_url": document_info.get("download_url"),
+                    "preview_url": document_info.get("preview_url"),
                     "knowledge_base_id": kb_info.get("id"),
                     "knowledge_base_name": kb_info.get("name", ""),
                     "chunk_index": r.get("chunk_index"),

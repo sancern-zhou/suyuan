@@ -176,6 +176,9 @@ class SearchRequest(BaseModel):
 class SearchResultItem(BaseModel):
     """单个检索结果"""
     content: str = Field(description="匹配内容")
+    original_content: Optional[str] = Field(default=None, description="原文分块内容")
+    context_prefix: Optional[str] = Field(default=None, description="检索增强上下文前缀")
+    embedding_text: Optional[str] = Field(default=None, description="实际用于向量化/精排的文本")
     score: float = Field(description="最终得分")
     rerank_score: Optional[float] = Field(default=None, description="Reranker得分（Reranker可用时）")
     original_score: Optional[float] = Field(default=None, description="向量检索原始得分（Reranker可用时）")
@@ -185,6 +188,7 @@ class SearchResultItem(BaseModel):
     metadata: Dict[str, Any] = Field(description="文档元数据")
     chunk_index: Optional[int] = Field(default=None, description="分块索引")
     # 溯源相关字段
+    document: Optional[Dict[str, Any]] = Field(default=None, description="原文档信息")
     download_url: Optional[str] = Field(default=None, description="原文件下载链接")
     preview_url: Optional[str] = Field(default=None, description="文档预览链接")
     has_original_file: bool = Field(default=False, description="是否有原文件可下载")
@@ -237,6 +241,9 @@ class DocumentChunk(BaseModel):
     """文档分段"""
     chunk_index: int = Field(description="分块索引")
     content: str = Field(description="分块内容")
+    original_content: Optional[str] = Field(default=None, description="原文分块内容")
+    context_prefix: Optional[str] = Field(default=None, description="检索增强上下文前缀")
+    embedding_text: Optional[str] = Field(default=None, description="实际用于向量化/精排的文本")
     chunk_id: Optional[str] = Field(description="分块ID")
     start_char: Optional[int] = Field(description="起始字符位置")
     end_char: Optional[int] = Field(description="结束字符位置")

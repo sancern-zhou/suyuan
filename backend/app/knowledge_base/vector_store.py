@@ -183,8 +183,9 @@ class KnowledgeVectorStore:
                 # BM25 TF归一化
                 tf_normalized = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * total_words / avg_dl))
                 
-                # 使用hash映射到固定维度
-                index = hash(word) % self._sparse_dim
+                # 使用稳定hash映射到固定维度，避免Python内置hash跨进程随机化导致召回漂移
+                digest = hashlib.md5(word.encode("utf-8")).hexdigest()
+                index = int(digest[:8], 16) % self._sparse_dim
                 
                 # 累加（处理hash冲突）
                 if index in sparse_vector:
@@ -345,8 +346,11 @@ class KnowledgeVectorStore:
         try:
             from qdrant_client.models import PointStruct
 
-            # 批量生成稠密embedding
-            texts = [chunk["content"] for chunk in chunks]
+            # 批量生成稠密embedding：优先使用带上下文的检索文本，展示内容保持原文
+            texts = [
+                chunk.get("embedding_text") or chunk.get("original_content") or chunk.get("content", "")
+                for chunk in chunks
+            ]
             embeddings = self.embedding_model.encode(
                 texts,
                 normalize_embeddings=True,
@@ -415,11 +419,25 @@ class KnowledgeVectorStore:
                     metadata.get("document_id", ""),
                     i
                 )
+                original_content = chunk.get("original_content") or chunk.get("content", "")
+                embedding_text = chunk.get("embedding_text") or original_content
+                common_payload = {
+                    "content": original_content,
+                    "original_content": original_content,
+                    "embedding_text": embedding_text,
+                    "context_prefix": chunk.get("context_prefix", ""),
+                    "chunk_index": i,
+                    "chunk_id": chunk.get("id", f"chunk_{i}"),
+                    "start_char": chunk.get("start_char"),
+                    "end_char": chunk.get("end_char"),
+                    "chunk_metadata": chunk.get("metadata", {}),
+                    **metadata
+                }
 
                 if use_hybrid:
                     # 混合向量模式：稠密+稀疏（使用命名向量）
                     from qdrant_client.models import SparseVector
-                    sparse_vec = self._compute_sparse_vector(chunk["content"])
+                    sparse_vec = self._compute_sparse_vector(embedding_text)
 
                     points.append(PointStruct(
                         id=point_id,
@@ -430,15 +448,7 @@ class KnowledgeVectorStore:
                                 values=list(sparse_vec.values())
                             ) if sparse_vec else SparseVector(indices=[], values=[])
                         },
-                        payload={
-                            "content": chunk["content"],
-                            "chunk_index": i,
-                            "chunk_id": chunk.get("id", f"chunk_{i}"),
-                            "start_char": chunk.get("start_char"),
-                            "end_char": chunk.get("end_char"),
-                            "chunk_metadata": chunk.get("metadata", {}),
-                            **metadata
-                        }
+                        payload=common_payload
                     ))
                 elif use_named_vectors:
                     # 命名向量模式（无sparse）：使用命名向量格式，但只有dense向量
@@ -447,30 +457,14 @@ class KnowledgeVectorStore:
                         vector={
                             "dense": embedding.tolist()
                         },
-                        payload={
-                            "content": chunk["content"],
-                            "chunk_index": i,
-                            "chunk_id": chunk.get("id", f"chunk_{i}"),
-                            "start_char": chunk.get("start_char"),
-                            "end_char": chunk.get("end_char"),
-                            "chunk_metadata": chunk.get("metadata", {}),
-                            **metadata
-                        }
+                        payload=common_payload
                     ))
                 else:
                     # 单一向量模式（向后兼容）
                     points.append(PointStruct(
                         id=point_id,
                         vector=embedding.tolist(),
-                        payload={
-                            "content": chunk["content"],
-                            "chunk_index": i,
-                            "chunk_id": chunk.get("id", f"chunk_{i}"),
-                            "start_char": chunk.get("start_char"),
-                            "end_char": chunk.get("end_char"),
-                            "chunk_metadata": chunk.get("metadata", {}),
-                            **metadata
-                        }
+                        payload=common_payload
                     ))
 
             # 批量插入（分批避免超时）
@@ -598,13 +592,19 @@ class KnowledgeVectorStore:
             for hit in results:
                 formatted_results.append({
                     "content": hit.payload.get("content"),
+                    "original_content": hit.payload.get("original_content") or hit.payload.get("content"),
+                    "embedding_text": hit.payload.get("embedding_text") or hit.payload.get("content"),
+                    "context_prefix": hit.payload.get("context_prefix", ""),
                     "score": hit.score,
                     "document_id": hit.payload.get("document_id"),
                     "filename": hit.payload.get("filename"),
                     "chunk_index": hit.payload.get("chunk_index"),
                     "metadata": {
                         k: v for k, v in hit.payload.items()
-                        if k not in ["content", "document_id", "filename", "chunk_index"]
+                        if k not in [
+                            "content", "original_content", "embedding_text", "context_prefix",
+                            "document_id", "filename", "chunk_index"
+                        ]
                     }
                 })
 
@@ -770,13 +770,19 @@ class KnowledgeVectorStore:
             if score >= threshold:
                 formatted_results.append({
                     "content": hit.payload.get("content"),
+                    "original_content": hit.payload.get("original_content") or hit.payload.get("content"),
+                    "embedding_text": hit.payload.get("embedding_text") or hit.payload.get("content"),
+                    "context_prefix": hit.payload.get("context_prefix", ""),
                     "score": score,
                     "document_id": hit.payload.get("document_id"),
                     "filename": hit.payload.get("filename"),
                     "chunk_index": hit.payload.get("chunk_index"),
                     "metadata": {
                         k: v for k, v in hit.payload.items()
-                        if k not in ["content", "document_id", "filename", "chunk_index"]
+                        if k not in [
+                            "content", "original_content", "embedding_text", "context_prefix",
+                            "document_id", "filename", "chunk_index"
+                        ]
                     }
                 })
 
