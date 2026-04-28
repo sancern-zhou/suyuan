@@ -328,6 +328,13 @@ export const useReactStore = defineStore('react', {
         }
 
         const savedState = JSON.parse(savedStateJSON)
+        savedState.isAnalyzing = false
+        savedState.isInterruption = false
+        savedState.streamingAnswerMessageId = null
+        const lastMessage = savedState.messages && savedState.messages[savedState.messages.length - 1]
+        if (lastMessage?.type === 'final' && !lastMessage.streaming) {
+          savedState.isComplete = true
+        }
 
         // 合并保存的状态到当前模式状态
         Object.assign(this.modeStates[mode], savedState)
@@ -484,6 +491,11 @@ export const useReactStore = defineStore('react', {
      */
     setComplete(isComplete) {
       this.currentState.isComplete = !!isComplete
+      if (isComplete) {
+        this.currentState.isAnalyzing = false
+        this.currentState.isInterruption = false
+        this.currentState.streamingAnswerMessageId = null
+      }
       console.log(`[setComplete] Set complete=${isComplete} for mode ${this.currentMode}`)
     },
 
@@ -736,6 +748,44 @@ export const useReactStore = defineStore('react', {
       console.log(`[addMessageToMode] Current mode ${this.currentMode} has ${this.currentState.messages.length} messages`)
 
       return message.id
+    },
+
+    _findLatestFinalMessageForCurrentTurn(modeState, content = '') {
+      if (!modeState?.messages?.length) return null
+
+      const lastUserIndex = modeState.messages.reduce((lastIndex, message, index) => {
+        return message.type === 'user' ? index : lastIndex
+      }, -1)
+
+      const normalizedContent = (content || '').trim()
+      for (let i = modeState.messages.length - 1; i > lastUserIndex; i--) {
+        const message = modeState.messages[i]
+        if (message.type !== 'final') continue
+
+        const existingContent = (message.content || '').trim()
+        if (
+          message.streaming ||
+          !normalizedContent ||
+          existingContent === normalizedContent ||
+          normalizedContent.startsWith(existingContent) ||
+          existingContent.startsWith(normalizedContent)
+        ) {
+          return message
+        }
+      }
+      return null
+    },
+
+    _mergeFinalMessage(message, content, data = {}) {
+      if (!message) return
+      if (content) {
+        message.content = content
+      }
+      message.streaming = false
+      message.data = {
+        ...(message.data || {}),
+        ...data
+      }
     },
 
     /**
@@ -1029,50 +1079,44 @@ export const useReactStore = defineStore('react', {
 
           // 【修复】使用targetState而不是currentState，确保状态更新到正确的模式
           targetState.isAnalyzing = false
+          targetState.isInterruption = false
           targetState.isComplete = true
           targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
-          targetState.finalAnswer = data?.response || data?.answer || ''
+          const finalContent = data?.response || data?.answer || ''
+          if (finalContent) {
+            targetState.finalAnswer = finalContent
+          }
           targetState.hasResults = true
 
           // 记录最终答案（原有工作流逻辑）
           targetState.finalAnswers.push({
             run: targetState.sessionRound,
-            content: data?.response || data?.answer || '分析完成',
+            content: finalContent || targetState.finalAnswer || '分析完成',
             timestamp: new Date().toISOString()
           })
 
           // 添加最终答案消息到UI
           // 如果已经通过 answer_delta 流式创建了最终答案消息，则只更新其元数据，避免重复追加一条消息
           console.log('[event:complete] streamingAnswerMessageId:', targetState.streamingAnswerMessageId)
-          if (targetState.streamingAnswerMessageId) {
-            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
-            if (msg) {
-              // 【修复】确保流式结束状态，并触发响应式更新
-              msg.streaming = false
-              // 【关键修复】用后端返回的完整response覆盖content（确保格式正确）
-              if (data?.response) {
-                msg.content = data.response
-                targetState.finalAnswer = data.response
-              }
-              // 使用 Object.assign 确保响应式更新
-              Object.assign(msg, {
-                data: {
-                  ...(msg.data || {}),
-                  iterations: data?.iterations,
-                  session_id: data?.session_id,
-                  timestamp: data?.timestamp,
-                  expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-                  sources: data?.sources || null  // ✅ 知识问答参考来源
-                }
-              })
-              // 触发数组响应式更新
-              targetState.messages = [...targetState.messages]
-              console.log('[event:complete] 更新已有消息的数据，streaming设置为false')
+          const existingFinalMessage = targetState.streamingAnswerMessageId
+            ? targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
+            : this._findLatestFinalMessageForCurrentTurn(targetState, finalContent)
+          if (existingFinalMessage) {
+            this._mergeFinalMessage(existingFinalMessage, finalContent, {
+              iterations: data?.iterations,
+              session_id: data?.session_id,
+              timestamp: data?.timestamp,
+              expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
+              sources: data?.sources || null  // ✅ 知识问答参考来源
+            })
+            if (finalContent) {
+              targetState.finalAnswer = finalContent
             }
-          } else if (data?.answer || data?.response) {
+            targetState.messages = [...targetState.messages]
+            console.log('[event:complete] 复用当前轮次已有final消息，避免重复追加')
+          } else if (finalContent) {
             // 【修复】优先使用response字段，兼容answer字段
-            const finalContent = data?.response || data?.answer || ''
             console.log('[event:complete] 添加final消息，content:', finalContent.substring(0, 50) + '...')
             addMessage('final', finalContent, {
               iterations: data?.iterations,
@@ -1161,6 +1205,7 @@ export const useReactStore = defineStore('react', {
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          this._persistModeState(targetMode)
           break
         }
 
@@ -1441,13 +1486,20 @@ export const useReactStore = defineStore('react', {
             sources: sources  // 保存sources供知识溯源面板使用（旧格式兼容）
           }
 
-          // 添加final消息并设置streamingAnswerMessageId，避免complete事件重复添加
-          const msgId = this.addMessage('final', finalContent, msgData, null, { streaming: false })
-          this.currentState.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
+          // final_answer 可能跟在 streaming_text 后面，只补齐当前轮次已有final消息，避免重复显示
+          let msg = this._findLatestFinalMessageForCurrentTurn(targetState, finalContent)
+          let msgId = msg?.id
+          if (msg) {
+            this._mergeFinalMessage(msg, finalContent, msgData)
+            targetState.messages = [...targetState.messages]
+          } else {
+            msgId = addMessage('final', finalContent, msgData, null, { streaming: false })
+            msg = targetState.messages.find(m => m.id === msgId)
+          }
+          targetState.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
 
           // 如果有sources，额外保存到message.data.sources（VisualizationPanel优先检查这里）
           if (sources && sources.length > 0) {
-            const msg = this.currentState.messages.find(m => m.id === msgId)
             if (msg) {
               // 确保data对象存在
               if (!msg.data) {
@@ -1460,7 +1512,10 @@ export const useReactStore = defineStore('react', {
           }
 
           // 更新finalAnswer
-          this.currentState.finalAnswer = finalContent
+          targetState.finalAnswer = finalContent
+          targetState.isAnalyzing = false
+          targetState.isInterruption = false
+          targetState.isComplete = true
           break
         }
 
