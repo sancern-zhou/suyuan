@@ -579,7 +579,7 @@ class ReActLoop:
                             )
 
                             # ✅ 临时保存工具结果（供 FINAL_ANSWER 分支使用）
-                            _last_single_tool_result = {
+                            self._last_single_tool_result = {
                                 "observation": observation,
                                 "tool_name": streaming_tool_executor._executions[0].tool_name
                             }

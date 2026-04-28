@@ -308,9 +308,7 @@ const handleMessageClick = (message, index) => {
      (message.sources && Array.isArray(message.sources) && message.sources.length > 0))
 
   if (hasSources && props.onMessageClick) {
-    // 计算在原始 messages 数组中的索引
-    const originalIndex = props.messages.findIndex(m => m.id === message.id)
-    props.onMessageClick(originalIndex >= 0 ? originalIndex : index, message)
+    props.onMessageClick(message.id, message)
   }
 }
 

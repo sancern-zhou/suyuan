@@ -96,28 +96,42 @@ async def generate_hypothetical_answer(query: str) -> str:
     """
     from app.services.llm_service import llm_service
 
-    hyde_prompt = f"""你是一位大气环境监测领域的专家。请根据以下关于大气环境监测业务的问题，生成用于向量检索的关键词组。
+    hyde_prompt = f"""你是一位大气环境监测领域的专家。请根据问题生成用于知识库检索的结构化查询。
 
 问题：{query}
 
 要求：
-1. 第一组：对原始问题的完整概述（一个完整的短语或句子，保留问题的核心语义和完整信息，不要拆分）
-2. 第二组：提取3-4个核心关键词/关键概念（用逗号分隔）
+1. summary：对原始问题的完整概述，保留标准号、术语和核心意图
+2. keywords：3-4个核心关键词/关键概念
 
-输出格式（直接输出关键词，不要有前缀说明，每组用换行分隔）："""
+只返回JSON对象，不要输出解释文字：
+{{
+  "summary": "完整检索概述",
+  "keywords": ["关键词1", "关键词2", "关键词3"]
+}}"""
 
     try:
-        hypothetical_answer = await llm_service.chat(
-            messages=[{"role": "user", "content": hyde_prompt}],
-            temperature=0.3,  # 低温度，关键词更稳定
-            max_tokens=256  # 增加token限制以容纳3组关键词
+        hyde_result = await llm_service.call_llm_with_json_response(
+            prompt=hyde_prompt,
+            max_retries=1
         )
+        summary = str(hyde_result.get("summary", "")).strip()
+        keywords = hyde_result.get("keywords", [])
+        if not isinstance(keywords, list):
+            keywords = []
+        keywords = [str(item).strip() for item in keywords if str(item).strip()]
+
+        if not summary:
+            logger.warning("hyde_json_missing_summary", query=query[:50], result=hyde_result)
+            return query
+
+        search_text = "\n".join([summary, ", ".join(keywords) if keywords else ""]).strip()
         logger.info(
             "hyde_generated",
             query=query[:100],
-            hyde_keywords=hypothetical_answer.strip()[:200]  # 记录关键词组内容
+            hyde_keywords=search_text[:200]
         )
-        return hypothetical_answer
+        return search_text
     except Exception as e:
         logger.warning("hyde_generation_failed", error=str(e), query=query[:50])
         # 降级：返回原始问题

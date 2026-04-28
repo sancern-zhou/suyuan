@@ -49,10 +49,17 @@ export function usePanelManagement(store = null) {
     const hasCharts = store.currentState.visualizationHistory?.length > 0 ||
       store.currentState.currentVisualization?.visuals?.length > 0
 
+    // 检查知识问答检索来源，复用可视化面板展示知识溯源
+    const messages = store.messages || store.currentState?.messages || []
+    const hasSources = messages.some(msg =>
+      (Array.isArray(msg?.data?.sources) && msg.data.sources.length > 0) ||
+      (Array.isArray(msg?.sources) && msg.sources.length > 0)
+    )
+
     // 检查是否有Office文档
     const hasOffice = officePanelVisible.value
 
-    return hasCharts || hasOffice
+    return hasCharts || hasSources || hasOffice
   })
 
   /**
@@ -214,6 +221,9 @@ export function usePanelManagement(store = null) {
     watch(hasVizContent, (newValue) => {
       if (newValue && !vizPanelVisible.value) {
         vizPanelVisible.value = true
+        if (!officePanelVisible.value) {
+          activeRightTab.value = 'visualization'
+        }
       }
     }, { immediate: true })
 

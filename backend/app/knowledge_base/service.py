@@ -625,6 +625,9 @@ class KnowledgeBaseService:
         Returns:
             检索结果列表
         """
+        if score_threshold is None:
+            score_threshold = 0.25
+
         # 获取要检索的知识库
         if knowledge_base_ids:
             # 过滤出可访问的
