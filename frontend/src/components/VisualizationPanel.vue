@@ -152,6 +152,11 @@ const props = defineProps({
 defineEmits([])
 
 const expandedGroups = ref(['weather', 'component'])
+const expanded = ref(true)
+
+const toggleExpand = () => {
+  expanded.value = !expanded.value
+}
 
 // 图表组件引用（用于刷新和截图）
 const chartRefs = ref({})
