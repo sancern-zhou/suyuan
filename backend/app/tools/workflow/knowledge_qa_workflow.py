@@ -170,6 +170,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             # ✅ 不生成回答，只返回检索结果，让主 Agent 决定如何使用
             # 构建来源信息（用于data字段）
             sources = []
+            retrieval_metadata = documents[0].get("retrieval_metadata", {}) if documents else {}
             for doc in documents[:5]:  # 最多返回5篇参考文档
                 # 获取完整内容，不再截断
                 content = doc.get("content", "")
@@ -188,6 +189,9 @@ class KnowledgeQAWorkflow(WorkflowTool):
                     "chunk_index": doc.get("chunk_index"),
                     "section": doc.get("section"),
                     "topic": doc.get("topic"),
+                    "retrieval_route": doc.get("retrieval_route"),
+                    "retrieval_routes": doc.get("retrieval_routes", []),
+                    "retrieval_metadata": doc.get("retrieval_metadata", {}),
                     "content": content  # 返回完整内容
                 })
 
@@ -201,6 +205,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 "query": actual_query,
                 "sources": sources,
                 "total_retrieved": len(documents),
+                "retrieval_metadata": retrieval_metadata,
                 "retrieval_summary": f"从知识库中检索到 {len(documents)} 篇相关文档"
             }
 
@@ -212,7 +217,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 summary=f"知识检索完成，找到{len(documents)}篇相关文档",
                 extra_metadata={
                     "retrieval_only": True,  # ✅ 标记：仅检索，不生成回答
-                    "documents_count": len(documents)
+                    "documents_count": len(documents),
+                    "retrieval_metadata": retrieval_metadata
                 }
             )
 

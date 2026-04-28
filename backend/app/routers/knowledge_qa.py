@@ -12,10 +12,12 @@
 """
 
 import json
+import re
 import structlog
 import asyncio
 import time
 from typing import Optional, List
+from collections import OrderedDict
 from fastapi import APIRouter, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -81,6 +83,79 @@ class KnowledgeQAResponse(BaseModel):
 # HyDE 假设答案生成函数
 # ========================================
 
+_HYDE_CACHE_TTL_SECONDS = 3600
+_HYDE_CACHE_MAX_SIZE = 256
+_hyde_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+
+
+def _dedupe_search_results(results: List[dict]) -> List[dict]:
+    """合并双路召回结果，同一分块只保留得分更高的一条，并记录命中路由。"""
+    deduped: "OrderedDict[tuple, dict]" = OrderedDict()
+    for item in results:
+        kb_info = item.get("knowledge_base", {}) or {}
+        metadata = item.get("metadata", {}) or {}
+        key = (
+            kb_info.get("id"),
+            item.get("document_id"),
+            item.get("chunk_index"),
+            metadata.get("chunk_id"),
+            (item.get("content") or "")[:120]
+        )
+        route = item.get("retrieval_route", "unknown")
+        existing = deduped.get(key)
+        if not existing:
+            item["retrieval_routes"] = [route]
+            deduped[key] = item
+            continue
+
+        existing_routes = existing.setdefault("retrieval_routes", [])
+        if route not in existing_routes:
+            existing_routes.append(route)
+        if float(item.get("score") or 0) > float(existing.get("score") or 0):
+            item["retrieval_routes"] = existing_routes
+            deduped[key] = item
+
+    return list(deduped.values())
+
+
+def _get_cached_hyde_keywords(query: str) -> Optional[str]:
+    cached = _hyde_cache.get(query)
+    if not cached:
+        return None
+
+    cached_at, keywords = cached
+    if time.time() - cached_at > _HYDE_CACHE_TTL_SECONDS:
+        _hyde_cache.pop(query, None)
+        return None
+
+    _hyde_cache.move_to_end(query)
+    return keywords
+
+
+def _set_cached_hyde_keywords(query: str, keywords: str) -> None:
+    _hyde_cache[query] = (time.time(), keywords)
+    _hyde_cache.move_to_end(query)
+    while len(_hyde_cache) > _HYDE_CACHE_MAX_SIZE:
+        _hyde_cache.popitem(last=False)
+
+
+def _is_precise_retrieval_query(query: str) -> bool:
+    """标准号/缩写/多个专业词已经足够明确时，跳过HyDE以降低首 token 等待。"""
+    normalized = query.upper().replace(" ", "")
+    if re.search(r"\b(HJ|GB|GB/T|DB|T/CN)[\s-]*\d+", query, re.IGNORECASE):
+        return True
+    if re.search(r"(HJ|GB|GBT|DB)\d{3,}", normalized):
+        return True
+
+    domain_terms = [
+        "AQI", "IAQI", "PM2.5", "PM10", "SO2", "NO2", "O3", "CO",
+        "综合指数", "空气质量", "评价标准", "分指数", "首要污染物",
+        "污染物", "浓度限值", "监测点位", "技术规定", "计算方法"
+    ]
+    matched_terms = sum(1 for term in domain_terms if term.upper() in normalized or term in query)
+    return matched_terms >= 3 and len(query.strip()) <= 80
+
+
 async def generate_hypothetical_keywords(query: str) -> str:
     """
     使用LLM生成检索关键词（HyDE优化版）
@@ -95,6 +170,11 @@ async def generate_hypothetical_keywords(query: str) -> str:
         关键词字符串（逗号分隔）
     """
     from app.services.llm_service import llm_service
+
+    cached_keywords = _get_cached_hyde_keywords(query)
+    if cached_keywords is not None:
+        logger.info("hyde_cache_hit", query=query[:100], keywords=cached_keywords[:200])
+        return cached_keywords
 
     hyde_prompt = f"""你是一位环境监测领域的专家。请从问题中提取核心检索关键词。
 
@@ -132,6 +212,7 @@ async def generate_hypothetical_keywords(query: str) -> str:
             query=query[:100],
             keywords=keywords_text[:200]
         )
+        _set_cached_hyde_keywords(query, keywords_text)
         return keywords_text
     except Exception as e:
         logger.warning("hyde_generation_failed", error=str(e), query=query[:50])
@@ -186,40 +267,85 @@ async def search_knowledge_bases(
                 logger.info("no_available_knowledge_bases", query=query[:50])
                 return []
 
-        # HyDE优化：生成关键词用于检索
-        # 策略：原始query + HyDE关键词（避免重复，只添加扩展关键词）
-        search_query = query
-        hyde_used = False
-        hyde_keywords = ""
-        if use_hyde:
-            hyde_start = time.time()
-            hyde_keywords = await generate_hypothetical_keywords(query)
-            # 只在有关键词时才组合
-            if hyde_keywords:
-                search_query = f"{query}\n{hyde_keywords}"
-            hyde_elapsed = (time.time() - hyde_start) * 1000
-            hyde_used = True
-            logger.info(
-                "hyde_applied",
-                original_query=query[:100],
-                hyde_keywords=hyde_keywords.strip()[:200],  # 记录用于检索的关键词
-                search_query=search_query[:300],  # 记录最终检索文本
-                hyde_elapsed_ms=round(hyde_elapsed, 2)
-            )
-
-        try:
-            results = await asyncio.wait_for(
-                service.search(
-                    query=search_query,  # 使用原始问题或假设答案
+        async def run_search_route(route: str, route_query: str) -> tuple[List[dict], float]:
+            route_started_at = time.time()
+            async with async_session() as route_db:
+                route_service = KnowledgeBaseService(db=route_db)
+                route_results = await route_service.search(
+                    query=route_query,
                     user_id=user_id,
                     knowledge_base_ids=kb_ids,
                     top_k=top_k,
                     score_threshold=score_threshold,
                     filters=None,
                     use_reranker=use_reranker
-                ),
-                timeout=30.0  # 检索超时30秒
-            )
+                )
+            route_elapsed = (time.time() - route_started_at) * 1000
+            for item in route_results:
+                item["retrieval_route"] = route
+                item["retrieval_route_query"] = route_query
+                item["retrieval_route_elapsed_ms"] = round(route_elapsed, 2)
+            return route_results, route_elapsed
+
+        # HyDE优化：原始问题一路立即检索；关键词一路等HyDE生成后检索，两路并行合并。
+        search_query = query
+        hyde_used = False
+        hyde_keywords = ""
+        hyde_elapsed = 0.0
+        hyde_skipped_reason = None
+        retrieval_routes = ["original"]
+
+        try:
+            retrieval_started_at = time.time()
+            original_task = asyncio.create_task(run_search_route("original", query))
+            route_elapsed_ms = {}
+
+            if use_hyde and not _is_precise_retrieval_query(query):
+                hyde_start = time.time()
+                hyde_keywords = await generate_hypothetical_keywords(query)
+                hyde_elapsed = (time.time() - hyde_start) * 1000
+                hyde_used = bool(hyde_keywords)
+
+                if hyde_keywords:
+                    retrieval_routes.append("hyde_keywords")
+                    keyword_task = asyncio.create_task(
+                        run_search_route("hyde_keywords", hyde_keywords)
+                    )
+                    route_results = await asyncio.wait_for(
+                        asyncio.gather(original_task, keyword_task),
+                        timeout=30.0
+                    )
+                else:
+                    route_results = [await asyncio.wait_for(original_task, timeout=30.0)]
+
+                logger.info(
+                    "hyde_dual_route_applied",
+                    original_query=query[:100],
+                    hyde_keywords=hyde_keywords.strip()[:200],
+                    routes=retrieval_routes,
+                    hyde_elapsed_ms=round(hyde_elapsed, 2)
+                )
+            else:
+                if use_hyde:
+                    hyde_skipped_reason = "precise_query"
+                    logger.info(
+                        "hyde_skipped",
+                        query=query[:100],
+                        reason=hyde_skipped_reason
+                    )
+                route_results = [await asyncio.wait_for(original_task, timeout=30.0)]
+
+            raw_results = []
+            for route_items, route_elapsed in route_results:
+                raw_results.extend(route_items)
+                if route_items:
+                    route_name = route_items[0].get("retrieval_route", "unknown")
+                    route_elapsed_ms[route_name] = round(route_elapsed, 2)
+
+            results = _dedupe_search_results(raw_results)
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
+            results = results[:top_k]
+            retrieval_elapsed = (time.time() - retrieval_started_at) * 1000
 
             # 格式化结果，添加文档信息
             doc_ids = [r.get("document_id") for r in results if r.get("document_id")]
@@ -277,7 +403,27 @@ async def search_knowledge_bases(
                     "section": chunk_metadata.get("section") or metadata.get("section"),
                     "topic": chunk_metadata.get("topic") or metadata.get("topic"),
                     "metadata": metadata,
-                    "hyde_used": hyde_used  # 标记是否使用HyDE
+                    "hyde_used": hyde_used,  # 标记是否使用HyDE
+                    "retrieval_route": r.get("retrieval_route"),
+                    "retrieval_routes": r.get("retrieval_routes", []),
+                    "retrieval_metadata": {
+                        "search_query": search_query,
+                        "search_queries": {
+                            "original": query,
+                            "hyde_keywords": hyde_keywords or None
+                        },
+                        "hyde_keywords": hyde_keywords,
+                        "hyde_used": hyde_used,
+                        "hyde_skipped_reason": hyde_skipped_reason,
+                        "hyde_elapsed_ms": round(hyde_elapsed, 2),
+                        "retrieval_elapsed_ms": round(retrieval_elapsed, 2),
+                        "retrieval_routes": retrieval_routes,
+                        "route_elapsed_ms": route_elapsed_ms,
+                        "raw_result_count": len(raw_results),
+                        "result_count": len(results),
+                        "top_k": top_k,
+                        "use_reranker": use_reranker
+                    }
                 })
 
             return formatted_results
