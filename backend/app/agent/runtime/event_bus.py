@@ -79,6 +79,12 @@ class RuntimeEventBus:
         }
         if tool_name:
             data["tool_name"] = tool_name
+        data_id = self._extract_data_id(result.get("data_id") if isinstance(result, dict) else None)
+        if data_id:
+            data["data_id"] = data_id
+        data_ids = self._extract_data_ids(result.get("data_ids") if isinstance(result, dict) else None)
+        if data_ids:
+            data["data_ids"] = data_ids
         return {
             "type": "tool_result",
             "stream": "tool",
@@ -170,3 +176,22 @@ class RuntimeEventBus:
                 "timestamp": datetime.now().isoformat(),
             },
         }
+
+    def _extract_data_id(self, value: Any) -> str | None:
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, dict):
+            nested = value.get("data_id")
+            if isinstance(nested, str) and nested:
+                return nested
+        return None
+
+    def _extract_data_ids(self, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        data_ids = []
+        for item in value:
+            data_id = self._extract_data_id(item)
+            if data_id:
+                data_ids.append(data_id)
+        return data_ids
