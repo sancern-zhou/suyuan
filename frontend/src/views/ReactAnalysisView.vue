@@ -28,6 +28,7 @@
       :right-panel-visible="rightPanelVisible"
       :viz-panel-visible="vizPanelVisible"
       :office-panel-visible="officePanelVisible"
+      :knowledge-panel-visible="knowledgePanelVisible"
       :active-right-tab="activeRightTab"
       :viz-panel-style="vizPanelStyle"
       :is-dragging="isDragging"
@@ -47,6 +48,7 @@
       :session-history-loading="sessionHistoryLoading"
       @update:active-module="handleAssistantSelect"
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
+      @update:layout-ref="layoutRef = $event"
       @send="handleSend"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
@@ -153,6 +155,7 @@ const {
   leftSidebarCollapsed,
   vizPanelVisible,
   officePanelVisible,
+  knowledgePanelVisible,
   activeRightTab,
   vizWidth,
   isDragging,
@@ -496,13 +499,18 @@ const deleteScheduledTask = async (task) => {
 onMounted(() => {
   setupPanelWatchers()
   setupGlobalListeners()
-  // 将 MainLayout 内部的 layoutRef 同步给 usePanelManagement（用于拖拽宽度计算）
-  if (mainLayoutRef.value?.layoutRef) {
-    layoutRef.value = mainLayoutRef.value.layoutRef
-    console.log('[ReactAnalysisView] layoutRef synced:', layoutRef.value)
-  } else {
-    console.warn('[ReactAnalysisView] layoutRef sync failed, mainLayoutRef:', !!mainLayoutRef.value, 'mainLayoutRef.value?.layoutRef:', !!mainLayoutRef.value?.layoutRef)
-  }
+
+  // layoutRef 会通过 MainLayout 的 @update:layout-ref 事件自动同步
+  // 这里只需要检查是否同步成功
+  nextTick(() => {
+    console.log('[ReactAnalysisView] layoutRef status:', {
+      hasLayoutRef: !!layoutRef.value,
+      hasMainLayoutRef: !!mainLayoutRef.value,
+      hasMainLayoutLayoutRef: !!mainLayoutRef.value?.layoutRef,
+      hasMainLayoutLayoutRefValue: !!mainLayoutRef.value?.layoutRef?.value
+    })
+  })
+
   // 初始化日期
   const today = new Date()
   era5HistoricalDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`

@@ -132,6 +132,7 @@
         :visible="rightPanelVisible"
         :viz-panel-visible="vizPanelVisible"
         :office-panel-visible="officePanelVisible"
+        :knowledge-panel-visible="knowledgePanelVisible"
         :active-tab="activeRightTab"
         :panel-style="vizPanelStyle"
         :assistant-mode="activeModule"
@@ -140,6 +141,7 @@
         :selected-message-id="selectedMessageId"
         :session-id="sessionId"
         :expert-results="expertResults"
+        :knowledge-sources="knowledgeSources"
         @tab-change="handleTabChange"
         @office-edit-submit="handleOfficeEditSubmit"
       />
@@ -239,6 +241,10 @@ const props = defineProps({
     default: false
   },
   officePanelVisible: {
+    type: Boolean,
+    default: false
+  },
+  knowledgePanelVisible: {
     type: Boolean,
     default: false
   },
@@ -370,7 +376,59 @@ const rightPanelExpanded = ref(true)
 // 计算是否有可视化内容（用于显示/隐藏ChatArea中的按钮）
 const hasVizContent = computed(() => {
   // 只要有右侧面板可见，就显示按钮
-  return props.vizPanelVisible || props.officePanelVisible
+  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible
+})
+
+// 计算知识溯源数据
+const knowledgeSources = computed(() => {
+  let sources = []
+
+  // 1. 优先从选中消息的data.sources获取
+  if (props.selectedMessageId && props.messages && props.messages.length > 0) {
+    const selectedMsg = props.messages.find(msg => msg.id === props.selectedMessageId)
+    if (selectedMsg) {
+      if (selectedMsg?.data?.sources && Array.isArray(selectedMsg.data.sources)) {
+        sources = selectedMsg.data.sources
+      }
+      // 兼容旧格式：直接在msg上的sources字段
+      else if (selectedMsg?.sources && Array.isArray(selectedMsg.sources)) {
+        sources = selectedMsg.sources
+      }
+    }
+  }
+
+  // 2. 如果没有选中的消息，从最后一条消息的data.sources获取
+  if (sources.length === 0 && props.messages && props.messages.length > 0) {
+    const lastMsg = props.messages[props.messages.length - 1]
+    if (lastMsg?.data?.sources && Array.isArray(lastMsg.data.sources)) {
+      sources = lastMsg.data.sources
+    }
+    // 兼容旧格式：直接在msg上的sources字段
+    else if (lastMsg?.sources && Array.isArray(lastMsg.sources)) {
+      sources = lastMsg.sources
+    }
+  }
+
+  // 3. 如果还没有sources，尝试从visualizationContent中提取
+  if (sources.length === 0 && props.visualizationContent?.visuals && Array.isArray(props.visualizationContent.visuals)) {
+    const knowledgeVisuals = props.visualizationContent.visuals
+      .filter(v => v.type === 'knowledge_source')
+      .map((v) => ({
+        title: v.title || '未知标题',
+        document_name: v.title || '未知标题',
+        source: v.data?.source || '未知来源',
+        knowledge_base_name: v.data?.source || '未知来源',
+        relevance: v.data?.relevance || 0,
+        score: v.data?.relevance || 0,
+        chunk_index: v.data?.chunk_index,
+        document_id: v.data?.document_id,
+        knowledge_base_id: v.data?.knowledge_base_id,
+        content: v.data?.content || ''
+      }))
+    sources = knowledgeVisuals
+  }
+
+  return sources
 })
 
 // 监听 layoutRef 变化并通知父组件

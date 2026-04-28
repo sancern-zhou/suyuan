@@ -90,9 +90,12 @@ class SessionMemory:
         use_llm_compression: bool = True,
     ) -> None:
         self.session_id = session_id
-        # 使用跨平台的临时目录（Windows: C:\Users\xxx\AppData\Local\Temp, Linux: /tmp）
+        # 使用项目目录而不是系统临时目录，避免 /tmp 下产生大量空文件夹
         if base_dir is None:
-            base_dir = tempfile.gettempdir()
+            # 使用 backend_data_registry/sessions 作为会话目录
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent.parent.parent  # backend 目录
+            base_dir = project_root / "backend_data_registry" / "sessions"
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
