@@ -454,17 +454,25 @@ class KnowledgeVectorStore:
 
                     # 只有同时支持命名向量和sparse向量才使用混合模式
                     if not has_sparse or not has_named_vectors:
-                        logger.info(
-                            "collection_no_sparse_fallback_to_dense",
+                        logger.error(
+                            "collection_missing_hybrid_vectors",
                             collection=collection_name,
                             has_sparse=has_sparse,
-                            has_named_vectors=has_named_vectors
+                            has_named_vectors=has_named_vectors,
+                            vectors_type=type(vectors).__name__
                         )
-                        use_hybrid = False
+                        raise RuntimeError(
+                            f"Collection {collection_name} does not support hybrid vectors; "
+                            "delete and recreate the knowledge base with the latest backend"
+                        )
                 except Exception as e:
-                    logger.warning("collection_check_failed", error=str(e), exc_info=True)
-                    # 安全起见，禁用混合模式
-                    use_hybrid = False
+                    logger.error(
+                        "collection_check_failed",
+                        collection=collection_name,
+                        error=str(e),
+                        exc_info=True
+                    )
+                    raise
 
             logger.info(
                 "add_chunks_vector_mode",
@@ -736,21 +744,22 @@ class KnowledgeVectorStore:
 
             # 只有同时支持命名向量和sparse向量才使用混合模式
             if not has_sparse or not has_named_vectors:
-                logger.info(
-                    "hybrid_search_fallback_no_sparse",
+                logger.error(
+                    "hybrid_search_collection_missing_hybrid_vectors",
                     collection=collection_name,
                     has_sparse=has_sparse,
                     has_named_vectors=has_named_vectors
                 )
-                return await self.search(
-                    collection_name, query, top_k, score_threshold, filters
+                raise RuntimeError(
+                    f"Collection {collection_name} does not support hybrid vectors"
                 )
         except Exception as e:
-            logger.warning("hybrid_search_collection_check_failed", error=str(e))
-            # 安全起见，降级到纯向量检索
-            return await self.search(
-                collection_name, query, top_k, score_threshold, filters
+            logger.error(
+                "hybrid_search_collection_check_failed",
+                collection=collection_name,
+                error=str(e)
             )
+            raise
 
         # 在线程池中执行混合检索
         import asyncio
@@ -761,11 +770,7 @@ class KnowledgeVectorStore:
             )
         except Exception as e:
             logger.error("hybrid_search_failed", error=str(e))
-            # 降级到纯向量检索
-            logger.warning("falling_back_to_dense_search")
-            return await self.search(
-                collection_name, query, top_k, score_threshold, filters
-            )
+            raise
 
     def _hybrid_search_sync(
         self,
