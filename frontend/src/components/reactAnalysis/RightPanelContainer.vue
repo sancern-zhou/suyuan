@@ -6,7 +6,7 @@
       :assistant-mode="assistantMode"
     />
 
-    <!-- 其他模式：可视化面板 + Office文档预览面板 -->
+    <!-- 其他模式：可视化面板 + Office文档预览面板 + 知识溯源面板 -->
     <template v-else>
       <!-- 标签页切换按钮 -->
       <div v-if="showTabs" class="right-panel-tabs">
@@ -22,12 +22,19 @@
         >
           文档预览
         </button>
+        <button
+          :class="['tab-btn', { active: activeTab === 'knowledge' }]"
+          @click="handleTabChange('knowledge')"
+        >
+          知识溯源
+        </button>
       </div>
 
       <!-- 可视化面板 -->
       <VisualizationPanel
         v-show="activeTab === 'visualization'"
         ref="vizPanelRef"
+        key="visualization-panel"
         class="panel-content"
         :content="visualizationContent"
         :history="messages"
@@ -40,10 +47,22 @@
       <OfficeDocumentPanel
         v-show="activeTab === 'document'"
         ref="officePanelRef"
+        key="document-panel"
         class="panel-content"
         :history="messages"
         :session-id="sessionId"
         @submit-edit="handleOfficeEditSubmit"
+      />
+
+      <!-- 知识溯源面板 -->
+      <KnowledgeSourcePanel
+        v-show="activeTab === 'knowledge'"
+        ref="knowledgePanelRef"
+        key="knowledge-panel"
+        class="panel-content"
+        :sources="knowledgeSources"
+        :history="messages"
+        :selected-message-id="selectedMessageId"
       />
     </template>
   </div>
@@ -54,6 +73,7 @@ import { ref, computed, watch } from 'vue'
 import VisualizationPanel from '@/components/VisualizationPanel.vue'
 import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
+import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
 
 const props = defineProps({
   visible: {
@@ -65,6 +85,10 @@ const props = defineProps({
     default: false
   },
   officePanelVisible: {
+    type: Boolean,
+    default: false
+  },
+  knowledgePanelVisible: {
     type: Boolean,
     default: false
   },
@@ -99,6 +123,10 @@ const props = defineProps({
   expertResults: {
     type: Object,
     default: null
+  },
+  knowledgeSources: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -118,10 +146,11 @@ watch(() => props.visible, (newVal) => {
 
 const vizPanelRef = ref(null)
 const officePanelRef = ref(null)
+const knowledgePanelRef = ref(null)
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.vizPanelVisible && props.officePanelVisible
+  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible
 })
 
 const handleTabChange = (tab) => {
@@ -160,14 +189,15 @@ defineExpose({
 
 .tab-btn {
   flex: 1;
-  padding: 12px 16px;
+  padding: 12px 8px;
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   color: #666;
   transition: all 0.3s;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
 }
 
 .tab-btn:hover {

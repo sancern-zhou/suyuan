@@ -675,6 +675,9 @@ const completedMessages = computed(() => {
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
 
+// 【新增】折叠的过程消息ID集合（用于批量加载时自动折叠历史消息）
+const collapsedProcessIds = ref(new Set())
+
 // 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
 const isInitialLoad = ref(true)
 

@@ -1,20 +1,23 @@
 <template>
-  <div class="knowledge-source-section">
+  <div class="knowledge-source-full-panel">
     <div class="panel-header">
       <div class="header-title">
         <span class="panel-icon">📚</span>
         <span class="panel-text">知识溯源</span>
-        <span class="source-count">{{ sources.length }} 篇参考文档</span>
+        <span v-if="sources.length > 0" class="source-count">{{ sources.length }} 篇参考文档</span>
       </div>
-      <button
-        @click="$emit('toggle-expand')"
-        class="toggle-btn"
-      >
-        {{ expanded ? '收起' : '展开' }}
-      </button>
     </div>
 
-    <div v-if="expanded" class="source-list">
+    <div v-if="sources.length === 0" class="empty-state">
+      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+        <path d="M2 17l10 5 10-5"/>
+        <path d="M2 12l10 5 10-5"/>
+      </svg>
+      <p>暂无知识溯源信息</p>
+    </div>
+
+    <div v-else class="source-list">
       <div
         v-for="(source, index) in sources"
         :key="index"
@@ -62,30 +65,34 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  expanded: {
-    type: Boolean,
-    default: true
+  history: {
+    type: Array,
+    default: () => []
+  },
+  selectedMessageId: {
+    type: String,
+    default: null
   }
 })
-
-// Emit events
-defineEmits(['toggle-expand'])
 </script>
 
 <style scoped>
-.knowledge-source-section {
-  background: white;
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+.knowledge-source-full-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #f5f6fb;
+  overflow: hidden;
 }
 
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  padding: 16px 20px;
+  background: white;
+  border-bottom: 1px solid #e8e8e8;
+  flex-shrink: 0;
 }
 
 .header-title {
@@ -95,41 +102,43 @@ defineEmits(['toggle-expand'])
 }
 
 .panel-icon {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .panel-text {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 16px;
   color: #333;
 }
 
 .source-count {
-  padding: 2px 8px;
+  padding: 4px 12px;
   background: #e3f2fd;
   color: #1976d2;
   border-radius: 12px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
 }
 
-.toggle-btn {
-  padding: 4px 12px;
-  border: 1px solid #1976d2;
-  background: white;
-  color: #1976d2;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: all 0.2s;
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  gap: 16px;
 }
 
-.toggle-btn:hover {
-  background: #1976d2;
-  color: white;
+.empty-state p {
+  font-size: 14px;
+  margin: 0;
 }
 
 .source-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -137,28 +146,28 @@ defineEmits(['toggle-expand'])
 
 .source-item {
   border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  padding: 12px;
-  background: #fafafa;
+  border-radius: 8px;
+  padding: 16px;
+  background: white;
   transition: all 0.2s;
 }
 
 .source-item:hover {
   border-color: #1976d2;
-  box-shadow: 0 2px 6px rgba(25, 118, 210, 0.15);
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
 }
 
 .source-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .source-title {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 12px;
   flex: 1;
 }
 
@@ -166,12 +175,12 @@ defineEmits(['toggle-expand'])
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   background: #1976d2;
   color: white;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -179,8 +188,8 @@ defineEmits(['toggle-expand'])
 .source-name {
   font-weight: 500;
   color: #333;
-  font-size: 14px;
-  line-height: 1.4;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 .source-meta {
@@ -188,32 +197,32 @@ defineEmits(['toggle-expand'])
 }
 
 .relevance-badge {
-  padding: 2px 8px;
+  padding: 4px 10px;
   background: #4caf50;
   color: white;
   border-radius: 12px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .source-info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-  padding-left: 32px;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding-left: 40px;
 }
 
 .info-row {
   display: flex;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .info-row label {
   color: #666;
   font-weight: 500;
-  min-width: 40px;
+  min-width: 50px;
 }
 
 .info-row span {
@@ -221,17 +230,18 @@ defineEmits(['toggle-expand'])
 }
 
 .source-content {
-  padding-left: 32px;
+  padding-left: 40px;
 }
 
 .content-preview {
-  padding: 8px;
-  background: white;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 12px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  font-size: 13px;
   color: #666;
-  line-height: 1.6;
-  max-height: 100px;
+  line-height: 1.7;
+  max-height: 150px;
   overflow-y: auto;
+  white-space: pre-wrap;
 }
 </style>
