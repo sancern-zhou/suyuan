@@ -758,9 +758,16 @@ export const useReactStore = defineStore('react', {
       }, -1)
 
       const normalizedContent = (content || '').trim()
+      let firstFinalAfterUser = null
+
       for (let i = modeState.messages.length - 1; i > lastUserIndex; i--) {
         const message = modeState.messages[i]
         if (message.type !== 'final') continue
+
+        // 记录第一个final消息（最接近用户消息的）
+        if (!firstFinalAfterUser) {
+          firstFinalAfterUser = message
+        }
 
         const existingContent = (message.content || '').trim()
         if (
@@ -773,6 +780,19 @@ export const useReactStore = defineStore('react', {
           return message
         }
       }
+
+      // 【修复】如果没有找到匹配的消息，但存在第一个final消息，
+      // 且它与用户消息之间没有其他final消息，则复用它（避免重复创建）
+      // 这处理了streaming标记被移除但消息确实存在的情况
+      if (firstFinalAfterUser && normalizedContent) {
+        const existingContent = (firstFinalAfterUser.content || '').trim()
+        // 如果内容相似（其中一个包含另一个），则复用
+        if (normalizedContent.includes(existingContent) || existingContent.includes(normalizedContent)) {
+          console.log('[_findLatestFinalMessageForCurrentTurn] 复用第一个final消息（内容相似）')
+          return firstFinalAfterUser
+        }
+      }
+
       return null
     },
 
@@ -1051,8 +1071,10 @@ export const useReactStore = defineStore('react', {
                 // 强制触发响应式更新，确保流式完成后重新渲染
                 targetState._forceRenderCount++
               }
+              // 【修复】不要在这里清除 streamingAnswerMessageId，
+              // 让 complete 事件来处理，这样可以找到流式创建的消息并更新它
+              // targetState.streamingAnswerMessageId = null  // ← 删除这行
             }
-            targetState.streamingAnswerMessageId = null
 
             // ✅ 自动保存会话：每次AI回复完成时保存
             if (targetState.sessionId && targetState.messages.length > 0) {
@@ -1061,6 +1083,29 @@ export const useReactStore = defineStore('react', {
               autoSaveSession(targetState.sessionId, targetState.messages, 'active').catch(err => {
                 console.warn('[autoSave] 自动保存失败:', err)
               })
+            }
+          }
+          break
+        }
+
+        case 'answer_delta': {
+          // ✅ 知识问答流式输出（兼容独立路由）
+          const delta = data?.delta || ''
+          if (delta) {
+            // 如果是第一个块，创建新消息
+            if (!targetState.streamingAnswerMessageId) {
+              targetState.streamingAnswerMessageId = addMessage('final', '', {
+                timestamp: data?.timestamp,
+                session_id: data?.session_id
+              }, null, { streaming: true })
+            }
+
+            // 找到消息并追加内容
+            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
+            if (msg) {
+              msg.content += delta
+              // 同步更新 finalAnswer
+              targetState.finalAnswer += delta
             }
           }
           break

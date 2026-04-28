@@ -1,6 +1,8 @@
 <template>
-  <div class="markdown-renderer" ref="markdownRef">
+  <div class="markdown-renderer" ref="markdownRef" :class="{ 'is-streaming': streaming }">
     <div v-html="renderedHtml" @click="handleImageClick"></div>
+    <!-- 流式输出光标 -->
+    <span v-if="streaming" class="streaming-cursor"></span>
   </div>
 
   <ImageLightbox
@@ -625,6 +627,36 @@ const handleImageClick = (e) => {
       padding: 8px;
       margin: 12px 0;
       font-size: 0.9em;
+    }
+  }
+
+  // 流式输出光标效果
+  .streaming-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background-color: #1976D2;
+    margin-left: 2px;
+    animation: blink 1s step-end infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes blink {
+    0%, 50% {
+      opacity: 1;
+    }
+    51%, 100% {
+      opacity: 0;
+    }
+  }
+
+  // 流式输出时的容器样式
+  &.is-streaming {
+    position: relative;
+
+    // 确保光标始终在最后
+    :deep(div) {
+      display: inline;
     }
   }
 }
