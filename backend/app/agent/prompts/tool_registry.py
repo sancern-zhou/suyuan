@@ -189,6 +189,7 @@ QUERY_TOOLS = {
 
     # === 知识库检索（预报会商场景） ===
     "search_knowledge_base": "检索会商记录、模型参数、历史案例等知识库内容。参数: query(str), knowledge_base_ids(list, 可选, 指定会商知识库ID), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5), filters(dict, 可选, 元数据过滤), use_reranker(bool, 可选, 默认true)",
+    "knowledge_document_reader": "读取知识库文档的chunk文本视图。适用：search_knowledge_base或knowledge_qa_workflow返回document_read_targets后，按document_id+chunk_index读取相邻chunks或全文chunks，再回答严肃知识问答。参数: knowledge_base_id(str, 必需), document_id(str, 必需), chunk_index(int, 可选, 单个命中chunk索引), chunk_indices(list[int], 可选, 多个命中chunk索引), mode(str, 可选, neighbor_chunks/all_chunks, 默认neighbor_chunks), window(int, 可选, 相邻窗口, 默认2), max_chunks(int, 可选, 返回chunk上限, 默认30)",
 
     # === 可视化工具 ===
 
@@ -294,6 +295,7 @@ SOCIAL_TOOLS = {
 
     # === 知识库检索 ===
     "search_knowledge_base": "在知识库中检索相关信息。参数: query(str), knowledge_base_ids(list, 可选), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5)",
+    "knowledge_document_reader": "读取知识库文档的chunk文本视图。适用：search_knowledge_base或knowledge_qa_workflow返回document_read_targets后，按document_id+chunk_index读取相邻chunks或全文chunks，再回答严肃知识问答。参数: knowledge_base_id(str, 必需), document_id(str, 必需), chunk_index(int, 可选, 单个命中chunk索引), chunk_indices(list[int], 可选, 多个命中chunk索引), mode(str, 可选, neighbor_chunks/all_chunks, 默认neighbor_chunks), window(int, 可选, 相邻窗口, 默认2), max_chunks(int, 可选, 返回chunk上限, 默认30)",
 
     # === 记忆管理 ===
     "remember_fact": "记住重要事实到长期记忆（MEMORY.md）。使用时机：✅用户明确说'记住'、✅分享偏好、✅纠正错误、✅发现环境信息。❌不使用：临时信息、对话内容、不稳定事实。参数: fact(str, 要记住的事实), category(str, 类别: 用户偏好/领域知识/历史结论/环境信息), priority(int, 可选, 优先级1-5, 默认3)",
@@ -458,6 +460,7 @@ QUERY_TOOL_ORDER = [
 
     # 知识库检索（预报会商场景）
     "search_knowledge_base",
+    "knowledge_document_reader",
 
     # 可视化工具
 
@@ -570,6 +573,7 @@ SOCIAL_TOOL_ORDER = [
 
     # 知识库检索
     "search_knowledge_base",
+    "knowledge_document_reader",
 
     # 呼吸式特有工具
     "schedule_task",
