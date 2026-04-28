@@ -12,7 +12,6 @@
 """
 
 import json
-import re
 import structlog
 import asyncio
 import time
@@ -137,23 +136,6 @@ def _set_cached_hyde_keywords(query: str, keywords: str) -> None:
     _hyde_cache.move_to_end(query)
     while len(_hyde_cache) > _HYDE_CACHE_MAX_SIZE:
         _hyde_cache.popitem(last=False)
-
-
-def _is_precise_retrieval_query(query: str) -> bool:
-    """标准号/缩写/多个专业词已经足够明确时，跳过HyDE以降低首 token 等待。"""
-    normalized = query.upper().replace(" ", "")
-    if re.search(r"\b(HJ|GB|GB/T|DB|T/CN)[\s-]*\d+", query, re.IGNORECASE):
-        return True
-    if re.search(r"(HJ|GB|GBT|DB)\d{3,}", normalized):
-        return True
-
-    domain_terms = [
-        "AQI", "IAQI", "PM2.5", "PM10", "SO2", "NO2", "O3", "CO",
-        "综合指数", "空气质量", "评价标准", "分指数", "首要污染物",
-        "污染物", "浓度限值", "监测点位", "技术规定", "计算方法"
-    ]
-    matched_terms = sum(1 for term in domain_terms if term.upper() in normalized or term in query)
-    return matched_terms >= 3 and len(query.strip()) <= 80
 
 
 async def generate_hypothetical_keywords(query: str) -> str:
@@ -300,7 +282,7 @@ async def search_knowledge_bases(
             original_task = asyncio.create_task(run_search_route("original", query))
             route_elapsed_ms = {}
 
-            if use_hyde and not _is_precise_retrieval_query(query):
+            if use_hyde:
                 hyde_start = time.time()
                 hyde_keywords = await generate_hypothetical_keywords(query)
                 hyde_elapsed = (time.time() - hyde_start) * 1000
@@ -326,13 +308,6 @@ async def search_knowledge_bases(
                     hyde_elapsed_ms=round(hyde_elapsed, 2)
                 )
             else:
-                if use_hyde:
-                    hyde_skipped_reason = "precise_query"
-                    logger.info(
-                        "hyde_skipped",
-                        query=query[:100],
-                        reason=hyde_skipped_reason
-                    )
                 route_results = [await asyncio.wait_for(original_task, timeout=30.0)]
 
             raw_results = []
