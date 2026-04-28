@@ -673,35 +673,25 @@ class KnowledgeBaseService:
         )
 
         async def search_single_kb(kb: KnowledgeBase):
-            try:
-                if use_hybrid:
-                    # 使用混合检索（Dense + Sparse BM25）
-                    kb_results = await self.vector_store.hybrid_search(
-                        collection_name=kb.qdrant_collection,
-                        query=query,
-                        top_k=recall_per_kb,
-                        score_threshold=score_threshold,
-                        alpha=alpha,
-                        filters=filters
-                    )
-                else:
-                    # 纯向量检索
-                    kb_results = await self.vector_store.search(
-                        collection_name=kb.qdrant_collection,
-                        query=query,
-                        top_k=recall_per_kb,
-                        score_threshold=score_threshold,
-                        filters=filters
-                    )
-            except RuntimeError as e:
-                logger.warning(
-                    "knowledge_search_kb_skipped",
-                    kb_id=kb.id,
-                    kb_name=kb.name,
-                    collection=kb.qdrant_collection,
-                    error=str(e)
+            if use_hybrid:
+                # 使用混合检索（Dense + Sparse BM25）
+                kb_results = await self.vector_store.hybrid_search(
+                    collection_name=kb.qdrant_collection,
+                    query=query,
+                    top_k=recall_per_kb,
+                    score_threshold=score_threshold,
+                    alpha=alpha,
+                    filters=filters
                 )
-                return []
+            else:
+                # 纯向量检索
+                kb_results = await self.vector_store.search(
+                    collection_name=kb.qdrant_collection,
+                    query=query,
+                    top_k=recall_per_kb,
+                    score_threshold=score_threshold,
+                    filters=filters
+                )
             for result in kb_results:
                 result["knowledge_base"] = {
                     "id": kb.id,
