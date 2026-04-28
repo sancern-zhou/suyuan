@@ -8,6 +8,42 @@
 
 from typing import Dict, List
 
+EXECUTE_SQL_QUERY_DESCRIPTION = (
+    "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。"
+    "⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'、"
+    "'city_168_statistics_new_standard'、'noise_city_compliance_monthly'或"
+    "'noise_city_compliance_daily'，动态从数据库获取表结构)。"
+    "执行查询：sql(str, SQL查询语句)。"
+    "⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），"
+    "❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。"
+    "可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、"
+    "limit(int, 返回记录数限制, 默认50, 最大100)。"
+    "可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、"
+    "quality_control_records(质控例行检查记录)、working_orders(运维工单)、"
+    "BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；"
+    "【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、"
+    "city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)、"
+    "province_statistics_new_standard(省级空气质量统计-新标准限值)、"
+    "province_statistics_old_standard(省级空气质量统计-旧标准限值)、"
+    "noise_city_compliance_monthly(城市噪声昼夜达标率月汇总表，字段包括province、city_name、"
+    "period_month、station_total、day_compliance_rate、night_compliance_rate、night_status、"
+    "is_province_total；当前已导入安徽省2025年11月16地市及全省汇总数据；"
+    "night_status按夜间评价达标率是否达到100%分为N'达标'/N'未达标'/N'无有效数据')、"
+    "noise_city_compliance_daily(城市噪声昼夜达标率逐日明细表，字段包括city_name、data_date、"
+    "night_compliant_station_days、night_valid_station_days、night_compliance_rate、night_status以及"
+    "1类/2类/3类/4a类站点有效天数字段；用于展示各城市每日夜间达标和未达标情况)；"
+    "【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。"
+    "⚠️ **噪声夜间达标查询口径**：全省汇总使用 "
+    "SELECT * FROM dbo.noise_city_compliance_monthly WHERE province=N'安徽' "
+    "AND period_month='2025-11' AND is_province_total=1；"
+    "各地市月度达标/未达标使用 is_province_total=0 并按 night_status 分组或筛选；"
+    "逐日未达标明细查询 noise_city_compliance_daily 并筛选 night_status=N'未达标'。"
+    "⚠️ **空气质量统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、"
+    "month_current(当月累计，如stat_date='2026-04'表示4月当月)、"
+    "year_to_date(年初至今，如stat_date='2026'表示1月至今)、"
+    "month_complete(完整月，如stat_date='2026-03'表示3月完整月)"
+)
+
 # ===== 助手模式工具 =====
 ASSISTANT_TOOLS = {
     # Shell命令
@@ -57,7 +93,7 @@ EXPERT_TOOLS = {
 
     # 全国城市历史数据查询工具
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。⚠️ **统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)",
+    "execute_sql_query": EXECUTE_SQL_QUERY_DESCRIPTION,
     # 广东省数据查询工具（⚠️ 注意区分城市级别和站点级别工具）
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点小时数据，请使用 query_gd_suncere_station_hour_new）。⚠️ 必需参数: cities(list, 城市名称列表), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_city_day": "查询广东省【城市级别】日空气质量数据（旧标准 HJ 633-2013，⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点日数据，请使用 query_gd_suncere_station_day_new）。参数: cities(list, 城市名称列表), start_date(str), end_date(str), data_type(int, 可选, 0原始实况/1审核实况默认/2原始标况/3审核标况)",
@@ -129,7 +165,7 @@ QUERY_TOOLS = {
     "get_pm25_crustal": "查询PM2.5地壳元素。参数: start_time(str), end_time(str), locations(可选)",
     "get_weather_forecast": "查询天气预报（未来7-16天，支持获取今天和昨天数据，Open-Meteo API）。⚠️ 必需参数: lat(float), lon(float)。可选: location_name(str), forecast_days(int, 默认7), past_days(int, 默认0), hourly(bool, 默认true), daily(bool, 默认true)",
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。⚠️ **统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)",
+    "execute_sql_query": EXECUTE_SQL_QUERY_DESCRIPTION,
     "query_gd_suncere_city_hour": "查询广东省【城市级别】小时空气质量数据（⚠️ 仅支持城市名称如'广州'、'深圳'，不支持站点名称如'广雅中学'。如需站点小时数据，请使用 query_gd_suncere_station_hour_new）。参数: cities(list, 城市名称列表), start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS'), include_weather(bool, 可选, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_station_hour_new": "查询广东省【站点级别】小时空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物。⚠️ 适用场景：当用户提到具体站点名称（如'广雅中学'、'市监测站'、'天河职防'）或需要站点级别数据时必须使用此工具，不要使用 query_gd_suncere_city_hour）。⚠️ 必需参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: station_type(str, 站点类型, 默认'国控'。⚠️ 仅在使用cities参数时有效，用于过滤该城市下的指定类型站点。如果使用stations参数，则不需要此参数), cities(list, 城市名自动展开该城市下所有站点，与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个。使用stations时不需要提供station_type), include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)",
     "query_gd_suncere_station_day_new": "查询广东省站点级别日空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物，三天内原始数据，三天前审核数据）。⚠️ 必需参数: station_type(str, 站点类型, 如'国控'/'省控'/'市控'或'1.0'/'2.0'/'3.0'), start_date(str, 'YYYY-MM-DD'), end_date(str, 'YYYY-MM-DD')。可选: cities(list, 城市名自动展开站点, 与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个)",
@@ -176,7 +212,7 @@ REPORT_TOOLS = {
 
     # 数据查询工具（直接调用，支持并发）
     "query_xcai_city_history": "查询全国城市历史空气质量数据（SQL Server XcAiDb数据库，支持773个城市）。⚠️ 必需参数: cities(list, 城市名称如'广州市'), data_type(str, hour=小时数据/day=日数据), start_time(str, 格式YYYY-MM-DD HH:MM:SS), end_time(str, 格式YYYY-MM-DD HH:MM:SS)。小时数据表2017年至今，日数据表2021年至今",
-    "execute_sql_query": "通用SQL执行工具，支持查看表结构和执行SQL查询（二选一）。⚠️ 查看表结构：describe_table(str, 输入目标表名如'qc_history'、'BSD_STATION'或'city_168_statistics_new_standard'，动态从数据库获取表结构)。执行查询：sql(str, SQL查询语句)。⚠️ SQL Server语法规则：❌ WHERE province_name='广东'（必须用N前缀：N'广东'），❌ SELECT ... LIMIT 10（SQL Server用TOP而非LIMIT）。可选：database(str, 数据库名称, 默认'XcAiDb', 查询质控数据时使用'AirPollutionAnalysis')、limit(int, 返回记录数限制, 默认50, 最大100)。可用表：【AirPollutionAnalysis数据库】qc_history(自动质控历史数据表)、quality_control_records(质控例行检查记录)、working_orders(运维工单)、BSD_STATION(站点信息表，包含站点ID、名称、代码、区域ID、经纬度、地址、状态等)；【XcAiDb数据库】city_168_statistics_new_standard(168城市空气质量统计-新标准限值)、city_168_statistics_old_standard(168城市空气质量统计-旧标准限值)；【系统视图】information_schema.columns/information_schema.tables(用于动态查询表结构)。⚠️ **统计数据表stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)",
+    "execute_sql_query": EXECUTE_SQL_QUERY_DESCRIPTION,
     "query_gd_suncere_city_day_new": "查询广东省城市日空气质量数据（新标准 HJ 633-2026）。参数: cities(list), start_date(str), end_date(str), data_type(int, 可选, 0原始实况/1审核实况默认/2原始标况/3审核标况)",
     "query_new_standard_report": "查询HJ 633-2026新标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true), use_old_composite_algorithm(bool, 可选, 默认false, 使用旧综合指数算法。false=新算法(PM2.5权重3,NO2权重2,O3权重2),true=旧算法(所有权重均为1))",
     "query_old_standard_report": "查询HJ 633-2013旧标准空气质量统计报表（综合指数、超标天数、达标率）。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true), use_new_composite_algorithm(bool, 可选, 默认false, 使用新综合指数算法。false=旧算法(所有权重均为1),true=新算法(PM2.5权重3,NO2权重2,O3权重2))",
@@ -348,7 +384,7 @@ EXPERT_TOOL_ORDER = [
     "query_new_standard_report", "query_old_standard_report",
     "query_standard_comparison", "compare_standard_reports",
     "query_xcai_city_history",  # 全国城市历史数据（XcAiDb SQL Server）
-    "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics_new_standard表）
+    "execute_sql_query",  # 通用SQL执行工具（支持统计表和噪声达标率表）
     "read_data_registry",
 
     # 分析工具
@@ -457,7 +493,7 @@ REPORT_TOOL_ORDER = [
     "query_station_new_standard_report",  # 站点级新标准统计报表
     "compare_station_standard_reports",  # 站点级新标准报表对比分析
     "query_xcai_city_history",  # 全国城市历史数据（XcAiDb SQL Server）
-    "execute_sql_query",  # 通用SQL执行工具（支持city_168_statistics_new_standard表）
+    "execute_sql_query",  # 通用SQL执行工具（支持统计表和噪声达标率表）
 
     # 数据读取
     "read_data_registry",

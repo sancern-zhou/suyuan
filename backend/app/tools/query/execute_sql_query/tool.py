@@ -47,6 +47,8 @@ class ExecuteSQLQueryTool(LLMTool):
             'city_168_statistics_old_standard',  # 168城市空气质量统计预计算表（旧标准限值）
             'province_statistics_new_standard',  # 省级空气质量统计预计算表（新标准限值）
             'province_statistics_old_standard',  # 省级空气质量统计预计算表（旧标准限值）
+            'noise_city_compliance_monthly',  # 城市噪声昼夜达标率月汇总表
+            'noise_city_compliance_daily',  # 城市噪声昼夜达标率逐日明细表
         ])
 
         function_schema = {
@@ -96,6 +98,10 @@ class ExecuteSQLQueryTool(LLMTool):
   **stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)
 
 - province_statistics_old_standard：省级空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整。stat_type字段说明同上）
+
+噪声达标率数据：
+- noise_city_compliance_monthly：城市噪声昼夜达标率月汇总表。包含 province、city_name、period_month、station_total、day_compliance_rate、night_compliance_rate、night_status、is_province_total 等字段；当前已导入安徽省2025年11月16地市及全省汇总数据。night_status 按夜间评价达标率是否达到100%分为“达标/未达标/无有效数据”。
+- noise_city_compliance_daily：城市噪声昼夜达标率逐日明细表。包含 city_name、data_date、night_compliant_station_days、night_valid_station_days、night_compliance_rate、night_status 以及1类/2类/3类/4a类站点有效天数字段；可用于展示各城市每日夜间达标和未达标情况。
 
 原始数据表：
 - CityDayAQIPublishHistory：城市日空气质量发布历史（24小时均值）
