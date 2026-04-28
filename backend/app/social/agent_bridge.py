@@ -113,6 +113,14 @@ class AgentBridge:
         if self.subagent_manager:
             await self.subagent_manager.start()
 
+        # ✅ 执行迁移：为现有用户创建 USER.md（如果不存在）
+        if self.mode == "social":
+            try:
+                from app.social.migrations.create_user_md_files import migrate_user_md_files
+                migrate_user_md_files()
+            except Exception as e:
+                logger.error("user_md_migration_failed", error=str(e), exc_info=True)
+
         logger.info("AgentBridge started", mode=self.mode)
 
     async def stop(self) -> None:
@@ -208,11 +216,12 @@ class AgentBridge:
                        chat_id=msg.chat_id,
                        mode=self.mode)
 
-            
-            from app.social.message_bus_singleton import set_current_chat_id, set_current_channel
+
+            from app.social.message_bus_singleton import set_current_chat_id, set_current_channel, set_current_bot_account
             set_current_chat_id(msg.chat_id)
             set_current_channel(msg.channel)
-            logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel)
+            set_current_bot_account(bot_account)  # ✅ 新增：设置 bot_account 到上下文
+            logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel, bot_account=bot_account)
 
             
             if self.user_heartbeat_manager and self.mode == "social":
@@ -221,64 +230,24 @@ class AgentBridge:
 
             
             
-            # 加载社交用户偏好、soul.md 和 USER.md
-            user_preferences = None
-
-
-            social_soul_file_path = None
-            social_user_file_path = None
-            social_heartbeat_file_path = None  # ✅ 新增
-            social_soul_context = None
-            social_user_context = None
-            if self.mode == "social":
-                preferences_manager = UserPreferences(social_user_id)
-                user_preferences = preferences_manager.get_preferences()
-
-
-                social_soul_file_path = str(preferences_manager.soul_file.resolve()) if preferences_manager.soul_file else None
-                social_user_file_path = str(preferences_manager.user_file.resolve()) if preferences_manager.user_file else None
-                social_heartbeat_file_path = str(preferences_manager.heartbeat_file.resolve()) if preferences_manager.heartbeat_file else None
-
-
-                social_soul_context = preferences_manager.load_soul_md()
-                has_soul = len(social_soul_context.strip()) > 0 if social_soul_context else False
-
-                social_user_context = preferences_manager.load_user_md()
-
-                logger.info(
-                    "soul_and_user_context_loaded",
-                    user_id=social_user_id,
-                    soul_file_path=social_soul_file_path,
-                    user_file_path=social_user_file_path,
-                    heartbeat_file_path=social_heartbeat_file_path,  # ✅ 新增
-                    has_soul=has_soul,
-                    soul_length=len(social_soul_context) if social_soul_context else 0,
-                    has_user_context=social_user_context is not None,
-                    user_context_length=len(social_user_context) if social_user_context else 0
-                )
-
-            # Aggregate events from agent
-            logger.info("Calling agent.analyze",
-                       session_id=session_id,
-                       content_preview=msg.content[:100])
-
-
-            # 获取社交用户隔离的记忆存储
+            # ✅ 使用复用函数加载社交上下文（避免代码重复）
             social_memory_store = None
             social_user_prefs = None
-            if self.user_memory_manager and self.mode == "social":
-                social_memory_store = await self.user_memory_manager.get_user_memory(social_user_id)
+            social_soul_file_path = None
+            social_user_file_path = None
+            social_heartbeat_file_path = None
+            social_soul_context = None
+            social_user_context = None
 
-                logger.debug(
-                    "user_context_loaded",
-                    user_id=social_user_id,
-                    has_context=social_user_context is not None,
-                    context_length=len(social_user_context) if social_user_context else 0
-                )
-
-            
-            if self.mode == "social" and user_preferences:
-                social_user_prefs = user_preferences
+            if self.mode == "social":
+                social_context = await self._load_social_agent_context(social_user_id)
+                social_memory_store = social_context["social_memory_store"]
+                social_user_prefs = social_context["social_user_preferences"]
+                social_soul_file_path = social_context["social_soul_file_path"]
+                social_user_file_path = social_context["social_user_file_path"]
+                social_heartbeat_file_path = social_context["social_heartbeat_file_path"]
+                social_soul_context = social_context["social_soul_context"]
+                social_user_context = social_context["social_user_context"]
 
             final_answer = await self._aggregate_agent_events(
                 content=msg.content,
@@ -587,6 +556,70 @@ class AgentBridge:
             resuming=resuming
         )
 
+    async def _load_social_agent_context(self, user_id: str) -> dict:
+        """
+        加载社交模式 Agent 所需的用户上下文
+
+        ✅ 复用函数：避免 _process_message 和 _on_heartbeat_execute 逻辑重复
+
+        Args:
+            user_id: 用户ID（格式：{channel}:{bot_account}:{sender_id}）
+
+        Returns:
+            包含社交上下文的字典
+        """
+        from app.social.user_preferences import UserPreferences
+
+        context = {
+            "social_memory_store": None,
+            "social_user_preferences": None,
+            "social_soul_file_path": None,
+            "social_user_file_path": None,
+            "social_heartbeat_file_path": None,
+            "social_soul_context": None,
+            "social_user_context": None
+        }
+
+        try:
+            # 1. 加载用户记忆存储
+            if self.user_memory_manager:
+                context["social_memory_store"] = await self.user_memory_manager.get_user_memory(user_id)
+                logger.debug("user_memory_loaded", user_id=user_id)
+
+            # 2. 加载用户偏好和文件路径
+            preferences_manager = UserPreferences(user_id)
+            user_preferences = preferences_manager.get_preferences()
+
+            if user_preferences:
+                context["social_user_preferences"] = user_preferences
+                context["social_soul_file_path"] = str(preferences_manager.soul_file.resolve()) if preferences_manager.soul_file else None
+                context["social_user_file_path"] = str(preferences_manager.user_file.resolve()) if preferences_manager.user_file else None
+                context["social_heartbeat_file_path"] = str(preferences_manager.heartbeat_file.resolve()) if preferences_manager.heartbeat_file else None
+
+                # 加载 soul.md 和 USER.md 内容
+                context["social_soul_context"] = preferences_manager.load_soul_md()
+                context["social_user_context"] = preferences_manager.load_user_md()
+
+                has_soul = len(context["social_soul_context"].strip()) > 0 if context["social_soul_context"] else False
+
+                logger.info(
+                    "social_agent_context_loaded",
+                    user_id=user_id,
+                    has_soul=has_soul,
+                    soul_file_path=context["social_soul_file_path"],
+                    user_file_path=context["social_user_file_path"],
+                    heartbeat_file_path=context["social_heartbeat_file_path"]
+                )
+        except Exception as e:
+            logger.warning(
+                "failed_to_load_social_agent_context",
+                user_id=user_id,
+                error=str(e),
+                exc_info=True
+            )
+
+        return context
+
     async def _check_and_consolidate_memory(
         self,
         session_id: str,
@@ -874,13 +907,20 @@ class AgentBridge:
 
         return "\n".join(lines)
     async def _on_heartbeat_execute(self, tasks: list, user_id: str) -> dict:
-        """Execute heartbeat tasks through the agent."""
+        """
+        Execute heartbeat tasks through the agent.
+
+        ✅ 修复：使用复用函数加载完整的社交上下文，确保任务执行时能访问用户专属资源
+        """
         from datetime import datetime
 
         logger.info("heartbeat_execute_callback", task_count=len(tasks), user_id=user_id)
 
         if not tasks:
             return {"should_notify": False, "summary": "No tasks to execute"}
+
+        # ✅ 使用复用函数加载社交上下文
+        social_context = await self._load_social_agent_context(user_id)
 
         task_description = "\n".join([
             f"- {task.get('name', 'task')}: {task.get('description', '')}"
@@ -889,14 +929,33 @@ class AgentBridge:
 
         try:
             heartbeat_session_id = f"heartbeat_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            query = f"Please execute these scheduled social-mode tasks and summarize the result:\n\n{task_description}"
+            query = f"""Please execute these scheduled tasks now and summarize the result:
+
+{task_description}
+
+⚠️ IMPORTANT:
+- These are already-scheduled tasks that are due NOW
+- Execute the task descriptions directly
+- DO NOT use schedule_task tool to create new tasks
+- DO NOT reschedule these tasks
+- Just perform the actions described in each task
+
+Example: If task says "Send a test message", then send the message directly, don't create a schedule."""
 
             result_parts = []
+            # ✅ 传递完整的社交上下文
             async for event in self.agent.analyze(
                 user_query=query,
                 session_id=heartbeat_session_id,
                 manual_mode="social",
-                user_identifier=user_id
+                user_identifier=user_id,
+                social_memory_store=social_context["social_memory_store"],
+                social_user_preferences=social_context["social_user_preferences"],
+                social_heartbeat_file_path=social_context["social_heartbeat_file_path"],
+                social_soul_file_path=social_context["social_soul_file_path"],
+                social_user_file_path=social_context["social_user_file_path"],
+                social_soul_context=social_context["social_soul_context"],
+                social_user_context=social_context["social_user_context"]
             ):
                 if event.get("type") == "complete":
                     data = event.get("data", {})
@@ -914,17 +973,22 @@ class AgentBridge:
             logger.error("heartbeat_execute_failed", user_id=user_id, error=str(e), exc_info=True)
             return {"should_notify": True, "summary": f"Task execution failed: {e}"}
     async def _on_heartbeat_notify(self, response: dict, user_id: str) -> None:
-        """发送心跳任务通知。"""
+        """
+        发送心跳任务通知。
+
+        ✅ 修复：使用 rsplit(":", 2) 正确解析 user_id（因为 channel 本身可能包含 ':'）
+        """
         logger.info("heartbeat_notify_callback", summary=response.get("summary"), user_id=user_id)
 
-        
-        # user_id 格式：{channel}:{bot_account}:{sender_id}
-        parts = user_id.split(":")
+
+        # ✅ 修复：user_id 格式：{channel}:{bot_account}:{sender_id}
+        # channel 本身可能包含 ':'（如 weixin:auto_mo427atx），所以用 rsplit(":", 2)
+        parts = user_id.rsplit(":", 2)
         if len(parts) < 3:
             logger.warning("invalid_user_id_format", user_id=user_id)
             return
 
-        channel, bot_account, sender_id = parts[0], parts[1], parts[2]
+        channel, bot_account, sender_id = parts
         chat_id = sender_id  
 
         summary = response.get("summary", "")

@@ -137,8 +137,8 @@ class UserPreferences:
         # ✅ 保存偏好后生成soul.md
         self._generate_soul_md()
 
-        # ✅ 确保USER.md存在（空白模板）
-        self._ensure_user_md_exists()
+        # ✅ USER.md 现在由 ImprovedMemoryStore 自动创建和管理
+        # Agent 通过文件工具（edit_file/read_file）主动维护用户档案
 
         # ✅ 清除等待状态
         self.clear_waiting_preferences()
@@ -179,47 +179,6 @@ class UserPreferences:
                        path=str(self.soul_file))
         except Exception as e:
             logger.error("failed_to_generate_soul_md",
-                        user_id=self.user_id,
-                        error=str(e))
-
-    def _ensure_user_md_exists(self) -> None:
-        """
-        确保 USER.md 存在（空白模板）
-
-        用户档案文件，助理通过文件工具主动学习和管理
-        """
-        try:
-            if not self.user_file.exists():
-                content = """# 用户档案
-
-## 基本信息
-- 姓名：（暂未了解）
-- 称呼：您
-- 代词：你
-- 时区：UTC+8
-
-## 专业背景
-- 职业：（待学习）
-- 技术水平：（待学习）
-- 专业领域：（待学习）
-
-## 沟通偏好
-- 详细程度：（待学习）
-- 格式偏好：（待学习）
-- 对话风格：（待学习）
-
-## 学习历史
-*助理通过对话逐步了解你的偏好*
-
----
-最后更新：（自动记录）
-"""
-                self.user_file.write_text(content, encoding='utf-8')
-                logger.info("user_md_template_created",
-                           user_id=self.user_id,
-                           path=str(self.user_file))
-        except Exception as e:
-            logger.error("failed_to_create_user_md_template",
                         user_id=self.user_id,
                         error=str(e))
 

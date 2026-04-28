@@ -16,6 +16,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const documentChunks = ref([])
   const loading = ref(false)
   const error = ref(null)
+  const chunksLoading = ref(false)
+  const chunksError = ref(null)
   const stats = ref(null)
   const strategies = ref([])
 
@@ -104,6 +106,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       const data = await api.listDocuments(kbId)
       documents.value = data.documents || []
       return data
+    } catch (e) {
+      console.error('Failed to fetch documents:', e)
+      throw e
     } finally {
       loading.value = false
     }
@@ -175,7 +180,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   }
 
   async function fetchDocumentChunks(kbId, docId) {
-    loading.value = true
+    chunksLoading.value = true
+    chunksError.value = null
     try {
       const data = await api.getDocumentChunks(kbId, docId)
       documentChunks.value = data.chunks || []
@@ -187,15 +193,17 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       return data
     } catch (e) {
       console.error('Failed to fetch document chunks:', e)
+      chunksError.value = e.message || '获取分块失败'
       throw e
     } finally {
-      loading.value = false
+      chunksLoading.value = false
     }
   }
 
   function clearCurrentDoc() {
     currentDoc.value = null
     documentChunks.value = []
+    chunksError.value = null
   }
 
   function toggleSelection(id) {
@@ -210,7 +218,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   function selectKnowledgeBase(kb) {
     currentKb.value = kb
     if (kb) {
-      fetchDocuments(kb.id)
+      fetchDocuments(kb.id).catch(e => console.error('Failed to fetch documents:', e))
     }
   }
 
@@ -232,6 +240,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     documentChunks,
     loading,
     error,
+    chunksLoading,
+    chunksError,
     stats,
     strategies,
 

@@ -142,10 +142,10 @@
         <div v-else class="kb-doc-list">
           <div
             v-for="doc in kbStore.documents"
-            :key="doc.id"
+            :key="doc.id || doc.filename"
             class="kb-doc-item"
-            :class="{ clickable: doc.status === 'completed' }"
-            @click="doc.status === 'completed' && $emit('view-chunks', doc)"
+            :class="{ clickable: doc.status === 'completed' && doc.id && doc.id !== 'undefined' }"
+            @click="doc.status === 'completed' && doc.id && doc.id !== 'undefined' && $emit('view-chunks', doc)"
           >
             <div class="kb-doc-info">
               <span class="kb-doc-name">{{ doc.filename }}</span>
@@ -160,11 +160,16 @@
               <button
                 v-if="doc.status === 'failed'"
                 class="kb-btn-text"
-                @click="$emit('retry-doc', doc.id)"
+                @click="doc.id && doc.id !== 'undefined' && $emit('retry-doc', doc.id)"
+                :disabled="!doc.id || doc.id === 'undefined'"
               >
                 重试
               </button>
-              <button class="kb-btn-text danger" @click="$emit('delete-doc', doc.id)">删除</button>
+              <button
+                class="kb-btn-text danger"
+                @click="doc.id && doc.id !== 'undefined' && $emit('delete-doc', doc.id)"
+                :disabled="!doc.id || doc.id === 'undefined'"
+              >删除</button>
             </div>
           </div>
         </div>
@@ -182,7 +187,7 @@ const kbStore = useKnowledgeBaseStore()
 // State
 const kbUploadOptions = ref({
   chunking_strategy: 'llm',
-  llm_mode: 'local',
+  llm_mode: 'online',
   chunk_size: 512,
   chunk_overlap: 50
 })
@@ -202,11 +207,11 @@ const formatFileSize = (bytes) => {
 }
 
 const selectKb = (kb) => {
-  kbStore.selectKb(kb.id)
+  kbStore.selectKnowledgeBase(kb)
 }
 
 const handleKbBack = () => {
-  kbStore.clearCurrentKb()
+  kbStore.currentKb = null
 }
 
 const triggerKbFileInput = () => {
@@ -233,13 +238,18 @@ const handleKbFileDrop = async (event) => {
 }
 
 const uploadDocuments = async (files) => {
+  if (!kbStore.currentKb) {
+    alert('请先选择知识库')
+    return
+  }
+
   kbIsUploading.value = true
   kbUploadProgress.value = { current: 0, total: files.length }
 
   try {
     for (let i = 0; i < files.length; i++) {
       kbUploadProgress.value.current = i + 1
-      await kbStore.uploadDocument(files[i], kbUploadOptions.value)
+      await kbStore.uploadDocument(kbStore.currentKb.id, files[i], kbUploadOptions.value)
     }
   } finally {
     kbIsUploading.value = false
@@ -652,5 +662,15 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 
 .kb-btn-text.danger:hover {
   background: #f8d7da;
+}
+
+.kb-btn-text:disabled {
+  color: #ccc;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.kb-btn-text:disabled:hover {
+  background: none;
 }
 </style>

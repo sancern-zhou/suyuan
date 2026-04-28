@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.tools.utility.project_root import get_project_root
 import structlog
 
 logger = structlog.get_logger()
@@ -324,8 +325,8 @@ class EditFileToolV2(LLMTool):
             requires_context=False
         )
 
-        # 工作目录限制（与read_file保持一致，使用项目根目录）
-        self.working_dir = Path.cwd().parent
+        # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
+        self.working_dir = get_project_root()
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()

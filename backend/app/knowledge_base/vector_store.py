@@ -744,7 +744,7 @@ class KnowledgeVectorStore:
                 Prefetch(
                     query=SparseVector(
                         indices=list(sparse_vector.keys()),
-                        values=list(sparse_vector.values())
+                        values=[float(v) if v is not None else 0.0 for v in sparse_vector.values()]
                     ) if sparse_vector else SparseVector(indices=[], values=[]),
                     using="sparse",
                     limit=top_k * 2
@@ -758,8 +758,11 @@ class KnowledgeVectorStore:
         # 格式化返回
         formatted_results = []
         for hit in results.points:
-            score = hit.score if hit.score else 0.0
-            if score >= score_threshold:
+            # 严格检查 score 是否为 None，避免类型比较错误
+            score = float(hit.score) if hit.score is not None else 0.0
+
+            # 只添加超过阈值的结果
+            if score >= float(score_threshold):
                 formatted_results.append({
                     "content": hit.payload.get("content"),
                     "score": score,

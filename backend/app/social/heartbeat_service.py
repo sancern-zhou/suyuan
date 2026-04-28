@@ -66,6 +66,15 @@ class HeartbeatService:
         self._running = False
         self._heartbeat_task: Optional[asyncio.Task] = None
 
+        # ✅ 任务变更事件（用于唤醒 sleep）
+        self._task_changed_event = asyncio.Event()
+
+        # ✅ 当前计划的下次唤醒时间（用于判断是否需要提前唤醒）
+        self._current_next_wake_ms: Optional[int] = None
+
+        # ✅ 执行标志（防止循环触发）
+        self._is_executing = False
+
         # HEARTBEAT.md 文件路径
         self.heartbeat_file = self.workspace / "HEARTBEAT.md"
 
@@ -170,6 +179,9 @@ class HeartbeatService:
                 # 2. 计算最近的唤醒时间
                 next_wake_ms = self._get_next_wake_ms(all_tasks)
 
+                # ✅ 存储下次唤醒时间，用于判断是否需要提前唤醒
+                self._current_next_wake_ms = next_wake_ms
+
                 logger.debug(
                     "heartbeat_loop_checking_tasks",
                     total_tasks=len(all_tasks),
@@ -183,7 +195,7 @@ class HeartbeatService:
                     await asyncio.sleep(self.interval_s)
                     continue
 
-                # 3. 精确等待到下次执行时间
+                # 3. 精确等待到下次执行时间（支持提前唤醒）
                 now_ms = int(time.time() * 1000)
                 delay_ms = max(0, next_wake_ms - now_ms)
                 delay_s = delay_ms / 1000
@@ -195,7 +207,19 @@ class HeartbeatService:
                     user_id=self.user_id
                 )
 
-                await asyncio.sleep(delay_s)
+                # ✅ 使用 wait_for 支持 event 提前唤醒
+                try:
+                    await asyncio.wait_for(
+                        self._task_changed_event.wait(),
+                        timeout=delay_s
+                    )
+                    logger.info("woken_up_by_task_change", user_id=self.user_id)
+                except asyncio.TimeoutError:
+                    # 正常超时，到达预定时间
+                    pass
+
+                # 清除事件标志，准备下次等待
+                self._task_changed_event.clear()
 
                 if not self._running:
                     break
@@ -217,6 +241,12 @@ class HeartbeatService:
 
     async def _tick(self) -> None:
         """执行一次心跳检查"""
+        # ✅ 防止重入（如果正在执行，直接返回）
+        if self._is_executing:
+            logger.debug("heartbeat_tick_already_running")
+            return
+
+        self._is_executing = True
         try:
             logger.info("heartbeat_tick")
 
@@ -323,6 +353,9 @@ class HeartbeatService:
                 error=str(e),
                 exc_info=True
             )
+        finally:
+            # ✅ 重置执行标志
+            self._is_executing = False
 
     def _parse_tasks(self, content: str) -> list[Dict[str, Any]]:
         """
@@ -567,11 +600,29 @@ class HeartbeatService:
         content += "\n" + new_task
         self.heartbeat_file.write_text(content, encoding="utf-8")
 
+        # ✅ 只有在需要提前执行时才触发唤醒
+        should_wake = False
+        if next_run and self._current_next_wake_ms:
+            next_run_ms = int(next_run.timestamp() * 1000)
+            # 如果新任务的下一次运行时间早于当前计划的唤醒时间
+            if next_run_ms < self._current_next_wake_ms:
+                should_wake = True
+                logger.info(
+                    "task_requires_early_wake",
+                    task_name=name,
+                    next_run=next_run.isoformat(),
+                    current_next_wake_ms=self._current_next_wake_ms
+                )
+
+        if should_wake:
+            self._task_changed_event.set()
+
         logger.info(
             "task_added_to_heartbeat",
             name=name,
             schedule=schedule,
-            next_run_at=next_run_at_str
+            next_run_at=next_run_at_str,
+            triggered_wake=should_wake
         )
 
     def list_tasks(self) -> list[Dict[str, Any]]:

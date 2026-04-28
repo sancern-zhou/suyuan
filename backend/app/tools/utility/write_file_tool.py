@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.tools.utility.project_root import get_project_root
 import structlog
 
 logger = structlog.get_logger()
@@ -215,7 +216,7 @@ class WriteFileTool(LLMTool):
             requires_context=False
         )
 
-        self.working_dir = Path.cwd().parent
+        self.working_dir = get_project_root()
         self.read_state = get_file_read_state()
 
     async def execute(

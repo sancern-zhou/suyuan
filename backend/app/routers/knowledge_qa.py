@@ -143,31 +143,50 @@ async def search_knowledge_bases(
     from app.knowledge_base.models import Document, KnowledgeBase as KBModel, KnowledgeBaseStatus
     from app.knowledge_base.service import KnowledgeBaseService
 
-    # 如果没有指定知识库，直接返回空结果
-    kb_ids = knowledge_base_ids or []
-    if not kb_ids:
-        logger.info("no_knowledge_bases_specified", query=query[:50])
-        return []
-
-    # HyDE优化：当开启精准检索时，生成假设答案用于检索
-    search_query = query
-    hyde_used = False
-    if use_hyde:
-        hyde_start = time.time()
-        hypothetical_answer = await generate_hypothetical_answer(query)
-        search_query = hypothetical_answer
-        hyde_elapsed = (time.time() - hyde_start) * 1000
-        hyde_used = True
-        logger.info(
-            "hyde_applied",
-            original_query=query[:100],
-            hyde_keywords=search_query.strip()[:200],  # 记录用于检索的关键词
-            hyde_elapsed_ms=round(hyde_elapsed, 2)
-        )
-
     # 使用独立会话，检索完成后立即关闭
     async with async_session() as db:
         service = KnowledgeBaseService(db=db)
+
+        # 如果没有指定知识库，自动使用所有可用的知识库
+        kb_ids = knowledge_base_ids or []
+        if not kb_ids:
+            try:
+                all_kbs = await service.list_knowledge_bases(
+                    user_id=user_id,
+                    include_public=True,
+                    status=KnowledgeBaseStatus.ACTIVE
+                )
+                kb_ids = [kb.id for kb in all_kbs]
+                logger.info(
+                    "auto_selected_all_knowledge_bases",
+                    query=query[:50],
+                    kb_count=len(kb_ids),
+                    kb_ids=kb_ids[:5]  # 只记录前5个
+                )
+            except Exception as e:
+                logger.error("failed_to_list_knowledge_bases", error=str(e))
+                return []
+
+            # 如果仍然没有知识库，返回空结果
+            if not kb_ids:
+                logger.info("no_available_knowledge_bases", query=query[:50])
+                return []
+
+        # HyDE优化：当开启精准检索时，生成假设答案用于检索
+        search_query = query
+        hyde_used = False
+        if use_hyde:
+            hyde_start = time.time()
+            hypothetical_answer = await generate_hypothetical_answer(query)
+            search_query = hypothetical_answer
+            hyde_elapsed = (time.time() - hyde_start) * 1000
+            hyde_used = True
+            logger.info(
+                "hyde_applied",
+                original_query=query[:100],
+                hyde_keywords=search_query.strip()[:200],  # 记录用于检索的关键词
+                hyde_elapsed_ms=round(hyde_elapsed, 2)
+            )
 
         try:
             results = await asyncio.wait_for(

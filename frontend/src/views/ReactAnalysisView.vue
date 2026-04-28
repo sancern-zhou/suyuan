@@ -68,7 +68,7 @@
       @show-kb-create-dialog="openDialog('kbCreate')"
       @show-kb-edit-dialog="openDialog('kbEdit')"
       @close-management-panel="managementPanel = null"
-      @view-kb-chunks="viewKbChunks"
+      @view-kb-chunks="handleViewKbChunks"
       @retry-kb-doc="handleKbRetry"
       @delete-kb-doc="handleKbDeleteDoc"
       @fetch-era5="fetchEra5Historical"
@@ -440,9 +440,28 @@ const handleKbUpdateConfirm = async (formData) => {
   }
 }
 
+const handleViewKbChunks = async (doc) => {
+  if (!doc || !doc.id || doc.id === 'undefined') {
+    alert('文档ID无效')
+    return
+  }
+
+  if (!kbStore.currentKb) {
+    alert('请先选择知识库')
+    return
+  }
+
+  try {
+    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, doc.id)
+    openDialog('kbChunks')
+  } catch (e) {
+    alert('获取分块失败: ' + e.message)
+  }
+}
+
 const viewKbChunksRetry = async () => {
-  if (kbStore.currentDoc) {
-    await kbStore.fetchDocumentChunks(kbStore.currentDoc.id)
+  if (kbStore.currentDoc && kbStore.currentKb) {
+    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, kbStore.currentDoc.id)
   }
 }
 

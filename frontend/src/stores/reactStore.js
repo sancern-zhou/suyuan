@@ -1141,11 +1141,21 @@ export const useReactStore = defineStore('react', {
 
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）
           if (data?.sources && Array.isArray(data.sources) && data.sources.length > 0) {
+            console.log('[event:complete] 保存sources到最后消息，count:', data.sources.length)
             // 保存到当前消息的sources字段，供VisualizationPanel使用
             if (targetState.messages.length > 0) {
               const lastMsg = targetState.messages[targetState.messages.length - 1]
+              // 确保data对象存在
+              if (!lastMsg.data) {
+                lastMsg.data = {}
+              }
+              // 保存到data.sources（优先）和msg.sources（兼容）
+              lastMsg.data.sources = data.sources
               lastMsg.sources = data.sources
+              console.log('[event:complete] sources已保存到lastMsg.data.sources和lastMsg.sources')
             }
+          } else {
+            console.log('[event:complete] 没有sources字段或为空')
           }
 
           // 流式最终答案结束，重置状态
@@ -1422,14 +1432,31 @@ export const useReactStore = defineStore('react', {
           const finalContent = data?.content || ''
           const sources = data?.sources || []
 
-          // 添加final消息并设置streamingAnswerMessageId，避免complete事件重复添加
-          const msgId = this.addMessage('final', finalContent, {
+          // 构建消息数据对象
+          const msgData = {
             session_id: data?.session_id,
             timestamp: data?.timestamp,
             direct_from_workflow: data?.direct_from_workflow,
-            sources: sources  // 保存sources供知识溯源面板使用
-          }, null, { streaming: false })  // 【修复】明确设置 streaming: false
+            sources: sources  // 保存sources供知识溯源面板使用（旧格式兼容）
+          }
+
+          // 添加final消息并设置streamingAnswerMessageId，避免complete事件重复添加
+          const msgId = this.addMessage('final', finalContent, msgData, null, { streaming: false })
           this.currentState.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
+
+          // 如果有sources，额外保存到message.data.sources（VisualizationPanel优先检查这里）
+          if (sources && sources.length > 0) {
+            const msg = this.currentState.messages.find(m => m.id === msgId)
+            if (msg) {
+              // 确保data对象存在
+              if (!msg.data) {
+                msg.data = {}
+              }
+              // 保存sources到data.sources
+              msg.data.sources = sources
+              console.log('[event:final_answer] sources已保存到msg.data.sources，count:', sources.length)
+            }
+          }
 
           // 更新finalAnswer
           this.currentState.finalAnswer = finalContent

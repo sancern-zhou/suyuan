@@ -24,7 +24,7 @@
       </div>
       <button
         class="refresh-btn"
-        @click="loadDirectory"
+        @click="() => loadDirectory()"
         :disabled="loading"
         title="刷新"
       >
@@ -51,7 +51,7 @@
       <div v-else class="file-list">
         <!-- 父目录链接 -->
         <div
-          v-if="parentPath !== null"
+          v-if="currentPath"
           class="file-item directory"
           @click="navigateToParent"
         >
@@ -129,7 +129,8 @@ const loadDirectory = async (path = null) => {
     if (data.success) {
       currentPath.value = data.current_path
       parentPath.value = data.parent_path
-      items.value = data.items
+      // 过滤隐藏文件（以 . 开头的文件/目录）
+      items.value = data.items.filter(item => !item.name.startsWith('.'))
     } else {
       error.value = data.message || '加载目录失败'
     }

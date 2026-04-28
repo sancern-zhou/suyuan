@@ -197,7 +197,13 @@ class LLMService:
 
                 # 提取内容片段
                 delta = first_choice.get("delta") or first_choice.get("message") or {}
+
+                # 优先使用 content，如果为空则尝试 reasoning_content（DeepSeek V4）
                 piece = delta.get("content") or ""
+
+                # DeepSeek V4 使用 reasoning_content 字段
+                if not piece:
+                    piece = delta.get("reasoning_content") or ""
 
                 if piece:
                     yielded_chunks += 1
@@ -205,7 +211,12 @@ class LLMService:
                     yield piece
                 else:
                     skipped_empty_content += 1
-                    # 空内容不记录（可能很频繁）
+                    # 记录前几个空数据块的完整结构，用于调试
+                    if skipped_empty_content <= 3:
+                        logger.debug(
+                            f"[SSE] 空内容块 (#{skipped_empty_content}): "
+                            f"delta keys={list(delta.keys()) if isinstance(delta, dict) else 'not dict'}"
+                        )
 
         # 记录最终统计
         logger.info(
@@ -303,7 +314,13 @@ class LLMService:
 
                 # 提取内容片段
                 delta = first_choice.get("delta") or first_choice.get("message") or {}
+
+                # 优先使用 content，如果为空则尝试 reasoning_content（DeepSeek V4）
                 piece = delta.get("content") or ""
+
+                # DeepSeek V4 使用 reasoning_content 字段
+                if not piece:
+                    piece = delta.get("reasoning_content") or ""
 
                 if piece:
                     yielded_chunks += 1

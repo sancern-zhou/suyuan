@@ -33,6 +33,7 @@ from datetime import datetime
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.utility.project_root import get_project_root
 
 logger = structlog.get_logger()
 
@@ -289,8 +290,8 @@ class BashTool(LLMTool):
             requires_context=False
         )
 
-        # 工作目录：默认为项目根目录
-        self.working_dir = Path.cwd().parent  # D:\溯源\ 或 /opt/app/ 等
+        # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
+        self.working_dir = get_project_root()
         self.default_timeout = 60
         self.max_output_size = 1024 * 1024  # 1MB（大幅提升，有上下文压缩策略）
 
