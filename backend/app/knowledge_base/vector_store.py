@@ -13,6 +13,7 @@ import os
 import hashlib
 from typing import List, Dict, Any, Optional
 from collections import Counter
+from threading import RLock
 import structlog
 
 logger = structlog.get_logger()
@@ -27,6 +28,8 @@ class KnowledgeVectorStore:
         self._embedding_dim = 1024  # bge-m3维度
         self._sparse_dim = 30000    # BM25稀疏向量维度
         self._jieba_initialized = False
+        self._collection_config_cache: Dict[str, Dict[str, Any]] = {}
+        self._collection_config_lock = RLock()
         self._init_client()
         self._init_embedding()
         self._init_jieba()
@@ -199,20 +202,44 @@ class KnowledgeVectorStore:
             logger.warning("sparse_vector_compute_failed", error=str(e))
             return {}
 
-    def _collection_supports_hybrid(self, collection_name: str) -> bool:
-        """检查集合是否为 named dense + sparse 结构。"""
+    def _get_collection_vector_config(self, collection_name: str) -> Dict[str, Any]:
+        """读取并缓存集合向量结构，避免每次写入/检索都访问Qdrant元信息。"""
+        with self._collection_config_lock:
+            cached = self._collection_config_cache.get(collection_name)
+            if cached:
+                return cached.copy()
+
         try:
             collection_info = self.qdrant_client.get_collection(collection_name)
             params = collection_info.config.params
             vectors = getattr(params, "vectors", None)
             sparse_vectors = getattr(params, "sparse_vectors", None)
-            return isinstance(vectors, dict) and sparse_vectors is not None
+            config = {
+                "has_named_vectors": isinstance(vectors, dict),
+                "has_sparse": sparse_vectors is not None,
+                "vectors_type": type(vectors).__name__
+            }
+            with self._collection_config_lock:
+                self._collection_config_cache[collection_name] = config.copy()
+            return config
         except Exception as e:
             logger.warning(
-                "collection_hybrid_check_failed",
+                "collection_vector_config_check_failed",
                 collection=collection_name,
                 error=str(e)
             )
+            raise
+
+    def _invalidate_collection_config_cache(self, collection_name: str) -> None:
+        with self._collection_config_lock:
+            self._collection_config_cache.pop(collection_name, None)
+
+    def _collection_supports_hybrid(self, collection_name: str) -> bool:
+        """检查集合是否为 named dense + sparse 结构。"""
+        try:
+            config = self._get_collection_vector_config(collection_name)
+            return bool(config["has_named_vectors"] and config["has_sparse"])
+        except Exception:
             return False
 
     def _collection_point_count(self, collection_name: str) -> int:
@@ -258,6 +285,7 @@ class KnowledgeVectorStore:
                             collection=collection_name
                         )
                         self.qdrant_client.delete_collection(collection_name)
+                        self._invalidate_collection_config_cache(collection_name)
                     else:
                         logger.warning(
                             "collection_exists_without_hybrid",
@@ -321,6 +349,11 @@ class KnowledgeVectorStore:
                     jieba_initialized=self._jieba_initialized,
                     full_scan_threshold=100
                 )
+                self._collection_config_cache[collection_name] = {
+                    "has_named_vectors": True,
+                    "has_sparse": True,
+                    "vectors_type": "dict"
+                }
             else:
                 # 创建仅支持稠密向量的Collection（向后兼容）
                 self.qdrant_client.create_collection(
@@ -337,6 +370,11 @@ class KnowledgeVectorStore:
                     vector_size=self._embedding_dim,
                     full_scan_threshold=100
                 )
+                self._collection_config_cache[collection_name] = {
+                    "has_named_vectors": False,
+                    "has_sparse": False,
+                    "vectors_type": "VectorParams"
+                }
             
             return True
 
@@ -360,6 +398,7 @@ class KnowledgeVectorStore:
         """
         try:
             self.qdrant_client.delete_collection(collection_name)
+            self._invalidate_collection_config_cache(collection_name)
             logger.info("collection_deleted", collection=collection_name)
             return True
         except Exception as e:
@@ -419,33 +458,27 @@ class KnowledgeVectorStore:
                 show_progress_bar=False
             )
 
+            if enable_hybrid and not self._jieba_initialized:
+                raise RuntimeError(
+                    "Hybrid vector insertion requires jieba to build sparse vectors"
+                )
+
             # 判断是否使用混合向量（检测集合是否支持sparse向量）
-            use_hybrid = enable_hybrid and self._jieba_initialized
+            use_hybrid = enable_hybrid
             use_named_vectors = False  # 是否使用命名向量格式
 
             if use_hybrid:
                 try:
-                    collection_info = self.qdrant_client.get_collection(collection_name)
-                    # 检查是否使用命名向量（named vectors）
-                    # 注意：Qdrant返回的属性名是vectors/sparse_vectors，不是vectors_config/sparse_vectors_config
-                    params = collection_info.config.params
-                    vectors = getattr(params, 'vectors', None)
-                    sparse_vectors = getattr(params, 'sparse_vectors', None)
-
-                    # 判断是否使用命名向量
-                    # - 如果vectors是dict，说明使用命名向量（如 {"dense": {...}}）
-                    # - 如果vectors是VectorParams对象，说明使用单一向量
-                    has_named_vectors = isinstance(vectors, dict)
-
-                    # 检查是否有sparse向量配置
-                    has_sparse = sparse_vectors is not None
+                    config = self._get_collection_vector_config(collection_name)
+                    has_named_vectors = config["has_named_vectors"]
+                    has_sparse = config["has_sparse"]
 
                     logger.info(
                         "collection_vector_config_check",
                         collection=collection_name,
                         has_sparse=has_sparse,
                         has_named_vectors=has_named_vectors,
-                        vectors_type=type(vectors).__name__,
+                        vectors_type=config["vectors_type"],
                         initial_use_hybrid=use_hybrid
                     )
 
@@ -459,7 +492,7 @@ class KnowledgeVectorStore:
                             collection=collection_name,
                             has_sparse=has_sparse,
                             has_named_vectors=has_named_vectors,
-                            vectors_type=type(vectors).__name__
+                            vectors_type=config["vectors_type"]
                         )
                         raise RuntimeError(
                             f"Collection {collection_name} does not support hybrid vectors; "
@@ -630,10 +663,8 @@ class KnowledgeVectorStore:
             # 检测Collection是否使用命名向量
             use_named_vectors = False
             try:
-                collection_info = self.qdrant_client.get_collection(collection_name)
-                params = collection_info.config.params
-                vectors = getattr(params, 'vectors', None)
-                use_named_vectors = isinstance(vectors, dict)
+                config = self._get_collection_vector_config(collection_name)
+                use_named_vectors = config["has_named_vectors"]
             except Exception as e:
                 logger.warning("check_named_vectors_failed", error=str(e))
 
@@ -721,26 +752,18 @@ class KnowledgeVectorStore:
         if score_threshold is None:
             score_threshold = 0.25
 
-        # 如果jieba未初始化，降级到纯向量检索
         if not self._jieba_initialized:
-            logger.warning("hybrid_search_fallback_no_jieba")
-            return await self.search(
-                collection_name, query, top_k, score_threshold, filters
+            logger.error(
+                "hybrid_search_jieba_not_initialized",
+                collection=collection_name
             )
+            raise RuntimeError("Hybrid search requires jieba to build sparse vectors")
 
         # 检测集合是否支持sparse向量
         try:
-            collection_info = self.qdrant_client.get_collection(collection_name)
-            # 检查是否使用命名向量（named vectors）
-            # 注意：Qdrant返回的属性名是vectors/sparse_vectors，不是vectors_config/sparse_vectors_config
-            params = collection_info.config.params
-            vectors = getattr(params, 'vectors', None)
-            sparse_vectors = getattr(params, 'sparse_vectors', None)
-
-            # 判断是否使用命名向量
-            has_named_vectors = isinstance(vectors, dict)
-            # 检查是否有sparse向量配置
-            has_sparse = sparse_vectors is not None
+            config = self._get_collection_vector_config(collection_name)
+            has_named_vectors = config["has_named_vectors"]
+            has_sparse = config["has_sparse"]
 
             # 只有同时支持命名向量和sparse向量才使用混合模式
             if not has_sparse or not has_named_vectors:
@@ -802,6 +825,8 @@ class KnowledgeVectorStore:
             ]
             qdrant_filter = Filter(must=conditions)
 
+        prefetch_limit = min(max(top_k, 10), 50)
+
         # 使用Qdrant的混合检索（RRF融合）
         results = self.qdrant_client.query_points(
             collection_name=collection_name,
@@ -809,7 +834,7 @@ class KnowledgeVectorStore:
                 Prefetch(
                     query=dense_embedding.tolist(),
                     using="dense",
-                    limit=top_k * 2
+                    limit=prefetch_limit
                 ),
                 Prefetch(
                     query=SparseVector(
@@ -817,7 +842,7 @@ class KnowledgeVectorStore:
                         values=[float(v) if v is not None else 0.0 for v in sparse_vector.values()]
                     ) if sparse_vector else SparseVector(indices=[], values=[]),
                     using="sparse",
-                    limit=top_k * 2
+                    limit=prefetch_limit
                 )
             ],
             query=FusionQuery(fusion=Fusion.RRF),
@@ -857,7 +882,8 @@ class KnowledgeVectorStore:
             "hybrid_search_completed",
             collection=collection_name,
             query=query[:50],
-            result_count=len(formatted_results)
+            result_count=len(formatted_results),
+            prefetch_limit=prefetch_limit
         )
         return formatted_results
 

@@ -7,6 +7,7 @@
 import os
 import hashlib
 import asyncio
+import time
 from uuid import uuid4
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -654,12 +655,16 @@ class KnowledgeBaseService:
         if not kbs:
             return []
 
+        search_started_at = time.time()
+
         # 根据是否使用重排序决定召回策略。每库召回不能过小，否则多知识库场景下
-        # 相关片段很容易在粗召回阶段被截断，reranker也没有足够候选可排。
+        # 相关片段很容易在粗召回阶段被截断；也不能无限放大，否则精排成本会线性增加。
         if use_reranker:
-            recall_per_kb = max(top_k * 5, 10)
+            recall_per_kb = min(max(top_k * 4, 8), 20)
+            rerank_candidate_limit = min(max(top_k * 8, 20), 60)
         else:
-            recall_per_kb = max(top_k * 3, 10)
+            recall_per_kb = min(max(top_k * 3, 8), 15)
+            rerank_candidate_limit = top_k
 
         logger.info(
             "knowledge_search_recall_plan",
@@ -667,6 +672,7 @@ class KnowledgeBaseService:
             kb_count=len(kbs),
             top_k=top_k,
             recall_per_kb=recall_per_kb,
+            rerank_candidate_limit=rerank_candidate_limit,
             use_hybrid=use_hybrid,
             use_reranker=use_reranker,
             score_threshold=score_threshold
@@ -700,7 +706,9 @@ class KnowledgeBaseService:
                 }
             return kb_results
 
+        recall_started_at = time.time()
         all_results = await asyncio.gather(*[search_single_kb(kb) for kb in kbs])
+        recall_elapsed_ms = (time.time() - recall_started_at) * 1000
         results = []
         for kb_results in all_results:
             results.extend(kb_results)
@@ -710,11 +718,23 @@ class KnowledgeBaseService:
             query_preview=query[:100],
             candidate_count=len(results),
             kb_count=len(kbs),
-            use_reranker=use_reranker
+            use_reranker=use_reranker,
+            recall_elapsed_ms=round(recall_elapsed_ms, 2)
         )
 
         # 根据是否使用重排序决定后续逻辑
         if use_reranker and len(results) > top_k:
+            before_limit_count = len(results)
+            results.sort(key=lambda x: x["score"], reverse=True)
+            results = results[:rerank_candidate_limit]
+            if before_limit_count > len(results):
+                logger.info(
+                    "knowledge_search_candidates_limited_before_rerank",
+                    query_preview=query[:100],
+                    before_count=before_limit_count,
+                    after_count=len(results),
+                    limit=rerank_candidate_limit
+                )
             # 开启重排序：从多个候选中精选top_k
             results = await self._rerank(query, results, top_k)
         else:
@@ -726,6 +746,13 @@ class KnowledgeBaseService:
         await self._enrich_results_with_document_info(results)
         self._attach_chunk_source_fields(results)
         self._log_search_top_results(query, results)
+
+        logger.info(
+            "knowledge_search_finished",
+            query_preview=query[:100],
+            result_count=len(results),
+            elapsed_ms=round((time.time() - search_started_at) * 1000, 2)
+        )
 
         return results
 
@@ -782,6 +809,7 @@ class KnowledgeBaseService:
             return candidates[:top_k]
 
         try:
+            rerank_started_at = time.time()
             pairs = [
                 (query, c.get("embedding_text") or c.get("metadata", {}).get("embedding_text") or c.get("content", ""))
                 for c in candidates
@@ -794,6 +822,12 @@ class KnowledgeBaseService:
                 candidates[i]["score"] = float(score)
 
             candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+            logger.info(
+                "rerank_completed",
+                candidate_count=len(candidates),
+                top_k=top_k,
+                elapsed_ms=round((time.time() - rerank_started_at) * 1000, 2)
+            )
             return candidates[:top_k]
         except Exception as e:
             logger.warning("rerank_failed_fallback_to_vector_score", error=str(e))
