@@ -159,16 +159,6 @@
         <div class="event-text">{{ message.content }}</div>
       </div>
 
-      <!-- 思考事件（未被折叠时实时显示） -->
-      <div v-else-if="getMessageType(message) === 'thought' && !isMessageHidden(message)" class="react-event event-thought">
-        <div class="event-content">
-          <div class="event-icon">💭</div>
-          <div class="event-text">
-            <div>{{ message.content }}</div>
-          </div>
-        </div>
-      </div>
-
       <!-- ✅ V3: Tool Use 事件 -->
       <div v-else-if="getMessageType(message) === 'tool_use' && !isMessageHidden(message)" class="react-event event-tool-use">
         <div class="event-content">

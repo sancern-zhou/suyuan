@@ -310,14 +310,14 @@ class DocumentProcessor:
         max_retries: int = 3
     ) -> tuple:
         """
-        调用 OCR API 处理单张图片（硅基流动 SiliconFlow - Qwen3-VL）
-        
+        调用 OCR API 处理单张图片（阿里云百炼 - 通义千问VL）
+
         Args:
             image_bytes: 图片字节数据
             page_num: 页码
             prompt: 提示词
             max_retries: 最大重试次数
-            
+
         Returns:
             (page_num, extracted_text)
         """
@@ -333,13 +333,15 @@ class DocumentProcessor:
         
         for attempt in range(max_retries):
             try:
+                # 构建请求头（如果有API key则添加Authorization）
+                headers = {"Content-Type": "application/json"}
+                if self.OCR_API_KEY:  # 只有在有API key时才添加Authorization
+                    headers["Authorization"] = f"Bearer {self.OCR_API_KEY}"
+
                 async with httpx.AsyncClient(timeout=float(self.OCR_TIMEOUT)) as client:
                     response = await client.post(
                         self.OCR_API_URL,
-                        headers={
-                            "Authorization": f"Bearer {self.OCR_API_KEY}",
-                            "Content-Type": "application/json"
-                        },
+                        headers=headers,
                         json={
                             "model": self.OCR_MODEL,
                             "messages": [
@@ -351,8 +353,7 @@ class DocumentProcessor:
                                     ]
                                 }
                             ],
-                            "max_tokens": 7000,
-                            "enable_thinking": False  # 非思考模式
+                            "max_tokens": 7000
                         }
                     )
                     response.raise_for_status()

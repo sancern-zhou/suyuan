@@ -169,29 +169,35 @@ class SessionMemory:
         )
 
         try:
-            if llm_service.provider in {"openai", "deepseek", "minimax", "mimo"}:
-                response = await llm_service.client.chat.completions.create(
-                    model=llm_service.config["model"],
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=150,
-                    temperature=0.3,
+            # ✅ 使用 Anthropic Messages API（所有provider统一格式）
+            if llm_service.anthropic_client is None:
+                logger.warning(
+                    "session_memory_anthropic_client_not_initialized",
+                    provider=llm_service.provider,
                 )
-                return response.choices[0].message.content.strip()
+                return self._simple_compress(iteration)
 
-            if llm_service.provider == "anthropic":
-                response = await llm_service.client.messages.create(
-                    model=llm_service.config["model"],
-                    max_tokens=150,
-                    temperature=0.3,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                return response.content[0].text.strip()
-
-            logger.warning(
-                "session_memory_unknown_llm_provider",
-                provider=llm_service.provider,
+            response = await llm_service.anthropic_client.messages.create(
+                model=llm_service.model,
+                max_tokens=150,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}],
             )
-            return self._simple_compress(iteration)
+
+            # 提取文本内容（Anthropic格式）
+            if response.content:
+                # content是列表，找到第一个text block
+                for block in response.content:
+                    if block.type == "text":
+                        return block.text.strip()
+
+            # 如果没有text block，返回空字符串
+            logger.warning(
+                "session_memory_no_text_content",
+                provider=llm_service.provider,
+                content_blocks=len(response.content) if response.content else 0,
+            )
+            return ""
 
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(

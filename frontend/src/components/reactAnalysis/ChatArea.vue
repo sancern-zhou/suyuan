@@ -18,13 +18,13 @@
     </button>
 
     <!-- 管理面板插槽 -->
-    <div v-if="showManagementPanel" class="management-panel-container">
+    <div v-show="showManagementPanel" class="management-panel-container">
       <slot name="management-panels"></slot>
     </div>
 
     <!-- 消息列表 -->
     <ReActMessageList
-      v-else
+      v-show="!showManagementPanel"
       :messages="messages"
       :show-reflexion="showReflexion"
       :reflexion-count="reflexionCount"
@@ -41,7 +41,7 @@
 
     <!-- 输入框 -->
     <InputBox
-      v-if="!showManagementPanel"
+      v-show="!showManagementPanel"
       ref="inputBoxRef"
       v-model="inputValue"
       :disabled="inputDisabled"
