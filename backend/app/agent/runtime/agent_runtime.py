@@ -128,13 +128,13 @@ class AgentRuntime:
             context_result,
             conversation_history,
         )
-        for event in planner_result.pop_events:
-            yield event
 
         action = planner_result.action or {"type": "ERROR", "error": "no action"}
         action_type = action.get("type", "ERROR")
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
+            for event in planner_result.pop_events:
+                yield event
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
                 yield event
             return
@@ -143,8 +143,14 @@ class AgentRuntime:
             action = {"type": "FINAL_ANSWER", "answer": action.get("answer", "")}
             action_type = "FINAL_ANSWER"
 
+        if action_type == "FINAL_ANSWER" and self._has_streamed_assistant_text(planner_result):
+            state.response_streamed = True
+
+        for event in planner_result.pop_events:
+            yield event
+
         if action_type == "FINAL_ANSWER":
-            async for event in self._complete_final_answer(state, planner_result, action.get("answer", "")):
+            async for event in self._complete_response(state, planner_result, action.get("answer", "")):
                 yield event
             return
 
@@ -276,6 +282,15 @@ class AgentRuntime:
 
         return planner_result, streaming_tool_executor
 
+    def _has_streamed_assistant_text(self, planner_result: PlannerResult) -> bool:
+        for event in planner_result.pop_events:
+            if event.get("type") != "streaming_text":
+                continue
+            data = event.get("data", {})
+            if data.get("chunk"):
+                return True
+        return False
+
     async def _fallback_non_streaming(
         self,
         state: RunState,
@@ -323,7 +338,7 @@ class AgentRuntime:
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
 
-    async def _complete_final_answer(
+    async def _complete_response(
         self,
         state: RunState,
         planner_result: PlannerResult,
@@ -381,11 +396,12 @@ class AgentRuntime:
             tool_results=self.memory.session.get_compressed_summary() or "无工具调用数据",
             final_thought=planner_result.thought,
         )
-        final_answer = ""
+        response_text = ""
         async for chunk in self.planner.stream_user_answer(prompt):
-            final_answer += chunk
+            response_text += chunk
             yield self.events.assistant_delta(state, chunk, is_complete=False)
         yield self.events.assistant_delta(state, "", is_complete=True)
+        state.response_streamed = True
 
         self.writer.add_iteration(
             planner_result.thought,
@@ -401,7 +417,7 @@ class AgentRuntime:
         )
         async for event in self.finalizer.complete(
             state,
-            final_answer,
+            response_text,
             planner_result=planner_result,
             thought=planner_result.thought,
             reasoning=planner_result.reasoning,

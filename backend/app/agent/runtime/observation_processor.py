@@ -39,11 +39,11 @@ class ObservationProcessor:
         async for event in self._document_events(observation):
             yield event
 
-        direct_answer = self._extract_direct_answer(state, observation)
-        if direct_answer:
+        direct_response = self._extract_direct_response(state, observation)
+        if direct_response:
             async for event in self.finalizer.complete(
                 state,
-                direct_answer,
+                direct_response,
                 planner_result=planner_result,
                 thought=planner_result.thought,
                 reasoning=planner_result.reasoning,
@@ -69,21 +69,21 @@ class ObservationProcessor:
         state.direct_from_workflow = True
         return True
 
-    def _extract_direct_answer(self, state: RunState, observation: Dict[str, Any]) -> Optional[str]:
+    def _extract_direct_response(self, state: RunState, observation: Dict[str, Any]) -> Optional[str]:
         metadata = observation.get("metadata", {}) if isinstance(observation, dict) else {}
-        if not metadata.get("can_be_final_answer") or not observation.get("success"):
+        if not metadata.get("can_emit_response") or not observation.get("success"):
             return None
         data = observation.get("data", {})
         if not isinstance(data, dict):
             return None
-        final_answer_field = metadata.get("final_answer_field", "answer")
-        answer = data.get(final_answer_field, "")
-        if not answer:
+        response_field = metadata.get("response_field", "response")
+        response = data.get(response_field, "")
+        if not response:
             return None
         state.direct_from_workflow = True
         state.workflow_sources = data.get("sources", [])
         state.workflow_visuals = observation.get("visuals", [])
-        return answer
+        return response
 
     async def _document_events(self, observation: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         for result_data, metadata in self._iter_result_payloads(observation):

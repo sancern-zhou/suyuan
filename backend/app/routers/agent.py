@@ -897,7 +897,7 @@ async def analyze_with_expert_router_v3(request: ExpertV3AnalyzeRequest):
                     "type": "pipeline_completed",
                     "data": {
                         "query": request.query,
-                        "final_answer": result.final_answer,
+                        "response": result.final_answer,
                         "conclusions": result.conclusions,
                         "recommendations": result.recommendations,
                         "data_ids": result.data_ids,

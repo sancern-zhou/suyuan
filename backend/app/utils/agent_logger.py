@@ -170,6 +170,7 @@ class AgentLogger:
         self,
         status: str = "completed",
         final_answer: Optional[str] = None,
+        response: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ):
         """
@@ -177,7 +178,8 @@ class AgentLogger:
 
         Args:
             status: 运行状态（completed/failed/timeout）
-            final_answer: 最终答案
+            final_answer: 最终答案（旧参数名，兼容保留）
+            response: 最终回复
             metadata: 额外元数据
         """
         if not self.current_run:
@@ -187,8 +189,9 @@ class AgentLogger:
         self.current_run["end_time"] = end_time.isoformat()
         self.current_run["status"] = status
 
-        if final_answer:
-            self.current_run["final_answer_preview"] = final_answer[:1000]
+        response_preview = response or final_answer
+        if response_preview:
+            self.current_run["response_preview"] = response_preview[:1000]
 
         if metadata:
             self.current_run["metadata"].update(metadata)

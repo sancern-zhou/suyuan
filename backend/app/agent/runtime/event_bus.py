@@ -104,42 +104,19 @@ class RuntimeEventBus:
         return {
             "type": "agent_finish",
             "stream": "final",
-            "answer": state.final_answer,
+            "answer": state.response_text,
             "data": {
                 "iterations": state.iteration,
                 "session_id": state.session_id,
                 "thought": thought,
                 "reasoning": reasoning,
-            },
-        }
-
-    def final_answer(
-        self,
-        state: RunState,
-        thought: Any = None,
-        reasoning: Any = None,
-        metadata: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        return {
-            "type": "final_answer",
-            "stream": "final",
-            "data": {
-                "content": state.final_answer,
-                "sources": state.workflow_sources,
-                "visuals": state.workflow_visuals,
-                "iterations": state.iteration,
-                "session_id": state.session_id,
-                "thought": thought,
-                "reasoning": reasoning,
-                "direct_from_workflow": state.direct_from_workflow,
-                "metadata": metadata or {},
             },
         }
 
     def complete(self, state: RunState, status: str = "completed", reason: str | None = None) -> Dict[str, Any]:
         data = {
-            "answer": state.final_answer,
-            "response": state.final_answer,
+            "answer": state.response_text,
+            "response": state.response_text,
             "iterations": state.iteration,
             "session_id": state.session_id,
             "run_id": state.run_id,
