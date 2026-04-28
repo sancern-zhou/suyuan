@@ -187,6 +187,8 @@ class SearchResultItem(BaseModel):
     knowledge_base: Dict[str, str] = Field(description="知识库信息")
     metadata: Dict[str, Any] = Field(description="文档元数据")
     chunk_index: Optional[int] = Field(default=None, description="分块索引")
+    section: Optional[str] = Field(default=None, description="章节")
+    topic: Optional[str] = Field(default=None, description="主题")
     # 溯源相关字段
     document: Optional[Dict[str, Any]] = Field(default=None, description="原文档信息")
     download_url: Optional[str] = Field(default=None, description="原文件下载链接")

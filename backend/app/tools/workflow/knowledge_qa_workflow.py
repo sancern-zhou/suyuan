@@ -186,6 +186,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
                     "preview_url": doc.get("preview_url"),
                     "knowledge_base_id": doc.get("knowledge_base_id"),
                     "chunk_index": doc.get("chunk_index"),
+                    "section": doc.get("section"),
+                    "topic": doc.get("topic"),
                     "content": content  # 返回完整内容
                 })
 

@@ -724,8 +724,47 @@ class KnowledgeBaseService:
 
         # 为每个结果添加原文档信息（用于溯源比对）
         await self._enrich_results_with_document_info(results)
+        self._attach_chunk_source_fields(results)
+        self._log_search_top_results(query, results)
 
         return results
+
+    def _attach_chunk_source_fields(self, results: List[Dict[str, Any]]) -> None:
+        """把常用chunk元数据提升到顶层，方便API和工具直接溯源。"""
+        for item in results:
+            metadata = item.get("metadata", {}) or {}
+            chunk_metadata = metadata.get("chunk_metadata", {}) or {}
+            item["section"] = chunk_metadata.get("section") or metadata.get("section")
+            item["topic"] = chunk_metadata.get("topic") or metadata.get("topic")
+
+    def _log_search_top_results(self, query: str, results: List[Dict[str, Any]]) -> None:
+        """记录检索最终Top结果摘要，便于判断召回、精排和分块质量。"""
+        try:
+            diagnostics = []
+            for rank, item in enumerate(results[:5], 1):
+                metadata = item.get("metadata", {}) or {}
+                chunk_metadata = metadata.get("chunk_metadata", {}) or {}
+                document = item.get("document", {}) or {}
+                diagnostics.append({
+                    "rank": rank,
+                    "score": item.get("score"),
+                    "original_score": item.get("original_score"),
+                    "rerank_score": item.get("rerank_score"),
+                    "document": document.get("filename") or item.get("filename"),
+                    "kb": (item.get("knowledge_base") or {}).get("name"),
+                    "chunk_index": item.get("chunk_index"),
+                    "section": chunk_metadata.get("section") or metadata.get("section"),
+                    "topic": chunk_metadata.get("topic") or metadata.get("topic"),
+                    "preview": (item.get("content") or "")[:120]
+                })
+            logger.info(
+                "knowledge_search_top_results",
+                query_preview=query[:100],
+                result_count=len(results),
+                results=diagnostics
+            )
+        except Exception as e:
+            logger.warning("knowledge_search_top_results_log_failed", error=str(e))
 
     async def _rerank(
         self,

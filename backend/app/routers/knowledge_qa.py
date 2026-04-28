@@ -101,10 +101,11 @@ async def generate_hypothetical_keywords(query: str) -> str:
 问题：{query}
 
 要求：
-1. 提取3-6个核心关键词/短语
-2. 包含专业术语、标准号、技术概念
-3. 添加同义词或相关概念（如"点位"→"监测点"、"采样点"）
-4. 不要生成完整句子，只要关键词
+1. 提取5-10个核心关键词/短语
+2. 优先包含标准号、条款名、表名、公式名、指标名、英文缩写
+3. 添加同义词或相关概念（如"点位"→"监测点"、"采样点"；"空气质量指数"→"AQI"、"分指数"、"首要污染物"）
+4. 对环境标准/技术规范问题，补充可能出现的标准写法（如"HJ 633"、"HJ633-2026"、"GB 3095"）
+5. 不要生成完整句子，只要关键词
 
 只返回JSON数组：
 ["关键词1", "关键词2", "关键词3", "同义词1", "相关概念"]"""
@@ -235,6 +236,8 @@ async def search_knowledge_bases(
                 kb_info = r.get("knowledge_base", {})
                 doc = docs_map.get(doc_id) if doc_id else None
                 document_info = r.get("document", {}) or {}
+                metadata = r.get("metadata", {}) or {}
+                chunk_metadata = metadata.get("chunk_metadata", {}) or {}
                 if doc and not document_info:
                     has_original_file = bool(
                         doc.original_file_oid or
@@ -271,7 +274,9 @@ async def search_knowledge_bases(
                     "knowledge_base_id": kb_info.get("id"),
                     "knowledge_base_name": kb_info.get("name", ""),
                     "chunk_index": r.get("chunk_index"),
-                    "metadata": r.get("metadata", {}),
+                    "section": chunk_metadata.get("section") or metadata.get("section"),
+                    "topic": chunk_metadata.get("topic") or metadata.get("topic"),
+                    "metadata": metadata,
                     "hyde_used": hyde_used  # 标记是否使用HyDE
                 })
 
