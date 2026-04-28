@@ -235,6 +235,45 @@ class ReActLoop:
             workflow_sources = []  # ✅ 保存工作流的sources数据
             workflow_visuals = []  # ✅ 保存工作流的visuals数据
 
+            def capture_last_knowledge_sources() -> bool:
+                """从最近一次 knowledge_qa_workflow 工具结果中提取 sources。"""
+                nonlocal workflow_sources, workflow_visuals, direct_from_workflow
+
+                last_result = getattr(self, "_last_single_tool_result", None)
+                if not last_result:
+                    return False
+
+                tool_observation = last_result.get("observation", {})
+                tool_name = last_result.get("tool_name", "")
+
+                logger.info(
+                    "checking_last_tool_for_sources",
+                    tool_name=tool_name,
+                    has_observation=bool(tool_observation),
+                    observation_success=tool_observation.get("success") if isinstance(tool_observation, dict) else False,
+                    observation_data_keys=list(tool_observation.get("data", {}).keys()) if isinstance(tool_observation, dict) else []
+                )
+
+                if tool_name != "knowledge_qa_workflow" or not tool_observation.get("success"):
+                    return False
+
+                tool_data = tool_observation.get("data", {})
+                sources = tool_data.get("sources") if isinstance(tool_data, dict) else None
+                if not sources:
+                    return False
+
+                workflow_sources = sources
+                workflow_visuals = tool_observation.get("visuals", [])
+                direct_from_workflow = True
+
+                logger.info(
+                    "knowledge_qa_sources_extracted",
+                    sources_count=len(workflow_sources),
+                    tool_name=tool_name,
+                    sources_preview=workflow_sources[:2] if workflow_sources else []
+                )
+                return True
+
             # Yield start event
             yield {
                 "type": "start",
@@ -743,6 +782,7 @@ class ReActLoop:
                         # 没有未完成任务，正常完成
                         task_completed = True
                         final_answer = action.get("answer", "")
+                        capture_last_knowledge_sources()
 
                         self.memory.add_iteration(
                             thought=thought,
@@ -1313,35 +1353,7 @@ class ReActLoop:
                             iteration=iteration_count
                         )
 
-                        # ✅ 尝试从上一次工具结果提取 sources（如果是 knowledge_qa_workflow）
-                        if '_last_single_tool_result' in dir(self) and self._last_single_tool_result:
-                            tool_observation = self._last_single_tool_result.get("observation", {})
-                            tool_name = self._last_single_tool_result.get("tool_name", "")
-
-                            logger.info(
-                                "checking_last_tool_for_sources",
-                                tool_name=tool_name,
-                                has_observation=bool(tool_observation),
-                                observation_success=tool_observation.get("success") if isinstance(tool_observation, dict) else False,
-                                observation_data_keys=list(tool_observation.get("data", {}).keys()) if isinstance(tool_observation, dict) else []
-                            )
-
-                            # 如果是 knowledge_qa_workflow，提取 sources
-                            if tool_name == "knowledge_qa_workflow" and tool_observation.get("success"):
-                                tool_data = tool_observation.get("data", {})
-                                if tool_data.get("sources"):
-                                    workflow_sources = tool_data.get("sources", [])
-                                    workflow_visuals = tool_observation.get("visuals", [])
-
-                                    logger.info(
-                                        "knowledge_qa_sources_extracted",
-                                        sources_count=len(workflow_sources),
-                                        tool_name=tool_name,
-                                        sources_preview=workflow_sources[:2] if workflow_sources else []
-                                    )
-
-                                    # 设置 direct_from_workflow 标记（表明答案来自工作流）
-                                    direct_from_workflow = True
+                        capture_last_knowledge_sources()
 
                         # 记录到记忆
                         self.memory.add_iteration(
