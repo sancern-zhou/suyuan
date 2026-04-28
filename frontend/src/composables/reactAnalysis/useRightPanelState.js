@@ -8,8 +8,9 @@ export function useRightPanelState(store = null) {
   // ========== 状态 ==========
   const vizPanelVisible = ref(false)
   const officePanelVisible = ref(false)
+  const knowledgePanelVisible = ref(false)
   const rightPanelVisible = ref(false)
-  const activeRightTab = ref('visualization') // 'visualization' | 'document'
+  const activeRightTab = ref('visualization') // 'visualization' | 'document' | 'knowledge'
 
   // ========== 计算属性 ==========
 
@@ -54,10 +55,24 @@ export function useRightPanelState(store = null) {
   })
 
   /**
+   * 是否有知识溯源信息
+   */
+  const hasKnowledgeSources = computed(() => {
+    if (!store || !store.messages) return false
+
+    return store.messages.some(msg => {
+      if (msg?.data?.sources && Array.isArray(msg.data.sources) && msg.data.sources.length > 0) {
+        return true
+      }
+      return false
+    })
+  })
+
+  /**
    * 是否显示标签页切换按钮
    */
   const showTabs = computed(() => {
-    return vizPanelVisible.value && officePanelVisible.value
+    return vizPanelVisible.value || officePanelVisible.value || knowledgePanelVisible.value
   })
 
   // ========== 方法 ==========
@@ -77,18 +92,26 @@ export function useRightPanelState(store = null) {
   }
 
   /**
+   * 切换到知识溯源标签页
+   */
+  const switchToKnowledge = () => {
+    activeRightTab.value = 'knowledge'
+  }
+
+  /**
    * 重置面板状态
    */
   const resetPanelState = () => {
     vizPanelVisible.value = false
     officePanelVisible.value = false
+    knowledgePanelVisible.value = false
     rightPanelVisible.value = false
     activeRightTab.value = 'visualization'
   }
 
   /**
    * 显示面板（根据内容类型）
-   * @param {string} type - 'visualization' | 'document' | 'auto'
+   * @param {string} type - 'visualization' | 'document' | 'knowledge' | 'auto'
    */
   const showPanel = (type = 'auto') => {
     rightPanelVisible.value = true
@@ -99,11 +122,17 @@ export function useRightPanelState(store = null) {
     } else if (type === 'document') {
       officePanelVisible.value = true
       activeRightTab.value = 'document'
+    } else if (type === 'knowledge') {
+      knowledgePanelVisible.value = true
+      activeRightTab.value = 'knowledge'
     } else if (type === 'auto') {
       // 自动检测
       if (hasOfficeDocuments.value) {
         officePanelVisible.value = true
         activeRightTab.value = 'document'
+      } else if (hasKnowledgeSources.value) {
+        knowledgePanelVisible.value = true
+        activeRightTab.value = 'knowledge'
       } else if (hasVizContent.value) {
         vizPanelVisible.value = true
         activeRightTab.value = 'visualization'
@@ -139,9 +168,17 @@ export function useRightPanelState(store = null) {
       }
     }, { immediate: true })
 
+    // 监听知识溯源变化
+    watch(hasKnowledgeSources, (newValue) => {
+      knowledgePanelVisible.value = newValue
+      if (newValue) {
+        activeRightTab.value = 'knowledge'
+      }
+    }, { immediate: true })
+
     // 监听面板可见性变化
-    watch([vizPanelVisible, officePanelVisible], ([viz, office]) => {
-      const shouldShow = viz || office
+    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible], ([viz, office, knowledge]) => {
+      const shouldShow = viz || office || knowledge
       rightPanelVisible.value = shouldShow
     }, { immediate: true })
 
@@ -160,17 +197,20 @@ export function useRightPanelState(store = null) {
     // 状态
     vizPanelVisible,
     officePanelVisible,
+    knowledgePanelVisible,
     rightPanelVisible,
     activeRightTab,
 
     // 计算属性
     hasVizContent,
     hasOfficeDocuments,
+    hasKnowledgeSources,
     showTabs,
 
     // 方法
     switchToVisualization,
     switchToDocument,
+    switchToKnowledge,
     resetPanelState,
     showPanel,
     hidePanel,

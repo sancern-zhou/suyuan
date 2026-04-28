@@ -352,7 +352,7 @@ class SimplifiedContextBuilder:
                 f"{user_question_section}"  # ✅ 添加用户问题
                 f"{attachment_section}"  # ✅ 添加附件信息（关键修复）
                 f"请根据上方对话历史中的工具执行结果，判断用户任务是否已完成。\n"
-                f"- 如果已完成：直接使用 FINAL_ANSWER 回复用户\n"
+                f"- 如果已完成：直接给出最终答案回复用户\n"
                 f"- 如果未完成：继续调用必要的工具，但**不要重复执行已经成功过的工具调用**"
             )
             sections.append(status_section)

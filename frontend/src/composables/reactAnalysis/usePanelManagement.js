@@ -12,6 +12,7 @@ export function usePanelManagement(store = null) {
   const leftSidebarCollapsed = ref(false) // 左侧边栏是否折叠
   const vizPanelVisible = ref(false) // 可视化面板是否可见
   const officePanelVisible = ref(false) // Office文档面板是否可见
+  const knowledgePanelVisible = ref(false) // 知识溯源面板是否可见
   const activeRightTab = ref('visualization') // 右侧面板活动标签页
 
   // ========== 宽度调整相关 ==========
@@ -91,6 +92,23 @@ export function usePanelManagement(store = null) {
     })
   })
 
+  /**
+   * 检测是否有知识溯源信息
+   */
+  const hasKnowledgeSources = computed(() => {
+    if (!store || !store.messages) return false
+
+    return store.messages.some(msg => {
+      if (msg?.data?.sources && Array.isArray(msg.data.sources) && msg.data.sources.length > 0) {
+        return true
+      }
+      if (msg?.sources && Array.isArray(msg.sources) && msg.sources.length > 0) {
+        return true
+      }
+      return false
+    })
+  })
+
   // ========== 面板切换方法 ==========
 
   /**
@@ -134,6 +152,7 @@ export function usePanelManagement(store = null) {
   const resetPanelState = () => {
     vizPanelVisible.value = false
     officePanelVisible.value = false
+    knowledgePanelVisible.value = false
     rightPanelVisible.value = false
     leftSidebarCollapsed.value = false
     managementPanel.value = null
@@ -153,13 +172,17 @@ export function usePanelManagement(store = null) {
    * 根据鼠标位置更新宽度
    */
   const updateWidthFromCursor = (clientX) => {
-    if (!layoutRef.value) {
+    if (!layoutRef.value || typeof layoutRef.value.getBoundingClientRect !== 'function') {
       return
     }
-    const bounds = layoutRef.value.getBoundingClientRect()
-    const vizPixels = bounds.right - clientX
-    const percent = (vizPixels / bounds.width) * 100
-    vizWidth.value = clampWidth(percent)
+    try {
+      const bounds = layoutRef.value.getBoundingClientRect()
+      const vizPixels = bounds.right - clientX
+      const percent = (vizPixels / bounds.width) * 100
+      vizWidth.value = clampWidth(percent)
+    } catch (error) {
+      console.warn('[usePanelManagement] updateWidthFromCursor error:', error)
+    }
   }
 
   /**
@@ -236,19 +259,28 @@ export function usePanelManagement(store = null) {
       }
     }, { immediate: true })
 
+    // 监听知识溯源变化
+    watch(hasKnowledgeSources, (newValue) => {
+      knowledgePanelVisible.value = newValue
+      // 当检测到知识溯源时，自动切换到知识标签页
+      if (newValue) {
+        activeRightTab.value = 'knowledge'
+      }
+    }, { immediate: true })
+
     // 监听图表历史变化，当有图表时且当前在document标签，切换回visualization标签
     if (store) {
       watch(() => store.currentState.visualizationHistory, (newHistory) => {
         const hasCharts = newHistory?.length > 0
-        if (hasCharts && activeRightTab.value === 'document' && !officePanelVisible.value) {
+        if (hasCharts && activeRightTab.value === 'document' && !officePanelVisible.value && !knowledgePanelVisible.value) {
           activeRightTab.value = 'visualization'
         }
       }, { immediate: true })
     }
 
     // 监听右侧面板显示状态
-    watch([vizPanelVisible, officePanelVisible], ([viz, office]) => {
-      const shouldShow = viz || office
+    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible], ([viz, office, knowledge]) => {
+      const shouldShow = viz || office || knowledge
       if (shouldShow) {
         rightPanelVisible.value = true
         // 右侧面板展开时，自动折叠左侧面板
@@ -302,6 +334,7 @@ export function usePanelManagement(store = null) {
     leftSidebarCollapsed,
     vizPanelVisible,
     officePanelVisible,
+    knowledgePanelVisible,
     activeRightTab,
     vizWidth,
     isDragging,
@@ -311,6 +344,7 @@ export function usePanelManagement(store = null) {
     vizPanelStyle,
     hasVizContent,
     hasOfficeDocuments,
+    hasKnowledgeSources,
 
     // 方法
     toggleVizPanel,
