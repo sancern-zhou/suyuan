@@ -71,7 +71,7 @@ class DocumentProcessor:
     # OCR 配置（阿里云百炼 - Qwen3-VL）
     OCR_API_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
     OCR_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
-    OCR_MODEL = os.getenv("OCR_MODEL", "qwen3-vl-flash")
+    OCR_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")  # 修复：统一使用QWEN_VL_MODEL
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
     OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "120"))
     

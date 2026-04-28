@@ -155,7 +155,10 @@ class Settings(BaseSettings):
 
     # Anthropic Format Configuration (V3 - Anthropic native only)
     anthropic_compatible_endpoints: Dict[str, str] = Field(
-        default={"deepseek": "https://api.deepseek.com/anthropic"},
+        default={
+            "deepseek": "https://api.deepseek.com/anthropic",
+            "mimo": "https://api.xiaomimimo.com/anthropic",
+        },
         description="Providers with Anthropic-compatible endpoints"
     )
 

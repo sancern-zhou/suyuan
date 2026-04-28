@@ -81,61 +81,60 @@ class KnowledgeQAResponse(BaseModel):
 # HyDE 假设答案生成函数
 # ========================================
 
-async def generate_hypothetical_answer(query: str) -> str:
+async def generate_hypothetical_keywords(query: str) -> str:
     """
-    使用LLM生成假设答案（HyDE核心步骤）
+    使用LLM生成检索关键词（HyDE优化版）
 
-    HyDE原理：先让LLM生成一个"假设的完美回答"，用这个假设答案去检索
-    能获得更好的语义匹配，因为假设答案包含了更丰富的语义信息
+    原理：提取原始query中的专业术语，并生成同义词、相关概念
+    避免生成描述性summary，减少与原始query的重复
 
     Args:
         query: 用户问题
 
     Returns:
-        假设的完美回答
+        关键词字符串（逗号分隔）
     """
     from app.services.llm_service import llm_service
 
-    hyde_prompt = f"""你是一位大气环境监测领域的专家。请根据问题生成用于知识库检索的结构化查询。
+    hyde_prompt = f"""你是一位环境监测领域的专家。请从问题中提取核心检索关键词。
 
 问题：{query}
 
 要求：
-1. summary：对原始问题的完整概述，保留标准号、术语和核心意图
-2. keywords：3-4个核心关键词/关键概念
+1. 提取3-6个核心关键词/短语
+2. 包含专业术语、标准号、技术概念
+3. 添加同义词或相关概念（如"点位"→"监测点"、"采样点"）
+4. 不要生成完整句子，只要关键词
 
-只返回JSON对象，不要输出解释文字：
-{{
-  "summary": "完整检索概述",
-  "keywords": ["关键词1", "关键词2", "关键词3"]
-}}"""
+只返回JSON数组：
+["关键词1", "关键词2", "关键词3", "同义词1", "相关概念"]"""
 
     try:
-        hyde_result = await llm_service.call_llm_with_json_response(
+        keywords = await llm_service.call_llm_with_json_response(
             prompt=hyde_prompt,
             max_retries=1
         )
-        summary = str(hyde_result.get("summary", "")).strip()
-        keywords = hyde_result.get("keywords", [])
+
         if not isinstance(keywords, list):
-            keywords = []
+            logger.warning("hyde_invalid_format", query=query[:50], result=keywords)
+            return ""
+
         keywords = [str(item).strip() for item in keywords if str(item).strip()]
 
-        if not summary:
-            logger.warning("hyde_json_missing_summary", query=query[:50], result=hyde_result)
-            return query
+        if not keywords:
+            logger.warning("hyde_empty_keywords", query=query[:50])
+            return ""
 
-        search_text = "\n".join([summary, ", ".join(keywords) if keywords else ""]).strip()
+        keywords_text = ", ".join(keywords)
         logger.info(
-            "hyde_generated",
+            "hyde_keywords_generated",
             query=query[:100],
-            hyde_keywords=search_text[:200]
+            keywords=keywords_text[:200]
         )
-        return search_text
+        return keywords_text
     except Exception as e:
         logger.warning("hyde_generation_failed", error=str(e), query=query[:50])
-        # 降级：返回原始问题
-        return query
+        return ""
 
 
 # ========================================
@@ -186,19 +185,24 @@ async def search_knowledge_bases(
                 logger.info("no_available_knowledge_bases", query=query[:50])
                 return []
 
-        # HyDE优化：当开启精准检索时，生成假设答案用于检索
+        # HyDE优化：生成关键词用于检索
+        # 策略：原始query + HyDE关键词（避免重复，只添加扩展关键词）
         search_query = query
         hyde_used = False
+        hyde_keywords = ""
         if use_hyde:
             hyde_start = time.time()
-            hypothetical_answer = await generate_hypothetical_answer(query)
-            search_query = hypothetical_answer
+            hyde_keywords = await generate_hypothetical_keywords(query)
+            # 只在有关键词时才组合
+            if hyde_keywords:
+                search_query = f"{query}\n{hyde_keywords}"
             hyde_elapsed = (time.time() - hyde_start) * 1000
             hyde_used = True
             logger.info(
                 "hyde_applied",
                 original_query=query[:100],
-                hyde_keywords=search_query.strip()[:200],  # 记录用于检索的关键词
+                hyde_keywords=hyde_keywords.strip()[:200],  # 记录用于检索的关键词
+                search_query=search_query[:300],  # 记录最终检索文本
                 hyde_elapsed_ms=round(hyde_elapsed, 2)
             )
 

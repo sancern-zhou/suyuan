@@ -1525,35 +1525,44 @@ class QuickTraceExecutor:
         Returns:
             dict: {"filepath": "...", "db_id": ...}
         """
-        # 1. 保存到本地文件
-        report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
-        report_dir.mkdir(parents=True, exist_ok=True)
-
-        # 生成文件名（添加时间戳避免冲突）
-        file_date_str = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d")
-        time_str = datetime.now().strftime("%H%M%S")
-        filename = f"{city}_快速溯源报告_{file_date_str}_{time_str}.md"
-        filepath = report_dir / filename
-
-        # 保存报告
+        # 1. 保存到本地文件（可选，失败不影响数据库保存）
+        filepath = None
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(summary_text)
-        except PermissionError:
-            # 如果文件存在且只读，生成新的文件名（添加随机后缀）
-            import uuid
-            unique_suffix = uuid.uuid4().hex[:6]
-            filename = f"{city}_快速溯源报告_{file_date_str}_{time_str}_{unique_suffix}.md"
-            filepath = report_dir / filename
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(summary_text)
+            report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
+            report_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(
-            "report_saved_to_file",
-            filepath=str(filepath),
-            city=city,
-            alert_time=alert_time
-        )
+            # 生成文件名（添加时间戳避免冲突）
+            file_date_str = datetime.strptime(alert_time, "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d")
+            time_str = datetime.now().strftime("%H%M%S")
+            filename = f"{city}_快速溯源报告_{file_date_str}_{time_str}.md"
+            filepath = report_dir / filename
+
+            # 保存报告
+            try:
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(summary_text)
+            except PermissionError:
+                # 如果文件存在且只读，生成新的文件名（添加随机后缀）
+                import uuid
+                unique_suffix = uuid.uuid4().hex[:6]
+                filename = f"{city}_快速溯源报告_{file_date_str}_{time_str}_{unique_suffix}.md"
+                filepath = report_dir / filename
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(summary_text)
+
+            logger.info(
+                "report_saved_to_file",
+                filepath=str(filepath),
+                city=city,
+                alert_time=alert_time
+            )
+        except Exception as e:
+            logger.warning(
+                "report_file_save_failed",
+                city=city,
+                error=str(e),
+                message="File save failed, will continue with database save"
+            )
 
         # 2. 保存到数据库
         db_id = None
