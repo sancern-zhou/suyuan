@@ -1217,18 +1217,18 @@ export const useReactStore = defineStore('react', {
           // 【修复】使用targetState而不是currentState，确保状态更新到正确的模式
           targetState.isAnalyzing = false
           targetState.isComplete = true
-          targetState.finalAnswer = data?.final_answer || ''
+          targetState.finalAnswer = data?.response || ''
           targetState.hasResults = true
 
           // 记录最终答案
           targetState.finalAnswers.push({
             run: targetState.sessionRound,
-            content: data?.final_answer || '溯源分析完成',
+            content: data?.response || '溯源分析完成',
             timestamp: new Date().toISOString()
           })
 
           // 添加最终答案消息到UI
-          addMessage('final', data?.final_answer || '溯源分析完成', {
+          addMessage('final', data?.response || '溯源分析完成', {
             session_id: data?.session_id,
             timestamp: new Date().toISOString(),
             conclusions: data?.conclusions || null,
@@ -1466,56 +1466,6 @@ export const useReactStore = defineStore('react', {
           // 专家错误事件
           const errorExpertName = this.getExpertLabel(data?.expert_type)
           addMessage('error', `【${errorExpertName}】专家执行失败: ${data?.error || '未知错误'}`, data)
-          break
-        }
-
-
-        case 'final_answer': {
-          // ✅ 直接来自工作流的最终答案（无需Agent再次总结）
-          console.log('[event:final_answer] 收到直接final_answer事件:', data)
-
-          // 提取最终答案内容
-          const finalContent = data?.content || ''
-          const sources = data?.sources || []
-
-          // 构建消息数据对象
-          const msgData = {
-            session_id: data?.session_id,
-            timestamp: data?.timestamp,
-            direct_from_workflow: data?.direct_from_workflow,
-            sources: sources  // 保存sources供知识溯源面板使用（旧格式兼容）
-          }
-
-          // final_answer 可能跟在 streaming_text 后面，只补齐当前轮次已有final消息，避免重复显示
-          let msg = this._findLatestFinalMessageForCurrentTurn(targetState, finalContent)
-          let msgId = msg?.id
-          if (msg) {
-            this._mergeFinalMessage(msg, finalContent, msgData)
-            targetState.messages = [...targetState.messages]
-          } else {
-            msgId = addMessage('final', finalContent, msgData, null, { streaming: false })
-            msg = targetState.messages.find(m => m.id === msgId)
-          }
-          targetState.streamingAnswerMessageId = msgId  // ✅ 设置标志，避免complete事件重复添加
-
-          // 如果有sources，额外保存到message.data.sources（VisualizationPanel优先检查这里）
-          if (sources && sources.length > 0) {
-            if (msg) {
-              // 确保data对象存在
-              if (!msg.data) {
-                msg.data = {}
-              }
-              // 保存sources到data.sources
-              msg.data.sources = sources
-              console.log('[event:final_answer] sources已保存到msg.data.sources，count:', sources.length)
-            }
-          }
-
-          // 更新finalAnswer
-          targetState.finalAnswer = finalContent
-          targetState.isAnalyzing = false
-          targetState.isInterruption = false
-          targetState.isComplete = true
           break
         }
 

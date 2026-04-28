@@ -53,7 +53,8 @@ class RunState:
     run_id: str = field(default_factory=lambda: uuid4().hex)
     iteration: int = 0
     task_completed: bool = False
-    final_answer: str = ""
+    response_text: str = ""
+    response_streamed: bool = False
     assistant_message_written: bool = False
     has_seen_tool_use: bool = False
     workflow_sources: List[Any] = field(default_factory=list)
