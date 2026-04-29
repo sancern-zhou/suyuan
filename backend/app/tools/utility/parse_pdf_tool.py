@@ -1168,81 +1168,41 @@ class ParsePDFTool(LLMTool):
         """获取Function Calling Schema"""
         return {
             "name": "parse_pdf",
-            "description": """解析PDF文件并提取内容
-
-支持多种解析模式：
-- text: 提取文本内容（使用PyPDF2或pdfplumber）
-- ocr: OCR识别（针对扫描版PDF）
-- table: 提取表格数据
-- image: 提取图片信息
-- meta: 提取元数据（标题、作者等）
-- auto: 自动检测PDF类型并选择最佳方法（默认）
-
-特性：
-- 自动检测文本型/扫描型PDF
-- 支持多种OCR引擎（Qwen/PaddleOCR/Tesseract）
-- 支持分页读取
-- 提取表格和图片信息
-- 获取PDF元数据
-
-使用示例：
-- parse_pdf(path="report.pdf")                   # 自动检测
-- parse_pdf(path="report.pdf", mode="text")      # 提取文本
-- parse_pdf(path="scan.pdf", mode="ocr")         # OCR识别
-- parse_pdf(path="data.pdf", mode="table")       # 提取表格
-- parse_pdf(path="doc.pdf", pages="1-5")         # 分页读取
-- parse_pdf(path="doc.pdf", extract_tables=True) # 提取文本+表格
-
-参数说明：
-- path: PDF文件路径（必填）
-- mode: 解析模式（默认auto）
-- pages: 页面范围（如"1-5", "3"）
-- extract_tables: 是否提取表格（默认False）
-- extract_images: 是否提取图片信息（默认False）
-- ocr_engine: OCR引擎（auto/tesseract/paddleocr/qwen）
-
-限制：
-- 文件大小限制：100MB
-- 页面限制：最多50页
-- OCR需要额外的依赖库
-
-注意：
-- 文本型PDF使用text模式最快
-- 扫描版PDF需要OCR，处理时间较长
-- 提取表格需要安装pdfplumber
-- OCR需要配置API密钥或安装本地引擎
-""",
+            "description": (
+                "解析PDF并提取文本、OCR、表格、图片信息或元数据。"
+                "mode默认auto；文本型PDF用text更快，扫描版用ocr；最多50页，文件上限100MB。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "PDF文件路径（绝对路径或相对路径）。示例：'D:/work_dir/report.pdf' 或 'data/document.pdf'"
+                        "description": "PDF文件路径，绝对或相对路径"
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["auto", "text", "ocr", "table", "image", "meta"],
-                        "description": "解析模式：auto=自动检测（默认）, text=提取文本, ocr=OCR识别, table=提取表格, image=提取图片, meta=提取元数据",
+                        "description": "解析模式：auto/text/ocr/table/image/meta",
                         "default": "auto"
                     },
                     "pages": {
                         "type": "string",
-                        "description": "页面范围（可选）。格式：'1-5'（范围）或 '3'（单页）。不指定则处理所有页面（最多50页）。"
+                        "description": "页面范围，如'1-5'或'3'；默认最多50页"
                     },
                     "extract_tables": {
                         "type": "boolean",
-                        "description": "是否提取表格（仅text模式有效，默认False）。设置为True时会在提取文本的同时提取表格数据。",
+                        "description": "text模式下是否同时提取表格",
                         "default": False
                     },
                     "extract_images": {
                         "type": "boolean",
-                        "description": "是否提取图片信息（仅text模式有效，默认False）。设置为True时会返回图片的位置和尺寸信息。",
+                        "description": "text模式下是否提取图片位置信息",
                         "default": False
                     },
                     "ocr_engine": {
                         "type": "string",
                         "enum": ["auto", "qwen", "paddleocr", "tesseract"],
-                        "description": "OCR引擎（仅ocr模式有效）：auto=自动选择（默认）, qwen=阿里云Qwen-VL, paddleocr=PaddleOCR, tesseract=Tesseract OCR",
+                        "description": "OCR引擎，仅ocr模式有效",
                         "default": "auto"
                     }
                 },

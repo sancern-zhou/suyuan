@@ -154,6 +154,10 @@ If operation times out: selector is not unique. Use more specific attributes or 
                 "summary": str
             }
         """
+        params = kwargs.pop("params", None)
+        if isinstance(params, dict):
+            kwargs = {**params, **kwargs}
+
         logger.info("[BROWSER_TOOL] execute called", action=action, kwargs=list(kwargs.keys()))
 
         try:
@@ -473,76 +477,12 @@ If operation times out: selector is not unique. Use more specific attributes or 
         """
         return {
             "name": "browser",
-            "description": """Browser automation tool for web-based operations (v3.0)
-
-CRITICAL: Always use snapshot() to get element info before using act()!
-
-Supported actions (22 operations):
-- **Lifecycle**: start, stop, status
-- **Tab Management**: tabs, open, focus, close
-- **Navigation**: navigate (alias for open)
-- **Content**: snapshot (page text + element info), screenshot (image), extract (structured data)
-- **Interaction**: act (10+ operations: click, type, scroll, press, hover, drag, select, fill, scrollIntoView)
-- **JavaScript**: execute_js (JavaScript code execution)
-- **Waiting**: wait (7 condition types: timeMs, text, textGone, selector, url, loadState, fn)
-
-ACT OPERATIONS (v3.0):
-- click: Click element (supports double_click, button="left/right/middle", modifiers)
-- type: Type text into element (ref="e1", text="hello")
-- press: Press keyboard key (press="Enter" or "Tab" or "Escape" or "Backspace" or "ArrowUp" etc.)
-- hover: Hover over element (hover=True)
-- drag: Drag element to another element (ref="e1", drag_to_ref="e2")
-- select: Select dropdown options (ref="e1", select_values=["Option1"])
-- fill: Fill form with multiple fields (fill_fields=[{"ref":"e1","type":"text","value":"..."}])
-- scrollIntoView: Scroll element into view (scroll_into_view=True)
-- scroll: Scroll page (scroll="up/down/top/bottom") - legacy
-
-WAIT CONDITIONS:
-- time_ms: Wait for fixed time (e.g., time_ms=5000)
-- text: Wait for text to appear (e.g., text="Loading complete", timeout=10000)
-- text_gone: Wait for text to disappear (e.g., text_gone="Loading...", timeout=10000)
-- selector: Wait for element visibility (e.g., selector=".result-panel", timeout=5000)
-- url: Wait for URL change (e.g., url="*dashboard*", timeout=10000)
-- load_state: Wait for page load state (e.g., load_state="domcontentloaded")
-- fn: Wait for JavaScript function (e.g., fn="() => document.title.includes('Done')")
-- timeout: Maximum wait time in milliseconds (default: 20000)
-
-SELECTOR STRATEGY (priority order):
-1. Text content: button:has-text("Login") - MOST RELIABLE
-2. Unique attributes: #submit-btn, [name="username"], [placeholder="Password"]
-3. Unique classes: .login-btn (avoid generic .el-button)
-4. Attribute combos: button[class*="login"], [type="password"][placeholder*="密码"]
-5. Tag + attribute: input[type="email"], button[type="submit"]
-
-NEVER use:
-- Generic classes: .el-button, .btn (matches multiple elements!)
-- Tag names alone: button, input (too broad!)
-
-Standard workflow:
-1. browser(action="start")
-2. browser(action="navigate", url="https://example.com")
-3. browser(action="wait", selector=".login-btn", timeout=5000)
-4. browser(action="snapshot", format="ai")
-5. browser(action="act", ref="e1", click=True)
-6. browser(action="wait", text_gone="Logging in...", timeout=10000)
-7. browser(action="stop")
-
-EXECUTE JS (JavaScript execution):
-Use execute_js when:
-- Element is blocked by overlay (timeout/intercepts pointer events)
-- Need to bypass normal click restrictions
-- Direct DOM manipulation required
-
-Examples:
-- Click blocked element: code='document.querySelector("a:has-text(\\"实时预览\\")").click()'
-- Remove blocking dialogs: code='document.querySelectorAll(".el-dialog").forEach(d=>d.remove())'
-- Get page info: code='document.title'
-- Scroll to bottom: code='window.scrollTo(0, document.body.scrollHeight)'
-
-IMPORTANT: If act(action="click") fails with timeout/blocking error, IMMEDIATELY try execute_js instead of retrying with different selectors!
-
-If operation times out: selector is not unique. Use more specific attributes or text content.
-""",
+            "description": (
+                "浏览器自动化工具。简单任务可直接调用；复杂浏览、表单、登录、下载上传、"
+                "多步骤页面操作或任何浏览器调用失败后，先阅读 "
+                "backend/app/tools/browser/browser_skills_guide.md。"
+                "陌生页面先snapshot，再优先用snapshot返回的ref执行act。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -555,176 +495,19 @@ If operation times out: selector is not unique. Use more specific attributes or 
                             "console", "pdf", "download", "upload", "list_files",
                             "trace", "dialog", "wait"
                         ],
-                        "description": "Browser action to perform"
+                        "description": "浏览器动作；复杂参数见browser_skills_guide.md"
                     },
-                    "url": {
-                        "type": "string",
-                        "description": "URL for navigate/open actions"
-                    },
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector for act/extract actions"
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Text to type (for act action)"
-                    },
-                    "click": {
-                        "type": "boolean",
-                        "description": "Click element (for act action)"
-                    },
-                    "scroll": {
-                        "type": "string",
-                        "enum": ["up", "down", "top", "bottom"],
-                        "description": "Scroll direction (for act action)"
-                    },
-                    "press": {
-                        "type": "string",
-                        "description": "Key to press (for act action): Enter, Tab, Escape, Backspace, ArrowUp, ArrowDown, etc."
-                    },
-                    "hover": {
-                        "type": "boolean",
-                        "description": "Hover over element (for act action)"
-                    },
-                    "drag_to_ref": {
-                        "type": "string",
-                        "description": "Target element ref to drag to (for act action)"
-                    },
-                    "select_values": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of values to select in dropdown (for act action)"
-                    },
-                    "fill_fields": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "ref": {"type": "string", "description": "Element reference ID"},
-                                "type": {"type": "string", "description": "Field type: text, checkbox, radio, select"},
-                                "value": {"description": "Field value"}
-                            },
-                            "required": ["ref", "type", "value"]
-                        },
-                        "description": "List of form fields to fill (for act action)"
-                    },
-                    "scroll_into_view": {
-                        "type": "boolean",
-                        "description": "Scroll element into view (for act action)"
-                    },
-                    "double_click": {
-                        "type": "boolean",
-                        "description": "Double click instead of single click (for act action)"
-                    },
-                    "button": {
-                        "type": "string",
-                        "enum": ["left", "right", "middle"],
-                        "description": "Mouse button for click (for act action, default: left)"
-                    },
-                    "modifiers": {
-                        "type": "array",
-                        "items": {"type": "string", "enum": ["Alt", "Control", "Meta", "Shift"]},
-                        "description": "Keyboard modifiers for click (for act action)"
-                    },
-                    "extract_type": {
-                        "type": "string",
-                        "enum": ["table", "list", "form", "links", "images"],
-                        "description": "Data type to extract"
-                    },
-                    "tab_id": {
-                        "type": "string",
-                        "description": "Tab ID for focus/close actions"
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Timeout in milliseconds (default: 30000)"
+                    "params": {
+                        "type": "object",
+                        "description": (
+                            "动作参数对象，如url/ref/text/selector/timeout/code等；"
+                            "复杂任务或出错后先读browser_skills_guide.md"
+                        ),
+                        "additionalProperties": True
                     },
                     "session_id": {
                         "type": "string",
-                        "description": "Session ID for multi-user isolation (optional)"
-                    },
-                    "code": {
-                        "type": "string",
-                        "description": "JavaScript code to execute (for execute_js action)"
-                    },
-                    "full_page": {
-                        "type": "boolean",
-                        "description": "Capture full page screenshot (default: false, only viewport)"
-                    },
-                    "format": {
-                        "type": "string",
-                        "enum": ["ai", "aria"],
-                        "default": "ai",
-                        "description": "Snapshot format (for snapshot action): ai=LLM-optimized with refs (default), aria=ARIA-based. Note: text format removed, use ai instead."
-                    },
-                    "max_refs": {
-                        "type": "integer",
-                        "description": "Maximum number of refs for ai/aria snapshot formats (default: 100)"
-                    },
-                    "interactive_only": {
-                        "type": "boolean",
-                        "description": "Only include interactive elements in snapshot (default: false)"
-                    },
-                    "compact": {
-                        "type": "boolean",
-                        "description": "Remove unnamed structural elements (generic, group, etc.) in ai format (default: true, reduces token usage by 30-50%)"
-                    },
-                    "console_action": {
-                        "type": "string",
-                        "enum": ["get", "enable", "disable", "clear"],
-                        "description": "Console operation (for console action)"
-                    },
-                    "pdf_action": {
-                        "type": "string",
-                        "enum": ["export", "export_element", "list"],
-                        "description": "PDF operation (for pdf action)"
-                    },
-                    "file_path": {
-                        "type": "string",
-                        "description": "File path for upload action"
-                    },
-                    "trace_action": {
-                        "type": "string",
-                        "enum": ["start", "stop", "chunk", "list"],
-                        "description": "Trace operation (for trace action)"
-                    },
-                    "dialog_action": {
-                        "type": "string",
-                        "enum": ["accept", "dismiss"],
-                        "description": "Dialog operation (for dialog action)"
-                    },
-                    "time_ms": {
-                        "type": "integer",
-                        "description": "Wait time in milliseconds (for wait action)"
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Text to wait for appearance (for wait action)"
-                    },
-                    "text_gone": {
-                        "type": "string",
-                        "description": "Text to wait for disappearance (for wait action)"
-                    },
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector to wait for element visibility (for wait action)"
-                    },
-                    "url": {
-                        "type": "string",
-                        "description": "URL pattern to wait for (supports * wildcard, for wait action)"
-                    },
-                    "load_state": {
-                        "type": "string",
-                        "enum": ["load", "domcontentloaded", "networkidle"],
-                        "description": "Page load state to wait for (for wait action)"
-                    },
-                    "fn": {
-                        "type": "string",
-                        "description": "JavaScript function body to wait for (for wait action, requires config.WAIT_FN_ENABLED=True)"
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Maximum wait time in milliseconds for wait conditions (default: 20000, min: 500, max: 120000)"
+                        "description": "会话ID，可选"
                     }
                 },
                 "required": ["action"]

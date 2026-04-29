@@ -24,55 +24,10 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "query_national_province_air_quality",
-            "description": """
-查询全国各省份空气质量统计数据（六参数均值、AQI达标率、综合指数）。
-
-【核心功能】
-- 查询全国31个省份的空气质量统计数据
-- 返回各省份的SO2、NO2、CO、O3_8h、PM10、PM2.5均值
-- 返回综合指数（SumIndex）
-- 返回AQI达标率（AQIStandardRate）
-
-【数据来源】
-- 参考项目：GDQFWS_SYS（广东省环境监测中心预报预警系统）
-- 数据库：SQL Server（10.10.10.135）
-- 数据表：Air_CityAQIHistory_Day_Pub（城市发布日均数据源）
-
-【使用场景】
-- 全国省份空气质量排名
-- 区域空气质量对比分析
-- 省份间六参数浓度比较
-- 省份达标率统计
-- 综合指数趋势分析
-
-【输入参数】
-- start_date: 开始日期，格式 "YYYY-MM-DD"
-- end_date: 结束日期，格式 "YYYY-MM-DD"
-- ns_type: 数据类型（可选），默认"NS"（非实时），可选"NSDay"（非实时日均值）
-
-【返回数据】
-每个省份包含以下字段：
-- AreaCode: 省份代码（如 440000 表示广东省）
-- AreaName: 省份名称（如 "广东省"）
-- SO2: SO2均值(μg/m³)
-- NO2: NO2均值(μg/m³)
-- CO: CO均值(mg/m³)
-- O3_8h: O3_8h均值(μg/m³)
-- PM10: PM10均值(μg/m³)
-- PM2_5: PM2.5均值(μg/m³)
-- SumIndex: 综合指数
-- AQIStandardRate: AQI达标率(%)
-
-【示例】
-start_date="2024-03-01"
-end_date="2024-03-31"
-ns_type="NS"
-
-【数据说明】
-- 共31个省份（不含港澳台）
-- 数据按省份代码排序
-- -99 表示数据缺失
-            """.strip(),
+            "description": (
+                "查询全国省份空气质量统计数据，返回六参数均值、综合指数SumIndex和AQI达标率。"
+                "用于省份排名、区域对比和达标率统计；数据来源为全国发布数据，-99表示缺失。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -86,7 +41,7 @@ ns_type="NS"
                     },
                     "ns_type": {
                         "type": "string",
-                        "description": "数据类型，默认'NS'（非实时），可选'NSDay'（非实时日均值）",
+                        "description": "数据类型，默认NS",
                         "enum": ["NS", "NSDay", "OldNS"],
                         "default": "NS"
                     }
@@ -182,52 +137,10 @@ class QueryNationalCityAirQualityTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "query_national_city_air_quality",
-            "description": """
-查询全国各城市空气质量统计数据（六参数均值、AQI达标率、综合指数）。
-
-【核心功能】
-- 查询全国城市（含地级市）的空气质量统计数据
-- 返回各城市的SO2、NO2、CO、O3_8h、PM10、PM2.5均值
-- 返回综合指数（SumIndex）
-- 返回AQI达标率（AQIStandardRate）
-- 支持按省份筛选
-
-【数据来源】
-- 参考项目：GDQFWS_SYS（广东省环境监测中心预报预警系统）
-- 数据库：SQL Server（10.10.10.135）
-- 数据表：Air_CityAQIHistory_Day_Pub（城市发布日均数据源）
-
-【使用场景】
-- 城市空气质量排名
-- 城市间空气质量对比分析
-- 省内城市对比分析
-- 城市达标率统计
-- 城市综合指数分析
-
-【输入参数】
-- start_date: 开始日期，格式 "YYYY-MM-DD"
-- end_date: 结束日期，格式 "YYYY-MM-DD"
-- province_code: 省份代码（可选），如 "440000" 表示广东省，不填则查询全国所有城市
-- ns_type: 数据类型（可选），默认"NS"（非实时）
-
-【返回数据】
-每个城市包含以下字段：
-- AreaCode: 城市代码（如 440100 表示广州市）
-- AreaName: 城市名称（如 "广州市"）
-- SO2、NO2、CO、O3_8h、PM10、PM2_5均值
-- SumIndex: 综合指数
-- AQIStandardRate: AQI达标率(%)
-
-【示例】
-# 查询全国所有城市
-start_date="2024-03-01"
-end_date="2024-03-31"
-
-# 查询广东省内城市
-start_date="2024-03-01"
-end_date="2024-03-31"
-province_code="440000"
-            """.strip(),
+            "description": (
+                "查询全国城市空气质量统计数据，返回六参数均值、综合指数SumIndex和AQI达标率。"
+                "用于城市排名、城市对比和省内城市统计；可用province_code筛选，数据来源为全国发布数据。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -241,11 +154,11 @@ province_code="440000"
                     },
                     "province_code": {
                         "type": "string",
-                        "description": "省份代码（可选），如 '440000' 表示广东省，不填则查询全国所有城市"
+                        "description": "省份代码；不填查询全国城市"
                     },
                     "ns_type": {
                         "type": "string",
-                        "description": "数据类型，默认'NS'（非实时）",
+                        "description": "数据类型，默认NS",
                         "enum": ["NS", "NSDay", "OldNS"],
                         "default": "NS"
                     }

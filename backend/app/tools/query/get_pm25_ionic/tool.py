@@ -49,17 +49,8 @@ class GetPM25IonicTool(LLMTool):
         function_schema = {
             "name": "get_pm25_ionic",
             "description": (
-                "【结构化查询工具-优先使用】查询PM2.5水溶性离子组分数据，包括：F⁻、Cl⁻、NO₂⁻、NO₃⁻、SO₄²⁻、PO₄³⁻、Li⁺、Na⁺、K⁺、NH₄⁺、Mg²⁺、Ca²⁺、Al³⁺等。"
-                ""
-                "**优势：**"
-                "- 参数精确，支持直接指定站点、时间范围、时间粒度"
-                "- 数据格式标准化，自动保存为particulate_unified格式"
-                "- 适用于PMF源解析和二次气溶胶分析"
-                "- 支持城市名称自动映射到站点编码"
-                ""
-                "**关键词：** 离子组分、水溶性离子、SO4、NO3、NH4、F、Cl、Na、K、Mg、Ca"
-                ""
-                "**何时使用：** 用户需要水溶性离子数据时，优先使用此工具而非自然语言查询工具"
+                "查询PM2.5水溶性离子组分（SO4/NO3/NH4/F/Cl/Na/K/Mg/Ca等），用于PMF和二次气溶胶分析。"
+                "需要离子组分数据时优先使用；locations可自动映射站点。"
             ),
             "parameters": {
                 "type": "object",
@@ -67,33 +58,33 @@ class GetPM25IonicTool(LLMTool):
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Location names (city/station), e.g., ['东莞'], ['广州', '新兴']. Will be auto-mapped to StationCodes."
+                        "description": "城市或站点名称列表，可自动映射站点编码"
                     },
                     "station": {
                         "type": "string",
-                        "description": "Station name in Chinese, e.g., '东莞', '揭阳', '新兴'. Use 'locations' for automatic mapping instead."
+                        "description": "中文站点名；优先用locations"
                     },
                     "code": {
                         "type": "string",
-                        "description": "Station code, e.g., '1037b', '1042b'. Automatically mapped if 'locations' provided."
+                        "description": "站点编码；locations存在时可省略"
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "Start time in format 'YYYY-MM-DD HH:MM:SS'"
+                        "description": "开始时间，格式YYYY-MM-DD HH:MM:SS"
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "End time in format 'YYYY-MM-DD HH:MM:SS'"
+                        "description": "结束时间，格式YYYY-MM-DD HH:MM:SS"
                     },
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1],
-                        "description": "Data quality: 0=original, 1=audited (default: 0). Maps to first dataType parameter."
+                        "description": "数据质量：0原始，1审核，默认0"
                     },
                     "time_type": {
                         "type": "integer",
                         "enum": [1, 2, 3, 5],
-                        "description": "Time granularity (integer only): 1=hour, 2=day, 3=month, 5=year. Must use integer values 1, 2, 3, or 5. Do NOT use strings like 'daily' or 'hourly'.",
+                        "description": "时间粒度必须为整数：1小时，2日，3月，5年",
                         "examples": [2]  # 明确示例使用数字
                     }
                 },

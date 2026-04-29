@@ -548,83 +548,41 @@ class WordEditTool(LLMTool):
         """Get Function Calling Schema."""
         return {
             "name": "word_edit",
-            "description": """编辑 Word 文档（结构化编辑，自动解包/打包）
-
-⭐ 复杂 Word 编辑的首选工具，自动处理解包/编辑/打包流程。
-
-功能：
-- 自动解包 .docx 文件
-- 结构化编辑操作（替换段落、插入内容、删除节点）
-- 保留文档格式和结构
-- 强大的 XML 级别编辑能力
-
-使用场景：
-- ✅ 结构化编辑（插入段落、重新组织内容）
-- ✅ 精确内容替换（带上下文）
-- ✅ 复杂多步骤编辑
-- ✅ 需要 XML 级别控制的操作
-
-简单文本替换？
-→ 使用 find_replace_word 工具（更简单、更快）
-
-操作类型：
-1. replace_text: 替换文本内容
-2. replace_paragraph: 替换整个段落
-3. insert_after: 在指定文本后插入新段落
-4. insert_before: 在指定文本前插入新段落
-5. delete_paragraph: 删除包含指定文本的段落
-
-示例：
-- word_edit(path="report.docx", operation="replace_text", search="旧内容", replace="新内容")
-- word_edit(path="report.docx", operation="insert_after", marker="结论：", content="补充说明")
-- word_edit(path="report.docx", operation="replace_paragraph", contains="错误段落", new_content="正确内容")
-
-参数说明：
-- path: DOCX 文件路径
-- operation: 操作类型（replace_text/replace_paragraph/insert_after/insert_before/delete_paragraph）
-- search: 要查找的文本（replace_text 操作）
-- replace: 替换后的文本（replace_text 操作）
-- contains: 段落包含的文本（replace_paragraph/delete_paragraph 操作）
-- marker: 标记文本（insert_after/insert_before 操作）
-- content: 新内容（insert_after/insert_before/replace_paragraph 操作）
-- output_file: 输出文件路径（可选，默认覆盖原文件）
-- backup: 是否创建备份（默认 True）
-
-决策流程：
-1. 仅需简单文本替换？→ find_replace_word
-2. 需要结构化编辑？→ word_edit（推荐）
-""",
+            "description": (
+                "结构化编辑DOCX，自动解包/打包并尽量保留格式。"
+                "用于替换文本/段落、插入段落、删除段落；简单文本替换优先用find_replace_word。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "DOCX 文件路径。示例：'report.docx' 或 'D:/work/report.docx'"
+                        "description": "DOCX文件路径"
                     },
                     "operation": {
                         "type": "string",
                         "enum": ["replace_text", "replace_paragraph", "insert_after", "insert_before", "delete_paragraph"],
-                        "description": "操作类型。replace_text=替换文本, replace_paragraph=替换段落, insert_after=在标记后插入, insert_before=在标记前插入, delete_paragraph=删除段落"
+                        "description": "操作类型"
                     },
                     "search": {
                         "type": "string",
-                        "description": "要查找的文本（replace_text 操作必填）。示例：'旧术语'"
+                        "description": "replace_text必填：要查找的文本"
                     },
                     "replace": {
                         "type": "string",
-                        "description": "替换后的文本（replace_text 操作必填）。示例：'新术语'"
+                        "description": "replace_text必填：替换文本"
                     },
                     "contains": {
                         "type": "string",
-                        "description": "段落包含的文本（replace_paragraph/delete_paragraph 操作必填）。示例：'错误内容'"
+                        "description": "replace_paragraph/delete_paragraph必填：段落包含文本"
                     },
                     "marker": {
                         "type": "string",
-                        "description": "标记文本（insert_after/insert_before 操作必填）。示例：'结论：'"
+                        "description": "insert_after/insert_before必填：定位标记文本"
                     },
                     "content": {
                         "type": "string",
-                        "description": "新内容（insert_after/insert_before/replace_paragraph 操作必填）。示例：'补充说明内容'"
+                        "description": "插入或替换段落的新内容"
                     },
                     "new_content": {
                         "type": "string",
@@ -632,7 +590,7 @@ class WordEditTool(LLMTool):
                     },
                     "output_file": {
                         "type": "string",
-                        "description": "输出文件路径（可选，默认覆盖原文件）。示例：'report_updated.docx'"
+                        "description": "输出文件路径，可选；默认覆盖原文件"
                     },
                     "backup": {
                         "type": "boolean",

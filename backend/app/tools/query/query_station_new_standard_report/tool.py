@@ -930,58 +930,27 @@ class QueryStationNewStandardReportTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "query_station_new_standard_report",
-            "description": """查询站点级基于 HJ 633-2026 新标准的空气质量统计报表。
-
-【核心功能】
-- 新标准综合指数计算（PM2.5权重3，O3权重2，NO2权重2，其他权重1）
-- 超标天数和达标率统计
-- 六参数统计浓度（SO2_P98, NO2_P98, PM10_P95, PM2_5_P95, CO_P95, O3_8h_P90）
-- 首要污染物分析
-- 支持按站点类型过滤（国控/省控/市控等）
-
-【与城市工具的差异】
-- 不支持扣沙处理（站点级别无扣沙数据）
-- 使用 station_name 字段替代 city_name
-- 支持城市名称自动展开为站点列表
-- 支持多站点汇总统计（aggregate参数）
-
-【返回数据说明】
-- result字段：⭐ 完整的统计结果（包含所有站点的详细统计数据）
-  - 各站点的综合指数、超标天数、达标率、六参数统计等
-  - aggregate=true时，额外包含station_aggregate（多站点汇总）
-  - ⚠️ 重要：result 字段包含完整的统计分析结果，**直接用于报告生成和分析**
-- data_id字段：站点日报工具返回的原始数据存储标识符
-  - 仅用于需要访问原始监测数据或进行聚合分析时使用
-  - ⚠️ 一般情况下不需要使用此字段，result 字段已包含所有统计结果
-
-【输入参数】
-- station_type: 站点类型（可选，默认'国控'）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'
-- cities: 城市名称列表（可选，自动展开为该城市下所有站点），如 ['广州']。如果不提供 station_type，默认查询国控站点
-- stations: 站点名称列表（可选，直接查询指定站点），如 ['广雅中学', '市监测站']。使用此参数时不需要提供 station_type
-- start_date: 开始日期 (YYYY-MM-DD)
-- end_date: 结束日期 (YYYY-MM-DD)
-- aggregate: 是否计算多站点汇总统计（默认false）
-
-【重要】
-- cities 和 stations 至少提供一个（为避免数据量过大，不支持全省查询）
-- station_type 为可选参数，使用 stations 时不需要提供，使用 cities 时默认为'国控'
-            """.strip(),
+            "description": (
+                "【第一优先级】站点级HJ 633-2026新标准统计报表。"
+                "用于站点综合指数、超标天数、达标率、六参数和首要污染物统计；不要手算。"
+                "result可直接用于报告；data_id仅用于明细读取或聚合。cities和stations至少提供一个。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "station_type": {
                         "type": "string",
-                        "description": "站点类型（可选，默认'国控'）。⚠️ 仅在使用 cities 参数时有效，用于过滤该城市下的指定类型站点。如果使用 stations 参数，则不需要此参数（站点名称已确定类型）。有效值：'国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
+                        "description": "站点类型，仅cities时生效，默认国控"
                     },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表（可选，自动展开为该城市下所有站点），如 ['广州']。如果不提供 station_type，默认查询国控站点"
+                        "description": "城市列表，可自动展开站点"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表（可选，直接查询指定站点），如 ['广雅中学', '市监测站']。使用此参数时不需要提供 station_type"
+                        "description": "站点名称列表，使用时不需要station_type"
                     },
                     "start_date": {
                         "type": "string",

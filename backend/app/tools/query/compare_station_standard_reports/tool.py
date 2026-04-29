@@ -76,53 +76,23 @@ class CompareStationStandardReportsTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "compare_station_standard_reports",
-            "description": """对比两个时间段基于 HJ 633-2026 新标准的站点级空气质量统计报表。
-
-【核心功能】
-- 并发查询两个时间段的站点统计数据
-- 自动对比全部统计指标（综合指数、超标天数、六参数等）
-- 返回差值、变化率
-- 支持单站点和多站点对比
-
-【对比指标】
-- 综合指标：composite_index, exceed_days, exceed_rate, compliance_rate, total_days, valid_days
-- 六参数统计：SO2, NO2, PM10, PM2_5, CO, O3_8h 及其百分位数
-- 单项质量指数：single_indexes.*
-- 首要污染物统计：primary_pollutant_days.*, total_primary_days
-- 超标统计：exceed_days_by_pollutant.*
-- 首要污染物超标天：primary_pollutant_exceed_days.*
-
-【返回数据说明】
-- result字段：⭐ 完整的对比结果（包含所有站点的详细对比数据）
-  - query_period: 查询时间段的统计数据
-  - comparison_period: 对比时间段的统计数据
-  - differences: 两个时间段的差值（query_period - comparison_period）
-  - change_rates: 变化率百分比（(query_period - comparison_period) / comparison_period * 100）
-  - ⚠️ 重要：result 字段包含完整的对比分析结果，**直接用于报告生成和分析**
-
-【多站点汇总对比】（多站点查询时）
-- 如果aggregate=true，还包含station_aggregate字段
-- station_aggregate结构与单站点对比相同，但数据为多站点汇总统计
-
-【输入参数】
-- cities: 城市名称列表（可选，自动展开为站点）
-- stations: 站点名称列表（可选，直接查询指定站点）
-- query_period: 查询时间段（当前时期）
-- comparison_period: 对比时间段（基准时期）
-- aggregate: 是否计算多站点汇总对比（默认false）
-            """.strip(),
+            "description": (
+                "【第一优先级】站点级新标准双时段对比工具，基于HJ 633-2026。"
+                "支持城市展开站点或直接指定站点，返回统计指标差值和变化率；不要手算。"
+                "result可直接用于报告；aggregate=true时返回多站点汇总。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表（可选，自动展开为站点），如 ['广州']"
+                        "description": "城市列表，可自动展开站点"
                     },
                     "stations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "站点名称列表（可选，直接查询指定站点），如 ['广雅中学']"
+                        "description": "站点名称列表"
                     },
                     "query_period": {
                         "type": "object",

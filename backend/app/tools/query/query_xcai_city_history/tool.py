@@ -35,43 +35,31 @@ class QueryXcAiCityHistoryTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "query_xcai_city_history",
-            "description": """
-查询全国城市历史空气质量数据（SQL Server XcAiDb数据库）。
-
-**数据表说明**：
-- hour（小时数据）：CityAQIPublishHistory表，时间范围 2017-01-01 至今，字段包括 PM2_5, PM10, O3, NO2, SO2, CO, AQI, PrimaryPollutant, Quality
-- day（日数据）：CityDayAQIPublishHistory表，时间范围 2021-06-25 至今，字段包括 PM2_5_24h, PM10_24h, O3_8h_24h, NO2_24h, SO2_24h, CO_24h, AQI, PrimaryPollutant, Quality
-
-**使用示例**：
-- 查询广州2025年3月的小时数据：data_type="hour", cities=["广州市"], start_time="2025-03-01 00:00:00", end_time="2025-03-31 23:00:00"
-- 查询深圳近7天的日数据：data_type="day", cities=["深圳市"], start_time="2025-03-22 00:00:00", end_time="2025-03-29 00:00:00"
-- 查询北京2024年全年日数据：data_type="day", cities=["北京市"], start_time="2024-01-01 00:00:00", end_time="2024-12-31 00:00:00"
-
-**注意事项**：
-- 时间格式必须严格：小时数据用 "YYYY-MM-DD HH:MM:SS"，日数据用 "YYYY-MM-DD 00:00:00"
-- 城市名称支持中文（如"广州市"、"深圳市"）
-- 返回的data_id可用于下游分析工具获取完整数据
-            """.strip(),
+            "description": (
+                "查询全国城市历史空气质量小时/日数据（XcAiDb SQL Server）。"
+                "hour表自2017-01-01起，day表自2021-06-25起；返回data_id供下游读取。"
+                "城市名用中文全称，时间格式为YYYY-MM-DD HH:MM:SS。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表，如：['广州市', '深圳市', '北京市']"
+                        "description": "城市名称列表，使用中文全称"
                     },
                     "data_type": {
                         "type": "string",
                         "enum": ["hour", "day"],
-                        "description": "数据类型：hour=查询小时数据表（CityAQIPublishHistory），day=查询日数据表（CityDayAQIPublishHistory）"
+                        "description": "数据类型：hour小时，day日"
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "开始时间（必须），格式：YYYY-MM-DD HH:MM:SS（小时数据）或 YYYY-MM-DD 00:00:00（日数据）"
+                        "description": "开始时间，格式YYYY-MM-DD HH:MM:SS"
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "结束时间（必须），格式：YYYY-MM-DD HH:MM:SS（小时数据）或 YYYY-MM-DD 00:00:00（日数据）"
+                        "description": "结束时间，格式YYYY-MM-DD HH:MM:SS"
                     }
                 },
                 "required": ["cities", "data_type", "start_time", "end_time"]

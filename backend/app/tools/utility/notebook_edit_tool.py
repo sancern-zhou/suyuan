@@ -43,45 +43,20 @@ class NotebookEditTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "notebook_edit",
-            "description": """编辑 Jupyter Notebook (.ipynb) 文件的单元格
-
-⭐ 数据分析报告自动化的核心工具
-
-支持操作：
-- replace: 替换单元格内容（默认）
-- insert: 在指定单元格后插入新单元格
-- delete: 删除指定单元格
-
-单元格类型：
-- code: 代码单元格（可执行）
-- markdown: 文档单元格（说明文字）
-
-使用场景：
-- 自动生成分析报告 Notebook
-- 插入数据分析代码和可视化
-- 更新数据源单元格
-- 添加分析结论（markdown）
-
-示例：
-- notebook_edit(notebook_path="analysis.ipynb", cell_id="cell-0", edit_mode="replace", new_source="print('新代码')")
-- notebook_edit(notebook_path="analysis.ipynb", cell_id="cell-2", edit_mode="insert", cell_type="code", new_source="import pandas as pd")
-- notebook_edit(notebook_path="analysis.ipynb", cell_id="cell-5", edit_mode="delete")
-
-重要：
-- 必须先用 read_file 读取 notebook 文件
-- 单元格索引从 0 开始
-- insert 模式必须指定 cell_type
-""",
+            "description": (
+                "编辑Jupyter Notebook单元格。支持replace/insert/delete；"
+                "必须先read_file，单元格索引从0开始，insert需指定cell_type。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "notebook_path": {
                         "type": "string",
-                        "description": "Jupyter Notebook 文件的绝对路径（.ipynb 文件）"
+                        "description": "ipynb文件路径"
                     },
                     "cell_id": {
                         "type": "string",
-                        "description": "目标单元格ID或索引（如 'cell-0'、'cell-1'），insert模式可选（默认在开头插入）"
+                        "description": "目标单元格ID或索引；insert可省略"
                     },
                     "new_source": {
                         "type": "string",
@@ -90,12 +65,12 @@ class NotebookEditTool(LLMTool):
                     "cell_type": {
                         "type": "string",
                         "enum": ["code", "markdown"],
-                        "description": "单元格类型（insert模式必填，replace/delete模式可选）"
+                        "description": "单元格类型；insert必填"
                     },
                     "edit_mode": {
                         "type": "string",
                         "enum": ["replace", "insert", "delete"],
-                        "description": "编辑模式：replace（替换，默认）、insert（插入）、delete（删除）"
+                        "description": "编辑模式：replace/insert/delete"
                     }
                 },
                 "required": ["notebook_path", "new_source"]

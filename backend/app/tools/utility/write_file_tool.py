@@ -541,56 +541,16 @@ class WriteFileTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "write_file",
-            "description": """创建或覆写文件内容（完整对标 Claude Code 官方实现）
-
-⚠️ 重要限制：
-- 如果是已存在的文件，必须先使用 read_file 读取文件内容！
-- 如果要修改文件的部分内容，请使用 edit_file 工具（更高效）
-- 此工具会完全覆写文件内容，谨慎使用！
-
-核心功能：
-1. 强制预读验证：已存在的文件必须先使用 read_file 读取
-2. 文件修改检查：检测文件是否在读取后被修改
-3. 结构化 diff：返回精确的变更信息（update 时）
-4. 原子性检查：防止并发修改导致的数据丢失
-
-使用场景：
-- ✅ 创建新文件（配置文件、代码文件、文档）
-- ✅ 完全覆写已有文件（必须先 read_file）
-- ✅ 导出数据到文本文件
-- ❌ 修改文件的部分内容 → 使用 edit_file 工具
-
-路径说明（重要）：
-- 报告文件：/home/xckj/suyuan/backend_data_registry/report.md
-- 数据文件：/home/xckj/suyuan/backend_data_registry/data.json
-- 相对路径：backend/output.txt（相对于项目根目录）
-
-示例：
-- write_file(path="/home/xckj/suyuan/backend_data_registry/report.md", content="# 报告内容")
-- write_file(path="backend/output.txt", content="output data")
-- write_file(path="config.json", content='{"port": 8000}')
-
-参数说明：
-- path: 文件路径（必填，绝对路径或相对路径）
-- content: 文件内容（必填，完整内容，会覆写已有文件）
-- encoding: 文件编码（默认 utf-8）
-- create_dirs: 是否自动创建父目录（默认 True）
-
-返回信息：
-- type: "create" | "update"（创建 or 更新）
-- filePath: 文件路径
-- content: 写入的内容
-- lines: 行数
-- size: 文件大小（字节）
-- structuredPatch: 结构化 diff（仅 update 时）
-- originalFile: 原始内容（仅 update 时）
-""",
+            "description": (
+                "创建或完整覆写文件。已存在文件必须先read_file；局部修改用edit_file。"
+                "会做修改时间检查并返回diff，避免覆盖并发修改。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "文件路径（绝对路径或相对路径）。示例：'D:/work/config.json' 或 'backend/output.txt'"
+                        "description": "文件路径，绝对或相对路径"
                     },
                     "content": {
                         "type": "string",

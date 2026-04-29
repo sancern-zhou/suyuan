@@ -47,46 +47,46 @@ class CallSubAgentTool(LLMTool):
         # 定义 function_schema（参考Hermes设计：分离goal和context）
         function_schema = {
             "name": "call_sub_agent",
-            "description": "调用另一个Agent模式作为子Agent执行任务（支持session连续对话）。",
+            "description": "调用另一个Agent模式作为子Agent执行任务，支持session连续对话。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "target_mode": {
                         "type": "string",
                         "enum": ["assistant", "code", "query", "report", "social"],
-                        "description": "目标Agent模式（assistant=助手, social=社交, query=问数, report=报告, code=编程）"
+                        "description": "目标Agent模式"
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
                     "goal": {
                         "type": "string",
-                        "description": "⚠️ 任务目标（必须完整保留所有参数）：文件路径、时间范围、sheet索引、城市名称等所有具体参数。禁止摘要化或省略任何细节。\n\n示例：'更新Excel文件 /tmp/会商文件/全国各省份污染物累计平均.xlsx（第五个sheet，时间段：2026年1-3月和2025年1-3月）'"
+                        "description": "任务目标；必须完整保留文件路径、时间范围、sheet索引、城市名等具体参数，禁止摘要化"
                     },
                     # ✅ 新设计：context_str（可选）- 补充上下文
                     "context_str": {
                         "type": "string",
-                        "description": "补充上下文（可选）：技能名称、操作步骤、背景信息等。如：'按照AQI技能文档的步骤执行'或'用户之前查询过NO2数据，现在查询AQI数据'"
+                        "description": "补充上下文，可填技能名称、操作步骤、背景信息等"
                     },
                     # ✅ 新设计：workspace_path（可选）- 工作目录
                     "workspace_path": {
                         "type": "string",
-                        "description": "工作目录路径（可选）：文件所在目录，用于帮助子Agent定位文件。如：'/tmp/会商文件'"
+                        "description": "工作目录路径，可选"
                     },
                     # ⚠️ 向后兼容：保留旧参数名
                     "task_description": {
                         "type": "string",
-                        "description": "⚠️ [向后兼容] 等同于goal参数。新代码请使用goal参数。"
+                        "description": "向后兼容，等同于goal"
                     },
                     "context_supplement": {
                         "type": "string",
-                        "description": "⚠️ [向后兼容] 等同于context_str参数。新代码请使用context_str参数。"
+                        "description": "向后兼容，等同于context_str"
                     },
                     "session_id": {
                         "type": "string",
-                        "description": "子Agent会话ID（可选，一般不需要传递）：系统会自动复用最近的session。只有需要指定特定session时才传递。"
+                        "description": "子Agent会话ID，可选；一般不需要传"
                     },
                     "force_new_session": {
                         "type": "boolean",
-                        "description": "是否强制创建新会话（可选，默认false）：设为true时会创建新的session，而不是复用最近的session。当用户明确开始新话题时使用。"
+                        "description": "是否强制创建新会话，默认false；新话题时使用"
                     }
                 },
                 "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
