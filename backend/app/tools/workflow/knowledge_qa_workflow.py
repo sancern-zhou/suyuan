@@ -9,8 +9,8 @@
 - 避免重复LLM调用，提高效率
 
 流程：
-1. HyDE（Hypothetical Document Embeddings）：生成假设性答案
-2. 检索：基于假设性答案从知识库检索相关文档
+1. 检索：基于原问题或主Agent补充后的关键词从知识库检索相关文档
+2. 可选精排：按 reranker 参数决定是否启用 CrossEncoder
 3. 返回：将检索结果返回给主Agent
 
 适用场景：
@@ -22,6 +22,7 @@
 - query: 用户问题
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
 - top_k: 检索文档数量（默认3）
+- reranker: 精排模式，auto/always/never，默认auto
 
 返回：
 标准UDF v2.0格式，包含：
@@ -104,8 +105,9 @@ class KnowledgeQAWorkflow(WorkflowTool):
 从知识库中检索与用户问题相关的文档片段，为主Agent提供参考资料。
 
 技术特点：
-- HyDE技术：生成假设性答案，提高检索准确性
 - 语义检索：基于向量相似度的智能检索
+- 混合检索：dense+sparse融合，适合标准号和关键词查询
+- 按需精排：auto模式仅在粗召回不够确定时启用Reranker
 - 多源融合：从多个知识库中检索相关文档
 
 知识库内容：
@@ -124,6 +126,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
 - query: 用户问题（自然语言描述）
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
 - top_k: 检索文档数量（默认3，最多10）
+- reranker: 精排模式，auto/always/never，默认auto。标准号、明确查询建议auto或never；法规条款、跨文档对比、低置信召回可用always。
 
 返回：检索到的文档列表（包含文档内容、来源、相关度等信息）
 注意：此工具只负责检索，不生成回答。主Agent应使用检索结果生成最终回答。
@@ -142,7 +145,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
         question: Optional[str] = None,  # 别名，兼容 LLM 调用
         session_id: Optional[str] = None,
         knowledge_base_ids: Optional[List[str]] = None,  # 知识库ID列表
-        top_k: int = 3
+        top_k: int = 3,
+        reranker: str = "auto"
     ) -> Dict[str, Any]:
         """
         执行知识库检索
@@ -153,6 +157,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             session_id: 会话ID（可选，当前未使用）
             knowledge_base_ids: 知识库ID列表（可选）
             top_k: 检索文档数量
+            reranker: 精排模式，auto/always/never
 
         Returns:
             标准UDF v2.0格式，包含检索结果
@@ -178,19 +183,20 @@ class KnowledgeQAWorkflow(WorkflowTool):
             self._record_step("knowledge_retrieval_start", "running", {
                 "query": actual_query[:100] if actual_query else "",
                 "session_id": session_id,
-                "top_k": top_k
+                "top_k": top_k,
+                "reranker": reranker
             })
 
             # 导入检索函数
             from app.routers.knowledge_qa import search_knowledge_bases
 
-            # 1. 检索相关文档（使用HyDE和Reranker提升召回质量）
+            # 1. 检索相关文档。HyDE不再由workflow双路触发；需要扩展词时由主Agent拼入query。
             self._record_step("knowledge_retrieval", "running")
             search_results = await search_knowledge_bases(
                 query=actual_query,
                 knowledge_base_ids=knowledge_base_ids,  # 传递知识库ID列表
-                use_hyde=True,  # 使用HyDE检索，会自动生成假设答案
-                use_reranker=True,
+                use_hyde=False,
+                use_reranker=reranker,
                 top_k=min(top_k, 10)  # 限制最大10篇
             )
 
@@ -341,6 +347,12 @@ class KnowledgeQAWorkflow(WorkflowTool):
                         "default": 3,
                         "minimum": 1,
                         "maximum": 10
+                    },
+                    "reranker": {
+                        "type": "string",
+                        "enum": ["auto", "always", "never"],
+                        "description": "Reranker精排模式。auto默认按粗召回置信度决定；always强制精排；never跳过精排。",
+                        "default": "auto"
                     }
                 },
                 "required": []  # query 和 question 都可选，因为有一个即可

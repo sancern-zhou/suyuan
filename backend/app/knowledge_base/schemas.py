@@ -166,7 +166,8 @@ class SearchRequest(BaseModel):
         le=1.0,
         description="相似度阈值"
     )
-    use_reranker: bool = Field(default=True, description="是否使用Reranker精排")
+    use_reranker: Optional[bool] = Field(default=None, description="兼容旧参数：是否强制使用Reranker精排")
+    rerank_mode: str = Field(default="auto", description="Reranker精排模式：auto/always/never")
     filters: Optional[Dict[str, Any]] = Field(
         default=None,
         description="元数据过滤条件"
