@@ -331,9 +331,9 @@ class ReActAgent:
                     mode=manual_mode
                 )
 
-            # ✅ 设置用户偏好到上下文构建器（仅social模式使用）
+            # ✅ 设置社交上下文到上下文构建器（仅social模式使用）
             # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
-            if manual_mode == "social" and social_user_preferences:
+            if manual_mode == "social":
                 react_loop.context_builder.user_preferences = social_user_preferences
                 react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
                 react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
@@ -346,9 +346,18 @@ class ReActAgent:
                 from app.tools.social.replace_memory.tool import ReplaceMemoryTool
                 from app.tools.social.remove_memory.tool import RemoveMemoryTool
                 social_user_id = user_identifier  # social_user_id 即 user_identifier
-                RememberFactTool.set_memory_context("social", social_user_id)
-                ReplaceMemoryTool.set_memory_context("social", social_user_id)
-                RemoveMemoryTool.set_memory_context("social", social_user_id)
+                if social_user_id:
+                    RememberFactTool.set_memory_context("social", social_user_id)
+                    ReplaceMemoryTool.set_memory_context("social", social_user_id)
+                    RemoveMemoryTool.set_memory_context("social", social_user_id)
+                else:
+                    RememberFactTool.clear_memory_context()
+                    ReplaceMemoryTool.clear_memory_context()
+                    RemoveMemoryTool.clear_memory_context()
+                    logger.warning(
+                        "social_memory_context_missing_user_id",
+                        message="social mode requires user_identifier for isolated memory writes"
+                    )
 
                 logger.debug(
                     "social_memory_context_set",

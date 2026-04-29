@@ -12,7 +12,7 @@ def build_expert_prompt(available_tools: List[str], memory_context: Optional[str
     特点：
     - 专注环境数据分析
     - 采用"源码即文档"策略
-    - 自解释工具直接列出，其他工具查看文档
+    - 工具参数和描述由原生 tool schema 提供
     - 记忆注入（从快照获取，直接注入到系统提示词）
 
     Args:
@@ -129,14 +129,9 @@ def build_expert_prompt(available_tools: List[str], memory_context: Optional[str
         "- PM2.5：年均30μg/m³，日均60μg/m³\n",
         "- PM10：年均60μg/m³，日均120μg/m³\n",
         "\n",
-        "## 可用工具\n",
+        "## 工具参数来源\n",
         "\n",
-        "**自解释工具**（可直接使用）：\n",
-        "- `call_sub_agent(target_mode, task_description)`: 调用助手Agent\n",
-        "- `TodoWrite(items)`: 任务管理（完整替换模式）\n",
-        "  - 参数：items=[{'content':'任务描述','status':'pending'},...]\n",
-        "  - status: pending/in_progress/completed\n",
-        "  - 约束：最多20个任务、同时只能1个in_progress\n",
+        "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词只保留业务策略，不重复注入工具目录。\n",
         "\n",
         "### 工具调用出错时\n",
         "如果工具返回参数错误，请查看完整工具文档：\n",

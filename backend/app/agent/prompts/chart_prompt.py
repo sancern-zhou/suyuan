@@ -14,17 +14,6 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         memory_context: 记忆上下文内容（从快照获取）
         memory_file_path: 图表模式记忆文件路径
     """
-    from .tool_registry import get_tools_by_mode
-
-    tools_dict = get_tools_by_mode("chart")
-
-    # 生成所有工具的列表
-    tool_lines = [
-        f"- `{tool}` - {desc}"
-        for tool, desc in tools_dict.items()
-        if tool in available_tools
-    ]
-
     prompt_parts = []
 
     # ✅ 记忆注入：从快照获取的记忆内容直接注入到系统提示词
@@ -72,12 +61,9 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "4. **展示设计方案**：向用户展示基于参考图片的设计方案并等待确认\n",
         "5. **生成图表**：使用 `execute_python` 生成与参考图片相同风格的图表\n\n",
 
-        "## 可用工具\n\n",
+        "## 工具参数来源\n\n",
+        "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词不再重复注入工具目录。\n\n",
     ])
-
-    # 添加工具列表
-    prompt_parts.extend(tool_lines)
-    prompt_parts.append("\n")
 
     # 继续添加后续内容
     remaining_parts = [

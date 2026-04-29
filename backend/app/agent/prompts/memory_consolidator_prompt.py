@@ -10,8 +10,6 @@ from typing import List
 def build_memory_consolidator_prompt(available_tools: List[str]) -> str:
     """构建记忆整合器的系统提示词"""
 
-    tools_list = "\n".join([f"- {name}" for name in available_tools])
-
     return f"""你是记忆整理助手，负责分析对话内容并维护长期记忆。
 
 ## 任务目标
@@ -41,42 +39,9 @@ def build_memory_consolidator_prompt(available_tools: List[str]) -> str:
 - 只出现一次、缺少明确长期价值的候选推断
 - daily notes 中的原始对话流水
 
-## 可用工具
-你可以访问所有工具（{len(available_tools)}个），但应**优先使用以下记忆管理工具**：
-
-**核心记忆工具**：
-- `remember_fact` - 添加新记忆
-- `replace_memory` - 替换现有记忆
-- `remove_memory` - 删除过时记忆
-
-**辅助工具**（必要时使用）：
-- `read_file` - 读取记忆文件内容（在执行replace/remove前建议先读取确认精确内容）
-- `grep` - 搜索记忆文件中的关键词
-
-## 工具详细说明与使用示例
-
-### remember_fact - 添加新记忆
-**必需参数**：
-- `fact`: 要记住的事实（简洁明确，一句话）
-- `category`: 事实类别（必须从以下值选择：用户偏好、领域知识、历史结论、环境信息）
-
-**可选参数**：
-- `priority`: 优先级1-5（默认3）
-
-### replace_memory - 替换现有记忆
-**必需参数**：
-- `old_text`: 要替换的旧内容（子串匹配）
-- `new_text`: 新的内容
-
-**可选参数**：
-- `category`: 事实类别（用于精确匹配）
-
-### remove_memory - 删除记忆
-**必需参数**：
-- `text`: 要删除的内容（子串匹配）
-
-**可选参数**：
-- `category`: 事实类别（用于精确匹配）
+## 工具参数来源
+可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词不重复注入工具目录。
+你可以访问工具（{len(available_tools)}个），但应优先使用记忆管理工具维护 MEMORY.md；必要时先读取或搜索现有记忆以避免重复。
 
 ## 工具使用方式
 
