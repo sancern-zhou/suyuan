@@ -1588,17 +1588,71 @@ class LLMService:
                 "the provider is in anthropic_compatible_endpoints."
             )
 
-        # 调试日志
+        # 调试日志 - 完整上下文
         logger.info(
-            "llm_anthropic_chat_request",
+            "========== LLM调用开始 ==========",
             provider=self.provider,
             model=self.model,
-            messages_count=len(messages),
-            has_tools=tools is not None,
-            has_system=system is not None,
-            max_tokens=max_tokens,
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens
         )
+
+        # 打印系统提示词（如果存在）
+        if system:
+            system_preview = system[:500] + "..." if len(system) > 500 else system
+            logger.info(
+                "【系统提示词】",
+                length=len(system),
+                preview=system_preview
+            )
+        else:
+            logger.info("【系统提示词】无")
+
+        # 打印消息列表
+        logger.info(f"【消息列表】共 {len(messages)} 条")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+
+            # 处理不同类型的内容
+            if isinstance(content, list):
+                # 统计content blocks类型
+                block_types = []
+                text_preview = ""
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get("type", "unknown")
+                        block_types.append(block_type)
+
+                        # 提取文本预览
+                        if block_type == "text" and "text" in block:
+                            text_preview = block["text"][:200] + "..." if len(block["text"]) > 200 else block["text"]
+                        elif block_type == "tool_use":
+                            text_preview = f"[工具调用: {block.get('name', 'unknown')}]"
+
+                logger.info(
+                    f"  消息 {i+1}: role={role}, blocks={block_types}",
+                    preview=text_preview if text_preview else "[无文本内容]"
+                )
+            else:
+                # 字符串内容
+                content_preview = content[:200] + "..." if len(str(content)) > 200 else str(content)
+                logger.info(
+                    f"  消息 {i+1}: role={role}",
+                    preview=content_preview
+                )
+
+        # 打印工具列表
+        if tools:
+            tool_names = [tool.get("name", "unknown") for tool in tools]
+            logger.info(
+                f"【工具列表】共 {len(tools)} 个",
+                tools=tool_names
+            )
+        else:
+            logger.info("【工具列表】无")
+
+        logger.info("========== LLM调用上下文结束 ==========")
 
         try:
             is_real_anthropic = (
@@ -1751,6 +1805,39 @@ class LLMService:
                 "stop_reason": response.stop_reason
             }
 
+            # 打印响应内容
+            logger.info("========== LLM响应开始 ==========")
+            logger.info(
+                "【响应元数据】",
+                model=result["model"],
+                input_tokens=result["usage"]["input_tokens"],
+                output_tokens=result["usage"]["output_tokens"],
+                stop_reason=result["stop_reason"]
+            )
+
+            # 打印content blocks
+            logger.info(f"【响应内容】共 {len(result['content'])} 个blocks")
+            for i, block in enumerate(result["content"]):
+                if hasattr(block, 'type'):
+                    block_type = block.type
+
+                    if block_type == "text":
+                        text_preview = block.text[:500] + "..." if len(block.text) > 500 else block.text
+                        logger.info(f"  Block {i+1}: type=text", preview=text_preview)
+                    elif block_type == "tool_use":
+                        logger.info(
+                            f"  Block {i+1}: type=tool_use",
+                            name=block.name,
+                            input=str(block.input)[:300] + "..." if len(str(block.input)) > 300 else str(block.input)
+                        )
+                    elif block_type == "thinking":
+                        thinking_preview = block.thinking[:500] + "..." if len(block.thinking) > 500 else block.thinking
+                        logger.info(f"  Block {i+1}: type=thinking", preview=thinking_preview)
+                    else:
+                        logger.info(f"  Block {i+1}: type={block_type}")
+
+            logger.info("========== LLM响应结束 ==========")
+
             logger.info(
                 "llm_anthropic_chat_success",
                 model=result["model"],
@@ -1800,6 +1887,72 @@ class LLMService:
                 "Anthropic client not initialized. "
                 "Ensure the provider is in anthropic_compatible_endpoints."
             )
+
+        # 调试日志 - 完整上下文（流式）
+        logger.info(
+            "========== LLM流式调用开始 ==========",
+            provider=self.provider,
+            model=self.model,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        # 打印系统提示词（如果存在）
+        if system:
+            system_preview = system[:500] + "..." if len(system) > 500 else system
+            logger.info(
+                "【系统提示词】",
+                length=len(system),
+                preview=system_preview
+            )
+        else:
+            logger.info("【系统提示词】无")
+
+        # 打印消息列表
+        logger.info(f"【消息列表】共 {len(messages)} 条")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+
+            # 处理不同类型的内容
+            if isinstance(content, list):
+                # 统计content blocks类型
+                block_types = []
+                text_preview = ""
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get("type", "unknown")
+                        block_types.append(block_type)
+
+                        # 提取文本预览
+                        if block_type == "text" and "text" in block:
+                            text_preview = block["text"][:200] + "..." if len(block["text"]) > 200 else block["text"]
+                        elif block_type == "tool_use":
+                            text_preview = f"[工具调用: {block.get('name', 'unknown')}]"
+
+                logger.info(
+                    f"  消息 {i+1}: role={role}, blocks={block_types}",
+                    preview=text_preview if text_preview else "[无文本内容]"
+                )
+            else:
+                # 字符串内容
+                content_preview = content[:200] + "..." if len(str(content)) > 200 else str(content)
+                logger.info(
+                    f"  消息 {i+1}: role={role}",
+                    preview=content_preview
+                )
+
+        # 打印工具列表
+        if tools:
+            tool_names = [tool.get("name", "unknown") for tool in tools]
+            logger.info(
+                f"【工具列表】共 {len(tools)} 个",
+                tools=tool_names
+            )
+        else:
+            logger.info("【工具列表】无")
+
+        logger.info("========== LLM流式调用上下文结束 ==========")
 
         is_real_anthropic = (
             self.provider in ["anthropic", "claude"] or
@@ -2012,6 +2165,19 @@ class LLMService:
                     elif event_type == "message_stop":
                         # 记录总时间
                         total_time = time.time() - start_time
+
+                        # 打印流式响应总结
+                        logger.info("========== LLM流式响应完成 ==========")
+                        logger.info(
+                            "【流式响应总结】",
+                            provider=self.provider,
+                            model=self.model,
+                            total_seconds=round(total_time, 3),
+                            first_token_received=first_token_received,
+                            blocks_yielded=blocks_yielded if 'blocks_yielded' in locals() else 'N/A'
+                        )
+                        logger.info("========== LLM流式响应结束 ==========")
+
                         logger.info(
                             "llm_streaming_completed",
                             provider=self.provider,

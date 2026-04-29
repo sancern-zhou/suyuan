@@ -20,17 +20,6 @@ def build_expert_prompt(available_tools: List[str], memory_context: Optional[str
         memory_context: 记忆上下文内容（从快照获取）
         memory_file_path: 专家模式记忆文件路径
     """
-    from .tool_registry import get_tools_by_mode
-
-    tools_dict = get_tools_by_mode("expert")
-
-    # 生成所有工具的列表（不过滤）
-    tool_lines = [
-        f"- {tool}: {desc}"
-        for tool, desc in tools_dict.items()
-        if tool in available_tools
-    ]
-
     # 使用字符串拼接避免 f-string 中的大括号转义问题
     prompt_parts = []
 
@@ -148,12 +137,6 @@ def build_expert_prompt(available_tools: List[str], memory_context: Optional[str
         "  - 参数：items=[{'content':'任务描述','status':'pending'},...]\n",
         "  - status: pending/in_progress/completed\n",
         "  - 约束：最多20个任务、同时只能1个in_progress\n",
-        "\n",
-        "**完整工具列表**：\n",
-        "\n",
-        chr(10).join(tool_lines),
-        "\n",
-        "**注意**：工具列表中已包含简洁的参数说明。如果调用出错，请查看完整工具文档。\n",
         "\n",
         "### 工具调用出错时\n",
         "如果工具返回参数错误，请查看完整工具文档：\n",
