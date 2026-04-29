@@ -10,12 +10,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
 
-from ..context.simplified_context_builder import SimplifiedContextBuilder
+from ..context.context_builder import SimplifiedContextBuilder
 from ..memory.hybrid_manager import HybridMemoryManager
 from ..runtime import AgentRuntime, AgentRuntimeConfig
 from ...utils.agent_logger import AgentLogger
 from .guards import TaskCompletionGuard
-from .memory_tools_handler import MemoryToolsHandler
 from .schema_injection import SchemaInjector
 
 logger = structlog.get_logger()
@@ -50,9 +49,6 @@ class ReActLoop:
         self.stream_enabled = stream_enabled
         self.is_interruption = is_interruption
         self.knowledge_base_ids = knowledge_base_ids
-
-        self.memory_tools_handler = MemoryToolsHandler(memory_manager, tool_executor)
-        self.memory_tools_handler.register_memory_tools()
 
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = (

@@ -12,8 +12,7 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
 
     特点：
     - 专注办公任务
-    - 动态生成完整工具列表
-    - 自解释工具单独列出作为快速参考
+    - 工具参数和描述由原生 tool schema 提供
     - 支持任务清单管理（复杂任务拆解）
     - 记忆注入（从快照获取，直接注入到系统提示词）
 
@@ -22,8 +21,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         memory_context: 记忆上下文内容（从快照获取）
         memory_file_path: 助手模式记忆文件路径
     """
-    from .tool_registry import get_tools_by_mode
-
     # 动态生成绝对路径（LLM需要完整路径才能正确调用read_file）
     current_dir = Path(__file__).parent
     office_guide_path = (current_dir.parent.parent / "tools" / "office" / "office_skills_guide.md").resolve()
@@ -40,15 +37,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     # 专家模式Agent调用指南路径
     expert_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "expert_agent_guide.md").resolve()
     expert_agent_guide_path_str = str(expert_agent_guide_path).replace("\\", "/")
-
-    tools_dict = get_tools_by_mode("assistant")
-
-    # 生成所有工具的列表（不过滤）
-    tool_lines = [
-        f"- {tool}: {desc}"
-        for tool, desc in tools_dict.items()
-        if tool in available_tools
-    ]
 
     # 使用字符串拼接避免 f-string 中的大括号转义问题
     prompt_parts = []
@@ -150,23 +138,9 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- 数据可视化：统计图表、地图可视化\n",
         "- 文档处理：Word编辑、PPT制作\n",
         "\n",
-        "## 可用工具\n",
+        "## 工具参数来源\n",
         "\n",
-        "**自解释工具**（参数名称即含义，可直接使用）：\n",
-        "- `bash(command)`: 执行Shell命令\n",
-        "- `read_file(path)`: 读取文件\n",
-        "- `edit_file(path, old_string, new_string)`: 精确编辑文件（不适用于Word文档）\n",
-        "- `grep(pattern, path)`: 搜索文件内容\n",
-        "- `write_file(path, content)`: 写入文件\n",
-        "- `list_directory(path)`: 列出目录\n",
-        "- `search_files(pattern)`: 搜索文件（glob模式）\n",
-        "- `call_sub_agent(target_mode, goal, context_str)`: 调用子Agent（assistant=助手, query=问数, code=编程）\n",
-        "\n",
-        "**完整工具列表**：\n",
-        "\n",
-        chr(10).join(tool_lines),
-        "\n",
-        "**注意**：工具列表中已包含简洁的参数说明。如果调用出错，请查看完整工具文档。\n",
+        "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；不要依赖系统提示词中的工具目录，也不要在文本中伪造工具调用。\n",
         "\n",
         "### 委托子Agent（MANDATORY）\n",
         "\n",

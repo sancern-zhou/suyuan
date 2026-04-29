@@ -47,7 +47,6 @@ def build_social_prompt(
     Returns:
         系统提示词字符串
     """
-    from .tool_registry import get_tools_by_mode
     from pathlib import Path
 
     # 问数模式Agent调用指南路径
@@ -58,15 +57,6 @@ def build_social_prompt(
     # 专家模式Agent调用指南路径
     expert_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "expert_agent_guide.md").resolve()
     expert_agent_guide_path_str = str(expert_agent_guide_path).replace("\\", "/")
-
-    tools_dict = get_tools_by_mode("social")
-
-    # 生成所有工具的列表
-    tool_lines = [
-        f"- {tool}: {desc}"
-        for tool, desc in tools_dict.items()
-        if tool in available_tools
-    ]
 
     # 解析用户偏好（助理定义模式）
     assistant_name = "智能助手"
@@ -209,7 +199,9 @@ def build_social_prompt(
         "- 复杂问题提供完整分析\n",
         "- 移动端优先简洁；用户需要明细或工具返回结构化数据时，用 markdown 表格展示关键字段\n",
         "\n",
-        "## 可用工具\n",
+        "## 工具参数来源\n",
+        "\n",
+        "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；不要在文本中输出伪工具调用格式。\n",
         "\n",
     ])
 
@@ -235,9 +227,6 @@ def build_social_prompt(
     except Exception:
         # 如果获取失败，忽略此部分（非 social 模式或测试环境）
         pass
-
-    prompt_parts.extend(tool_lines)
-    prompt_parts.append("\n")
 
     prompt_parts.extend([
         "## 工具使用方式\n",

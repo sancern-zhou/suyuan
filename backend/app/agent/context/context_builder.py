@@ -2,8 +2,10 @@
 简化的上下文构建器
 
 按照提示词结构分为两部分：
-1. 系统提示词：REACT_SYSTEM_PROMPT + 工具摘要
-2. 用户对话内容：Conversation History + Current Query + Latest Observation
+1. 系统提示词：模式提示词 + 记忆/社交档案
+2. 用户对话内容：仅当前轮状态提示和当前查询
+
+对话历史由 Anthropic 原生 messages 单独传递，不能再格式化成文本重复注入。
 """
 
 from typing import Dict, Any, List, Optional
@@ -23,8 +25,13 @@ class SimplifiedContextBuilder:
 
     核心职责：
     1. 构建系统提示词（固定部分）
-    2. 构建用户对话内容（动态部分）
+    2. 构建当前轮用户消息（动态部分）
     3. 超过80%阈值时触发LLM压缩
+
+    注意：
+    - conversation_history 会以结构化 messages 传给 LLM。
+    - 不要把 conversation_history 转成 "## 对话历史" 文本塞进 user message，
+      否则 tool_use/tool_result 会重复进入上下文。
     """
 
     def __init__(self, llm_client, memory_manager, tool_registry=None):
@@ -74,7 +81,7 @@ class SimplifiedContextBuilder:
         self.heartbeat_file_path = None
 
         logger.info(
-            "simplified_context_builder_initialized",
+            "context_builder_initialized",
             max_context=self.max_context_tokens,
             safety_buffer=self.safety_buffer,
             compression_threshold=f"{self.compression_threshold*100}%"
@@ -113,6 +120,7 @@ class SimplifiedContextBuilder:
         """
         # 设置当前模式
         self.current_mode = mode
+        self._apply_mode_context_policy(mode)
 
         # ✅ 调试日志：检查查询是否包含记忆
         has_memory_in_query = "长期记忆" in query and "记忆文件路径" in query
@@ -138,9 +146,10 @@ class SimplifiedContextBuilder:
             is_interruption=is_interruption  # ✅ 传递中断标志
         )
         user_tokens = token_budget_manager.count_tokens(user_conversation)
+        history_tokens = self._estimate_messages_tokens(conversation_history)
 
-        # 3. 计算总token
-        total_tokens = system_tokens + user_tokens
+        # 3. 计算总token（包含结构化历史的估算）
+        total_tokens = system_tokens + user_tokens + history_tokens
         max_allowed = int(self.max_context_tokens * self.compression_threshold)
 
         logger.info(
@@ -148,6 +157,7 @@ class SimplifiedContextBuilder:
             mode=mode,  # ✅ 记录模式
             system_tokens=system_tokens,
             user_tokens=user_tokens,
+            history_tokens=history_tokens,
             total_tokens=total_tokens,
             max_allowed=max_allowed,
             usage_ratio=f"{total_tokens/self.max_context_tokens*100:.1f}%"
@@ -172,14 +182,18 @@ class SimplifiedContextBuilder:
                 query=query,
                 iteration=iteration,
                 latest_observation=latest_observation,
-                conversation_history=compressed_history
+                conversation_history=compressed_history,
+                is_interruption=is_interruption
             )
             user_tokens_after = token_budget_manager.count_tokens(user_conversation)
+            history_tokens_after = self._estimate_messages_tokens(compressed_history)
 
             logger.info(
                 "user_conversation_compressed",
                 before_tokens=user_tokens,
                 after_tokens=user_tokens_after,
+                history_tokens_before=history_tokens,
+                history_tokens_after=history_tokens_after,
                 compression_ratio=f"{(1 - user_tokens_after/user_tokens)*100:.1f}%",
                 history_length_before=len(conversation_history) if conversation_history else 0,
                 history_length_after=len(compressed_history) if compressed_history else 0
@@ -187,6 +201,7 @@ class SimplifiedContextBuilder:
 
             compressed = True
             user_tokens = user_tokens_after
+            history_tokens = history_tokens_after
 
         return {
             "system_prompt": system_prompt,
@@ -194,7 +209,8 @@ class SimplifiedContextBuilder:
             "tokens": {
                 "system": system_tokens,
                 "user": user_tokens,
-                "total": system_tokens + user_tokens,
+                "history": history_tokens,
+                "total": system_tokens + user_tokens + history_tokens,
                 "compressed": compressed
             }
         }
@@ -223,6 +239,55 @@ class SimplifiedContextBuilder:
             user_context=self.user_context  # ✅ 传递用户上下文内容（USER.md）
         )
 
+    def _apply_mode_context_policy(self, mode: str) -> None:
+        """Enforce mode-specific context boundaries.
+
+        social:
+            May inject MEMORY.md, SOUL.md, USER.md and HEARTBEAT.md metadata/content.
+        all other modes:
+            May inject only the mode memory document. Social profile files are
+            explicitly cleared even if an upstream caller accidentally sets them.
+        """
+        if mode == "social":
+            return
+
+        if any([
+            self.user_preferences,
+            self.user_context,
+            self.soul_context,
+            self.soul_file_path,
+            self.user_file_path,
+            self.heartbeat_file_path,
+        ]):
+            logger.warning(
+                "non_social_context_stripped",
+                mode=mode,
+                had_user_preferences=self.user_preferences is not None,
+                had_user_context=self.user_context is not None,
+                had_soul_context=self.soul_context is not None,
+                had_soul_file_path=self.soul_file_path is not None,
+                had_user_file_path=self.user_file_path is not None,
+                had_heartbeat_file_path=self.heartbeat_file_path is not None,
+            )
+
+        self.user_preferences = None
+        self.user_context = None
+        self.soul_context = None
+        self.soul_file_path = None
+        self.user_file_path = None
+        self.heartbeat_file_path = None
+
+    def _estimate_messages_tokens(self, conversation_history: Optional[List[Dict[str, Any]]]) -> int:
+        """Best-effort token estimate for structured message history."""
+        if not conversation_history:
+            return 0
+        try:
+            return token_budget_manager.count_tokens(
+                json.dumps(conversation_history, ensure_ascii=False, default=str)
+            )
+        except Exception:
+            return 0
+
     def _get_simple_tool_list(self) -> str:
         """获取简单工具列表（回退方案）"""
         if not self.tool_registry:
@@ -240,18 +305,18 @@ class SimplifiedContextBuilder:
         is_interruption: bool = False  # ✅ 新增：中断标志
     ) -> str:
         """
-        构建用户对话内容（动态部分）
+        构建当前轮用户消息（动态部分）
 
         包括：
-        1. 对话历史（从WorkingMemory获取）
-        2. 当前查询
-        3. 最新观察结果
+        1. 当前查询
+        2. 当前运行状态
+        3. 必要的中断提示/附件提示
 
         Args:
             query: 用户查询
             iteration: 当前迭代次数
             latest_observation: 最新观察结果
-            conversation_history: 对话历史（LLM格式，优先使用）
+            conversation_history: 结构化对话历史（仅用于判断是否为后续迭代，不在此处展开）
             is_interruption: 是否为用户中断后的对话
 
         Returns:
@@ -288,11 +353,7 @@ class SimplifiedContextBuilder:
 
 ---""")
 
-        # 1. 对话历史（优先使用LLM格式）
-        if conversation_history:
-            # 使用LLM消息格式的历史
-            sections.append(self._format_llm_conversation_history(conversation_history))
-        else:
+        if not conversation_history:
             logger.warning("context_builder_no_conversation_history", iteration=iteration)
 
         # 2. 当前进行的任务
@@ -343,15 +404,15 @@ class SimplifiedContextBuilder:
                 )
 
         if conversation_history:
-            # 已有对话历史：不要重复完整查询，避免LLM重复执行工具
-            # 对话历史中已包含工具结果，只需提醒LLM检查是否完成
+            # 已有对话历史：结构化 history 已通过 messages 单独传递。
+            # 此处只放当前轮状态，不重复展开工具调用和工具结果。
             status_section = (
                 f"## 当前状态\n"
                 f"**迭代次数**: {iteration} | **当前时间**: {current_time}\n\n"
                 f"{memory_section}"  # ✅ 添加记忆增强内容
                 f"{user_question_section}"  # ✅ 添加用户问题
                 f"{attachment_section}"  # ✅ 添加附件信息（关键修复）
-                f"请根据上方对话历史中的工具执行结果，判断用户任务是否已完成。\n"
+                f"请根据已传入的结构化对话历史和工具执行结果，判断用户任务是否已完成。\n"
                 f"- 如果已完成：直接给出最终答案回复用户\n"
                 f"- 如果未完成：继续调用必要的工具，但**不要重复执行已经成功过的工具调用**"
             )
@@ -379,61 +440,6 @@ class SimplifiedContextBuilder:
             sections.append(f"## 最新观察结果\n{latest_observation}")
 
         return "\n\n".join(sections)
-
-    def _format_llm_conversation_history(self, history: List[Dict[str, Any]]) -> str:
-        """
-        格式化LLM对话历史为文本
-
-        Args:
-            history: LLM消息格式的历史 [{"role": "user", "content": "..."}, ...]
-                     content 可能是字符串，也可能是 Anthropic content blocks 列表
-
-        Returns:
-            格式化的文本
-        """
-        lines = ["## 对话历史"]
-
-        for i, msg in enumerate(history, 1):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-
-            # 转换角色名称
-            role_name = {
-                "user": "用户",
-                "assistant": "助手",
-                "system": "系统"
-            }.get(role, role)
-
-            lines.append(f"\n### {role_name} {i}")
-
-            # 处理 Anthropic content blocks 格式
-            # content 可能是 str 或 List[Dict]（Anthropic content blocks）
-            if isinstance(content, list):
-                formatted_parts = []
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "")
-                        if block_type == "tool_use":
-                            tool_name = block.get("name", "unknown")
-                            tool_input = block.get("input", {})
-                            tool_input_str = json.dumps(tool_input, ensure_ascii=False, indent=2, default=str)
-                            formatted_parts.append(f"[调用工具: {tool_name}]\n{tool_input_str}")
-                        elif block_type == "tool_result":
-                            tool_result_content = block.get("content", "")
-                            is_error = block.get("is_error", False)
-                            prefix = "[工具结果(错误)]" if is_error else "[工具结果]"
-                            formatted_parts.append(f"{prefix}\n{tool_result_content}")
-                        elif block_type == "text":
-                            formatted_parts.append(block.get("text", ""))
-                        else:
-                            formatted_parts.append(json.dumps(block, ensure_ascii=False, default=str))
-                    else:
-                        formatted_parts.append(str(block))
-                lines.append("\n".join(formatted_parts))
-            else:
-                lines.append(str(content))
-
-        return "\n".join(lines)
 
     async def _compress_and_persist_history(self, conversation_history: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
         """

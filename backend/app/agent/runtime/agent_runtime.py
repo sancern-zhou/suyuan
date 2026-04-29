@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -205,6 +206,22 @@ class AgentRuntime:
 
         # 按模式过滤工具 schema（节省 token）
         tool_schemas = get_tool_schemas(mode=state.mode)
+        tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
+        tool_schema_tokens_est = int(tool_schema_chars / 1.5)
+        context_tokens = context_result.get("tokens", {})
+        logger.info(
+            "planner_context_with_tools",
+            mode=state.mode,
+            iteration=state.iteration,
+            tool_count=len(tool_schemas),
+            tool_schema_chars=tool_schema_chars,
+            tool_schema_tokens_est=tool_schema_tokens_est,
+            system_tokens=context_tokens.get("system"),
+            user_tokens=context_tokens.get("user"),
+            history_tokens=context_tokens.get("history"),
+            total_without_tools=context_tokens.get("total"),
+            total_with_tools_est=(context_tokens.get("total") or 0) + tool_schema_tokens_est,
+        )
         streaming_tool_executor = StreamingToolExecutor(
             tool_executor=self.executor,
             tool_registry=self.executor.tool_registry if hasattr(self.executor, "tool_registry") else {},

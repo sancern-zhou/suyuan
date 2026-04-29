@@ -5,7 +5,7 @@
 第一层：角色定位（WHAT & WHO）- 是谁、能做什么
 第二层：决策框架（WHEN & WHICH）- 何时用什么、如何判断
 第三层：执行规范（HOW）- 具体怎么做、业务特定规则
-第四层：工具清单（TOOLS）- 用什么工具
+第四层：工具调用规则（TOOLS）- 如何使用原生工具
 
 精简原则：
 - 删除大模型已知的基础知识（JSON格式、SQL概念、数据结构）
@@ -33,17 +33,6 @@ def build_query_prompt(available_tools: List[str], memory_context: Optional[str]
         memory_context: 记忆上下文内容（从快照获取）
         memory_file_path: 问数模式记忆文件路径
     """
-    from .tool_registry import get_tools_by_mode
-
-    tools_dict = get_tools_by_mode("query")
-
-    # 生成所有工具的列表
-    tool_lines = [
-        f"- {tool}: {desc}"
-        for tool, desc in tools_dict.items()
-        if tool in available_tools
-    ]
-
     # ========================================
     # 第一层：角色定位（精简）
     # ========================================
@@ -224,21 +213,15 @@ def build_query_prompt(available_tools: List[str], memory_context: Optional[str]
     ]
 
     # ========================================
-    # 第四层：工具清单（TOOLS）
+    # 第四层：工具调用规则（TOOLS）
     # ========================================
     layer_4 = [
         "=" * 80,
-        "第四层：工具清单（TOOLS）",
+        "第四层：工具调用规则（TOOLS）",
         "=" * 80,
         "",
-
-        "## 自解释工具",
-        "- `call_sub_agent(target_mode, task_description)`: 调用专家Agent或助手Agent",
-        "- `TodoWrite(items)`: 任务管理（完整替换模式，最多20个任务、同时只能1个in_progress）",
-        "",
-        "## 完整工具列表",
-        "",
-        chr(10).join(tool_lines),
+        "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词不再重复注入工具目录。",
+        "需要调用工具时，直接使用原生 tool_use；不要在文本中输出伪工具调用格式。",
         "",
     ]
 
