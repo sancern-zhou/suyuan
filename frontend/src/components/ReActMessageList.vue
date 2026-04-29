@@ -24,8 +24,8 @@
       </div>
     </div>
 
-    <!-- 已完成的消息 -->
-    <div v-for="(message, index) in completedMessages" :key="message.id" class="message-wrapper"
+    <!-- 对话消息：过程消息由实时过程区和final内折叠区统一渲染 -->
+    <div v-for="(message, index) in displayedMessages" :key="message.id" class="message-wrapper"
       :class="{
         'has-sources': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
         'clickable': getMessageType(message) === 'final' && (message.data?.sources?.length > 0 || message.sources?.length > 0),
@@ -80,35 +80,41 @@
       <div v-else-if="getMessageType(message) === 'final'" class="message agent-message final">
         <!-- 统一折叠区域：显示该final之前的所有过程消息 -->
         <details
-          v-if="getUnifiedProcessMessages(message, messages).length > 0"
+          v-if="getProcessItemsForFinal(message, messages).length > 0"
           class="process-collapse"
           :open="isProcessExpanded(message.id)"
           @toggle="handleProcessToggle(message.id, $event)"
         >
-          <summary>查看分析过程 ({{ getUnifiedProcessMessages(message, messages).length }} 个步骤)</summary>
+          <summary>查看分析过程 ({{ getProcessItemsForFinal(message, messages).length }} 个步骤)</summary>
           <div class="process-content">
-            <div v-for="(procMsg, idx) in getUnifiedProcessMessages(message, messages)" :key="idx" class="process-item">
-              <!-- 思考事件 -->
-              <div v-if="getMessageType(procMsg) === 'thought'" class="process-thought">
+            <div
+              v-for="item in getProcessItemsForFinal(message, messages)"
+              :key="item.id"
+              class="process-item"
+              :class="`process-item-${item.kind}`"
+            >
+              <div v-if="item.kind === 'thought'" class="process-thought">
                 <span class="process-icon">💭</span>
                 <span class="process-label">思考</span>
-                <div class="process-text">{{ procMsg.content }}</div>
+                <div class="process-text">{{ item.content }}</div>
               </div>
 
-              <!-- V3: tool_use 事件 -->
-              <div v-else-if="getMessageType(procMsg) === 'tool_use'" class="process-action">
-                <span class="process-icon">🔧</span>
-                <span class="process-label">工具调用</span>
-                <div class="process-text">{{ procMsg.content }}</div>
+              <div v-else-if="item.kind === 'tool'" class="process-tool">
+                <div class="process-tool-header">
+                  <span class="process-icon">{{ item.status === 'error' ? '❌' : item.status === 'done' ? '✅' : '🔧' }}</span>
+                  <span class="process-label">{{ item.toolName }}</span>
+                  <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
+                </div>
+                <div v-if="item.summary" class="process-text">{{ item.summary }}</div>
+                <details v-if="hasProcessValue(item.input)" class="process-details">
+                  <summary>参数</summary>
+                  <pre>{{ formatProcessValue(item.input) }}</pre>
+                </details>
+                <details v-if="hasProcessValue(item.result) && !item.resultHidden" class="process-details">
+                  <summary>结果详情</summary>
+                  <pre>{{ formatProcessValue(item.result) }}</pre>
+                </details>
               </div>
-
-              <!-- V3: tool_result 事件 -->
-              <div v-else-if="getMessageType(procMsg) === 'tool_result'" class="process-observation">
-                <span class="process-icon">{{ procMsg.data?.is_error ? '❌' : '✅' }}</span>
-                <span class="process-label">工具结果</span>
-                <div class="process-text">{{ procMsg.data?.result?.summary || procMsg.content }}</div>
-              </div>
-
             </div>
           </div>
         </details>
@@ -153,41 +159,53 @@
         </div>
       </div>
 
-      <!-- 错误事件 -->
+      <!-- 错误消息 -->
       <div v-else-if="getMessageType(message) === 'error'" class="event-content error">
         <div class="event-icon">⚠️</div>
         <div class="event-text">{{ contentToString(message.content) }}</div>
       </div>
+    </div>
 
-      <!-- ✅ V3: Tool Use 事件 -->
-      <div v-else-if="getMessageType(message) === 'tool_use' && !isMessageHidden(message)" class="react-event event-tool-use">
-        <div class="event-content">
-          <div class="event-icon">🔧</div>
+    <!-- 当前轮实时分析过程：最终答案到达前先展开显示，答案开始后由final消息内的details折叠承载 -->
+    <div
+      v-if="liveProcessItems.length > 0"
+      class="live-process"
+    >
+      <div class="live-process-header">
+        <span class="live-process-spinner"></span>
+        <span>分析过程中</span>
+      </div>
+
+      <div
+        v-for="item in liveProcessItems"
+        :key="item.id"
+        class="live-process-item"
+        :class="`live-process-${item.kind} status-${item.status || 'default'}`"
+      >
+        <div v-if="item.kind === 'thought'" class="event-content">
+          <div class="event-icon">💭</div>
           <div class="event-text">
-            <div class="tool-use-main">{{ contentToString(message.content) }}</div>
-            <div v-if="message.data?.input && Object.keys(message.data.input).length > 0" class="tool-use-details">
+            <div class="thought-main">{{ item.content }}</div>
+          </div>
+        </div>
+
+        <div v-else-if="item.kind === 'tool'" class="event-content">
+          <div class="event-icon">{{ item.status === 'error' ? '❌' : item.status === 'done' ? '✅' : '🔧' }}</div>
+          <div class="event-text">
+            <div class="tool-use-main">
+              <span>{{ item.toolName }}</span>
+              <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
+            </div>
+            <div v-if="item.summary" class="tool-result-summary">{{ item.summary }}</div>
+            <div v-if="hasProcessValue(item.input)" class="tool-use-details">
               <details>
                 <summary>查看参数</summary>
-                <pre>{{ JSON.stringify(message.data.input, null, 2) }}</pre>
+                <pre>{{ formatProcessValue(item.input) }}</pre>
               </details>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- ✅ V3: Tool Result 事件 -->
-      <div v-else-if="getMessageType(message) === 'tool_result' && !isMessageHidden(message)" class="react-event event-tool-result">
-        <div class="event-content">
-          <div class="event-icon">{{ message.data?.is_error ? '❌' : '✅' }}</div>
-          <div class="event-text">
-            <div class="tool-result-main">{{ contentToString(message.content) }}</div>
-            <div v-if="message.data?.result?.summary" class="tool-result-summary">
-              {{ message.data.result.summary }}
-            </div>
-          </div>
-        </div>
-      </div>
-
     </div>
 
     <!-- 图片预览模态框 -->
@@ -229,23 +247,30 @@ const getMessageType = (message) => {
 
 // 【新增】辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
+  if (content === null || content === undefined) {
+    return ''
+  }
   if (typeof content === 'string') {
     return content
   }
   if (Array.isArray(content)) {
-    // Anthropic content blocks 格式：提取所有文本块并拼接
+    // Anthropic content blocks 格式：提取可显示文本块并拼接
     const textBlocks = content
-      .filter(block => block.type === 'text')
-      .map(block => block.text || '')
-    return textBlocks.length > 0 ? textBlocks.join('') : '[结构化内容]'
+      .filter(block => block.type === 'text' || block.type === 'thinking')
+      .map(block => block.text || block.thinking || '')
+    return textBlocks.length > 0 ? textBlocks.join('') : ''
   }
-  return '[未知格式]'
-}
-
-// 【新增】辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
-const getContentPreview = (content, maxLength = 100) => {
-  const text = contentToString(content)
-  return text.substring(0, maxLength)
+  if (typeof content === 'object') {
+    if (content.text) return String(content.text)
+    if (content.thinking) return String(content.thinking)
+    if (content.message) return String(content.message)
+    try {
+      return JSON.stringify(content)
+    } catch {
+      return String(content)
+    }
+  }
+  return String(content)
 }
 
 const props = defineProps({
@@ -335,8 +360,8 @@ const updatePendingEvents = (messages) => {
 
   if (totalPending !== pendingEventsCount.value) {
     console.log(`[ReActMessageList] 待处理事件变化: ${pendingEventsCount.value} -> ${totalPending}`, {
-      actions: toolUseCount,
-      observations: toolResultCount,
+      toolUses: toolUseCount,
+      toolResults: toolResultCount,
       thoughts: thoughtCount
     })
     pendingEventsCount.value = totalPending
@@ -581,123 +606,47 @@ const welcomeContent = computed(() => {
   return contentMap[props.assistantMode] || contentMap['general-agent']
 })
 
-// 调试：监听消息变化
-watch(() => props.messages, (newMessages) => {
-  console.log('[ReActMessageList] 消息数量变化:', newMessages.length)
-  // newMessages.forEach((msg, idx) => {
-  //   if (msg.type === 'observation') {
-  //     console.log(`[ReActMessageList] 观察事件 #${idx}:`, {
-  //       id: msg.id,
-  //       hasData: !!msg.data,
-  //       dataKeys: msg.data ? Object.keys(msg.data) : [],
-  //       data: msg.data
-  //     })
-  //   }
-  // })
-}, { deep: true, immediate: true })
+const PROCESS_MESSAGE_TYPES = new Set(['thought', 'tool_use', 'tool_result'])
 
-// 过滤掉系统消息，保留所有其他消息（实时显示过程消息）
-const filteredMessages = computed(() => {
-  const filtered = props.messages.filter(msg => {
-    // 【修复】兼容 role 和 type 字段
-    const msgType = msg.role || msg.type
-    // 过滤掉系统消息
-    if (msgType === 'start' || msgType === 'agent') return false
-    return true
-  })
+const isProcessMessage = (message) => PROCESS_MESSAGE_TYPES.has(getMessageType(message))
 
-  // 【修复】检查是否有重复的消息ID（同一消息被多次显示）
-  const messageIds = new Set()
-  const duplicates = []
-  filtered.forEach((msg, idx) => {
-    if (messageIds.has(msg.id)) {
-      duplicates.push({ id: msg.id, index: idx, content: getContentPreview(msg.content, 50) })
-    } else {
-      messageIds.add(msg.id)
-    }
-  })
-
-  if (duplicates.length > 0) {
-    console.error(`[ReActMessageList] ⚠️ 发现 ${duplicates.length} 个重复的消息ID:`, duplicates)
-  }
-
-  // 【修复】兼容 role 和 type 字段统计
-  const getType = (m) => m.role || m.type
-
-  console.log('[ReActMessageList] filteredMessages计算:', {
-    原始消息数: props.messages.length,
-    过滤后消息数: filtered.length,
-    唯一消息ID数: messageIds.size,
-    重复数: duplicates.length,
-    过滤后类型分布: {
-      user: filtered.filter(m => getType(m) === 'user').length,
-      thought: filtered.filter(m => getType(m) === 'thought').length,
-      tool_use: filtered.filter(m => getType(m) === 'tool_use').length,
-      tool_result: filtered.filter(m => getType(m) === 'tool_result').length,
-      final: filtered.filter(m => getType(m) === 'final' || getType(m) === 'assistant').length
-    }
-  })
-
-  return filtered
-})
-
-// 【新增】执行中的过程消息（最后一个final之后的消息，实时显示）
+// 执行中的过程消息：只显示当前用户消息之后、最终答案到达之前的过程。
 const executingProcessMessages = computed(() => {
-  // 找到最后一个final消息的位置
   let lastFinalIndex = -1
+  let lastUserIndex = -1
   for (let i = props.messages.length - 1; i >= 0; i--) {
-    if (getMessageType(props.messages[i]) === 'final') {
+    const type = getMessageType(props.messages[i])
+    if (lastFinalIndex === -1 && type === 'final') {
       lastFinalIndex = i
+    }
+    if (lastUserIndex === -1 && type === 'user') {
+      lastUserIndex = i
+    }
+    if (lastFinalIndex !== -1 && lastUserIndex !== -1) {
       break
     }
   }
 
-  let processMessages = []
-  if (lastFinalIndex === -1) {
-    // 还没有final消息，显示所有过程消息
-    processMessages = props.messages.filter(m => {
-      const type = getMessageType(m)
-      return type === 'thought' || type === 'tool_use' || type === 'tool_result'
-    })
-  } else {
-    // 有final消息，显示该final之后的过程消息（新的一轮对话）
-    processMessages = props.messages.slice(lastFinalIndex + 1).filter(m => {
-      const type = getMessageType(m)
-      return type === 'thought' || type === 'tool_use' || type === 'tool_result'
-    })
+  if (lastUserIndex > lastFinalIndex) {
+    return props.messages.slice(lastUserIndex + 1).filter(isProcessMessage)
   }
 
-  // 【优化】过滤掉模板化的思考消息，避免重复显示
-  return processMessages.filter(m => {
-    const type = getMessageType(m)
-    if (type === 'thought') {
-      const content = m.content || ''
-      // 过滤掉模板化的思考内容
-      const isTemplateThinking =
-        content.startsWith('准备调用工具:') ||
-        content.startsWith('我需要调用') ||
-        content.startsWith('现在调用') ||
-        content.startsWith('开始执行') ||
-        content.length < 20  // 过滤掉太短的思考
-      return !isTemplateThinking
-    }
-    return true
-  })
+  if (lastFinalIndex === -1) {
+    return props.messages.filter(isProcessMessage)
+  }
+
+  return []
 })
 
-// 【新增】已完成的消息（用户消息 + final消息）
-const completedMessages = computed(() => {
+const displayedMessages = computed(() => {
   return props.messages.filter(m => {
     const type = getMessageType(m)
-    return type === 'user' || type === 'final'
+    return type === 'user' || type === 'final' || type === 'error'
   })
 })
 
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
-
-// 【新增】折叠的过程消息ID集合（用于批量加载时自动折叠历史消息）
-const collapsedProcessIds = ref(new Set())
 
 // 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
 const isInitialLoad = ref(true)
@@ -760,118 +709,226 @@ const isOfficeToolWithPdf = (message) => {
   return !!(data?.pdf_preview)
 }
 
-// 【新增】获取当前final消息之前的过程消息（用于统一折叠区域）
-// 【修复】只返回该轮对话的过程消息，不包括之前轮次的
-// 【性能优化】使用缓存避免重复计算
-const processMessagesCache = ref(new Map())
-
-const getUnifiedProcessMessages = (finalMessage, allMessages) => {
-  // 【性能优化】使用缓存键：final消息的引用或ID
-  const cacheKey = finalMessage.id || JSON.stringify(finalMessage)
-
-  // 检查缓存
-  if (processMessagesCache.value.has(cacheKey)) {
-    return processMessagesCache.value.get(cacheKey)
-  }
-
-  // 【关键调试】检查 finalMessage.id 是否存在
-  console.log('[getUnifiedProcessMessages] 接收到final消息:', {
-    hasId: !!finalMessage.id,
-    id: finalMessage.id,
-    type: finalMessage.type,
-    role: finalMessage.role,
-    effectiveType: getMessageType(finalMessage),
-    allMessagesCount: allMessages.length
-  })
-
-  let processMessages = []
-
-  // 如果 finalMessage.id 不存在，尝试使用其他方式查找
-  if (!finalMessage.id) {
-    console.warn('[getUnifiedProcessMessages] finalMessage.id 为空，尝试使用索引查找')
-
-    // 尝试在 allMessages 中直接查找这个 finalMessage
-    const finalIndex = allMessages.findIndex(m => m === finalMessage || (m.type === 'final' && !m.id))
-    if (finalIndex === -1) {
-      console.error('[getUnifiedProcessMessages] 无法找到final消息索引')
-      processMessages = []
-    } else {
-      console.log('[getUnifiedProcessMessages] 通过引用找到final消息，索引:', finalIndex)
-
-      // 获取该final之前的消息
-      const beforeMessages = allMessages.slice(0, finalIndex)
-
-      // 找到上一个final的位置
-      let lastFinalIndex = -1
-      for (let i = finalIndex - 1; i >= 0; i--) {
-        if (getMessageType(allMessages[i]) === 'final') {
-          lastFinalIndex = i
-          break
-        }
-      }
-
-      const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
-      processMessages = currentRoundMessages.filter(msg => {
-        const msgType = getMessageType(msg)
-        return msgType === 'thought' || msgType === 'tool_use' || msgType === 'tool_result'
-      })
-
-      console.log('[getUnifiedProcessMessages] 通过引用找到过程消息:', {
-        processMessageCount: processMessages.length,
-        types: processMessages.map(m => getMessageType(m))
-      })
-    }
-  } else {
-    // 正常情况：使用 id 查找
-    const finalIndex = allMessages.findIndex(m => m.id === finalMessage.id)
-    console.log('[getUnifiedProcessMessages] 开始查找过程消息:', {
-      finalMessageId: finalMessage.id,
-      finalIndex,
-      totalMessages: allMessages.length
-    })
-
-    if (finalIndex === -1) {
-      console.log('[getUnifiedProcessMessages] 未找到final消息，返回空数组')
-      processMessages = []
-    } else {
-      // 获取该final之前的消息
-      const beforeMessages = allMessages.slice(0, finalIndex)
-
-      // 找到上一个final的位置，只获取两轮final之间的过程消息
-      let lastFinalIndex = -1
-      for (let i = finalIndex - 1; i >= 0; i--) {
-        if (getMessageType(allMessages[i]) === 'final') {
-          lastFinalIndex = i
-          break
-        }
-      }
-
-      // 只获取上一轮final之后、当前final之前的过程消息
-      const currentRoundMessages = beforeMessages.slice(lastFinalIndex + 1)
-
-      processMessages = currentRoundMessages.filter(msg => {
-        const msgType = getMessageType(msg)
-        return msgType === 'thought' || msgType === 'tool_use' || msgType === 'tool_result'
-      })
-
-      console.log('[getUnifiedProcessMessages] 找到过程消息:', {
-        processMessageCount: processMessages.length,
-        types: processMessages.map(m => m.type)
-      })
-    }
-  }
-
-  // 【性能优化】缓存结果
-  processMessagesCache.value.set(cacheKey, processMessages)
-
-  return processMessages
+const getProcessCorrelationId = (message) => {
+  const data = message?.data || {}
+  if (data.tool_use_id) return `tool:${data.tool_use_id}`
+  if (data.tool_call_id) return `tool:${data.tool_call_id}`
+  if (data.id) return `tool:${data.id}`
+  if (data.task_id) return `task:${data.task_id}`
+  if (data.expert_type) return `expert:${data.expert_type}`
+  return null
 }
 
-// 【新增】监听消息变化，清空缓存
-watch(() => props.messages, () => {
-  processMessagesCache.value.clear()
-  console.log('[getUnifiedProcessMessages] 消息变化，清空缓存')
-}, { deep: true })
+const getProcessToolName = (message) => {
+  const data = message?.data || {}
+  if (data.tool_name) return data.tool_name
+  if (data.tool) return data.tool
+  if (data.name) return data.name
+  if (data.expert_type) return getExpertLabel(data.expert_type)
+
+  const text = contentToString(message?.content || '')
+  const toolUseMatch = text.match(/Tool Use:\s*([^\s(]+)/i)
+  if (toolUseMatch?.[1]) return toolUseMatch[1]
+  const cnMatch = text.match(/执行【([^】]+)】/)
+  if (cnMatch?.[1]) return cnMatch[1]
+  return text.replace(/^[🔧✅❌]\s*/, '').split(/[(:：\n]/)[0].trim() || '工具调用'
+}
+
+const getProcessInput = (message) => {
+  const data = message?.data || {}
+  if (data.input !== undefined) return data.input
+  if (data.params !== undefined) return data.params
+  if (data.arguments !== undefined) return data.arguments
+  return null
+}
+
+const getProcessResultSummary = (message) => {
+  const data = message?.data || {}
+  const result = data.result
+  if (result?.summary) return result.summary
+  if (result?.error) return result.error
+  if (data.status) return `状态: ${data.status}`
+  if (Array.isArray(data.data_ids)) return `产生 ${data.data_ids.length} 个数据结果`
+  const text = contentToString(message?.content || '').trim()
+  return text || ''
+}
+
+const shouldShowThought = (message, previousThought = '') => {
+  const content = contentToString(message?.content || '').trim()
+  if (!content) return false
+  const isTemplateThinking =
+    content.startsWith('准备调用工具:') ||
+    content.startsWith('我需要调用') ||
+    content.startsWith('现在调用') ||
+    content.startsWith('开始执行') ||
+    content === '思考回复策略' ||
+    content === '思考中...'
+  if (isTemplateThinking) return false
+  if (previousThought && previousThought === content) {
+    return false
+  }
+  return true
+}
+
+const buildProcessItems = (messages, options = {}) => {
+  const items = []
+  const toolItemsByKey = new Map()
+  let previousThought = ''
+
+  for (const message of messages || []) {
+    const type = getMessageType(message)
+
+    if (type === 'thought') {
+      const content = contentToString(message.content)
+      if (!shouldShowThought(message, previousThought)) continue
+      previousThought = content.trim()
+      items.push({
+        kind: 'thought',
+        id: message.id || `thought-${items.length}`,
+        content,
+        streaming: message.streaming === true
+      })
+      continue
+    }
+
+    if (type === 'tool_use') {
+      const key = getProcessCorrelationId(message) || `message:${message.id}`
+      const existingItem = toolItemsByKey.get(key)
+      if (existingItem) {
+        existingItem.toolName = getProcessToolName(message)
+        existingItem.input = getProcessInput(message)
+        existingItem.startedAt = message.timestamp
+        if (!existingItem.result) {
+          existingItem.status = 'running'
+        }
+        continue
+      }
+
+      const item = {
+        kind: 'tool',
+        id: key,
+        correlationId: key,
+        toolUseId: message.data?.tool_use_id || null,
+        toolName: getProcessToolName(message),
+        input: getProcessInput(message),
+        result: null,
+        resultHidden: false,
+        summary: '',
+        status: 'running',
+        startedAt: message.timestamp
+      }
+      toolItemsByKey.set(key, item)
+      items.push(item)
+      continue
+    }
+
+    if (type === 'tool_result') {
+      const key = getProcessCorrelationId(message)
+      let item = key ? toolItemsByKey.get(key) : null
+      if (!item) {
+        item = {
+          kind: 'tool',
+          id: key || `result:${message.id}`,
+          correlationId: key,
+          toolUseId: message.data?.tool_use_id || null,
+          toolName: getProcessToolName(message),
+          input: null,
+          result: null,
+          resultHidden: false,
+          summary: '',
+          status: 'done',
+          startedAt: null
+        }
+        if (key) toolItemsByKey.set(key, item)
+        items.push(item)
+      }
+
+      item.status = message.data?.is_error ? 'error' : 'done'
+      item.result = message.data?.result ?? message.data ?? null
+      item.resultHidden = isOfficeToolWithPdf(message)
+      item.summary = getProcessResultSummary(message)
+      item.completedAt = message.timestamp
+    }
+  }
+
+  if (options.finalized) {
+    for (const item of items) {
+      if (item.kind === 'tool' && item.status === 'running') {
+        item.status = 'called'
+      }
+    }
+  }
+
+  return items
+}
+
+const liveProcessItems = computed(() => buildProcessItems(executingProcessMessages.value))
+
+const getProcessItemsForFinal = (finalMessage, allMessages) => {
+  return buildProcessItems(getUnifiedProcessMessages(finalMessage, allMessages), { finalized: true })
+}
+
+const getProcessStatusText = (status) => {
+  const labels = {
+    running: '执行中',
+    called: '已调用',
+    done: '已完成',
+    error: '失败'
+  }
+  return labels[status] || '处理中'
+}
+
+const hasProcessValue = (value) => {
+  if (value === null || value === undefined || value === '') return false
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
+const formatProcessValue = (value) => {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+const getUnifiedProcessMessages = (finalMessage, allMessages) => {
+  const messages = allMessages || []
+  const finalIndex = messages.findIndex(m =>
+    (finalMessage.id && m.id === finalMessage.id) || m === finalMessage
+  )
+  if (finalIndex === -1) {
+    return []
+  }
+
+  let previousBoundaryIndex = -1
+  for (let i = finalIndex - 1; i >= 0; i--) {
+    const type = getMessageType(messages[i])
+    if (type === 'final' || type === 'user') {
+      previousBoundaryIndex = i
+      break
+    }
+  }
+
+  const beforeFinal = messages
+    .slice(previousBoundaryIndex + 1, finalIndex)
+    .filter(isProcessMessage)
+
+  const afterFinal = []
+  for (let i = finalIndex + 1; i < messages.length; i++) {
+    const type = getMessageType(messages[i])
+    if (type === 'user' || type === 'final' || type === 'error') {
+      break
+    }
+    if (isProcessMessage(messages[i])) {
+      afterFinal.push(messages[i])
+    }
+  }
+
+  return [...beforeFinal, ...afterFinal]
+}
 
 // 【修复】智能滚动控制
 const scrollToBottom = () => {
@@ -965,76 +1022,22 @@ onMounted(() => {
   document.addEventListener('keydown', handleEscKey)
 })
 
-// 【修复】监听新final消息的添加，自动折叠之前的过程消息
+// 批量加载历史时默认折叠分析过程；用户手动展开状态只在当前加载批次内保留
 watch(
   () => props.messages,
   (newMessages, oldMessages) => {
     if (!newMessages || newMessages.length === 0) return
 
-    // 【增强】检测是否需要批量折叠（初次加载或消息数量大幅变化）
     const isFirstLoad = !oldMessages || oldMessages.length === 0
-    const isBulkLoad = oldMessages && Math.abs(newMessages.length - oldMessages.length) > 5 // 超过5条消息变化视为批量加载
-
-    console.log('[ReActMessageList] watch触发，消息变化:', {
-      newCount: newMessages?.length,
-      oldCount: oldMessages?.length,
-      isFirstLoad,
-      isBulkLoad
-    })
+    const isBulkLoad = oldMessages && Math.abs(newMessages.length - oldMessages.length) > 5
 
     if (isFirstLoad || isBulkLoad) {
-      // 批量加载时，清空展开状态，确保所有 details 默认折叠
       expandedProcessIds.value.clear()
-      collapsedProcessIds.value.clear() // 【修复】清空折叠集合，重新计算
-      isInitialLoad.value = true // 【修复】重置初始加载标志
-      // console.log('[ReActMessageList] 批量加载历史对话，默认折叠所有过程消息', {
-      //   isFirstLoad,
-      //   isBulkLoad,
-      //   messageCount: newMessages.length
-      // })
+      isInitialLoad.value = true
 
-      // 【修复】遍历所有final消息，折叠它们之前的过程消息
-      nextTick(() => {
-        let lastFinalIndex = -1
-        let totalCollapsedCount = 0
-
-        // 找到所有的final消息
-        for (let i = 0; i < newMessages.length; i++) {
-          const msg = newMessages[i]
-          const msgType = getMessageType(msg)
-          if (msgType === 'final') {
-            // 获取上一个final之后、当前final之前的所有消息
-            const messagesBetween = newMessages.slice(lastFinalIndex + 1, i)
-
-            // 折叠这些消息中的过程消息
-            for (const procMsg of messagesBetween) {
-              const procMsgType = getMessageType(procMsg)
-              if (procMsgType === 'thought' || procMsgType === 'tool_use' || procMsgType === 'tool_result') {
-                if (procMsg.id) { // 【修复】确保有id才折叠
-                  collapsedProcessIds.value.add(procMsg.id)
-                  totalCollapsedCount++
-                  // console.log('[ReActMessageList] 折叠过程消息:', {
-                  //   type: procMsgType,
-                  //   id: procMsg.id,
-                  //   hasContent: !!procMsg.content
-                  // })
-                }
-              }
-            }
-
-            lastFinalIndex = i
-          }
-        }
-
-        // console.log(`[ReActMessageList] 批量加载：已折叠 ${totalCollapsedCount} 个过程消息`)
-        // console.log('[ReActMessageList] collapsedProcessIds数量:', collapsedProcessIds.value.size)
-      })
-
-      // 【新增】延迟一段时间后允许用户手动展开 details
       setTimeout(() => {
         isInitialLoad.value = false
-        // console.log('[ReActMessageList] 初始加载完成，允许用户手动展开 details')
-      }, 3000) // 3秒后允许用户手动展开
+      }, 3000)
     }
   },
   { deep: true }
@@ -1058,63 +1061,6 @@ const handleEscKey = (e) => {
   }
 }
 
-// 获取数据大小（用于显示在折叠标签中）
-const getDataSize = (data) => {
-  if (!data) return '0B'
-  const jsonStr = JSON.stringify(data)
-  const bytes = new Blob([jsonStr]).size
-
-  if (bytes < 1024) {
-    return bytes + 'B'
-  } else if (bytes < 1024 * 1024) {
-    return (bytes / 1024).toFixed(1) + 'KB'
-  } else {
-    return (bytes / (1024 * 1024)).toFixed(1) + 'MB'
-  }
-}
-
-const getActionPayload = (data) => {
-  if (!data) return null
-  if (data.input !== undefined) return data.input
-  if (data.params !== undefined) return data.params
-  if (data.arguments !== undefined) return data.arguments
-  if (data.payload !== undefined) return data.payload
-  const { toolInfo, ...rest } = data
-  if (Object.keys(rest).length === 0) {
-    return toolInfo || null
-  }
-  return rest
-}
-
-const toAbsoluteUrl = (url) => {
-  if (!url) return '#'
-  // 已经是完整URL
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url
-  }
-  // 相对路径：补上当前站点 origin，确保前端可点击跳转
-  try {
-    return window.location.origin + url
-  } catch {
-    return url
-  }
-}
-
-const formatActionParams = (data) => {
-  const payload = getActionPayload(data)
-  if (payload === null || payload === undefined || payload === '') {
-    return '无输入参数'
-  }
-  if (typeof payload === 'string') {
-    return payload
-  }
-  try {
-    return JSON.stringify(payload, null, 2)
-  } catch (error) {
-    return String(payload)
-  }
-}
-
 // 获取专家标签
 const getExpertLabel = (expertType) => {
   const labelMap = {
@@ -1124,17 +1070,6 @@ const getExpertLabel = (expertType) => {
     'report': '报告生成专家'
   }
   return labelMap[expertType] || expertType
-}
-
-// 获取专家图标
-const getExpertIcon = (expertType) => {
-  const iconMap = {
-    'weather': '🌤️',
-    'component': '🧪',
-    'viz': '📊',
-    'report': '📋'
-  }
-  return iconMap[expertType] || '🔬'
 }
 
 // 已移除脱敏限制
@@ -1807,52 +1742,6 @@ const closeImagePreview = () => {
   to { transform: rotate(360deg); }
 }
 
-// 【新增】执行中的过程消息样式
-.executing-process {
-  animation: slideIn 0.3s ease-out;
-
-  .message {
-    background: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 100%);
-    border-left: 3px solid #2196F3;
-    padding: 12px 16px;
-    margin-bottom: 8px;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-
-    &.thought-message {
-      border-left-color: #9C27B0;
-    }
-
-    &.tool-use-message {
-      border-left-color: #FF9800;
-    }
-
-    &.tool-result-message {
-      border-left-color: #4CAF50;
-    }
-  }
-
-  .process-icon {
-    font-size: 16px;
-    margin-right: 8px;
-  }
-
-  .process-label {
-    font-weight: 600;
-    color: #555;
-    font-size: 13px;
-    margin-right: 8px;
-  }
-
-  .process-text {
-    color: #333;
-    font-size: 14px;
-    line-height: 1.5;
-    word-break: break-word;
-  }
-
-}
-
 @keyframes slideIn {
   from {
     opacity: 0;
@@ -2344,52 +2233,59 @@ const closeImagePreview = () => {
   }
 }
 
-.react-event {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.live-process {
+  margin: 6px 0 10px 0;
   padding: 10px 14px;
-  background: transparent;
+  border-left: 3px solid #1976D2;
+  background: #f8fbff;
   border-radius: 6px;
-  border-left: 3px solid #ddd;
-  margin-left: 0;
-  margin-right: 0;
-  max-width: 100%;
   font-size: 14px;
+}
 
-  &.event-start {
-    border-left-color: #1976D2;
-    background: transparent;
+.live-process-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #1976D2;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.live-process-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(25, 118, 210, 0.2);
+  border-top-color: #1976D2;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+.live-process-item {
+  padding: 8px 0;
+  border-top: 1px solid #e7f0fb;
+
+  &:first-of-type {
+    border-top: none;
   }
 
-  &.event-thought {
-    border-left-color: #9C27B0;
-    background: transparent;
+  &.live-process-thought {
+    .event-text {
+      color: #4A148C;
+    }
   }
 
-  &.event-action {
-    border-left-color: #FF9800;
-    background: transparent;
+  &.live-process-tool.status-done,
+  &.live-process-tool.status-called {
+    .event-text {
+      color: #2E7D32;
+    }
   }
 
-  &.event-observation {
-    border-left-color: #4CAF50;
-    background: transparent;
-  }
-
-  &.event-tool-use {
-    border-left-color: #2196F3;
-    background: transparent;
-  }
-
-  &.event-tool-result {
-    border-left-color: #9C27B0;
-    background: transparent;
-  }
-
-  &.event-error {
-    border-left-color: #F44336;
-    background: transparent;
+  &.live-process-tool.status-error {
+    .event-text {
+      color: #C62828;
+    }
   }
 }
 
@@ -2409,24 +2305,13 @@ const closeImagePreview = () => {
     line-height: 1.6;
     color: #333;
 
-    .action-main {
-      font-weight: 500;
-      color: #333;
-    }
-
-    .observation-main {
-      font-weight: 500;
-      color: #333;
-    }
-
     .tool-use-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
       font-weight: 500;
       color: #1976D2;
-    }
-
-    .tool-result-main {
-      font-weight: 500;
-      color: #7B1FA2;
     }
 
     .tool-use-details {
@@ -2465,86 +2350,6 @@ const closeImagePreview = () => {
       color: #4A148C;
     }
 
-    .thought-context,
-    .action-params,
-    .observation-details {
-      margin-top: 8px;
-
-      details {
-        summary {
-          cursor: pointer;
-          color: #666;
-          font-size: 12px;
-          user-select: none;
-          padding: 4px 8px;
-          background: transparent;
-          border-radius: 4px;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-
-          &:before {
-            content: '▶';
-            font-size: 10px;
-            transition: transform 0.2s;
-          }
-
-          &:hover {
-            color: #1976D2;
-          }
-        }
-
-        details[open] summary:before {
-          transform: rotate(90deg);
-        }
-
-        .observation-content-wrapper,
-        .thought-context-content-wrapper,
-        .params-content-wrapper {
-          // 固定高度 + 滚动条，宽度自适应容器，避免爆屏
-          width: 100%;
-          max-height: 260px;
-          overflow-y: auto;
-          overflow-x: auto;
-          margin-top: 4px;
-          padding: 8px 10px;
-          background: #fafafa;
-          border: 1px solid #e0e0e0;
-          border-radius: 4px;
-          box-sizing: border-box;
-
-          // 自定义滚动条样式
-          &::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-          }
-
-          &::-webkit-scrollbar-track {
-            background: #f5f5f5;
-            border-radius: 4px;
-          }
-
-          &::-webkit-scrollbar-thumb {
-            background: #c0c0c0;
-            border-radius: 4px;
-
-            &:hover {
-              background: #a0a0a0;
-            }
-          }
-
-          pre {
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            font-size: 11px;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-          }
-        }
-      }
-    }
   }
 
   &.error {
@@ -2590,7 +2395,7 @@ const closeImagePreview = () => {
   border-radius: 6px;
   overflow: hidden;
 
-  summary {
+  > summary {
     padding: 8px 12px;
     background: #f5f5f5;
     cursor: pointer;
@@ -2620,8 +2425,7 @@ const closeImagePreview = () => {
     }
 
     .process-thought,
-    .process-action,
-    .process-observation {
+    .process-tool {
       display: flex;
       align-items: flex-start;
       gap: 8px;
@@ -2647,17 +2451,81 @@ const closeImagePreview = () => {
       }
     }
 
+    .process-tool {
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .process-tool-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
     .process-thought .process-label {
       color: #9C27B0;
     }
 
-    .process-action .process-label {
+    .process-tool .process-label {
       color: #1976D2;
     }
+  }
+}
 
-    .process-observation .process-label {
-      color: #388E3C;
-    }
+.process-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #e3f2fd;
+  color: #1565C0;
+
+  &.status-running {
+    background: #fff8e1;
+    color: #F57F17;
+  }
+
+  &.status-called {
+    background: #e3f2fd;
+    color: #1565C0;
+  }
+
+  &.status-done {
+    background: #e8f5e9;
+    color: #2E7D32;
+  }
+
+  &.status-error {
+    background: #ffebee;
+    color: #C62828;
+  }
+}
+
+.process-details {
+  width: 100%;
+  margin-top: 4px;
+
+  > summary {
+    cursor: pointer;
+    color: #666;
+    font-size: 12px;
+    user-select: none;
+  }
+
+  pre {
+    max-height: 220px;
+    overflow: auto;
+    margin: 6px 0 0;
+    padding: 8px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 }
 

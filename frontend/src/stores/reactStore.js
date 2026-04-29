@@ -7,17 +7,30 @@ import { autoSaveSession } from '@/api/session'
 
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
+  if (content === null || content === undefined) {
+    return ''
+  }
   if (typeof content === 'string') {
     return content
   }
   if (Array.isArray(content)) {
-    // Anthropic content blocks 格式：提取所有文本块并拼接
+    // Anthropic content blocks 格式：提取可显示文本块并拼接
     const textBlocks = content
-      .filter(block => block.type === 'text')
-      .map(block => block.text || '')
-    return textBlocks.length > 0 ? textBlocks.join('') : '[结构化内容]'
+      .filter(block => block.type === 'text' || block.type === 'thinking')
+      .map(block => block.text || block.thinking || '')
+    return textBlocks.length > 0 ? textBlocks.join('') : ''
   }
-  return '[未知格式]'
+  if (typeof content === 'object') {
+    if (content.text) return String(content.text)
+    if (content.thinking) return String(content.thinking)
+    if (content.message) return String(content.message)
+    try {
+      return JSON.stringify(content)
+    } catch {
+      return String(content)
+    }
+  }
+  return String(content)
 }
 
 // 辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
@@ -853,6 +866,35 @@ export const useReactStore = defineStore('react', {
       Object.assign(message, updatedMessage)
     },
 
+    _convertStreamingAnswerToThoughtIfToolPlanning(modeState) {
+      const messageId = modeState?.streamingAnswerMessageId
+      if (!messageId) return
+
+      const message = modeState.messages.find(m => m.id === messageId)
+      if (!message || message.type !== 'final') return
+
+      const content = contentToString(message.content).trim()
+      if (!content) {
+        modeState.streamingAnswerMessageId = null
+        modeState.finalAnswer = ''
+        return
+      }
+
+      Object.assign(message, {
+        type: 'thought',
+        content,
+        streaming: false,
+        data: {
+          ...(message.data || {}),
+          converted_from: 'pre_tool_streaming_text'
+        }
+      })
+
+      modeState.streamingAnswerMessageId = null
+      modeState.finalAnswer = ''
+      modeState._forceRenderCount++
+    },
+
     /**
      * 获取事件的目标模式状态
      */
@@ -994,6 +1036,8 @@ export const useReactStore = defineStore('react', {
 
         case 'tool_use': {
           // ✅ V3: Anthropic tool_use 事件
+          this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
+
           const toolUseData = data || {}
           const toolName = toolUseData.tool_name || 'unknown'
           const toolUseId = toolUseData.tool_use_id
@@ -1037,6 +1081,7 @@ export const useReactStore = defineStore('react', {
           // 添加工具结果消息
           addMessage('tool_result', toolResultContent, {
             tool_use_id: resultToolUseId,
+            tool_name: toolResultData.tool_name,
             result: result,
             is_error: isError,
             iteration: toolResultData.iteration,
