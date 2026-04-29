@@ -716,45 +716,63 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 # 工具Schema定义（用于LLM Function Calling）
 # ========================================
 
-def get_tool_schemas() -> List[Dict[str, Any]]:
+def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    获取所有工具的Schema定义（单一注册源）
+    获取工具的Schema定义（支持按模式过滤）
+
+    Args:
+        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social" | "chart")
+              如果为None，返回所有工具的schema
 
     Returns:
         Schema列表，用于LLM Function Calling
     """
     schemas = []
 
+    # 如果指定了模式，获取该模式的工具列表
+    if mode:
+        from app.agent.prompts.tool_registry import get_tools_by_mode
+        mode_tools = get_tools_by_mode(mode)
+        allowed_tools = set(mode_tools.keys()) | {"call_sub_agent"}  # 始终包含call_sub_agent
+    else:
+        allowed_tools = None
+
     # ========================================
-    # 1. 从 global_tool_registry 获取所有工具的 Schema
+    # 从 global_tool_registry 获取工具的 Schema
     # ========================================
     for tool_data in global_tool_registry.get_all_tools():
         tool = tool_data["tool"]
-        if tool.is_available():
-            # 特别处理图表工具的Schema，添加职责说明
-            if tool.name in ["smart_chart_generator", "generate_chart"]:
-                schema = tool.get_function_schema()
-                # 在描述中添加职责分工信息
-                if "description" in schema:
-                    if tool.name == "smart_chart_generator":
-                        schema["description"] = (
-                            "智能图表生成器 - 固定格式数据专用\n"
-                            "适用：PMF/OBM分析结果、组分数据、已存储数据（有data_id）\n"
-                            "特征：从统一存储加载数据，智能推荐图表类型\n"
-                            "决策：有data_id或需要智能推荐时使用此工具"
-                        )
-                    elif tool.name == "generate_chart":
-                        schema["description"] = (
-                            "通用图表生成工具 - 动态数据专用\n"
-                            "适用：直接传入的原始数据、自定义场景、预定义场景模板\n"
-                            "特征：直接传入数据，使用模板库+LLM生成\n"
-                            "决策：无data_id或需要LLM分析数据特征时使用此工具"
-                        )
-                schemas.append(schema)
-            else:
-                schemas.append(tool.get_function_schema())
+        if not tool.is_available():
+            continue
 
-    logger.info("tool_schemas_generated", count=len(schemas))
+        # 按模式过滤
+        if allowed_tools and tool.name not in allowed_tools:
+            continue
+
+        # 特别处理图表工具的Schema，添加职责说明
+        if tool.name in ["smart_chart_generator", "generate_chart"]:
+            schema = tool.get_function_schema()
+            # 在描述中添加职责分工信息
+            if "description" in schema:
+                if tool.name == "smart_chart_generator":
+                    schema["description"] = (
+                        "智能图表生成器 - 固定格式数据专用\n"
+                        "适用：PMF/OBM分析结果、组分数据、已存储数据（有data_id）\n"
+                        "特征：从统一存储加载数据，智能推荐图表类型\n"
+                        "决策：有data_id或需要智能推荐时使用此工具"
+                    )
+                elif tool.name == "generate_chart":
+                    schema["description"] = (
+                        "通用图表生成工具 - 动态数据专用\n"
+                        "适用：直接传入的原始数据、自定义场景、预定义场景模板\n"
+                        "特征：直接传入数据，使用模板库+LLM生成\n"
+                        "决策：无data_id或需要LLM分析数据特征时使用此工具"
+                    )
+            schemas.append(schema)
+        else:
+            schemas.append(tool.get_function_schema())
+
+    logger.info("tool_schemas_generated", mode=mode, count=len(schemas))
 
     return schemas
 

@@ -25,6 +25,18 @@ class ObservationProcessor:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         state.last_observation = observation
 
+        # ✅ 立即捕获 knowledge_qa_workflow 的知识溯源数据
+        # 避免被后续工具调用覆盖
+        tool_name = action.get("tool") or ""
+        if tool_name == "knowledge_qa_workflow" and observation.get("success"):
+            data = observation.get("data", {})
+            if isinstance(data, dict):
+                sources = data.get("sources")
+                if sources and isinstance(sources, list):
+                    state.workflow_sources = sources
+                    state.workflow_visuals = observation.get("visuals", [])
+                    state.direct_from_workflow = True
+
         if observation.get("visuals") and isinstance(observation.get("visuals"), list):
             state.workflow_visuals.extend(observation["visuals"])
             self._record_chart_observations(observation, action)
@@ -50,23 +62,31 @@ class ObservationProcessor:
                 yield event
 
     def capture_last_knowledge_sources(self, state: RunState) -> bool:
+        # ✅ 如果已经有知识溯源数据（从 process() 中保存），直接返回
+        if state.workflow_sources:
+            return True
+
         last_result = state.last_single_tool_result
         if not last_result:
             return False
         tool_observation = last_result.get("observation", {})
         tool_name = last_result.get("tool_name", "")
-        if tool_name != "knowledge_qa_workflow" or not isinstance(tool_observation, dict):
+        if not isinstance(tool_observation, dict):
             return False
         if not tool_observation.get("success"):
             return False
-        data = tool_observation.get("data", {})
-        sources = data.get("sources") if isinstance(data, dict) else None
-        if not sources:
-            return False
-        state.workflow_sources = sources
-        state.workflow_visuals = tool_observation.get("visuals", [])
-        state.direct_from_workflow = True
-        return True
+
+        # 处理 knowledge_qa_workflow 工具
+        if tool_name == "knowledge_qa_workflow":
+            data = tool_observation.get("data", {})
+            sources = data.get("sources") if isinstance(data, dict) else None
+            if sources:
+                state.workflow_sources = sources
+                state.workflow_visuals = tool_observation.get("visuals", [])
+                state.direct_from_workflow = True
+                return True
+
+        return False
 
     def _extract_direct_response(self, state: RunState, observation: Dict[str, Any]) -> Optional[str]:
         metadata = observation.get("metadata", {}) if isinstance(observation, dict) else {}

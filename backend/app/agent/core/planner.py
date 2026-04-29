@@ -1,13 +1,13 @@
 """
-ReAct Agent 规划器 (Planner) - V3 Anthropic Native
+ReAct Agent 规划器 (Planner) - V4 按模式过滤
 
-使用 Anthropic Messages API 原生工具调用，消除手动 JSON 解析。
+使用 Anthropic 原生工具调用，但按模式过滤 tools schema。
 
 核心特性:
-- Anthropic 原生 tool_use content blocks（无需 JSON 解析）
-- 流式 Anthropic API（content_block_start/delta/stop 事件）
-- 通过遍历 content blocks 检测工具调用（不依赖 stop_reason）
-- 一次性参数生成（提示词中包含完整工具信息）
+- 按模式过滤工具定义（Expert 只传 44 个工具，不是 94 个）
+- 系统提示词不包含工具列表（避免与 tools schema 重复）
+- 节省 token：Expert 模式节省 53%（163 KB），Query 模式节省 62%（190 KB）
+- LLM 从 tools 参数获取工具定义，生成原生 tool_use 调用
 """
 
 import json
@@ -25,13 +25,17 @@ logger = structlog.get_logger()
 
 class ReActPlanner:
     """
-    ReAct规划器: 使用 Anthropic 原生工具调用
+    ReAct规划器: 按模式过滤工具定义（V4 架构）
 
-    V3 架构:
-    - 使用 Anthropic Messages API 的 tool_use content blocks
-    - 通过遍历 content blocks 检测工具调用（参考 Claude Code，不依赖 stop_reason）
-    - 支持 text + tool_use 混合输出
-    - 流式输出支持（content_block_delta 事件）
+    核心优化:
+    - 按模式过滤 tools schema（不同模式传递不同的工具集）
+    - 系统提示词不包含工具列表（避免与 tools schema 重复）
+    - 节省 token：Expert 模式节省 53%，Query 模式节省 62%
+
+    工作原理:
+    - 传递按模式过滤的 tools schema（让 Anthropic 生成原生 tool_use）
+    - LLM 从 tools 参数获取工具定义
+    - 解析 tool_use blocks（不需要原始 schema）
     """
 
     def __init__(
@@ -104,19 +108,12 @@ class ReActPlanner:
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
-        """Anthropic 原生工具调用规划器（非流式）
+        """原生工具调用规划器（非流式）
 
-        通过遍历 content blocks 检测工具调用，不依赖 stop_reason。
-        参考 Claude Code: stop_reason === 'tool_use' is unreliable.
+        使用 Anthropic 原生 tool_use blocks，按模式过滤工具定义。
 
         Args:
-            query: 用户查询
-            system_prompt: 系统提示词
-            user_conversation: 用户对话内容
-            tools: 工具列表（Anthropic 格式）
-            iteration: 当前迭代次数
-            mode: Agent模式
-            conversation_history: 对话历史（Anthropic 格式）
+            tools: 按模式过滤的工具 schema（Expert 模式约 44 个工具，节省 53% token）
 
         Returns:
             {
@@ -148,7 +145,7 @@ class ReActPlanner:
             for tool in tools
         ]
 
-        logger.info("anthropic_planner_call", iteration=iteration, mode=mode)
+        logger.info("anthropic_planner_call", iteration=iteration, mode=mode, tool_count=len(tools))
 
         llm_response = await self.llm_service.chat_anthropic(
             messages=messages,
@@ -169,22 +166,21 @@ class ReActPlanner:
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Anthropic 原生流式规划器
+        """流式规划器（按模式过滤 tools schema）
 
-        使用 Anthropic streaming API，按 content_block 事件逐步 yield：
+        使用 Anthropic streaming API，按模式传递工具定义。
+        按 content_block 事件逐步 yield：
         - text blocks: 流式输出文本内容
         - tool_use blocks: 完成后 yield 工具调用
 
-        参考 Claude Code 事件序列：
-        message_start -> content_block_start -> content_block_delta -> content_block_stop
-        -> message_delta -> message_stop
+        Args:
+            tools: 按模式过滤的工具 schema（Expert 模式约 44 个工具，节省 53% token）
 
         Yields:
             流式事件:
             - {"type": "streaming_text", "data": {"chunk": str, "is_complete": bool}}
             - {"type": "thought", "data": {"thought": str}}
             - {"type": "tool_use", "data": {"tool_use_id": str, "tool_name": str, "input": Dict}}
-              ↑ V4: 在 content_block_stop 时立即 yield（支持流式工具调用）
             - {"type": "action", "data": {"thought": str, "action": Dict}}
         """
         from app.agent.tool_adapter import convert_openai_to_anthropic_schema
@@ -198,12 +194,13 @@ class ReActPlanner:
             {"role": "user", "content": user_conversation}
         ]
 
+        # 转换工具为 Anthropic 格式
         anthropic_tools = [
             convert_openai_to_anthropic_schema(tool)
             for tool in tools
         ]
 
-        logger.info("anthropic_planner_streaming_call", iteration=iteration, mode=mode)
+        logger.info("planner_streaming_call", iteration=iteration, mode=mode, tool_count=len(tools))
 
         # 累积 content blocks
         current_blocks: List[Dict[str, Any]] = []

@@ -203,7 +203,8 @@ class AgentRuntime:
         from app.agent.tool_adapter import get_tool_schemas
         from ..core.streaming_tool_executor import StreamingToolExecutor
 
-        tool_schemas = get_tool_schemas()
+        # 按模式过滤工具 schema（节省 token）
+        tool_schemas = get_tool_schemas(mode=state.mode)
         streaming_tool_executor = StreamingToolExecutor(
             tool_executor=self.executor,
             tool_registry=self.executor.tool_registry if hasattr(self.executor, "tool_registry") else {},
