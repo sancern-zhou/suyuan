@@ -11,7 +11,7 @@
     </div>
 
     <div class="message-content">
-      <div class="text">{{ message.content }}</div>
+      <div class="text">{{ contentToString(message.content) }}</div>
 
       <!-- 调试信息（可选显示） -->
       <div v-if="debugEnabled && message.debugInfo" class="debug-info">
@@ -25,6 +25,21 @@
 </template>
 
 <script setup>
+// 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
+const contentToString = (content) => {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    // Anthropic content blocks 格式：提取所有文本块并拼接
+    const textBlocks = content
+      .filter(block => block.type === 'text')
+      .map(block => block.text || '')
+    return textBlocks.length > 0 ? textBlocks.join('') : '[结构化内容]'
+  }
+  return '[未知格式]'
+}
+
 const props = defineProps({
   message: {
     type: Object,
