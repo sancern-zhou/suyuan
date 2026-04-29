@@ -253,6 +253,9 @@ CHART_TOOLS = {
     "query_gd_suncere_station_hour_new": "查询广东省【站点级别】小时空气质量数据（⭐ 新标准 HJ 633-2026，自动计算新标准IAQI、AQI、首要污染物，支持气象字段提取）。⚠️ 适用场景：当用户提到具体站点名称（如'广雅中学'、'市监测站'、'天河职防'）或需要站点级别数据时使用。⚠️ 必需参数: start_time(str, 'YYYY-MM-DD HH:MM:SS'), end_time(str, 'YYYY-MM-DD HH:MM:SS')。可选: station_type(str, 站点类型, 默认'国控'。⚠️ 仅在使用cities参数时有效，用于过滤该城市下的指定类型站点。如果使用stations参数，则不需要此参数), cities(list, 城市名自动展开该城市下所有站点，与stations至少提供一个), stations(list, 站点名称如['广雅中学','市监测站'], 与cities至少提供一个。使用stations时不需要提供station_type), include_weather(bool, 是否包含气象字段, 默认true, 包含风速/风向/温度/湿度/气压等)。返回: 站点级别小时数据、新标准IAQI/AQI/首要污染物",
     "query_gd_suncere_city_day_new": "查询广东省【城市级别】日空气质量数据（新标准 HJ 633-2026，⚠️ 仅支持城市名称，不支持站点名称。如需站点日数据，请使用 query_gd_suncere_station_day_new）。⚠️ 必需参数: cities(list, 城市名称列表, 如['广州','深圳']), start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: data_type(int, 数据类型, 默认1=审核数据)。返回: 城市级别日均值、AQI、首要污染物、空气质量等级",
 
+    # SQL Server通用查询（声环境数据等）
+    "execute_sql_query": EXECUTE_SQL_QUERY_DESCRIPTION,
+
     # 知识库检索
     "knowledge_qa_workflow": "知识库检索入口。⚠️ 调用前应先把用户原问题改写成组合检索词：保留原始问题全文，并追加3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写；不要只传抽象摘要。示例: 用户问'HJ 633-2026 综合指数怎么算'，query可写为'HJ 633-2026 综合指数怎么算 综合指数 计算方法 评价项目 分指数 IAQI AQI HJ633-2026 环境空气质量指数'。参数: query(str, 原问题+补充关键词的组合检索词), knowledge_base_ids(list, 可选, 指定知识库ID), top_k(int, 可选, 默认3, 最多10), reranker(str, 可选, auto/always/never, 默认auto)。返回sources和document_read_targets；严肃知识问答应继续调用knowledge_document_reader读取相邻chunks后再答。",
     "knowledge_document_reader": "读取知识库文档的chunk文本视图。适用：knowledge_qa_workflow返回document_read_targets后，按document_id+chunk_index读取相邻chunks或全文chunks，再回答严肃知识问答。参数: knowledge_base_id(str, 必需), document_id(str, 必需), chunk_index(int, 可选, 单个命中chunk索引), chunk_indices(list[int], 可选, 多个命中chunk索引), mode(str, 可选, neighbor_chunks/all_chunks, 默认neighbor_chunks), window(int, 可选, 相邻窗口, 默认2), max_chunks(int, 可选, 返回chunk上限, 默认30)",
@@ -529,6 +532,9 @@ CHART_TOOL_ORDER = [
     "query_new_standard_report",
     "query_old_standard_report",
     "compare_standard_reports",
+
+    # SQL Server通用查询（声环境数据等）
+    "execute_sql_query",
 
     # 知识库检索
     "knowledge_qa_workflow",

@@ -635,9 +635,26 @@ def convert_openai_to_anthropic_schema(tool_schema: Dict) -> Dict:
             }
         }
 
-    # 如果格式未知，返回基础 Anthropic 格式
+    # 如果格式未知，记录错误并返回带警告的 schema
+    schema_name = tool_schema.get("name")
+    if not schema_name or not isinstance(schema_name, str):
+        logger.error(
+            "invalid_tool_schema_no_name",
+            schema_preview=str(tool_schema)[:200],
+            message="工具 Schema 缺少 name 字段，这不应该发生（工具注册时应该被拦截）"
+        )
+        return {
+            "name": "unknown",
+            "description": "[ERROR] Invalid tool schema - missing name field",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+
+    # 有 name 但格式不完整，返回基础格式
     return {
-        "name": tool_schema.get("name", "unknown"),
+        "name": schema_name,
         "description": tool_schema.get("description", ""),
         "input_schema": {
             "type": "object",
