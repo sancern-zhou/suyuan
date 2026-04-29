@@ -170,13 +170,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="get_universal_meteorology", error=str(e))
 
     try:
-        from app.tools.knowledge.search_knowledge_base.tool import SearchKnowledgeBaseTool
-        registry.register(SearchKnowledgeBaseTool(), priority=27)
-        logger.info("tool_loaded", tool="search_knowledge_base")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="search_knowledge_base", error=str(e))
-
-    try:
         from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
         registry.register(GetJiningRegularStationsTool(), priority=31)
         logger.info("tool_loaded", tool="get_jining_regular_stations")

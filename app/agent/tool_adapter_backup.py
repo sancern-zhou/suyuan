@@ -81,13 +81,6 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
     """
     start_time = datetime.now()
     try:
-        # 对知识库检索统一收敛 top_k，避免返回过多结果
-        if tool_name == "search_knowledge_base":
-            orig_top_k = kwargs.get("top_k")
-            capped_top_k = min(int(orig_top_k) if orig_top_k else 3, 3)
-            kwargs["top_k"] = capped_top_k
-            logger.info("normalized_top_k_for_kb_search", orig_top_k=orig_top_k, effective_top_k=capped_top_k)
-
         # 从单一注册源获取工具
         tool = global_tool_registry.get_tool(tool_name)
 
@@ -774,10 +767,6 @@ def get_tool_summaries() -> str:
     # 简单工具（参数直观，免二次调用）
     # 注意：bash 工具已在提示词中直接描述，不需要两阶段加载
     SIMPLE_TOOLS = {
-        "search_knowledge_base": {
-            "desc": "检索项目知识库文档",
-            "example": 'query="臭氧污染来源分析"'
-        },
         "word_processor": {
             "desc": "读取和编辑 Word 文档（仅 Windows）",
             "example": 'file_path="D:\\\\docs\\\\report.docx", operation="read"'

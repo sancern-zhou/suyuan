@@ -30,7 +30,7 @@ class ReportPlanner:
                     "required": True,
                     "order": 2,
                     "use_knowledge_base": True,
-                    "tools": ["search_knowledge_base"]
+                    "tools": ["knowledge_qa_workflow"]
                 },
                 {
                     "id": "methodology",
@@ -224,7 +224,7 @@ class ReportPlanner:
             tools.extend(section.tools)
 
         if section.use_knowledge_base:
-            tools.append("search_knowledge_base")
+            tools.append("knowledge_qa_workflow")
 
         if section.use_data_tools:
             tools.extend(["get_air_quality", "get_weather_data"])

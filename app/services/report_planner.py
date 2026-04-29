@@ -30,7 +30,7 @@ class ReportPlanner:
                     "required": True,
                     "order": 2,
                     "use_knowledge_base": True,
-                    "tools": ["search_knowledge_base"]
+                    "tools": []
                 },
                 {
                     "id": "methodology",
@@ -224,7 +224,7 @@ class ReportPlanner:
             tools.extend(section.tools)
 
         if section.use_knowledge_base:
-            tools.append("search_knowledge_base")
+            logger.warning("knowledge_base_tool_removed", section_id=section.id)
 
         if section.use_data_tools:
             tools.extend(["get_air_quality", "get_weather_data"])
