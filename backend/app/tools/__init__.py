@@ -578,6 +578,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="list_directory", error=str(e))
 
     try:
+        from app.tools.utility.vectorize_document_tool import VectorizeDocumentTool
+        registry.register(VectorizeDocumentTool(), priority=512)
+        logger.info("tool_loaded", tool="vectorize_document")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="vectorize_document", error=str(e))
+
+    try:
         from app.tools.utility.skill_management.list_skills_tool import ListSkillsTool
         registry.register(ListSkillsTool(), priority=508)
         logger.info("tool_loaded", tool="list_skills")
@@ -750,8 +757,14 @@ def create_global_tool_registry() -> ToolRegistry:
         from app.tools.browser.tool import BrowserTool
         registry.register(BrowserTool(), priority=550)
         logger.info("tool_loaded", tool="browser")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="browser", error=str(e))
+    except (ImportError, ValueError) as e:
+        # 捕获导入错误和 schema 验证错误
+        logger.warning(
+            "tool_registration_failed",
+            tool="browser",
+            error_type=type(e).__name__,
+            error=str(e)
+        )
 
     # ========================================
     # Agent Tools（Agent间调用工具）
