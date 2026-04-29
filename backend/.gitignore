@@ -45,6 +45,7 @@ data/
 *.json
 *.parquet
 !app/schemas/**/*.json
+!app/tools/planning/complex_query_planner/query_tool_metadata.json
 
 # Temporary cache
 *.png
@@ -103,6 +104,7 @@ nul
 *_GUIDE.md
 *_UPDATE_SUMMARY.md
 *_LOG_REVIEW.md
+!app/tools/planning/complex_query_planner/query_tools_guide.md
 
 # OS
 Thumbs.db
