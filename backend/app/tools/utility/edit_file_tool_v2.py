@@ -727,51 +727,29 @@ class EditFileToolV2(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "edit_file",
-            "description": """精确编辑文件内容（完整对标 Claude Code 官方实现）
-
-⚠️ 不适用于编辑 Word 文档！
-- 简单文本替换 → 使用 find_replace_word 工具
-- 复杂结构编辑 → 使用 word_edit 工具
-
-核心功能：
-1. 强制预读验证：必须先使用 read_file 读取文件
-2. 引号规范化：自动处理弯引号（"..." ↔ "..."）
-3. Trailing空格处理：自动去除每行末尾空格（Markdown除外）
-4. 文件修改检查：检测文件是否在读取后被修改
-5. 模糊匹配：支持引号规范化后的容错匹配
-
-使用场景：修改代码文件（.py, .js 等）、配置文件（.json, .yaml 等）、文本文件。
-
-⚠️ JSON格式要求（重要）：
-- old_string 和 new_string 中的换行符必须写成 \\n（不是真实换行）
-- 引号必须写成 \\"
-- 反斜杠必须写成 \\\\
-- 示例：多行文本应该是 "line1\\nline2\\nline3" 而不是直接换行
-
-注意：
-- ❌ 不要用于编辑 Word 文档（.docx）或 Word XML（document.xml）
-- ✅ 用于编辑代码、配置、文本文件
-- 必须先使用 read_file 读取文件
-- 工作目录限制：D:/溯源/ 及其子目录
-""",
+            "description": (
+                "精确替换代码、配置、文本文件内容；必须先read_file。"
+                "不用于docx或Word XML；多行old_string/new_string在JSON中用\\n转义。"
+                "会检查文件是否被修改，并支持引号规范化容错匹配。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "文件路径（绝对路径或相对路径）。示例：'D:/溯源/backend/app/main.py' 或 'backend/config.py'"
+                        "description": "文件路径，绝对或相对路径"
                     },
                     "old_string": {
                         "type": "string",
-                        "description": "要替换的原内容（必须与文件完全一致，包括空格、缩进、换行符）。注意：JSON字符串中换行符需用\\\\n转义，引号需用\\\\\"转义。工具会自动处理引号规范化（弯引号↔直引号）和trailing空格。"
+                        "description": "要替换的原内容，需尽量与文件一致；多行用\\n转义"
                     },
                     "new_string": {
                         "type": "string",
-                        "description": "替换后的新内容。注意：JSON字符串中换行符需用\\\\n转义，引号需用\\\\\"转义。工具会自动保留文件的引号风格和处理trailing空格。"
+                        "description": "替换后的新内容；多行用\\n转义"
                     },
                     "replace_all": {
                         "type": "boolean",
-                        "description": "是否替换所有匹配项（默认 False，仅替换第一个）。当 old_string 在文件中出现多次时需设为 True",
+                        "description": "是否替换所有匹配项，默认False",
                         "default": False
                     },
                     "encoding": {

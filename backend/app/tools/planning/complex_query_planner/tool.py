@@ -1064,32 +1064,11 @@ class ComplexQueryPlannerTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="complex_query_planner",
-            description="""复杂查询计划工具（多数据源查询规划）。当需要同时查询多组数据、或不确定应使用哪个查询工具时调用。
-
-【适用场景】
-- 多时间段对比分析（同比/环比/多时段/季度对比）
-- 多城市分组分析（非标准21城列表、城市间对比、分组统计）
-- 不确定应该使用哪个工具（新vs旧标准、日报表vs统计报表、小时vs日数据）
-- 需要≥3个工具组合执行（查询+聚合+可视化+分析）
-
-【重要说明】统计报表使用限制
-- **统计报表工具（query_new_standard_report、query_old_standard_report、query_station_new_standard_report）只能查询累计统计结果**
-- 如果用户需要查询每个月的统计结果（如每个月的超标天数、综合指数等），应该：
-  1. 先使用日数据查询工具（如 query_gd_suncere_city_day_new）查询日数据
-  2. 再使用 aggregate_data 工具按月进行聚合统计
-  3. 最后使用 smart_chart_generator 工具生成月度趋势图表
-
-【返回数据说明】
-- data.plan 字段：⭐ 查询计划（直接包含在返回结果中，无需额外读取文件）
-  - plan_steps：查询步骤列表（每个步骤包含工具名称和参数）
-  - execution_strategy：执行策略（顺序/并发）
-  - ⚠️ 重要：查询计划直接在返回结果的 data.plan 字段中，**按照 plan_steps 逐步执行即可**
-- summary 字段：查询计划摘要（包含步骤数量）
-
-【使用示例】
-调用后直接从返回结果的 data.plan 字段获取查询计划，按照 plan_steps 逐步执行工具调用。
-
-⚠️ 必需参数: query_description(str, 详细描述查询需求), mode(str, 当前模式: query或report)""",
+            description=(
+                "复杂查询计划工具。多时间段/多城市分组/不确定工具选择/需要3个以上工具组合时调用。"
+                "注意统计报表工具只返回累计结果；月度统计应先查日数据再聚合。"
+                "查询计划在返回的data.plan中，按plan_steps执行即可。"
+            ),
             category=ToolCategory.PLANNING,
             requires_context=False
         )

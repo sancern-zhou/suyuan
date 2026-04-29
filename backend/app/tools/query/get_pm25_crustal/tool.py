@@ -49,17 +49,8 @@ class GetPM25CrustalTool(LLMTool):
         function_schema = {
             "name": "get_pm25_crustal",
             "description": (
-                "【结构化查询工具-优先使用】查询PM2.5地壳元素数据 - 铝、硅、钙、铁、钛、钾等。"
-                ""
-                "**优势：**"
-                "- 参数精确，支持直接指定站点、时间范围、时间粒度"
-                "- 数据格式标准化，自动保存为particulate_unified格式"
-                "- 适用于扬尘源解析和地壳元素分析"
-                "- 支持城市名称自动映射到站点编码"
-                ""
-                "**关键词：** 地壳元素、重金属、Al、Si、Fe、Ca、Ti、K、扬尘"
-                ""
-                "**何时使用：** 用户需要地壳元素/重金属数据时，优先使用此工具而非自然语言查询工具"
+                "查询PM2.5地壳元素数据（Al/Si/Fe/Ca/Ti/K等），用于扬尘源解析和地壳元素分析。"
+                "需要地壳元素/重金属数据时优先使用；locations可自动映射站点。"
             ),
             "parameters": {
                 "type": "object",
@@ -67,40 +58,40 @@ class GetPM25CrustalTool(LLMTool):
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Location names (city/station), e.g., ['东莞'], ['广州', '新兴']. Will be auto-mapped to StationCodes."
+                        "description": "城市或站点名称列表，可自动映射站点编码"
                     },
                     "station": {
                         "type": "string",
-                        "description": "Station name in Chinese, e.g., '东莞', '揭阳', '新兴'. Use 'locations' for automatic mapping instead."
+                        "description": "中文站点名；优先用locations"
                     },
                     "code": {
                         "type": "string",
-                        "description": "Station code, e.g., '1037b', '1042b'. Automatically mapped if 'locations' provided."
+                        "description": "站点编码；locations存在时可省略"
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "Start time in format 'YYYY-MM-DD HH:MM:SS'"
+                        "description": "开始时间，格式YYYY-MM-DD HH:MM:SS"
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "End time in format 'YYYY-MM-DD HH:MM:SS'"
+                        "description": "结束时间，格式YYYY-MM-DD HH:MM:SS"
                     },
                     "data_type": {
                         "type": "integer",
                         "enum": [0, 1],
-                        "description": "Data quality: 0=original, 1=audited. IMPORTANT: Crustal element NUMERIC data is only available in audited data (data_type=1). Default: 1",
+                        "description": "数据质量：0原始，1审核；地壳元素数值需用1，默认1",
                         "default": 1
                     },
                     "time_granularity": {
                         "type": "integer",
                         "enum": [0],
-                        "description": "Time granularity for crustal elements. NOTE: Only 0 (hour granularity) returns numeric values - all string inputs like 'daily'/'hourly' are converted to 0. The API returns placeholders for other granularities. Default: 0",
+                        "description": "时间粒度固定0；其他粒度会返回占位符",
                         "default": 0
                     },
                     "elements": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Element list, e.g., ['Al', 'Si', 'Fe', 'Ca', 'Ti', 'Mn']",
+                        "description": "元素列表，如['Al','Si','Fe','Ca','Ti','Mn']",
                         "default": ["Al", "Si", "Fe", "Ca", "Ti", "Mn"]
                     }
                 },

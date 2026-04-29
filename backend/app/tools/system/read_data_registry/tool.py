@@ -28,39 +28,10 @@ class ReadDataRegistryTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="read_data_registry",
-            description="""从 backend_data_registry/datasets/ 读取已保存的数据。
-
-⚠️ 【重要】为避免读取大量原始数据导致性能问题，**必须指定 time_range 参数**限制时间范围。
-
-使用场景：
-- 查看工具返回的完整数据
-- 按时间范围过滤数据
-- 选择特定字段
-- 对数据进行高级过滤
-
-【参数使用说明】
-1. 先查看字段（推荐）：
-   - read_data_registry(data_id="xxx", list_fields=true)  # 查看可用字段和**时间范围**
-   - list_fields=true 时不需要 time_range，会自动返回数据的时间范围信息
-
-2. 读取数据（必须指定时间范围）：
-   - read_data_registry(data_id="xxx", time_range="2024-01-01,2024-01-31", fields=["temperature", "humidity"])
-   - ⚠️ 不指定 time_range 可能读取数万条记录，严重影响性能
-
-时间过滤示例：
-- read_data_registry(data_id="weather_001", time_range="2024-01-01,2024-01-31")  # 指定月份
-- read_data_registry(data_id="weather_001", time_range="2024-01-01,")  # 从某日期开始
-- read_data_registry(data_id="weather_001", time_range=",2024-01-31")  # 到某日期结束
-
-组合使用：
-- read_data_registry(data_id="weather_001", time_range="2024-01-01,2024-01-31", fields=["temperature", "humidity"])
-
-注意：
-- time_range 格式：开始日期,结束日期（逗号分隔，任一可省略）
-- 时间字段会自动识别（timestamp, time, datetime, date 等）
-- list_fields=true 时会返回数据的完整时间范围，便于您设置 time_range 参数
-- 如果 fields 参数中的字段名不存在，工具会返回字段不匹配错误及可用字段列表
-""",
+            description=(
+                "读取DataRegistry中已保存的数据。先用list_fields=true查看字段和时间范围；"
+                "正式读取必须传time_range以避免加载大量原始数据。支持fields字段筛选和jq_filter高级过滤。"
+            ),
             category=ToolCategory.QUERY,
             version="2.1.0",
             requires_context=True
@@ -79,20 +50,20 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "list_fields": {
                         "type": "boolean",
-                        "description": "设置为 true 时，只返回可用字段列表和数据的时间范围（不返回数据），用于确认字段名和时间范围后再使用 time_range 参数。注意：list_fields=true 时不需要 time_range 参数"
+                        "description": "只返回字段列表和时间范围；此时不需要time_range"
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "【必填】时间范围过滤，格式：开始日期,结束日期（如 '2024-01-01,2024-01-31'）。任一可省略（'2024-01-01,' 从某日期开始；',2024-01-31' 到某日期结束）。支持格式：YYYY-MM-DD, YYYY-MM-DD HH:MM:SS。⚠️ 必须指定此参数以避免读取大量数据"
+                        "description": "读取数据必填，格式'开始,结束'；任一端可省略，支持日期或日期时间"
                     },
                     "fields": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "选择特定字段（如 ['temperature', 'humidity']）。⚠️ 务必先用 list_fields=true 确认字段名，避免因字段名错误导致查询结果为空"
+                        "description": "选择特定字段；建议先用list_fields确认字段名"
                     },
                     "jq_filter": {
                         "type": "string",
-                        "description": "高级：jq 过滤表达式。注意：数据是数组格式，需要用 .[] 迭代或用 map/select。示例：'.[] | select(.temperature > 30)' 或 'map(select(.measurements.PM10 == null))'。注意：jq_filter 在 time_range 和 fields 之后应用"
+                        "description": "高级jq过滤；数组数据需使用.[]或map/select"
                     }
                 },
                 "anyOf": [

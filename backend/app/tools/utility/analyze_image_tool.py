@@ -46,39 +46,10 @@ class AnalyzeImageTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="analyze_image",
-            description="""分析图片内容（使用通义千问 VL 模型）
-
-支持输入格式：
-- 本地文件路径：支持任意绝对路径或相对路径（无路径限制）
-  - 绝对路径：D:/images/photo.png, /tmp/screenshot.png
-  - 相对路径：./image.png, uploads/photo.jpg（自动拼接工作目录）
-- HTTP URL：http://localhost:8000/api/upload/xxx（用户上传的图片，自动下载）
-- HTTP URL：http://localhost:8000/api/image/xxx（系统生成的图表，自动下载）
-
-使用场景：
-- OCR 文字识别：提取图片中的文字
-- 图片描述：生成图片的详细描述
-- 图表分析：提取数据图表中的信息
-- 场景理解：理解图片中的场景和对象
-
-操作类型：
-- ocr: 文字识别（提取图片中的所有文字）
-- describe: 图片描述（详细描述图片内容）
-- chart: 图表分析（提取图表中的数据和趋势）
-- analyze: 综合分析（默认，包含以上所有内容）
-
-示例：
-- analyze_image(path="D:/images/chart.png", operation="ocr")  # 绝对路径
-- analyze_image(path="/tmp/screenshot.png", operation="describe")  # 系统路径
-- analyze_image(path="http://localhost:8000/api/image/xxx", operation="chart")  # URL
-- analyze_image(path="./photo.jpg", operation="analyze")  # 相对路径
-
-配置：
-- 使用通义千问 VL 模型（qwen-vl-max-latest）
-- 支持的格式：PNG、JPG、JPEG、GIF、BMP、WEBP
-- 图片大小限制：5MB
-- 超时时间：240秒
-""",
+            description=(
+                "分析图片内容，支持本地路径和HTTP URL。"
+                "operation可选ocr/describe/chart/analyze；支持PNG/JPG/GIF/BMP/WEBP，大小上限5MB。"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False
@@ -377,16 +348,16 @@ class AnalyzeImageTool(LLMTool):
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "图片文件路径（支持任意本地路径或HTTP URL，无路径限制）。例如：D:/images/photo.png, /tmp/screenshot.png, ./image.png, http://localhost:8000/api/image/xxx"
+                        "description": "图片路径或HTTP URL"
                     },
                     "operation": {
                         "type": "string",
                         "enum": ["ocr", "describe", "chart", "analyze"],
-                        "description": "操作类型：ocr=文字识别, describe=图片描述, chart=图表分析, analyze=综合分析（默认）"
+                        "description": "操作类型：ocr/describe/chart/analyze"
                     },
                     "prompt": {
                         "type": "string",
-                        "description": "自定义分析提示词（可选，不指定则使用默认提示词）"
+                        "description": "自定义分析提示词，可选"
                     }
                 },
                 "required": ["path"]

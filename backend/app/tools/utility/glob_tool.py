@@ -45,42 +45,10 @@ class GlobTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="search_files",
-            description="""搜索文件名（glob 模式匹配）
-
-功能：
-- 使用 glob 模式快速查找文件
-- 支持通配符：* (任意字符) / ** (递归目录) / ? (单个字符) / [] (字符集)
-- 按修改时间排序（最新优先）
-- 自动跳过常见忽略目录（__pycache__, node_modules, .git 等）
-
-使用场景：
-- 查找特定扩展名的文件
-- 递归搜索目录树
-- 查找匹配命名模式的文件
-
-示例：
-- search_files(pattern="*.py", path="backend/app")              # 查找所有 Python 文件
-- search_files(pattern="**/*.json", path="backend")             # 递归查找所有 JSON 文件
-- search_files(pattern="test_*.py", path="backend/tests")       # 查找测试文件
-- search_files(pattern="*config*", path="backend")              # 查找包含 config 的文件
-- search_files(pattern="*.{py,js,ts}", path="src")              # 查找多种扩展名（需展开）
-
-参数说明：
-- pattern: glob 模式（必填）
-  * "*" 匹配任意字符（不含路径分隔符）
-  * "**" 递归匹配所有子目录
-  * "?" 匹配单个字符
-  * "[abc]" 匹配字符集中的任意字符
-- path: 搜索路径（默认当前工作目录）
-- files_only: 是否只返回文件（默认 True，排除目录）
-- limit: 最多返回几个结果（默认 100）
-- sort_by_time: 是否按修改时间排序（默认 True，最新优先）
-
-注意：
-- 工作目录限制：D:/溯源/ 及其子目录
-- 自动跳过 __pycache__、node_modules、.git 等目录
-- 大型目录树搜索可能较慢，建议使用 limit 限制结果数量
-""",
+            description=(
+                "按glob模式搜索文件名，支持*、**、?、[]，自动跳过.git/node_modules/__pycache__等目录。"
+                "大型目录建议设置limit。"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False
@@ -275,41 +243,22 @@ class GlobTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "search_files",
-            "description": """搜索文件名（glob 模式匹配）
-
-使用 glob 模式快速查找文件。
-支持通配符：* / ** / ? / []
-
-使用场景：
-- 查找特定扩展名的文件
-- 递归搜索目录树
-- 查找匹配命名模式的文件
-
-注意：
-- 自动跳过 __pycache__、node_modules、.git 等
-- 工作目录限制：D:/溯源/ 及其子目录
-""",
+            "description": "按glob模式搜索文件名，支持*、**、?、[]；自动跳过.git/node_modules/__pycache__等目录。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": (
-                            "glob 模式。示例：\n"
-                            "- \"*.py\" 查找所有 Python 文件\n"
-                            "- \"**/*.json\" 递归查找所有 JSON 文件\n"
-                            "- \"test_*.py\" 查找测试文件\n"
-                            "- \"*config*\" 查找包含 config 的文件"
-                        )
+                        "description": "glob模式，如*.py、**/*.json、test_*.py"
                     },
                     "path": {
                         "type": "string",
-                        "description": "搜索路径（文件或目录）。示例：\"backend/app\"、\"D:/溯源/backend\"",
+                        "description": "搜索路径，文件或目录",
                         "default": "."
                     },
                     "files_only": {
                         "type": "boolean",
-                        "description": "是否只返回文件（排除目录）。默认 True",
+                        "description": "是否只返回文件，默认True",
                         "default": True
                     },
                     "limit": {
@@ -319,7 +268,7 @@ class GlobTool(LLMTool):
                     },
                     "sort_by_time": {
                         "type": "boolean",
-                        "description": "是否按修改时间排序（最新优先）。默认 True",
+                        "description": "是否按修改时间排序，默认True",
                         "default": True
                     }
                 },

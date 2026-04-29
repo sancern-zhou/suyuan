@@ -53,93 +53,27 @@ class ExecuteSQLQueryTool(LLMTool):
 
         function_schema = {
             "name": "execute_sql_query",
-            "description": """
-通用SQL执行工具，直接执行SQL查询语句访问SQL Server历史数据库。
-
-**两种使用方式（二选一）**：
-1. 查看表结构：execute_sql_query(describe_table='表名')
-   - 动态从数据库获取表结构信息
-   - 返回字段名、数据类型、长度、是否可空等信息
-
-2. 执行SQL查询：execute_sql_query(sql='SQL语句')
-   - 执行SELECT查询获取数据
-   - 支持复杂查询、JOIN、聚合等操作
-
-**describe_table 参数说明**：
-- 输入目标表名（如 'qc_history', 'working_orders'）
-- 工具会动态查询数据库获取该表的结构信息
-- 不需要提供 sql 参数
-
-**sql 参数说明**：
-- 输入完整的SQL查询语句
-- 不需要提供 describe_table 参数
-
-**database 参数说明**（可选）：
-- 指定查询的数据库名称
-- 'XcAiDb'（默认）：空气质量发布历史数据
-- 'AirPollutionAnalysis'：污染分析数据（包含qc_history、quality_control_records等质控表）
-
-**⚠️ SQL Server语法规则**
-- ❌ WHERE province_name = '广东' → 必须使用N前缀：N'广东'
-- ❌ SELECT ... LIMIT 10 → SQL Server使用TOP而非LIMIT
-
-**可用数据表**：
-【XcAiDb数据库（默认）】
-168城市统计（城市名不带'市'后缀，省份名不带'省'后缀）：
-- city_168_statistics_new_standard：168城市空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。数据周期2024-01至今）
-
-  **stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)
-
-- city_168_statistics_old_standard：168城市空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整。stat_type字段说明同上）
-
-省级统计（省份名不带'省'后缀）：
-- province_statistics_new_standard：省级空气质量统计（新标准 HJ 633-2026，限值：PM10=60, PM2.5=30。包含预计算的排名字段：comprehensive_index_rank、comprehensive_index_rank_new_limit_old_algo。数据周期2024-01至今）
-
-  **stat_type字段说明**：ytd_to_month(年初到某月累计，如stat_date='2026-03'表示1-3月累计)、month_current(当月累计，如stat_date='2026-04'表示4月当月)、year_to_date(年初至今，如stat_date='2026'表示1月至今)、month_complete(完整月，如stat_date='2026-03'表示3月完整月)
-
-- province_statistics_old_standard：省级空气质量统计（旧标准 HJ 633-2013，限值：PM10=70, PM2.5=35。包含预计算的排名字段：comprehensive_index_rank_new_algo、comprehensive_index_rank_old_algo。使用final_output修约规则：PM2.5/CO保留1位，其他取整。stat_type字段说明同上）
-
-噪声达标率数据：
-- noise_city_compliance_monthly：城市噪声昼夜达标率月汇总表。包含 province、city_name、period_month、station_total、day_compliance_rate、night_compliance_rate、night_status、is_province_total 等字段；当前已导入安徽省2025年11月16地市及全省汇总数据。night_status 按夜间评价达标率是否达到100%分为“达标/未达标/无有效数据”。
-- noise_city_compliance_daily：城市噪声昼夜达标率逐日明细表。包含 city_name、data_date、night_compliant_station_days、night_valid_station_days、night_compliance_rate、night_status 以及1类/2类/3类/4a类站点有效天数字段；可用于展示各城市每日夜间达标和未达标情况。
-
-原始数据表：
-- CityDayAQIPublishHistory：城市日空气质量发布历史（24小时均值）
-- CityAQIPublishHistory：城市小时空气质量发布历史
-- CurrentAirQuality：当前空气质量
-
-【AirPollutionAnalysis数据库】
-- qc_history：自动质控历史数据表（13551条记录，包含站点代码、任务组、任务名称、结果、目标值、响应值等，支持StationName字段查询）
-- quality_control_records：质控例行检查记录
-- working_orders：运维工单
-- analysis_history：分析历史记录
-- BSD_STATION：站点信息表（包含站点ID、名称、代码、区域ID、经纬度、地址、状态等，支持按区域查询站点列表）
-
-**安全限制**：
-- 只允许SELECT查询
-- 禁止DROP/DELETE/INSERT/UPDATE等操作
-- 表名白名单验证
-- 最大返回100条记录
-
-**使用流程**：
-1. 先查看表结构：execute_sql_query(describe_table='qc_history', database='AirPollutionAnalysis')
-2. 根据表结构和数据样例编写SQL（注意中文字符串使用 N 前缀）
-3. 执行查询：execute_sql_query(sql='SELECT ...', database='AirPollutionAnalysis')
-            """.strip(),
+            "description": (
+                "通用SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
+                "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的表清单。"
+                "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回100条。"
+                "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
+                "database默认为XcAiDb；质控/工单/站点基础信息通常用AirPollutionAnalysis。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "description": "查看表结构（与sql参数二选一）。输入目标表名，如 'qc_history' 或 'working_orders'。工具会动态从数据库获取该表的结构信息，包括字段名、数据类型、长度、是否可空等。"
+                        "description": "查看表结构（与sql二选一），输入目标表名"
                     },
                     "sql": {
                         "type": "string",
-                        "description": "SQL查询语句（与describe_table参数二选一）。输入完整的SQL SELECT查询语句。"
+                        "description": "SQL SELECT查询语句（与describe_table二选一）"
                     },
                     "database": {
                         "type": "string",
-                        "description": "数据库名称（可选）。默认为'XcAiDb'，查询质控数据时使用'AirPollutionAnalysis'。",
+                        "description": "数据库名称，默认XcAiDb",
                         "enum": ["XcAiDb", "AirPollutionAnalysis"]
                     },
                     "limit": {

@@ -45,38 +45,10 @@ class ListDirectoryTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="list_directory",
-            description="""列出目录内容
-
-功能：
-- 列出指定目录中的文件和子目录
-- 显示文件大小、修改时间、类型（文件/目录）
-- 支持递归列出所有子目录
-- 支持文件类型过滤
-
-使用场景：
-- 查看目录结构
-- 检查文件是否存在
-- 获取文件元信息（大小、修改时间）
-- 浏览项目目录
-
-示例：
-- list_directory(path="backend/app")                    # 列出目录内容
-- list_directory(path="backend/app", recursive=True)    # 递归列出所有子目录
-- list_directory(path="backend", show_hidden=False)     # 不显示隐藏文件
-- list_directory(path="data", sort_by="size")           # 按文件大小排序
-
-参数说明：
-- path: 目录路径（必填）
-- recursive: 是否递归列出子目录（默认 False）
-- show_hidden: 是否显示隐藏文件（默认 False）
-- sort_by: 排序方式（name/size/time，默认 name）
-- limit: 最多返回几个条目（默认 1000）
-
-注意：
-- 工作目录限制：D:/溯源/ 及其子目录
-- 自动跳过 __pycache__、node_modules、.git 等目录
-- 递归模式可能较慢，建议使用 limit 限制
-""",
+            description=(
+                "列出目录内容，返回文件/目录、大小和修改时间；支持递归、隐藏文件、排序和limit。"
+                "自动跳过.git/node_modules/__pycache__等目录。"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False
@@ -409,45 +381,33 @@ class ListDirectoryTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "list_directory",
-            "description": """列出目录内容
-
-列出指定目录中的文件和子目录，显示文件大小、修改时间等信息。
-
-使用场景：
-- 查看目录结构
-- 检查文件是否存在
-- 获取文件元信息
-
-注意：
-- 自动跳过 __pycache__、node_modules、.git 等
-- 工作目录限制：D:/溯源/ 及其子目录
-""",
+            "description": "列出目录内容，返回文件/目录、大小和修改时间；自动跳过.git/node_modules/__pycache__等目录。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "目录路径。示例：\"backend/app\"、\"D:/溯源/backend\""
+                        "description": "目录路径"
                     },
                     "recursive": {
                         "type": "boolean",
-                        "description": "是否递归列出所有子目录（默认 False）",
+                        "description": "是否递归，默认False",
                         "default": False
                     },
                     "show_hidden": {
                         "type": "boolean",
-                        "description": "是否显示隐藏文件（以 . 开头的文件，默认 False）",
+                        "description": "是否显示隐藏文件，默认False",
                         "default": False
                     },
                     "sort_by": {
                         "type": "string",
                         "enum": ["name", "size", "time"],
-                        "description": "排序方式：name（名称）/ size（大小）/ time（修改时间），默认 name",
+                        "description": "排序方式：name/size/time，默认name",
                         "default": "name"
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "最多返回几个条目（默认 1000）",
+                        "description": "最多返回条目数，默认1000",
                         "default": 1000
                     }
                 },

@@ -77,98 +77,13 @@ class ReadFileTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="read_file",
-            description="""读取文件内容（统一入口，支持分页、智能大小限制、多格式）
-
-文本文件特性：
-- 支持分页读取：offset（起始行号）、limit（读取行数）
-- 智能大小限制：默认100KB，超过自动截断并提示
-- 大文件处理：自动提示使用 grep 搜索或分页读取
-
-其他格式支持：
-- 图片文件：自动调用 Vision API 分析图片内容（可关闭）
-- PDF 文件：智能PDF解析（自动检测文本型/扫描型，支持OCR、表格、图片提取）
-- DOCX 文件：读取Word文档（支持PDF预览、表格、图片提取）
-- Word XML：智能分层读取（根据文件大小自动选择模式）
-- Excel 文件：提示使用 execute_python 工具读取（支持数据分析和图表提取）
-- 目录列表：查看目录中的文件和子目录
-
-分页使用场景：
-- 大文件分批读取：read_file(path="large.log", offset=1000, limit=500)
-- 从指定行开始：read_file(path="data.txt", offset=500)
-- 只读取前N行：read_file(path="config.py", limit=100)
-
-大文件处理策略：
-当文件超过100KB时：
-1. 自动返回前1000行
-2. 提示总行数和文件大小
-3. 建议使用 offset/limit 分页读取
-4. 或先用 grep 搜索定位目标行号
-
-PDF/DOCX 预览功能：
-- PDF/DOCX 文件自动生成 PDF 预览（可在前端查看）
-- PDF：直接使用原文件（性能最优）
-- DOCX：通过 LibreOffice 转换为 PDF
-- 预览失败不影响文件内容读取
-
-Excel 文件处理：
-- Excel 文件需要使用 execute_python 工具读取
-- read_file 会自动识别并提示使用 execute_python
-- execute_python 提供以下函数：
-  * read_excel(file_path): 读取 Excel 数据和结构
-  * analyze_excel_template(file_path): 分析模板和图表
-  * create_excel_report(data, config, output_name): 生成报告
-
-PDF 智能解析：
-- 自动检测PDF类型（文本型/扫描型）
-- 文本型PDF：直接提取文本和表格
-- 扫描型PDF：自动使用OCR识别
-- 默认提取表格（可通过参数控制）
-
-示例：
-- read_file(path="data.txt")                              # 读取文本（<100KB全量，>100KB前1000行）
-- read_file(path="large.log", offset=2000, limit=500)     # 分页读取：从第2000行开始读500行
-- read_file(path="chart.png")                             # 图片文件（自动分析）
-- read_file(path="report.pdf")                            # PDF文件（自动检测模式，提取表格）
-- read_file(path="report.pdf", pages="1-5")               # PDF文件（指定页面）
-- read_file(path="report.pdf", extract_images=True)      # PDF文件（提取图片）
-- read_file(path="document.docx")                         # DOCX文件（自动生成预览）
-- read_file(path="data.xlsx")                             # Excel文件（提示使用execute_python）
-- read_file(path="doc.xml", raw_mode=True)                # Word XML（完整 XML）
-- read_file(path="D:/work_dir")                           # 查看目录内容
-
-参数说明：
-- path: 文件或目录路径（必填）
-- offset: 起始行号（从0开始，默认0）
-- limit: 读取行数（默认1000，设置为None则不限制）
-- max_size: 最大文件大小（字节，默认100KB=102400）
-- encoding: 文本文件编码（默认 utf-8）
-- pages: PDF/DOCX 页面范围（如 "1-5", "3"）
-- auto_analyze: 是否自动分析图片（默认 True）
-- analysis_type: 图片分析类型（ocr/describe/chart/analyze）
-- extract_tables: PDF是否提取表格（默认 True）
-- extract_images: PDF是否提取图片（默认 False）
-- enable_preview: PDF/DOCX是否生成预览（默认 True）
-- raw_mode: 是否返回原始内容（Word XML 专用）
-- include_formatting: 是否保留格式信息（Word XML 专用）
-- max_paragraphs: 最大段落数（Word XML/DOCX 专用）
-
-限制：
-- 图片大小限制：5MB
-- PDF 大小限制：50MB
-- DOCX 大小限制：20MB
-- Excel 大小限制：50MB
-- PDF 页面限制：最多 20 页
-- 工作目录限制：D:/溯源/ 及其子目录
-- 文本文件默认大小限制：100KB
-
-注意：
-- 文件超过100KB时会自动截断并提示分页读取
-- 建议先用 grep 搜索定位行号，再用 offset/limit 精确读取
-- 图片文件会自动进行内容分析
-- PDF/DOCX 自动生成预览，可在前端查看
-- Excel 文件请使用 execute_python 工具读取
-- 不返回 base64 数据（避免 token 浪费）
-""",
+            description=(
+                "读取文件或目录内容，支持文本分页、图片分析、PDF、DOCX、Word XML、Markdown、Notebook。"
+                "PDF/DOCX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
+                "Excel文件不由 read_file 读取，需使用 execute_python。"
+                "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
+                "不返回base64，避免浪费上下文。"
+            ),
             category=ToolCategory.QUERY,
             version="4.0.0",
             requires_context=False
@@ -1263,156 +1178,80 @@ PDF 智能解析：
         """获取 Function Calling Schema"""
         return {
             "name": "read_file",
-            "description": """读取文件内容（统一入口，支持分页、智能大小限制、多格式）
-
-文本文件特性：
-- 支持分页读取：offset（起始行号）、limit（读取行数）
-- 智能大小限制：默认100KB，超过自动截断并提示
-- 大文件处理：自动提示使用 grep 搜索或分页读取
-
-其他格式支持：
-- 图片文件：自动调用 Vision API 分析图片内容（可关闭）
-- PDF 文件：智能PDF解析（自动检测文本型/扫描型，支持OCR、表格、图片提取）
-- DOCX 文件：读取Word文档（支持PDF预览、表格、图片提取）
-- Word XML：智能分层读取（根据文件大小自动选择模式）
-- 目录列表：查看目录中的文件和子目录
-
-分页使用场景：
-- 大文件分批读取：read_file(path="large.log", offset=1000, limit=500)
-- 从指定行开始：read_file(path="data.txt", offset=500)
-- 只读取前N行：read_file(path="config.py", limit=100)
-
-大文件处理策略：
-当文件超过100KB时：
-1. 自动返回前1000行
-2. 提示总行数和文件大小
-3. 建议使用 offset/limit 分页读取
-4. 或先用 grep 搜索定位目标行号
-
-PDF/DOCX 预览功能：
-- PDF/DOCX 文件自动生成 PDF 预览（可在前端查看）
-- PDF：直接使用原文件（性能最优）
-- DOCX：通过 LibreOffice 转换为 PDF
-- 预览失败不影响文件内容读取
-
-PDF 智能解析：
-- 自动检测PDF类型（文本型/扫描型）
-- 文本型PDF：直接提取文本和表格
-- 扫描型PDF：自动使用OCR识别
-- 默认提取表格（可通过参数控制）
-
-示例：
-- read_file(path="data.txt")                              # 读取文本（<100KB全量，>100KB前1000行）
-- read_file(path="large.log", offset=2000, limit=500)     # 分页读取：从第2000行开始读500行
-- read_file(path="chart.png")                             # 图片文件（自动分析）
-- read_file(path="report.pdf")                            # PDF文件（自动检测模式，提取表格）
-- read_file(path="report.pdf", pages="1-5")               # PDF文件（指定页面）
-- read_file(path="report.pdf", extract_images=True)      # PDF文件（提取图片）
-- read_file(path="document.docx")                         # DOCX文件（自动生成预览）
-- read_file(path="doc.xml", raw_mode=True)                # Word XML（完整 XML）
-- read_file(path="D:/work_dir")                           # 查看目录内容
-
-参数说明：
-- path: 文件或目录路径（必填）
-- offset: 起始行号（从0开始，默认0）
-- limit: 读取行数（默认1000，设置为None则不限制）
-- max_size: 最大文件大小（字节，默认100KB=102400）
-- encoding: 文本文件编码（默认 utf-8）
-- pages: PDF/DOCX 页面范围（如 "1-5", "3"）
-- auto_analyze: 是否自动分析图片（默认 True）
-- analysis_type: 图片分析类型（ocr/describe/chart/analyze）
-- extract_tables: PDF是否提取表格（默认 True）
-- extract_images: PDF是否提取图片（默认 False）
-- enable_preview: PDF/DOCX是否生成预览（默认 True）
-- raw_mode: 是否返回原始内容（Word XML 专用）
-- include_formatting: 是否保留格式信息（Word XML 专用）
-- max_paragraphs: 最大段落数（Word XML/DOCX 专用）
-
-限制：
-- 图片大小限制：5MB
-- PDF 大小限制：50MB
-- DOCX 大小限制：20MB
-- PDF 页面限制：最多 20 页
-- 工作目录限制：D:/溯源/ 及其子目录
-- 文本文件默认大小限制：100KB
-
-注意：
-- 文件超过100KB时会自动截断并提示分页读取
-- 建议先用 grep 搜索定位行号，再用 offset/limit 精确读取
-- 图片文件会自动进行内容分析
-- PDF/DOCX 自动生成预览，可在前端查看
-- 不返回 base64 数据（避免 token 浪费）
-""",
+            "description": (
+                "读取文件/目录；支持文本分页、图片、PDF、DOCX、Word XML、Markdown、Notebook。"
+                "PDF/DOCX可预览；Excel用execute_python；大文本用grep或分页；不返回base64。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "文件路径（绝对路径或相对路径）。示例：'D:/work_dir/data.txt' 或 'data/chart.png'"
+                        "description": "文件或目录路径"
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "起始行号（从0开始，默认0）。用于分页读取大文件，例如 offset=1000 表示从第1001行开始读取。",
+                        "description": "起始行号，从0开始",
                         "default": 0
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "读取行数（默认1000）。设置为None则不限制。用于控制单次读取的行数，避免读取过多内容。",
+                        "description": "分页读取行数，默认1000",
                         "default": 1000
                     },
                     "max_size": {
                         "type": "integer",
-                        "description": "最大文件大小（字节，默认102400即100KB）。超过此大小的文件会自动截断并提示分页读取。",
+                        "description": "最大读取字节，默认100KB",
                         "default": 102400
                     },
                     "encoding": {
                         "type": "string",
-                        "description": "文本文件编码（默认 utf-8），对于中文文件可尝试 'gbk'",
+                        "description": "文本编码，默认utf-8",
                         "default": "utf-8"
                     },
                     "auto_analyze": {
                         "type": "boolean",
-                        "description": "是否自动分析图片（默认 True）。设置为 False 则只读取图片数据，不调用 Vision API",
+                        "description": "是否自动分析图片",
                         "default": True
                     },
                     "analysis_type": {
                         "type": "string",
                         "enum": ["ocr", "describe", "chart", "analyze"],
-                        "description": "图片分析类型（仅当 auto_analyze=True 时有效）：ocr=文字识别, describe=图片描述, chart=图表分析, analyze=综合分析（默认）",
+                        "description": "图片分析类型",
                         "default": "analyze"
                     },
                     "pages": {
                         "type": "string",
-                        "description": "PDF/DOCX 页面范围。格式：'1-5'（范围）或 '3'（单页）。最多支持 20 页。"
+                        "description": "PDF/DOCX页码范围，如1-5或3"
                     },
                     "extract_tables": {
                         "type": "boolean",
-                        "description": "PDF是否提取表格（默认 True）。设置为 False 则只提取文本内容。",
+                        "description": "PDF是否提取表格",
                         "default": True
                     },
                     "extract_images": {
                         "type": "boolean",
-                        "description": "PDF是否提取图片（默认 False）。设置为 True 则提取PDF中的图片信息。",
+                        "description": "PDF是否提取图片",
                         "default": False
                     },
                     "enable_preview": {
                         "type": "boolean",
-                        "description": "PDF/DOCX是否生成预览（默认 True）。设置为 False 则不生成PDF预览。",
+                        "description": "PDF/DOCX是否生成前端预览",
                         "default": True
                     },
                     "raw_mode": {
                         "type": "boolean",
-                        "description": "是否返回原始内容（Word XML 专用，默认 False）。设置为 True 时返回完整原始 XML，用于精确编辑格式。",
+                        "description": "Word XML是否返回原始内容",
                         "default": False
                     },
                     "include_formatting": {
                         "type": "boolean",
-                        "description": "是否保留格式信息（Word XML 专用，默认 False）。设置为 True 时保留标题、表格等结构信息。",
+                        "description": "Word XML是否保留格式信息",
                         "default": False
                     },
                     "max_paragraphs": {
                         "type": "integer",
-                        "description": "最大段落数（Word XML/DOCX 专用，默认不限制）。用于进一步控制 token 消耗，例如设置为 50 只读取前 50 个段落。"
+                        "description": "最大段落数"
                     }
                 },
                 "required": ["path"]

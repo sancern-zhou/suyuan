@@ -2151,72 +2151,14 @@ class QueryNewStandardReportTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "query_new_standard_report",
-            "description": """
-查询基于HJ 633-2026新标准的空气质量统计报表。
-
-【核心功能】
-- 新标准污染物浓度限值（PM2.5断点60μg/m³，PM10断点120μg/m³）
-- 综合指数计算（默认：PM2.5权重3，NO2权重2，O3权重2，其他权重1；可选：所有权重均为1）
-- 超标天数和达标率统计（基于单项质量指数 > 1）
-- 六参数统计浓度（SO2_P98, NO2_P98, PM10_P95, PM2_5_P95, CO_P95, O3_8h_P90）
-- 首要污染物分析
-
-【新标准特点】
-- PM2.5断点：IAQI=100时60μg/m³（旧标准75）
-- PM10断点：IAQI=100时120μg/m³（旧标准150）
-- 超标判断：基于单项质量指数 > 1
-
-【返回数据说明】
-- result字段：⭐ 统计汇总结果（综合指数、超标天数、首要污染物比例等）
-  - **综合指标**：composite_index（综合指数）, exceed_days（超标天数）, valid_days（有效天数）, exceed_rate（超标率%）, compliance_rate（达标率%）, total_days（总天数）
-  - **六参数统计**：SO2, SO2_P98, NO2, NO2_P98, PM10, PM10_P95, PM2_5, PM2_5_P95, CO_P95, O3_8h_P90
-  - **加权单项质量指数**：single_indexes.SO2/NO2/PM10/CO/PM2_5/O3_8h
-  - **首要污染物统计**：primary_pollutant_days（各污染物作为首要污染物的天数）, primary_pollutant_ratio（首要污染物比例%）, total_primary_days（总首要污染物天数）, PM2_5_primary_dates（PM2.5作为首要污染物的日期列表）
-  - **超标统计**：exceed_days_by_pollutant（各污染物超标天数）, exceed_rate_by_pollutant（各污染物超标率%）, primary_pollutant_exceed_days（首要污染物超标天，既是首要污染物又超标的天数）
-  - 单城市查询：直接返回城市统计数据
-  - 多城市查询：返回各城市统计数据 + province_wide（全省汇总统计）+ regional_stats（区域汇总统计）
-  - ⚠️ 重要：result 字段包含完整的统计汇总结果，**直接用于报告生成和分析**
-- data_id字段：完整日报数据（基于HJ 633-2026新标准计算的每日监测数据）
-  - ⚠️ 重要：data_id 只包含每日监测数据（timestamp、AQI、measurements 等），**不包含**统计汇总指标
-  - ❌ 不要从 data_id 读取 exceed_days_by_pollutant、primary_pollutant_exceed_days 等统计字段（这些字段只在 result 中）
-
-【全省汇总统计规则】（多城市查询时）
-- **均值类指标**（各城市均值）：composite_index, single_indexes.*, SO2, NO2, PM10, PM2_5, CO_P95, O3_8h_P90等
-- **累加类指标**（各城市累加）：exceed_days, valid_days, exceed_days_by_pollutant.*, primary_pollutant_days.*, primary_pollutant_exceed_days.*, total_primary_days
-- **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
-
-**重要**：全省汇总结果中包含 `_indicator_types` 字段，明确标注每个指标是"平均值"还是"累计值"，避免误解。
-
-【区域汇总统计规则】（多城市查询时）
-- **区域划分**：
-  - 珠三角（9市）：广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆
-  - 粤东（4市）：汕头、汕尾、潮州、揭阳
-  - 粤西（3市）：湛江、茂名、阳江
-  - 粤北（5市）：韶关、河源、梅州、清远、云浮
-  - 非珠三角（12市）：粤东+粤西+粤北
-- **均值类指标**（区域内各城市均值）：composite_index, single_indexes.*, SO2, NO2, PM10, PM2_5, CO_P95, O3_8h_P90等
-- **累加类指标**（区域内各城市累加）：exceed_days, valid_days, exceed_days_by_pollutant.*, primary_pollutant_days.*, primary_pollutant_exceed_days.*, total_primary_days
-- **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
-- **返回格式**：regional_stats 字段包含各区域的统计数据，key为区域名称（"珠三角"、"粤东"、"粤西"、"粤北"、"非珠三角"），value为该区域的统计汇总
-
-**重要**：data_id中的日报数据已用新标准计算结果覆盖原始字段，Agent可直接使用：
-- AQI：新标准空气质量指数（覆盖原始值）
-- primary_pollutant：新标准首要污染物（覆盖原始值）
-- IAQI_PM2_5、IAQI_PM10、IAQI_SO2、IAQI_NO2、IAQI_CO、IAQI_O3_8h：新标准分指数（覆盖原始值）
-- single_index_PM2_5_new、single_index_PM10_new等：单项质量指数（新增字段）
-
-使用示例：
-- read_data_registry(data_id="xxx", fields=["timestamp", "AQI", "primary_pollutant", "IAQI_PM2_5"])
-
-【输入参数】
-- cities: 城市列表
-- start_date: 开始日期 (YYYY-MM-DD)
-- end_date: 结束日期 (YYYY-MM-DD)
-- enable_sand_deduction: 是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）
-- use_old_composite_algorithm: 是否使用旧综合指数算法（默认false，使用新算法）
-    - false（默认）: 新综合指数算法（PM2.5权重3，NO2权重2，O3权重2，其他权重1）
-    - true: 旧综合指数算法（所有污染物权重均为1）
-            """.strip(),
+            "description": (
+                "【第一优先级】查询HJ 633-2026新标准空气质量统计报表。"
+                "用于综合指数、超标天数、达标率、六参数统计浓度、首要污染物等统计结果；"
+                "不要用execute_python或手算替代。"
+                "result返回统计汇总，可直接用于分析和报告；data_id仅保存日报明细，不包含汇总指标。"
+                "默认新综合指数算法为PM2.5权重3、NO2权重2、O3权重2、其他权重1；"
+                "详细算法和返回字段需要时阅读源码。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

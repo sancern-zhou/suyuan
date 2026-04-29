@@ -78,51 +78,18 @@ class CompareStandardReportsTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "compare_standard_reports",
-            "description": """对比两个时间段基于 HJ 633-2026 新标准的空气质量统计报表。
-
-【核心功能】
-- 并发查询两个时间段的统计数据
-- 自动对比全部统计指标（综合指数、超标天数、六参数等）
-- 返回差值、变化率
-- 合并存储原始数据，支持后续 aggregate_data 分析
-
-【对比指标】
-- 综合指标：composite_index, exceed_days, exceed_rate, compliance_rate, total_days, valid_days
-- 六参数统计：SO2, NO2, PM10, PM2_5, CO, O3_8h 及其百分位数
-- 单项质量指数：single_indexes.*
-- 首要污染物统计：primary_pollutant_days.*, total_primary_days
-- 超标统计：exceed_days_by_pollutant.*
-- 首要污染物超标天：primary_pollutant_exceed_days.*（某污染物既是首要污染物又超标的天数）
-
-【返回数据说明】
-- result字段：⭐ 完整的对比结果（包含所有城市的详细对比数据）
-  - query_period: 查询时间段的统计数据
-  - comparison_period: 对比时间段的统计数据
-  - differences: 两个时间段的差值（query_period - comparison_period）
-  - change_rates: 变化率百分比（(query_period - comparison_period) / comparison_period * 100）
-  - ⚠️ 重要：result 字段包含完整的对比分析结果，**直接用于报告生成和分析，无需再读取 data_id**
-- data_id字段：系统生成的原始数据存储标识符（格式如 "air_quality_unified:v1:xxx"）
-  - 仅用于需要访问原始监测数据或进行聚合分析时使用
-  - ⚠️ 一般情况下不需要使用此字段，result 字段已包含所有对比结果
-
-【全省汇总对比】（多城市查询时）
-- 除了各城市对比外，还包含 province_wide 字段
-- province_wide 结构与单城市对比相同，但数据为全省汇总统计
-- 全省汇总统计规则同 query_new_standard_report
-
-【输入参数】
-- cities: 城市列表
-- query_period: 查询时间段 {start_date, end_date}
-- comparison_period: 对比时间段 {start_date, end_date}
-- enable_sand_deduction: 是否启用扣沙处理（默认true）
-            """.strip(),
+            "description": (
+                "【第一优先级】新标准同比/环比/双时段对比工具，基于HJ 633-2026。"
+                "返回综合指数、超标天数、达标率、六参数等统计指标的差值和变化率；不要手算。"
+                "result可直接用于报告；data_id仅用于读取原始明细或后续聚合。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市列表，如 ['广州', '深圳']"
+                        "description": "城市列表"
                     },
                     "query_period": {
                         "type": "object",
@@ -156,7 +123,7 @@ class CompareStandardReportsTool(LLMTool):
                     },
                     "enable_sand_deduction": {
                         "type": "boolean",
-                        "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据），默认true"
+                        "description": "是否启用扣沙处理，默认true"
                     }
                 },
                 "required": ["cities", "query_period", "comparison_period"]

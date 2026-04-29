@@ -265,39 +265,20 @@ class UnpackOfficeTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "unpack_office",
-            "description": """解包 Office 文件到目录，提取 XML 文件用于编辑
-
-将 DOCX/XLSX/PPTX 文件解包为 XML 文件，供后续精确编辑。
-
-使用场景：
-- 精确编辑 Office 文件（XML 级别控制）
-- 批量修改文档结构
-- 提取文档元数据
-
-示例：
-- unpack_office(path="report.docx")  # 自动创建 unpacked_report 目录（在源文件同目录）
-- unpack_office(path="data.xlsx", output_dir="temp/")
-
-解包后操作：
-- read_file(path="unpacked_report/word/document.xml")  # 读取主文档
-- edit_file(path="unpacked_report/word/document.xml", ...)  # 编辑文档
-- pack_office(input_dir="unpacked_report", output_file="report_edited.docx")  # 重新打包
-
-注意：
-- 返回的 output_dir 是相对路径（便于后续工具使用）
-- 主文档路径：{output_dir}/word/document.xml（DOCX）
-- 输出目录默认在源文件同目录下（不是项目根目录）
-""",
+            "description": (
+                "解包DOCX/XLSX/PPTX为XML目录，用于精确编辑或读取内部文件。"
+                "返回output_dir；DOCX主文档通常在{output_dir}/word/document.xml。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Office 文件路径（.docx/.xlsx/.pptx）。示例：'report.docx' 或 'D:/work/data.xlsx'"
+                        "description": "Office文件路径（docx/xlsx/pptx）"
                     },
                     "output_dir": {
                         "type": "string",
-                        "description": "输出目录路径（可选，相对路径）。默认在源文件目录创建 unpacked_<文件名> 目录。示例：'unpacked/' 或 'temp/excel/'"
+                        "description": "输出目录，可选；默认源文件目录下unpacked_<文件名>"
                     }
                 },
                 "required": ["path"]

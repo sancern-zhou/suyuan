@@ -239,30 +239,17 @@ class PackOfficeTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "pack_office",
-            "description": """打包 XML 目录为 Office 文件
-
-将编辑后的 XML 文件打包为 DOCX/XLSX/PPTX 文件。
-
-使用场景：
-- 将编辑后的 XML 重新打包为 Office 文件
-- 批量生成 Office 文档
-- 自动化文档处理流程
-
-注意：
-- 必须先使用 unpack_office 解包
-- 使用 read_file/edit_file 编辑 XML 后再打包
-- 打包前确保 XML 格式正确
-""",
+            "description": "将unpack_office输出的XML目录重新打包为DOCX/XLSX/PPTX；打包前确保XML格式正确。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "input_dir": {
                         "type": "string",
-                        "description": "XML 文件目录（unpack_office 的输出目录）。示例：'unpacked/' 或 'temp/excel/'"
+                        "description": "XML目录，通常为unpack_office的output_dir"
                     },
                     "output_file": {
                         "type": "string",
-                        "description": "输出 Office 文件路径（.docx/.xlsx/.pptx）。示例：'report_edited.docx' 或 'D:/work/data.xlsx'"
+                        "description": "输出Office文件路径（docx/xlsx/pptx）"
                     },
                     "backup": {
                         "type": "boolean",

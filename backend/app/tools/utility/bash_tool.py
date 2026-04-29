@@ -1,4 +1,4 @@
-"""
+r"""
 Bash Command Execution Tool
 
 安全地执行 Bash 命令，用于扩展 Agent 能力：
@@ -49,7 +49,7 @@ def has_unescaped_char(content: str, char: str) -> bool:
     这是核心的安全检查函数，正确处理：
     - 单引号 ('...')：完全引用，所有特殊字符都失去特殊含义
     - 双引号 ("...")：部分引用，但 $ ` 仍保持特殊含义
-    - 转义字符 (\)：转义下一个字符
+    - 转义字符 (\\)：转义下一个字符
 
     Args:
         content: 要检查的内容
@@ -902,37 +902,9 @@ class BashTool(LLMTool):
         return {
             "name": "bash",
             "description": (
-                "【工具名称：bash】执行安全的 Bash 命令（跨平台兼容，防止命令注入）。\n\n"
-                "使用场景：\n"
-                "• 文件操作：ls/dir, cat/type, grep/findstr 等\n"
-                "• 数据处理：Python 脚本、gdal、ncdump 等\n"
-                "• 气象模型：HYSPLIT、WRF 等命令行工具\n"
-                "• 系统监控：df, du, ps 等\n\n"
-                "跨平台支持：\n"
-                "• 自动转换 Unix 命令为 Windows 命令（ls→dir, cat→type, grep→findstr 等）\n"
-                "• Linux/macOS 执行原生 Unix 命令\n"
-                "• Windows 执行等价命令或 PowerShell 命令\n\n"
-                "安全限制（防止命令注入）：\n"
-                "• 工作目录限制在项目范围内\n"
-                "• 禁止Shell元字符（; | & $ ` 等）防止命令注入\n"
-                "• 禁止Shell特性（重定向>、管道|、命令替换$()）\n"
-                "• 禁止危险命令（rm -rf /、sudo 等）\n"
-                "• 默认超时 60 秒\n"
-                "• 输出限制 1MB\n\n"
-                "【重要提示】\n"
-                "• 工具名称必须是 'bash'，不要使用 execute_command、run_command 等其他名称\n"
-                "• **不能使用重定向和管道**：不能使用 > >> < | && 等Shell特性\n"
-                "  ❌ 错误：command=\"cat file.txt > output.txt\"（不能使用重定向）\n"
-                "  ❌ 错误：command=\"cat file.txt | grep test\"（不能使用管道）\n"
-                "  ✅ 正确：使用Python脚本处理文件读写\n"
-                "• **路径格式建议**：使用正斜杠（推荐）或双反斜杠，避免转义问题\n"
-                "  ✅ 推荐：command=\"dir D:/溯源/报告模板\"（正斜杠，无需转义）\n"
-                "  ✅ 可用：command=\"dir D:\\\\溯源\\\\报告模板\"（双反斜杠，需要转义）\n"
-                "  ❌ 避免：command=\"dir D:\\溯源\\报告模板\"（单反斜杠可能被JSON误解析）\n"
-                "• 命令中可以直接使用绝对路径或相对路径，无需指定 working_dir\n"
-                "• 使用 cd 命令切换目录时，不要设置 working_dir 参数\n"
-                "• 只在需要在特定目录执行命令时才使用 working_dir 参数\n\n"
-                "注意：只用于调用现有工具，不要用此工具编写复杂脚本。"
+                "执行安全命令，用于文件查看、数据处理、外部程序和系统检查。"
+                "禁止重定向、管道、命令替换和危险命令；默认超时60秒、输出1MB。"
+                "路径优先使用正斜杠；复杂脚本或文件写入优先用execute_python/write_file。"
             ),
             "parameters": {
                 "type": "object",
@@ -947,7 +919,7 @@ class BashTool(LLMTool):
                     },
                     "working_dir": {
                         "type": "string",
-                        "description": "命令执行的起始目录（可选，不指定则使用默认项目目录 D:/溯源）。【重要】\n\n**路径格式（推荐使用正斜杠，避免转义问题）**：\n- ✅ 推荐：working_dir=\"D:/溯源/data\"（正斜杠，JSON 友好）\n- ✅ 可用：working_dir=\"D:\\\\溯源\\\\data\"（双反斜杠，需要转义）\n\n**使用规则**：\n1. 默认情况下不需要填写此参数，直接在命令中使用完整路径即可\n2. working_dir 必须在项目目录范围内（D:/溯源 及其子目录）\n3. **错误示例**：working_dir=\"D:/\" （超出允许范围，会被拒绝）\n\n**示例**：\n- ✅ command=\"dir D:/溯源/报告模板\"（推荐格式，不需要 working_dir）\n- ✅ command=\"cd data && dir\"（相对路径，不需要 working_dir）\n- ❌ working_dir=\"D:/\" + command=\"dir 溯源\"（超出范围）"
+                        "description": "起始目录，可选；必须在项目目录内。默认不填，路径建议用正斜杠"
                     }
                 },
                 "required": ["command"]
