@@ -531,7 +531,7 @@ async def search_knowledge_base(
                 top_k=request.top_k,
                 score_threshold=request.score_threshold,
                 filters=request.filters,
-                use_reranker=request.use_reranker
+                use_reranker=request.use_reranker if request.use_reranker is not None else request.rerank_mode
             )
 
             # 为每个结果添加溯源链接

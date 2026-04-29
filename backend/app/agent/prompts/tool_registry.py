@@ -188,7 +188,7 @@ QUERY_TOOLS = {
     "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
 
     # === 知识库检索（预报会商场景） ===
-    "search_knowledge_base": "检索会商记录、模型参数、历史案例等知识库内容。参数: query(str), knowledge_base_ids(list, 可选, 指定会商知识库ID), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5), filters(dict, 可选, 元数据过滤), use_reranker(bool, 可选, 默认true)",
+    "search_knowledge_base": "检索会商记录、模型参数、历史案例等知识库内容。参数: query(str, 可用原问题+补充关键词), knowledge_base_ids(list, 可选, 指定会商知识库ID), top_k(int, 可选, 默认5), score_threshold(float, 可选, 默认0.5), filters(dict, 可选, 元数据过滤), reranker(str, 可选, auto/always/never, 默认auto), use_reranker(bool, 兼容旧参数)",
     "knowledge_document_reader": "读取知识库文档的chunk文本视图。适用：search_knowledge_base或knowledge_qa_workflow返回document_read_targets后，按document_id+chunk_index读取相邻chunks或全文chunks，再回答严肃知识问答。参数: knowledge_base_id(str, 必需), document_id(str, 必需), chunk_index(int, 可选, 单个命中chunk索引), chunk_indices(list[int], 可选, 多个命中chunk索引), mode(str, 可选, neighbor_chunks/all_chunks, 默认neighbor_chunks), window(int, 可选, 相邻窗口, 默认2), max_chunks(int, 可选, 返回chunk上限, 默认30)",
 
     # === 可视化工具 ===

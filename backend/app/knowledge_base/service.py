@@ -608,7 +608,7 @@ class KnowledgeBaseService:
         top_k: int = 5,
         score_threshold: float = 0.25,
         filters: Optional[Dict[str, Any]] = None,
-        use_reranker: bool = True,
+        use_reranker: bool | str = True,
         use_hybrid: bool = True,
         alpha: float = 0.7
     ) -> List[Dict[str, Any]]:
@@ -622,7 +622,7 @@ class KnowledgeBaseService:
             top_k: 返回数量
             score_threshold: 相似度阈值
             filters: 元数据过滤
-            use_reranker: 是否使用Reranker精排
+            use_reranker: 是否使用Reranker精排，支持 bool 或 auto/always/never
             use_hybrid: 是否使用混合检索（Dense+Sparse BM25）
             alpha: Dense权重（0-1），1=纯语义，0=纯关键词
 
@@ -657,9 +657,12 @@ class KnowledgeBaseService:
 
         search_started_at = time.time()
 
-        # 根据是否使用重排序决定召回策略。每库召回不能过小，否则多知识库场景下
+        rerank_mode = self._normalize_rerank_mode(use_reranker)
+        recall_for_rerank = rerank_mode in {"auto", "always"}
+
+        # 根据是否可能使用重排序决定召回策略。每库召回不能过小，否则多知识库场景下
         # 相关片段很容易在粗召回阶段被截断；也不能无限放大，否则精排成本会线性增加。
-        if use_reranker:
+        if recall_for_rerank:
             recall_per_kb = min(max(top_k * 4, 8), 20)
             rerank_candidate_limit = min(max(top_k * 8, 20), 60)
         else:
@@ -674,7 +677,7 @@ class KnowledgeBaseService:
             recall_per_kb=recall_per_kb,
             rerank_candidate_limit=rerank_candidate_limit,
             use_hybrid=use_hybrid,
-            use_reranker=use_reranker,
+            use_reranker=rerank_mode,
             score_threshold=score_threshold
         )
 
@@ -718,12 +721,13 @@ class KnowledgeBaseService:
             query_preview=query[:100],
             candidate_count=len(results),
             kb_count=len(kbs),
-            use_reranker=use_reranker,
+            use_reranker=rerank_mode,
             recall_elapsed_ms=round(recall_elapsed_ms, 2)
         )
 
         # 根据是否使用重排序决定后续逻辑
-        if use_reranker and len(results) > top_k:
+        should_rerank = self._should_rerank(query, results, top_k, rerank_mode)
+        if should_rerank and len(results) > top_k:
             before_limit_count = len(results)
             results.sort(key=lambda x: x["score"], reverse=True)
             results = results[:rerank_candidate_limit]
@@ -755,6 +759,67 @@ class KnowledgeBaseService:
         )
 
         return results
+
+    def _normalize_rerank_mode(self, use_reranker: bool | str) -> str:
+        """兼容旧的 bool 参数，同时支持 auto/always/never。"""
+        if isinstance(use_reranker, bool):
+            return "always" if use_reranker else "never"
+        mode = str(use_reranker or "auto").strip().lower()
+        aliases = {
+            "true": "always",
+            "false": "never",
+            "yes": "always",
+            "no": "never",
+            "on": "always",
+            "off": "never",
+        }
+        mode = aliases.get(mode, mode)
+        return mode if mode in {"auto", "always", "never"} else "auto"
+
+    def _should_rerank(
+        self,
+        query: str,
+        results: List[Dict[str, Any]],
+        top_k: int,
+        rerank_mode: str
+    ) -> bool:
+        """auto 模式只在粗召回不够确定时启用 CrossEncoder。"""
+        if rerank_mode == "always":
+            return True
+        if rerank_mode == "never" or len(results) <= top_k:
+            return False
+
+        sorted_results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
+        top1 = float(sorted_results[0].get("score") or 0) if sorted_results else 0.0
+        top2 = float(sorted_results[1].get("score") or 0) if len(sorted_results) > 1 else 0.0
+        score_gap = top1 - top2
+        relative_gap = score_gap / max(abs(top1), 1e-6)
+
+        top_docs = [
+            item.get("document_id")
+            for item in sorted_results[:max(3, min(5, len(sorted_results)))]
+            if item.get("document_id")
+        ]
+        dominant_doc_hits = max((top_docs.count(doc_id) for doc_id in set(top_docs)), default=0)
+        document_concentrated = bool(top_docs) and (
+            dominant_doc_hits >= 3 or len(set(top_docs[:3])) == 1
+        )
+
+        obvious_score_gap = score_gap >= 0.08 or relative_gap >= 0.20
+        should_rerank = not (obvious_score_gap or document_concentrated)
+        logger.info(
+            "rerank_auto_decision",
+            query_preview=query[:100],
+            candidate_count=len(results),
+            top_k=top_k,
+            top1_score=top1,
+            top2_score=top2,
+            score_gap=round(score_gap, 6),
+            relative_gap=round(relative_gap, 6),
+            document_concentrated=document_concentrated,
+            should_rerank=should_rerank
+        )
+        return should_rerank
 
     def _attach_chunk_source_fields(self, results: List[Dict[str, Any]]) -> None:
         """把常用chunk元数据提升到顶层，方便API和工具直接溯源。"""
@@ -811,7 +876,10 @@ class KnowledgeBaseService:
         try:
             rerank_started_at = time.time()
             pairs = [
-                (query, c.get("embedding_text") or c.get("metadata", {}).get("embedding_text") or c.get("content", ""))
+                (
+                    query,
+                    (c.get("embedding_text") or c.get("metadata", {}).get("embedding_text") or c.get("content", ""))[:1200]
+                )
                 for c in candidates
             ]
             scores = reranker.predict(pairs)

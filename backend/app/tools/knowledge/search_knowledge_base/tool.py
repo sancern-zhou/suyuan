@@ -3,7 +3,7 @@
 
 作为ReAct Agent的工具节点，支持：
 - 多知识库联合检索（公共+个人）
-- 语义相似度搜索 + Reranker精排
+- 语义相似度搜索 + 按需Reranker精排
 - 元数据过滤
 - UDF v2.0格式输出
 """
@@ -26,7 +26,7 @@ class SearchKnowledgeBaseTool(LLMTool):
 
     作为ReAct Agent的工具节点，支持：
     - 多知识库联合检索（公共+个人）
-    - 语义相似度搜索 + Reranker精排
+    - 语义相似度搜索 + 按需Reranker精排
     - 元数据过滤
     - 混合检索（向量+关键词）
     """
@@ -58,7 +58,7 @@ class SearchKnowledgeBaseTool(LLMTool):
 - top_k: 返回结果数量（默认5）
 - score_threshold: 相似度阈值（0-1，默认0.5）
 - filters: 元数据过滤条件（可选）
-- use_reranker: 是否使用Reranker精排
+- reranker: Reranker精排模式，auto/always/never
 
 返回：
 - 相关文档片段列表，包含内容、来源、相似度分数""".strip(),
@@ -88,10 +88,15 @@ class SearchKnowledgeBaseTool(LLMTool):
                         "type": "object",
                         "description": "元数据过滤条件"
                     },
+                    "reranker": {
+                        "type": "string",
+                        "enum": ["auto", "always", "never"],
+                        "default": "auto",
+                        "description": "Reranker精排模式"
+                    },
                     "use_reranker": {
                         "type": "boolean",
-                        "default": True,
-                        "description": "是否使用Reranker精排"
+                        "description": "兼容旧参数：是否强制使用Reranker精排"
                     }
                 },
                 "required": ["query"]
@@ -133,7 +138,8 @@ class SearchKnowledgeBaseTool(LLMTool):
         top_k: int = 5,
         score_threshold: float = 0.5,
         filters: Optional[Dict[str, Any]] = None,
-        use_reranker: bool = True,
+        use_reranker: Optional[bool] = None,
+        reranker: str = "auto",
         user_id: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
@@ -146,7 +152,8 @@ class SearchKnowledgeBaseTool(LLMTool):
             top_k: 返回数量
             score_threshold: 相似度阈值
             filters: 元数据过滤
-            use_reranker: 是否使用Reranker
+            use_reranker: 兼容旧参数：是否强制使用Reranker
+            reranker: Reranker精排模式，auto/always/never
             user_id: 用户ID（用于权限检查）
 
         Returns:
@@ -156,7 +163,9 @@ class SearchKnowledgeBaseTool(LLMTool):
             "knowledge_base_search_started",
             query=query[:100],
             knowledge_base_ids=knowledge_base_ids,
-            top_k=top_k
+            top_k=top_k,
+            reranker=reranker,
+            use_reranker=use_reranker
         )
 
         # 限制召回数量，避免返回过多结果
@@ -174,7 +183,7 @@ class SearchKnowledgeBaseTool(LLMTool):
                 top_k=top_k,
                 score_threshold=score_threshold,
                 filters=filters,
-                use_reranker=use_reranker
+                use_reranker=use_reranker if use_reranker is not None else reranker
             )
 
             logger.info(
@@ -232,6 +241,7 @@ class SearchKnowledgeBaseTool(LLMTool):
                     "result_count": len(results),
                     "top_k": top_k,
                     "score_threshold": score_threshold,
+                    "reranker": reranker,
                     "use_reranker": use_reranker,
                     "preview_items": preview_items,  # 供前端/LLM直接引用的简表
                     "display_summary": display_summary,  # 简洁正文片段

@@ -12,6 +12,7 @@
 """
 
 import json
+import re
 import structlog
 import asyncio
 import time
@@ -50,7 +51,8 @@ class KnowledgeQARequest(BaseModel):
         le=1,
         description="检索结果相似度阈值（可选）"
     )
-    use_reranker: bool = Field(default=True, description="是否使用Reranker精排（默认开启以提升召回质量）")
+    use_reranker: Optional[bool] = Field(default=None, description="兼容旧参数：是否强制使用Reranker精排")
+    rerank_mode: str = Field(default="auto", description="Reranker精排模式：auto/always/never，默认auto")
 
 
 class ConversationHistoryResponse(BaseModel):
@@ -88,7 +90,7 @@ _hyde_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
 
 
 def _dedupe_search_results(results: List[dict]) -> List[dict]:
-    """合并双路召回结果，同一分块只保留得分更高的一条，并记录命中路由。"""
+    """合并召回结果，同一分块只保留得分更高的一条，并记录命中路由。"""
     deduped: "OrderedDict[tuple, dict]" = OrderedDict()
     for item in results:
         kb_info = item.get("knowledge_base", {}) or {}
@@ -136,6 +138,47 @@ def _set_cached_hyde_keywords(query: str, keywords: str) -> None:
     _hyde_cache.move_to_end(query)
     while len(_hyde_cache) > _HYDE_CACHE_MAX_SIZE:
         _hyde_cache.popitem(last=False)
+
+
+def _normalize_mode(value, default: str, allowed: set[str]) -> str:
+    if isinstance(value, bool):
+        return "always" if value else "never"
+    mode = str(value or default).strip().lower()
+    aliases = {
+        "true": "always",
+        "false": "never",
+        "yes": "always",
+        "no": "never",
+        "on": "always",
+        "off": "never",
+    }
+    mode = aliases.get(mode, mode)
+    return mode if mode in allowed else default
+
+
+def _is_precise_knowledge_query(query: str) -> bool:
+    """标准号、文件号、英文缩写等精确查询优先走原始 hybrid recall。"""
+    patterns = [
+        r"\b(HJ|GB|GB/T|HJ/T|DB\d*|ISO|IEC)\s*[\dA-Z]+(?:[-—]\d{2,4})?\b",
+        r"(环办|环发|环监|国办发|国务院|生态环境部).{0,12}\d{2,4}",
+        r"\b[A-Z]{2,}\d{0,4}\b",
+    ]
+    return any(re.search(pattern, query, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _should_generate_hyde_keywords(query: str, mode: str) -> tuple[bool, Optional[str]]:
+    if mode == "never":
+        return False, "disabled"
+    if mode == "always":
+        return True, None
+    if _is_precise_knowledge_query(query):
+        return False, "precise_query"
+
+    compact_query = re.sub(r"\s+", "", query)
+    has_question_word = any(word in query for word in ("怎么", "如何", "怎么算", "是什么", "哪个", "哪里", "为何", "为什么"))
+    if len(compact_query) <= 18 or has_question_word:
+        return True, None
+    return False, "auto_not_needed"
 
 
 async def generate_hypothetical_keywords(query: str) -> str:
@@ -211,8 +254,8 @@ async def search_knowledge_bases(
     knowledge_base_ids: Optional[List[str]] = None,
     top_k: int = 5,
     score_threshold: Optional[float] = None,
-    use_reranker: bool = True,
-    use_hyde: bool = False  # 是否使用HyDE
+    use_reranker: bool | str = "auto",
+    use_hyde: bool | str = False  # 是否使用HyDE关键词增强；不再双路检索
 ) -> List[dict]:
     """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
     from app.db.database import async_session
@@ -269,45 +312,46 @@ async def search_knowledge_bases(
                 item["retrieval_route_elapsed_ms"] = round(route_elapsed, 2)
             return route_results, route_elapsed
 
-        # HyDE优化：原始问题一路立即检索；关键词一路等HyDE生成后检索，两路并行合并。
+        # HyDE按需生成补充关键词后拼入同一次检索，不再 original/hyde 双路各检索、各 rerank。
+        hyde_mode = _normalize_mode(use_hyde, "never", {"auto", "always", "never"})
+        should_use_hyde, hyde_skipped_reason = _should_generate_hyde_keywords(query, hyde_mode)
         hyde_used = False
         hyde_keywords = ""
         hyde_elapsed = 0.0
-        hyde_skipped_reason = None
         retrieval_routes = ["original"]
 
         try:
             retrieval_started_at = time.time()
-            original_task = asyncio.create_task(run_search_route("original", query))
             route_elapsed_ms = {}
+            effective_query = query
+            route_name = "original"
 
-            if use_hyde:
+            if should_use_hyde:
                 hyde_start = time.time()
                 hyde_keywords = await generate_hypothetical_keywords(query)
                 hyde_elapsed = (time.time() - hyde_start) * 1000
                 hyde_used = bool(hyde_keywords)
-
                 if hyde_keywords:
-                    retrieval_routes.append("hyde_keywords")
-                    keyword_task = asyncio.create_task(
-                        run_search_route("hyde_keywords", hyde_keywords)
-                    )
-                    route_results = await asyncio.wait_for(
-                        asyncio.gather(original_task, keyword_task),
-                        timeout=30.0
-                    )
+                    effective_query = f"{query}\n补充关键词：{hyde_keywords}"
+                    route_name = "hyde_augmented"
+                    retrieval_routes = [route_name]
                 else:
-                    route_results = [await asyncio.wait_for(original_task, timeout=30.0)]
+                    hyde_skipped_reason = "keyword_generation_empty"
 
                 logger.info(
-                    "hyde_dual_route_applied",
+                    "hyde_single_route_applied",
                     original_query=query[:100],
                     hyde_keywords=hyde_keywords.strip()[:200],
                     routes=retrieval_routes,
                     hyde_elapsed_ms=round(hyde_elapsed, 2)
                 )
-            else:
-                route_results = [await asyncio.wait_for(original_task, timeout=30.0)]
+
+            route_results = [
+                await asyncio.wait_for(
+                    run_search_route(route_name, effective_query),
+                    timeout=30.0
+                )
+            ]
 
             raw_results = []
             for route_items, route_elapsed in route_results:
@@ -383,6 +427,7 @@ async def search_knowledge_bases(
                     "retrieval_metadata": {
                         "route_queries": {
                             "original": query,
+                            "effective": effective_query,
                             "hyde_keywords": hyde_keywords or None
                         },
                         "hyde_keywords": hyde_keywords,
@@ -672,9 +717,9 @@ async def knowledge_qa_stream(
     )
 
     try:
-        # Step 1: HyDE + 检索知识库（使用独立会话，超时控制）
-        # HyDE始终启用，精准检索控制是否重排序
+        # Step 1: 按需HyDE关键词增强 + 检索知识库（使用独立会话，超时控制）
         search_start = time.time()
+        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
 
         contexts = await search_knowledge_bases(
             query=request.query,
@@ -682,8 +727,8 @@ async def knowledge_qa_stream(
             knowledge_base_ids=request.knowledge_base_ids,
             top_k=request.top_k,
             score_threshold=request.score_threshold,
-            use_reranker=request.use_reranker,
-            use_hyde=True  # 始终启用HyDE
+            use_reranker=reranker_setting,
+            use_hyde="auto"
         )
 
         search_elapsed = (time.time() - search_start) * 1000
@@ -753,15 +798,16 @@ async def knowledge_qa_non_stream(request: KnowledgeQARequest):
     session_id = request.session_id or f"kqa_{int(time.time() * 1000)}"
 
     try:
-        # 检索知识库（HyDE始终启用，精准检索控制是否重排序）
+        # 检索知识库（按需HyDE关键词增强，按需Reranker精排）
+        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
         contexts = await search_knowledge_bases(
             query=request.query,
             user_id=user_id,
             knowledge_base_ids=request.knowledge_base_ids,
             top_k=request.top_k,
             score_threshold=request.score_threshold,
-            use_reranker=request.use_reranker,
-            use_hyde=True  # 始终启用HyDE
+            use_reranker=reranker_setting,
+            use_hyde="auto"
         )
 
         # 构建Prompt
