@@ -18,6 +18,7 @@ from .session_queue import SessionRunQueue
 from .tool_coordinator import ToolCoordinator
 from .transcript_repairer import TranscriptRepairer
 from .types import PlannerResult, RunState, ToolCall
+from ..context.context_diagnostics import ContextDiagnostics
 
 logger = structlog.get_logger()
 
@@ -58,6 +59,7 @@ class AgentRuntime:
         self.observation_processor = ObservationProcessor(self.finalizer, self.events, memory_manager=self.memory)
         self.transcript_repairer = TranscriptRepairer()
         self.session_queue = SessionRunQueue()
+        self.context_diagnostics = ContextDiagnostics()
 
     async def run(
         self,
@@ -221,6 +223,13 @@ class AgentRuntime:
             history_tokens=context_tokens.get("history"),
             total_without_tools=context_tokens.get("total"),
             total_with_tools_est=(context_tokens.get("total") or 0) + tool_schema_tokens_est,
+        )
+        self.context_diagnostics.log_report(
+            mode=state.mode,
+            iteration=state.iteration,
+            context_tokens=context_tokens,
+            tool_schemas=tool_schemas,
+            conversation_history=conversation_history,
         )
         streaming_tool_executor = StreamingToolExecutor(
             tool_executor=self.executor,
