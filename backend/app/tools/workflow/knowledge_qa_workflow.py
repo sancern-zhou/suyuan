@@ -9,7 +9,7 @@
 - 避免重复LLM调用，提高效率
 
 流程：
-1. 检索：基于原问题或主Agent补充后的关键词从知识库检索相关文档
+1. 检索：基于“原问题全文 + 主Agent补充关键词”的组合检索词从知识库检索相关文档
 2. 可选精排：按 reranker 参数决定是否启用 CrossEncoder
 3. 返回：将检索结果返回给主Agent
 
@@ -19,7 +19,7 @@
 - 需要获取专业领域的权威资料
 
 参数：
-- query: 用户问题
+- query: 原问题全文 + 3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
 - top_k: 检索文档数量（默认3）
 - reranker: 精排模式，auto/always/never，默认auto
@@ -103,6 +103,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
     description = """知识库检索工具 - 从知识库中检索相关文档
 
 从知识库中检索与用户问题相关的文档片段，为主Agent提供参考资料。
+调用前应保留原问题全文，并追加3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写；不要只传抽象摘要。
 
 技术特点：
 - 语义检索：基于向量相似度的智能检索
@@ -123,7 +124,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
 - 需要获取专业领域的权威资料
 
 参数：
-- query: 用户问题（自然语言描述）
+- query: 原问题全文 + 补充关键词的组合检索词。示例：用户问“HJ 633-2026 综合指数怎么算”，query可写为“HJ 633-2026 综合指数怎么算 综合指数 计算方法 评价项目 分指数 IAQI AQI HJ633-2026 环境空气质量指数”。
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
 - top_k: 检索文档数量（默认3，最多10）
 - reranker: 精排模式，auto/always/never，默认auto。标准号、明确查询建议auto或never；法规条款、跨文档对比、低置信召回可用always。
@@ -326,11 +327,11 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "用户问题，自然语言描述，如 'HJ 906-2017 数据有效性是如何定义的' 或 'PM2.5的日均值标准是多少？'"
+                        "description": "组合检索词：保留用户原问题全文，并追加3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写；不要只传抽象摘要。示例：'HJ 633-2026 综合指数怎么算 综合指数 计算方法 评价项目 分指数 IAQI AQI HJ633-2026 环境空气质量指数'"
                     },
                     "question": {
                         "type": "string",
-                        "description": "用户问题（别名，与query二选一）"
+                        "description": "query别名；同样应传原问题全文 + 补充关键词的组合检索词"
                     },
                     "session_id": {
                         "type": "string",

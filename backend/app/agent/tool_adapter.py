@@ -51,13 +51,6 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
     """
     start_time = datetime.now()
     try:
-        # 对知识库检索统一收敛 top_k，避免返回过多结果
-        if tool_name == "search_knowledge_base":
-            orig_top_k = kwargs.get("top_k")
-            capped_top_k = min(int(orig_top_k) if orig_top_k else 3, 3)
-            kwargs["top_k"] = capped_top_k
-            logger.info("normalized_top_k_for_kb_search", orig_top_k=orig_top_k, effective_top_k=capped_top_k)
-
         # 从单一注册源获取工具
         tool = global_tool_registry.get_tool(tool_name)
 

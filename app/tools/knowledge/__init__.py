@@ -1,7 +1,3 @@
-"""
-知识库工具模块
-"""
+"""知识库工具模块。"""
 
-from .search_knowledge_base import SearchKnowledgeBaseTool
-
-__all__ = ["SearchKnowledgeBaseTool"]
+__all__ = []
