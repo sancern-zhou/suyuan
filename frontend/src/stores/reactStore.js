@@ -5,6 +5,27 @@ import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 import { autoSaveSession } from '@/api/session'
 
+// 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
+const contentToString = (content) => {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    // Anthropic content blocks 格式：提取所有文本块并拼接
+    const textBlocks = content
+      .filter(block => block.type === 'text')
+      .map(block => block.text || '')
+    return textBlocks.length > 0 ? textBlocks.join('') : '[结构化内容]'
+  }
+  return '[未知格式]'
+}
+
+// 辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
+const getContentPreview = (content, maxLength = 100) => {
+  const text = contentToString(content)
+  return text.substring(0, maxLength)
+}
+
 // 辅助函数：创建空的模式状态
 const createEmptyModeState = () => ({
   // 基础状态
@@ -267,6 +288,22 @@ export const useReactStore = defineStore('react', {
 
       // 只保存最近50条消息（避免localStorage超限）
       const messagesToSave = modeState.messages.slice(-50)
+
+      // 【验证】检查持久化前的 messages 数据
+      const toolResultMsgs = messagesToSave.filter(m => m.type === 'tool_result')
+      console.log(`[_persistModeState] 🔍 验证 - 持久化 ${mode} 模式:`, {
+        totalMessages: messagesToSave.length,
+        toolResultCount: toolResultMsgs.length,
+        toolResultsWithVisuals: toolResultMsgs.filter(m => m.data?.result?.visuals?.length > 0).length,
+        visualizationHistoryCount: modeState.visualizationHistory?.length || 0
+      })
+      toolResultMsgs.forEach((msg, idx) => {
+        if (msg.data?.result?.visuals?.length > 0) {
+          console.log(`[_persistModeState] tool_result[${idx}] 有 ${msg.data.result.visuals.length} 个 visuals:`,
+            msg.data.result.visuals.map(v => ({ id: v.id, type: v.type }))
+          )
+        }
+      })
 
       const stateToSave = {
         sessionId: modeState.sessionId,
@@ -557,17 +594,17 @@ export const useReactStore = defineStore('react', {
       const existingContents = new Set()
       this.currentState.messages.forEach(m => {
         if (m.content) {
-          existingContents.add(m.content.substring(0, 100)) // 使用前100个字符作为内容指纹
+          existingContents.add(getContentPreview(m.content, 100)) // 使用前100个字符作为内容指纹
         }
       })
 
       const beforeCount = messages.length
       messages = messages.filter(m => {
         if (!m.content) return true
-        const contentFingerprint = m.content.substring(0, 100)
+        const contentFingerprint = getContentPreview(m.content, 100)
         const isDuplicate = existingContents.has(contentFingerprint)
         if (isDuplicate) {
-          console.warn(`[prependMessages] 过滤重复消息: ${m.id}`, { content: m.content.substring(0, 50) })
+          console.warn(`[prependMessages] 过滤重复消息: ${m.id}`, { content: getContentPreview(m.content, 50) })
         } else {
           existingContents.add(contentFingerprint)
         }
@@ -801,14 +838,19 @@ export const useReactStore = defineStore('react', {
 
     _mergeFinalMessage(message, content, data = {}) {
       if (!message) return
-      if (content) {
-        message.content = content
+      // 【根本原因修复】创建新对象而不是修改现有对象，确保 Vue 3 响应式系统能检测到变化
+      // 直接修改对象属性在某些情况下不会触发响应式更新
+      const updatedMessage = {
+        ...message,
+        content: content ? contentToString(content) : message.content,
+        streaming: false,
+        data: {
+          ...(message.data || {}),
+          ...data
+        }
       }
-      message.streaming = false
-      message.data = {
-        ...(message.data || {}),
-        ...data
-      }
+      // 将所有属性复制回原对象，保持引用不变（因为其他地方可能持有这个引用）
+      Object.assign(message, updatedMessage)
     },
 
     /**
@@ -882,15 +924,8 @@ export const useReactStore = defineStore('react', {
 
       // 创建局部的 addMessage 函数，自动路由到正确的模式
       const addMessage = (msgType, msgContent, msgData = null, msgAttachments = null, msgExtraFields = {}) => {
-        // 确保msgContent是字符串类型
-        let contentStr = msgContent
-        if (typeof msgContent !== 'string') {
-          if (msgContent === null || msgContent === undefined) {
-            contentStr = ''
-          } else {
-            contentStr = JSON.stringify(msgContent)
-          }
-        }
+        // 【修复】使用 contentToString 统一处理各种content格式（字符串、数组等）
+        const contentStr = contentToString(msgContent)
 
         const preview = contentStr.substring(0, 50)
         console.log(`[handleEvent] addMessage called: mode=${targetMode}, type=${msgType}, content=${preview}...`)
@@ -1144,7 +1179,6 @@ export const useReactStore = defineStore('react', {
           console.log('[event:complete] has response:', !!data?.response)
           console.log('[event:complete] response value:', data?.response)
           console.log('[event:complete] has expert_results:', !!data?.expert_results)
-          console.log('[event:complete] has visuals:', !!(data?.visuals && Array.isArray(data.visuals) && data.visuals.length > 0))
 
           // 【修复】使用targetState而不是currentState，确保状态更新到正确的模式
           targetState.isAnalyzing = false
@@ -1182,7 +1216,6 @@ export const useReactStore = defineStore('react', {
             if (finalContent) {
               targetState.finalAnswer = finalContent
             }
-            targetState.messages = [...targetState.messages]
             console.log('[event:complete] 复用当前轮次已有final消息，避免重复追加')
           } else if (finalContent) {
             // 【修复】优先使用response字段，兼容answer字段
@@ -1214,42 +1247,6 @@ export const useReactStore = defineStore('react', {
               expert_results: data.expert_results
             }
             console.log('[event:complete] lastExpertResults已设置')
-          }
-
-          // 【新增】直接处理complete事件中的visuals字段（后端多专家系统返回的聚合visuals）
-          if (data?.visuals && Array.isArray(data.visuals)) {
-            console.log('[event:complete] 直接处理visuals字段，数量:', data.visuals.length)
-            console.log('[event:complete] visuals详情:', data.visuals.map(v => ({ id: v.id, type: v.type })))
-            for (const viz of data.visuals) {
-              console.log('[event:complete] 添加visual:', viz.id, viz.type)
-              this.recordVisualization({
-                ...viz,
-                meta: {
-                  ...viz.meta,
-                  schema_version: 'v2.0'
-                }
-              })
-              // 【关键修复】同步更新 groupedVisualizations
-              const targetGroup = this._classifyVizForComplete(viz)
-              if (!targetState.groupedVisualizations[targetGroup]) {
-                targetState.groupedVisualizations[targetGroup] = []
-              }
-              targetState.groupedVisualizations[targetGroup].push({
-                ...viz,
-                meta: {
-                  ...viz.meta,
-                  schema_version: 'v2.0'
-                }
-              })
-              console.log(`[event:complete] 已添加到 ${targetGroup} 组，count=${targetState.groupedVisualizations[targetGroup].length}`)
-            }
-            targetState.hasResults = true
-            console.log('[event:complete] 更新后的 groupedVisualizations:', JSON.stringify({
-              weather: targetState.groupedVisualizations.weather?.length,
-              component: targetState.groupedVisualizations.component?.length
-            }))
-          } else {
-            console.log('[event:complete] 无visuals字段或为空')
           }
 
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）
@@ -1303,35 +1300,8 @@ export const useReactStore = defineStore('react', {
             conclusions: data?.conclusions || null,
             recommendations: data?.recommendations || null,
             confidence: data?.confidence || null,
-            data_ids: data?.data_ids || null,
-            visuals: data?.visuals || null
+            data_ids: data?.data_ids || null
           })
-
-          // 处理可视化数据
-          if (data?.visuals && Array.isArray(data.visuals)) {
-            console.log('[event:pipeline_completed] 处理visuals字段，数量:', data.visuals.length)
-            for (const viz of data.visuals) {
-              this.recordVisualization({
-                ...viz,
-                meta: {
-                  ...viz.meta,
-                  schema_version: 'v2.0'
-                }
-              })
-              // 同步更新 groupedVisualizations
-              const targetGroup = this._classifyVizForComplete(viz)
-              if (!targetState.groupedVisualizations[targetGroup]) {
-                targetState.groupedVisualizations[targetGroup] = []
-              }
-              targetState.groupedVisualizations[targetGroup].push({
-                ...viz,
-                meta: {
-                  ...viz.meta,
-                  schema_version: 'v2.0'
-                }
-              })
-            }
-          }
 
           targetState.streamingAnswerMessageId = null
           break
@@ -1850,44 +1820,6 @@ export const useReactStore = defineStore('react', {
     // 重新分析
     async restart() {
       this.reset()
-    },
-
-    // 【新增】在complete事件中直接处理visuals时的分类函数
-    _classifyVizForComplete(viz) {
-      const meta = viz.meta || {}
-      const title = (viz.title || '').toLowerCase()
-      const toolName = (meta.tool_name || '').toLowerCase()
-
-      // 气象相关的关键词
-      const weatherKeywords = ['轨迹', 'trajectory', '气象', 'weather', 'meteorology', '风向', 'wind', '上风向', 'upwind', 'hysplit', '后向轨迹', '反向轨迹', '高度剖面', 'profile']
-
-      // 1. 优先使用有效的 expert_source
-      if (meta.expert_source && ['weather', 'component'].includes(meta.expert_source)) {
-        return meta.expert_source
-      }
-
-      // 2. 检查标题和工具名是否包含气象关键词
-      for (const keyword of weatherKeywords) {
-        if (title.includes(keyword.toLowerCase()) || toolName.includes(keyword.toLowerCase())) {
-          return 'weather'
-        }
-      }
-
-      // 3. 检查图表类型 - image类型如果是轨迹相关也归为weather
-      if (viz.type === 'map' || viz.type === 'wind_rose' || viz.type === 'profile' ||
-          viz.type === 'weather_timeseries' || viz.type === 'pressure_pbl_timeseries') {
-        return 'weather'
-      }
-
-      // 4. 如果是image类型，根据工具名判断
-      if (viz.type === 'image') {
-        if (toolName.includes('trajectory') || toolName.includes('meteorological')) {
-          return 'weather'
-        }
-      }
-
-      // 5. 默认归类为 component
-      return 'component'
     },
 
     // 【新增方法】从专家结果中提取visuals并传递给可视化面板

@@ -461,107 +461,73 @@ const isDirectUrlImage = (viz) => {
 const visualizations = computed(() => {
   let allVisualizations = []
 
-  console.log('[VisualizationPanel] visualizations计算触发', {
-    isQuickTracingMode: isQuickTracingMode.value,
-    hasGroupedViz: !!(store.groupedVisualizations),
-    hasContent: !!(props.content),
-    hasContentVisuals: !!(props.content?.visuals),
-    groupedVizKeys: store.groupedVisualizations ? Object.keys(store.groupedVisualizations) : [],
-    groupedVizCounts: store.groupedVisualizations ? {
-      weather: store.groupedVisualizations.weather?.length || 0,
-      component: store.groupedVisualizations.component?.length || 0,
-      viz: store.groupedVisualizations.viz?.length || 0
-    } : {}
-  })
-
   // 多专家模式：从 store.groupedVisualizations 获取所有图表
   if (isQuickTracingMode.value) {
     const groups = store.groupedVisualizations
     const rawVisuals = [...(groups.weather || []), ...(groups.component || []), ...(groups.viz || [])]
-    console.log('[VisualizationPanel] 快速溯源模式 - 原始可视化数量:', rawVisuals.length)
-    console.log('[VisualizationPanel] 原始可视化类型:', rawVisuals.map(v => ({id: v.id, type: v.type, hasPayload: !!v.payload})))
 
     // 转换payload格式：如果viz.type是通用类型（chart/image），则使用payload中的具体类型
     allVisualizations = rawVisuals.map(v => {
       if (v.payload && v.type === 'chart') {
         // 将payload数据提升到顶层，保留meta
         const transformed = { ...v.payload, meta: v.meta || v.payload.meta }
-        console.log('[VisualizationPanel] 转换chart payload:', {id: v.id, oldType: v.type, newType: transformed.type})
         return transformed
       }
       return v
     })
-    console.log('[VisualizationPanel] 转换后可视化类型:', allVisualizations.map(v => ({id: v.id, type: v.type})))
   }
-  // 普通模式：从 props.content 和 props.history 获取所有可视化对象
+  // 普通模式：从 messages 的 tool_result 事件中提取visuals
   else {
-    // 1. 从当前消息的 visuals 获取
-    if (props.content) {
-      if (props.content?.visuals && Array.isArray(props.content.visuals)) {
-        console.log('[VisualizationPanel] 普通模式 - 从content.visuals获取，数量:', props.content.visuals.length)
-        // 兼容两种格式：
-        // 1. VisualBlock格式: {payload: {...}, meta: {...}}
-        // 2. 直接格式: {id, type, data, meta, ...} (如EKMA专业图表)
-        const currentVisuals = props.content.visuals.map((v) => {
-          if (v.payload) {
-            // VisualBlock格式
-            return { ...v.payload, meta: v.meta }
-          } else {
-            // 直接格式（EKMA专业图表等）
-            return v
-          }
-        })
-        allVisualizations = allVisualizations.concat(currentVisuals)
-      } else {
-        console.log('[VisualizationPanel] 普通模式 - content.visuals不是数组，使用content本身')
-        allVisualizations = allVisualizations.concat([props.content])
-      }
-    }
-
-    // 2. 从历史消息中收集所有图表（按时间顺序）
     if (props.history && Array.isArray(props.history)) {
-      console.log('[VisualizationPanel] 开始从历史消息收集图表，历史消息数量:', props.history.length)
-
-      let foundCount = 0
       props.history.forEach((msg, msgIndex) => {
-        // 只处理 observation 类型的消息（图表在observation中）
-        const msgType = msg.role || msg.type
-        if (msgType !== 'observation') return
+        // 只处理 tool_result 类型的消息
+        if (msg.type !== 'tool_result') {
+          return
+        }
 
-        // 检查消息的 data.observation.visuals（正确路径）
-        const obs = msg.data?.observation
-        if (!obs) return
+        // ✅ 检查两种格式：
+        // 1. 单个工具：msg.data.result.visuals
+        // 2. 多个工具：msg.data.results[].visuals
+        const result = msg.data?.result
+        const results = msg.data?.results
 
-        const visuals = obs.visuals
-        if (visuals && Array.isArray(visuals) && visuals.length > 0) {
-          console.log(`[VisualizationPanel] 从历史消息[${msgIndex}]获取图表，数量:`, visuals.length, '消息ID:', msg.id)
-          foundCount += visuals.length
-          const historyVisuals = visuals.map((v) => {
+        // 格式1：单个工具 result.visuals
+        if (result && result.visuals && Array.isArray(result.visuals) && result.visuals.length > 0) {
+          // 兼容两种格式：
+          // 1. VisualBlock格式: {payload: {...}, meta: {...}}
+          // 2. 直接格式: {id, type, data, meta, ...}
+          const extractedVisuals = result.visuals.map((v) => {
             if (v.payload) {
               return { ...v.payload, meta: v.meta }
             } else {
               return v
             }
           })
-          allVisualizations = allVisualizations.concat(historyVisuals)
+
+          allVisualizations = allVisualizations.concat(extractedVisuals)
         }
-      })
-      console.log('[VisualizationPanel] 历史消息收集完成，找到图表数量:', foundCount, '当前图表总数:', allVisualizations.length)
-    } else {
-      console.log('[VisualizationPanel] 历史消息不可用:', {
-        hasHistory: !!props.history,
-        isArray: Array.isArray(props.history),
-        length: props.history?.length
+
+        // 格式2：多个工具 results[].visuals
+        if (results && Array.isArray(results)) {
+          results.forEach((r, rIdx) => {
+            if (r.visuals && Array.isArray(r.visuals) && r.visuals.length > 0) {
+              const extractedVisuals = r.visuals.map((v) => {
+                if (v.payload) {
+                  return { ...v.payload, meta: v.meta }
+                } else {
+                  return v
+                }
+              })
+
+              allVisualizations = allVisualizations.concat(extractedVisuals)
+            }
+          })
+        }
       })
     }
   }
 
-  console.log('[VisualizationPanel] 过滤前的可视化数量:', allVisualizations.length)
-
-  // 注释掉过滤逻辑，允许所有图片在右侧面板显示
-  // allVisualizations = allVisualizations.filter(viz => !isDirectUrlImage(viz))
-
-  // 【关键修复】优先保留 type=image 的去重逻辑
+  // 去重逻辑
   const seen = new Map()  // key -> viz (存储保留的可视化)
   const customChartTypes = new Set(['ternary_SNA', 'sor_nor_scatter', 'charge_balance', 'ec_oc_scatter', 'ion_timeseries', 'crustal_boxplot'])
 
@@ -586,7 +552,6 @@ const visualizations = computed(() => {
       const currentIsCustom = customChartTypes.has(viz.type)
 
       // 替换策略：image > custom chart type
-      // 【关键修复】保留原始图表类型（用于报告匹配），但用image类型渲染
       if (currentIsImage && !existingIsImage) {
         // 当前是image，现有不是，替换
         const vizToStore = {
@@ -604,7 +569,7 @@ const visualizations = computed(() => {
           ...viz,
           meta: {
             ...(viz.meta || {}),
-            chartType: existingChartType || viz.type  // 保留已有的chartType
+            chartType: existingChartType || viz.type
           }
         }
         seen.set(key, vizToStore)

@@ -62,11 +62,11 @@
           <!-- 当 streaming 从 true 变为 false 时，key 变化，组件会重新创建 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}`"
-            :content="message.content"
+            :content="contentToString(message.content)"
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else-if="message.content">{{ message.content }}</div>
+        <div class="message-content" v-else-if="message.content">{{ contentToString(message.content) }}</div>
 
         <!-- Reflexion状态提示 -->
         <div v-if="showReflexion && reflexionCount > 0" class="reflexion-badge">
@@ -117,11 +117,11 @@
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}`"
-            :content="message.content"
+            :content="contentToString(message.content)"
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ message.content }}</div>
+        <div class="message-content" v-else>{{ contentToString(message.content) }}</div>
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -156,7 +156,7 @@
       <!-- 错误事件 -->
       <div v-else-if="getMessageType(message) === 'error'" class="event-content error">
         <div class="event-icon">⚠️</div>
-        <div class="event-text">{{ message.content }}</div>
+        <div class="event-text">{{ contentToString(message.content) }}</div>
       </div>
 
       <!-- ✅ V3: Tool Use 事件 -->
@@ -164,7 +164,7 @@
         <div class="event-content">
           <div class="event-icon">🔧</div>
           <div class="event-text">
-            <div class="tool-use-main">{{ message.content }}</div>
+            <div class="tool-use-main">{{ contentToString(message.content) }}</div>
             <div v-if="message.data?.input && Object.keys(message.data.input).length > 0" class="tool-use-details">
               <details>
                 <summary>查看参数</summary>
@@ -180,7 +180,7 @@
         <div class="event-content">
           <div class="event-icon">{{ message.data?.is_error ? '❌' : '✅' }}</div>
           <div class="event-text">
-            <div class="tool-result-main">{{ message.content }}</div>
+            <div class="tool-result-main">{{ contentToString(message.content) }}</div>
             <div v-if="message.data?.result?.summary" class="tool-result-summary">
               {{ message.data.result.summary }}
             </div>
@@ -225,6 +225,27 @@ const getMessageType = (message) => {
   // 将后端的 assistant 映射为 final
   if (type === 'assistant') return 'final'
   return type
+}
+
+// 【新增】辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
+const contentToString = (content) => {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    // Anthropic content blocks 格式：提取所有文本块并拼接
+    const textBlocks = content
+      .filter(block => block.type === 'text')
+      .map(block => block.text || '')
+    return textBlocks.length > 0 ? textBlocks.join('') : '[结构化内容]'
+  }
+  return '[未知格式]'
+}
+
+// 【新增】辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
+const getContentPreview = (content, maxLength = 100) => {
+  const text = contentToString(content)
+  return text.substring(0, maxLength)
 }
 
 const props = defineProps({
@@ -590,7 +611,7 @@ const filteredMessages = computed(() => {
   const duplicates = []
   filtered.forEach((msg, idx) => {
     if (messageIds.has(msg.id)) {
-      duplicates.push({ id: msg.id, index: idx, content: msg.content?.substring(0, 50) })
+      duplicates.push({ id: msg.id, index: idx, content: getContentPreview(msg.content, 50) })
     } else {
       messageIds.add(msg.id)
     }

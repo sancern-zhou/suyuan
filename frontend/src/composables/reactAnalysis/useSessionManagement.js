@@ -119,11 +119,24 @@ export function useSessionManagement(store) {
         return msgType === 'final' || msgType === 'assistant'
       })
 
+      // 辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
+      const getContentPreview = (content) => {
+        if (typeof content === 'string') {
+          return content.substring(0, 100)
+        }
+        if (Array.isArray(content)) {
+          // 提取文本类型的 content block（Anthropic 格式）
+          const textBlock = content.find(block => block.type === 'text')
+          return textBlock?.text?.substring(0, 100) || '[结构化内容]'
+        }
+        return '[未知格式]'
+      }
+
       // 【新增】检查是否有重复内容
       const contentMap = new Map()
       const contentDuplicates = []
       finalMessages.forEach(m => {
-        const content = m.content?.substring(0, 100)
+        const content = getContentPreview(m.content)
         if (content && contentMap.has(content)) {
           contentDuplicates.push({
             原消息ID: contentMap.get(content),
@@ -153,11 +166,37 @@ export function useSessionManagement(store) {
       // 优先从 session.metadata.visualizations 获取完整可视化数据
       if (sessionData.metadata?.visualizations && Array.isArray(sessionData.metadata.visualizations)) {
         visuals = sessionData.metadata.visualizations
-        console.log('[会话恢复] 从 metadata.visualizations 恢复可视化数据:', visuals.length, '个')
+
+        // 【修复】补充 tool_result 消息的缺失 data.result.visuals（旧会话兼容）
+        let fixedCount = 0
+        messages.forEach(msg => {
+          if (msg.type === 'tool_result' && msg.data) {
+            const hasResultVisuals = msg.data?.result?.visuals && Array.isArray(msg.data.result.visuals)
+            const hasResultsVisuals = msg.data?.results && Array.isArray(msg.data.results) &&
+                                     msg.data.results.some(r => r.visuals && Array.isArray(r.visuals))
+
+            if (!hasResultVisuals && !hasResultsVisuals) {
+              const toolUseId = msg.data?.tool_use_id
+              const toolName = msg.data?.tool_name || ''
+              const matchingVisuals = visuals.filter(v => {
+                const vToolName = v.meta?.generator || v.meta?.tool_name || ''
+                const vToolUseId = v.meta?.tool_use_id
+                return vToolName === toolName || vToolUseId === toolUseId
+              })
+
+              if (matchingVisuals.length > 0) {
+                if (!msg.data.result) {
+                  msg.data.result = {}
+                }
+                msg.data.result.visuals = matchingVisuals
+                fixedCount++
+              }
+            }
+          }
+        })
       } else {
         // 降级方案：从消息中提取
         visuals = extractVisualsFromMessages(messages)
-        console.log('[会话恢复] 从消息中提取可视化数据:', visuals.length, '个')
       }
 
       // 3. 更新store
@@ -221,23 +260,41 @@ export function useSessionManagement(store) {
 
     for (const msg of messages) {
       if (msg.type === 'tool_result') {
+        // ✅ 支持两种格式：
+        // 1. 单个工具：data.result.visuals
+        // 2. 多个工具：data.results[].visuals
         const result = msg.data?.result
-        if (!result) continue
+        const results = msg.data?.results
 
-        // result.visuals 在顶层
-        if (Array.isArray(result.visuals) && result.visuals.length > 0) {
-          visuals.push(...result.visuals)
+        // 格式1：单个工具 result.visuals
+        if (result) {
+          // result.visuals 在顶层
+          if (Array.isArray(result.visuals) && result.visuals.length > 0) {
+            visuals.push(...result.visuals)
+          }
+          // result.data.visuals
+          if (Array.isArray(result.data?.visuals) && result.data.visuals.length > 0) {
+            visuals.push(...result.data.visuals)
+          }
+          // 多工具结果：result.tool_results[].result.visuals
+          if (Array.isArray(result.tool_results)) {
+            for (const tr of result.tool_results) {
+              const rv = tr?.result?.visuals
+              if (Array.isArray(rv) && rv.length > 0) {
+                visuals.push(...rv)
+              }
+            }
+          }
         }
-        // result.data.visuals
-        if (Array.isArray(result.data?.visuals) && result.data.visuals.length > 0) {
-          visuals.push(...result.data.visuals)
-        }
-        // 多工具结果：result.tool_results[].result.visuals
-        if (Array.isArray(result.tool_results)) {
-          for (const tr of result.tool_results) {
-            const rv = tr?.result?.visuals
-            if (Array.isArray(rv) && rv.length > 0) {
-              visuals.push(...rv)
+
+        // 格式2：多个工具 results[].visuals
+        if (Array.isArray(results)) {
+          for (const r of results) {
+            if (Array.isArray(r.visuals) && r.visuals.length > 0) {
+              visuals.push(...r.visuals)
+            }
+            if (Array.isArray(r.data?.visuals) && r.data.visuals.length > 0) {
+              visuals.push(...r.data.visuals)
             }
           }
         }
