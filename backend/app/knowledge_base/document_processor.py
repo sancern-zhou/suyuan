@@ -69,7 +69,7 @@ class DocumentProcessor:
     }
 
     # OCR 配置（阿里云百炼 - Qwen3-VL）
-    OCR_API_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+    OCR_API_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     OCR_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
     OCR_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")  # 修复：统一使用QWEN_VL_MODEL
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
@@ -340,7 +340,7 @@ class DocumentProcessor:
 
                 async with httpx.AsyncClient(timeout=float(self.OCR_TIMEOUT)) as client:
                     response = await client.post(
-                        self.OCR_API_URL,
+                        f"{self.OCR_API_URL}/chat/completions",
                         headers=headers,
                         json={
                             "model": self.OCR_MODEL,
