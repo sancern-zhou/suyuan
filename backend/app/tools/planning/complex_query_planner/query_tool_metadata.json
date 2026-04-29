@@ -1,0 +1,225 @@
+{
+  "version": "1.0",
+  "global_rules": {
+    "default_standard": "HJ 633-2026 new standard unless the user explicitly asks for old standard or standard comparison",
+    "city_name_format": "Use short Chinese city names without the 市 suffix, for example 广州 not 广州市",
+    "date_format": "YYYY-MM-DD",
+    "guangdong_cities": [
+      "广州",
+      "深圳",
+      "珠海",
+      "汕头",
+      "佛山",
+      "韶关",
+      "河源",
+      "梅州",
+      "惠州",
+      "汕尾",
+      "东莞",
+      "中山",
+      "江门",
+      "阳江",
+      "湛江",
+      "茂名",
+      "肇庆",
+      "清远",
+      "潮州",
+      "揭阳",
+      "云浮"
+    ],
+    "result_vs_data_id": {
+      "result": "Computed statistics and comparison output. Use this for final answers, reports, rankings, exceedance counts, primary pollutant ratios, and composite index analysis.",
+      "data_id": "Stored detailed records for downstream aggregation, charts, or inspection. Do not assume it contains summary statistics."
+    }
+  },
+  "strategies": {
+    "statistics_report": "Use report tools for composite index, valid days, exceed days, compliance rate, pollutant percentiles, primary pollutant statistics, and exceedance breakdowns.",
+    "trend_comparison": "Use compare tools for同比、环比、下降、上升、变化、改善、恶化. Do not manually compare two single-period report calls unless no compare tool exists.",
+    "standard_comparison": "Use query_standard_comparison when the user asks for new-vs-old standard differences in the same period.",
+    "national_ranking": "Use execute_sql_query against national/168-city statistic tables for national ranking. Do not use Guangdong-only tools for national ranking.",
+    "station_query": "Use station tools when the user gives station names, station codes, monitoring points, or asks station-level questions.",
+    "hourly_query": "Use hourly tools for hourly process, peak hour, diurnal change, or time-of-day questions.",
+    "sql_query": "Use SQL Server syntax. Prefix Chinese string literals with N. Prefer precomputed ranking fields when available."
+  },
+  "tools": {
+    "query_new_standard_report": {
+      "purpose": "Query HJ 633-2026 new-standard city air quality statistics for one period.",
+      "best_for": ["综合指数", "达标率", "超标天数", "有效天数", "首要污染物", "污染物统计", "新标准统计报表"],
+      "required_params": ["cities", "start_date", "end_date"],
+      "optional_params": ["enable_sand_deduction"],
+      "result_paths": {
+        "statistics": "data.result",
+        "province_wide": "data.result.province_wide",
+        "daily_data_id": "data.data_id"
+      },
+      "key_fields": ["composite_index", "exceed_days", "valid_days", "exceed_rate", "compliance_rate", "SO2", "NO2", "PM10", "PM2_5", "CO_P95", "O3_8h_P90", "single_indexes", "primary_pollutant_days", "primary_pollutant_ratio", "exceed_days_by_pollutant", "primary_pollutant_exceed_days"],
+      "misuse": ["Do not read summary fields from data_id.", "Do not query daily data just to calculate statistics already returned in result."]
+    },
+    "query_old_standard_report": {
+      "purpose": "Query HJ 633-2013 old-standard city air quality statistics for one period.",
+      "best_for": ["旧标准", "2013标准", "旧口径统计"],
+      "required_params": ["cities", "start_date", "end_date"],
+      "optional_params": ["enable_sand_deduction"],
+      "result_paths": {
+        "statistics": "data.result",
+        "province_wide": "data.result.province_wide",
+        "daily_data_id": "data.data_id"
+      },
+      "key_fields": ["composite_index", "exceed_days", "valid_days", "exceed_rate", "compliance_rate", "single_indexes", "primary_pollutant_days", "exceed_days_by_pollutant"],
+      "misuse": ["Do not use this for new-standard questions.", "Do not manually compare periods when compare_old_standard_reports applies."]
+    },
+    "compare_standard_reports": {
+      "purpose": "Compare two periods under HJ 633-2026 new standard.",
+      "best_for": ["同比", "环比", "变化", "下降", "上升", "改善", "恶化", "新标准对比"],
+      "required_params": ["cities", "query_period", "comparison_period"],
+      "optional_params": ["enable_sand_deduction"],
+      "result_paths": {
+        "comparison": "data.result",
+        "query_period": "data.result.<city>.query_period",
+        "comparison_period": "data.result.<city>.comparison_period",
+        "differences": "data.result.<city>.differences",
+        "change_rates": "data.result.<city>.change_rates",
+        "province_wide": "data.result.province_wide"
+      },
+      "key_fields": ["query_period", "comparison_period", "differences", "change_rates"],
+      "misuse": ["Do not also call query_new_standard_report for the same periods.", "Do not manually compute change rates if returned by this tool."]
+    },
+    "compare_old_standard_reports": {
+      "purpose": "Compare two periods under HJ 633-2013 old standard.",
+      "best_for": ["旧标准同比", "旧标准环比", "2013标准变化"],
+      "required_params": ["cities", "query_period", "comparison_period"],
+      "optional_params": ["enable_sand_deduction"],
+      "result_paths": {
+        "comparison": "data.result",
+        "query_period": "data.result.<city>.query_period",
+        "comparison_period": "data.result.<city>.comparison_period",
+        "differences": "data.result.<city>.differences",
+        "change_rates": "data.result.<city>.change_rates"
+      },
+      "key_fields": ["query_period", "comparison_period", "differences", "change_rates"],
+      "misuse": ["Do not use for new-standard comparison.", "Do not duplicate with single-period old-standard report calls."]
+    },
+    "query_standard_comparison": {
+      "purpose": "Compare HJ 633-2026 and HJ 633-2013 for the same city set and period.",
+      "best_for": ["新旧标准对比", "标准影响", "2026标准 vs 2013标准", "口径差异"],
+      "required_params": ["cities", "start_date", "end_date"],
+      "optional_params": ["enable_sand_deduction"],
+      "result_paths": {
+        "comparison": "data.result",
+        "new_standard": "data.result.<city>.new_standard",
+        "old_standard": "data.result.<city>.old_standard",
+        "differences": "data.result.<city>.differences"
+      },
+      "key_fields": ["new_standard", "old_standard", "differences"],
+      "misuse": ["Do not call separate new and old report tools when this direct comparison is enough."]
+    },
+    "query_gd_suncere_city_day_new": {
+      "purpose": "Query new-standard city daily air quality records.",
+      "best_for": ["逐日数据", "日期列表", "日变化", "日AQI", "日首要污染物"],
+      "required_params": ["cities", "start_date", "end_date"],
+      "result_paths": {
+        "preview_records": "data.data",
+        "full_records": "data.data_id",
+        "metadata": "data.metadata"
+      },
+      "key_fields": ["timestamp", "measurements", "AQI", "air_quality_level", "primary_pollutant"],
+      "misuse": ["Do not use this just to calculate summary statistics that report tools already return."]
+    },
+    "query_gd_suncere_city_day": {
+      "purpose": "Query old-standard or legacy city daily air quality records.",
+      "best_for": ["旧标准日数据", "历史逐日数据"],
+      "required_params": ["cities", "start_date", "end_date"],
+      "result_paths": {
+        "preview_records": "data.data",
+        "full_records": "data.data_id"
+      },
+      "key_fields": ["timestamp", "measurements", "AQI", "air_quality_level", "primary_pollutant"],
+      "misuse": ["Do not use for new-standard statistics when query_new_standard_report applies."]
+    },
+    "query_gd_suncere_city_hour": {
+      "purpose": "Query city hourly air quality data.",
+      "best_for": ["小时数据", "日内变化", "小时峰值", "过程分析"],
+      "required_params": ["cities", "start_time", "end_time"],
+      "result_paths": {
+        "records": "data.data",
+        "full_records": "data.data_id"
+      },
+      "key_fields": ["timestamp", "measurements", "AQI"],
+      "misuse": ["Do not use hourly data for simple period statistics when report tools are available."]
+    },
+    "query_gd_suncere_station_hour_new": {
+      "purpose": "Query station-level hourly data under the new standard.",
+      "best_for": ["站点小时数据", "监测点小时变化", "站点峰值"],
+      "required_params": ["station_type", "start_time", "end_time"],
+      "conditional_params": "Provide at least one of cities or stations.",
+      "result_paths": {
+        "records": "data.data",
+        "full_records": "data.data_id"
+      },
+      "key_fields": ["station_name", "station_code", "timestamp", "measurements"],
+      "misuse": ["Do not answer station-level questions with city-level data unless explicitly allowed."]
+    },
+    "query_gd_suncere_station_day_new": {
+      "purpose": "Query station-level daily data under the new standard.",
+      "best_for": ["站点日数据", "监测点日AQI", "站点日首要污染物"],
+      "required_params": ["station_type", "start_date", "end_date"],
+      "conditional_params": "Provide at least one of cities or stations.",
+      "result_paths": {
+        "records": "data.data",
+        "full_records": "data.data_id"
+      },
+      "key_fields": ["station_name", "station_code", "timestamp", "measurements", "AQI", "primary_pollutant"],
+      "misuse": ["Do not use city report tools for station-level outputs."]
+    },
+    "query_station_new_standard_report": {
+      "purpose": "Query station-level new-standard statistics.",
+      "best_for": ["站点统计", "站点综合指数", "站点达标率", "站点超标天数"],
+      "required_params": ["station_type", "start_date", "end_date"],
+      "conditional_params": "Provide at least one of cities or stations.",
+      "result_paths": {
+        "statistics": "data.result",
+        "daily_data_id": "data.data_id"
+      },
+      "key_fields": ["composite_index", "exceed_days", "valid_days", "exceed_rate", "compliance_rate", "primary_pollutant_days"],
+      "misuse": ["Do not use city-level report tools for station-level statistics."]
+    },
+    "query_gd_suncere_regional_comparison": {
+      "purpose": "Compare regional or city-group air quality data.",
+      "best_for": ["区域对比", "城市组对比", "片区比较"],
+      "required_params": ["target_city", "nearby_cities", "start_time", "end_time"],
+      "result_paths": {
+        "comparison": "data.result",
+        "records": "data.data"
+      },
+      "key_fields": ["region", "cities", "composite_index", "AQI", "pollutants"],
+      "misuse": ["Do not duplicate by querying each city separately if this regional comparison covers the need."]
+    },
+    "query_xcai_city_history": {
+      "purpose": "Query XcAiDb city historical data.",
+      "best_for": ["历史数据", "XcAiDb", "较早时期查询"],
+      "required_params": ["cities", "start_date", "end_date"],
+      "result_paths": {
+        "records": "data.data",
+        "full_records": "data.data_id"
+      },
+      "key_fields": ["timestamp", "city", "pollutants", "AQI"],
+      "misuse": ["Do not use when newer standard-specific tools cover the period and metric."]
+    },
+    "execute_sql_query": {
+      "purpose": "Execute SQL Server queries for tables, rankings, joins, and unsupported specialized queries.",
+      "best_for": ["168城市排名", "全国发布数据", "预计算字段", "复杂SQL", "窗口函数", "JOIN"],
+      "required_params": ["sql"],
+      "result_paths": {
+        "rows": "data.rows or data.result",
+        "metadata": "data.metadata"
+      },
+      "key_fields": ["Depends on selected table"],
+      "recommended_tables": {
+        "city_168_statistics_new_standard": "168-city city statistics and ranking fields under the new standard",
+        "city_168_statistics": "168-city city statistics and ranking fields under the old or existing standard",
+        "province_statistics": "Province-level national published statistics"
+      },
+      "misuse": ["Do not guess unknown table columns; request table description first if needed.", "Do not use SQL to hand-calculate statistics already returned by report tools.", "Do not forget N prefix for Chinese string literals."]
+    }
+  }
+}
