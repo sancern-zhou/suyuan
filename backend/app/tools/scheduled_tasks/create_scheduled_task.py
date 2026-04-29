@@ -24,36 +24,33 @@ class CreateScheduledTaskTool(LLMTool):
 
     def __init__(self):
         function_schema = {
-            "type": "function",
-            "function": {
-                "name": "create_scheduled_task",
-                "description": (
-                    "通过自然语言创建定时任务。支持6种调度类型：\n"
-                    "预设类型：\n"
-                    "1. daily_8am - 每天早上8点执行\n"
-                    "2. every_2h - 每2小时执行一次\n"
-                    "3. every_30min - 每30分钟执行一次\n\n"
-                    "灵活类型：\n"
-                    "4. once - 一次性任务（指定具体时间执行一次）\n"
-                    "5. interval - 自定义间隔（每N分钟执行）\n"
-                    "6. daily_custom - 每天自定义时间执行\n\n"
-                    "示例：\n"
-                    "- '每天早上8点分析广州昨天的O3污染'\n"
-                    "- '每2小时检查PM2.5浓度变化'\n"
-                    "- '1分钟后执行臭氧报告分析'\n"
-                    "- '每5分钟更新空气质量数据'\n"
-                    "- '每天下午3点半生成污染分析报告'"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "user_request": {
-                            "type": "string",
-                            "description": "用户的自然语言请求，描述要创建的定时任务"
-                        }
-                    },
-                    "required": ["user_request"]
-                }
+            "name": "create_scheduled_task",
+            "description": (
+                "通过自然语言创建定时任务。支持6种调度类型：\n"
+                "预设类型：\n"
+                "1. daily_8am - 每天早上8点执行\n"
+                "2. every_2h - 每2小时执行一次\n"
+                "3. every_30min - 每30分钟执行一次\n\n"
+                "灵活类型：\n"
+                "4. once - 一次性任务（指定具体时间执行一次）\n"
+                "5. interval - 自定义间隔（每N分钟执行）\n"
+                "6. daily_custom - 每天自定义时间执行\n\n"
+                "示例：\n"
+                "- '每天早上8点分析广州昨天的O3污染'\n"
+                "- '每2小时检查PM2.5浓度变化'\n"
+                "- '1分钟后执行臭氧报告分析'\n"
+                "- '每5分钟更新空气质量数据'\n"
+                "- '每天下午3点半生成污染分析报告'"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_request": {
+                        "type": "string",
+                        "description": "用户的自然语言请求，描述要创建的定时任务"
+                    }
+                },
+                "required": ["user_request"]
             }
         }
         super().__init__(

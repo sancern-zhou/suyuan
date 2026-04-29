@@ -107,6 +107,39 @@ class ToolRegistry:
             )
             return_schema = {}
 
+        # ✅ 验证工具 Schema（防止 "unknown" 工具问题）
+        try:
+            function_schema = tool.get_function_schema()
+            schema_name = function_schema.get("name")
+
+            if not schema_name or not isinstance(schema_name, str) or not schema_name.strip():
+                logger.error(
+                    "tool_schema_invalid_name",
+                    tool=tool_name,
+                    schema_name=schema_name,
+                    schema_preview=str(function_schema)[:200],
+                    message="工具 Schema 缺少有效的 name 字段，拒绝注册"
+                )
+                raise ValueError(f"工具 {tool_name} 的 Schema 缺少有效的 name 字段")
+
+            # 确保 schema 的 name 与 tool.name 一致
+            if schema_name != tool_name:
+                logger.warning(
+                    "tool_schema_name_mismatch",
+                    tool=tool_name,
+                    schema_name=schema_name,
+                    message="Schema name 与 tool.name 不一致，使用 tool.name"
+                )
+
+        except Exception as e:
+            logger.error(
+                "tool_schema_validation_failed",
+                tool=tool_name,
+                error=str(e),
+                message="无法获取或验证工具 Schema，拒绝注册"
+            )
+            raise
+
         # 存储工具及完整元数据
         tool_data = {
             "tool": tool,

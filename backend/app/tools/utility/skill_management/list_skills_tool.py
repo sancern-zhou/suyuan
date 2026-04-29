@@ -28,26 +28,23 @@ class ListSkillsTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="list_skills",
-            description="""列出可用的技能文档
+            description="""【重要】列出【技能文档】（MD文档），不是查看可用工具列表
 
-技能是MD文档，描述如何使用多个工具完成复杂任务。
-此工具帮助发现和浏览可用的技能文档。
+⚠️ 区别说明：
+- 技能文档 = MD教程文档（描述如何组合使用多个工具完成复杂任务）
+- 工具列表 = 可直接调用的函数（如 read_file, bash, execute_python）
+- 如果用户问"查看工具列表"或"有哪些工具"，请勿使用此工具
+
+此工具用于：
+- 浏览系统中的技能教程文档
+- 查找特定领域的最佳实践（如"Excel批量处理"、"数据可视化"）
+- 学习如何组合多个工具解决复杂问题
 
 功能：
 - 列出所有可用的技能文档
-- 支持关键词过滤（如 "Excel", "可视化"）
+- 支持关键词过滤（如 "Excel", "图表", "会商"）
 - 返回技能名称、描述和文件路径
 - 读取自动生成的技能索引
-
-使用场景：
-- 需要完成复杂任务，不确定从何开始
-- 想了解系统支持哪些工作流
-- 寻找特定领域的技能（如Excel处理、数据可视化）
-
-示例：
-- list_skills()  # 列出所有技能
-- list_skills(keyword="Excel")  # 查找Excel相关技能
-- list_skills(keyword="可视化")  # 查找可视化相关技能
 
 参数说明：
 - keyword: 可选，过滤关键词（不区分大小写）
@@ -59,14 +56,14 @@ class ListSkillsTool(LLMTool):
     "data": {
         "skills": [
             {
-                "name": "Excel处理技能",
-                "file": "backend/docs/skills/excel.md",
-                "description": "使用pandas和openpyxl处理Excel文件"
+                "name": "Excel批量处理技能",
+                "file": "backend/docs/skills/excel_batch_processing.md",
+                "description": "使用pandas和openpyxl批量处理Excel文件"
             }
         ],
-        "count": 2
+        "count": 1
     },
-    "summary": "找到2个技能文档"
+    "summary": "找到1个技能文档"
 }
 
 注意：
@@ -261,19 +258,27 @@ class ListSkillsTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "list_skills",
-            "description": """列出可用的技能文档
+            "description": """【重要】列出【技能文档】（MD文档），不是查看可用工具列表
 
-技能是MD文档，描述如何使用多个工具完成复杂任务。
-此工具帮助发现和浏览可用的技能文档。
+⚠️ 区别说明：
+- 技能文档 = MD教程文档（描述如何组合使用多个工具完成复杂任务）
+- 工具列表 = 可直接调用的函数（如 read_file, bash, execute_python）
+- 如果用户问"查看工具列表"或"有哪些工具"，请勿使用此工具
 
-使用场景：
-- 需要完成复杂任务，不确定从何开始
-- 想了解系统支持哪些工作流
-- 寻找特定领域的技能（如Excel处理、数据可视化）
+此工具用于：
+- 浏览系统中的技能教程文档
+- 查找特定领域的最佳实践（如"Excel批量处理"、"数据可视化"）
+- 学习如何组合多个工具解决复杂问题
 
-注意：
-- 找到相关技能后，使用 read_file() 阅读详细文档
-- 技能文档位于 backend/docs/skills/ 目录
+参数：
+- keyword: 可选，搜索关键词（如 "Excel", "图表", "会商"）
+- category: 可选，分类过滤（预留字段）
+
+返回：技能文档列表（名称、文件路径、描述）
+
+示例：
+- list_skills() - 列出所有技能文档
+- list_skills(keyword="Excel") - 查找Excel相关技能文档
 """,
             "parameters": {
                 "type": "object",
