@@ -764,7 +764,7 @@ class ParsePDFTool(LLMTool):
                 }
 
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    response = await client.post(api_url, headers=headers, json=payload)
+                    response = await client.post(f"{api_url}/chat/completions", headers=headers, json=payload)
                     response.raise_for_status()
                     result = response.json()
 
