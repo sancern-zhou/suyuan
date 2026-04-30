@@ -219,8 +219,9 @@ class AcceptChangesTool(LLMTool):
                 logger.warning("accept_changes_pdf_conversion_failed", error=str(pdf_error))
 
             result_data = {
+                "file_path": str(output_path),  # 统一使用 file_path 字段名（前端期望）
                 "input_file": str(input_path),
-                "output_file": str(output_path),
+                "output_file": str(output_path),  # 保留向后兼容
                 "size": file_size
             }
 

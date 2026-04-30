@@ -654,11 +654,35 @@ class LLMService:
 
         # Anthropic Native Client (always initialized for V3 architecture)
         self.anthropic_client = None
-        if self.provider in settings.anthropic_compatible_endpoints:
+        if self.provider in ["deepseek", "mimo"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
-                anthropic_base_url = settings.anthropic_compatible_endpoints[self.provider]
+                # 完全从环境变量读取 base_url
+                if self.provider == "mimo":
+                    anthropic_base_url = settings.mimo_base_url
+                elif self.provider == "deepseek":
+                    # DeepSeek 的 Anthropic 格式端点
+                    anthropic_base_url = settings.deepseek_base_url.replace("/v1", "/anthropic")
+                else:
+                    logger.error(
+                        "llm_anthropic_unsupported_provider",
+                        provider=self.provider
+                    )
+                    return
+
+                # 去除末尾斜杠，避免SDK添加斜杠后导致双斜杠问题
+                if anthropic_base_url.endswith('/'):
+                    anthropic_base_url = anthropic_base_url.rstrip('/')
+
+                if not anthropic_base_url:
+                    logger.error(
+                        "llm_anthropic_base_url_missing",
+                        provider=self.provider,
+                        message=f"{self.provider.upper()}_BASE_URL 环境变量未配置"
+                    )
+                    return
+
                 self.anthropic_client = AsyncAnthropic(
                     api_key=self.api_key,
                     base_url=anthropic_base_url
@@ -666,7 +690,8 @@ class LLMService:
                 logger.info(
                     "llm_anthropic_client_initialized",
                     provider=self.provider,
-                    base_url=anthropic_base_url
+                    base_url=anthropic_base_url,
+                    api_key_prefix=self.api_key[:10] + "..."  # 显示前10个字符
                 )
             except ImportError:
                 logger.error(
@@ -1584,8 +1609,7 @@ class LLMService:
         if not self.anthropic_client:
             raise RuntimeError(
                 "Anthropic client not initialized. "
-                "Set USE_ANTHROPIC_FORMAT=true in environment and ensure "
-                "the provider is in anthropic_compatible_endpoints."
+                f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
             )
 
         # 调试日志 - 完整上下文
@@ -1885,7 +1909,7 @@ class LLMService:
         if not self.anthropic_client:
             raise RuntimeError(
                 "Anthropic client not initialized. "
-                "Ensure the provider is in anthropic_compatible_endpoints."
+                f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
             )
 
         # 调试日志 - 完整上下文（流式）

@@ -328,12 +328,21 @@ class SessionRepository:
                             )
 
                             # 提取元数据（排除已知字段）
-                            known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
-                                          "tool_use_id", "is_error"}
+                            # ✅ 修复：tool_use_id 和 is_error 需要保存到 data 中，不要排除
+                            known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning"}
                             msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
 
-                            # 转换 Decimal 为 float
+                            # ✅ 修复：将 tool_use_id、tool_name、is_error 合并到 data 中
                             msg_data = self._convert_decimal_to_float(msg.get("data"))
+                            if msg_data and isinstance(msg_data, dict):
+                                # 确保 data 是字典
+                                if "tool_use_id" in msg and "tool_use_id" not in msg_data:
+                                    msg_data["tool_use_id"] = msg["tool_use_id"]
+                                if "tool_name" in msg and "tool_name" not in msg_data:
+                                    msg_data["tool_name"] = msg["tool_name"]
+                                if "is_error" in msg and "is_error" not in msg_data:
+                                    msg_data["is_error"] = msg["is_error"]
+
                             msg_metadata_converted = self._convert_decimal_to_float(msg_metadata)
                             content = self._serialize_content(msg.get("content"))
 

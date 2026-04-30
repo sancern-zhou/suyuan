@@ -678,7 +678,14 @@ class SessionMemory:
                 type="tool_result",
                 tool_use_id=tool_use_id,
                 is_error=is_error,
-                data={"result": result}
+                # ✅ 修复：data 字段不包含 tool_use_id，因为它已经在 ConversationTurn 属性中
+                # 但需要在 data 中添加 tool_name（从 result.metadata.generator 推断）
+                data={
+                    "tool_use_id": tool_use_id,
+                    "tool_name": result.get("metadata", {}).get("generator", "") if isinstance(result, dict) else "",
+                    "is_error": is_error,
+                    "result": result
+                }
             )
         )
 
@@ -784,6 +791,27 @@ class SessionMemory:
                 "tool_use_id": te["tool_use_id"],
             })
 
+        # ✅ 修复：统一 data 字段格式，确保前端能正确读取 visuals
+        # 单个工具：data={"result": {...}}
+        # 多个工具：data={"results": [{...}, {...}]}
+        if len(tool_executions) == 1:
+            # 单个工具：使用 result 格式（与 add_tool_result_message 一致）
+            te = tool_executions[0]
+            data_field = {
+                "tool_use_id": te["tool_use_id"],
+                "tool_name": te["tool_name"],
+                "is_error": te.get("is_error", False),
+                "result": te["result"]
+            }
+        else:
+            # 多个工具：使用 results 格式
+            data_field = {
+                "tool_use_id": tool_executions[0]["tool_use_id"],  # 主工具ID
+                "tool_name": tool_executions[0]["tool_name"],  # 主工具名称
+                "is_error": any(te.get("is_error", False) for te in tool_executions),
+                "results": [te["result"] for te in tool_executions]
+            }
+
         self.conversation_history.append(
             ConversationTurn(
                 role="user",
@@ -792,7 +820,7 @@ class SessionMemory:
                 type="tool_result",
                 tool_use_id=tool_executions[0]["tool_use_id"] if len(tool_executions) == 1 else None,
                 is_error=any(te.get("is_error", False) for te in tool_executions),
-                data={"results": [te["result"] for te in tool_executions]},
+                data=data_field,
             )
         )
 

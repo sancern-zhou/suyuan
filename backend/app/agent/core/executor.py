@@ -1124,10 +1124,25 @@ class ToolExecutor:
                 merged_data.extend(
                     result["data"] if isinstance(result["data"], list) else [result["data"]]
                 )
+            # ✅ 修复：检查result是否包含visuals字段
             if result.get("visuals"):
+                logger.info(
+                    "merging_visuals_from_tool_result",
+                    tool=res.get("tool", "unknown"),
+                    visuals_count=len(result.get("visuals", [])),
+                    has_visuals="visuals" in result
+                )
                 merged_visuals.extend(result["visuals"])
             if result.get("data_id"):
                 merged_data_ids.append(result["data_id"])
+
+        # ✅ 添加调试日志
+        logger.info(
+            "parallel_execution_visuals_merged",
+            successful_tools_count=len(successful_results),
+            merged_visuals_count=len(merged_visuals),
+            merged_data_ids_count=len(merged_data_ids)
+        )
 
         # 判断执行状态
         success_count = len(successful_results)

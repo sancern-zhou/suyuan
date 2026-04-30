@@ -530,6 +530,7 @@ class HeartbeatService:
             tasks: 包含更新后next_run_at的任务列表
         """
         try:
+            import re
             # 读取文件内容
             content = self.heartbeat_file.read_text(encoding="utf-8")
 
@@ -541,13 +542,30 @@ class HeartbeatService:
                 if not task_name or not next_run_at:
                     continue
 
-                # 使用正则表达式替换
-                import re
-                # 匹配任务块并添加/更新next_run_at字段
-                pattern = rf'(- name: {re.escape(task_name)}.*?schedule: ".*?".*?)\n(  description:.*?\n)'
-                replacement = rf'\1  next_run_at: "{next_run_at}"\n\2'
+                # ✅ 修复：使用更稳健的正则表达式，允许字段顺序变化
+                # 匹配从 "- name: xxx" 到 "next_run_at:" 的整个任务块
+                pattern = rf'(- name:\s*{re.escape(task_name)}.*?next_run_at:\s*)["\'][^"\']*["\']'
 
-                content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+                if re.search(pattern, content, re.DOTALL):
+                    # 如果已存在 next_run_at 字段，替换其值
+                    replacement = rf'\1"{next_run_at}"'
+                    content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+                    logger.debug(
+                        "updated_next_run_at",
+                        task_name=task_name,
+                        next_run_at=next_run_at
+                    )
+                else:
+                    # 如果不存在 next_run_at 字段，在 enabled 行后添加
+                    enabled_pattern = rf'(- name:\s*{re.escape(task_name)}.*?enabled:\s*(?:true|false)\s*\n)'
+                    if re.search(enabled_pattern, content, re.DOTALL):
+                        replacement = rf'\1  next_run_at: "{next_run_at}"\n'
+                        content = re.sub(enabled_pattern, replacement, content, flags=re.DOTALL)
+                        logger.debug(
+                            "added_next_run_at",
+                            task_name=task_name,
+                            next_run_at=next_run_at
+                        )
 
             # 写回文件
             self.heartbeat_file.write_text(content, encoding="utf-8")

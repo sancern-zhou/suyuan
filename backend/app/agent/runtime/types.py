@@ -45,6 +45,13 @@ class PlannerResult:
 
 @dataclass
 class RunState:
+    """运行状态
+
+    ⚠️ 重要变更（模式B实施）：
+    - 移除 workflow_visuals 字段（visuals现在从tool_result事件获取）
+    - 移除 direct_from_workflow 字段（不再需要）
+    - 保留 workflow_sources 字段（用于知识溯源）
+    """
     session_id: str
     user_query: str
     mode: str
@@ -57,8 +64,10 @@ class RunState:
     assistant_message_written: bool = False
     has_seen_tool_use: bool = False
     workflow_sources: List[Any] = field(default_factory=list)
-    workflow_visuals: List[Any] = field(default_factory=list)
-    direct_from_workflow: bool = False
+    # ❌ 移除：workflow_visuals（不再使用，visuals从tool_result获取）
+    # workflow_visuals: List[Any] = field(default_factory=list)
+    # ❌ 移除：direct_from_workflow（不再需要）
+    # direct_from_workflow: bool = False
     last_observation: Optional[Dict[str, Any]] = None
     last_single_tool_result: Optional[Dict[str, Any]] = None
 

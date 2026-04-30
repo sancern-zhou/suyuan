@@ -567,8 +567,10 @@ doc.save('/root/report.docx')
                         display_title = echarts_title or f"{chart_type.upper()}图表"
 
                     # ✅ 直接使用 ECharts 标准格式
+                    # 使用计数器确保同一工具生成的多个图表有唯一ID
+                    echarts_count = len([v for v in result.get("visuals", []) if v.get("id", "").startswith("echarts_")])
                     result.setdefault("visuals", []).append({
-                        "id": f"echarts_{time.time_ns()}",
+                        "id": f"echarts_{time.time_ns()}_{echarts_count}",
                         "type": chart_type,
                         "title": display_title,
                         "data": echarts_data,  # 直接使用ECharts格式（包含完整title、yAxis.name等）
