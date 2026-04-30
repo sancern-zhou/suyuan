@@ -99,7 +99,8 @@ class SubagentManager:
         origin_chat_id: str,
         origin_sender_id: str,
         label: Optional[str] = None,
-        timeout: int = DEFAULT_TIMEOUT
+        timeout: int = DEFAULT_TIMEOUT,
+        manual_mode: str = "assistant"
     ) -> Dict[str, Any]:
         """
         Spawn a background subagent to execute a long-running task.
@@ -112,6 +113,7 @@ class SubagentManager:
             origin_sender_id: Origin sender ID
             label: Optional task label
             timeout: Task timeout in seconds (60-86400)
+            manual_mode: Background agent mode (assistant/expert/query/code)
 
         Returns:
             Result dict with task_id and label
@@ -120,6 +122,10 @@ class SubagentManager:
         if not (60 <= timeout <= 86400):
             timeout = self.DEFAULT_TIMEOUT
 
+        allowed_modes = {"assistant", "expert", "query", "code"}
+        if manual_mode not in allowed_modes:
+            manual_mode = "assistant"
+
         # Check concurrent limit
         user_tasks = await self.task_store.get_user_tasks(
             social_user_id,
@@ -127,7 +133,7 @@ class SubagentManager:
         )
         if len(user_tasks) >= self.MAX_CONCURRENT_PER_USER:
             return {
-                "status": "error",
+                "status": "failed",
                 "success": False,
                 "error": f"并发任务数量已达上限（{self.MAX_CONCURRENT_PER_USER}个），请等待现有任务完成"
             }
@@ -159,7 +165,8 @@ class SubagentManager:
                     "chat_id": origin_chat_id,
                     "sender_id": origin_sender_id
                 },
-                timeout=timeout
+                timeout=timeout,
+                manual_mode=manual_mode
             )
         )
 
@@ -174,14 +181,16 @@ class SubagentManager:
             "subagent_spawned",
             task_id=task_id,
             social_user_id=social_user_id,
-            label=label
+            label=label,
+            manual_mode=manual_mode
         )
 
         return {
             "status": "success",
             "success": True,
             "task_id": task_id,
-            "label": label or task[:50]
+            "label": label or task[:50],
+            "manual_mode": manual_mode
         }
 
     async def _run_subagent(
@@ -190,7 +199,8 @@ class SubagentManager:
         task: str,
         social_user_id: str,
         origin_info: Dict[str, str],
-        timeout: int
+        timeout: int,
+        manual_mode: str
     ) -> None:
         """
         Run subagent in background.
@@ -201,6 +211,7 @@ class SubagentManager:
             social_user_id: User ID
             origin_info: Origin information (channel, chat_id, sender_id)
             timeout: Timeout in seconds
+            manual_mode: Background agent mode
         """
         try:
             # Update status to running
@@ -211,7 +222,7 @@ class SubagentManager:
 
             # Execute subagent with timeout
             result = await asyncio.wait_for(
-                self._execute_subagent(task, session_id),
+                self._execute_subagent(task, session_id, manual_mode=manual_mode),
                 timeout=timeout
             )
 
@@ -246,6 +257,13 @@ class SubagentManager:
                 error=error_msg
             )
 
+            await self._send_failure_notification(
+                task_id=task_id,
+                error=error_msg,
+                social_user_id=social_user_id,
+                origin_info=origin_info
+            )
+
             logger.warning(
                 "subagent_timeout",
                 task_id=task_id,
@@ -260,6 +278,13 @@ class SubagentManager:
                 error=error_msg
             )
 
+            await self._send_failure_notification(
+                task_id=task_id,
+                error=error_msg,
+                social_user_id=social_user_id,
+                origin_info=origin_info
+            )
+
             logger.error(
                 "subagent_failed",
                 task_id=task_id,
@@ -270,7 +295,8 @@ class SubagentManager:
     async def _execute_subagent(
         self,
         task: str,
-        session_id: str
+        session_id: str,
+        manual_mode: str = "assistant"
     ) -> str:
         """
         Execute subagent with tool isolation.
@@ -278,40 +304,56 @@ class SubagentManager:
         Args:
             task: Task description
             session_id: Independent session ID
+            manual_mode: Background agent mode
 
         Returns:
             Final answer from subagent
         """
-        # Create filtered tool registry (exclude spawn and message tools)
-        from app.tools.base.registry import ToolRegistry
+        allowed_modes = {"assistant", "expert", "query", "code"}
+        if manual_mode not in allowed_modes:
+            manual_mode = "assistant"
 
-        filtered_registry = ToolRegistry(registry_name=f"spawn_{session_id}")
+        # Create a temporary ReActAgent with side-effect social tools removed.
+        # The tool schemas are still mode-filtered by manual_mode, and this
+        # executor-level filter protects against accidental or legacy calls.
+        from app.agent.react_agent import ReActAgent
+        from app.agent.tool_adapter import get_react_agent_tool_registry
 
-        # Register all tools except spawn and message
-        from app.tools import create_global_tool_registry
-        global_registry = create_global_tool_registry()
+        blocked_tools = {"spawn", "send_notification", "schedule_task"}
+        full_tool_registry = get_react_agent_tool_registry()
+        filtered_tool_registry = {
+            name: tool
+            for name, tool in full_tool_registry.items()
+            if name not in blocked_tools
+        }
 
-        for tool_name, tool_instance in global_registry._tools.items():
-            # Exclude spawn and message tools to prevent recursion
-            if tool_name not in ["spawn", "message"]:
-                filtered_registry.register(tool_instance)
+        subagent = ReActAgent(
+            tool_registry=filtered_tool_registry,
+            max_iterations=self.MAX_ITERATIONS,
+            enable_memory=self.agent.enable_memory,
+            memory_manager=self.agent.memory_manager
+        )
 
-        # Create temporary ReActAgent with filtered tools
-        # Note: We reuse the main agent's configuration but with filtered tools
         events = []
         final_answer = ""
 
-        async for event in self.agent.analyze(
+        async for event in subagent.analyze(
             user_query=task,
             session_id=session_id,
-            max_iterations=self.MAX_ITERATIONS
+            max_iterations=self.MAX_ITERATIONS,
+            manual_mode=manual_mode
         ):
             events.append(event)
 
             # Extract final answer
             if event.get("type") == "complete":
                 final_data = event.get("data", {})
-                final_answer = final_data.get("final_answer", "")
+                final_answer = (
+                    final_data.get("answer")
+                    or final_data.get("response")
+                    or final_data.get("final_answer")
+                    or ""
+                )
                 break
             elif event.get("type") == "error":
                 error_data = event.get("data", {})
@@ -385,6 +427,63 @@ class SubagentManager:
         except Exception as e:
             logger.error(
                 "notification_send_failed",
+                task_id=task_id,
+                error=str(e),
+                exc_info=True
+            )
+
+    async def _send_failure_notification(
+        self,
+        task_id: str,
+        error: str,
+        social_user_id: str,
+        origin_info: Dict[str, str]
+    ) -> None:
+        """
+        Send failure notification to user.
+
+        Args:
+            task_id: Task ID
+            error: Failure reason
+            social_user_id: User ID
+            origin_info: Origin information
+        """
+        if not self.message_bus:
+            logger.debug("no_message_bus_skip_failure_notification", task_id=task_id)
+            return
+
+        task_record = await self.task_store.get_task(task_id)
+        label = task_record.get("label", "后台任务") if task_record else "后台任务"
+        safe_error = (error or "未知错误").strip()
+        if len(safe_error) > 500:
+            safe_error = safe_error[:500] + "..."
+
+        notification = f"""【后台任务失败】
+
+任务: {label}
+原因: {safe_error}
+
+任务ID: {task_id}"""
+
+        try:
+            outbound_msg = OutboundMessage(
+                channel=origin_info["channel"],
+                chat_id=origin_info["chat_id"],
+                content=notification,
+                reply_to=origin_info["sender_id"]
+            )
+
+            await self.message_bus.publish_outbound(outbound_msg)
+
+            logger.info(
+                "failure_notification_sent",
+                task_id=task_id,
+                social_user_id=social_user_id
+            )
+
+        except Exception as e:
+            logger.error(
+                "failure_notification_send_failed",
                 task_id=task_id,
                 error=str(e),
                 exc_info=True
