@@ -32,7 +32,7 @@ class SubagentManager:
 
     MAX_CONCURRENT_PER_USER = 5
     DEFAULT_TIMEOUT = 3600  # 1 hour
-    MAX_ITERATIONS = 30  # Subagent iteration limit
+    MAX_ITERATIONS = 100  # Subagent iteration limit
 
     def __init__(
         self,
@@ -291,9 +291,11 @@ class SubagentManager:
         from app.tools import create_global_tool_registry
         global_registry = create_global_tool_registry()
 
-        for tool_name, tool_instance in global_registry._tools.items():
+        for tool_name, tool_data in global_registry._tools.items():
             # Exclude spawn and message tools to prevent recursion
             if tool_name not in ["spawn", "message"]:
+                # Extract the actual tool object from tool_data dictionary
+                tool_instance = tool_data["tool"]
                 filtered_registry.register(tool_instance)
 
         # Create temporary ReActAgent with filtered tools

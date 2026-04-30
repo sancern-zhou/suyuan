@@ -1,13 +1,5 @@
 <template>
   <div class="knowledge-source-full-panel">
-    <div class="panel-header">
-      <div class="header-title">
-        <span class="panel-icon">📚</span>
-        <span class="panel-text">知识溯源</span>
-        <span v-if="sources.length > 0" class="source-count">{{ sources.length }} 篇参考文档</span>
-      </div>
-    </div>
-
     <div v-if="sources.length === 0" class="empty-state">
       <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
         <path d="M12 2L2 7l10 5 10-5-10-5z"/>
@@ -85,41 +77,6 @@ const props = defineProps({
   overflow: hidden;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  background: white;
-  border-bottom: 1px solid #e8e8e8;
-  flex-shrink: 0;
-}
-
-.header-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.panel-icon {
-  font-size: 20px;
-}
-
-.panel-text {
-  font-weight: 600;
-  font-size: 16px;
-  color: #333;
-}
-
-.source-count {
-  padding: 4px 12px;
-  background: #e3f2fd;
-  color: #1976d2;
-  border-radius: 12px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .empty-state {
   flex: 1;
   display: flex;
@@ -138,23 +95,14 @@ const props = defineProps({
 .source-list {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .source-item {
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 16px;
-  background: white;
-  transition: all 0.2s;
-}
-
-.source-item:hover {
-  border-color: #1976d2;
-  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
+  padding: 16px 20px;
+  border-bottom: 1px solid #e8e8e8;
+  background: transparent;
 }
 
 .source-header {
@@ -210,7 +158,6 @@ const props = defineProps({
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;
-  padding-left: 40px;
 }
 
 .info-row {
@@ -230,17 +177,17 @@ const props = defineProps({
 }
 
 .source-content {
-  padding-left: 40px;
+  margin-top: 8px;
 }
 
 .content-preview {
-  padding: 12px;
+  padding: 16px;
   background: #f5f5f5;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: #666;
   line-height: 1.7;
-  max-height: 150px;
+  max-height: 400px;
   overflow-y: auto;
   white-space: pre-wrap;
 }

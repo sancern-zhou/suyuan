@@ -112,6 +112,20 @@ class RuntimeEventBus:
         }
 
     def complete(self, state: RunState, status: str = "completed", reason: str | None = None) -> Dict[str, Any]:
+        """
+        生成complete事件
+
+        ⚠️ 重要：complete事件只返回文本答案，不包含visuals
+        visuals应该从tool_result事件中获取，符合单一职责原则
+
+        Args:
+            state: 运行状态
+            status: 完成状态（completed/incomplete）
+            reason: 未完成原因
+
+        Returns:
+            complete事件字典
+        """
         data = {
             "answer": state.response_text,
             "response": state.response_text,
@@ -119,9 +133,10 @@ class RuntimeEventBus:
             "session_id": state.session_id,
             "run_id": state.run_id,
             "timestamp": datetime.now().isoformat(),
+            # ✅ 保留sources字段（用于知识溯源）
             "sources": state.workflow_sources,
-            "visuals": state.workflow_visuals,
-            "direct_from_workflow": state.direct_from_workflow,
+            # ❌ 移除visuals字段（应该从tool_result获取）
+            # ❌ 移除direct_from_workflow字段（不需要）
         }
         if status != "completed":
             data["status"] = status

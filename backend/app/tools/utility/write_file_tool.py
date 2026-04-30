@@ -25,12 +25,11 @@ WriteFile 工具 - 完整对标 Claude Code 官方实现
 - Claude Code: src/tools/FileWriteTool/FileWriteTool.ts
 - Claude Code: src/tools/FileWriteTool/utils.ts
 """
-import os
-import time
 import difflib
 import platform
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
+
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.utility.project_root import get_project_root
@@ -178,13 +177,12 @@ class WriteFileTool(LLMTool):
 - ✅ 导出数据到文本文件
 - ❌ 修改文件的部分内容 → 使用 edit_file 工具
 
-路径说明（重要）：
-- 报告文件：/home/xckj/suyuan/backend_data_registry/report.md
-- 数据文件：/home/xckj/suyuan/backend_data_registry/data.json
-- 相对路径：backend/output.txt（相对于项目根目录）
+路径说明：
+- 项目目录：任何相对路径或绝对路径在 /home/xckj/suyuan 下
+- 临时目录：/tmp 及其子目录（用于临时文件）
 
 示例：
-- write_file(path="/home/xckj/suyuan/backend_data_registry/report.md", content="# 报告内容")
+- write_file(path="/tmp/reports/jining_202603_pollution_report/report.qmd", content="---\ntitle: 报告\n---")
 - write_file(path="backend/output.txt", content="output data")
 - write_file(path="config.json", content='{"port": 8000}')
 
@@ -218,6 +216,8 @@ class WriteFileTool(LLMTool):
 
         self.working_dir = get_project_root()
         self.read_state = get_file_read_state()
+        # 额外允许的路径列表（用于临时文件）
+        self.allowed_extra_paths = [Path("/tmp")]
 
     async def execute(
         self,
@@ -501,9 +501,7 @@ class WriteFileTool(LLMTool):
 
     def _resolve_path(self, path: str) -> Optional[Path]:
         """
-        解析文件路径，确保在工作目录范围内
-
-        参考：FileWriteTool.ts:expandPath() + 权限检查
+        解析文件路径，确保在工作目录或允许的额外路径范围内
         """
         try:
             file_path = Path(path).expanduser().resolve()
@@ -512,18 +510,22 @@ class WriteFileTool(LLMTool):
             if not file_path.is_absolute():
                 file_path = (self.working_dir / file_path).resolve()
 
-            # 安全检查：确保在工作目录范围内
-            try:
-                file_path.relative_to(self.working_dir)
-            except ValueError:
-                logger.warning(
-                    "write_file_path_escape",
-                    requested_path=path,
-                    allowed_dir=str(self.working_dir)
-                )
-                return None
+            # 安全检查：确保在工作目录或允许的额外路径范围内
+            allowed_dirs = [self.working_dir] + [p.resolve() for p in self.allowed_extra_paths]
 
-            return file_path
+            for allowed_dir in allowed_dirs:
+                try:
+                    file_path.relative_to(allowed_dir)
+                    return file_path
+                except ValueError:
+                    continue
+
+            logger.warning(
+                "write_file_path_escape",
+                requested_path=path,
+                allowed_dirs=[str(d) for d in allowed_dirs]
+            )
+            return None
 
         except Exception as e:
             logger.error("write_file_path_resolution_failed", path=path, error=str(e))

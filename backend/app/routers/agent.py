@@ -317,10 +317,11 @@ async def analyze_stream(request: AgentAnalyzeRequest):
         conversation_history = []
         collected_data_ids = []
         collected_visuals = []
+        seen_visual_ids = set()  # ✅ 用于去重：记录已添加的图表ID
 
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals
+            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, seen_visual_ids
 
             # ✅ 用于统计（不输出日志）
             event_count = 0
@@ -387,20 +388,33 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     # 收集对话历史（转换为前端格式，添加 content 字段）
                     if event["type"] in ["thought", "tool_use", "tool_result"]:
                         # 创建前端格式的消息
+                        event_data = event.get("data", {})
+
+                        # 【验证】检查 tool_result 事件的 data 字段
+                        if event["type"] == "tool_result":
+                            logger.info("[tool_result_debug] 验证 event.data 结构",
+                                has_data="data" in event,
+                                data_keys=list(event_data.keys()) if isinstance(event_data, dict) else "not_dict",
+                                has_result="result" in event_data,
+                                result_keys=list(event_data.get("result", {}).keys()) if isinstance(event_data.get("result"), dict) else "not_dict",
+                                has_visuals="visuals" in event_data.get("result", {}),
+                                visuals_count=len(event_data.get("result", {}).get("visuals", []))
+                            )
+
                         frontend_message = {
                             "type": event["type"],
-                            "data": event.get("data", {}),
-                            "timestamp": event.get("data", {}).get("timestamp") if "data" in event else None
+                            "data": event_data,
+                            "timestamp": event_data.get("timestamp") if "timestamp" in event_data else None
                         }
 
                         # 提取 content 字段（前端显示用）
                         if event["type"] == "thought":
-                            frontend_message["content"] = event.get("data", {}).get("thought", "思考中...")
+                            frontend_message["content"] = event_data.get("thought", "思考中...")
                         elif event["type"] == "tool_use":
-                            tool_name = event.get("data", {}).get("tool_name", "")
+                            tool_name = event_data.get("tool_name", "")
                             frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
                         elif event["type"] == "tool_result":
-                            result_data = event.get("data", {}).get("result", {})
+                            result_data = event_data.get("result", {})
                             frontend_message["content"] = result_data.get("summary", "获得结果") if isinstance(result_data, dict) else str(result_data)
 
                         conversation_history.append(frontend_message)
@@ -426,11 +440,31 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         if "data_ids" in data:
                             collected_data_ids.extend(data["data_ids"])
 
-                    # 收集可视化
+                    # 收集可视化（基于ID去重）
                     if "visuals" in event.get("data", {}):
                         visuals = event["data"]["visuals"]
                         if isinstance(visuals, list):
-                            collected_visuals.extend(visuals)
+                            for visual in visuals:
+                                visual_id = visual.get("id")
+                                visual_title = visual.get("title", "")
+                                if visual_id and visual_id not in seen_visual_ids:
+                                    logger.info(
+                                        "visual_collected",
+                                        visual_id=visual_id,
+                                        visual_title=visual_title[:50] if visual_title else "",
+                                        seen_count=len(seen_visual_ids)
+                                    )
+                                    collected_visuals.append(visual)
+                                    seen_visual_ids.add(visual_id)
+                                elif visual_id and visual_id in seen_visual_ids:
+                                    logger.warning(
+                                        "visual_duplicate_skipped",
+                                        visual_id=visual_id,
+                                        visual_title=visual_title[:50] if visual_title else ""
+                                    )
+                                elif not visual_id:
+                                    # 如果没有ID，也添加（向后兼容）
+                                    collected_visuals.append(visual)
 
                     # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
                     if event["type"] == "complete":

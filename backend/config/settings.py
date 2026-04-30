@@ -154,12 +154,10 @@ class Settings(BaseSettings):
     )
 
     # Anthropic Format Configuration (V3 - Anthropic native only)
+    # 所有端点从环境变量读取，不再使用硬编码默认值
     anthropic_compatible_endpoints: Dict[str, str] = Field(
-        default={
-            "deepseek": "https://api.deepseek.com/anthropic",
-            "mimo": "https://api.xiaomimimo.com/anthropic",
-        },
-        description="Providers with Anthropic-compatible endpoints"
+        default={},  # 空字典，强制从环境变量读取
+        description="Providers with Anthropic-compatible endpoints (从环境变量读取)"
     )
 
     # LLM Temperature Configuration
