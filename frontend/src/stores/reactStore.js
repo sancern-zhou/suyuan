@@ -1044,7 +1044,7 @@ export const useReactStore = defineStore('react', {
           const toolInput = toolUseData.input || {}
 
           // 格式化工具调用信息
-          let toolUseContent = `🔧 Tool Use: ${toolName}`
+          let toolUseContent = `Tool Use: ${toolName}`
           if (toolUseId) {
             toolUseContent += ` (ID: ${toolUseId.substring(0, 8)}...)`
           }
@@ -1068,7 +1068,7 @@ export const useReactStore = defineStore('react', {
           const isError = toolResultData.is_error || false
 
           // 格式化工具结果信息
-          let toolResultContent = isError ? '❌ Tool Error' : '✅ Tool Result'
+          let toolResultContent = isError ? 'Tool Error' : 'Tool Result'
           if (resultToolUseId) {
             toolResultContent += ` (ID: ${resultToolUseId.substring(0, 8)}...)`
           }
