@@ -68,6 +68,12 @@ class SpawnTool(LLMTool):
                         "minimum": 60,
                         "maximum": 86400,
                         "default": 3600
+                    },
+                    "manual_mode": {
+                        "type": "string",
+                        "description": "后台子Agent运行模式（可选：assistant/expert/query/code，默认assistant）",
+                        "enum": ["assistant", "expert", "query", "code"],
+                        "default": "assistant"
                     }
                 },
                 "required": ["task"]
@@ -99,6 +105,7 @@ class SpawnTool(LLMTool):
         task: str = None,
         label: str = None,
         timeout: int = 3600,
+        manual_mode: str = "assistant",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -108,6 +115,7 @@ class SpawnTool(LLMTool):
             task: Task description (required)
             label: Optional task label
             timeout: Timeout in seconds (default: 3600)
+            manual_mode: Background agent mode (assistant/expert/query/code)
 
         Returns:
             Result dict with task_id and summary
@@ -115,7 +123,7 @@ class SpawnTool(LLMTool):
         # Validate required parameters
         if not task:
             return {
-                "status": "error",
+                "status": "failed",
                 "success": False,
                 "error": "缺少必填参数：task（任务描述）"
             }
@@ -124,32 +132,40 @@ class SpawnTool(LLMTool):
         if not isinstance(timeout, int) or timeout < 60 or timeout > 86400:
             timeout = 3600
 
+        allowed_modes = {"assistant", "expert", "query", "code"}
+        if manual_mode not in allowed_modes:
+            manual_mode = "assistant"
+
         # Get SubagentManager
         manager = self.manager
         if not manager:
             return {
-                "status": "error",
+                "status": "failed",
                 "success": False,
                 "error": "SubagentManager未初始化，请检查系统配置"
             }
 
         # Get current context information
-        from app.social.message_bus_singleton import get_current_chat_id, get_current_channel
+        from app.social.message_bus_singleton import (
+            get_current_bot_account,
+            get_current_chat_id,
+            get_current_channel,
+        )
 
         chat_id = get_current_chat_id()
         channel = get_current_channel()
+        bot_account = get_current_bot_account() or "default"
 
         if not chat_id or not channel:
             return {
-                "status": "error",
+                "status": "failed",
                 "success": False,
                 "error": "无法获取当前会话信息（chat_id或channel为空）"
             }
 
-        # Build social_user_id
-        # Format: {channel}:{bot_account}:{sender_id}
-        # For now, we use a simplified format since we don't have bot_account here
-        social_user_id = f"{channel}:default:{chat_id}"
+        # Build social_user_id. In current Weixin integration chat_id == sender_id.
+        # Keep bot_account aligned with AgentBridge/ScheduleTask user isolation.
+        social_user_id = f"{channel}:{bot_account}:{chat_id}"
 
         try:
             # Spawn the subagent
@@ -160,12 +176,13 @@ class SpawnTool(LLMTool):
                 origin_chat_id=chat_id,
                 origin_sender_id=chat_id,  # For weixin, chat_id = sender_id
                 label=label,
-                timeout=timeout
+                timeout=timeout,
+                manual_mode=manual_mode
             )
 
             if not result.get("success"):
                 return {
-                    "status": "error",
+                    "status": "failed",
                     "success": False,
                     "error": result.get("error", "创建后台任务失败")
                 }
@@ -178,6 +195,7 @@ class SpawnTool(LLMTool):
 
 任务ID: {task_id}
 状态: 执行中
+模式: {manual_mode}
 超时: {timeout}秒
 
 任务将在后台执行，完成后会主动通知您。
@@ -188,6 +206,7 @@ class SpawnTool(LLMTool):
                 "success": True,
                 "task_id": task_id,
                 "label": task_label,
+                "manual_mode": manual_mode,
                 "summary": summary
             }
 
@@ -199,7 +218,7 @@ class SpawnTool(LLMTool):
                 exc_info=True
             )
             return {
-                "status": "error",
+                "status": "failed",
                 "success": False,
                 "error": f"创建后台任务失败: {str(e)}"
             }
