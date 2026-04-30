@@ -94,15 +94,14 @@
               :class="`process-item-${item.kind}`"
             >
               <div v-if="item.kind === 'thought'" class="process-thought">
-                <span class="process-icon">💭</span>
                 <span class="process-label">思考</span>
                 <div class="process-text">{{ item.content }}</div>
               </div>
 
               <div v-else-if="item.kind === 'tool'" class="process-tool">
                 <div class="process-tool-header">
-                  <span class="process-icon">{{ item.status === 'error' ? '❌' : item.status === 'done' ? '✅' : '🔧' }}</span>
-                  <span class="process-label">{{ item.toolName }}</span>
+                  <span class="process-label">工具</span>
+                  <span class="process-tool-name">{{ item.toolName }}</span>
                   <span class="process-status" :class="`status-${item.status}`">{{ getProcessStatusText(item.status) }}</span>
                 </div>
                 <div v-if="item.summary" class="process-text">{{ item.summary }}</div>
@@ -172,7 +171,6 @@
       class="live-process"
     >
       <div class="live-process-header">
-        <span class="live-process-spinner"></span>
         <span>分析过程中</span>
       </div>
 
@@ -183,14 +181,14 @@
         :class="`live-process-${item.kind} status-${item.status || 'default'}`"
       >
         <div v-if="item.kind === 'thought'" class="event-content">
-          <div class="event-icon">💭</div>
+          <div class="event-icon">思考</div>
           <div class="event-text">
             <div class="thought-main">{{ item.content }}</div>
           </div>
         </div>
 
         <div v-else-if="item.kind === 'tool'" class="event-content">
-          <div class="event-icon">{{ item.status === 'error' ? '❌' : item.status === 'done' ? '✅' : '🔧' }}</div>
+          <div class="event-icon">工具</div>
           <div class="event-text">
             <div class="tool-use-main">
               <span>{{ item.toolName }}</span>
@@ -731,7 +729,7 @@ const getProcessToolName = (message) => {
   if (toolUseMatch?.[1]) return toolUseMatch[1]
   const cnMatch = text.match(/执行【([^】]+)】/)
   if (cnMatch?.[1]) return cnMatch[1]
-  return text.replace(/^[🔧✅❌]\s*/, '').split(/[(:：\n]/)[0].trim() || '工具调用'
+  return text.replace(/^[\u{1F527}\u2705\u274C]\s*/u, '').split(/[(:：\n]/)[0].trim() || '工具调用'
 }
 
 const getProcessInput = (message) => {
@@ -750,7 +748,7 @@ const getProcessResultSummary = (message) => {
   if (data.status) return `状态: ${data.status}`
   if (Array.isArray(data.data_ids)) return `产生 ${data.data_ids.length} 个数据结果`
   const text = contentToString(message?.content || '').trim()
-  return text || ''
+  return text.replace(/^[\u{1F527}\u2705\u274C]\s*/u, '') || ''
 }
 
 const shouldShowThought = (message, previousThought = '') => {
@@ -2236,10 +2234,9 @@ const closeImagePreview = () => {
 .live-process {
   margin: 6px 0 10px 0;
   padding: 10px 14px;
-  border-left: 3px solid #1976D2;
-  background: #f8fbff;
   border-radius: 6px;
   font-size: 14px;
+  color: #000;
 }
 
 .live-process-header {
@@ -2247,45 +2244,17 @@ const closeImagePreview = () => {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-  color: #1976D2;
+  color: #000;
   font-weight: 600;
   font-size: 13px;
 }
 
-.live-process-spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(25, 118, 210, 0.2);
-  border-top-color: #1976D2;
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
-}
-
 .live-process-item {
   padding: 8px 0;
-  border-top: 1px solid #e7f0fb;
+  border-top: 1px solid #e0e0e0;
 
   &:first-of-type {
     border-top: none;
-  }
-
-  &.live-process-thought {
-    .event-text {
-      color: #4A148C;
-    }
-  }
-
-  &.live-process-tool.status-done,
-  &.live-process-tool.status-called {
-    .event-text {
-      color: #2E7D32;
-    }
-  }
-
-  &.live-process-tool.status-error {
-    .event-text {
-      color: #C62828;
-    }
   }
 }
 
@@ -2295,15 +2264,18 @@ const closeImagePreview = () => {
   gap: 12px;
 
   .event-icon {
-    font-size: 18px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #000;
     flex-shrink: 0;
     margin-top: 2px;
+    min-width: 36px;
   }
 
   .event-text {
     flex: 1;
     line-height: 1.6;
-    color: #333;
+    color: #000;
 
     .tool-use-main {
       display: flex;
@@ -2311,7 +2283,7 @@ const closeImagePreview = () => {
       gap: 8px;
       flex-wrap: wrap;
       font-weight: 500;
-      color: #1976D2;
+      color: #000;
     }
 
     .tool-use-details {
@@ -2320,11 +2292,10 @@ const closeImagePreview = () => {
       details {
         summary {
           cursor: pointer;
-          color: #666;
+          color: #000;
           font-size: 12px;
           user-select: none;
           padding: 4px 8px;
-          background: transparent;
           border-radius: 4px;
           display: inline-flex;
           align-items: center;
@@ -2333,7 +2304,6 @@ const closeImagePreview = () => {
         pre {
           margin-top: 8px;
           padding: 8px;
-          background: #f5f5f5;
           border-radius: 4px;
           font-size: 12px;
           overflow-x: auto;
@@ -2344,10 +2314,9 @@ const closeImagePreview = () => {
     .tool-result-summary {
       margin-top: 8px;
       padding: 8px;
-      background: #f3e5f5;
       border-radius: 4px;
       font-size: 13px;
-      color: #4A148C;
+      color: #000;
     }
 
   }
@@ -2394,24 +2363,20 @@ const closeImagePreview = () => {
   border: 1px solid #e0e0e0;
   border-radius: 6px;
   overflow: hidden;
+  color: #000;
 
   > summary {
     padding: 8px 12px;
-    background: #f5f5f5;
     cursor: pointer;
     font-size: 14px;
     text-align: center;
     display: block;
     user-select: none;
-
-    &:hover {
-      background: #eeeeee;
-    }
+    color: #000;
   }
 
   .process-content {
     padding: 8px 12px;
-    background: #fafafa;
     max-height: 400px;
     overflow-y: auto;
 
@@ -2430,22 +2395,17 @@ const closeImagePreview = () => {
       align-items: flex-start;
       gap: 8px;
 
-      .process-icon {
-        font-size: 14px;
-        flex-shrink: 0;
-      }
-
       .process-label {
         font-size: 11px;
         font-weight: 600;
-        color: #666;
+        color: #000;
         white-space: nowrap;
         min-width: 60px;
       }
 
       .process-text {
         font-size: 12px;
-        color: #333;
+        color: #000;
         line-height: 1.5;
         word-break: break-word;
       }
@@ -2463,12 +2423,10 @@ const closeImagePreview = () => {
       width: 100%;
     }
 
-    .process-thought .process-label {
-      color: #9C27B0;
-    }
-
-    .process-tool .process-label {
-      color: #1976D2;
+    .process-tool-name {
+      color: #000;
+      font-size: 12px;
+      font-weight: 500;
     }
   }
 }
@@ -2480,28 +2438,7 @@ const closeImagePreview = () => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  background: #e3f2fd;
-  color: #1565C0;
-
-  &.status-running {
-    background: #fff8e1;
-    color: #F57F17;
-  }
-
-  &.status-called {
-    background: #e3f2fd;
-    color: #1565C0;
-  }
-
-  &.status-done {
-    background: #e8f5e9;
-    color: #2E7D32;
-  }
-
-  &.status-error {
-    background: #ffebee;
-    color: #C62828;
-  }
+  color: #000;
 }
 
 .process-details {
@@ -2510,7 +2447,7 @@ const closeImagePreview = () => {
 
   > summary {
     cursor: pointer;
-    color: #666;
+    color: #000;
     font-size: 12px;
     user-select: none;
   }
@@ -2520,7 +2457,6 @@ const closeImagePreview = () => {
     overflow: auto;
     margin: 6px 0 0;
     padding: 8px;
-    background: #f5f5f5;
     border-radius: 4px;
     font-size: 12px;
     line-height: 1.5;
