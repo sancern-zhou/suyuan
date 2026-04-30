@@ -169,6 +169,10 @@ app.include_router(office_router)
 from app.api.notebook_routes import router as notebook_router
 app.include_router(notebook_router)
 
+# Include Quarto Report routes (报告预览与分享)
+from app.api.report_routes import router as report_router
+app.include_router(report_router)
+
 # Include File Manager routes (文件管理)
 from app.api.file_manager_routes import router as file_manager_router
 app.include_router(file_manager_router, prefix="/api")
