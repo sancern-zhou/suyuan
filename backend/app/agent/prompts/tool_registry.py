@@ -328,7 +328,7 @@ SOCIAL_TOOLS = {
     # === 呼吸式特有工具 ===
     "schedule_task": "创建定时任务。参数: task_description(str), schedule(str, cron表达式), channels(list, 可选, 支持'weixin'|'qq')",
     "send_notification": "主动发送通知（支持文本、图片、文件，自动发送到当前对话的用户）。参数: message(str), media(list, 可选, 支持本地路径或URL)",
-    "spawn": "⭐创建后台子Agent执行长时间任务（不阻塞主对话，完成后主动通知）。参数: task(str, 任务描述), label(str, 可选, 任务标签), timeout(int, 可选, 超时秒数, 默认3600, 范围60-86400)",
+    "spawn": "⭐创建后台子Agent执行长时间任务（不阻塞主对话，完成后主动通知）。参数: task(str, 任务描述), label(str, 可选, 任务标签), timeout(int, 可选, 超时秒数, 默认3600, 范围60-86400), manual_mode(str, 可选, assistant/expert/query/code, 默认assistant)",
 
     # === 网络搜索 ===
     "web_search": "搜索互联网。参数: query(str), count(int, 可选, 默认5, 范围1-10)",
