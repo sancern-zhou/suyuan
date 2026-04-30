@@ -15,8 +15,22 @@
           <div v-if="!isEditMode" class="doc-preview">
             <!-- Action buttons in top-right corner -->
             <div class="action-buttons">
-              <button @click="toggleEditMode" class="action-btn edit-btn" title="编辑模式">
+              <button
+                v-if="!['notebook', 'report'].includes(doc.doc_type)"
+                @click="toggleEditMode"
+                class="action-btn edit-btn"
+                title="编辑模式"
+              >
                 ✏️ 编辑
+              </button>
+              <button
+                v-if="doc.doc_type === 'report'"
+                @click="handleReportShare(doc)"
+                class="action-btn share-btn"
+                title="生成分享链接"
+                :disabled="doc.sharing"
+              >
+                {{ doc.sharing ? '生成中...' : '📤 分享' }}
               </button>
 
               <!-- Download dropdown menu -->
@@ -67,8 +81,8 @@
               ></iframe>
             </div>
 
-            <!-- Notebook HTML preview (使用iframe显示) -->
-            <div v-else-if="doc.doc_type === 'notebook' && doc.html_url" class="notebook-wrapper">
+            <!-- HTML preview (Notebook/Quarto报告使用iframe显示) -->
+            <div v-else-if="['notebook', 'report'].includes(doc.doc_type) && doc.html_url" class="notebook-wrapper">
               <iframe
                 :src="doc.html_url"
                 class="notebook-iframe"
@@ -514,7 +528,9 @@ async function submitEdit(doc) {
 
 function getDocType(generator, markdownPreview, htmlPreview, filePath) {
   // 先根据 generator 判断
-  if (['word_edit', 'find_replace_word', 'accept_word_changes'].includes(generator)) {
+  if (generator === 'quarto_report' || filePath?.endsWith('report.qmd')) {
+    return 'report'
+  } else if (['word_edit', 'find_replace_word', 'accept_word_changes'].includes(generator)) {
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
     return 'ppt'
@@ -579,8 +595,8 @@ function loadDocuments(documents) {
   console.log('[OfficeDocumentPanel] 开始加载历史文档，数量:', documents.length)
 
   documents.forEach((doc, index) => {
-    // 检查是否有有效的预览数据（PDF或Markdown）
-    if ((!doc.pdf_preview && !doc.markdown_preview) || !doc.file_path) {
+    // 检查是否有有效的预览数据（PDF、Markdown或HTML）
+    if ((!doc.pdf_preview && !doc.markdown_preview && !doc.html_preview) || !doc.file_path) {
       console.warn('[OfficeDocumentPanel] 跳过无效文档:', index, doc)
       return
     }
@@ -597,13 +613,16 @@ function loadDocuments(documents) {
       // 添加新文档（不触发动画，因为这是历史数据）
       console.log('[OfficeDocumentPanel] 加载历史文档:', index + 1, fileName)
       officeDocuments.value.push({
-        doc_type: getDocType(doc.generator, doc.markdown_preview),
+        doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath),
         file_name: fileName,
         file_path: filePath,
         pdf_url: doc.pdf_preview?.pdf_url,
         pdf_id: doc.pdf_preview?.pdf_id,
+        html_url: doc.html_preview?.html_url,
+        html_id: doc.html_preview?.html_id,
         markdown_content: doc.markdown_preview?.content,
         loading: false,
+        sharing: false,
         editContent: '',
         submitting: false,
         editMessage: null,
@@ -622,6 +641,51 @@ function loadDocuments(documents) {
 function getFileName(path) {
   if (!path) return '未命名文档'
   return path.split(/[/\\]/).pop() || '未命名文档'
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+}
+
+// 处理Quarto报告分享
+async function handleReportShare(doc) {
+  const reportId = doc.html_id
+  if (!reportId) {
+    alert('无法分享：缺少报告ID')
+    return
+  }
+
+  doc.sharing = true
+
+  try {
+    const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/share/html`, {
+      method: 'POST'
+    })
+    const result = await response.json()
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.detail || '生成分享链接失败')
+    }
+
+    const shareLink = `${window.location.origin}${result.share_url}`
+    await copyTextToClipboard(shareLink)
+    alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] 生成报告分享链接失败:', error)
+    alert('❌ 生成分享链接失败：' + error.message)
+  } finally {
+    doc.sharing = false
+  }
 }
 
 // 处理Notebook分享
@@ -656,17 +720,10 @@ async function handleNotebookShare(doc) {
       const userCopy = confirm(`分享链接已生成：\n\n${shareLink}\n\n点击"确定"复制链接到剪贴板`)
 
       if (userCopy) {
-        navigator.clipboard.writeText(shareLink).then(() => {
+        copyTextToClipboard(shareLink).then(() => {
           alert('✅ 链接已复制到剪贴板！')
         }).catch(() => {
-          // 降级方案
-          const textarea = document.createElement('textarea')
-          textarea.value = shareLink
-          document.body.appendChild(textarea)
-          textarea.select()
-          document.execCommand('copy')
-          document.body.removeChild(textarea)
-          alert('✅ 链接已复制到剪贴板！')
+          alert('链接已生成，但复制失败，请手动复制：\n' + shareLink)
         })
       }
     } else {
