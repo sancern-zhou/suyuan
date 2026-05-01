@@ -5,6 +5,7 @@ import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
 import ToolsManagementView from '@/views/ToolsManagementView.vue'
 import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
+import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -48,6 +49,12 @@ const router = createRouter({
       name: 'social-accounts',
       component: SocialAccountsView,
       meta: { title: '社交账号管理' }
+    },
+    {
+      path: '/expert-deliberation',
+      name: 'expert-deliberation',
+      component: ExpertDeliberationView,
+      meta: { title: '专家会商推演' }
     },
     {
       path: '/:pathMatch(.*)*',

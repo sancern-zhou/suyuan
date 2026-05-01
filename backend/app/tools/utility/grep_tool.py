@@ -57,7 +57,8 @@ def _find_ripgrep() -> Optional[str]:
             )
             if result.returncode == 0:
                 return cmd
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError, OSError) as exc:
+            logger.warning("ripgrep_probe_failed", command=cmd, error=str(exc))
             continue
 
     # 2. 尝试Claude Code内置的ripgrep
