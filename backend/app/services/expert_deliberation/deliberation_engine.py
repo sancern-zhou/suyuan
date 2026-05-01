@@ -258,12 +258,15 @@ class ExpertDeliberationEngine:
         dissents: list[dict[str, str]],
         forbidden_claims: list[dict[str, str]],
     ) -> str:
+        # 构建时间范围字符串（避免f-string嵌套）
+        time_range_str = request.time_range.display or f'{request.time_range.start or ""} 至 {request.time_range.end or ""}'.strip()
+
         lines = [
             "# 专家会商结论",
             "",
             f"**会商主题**：{request.topic}",
             f"**区域**：{request.region}",
-            f"**时段**：{request.time_range.display or f'{request.time_range.start or ''} 至 {request.time_range.end or ''}'.strip()}",
+            f"**时段**：{time_range_str}",
             f"**事实数量**：{len(facts)}",
             "",
             "## 会商依据",
