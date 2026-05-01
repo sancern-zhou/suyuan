@@ -125,6 +125,10 @@ app.include_router(kb_router, prefix="/api")
 from app.routers import report_generation
 app.include_router(report_generation.router, prefix="/api")
 
+# Include Expert Deliberation routes
+from app.routers import expert_deliberation
+app.include_router(expert_deliberation.router, prefix="/api")
+
 # Include Monitoring router (LLM API monitoring)
 from app.routers import monitoring as monitoring_router
 app.include_router(monitoring_router.router)
