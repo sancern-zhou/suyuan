@@ -671,9 +671,14 @@ class LLMService:
                     )
                     return
 
-                # 去除末尾斜杠，避免SDK添加斜杠后导致双斜杠问题
-                if anthropic_base_url.endswith('/'):
-                    anthropic_base_url = anthropic_base_url.rstrip('/')
+                # 🔍 关键：确保base_url不带末尾斜杠，避免双斜杠问题
+                # Anthropic SDK会自动添加斜杠，所以我们不需要
+                anthropic_base_url = anthropic_base_url.rstrip('/')
+                logger.info("llm_anthropic_base_url_cleaned",
+                    provider=self.provider,
+                    original_url=settings.mimo_base_url if self.provider == "mimo" else settings.deepseek_base_url,
+                    cleaned_url=anthropic_base_url
+                )
 
                 if not anthropic_base_url:
                     logger.error(
@@ -683,10 +688,22 @@ class LLMService:
                     )
                     return
 
-                self.anthropic_client = AsyncAnthropic(
-                    api_key=self.api_key,
-                    base_url=anthropic_base_url
-                )
+                if self.provider == "mimo":
+                    # Mimo 使用 api-key 头，不是 x-api-key
+                    # 使用空 api_key 禁用默认认证，通过 default_headers 添加 api-key
+                    self.anthropic_client = AsyncAnthropic(
+                        api_key=None,  # 禁用默认的 x-api-key 头
+                        auth_token=None,  # 禁用 Authorization 头
+                        base_url=anthropic_base_url,
+                        default_headers={"api-key": self.api_key},
+                        timeout=60.0,
+                        max_retries=2
+                    )
+                else:
+                    self.anthropic_client = AsyncAnthropic(
+                        api_key=self.api_key,
+                        base_url=anthropic_base_url
+                    )
                 logger.info(
                     "llm_anthropic_client_initialized",
                     provider=self.provider,
@@ -1737,10 +1754,13 @@ class LLMService:
             api_params = {
                 "model": self.model,
                 "messages": messages,
-                "tools": tools or [],
                 "max_tokens": max_tokens or 16384,
                 "temperature": temperature
             }
+
+            # 只在有工具时才添加tools参数（某些API如Mimo不支持空tools）
+            if tools:
+                api_params["tools"] = tools
 
             logger.debug(
                 "thinking_mode_decision",
@@ -1814,6 +1834,9 @@ class LLMService:
             # 添加 system 参数（如果提供）
             if system:
                 api_params["system"] = system
+
+            # 调用 Anthropic API
+            response = await self.anthropic_client.messages.create(**api_params)
 
             # 调用 Anthropic API
             response = await self.anthropic_client.messages.create(**api_params)
@@ -2034,10 +2057,13 @@ class LLMService:
         api_params = {
             "model": self.model,
             "messages": messages,
-            "tools": tools or [],
             "max_tokens": max_tokens or 16384,
             "temperature": temperature
         }
+
+        # 只在有工具时才添加tools参数（某些API如Mimo不支持空tools）
+        if tools:
+            api_params["tools"] = tools
 
         logger.debug(
             "thinking_mode_decision_streaming",
