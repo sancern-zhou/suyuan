@@ -16,6 +16,13 @@ class TableInput(BaseModel):
     rows: List[Dict[str, Any]] = Field(default_factory=list, description="表格行")
 
 
+class ParsedInputFilesResult(BaseModel):
+    consultation_tables: List[TableInput] = Field(default_factory=list)
+    monthly_report_text: str = ""
+    stage5_report_text: str = ""
+    warnings: List[str] = Field(default_factory=list)
+
+
 class DeliberationOptions(BaseModel):
     max_facts_per_expert: int = 12
     enable_supplement_planning: bool = True
@@ -115,4 +122,3 @@ class DeliberationResult(BaseModel):
     forbidden_claims: List[Dict[str, str]]
     report_markdown: str
     output_files: Dict[str, str] = Field(default_factory=dict)
-
