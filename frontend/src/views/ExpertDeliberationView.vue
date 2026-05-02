@@ -41,6 +41,42 @@
           <input v-model="pollutantsText" type="text" placeholder="PM2.5, O3" />
         </label>
 
+        <section class="upload-box">
+          <div class="upload-title">
+            <div>
+              <h3>事实文件</h3>
+              <p>默认读取 /tmp/A会商文件；也可手动上传 Excel/CSV、Markdown/TXT/DOCX 覆盖。</p>
+            </div>
+            <div class="upload-actions">
+              <button class="secondary-button" :disabled="loadingDefaultFiles || parsingFiles" @click="loadDefaultInputFiles(false)">
+                {{ loadingDefaultFiles ? '读取中...' : '读取默认目录' }}
+              </button>
+              <button class="secondary-button" :disabled="parsingFiles || loadingDefaultFiles" @click="parseInputFiles">
+                {{ parsingFiles ? '解析中...' : '解析上传' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="upload-grid">
+            <label class="file-field">
+              <span>会商数据表</span>
+              <input accept=".xlsx,.xls,.csv" type="file" @change="setUploadFile('consultationFile', $event)" />
+            </label>
+            <label class="file-field">
+              <span>上月报告</span>
+              <input accept=".md,.markdown,.txt,.docx" type="file" @change="setUploadFile('monthlyReportFile', $event)" />
+            </label>
+            <label class="file-field">
+              <span>阶段5成果</span>
+              <input accept=".md,.markdown,.txt,.docx" type="file" @change="setUploadFile('stage5ReportFile', $event)" />
+            </label>
+          </div>
+
+          <div v-if="parseWarnings.length" class="warning-list">
+            <p v-for="warning in parseWarnings" :key="warning">{{ warning }}</p>
+          </div>
+        </section>
+
         <label class="field">
           <span>会商表格 JSON</span>
           <textarea
@@ -167,15 +203,24 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
-import { runExpertDeliberation } from '@/services/expertDeliberationApi'
+import {
+  loadDefaultExpertDeliberationInputFiles,
+  parseExpertDeliberationInputFiles,
+  runExpertDeliberation
+} from '@/services/expertDeliberationApi'
 
 const running = ref(false)
+const parsingFiles = ref(false)
+const loadingDefaultFiles = ref(false)
 const error = ref('')
 const result = ref(null)
 const activeTab = ref('facts')
+const parseWarnings = ref([])
+const parsedConsultationTables = ref([])
+const uploadedTablesText = ref('')
 
 const tabs = [
   { key: 'facts', label: '事实账本' },
@@ -198,6 +243,11 @@ const tablesText = ref(JSON.stringify([
   { 城市: '广州', 污染物: 'PM2.5', 月均浓度: 28, 同比: '10%', 说明: '污染过程受静稳气象影响' },
   { 城市: '东莞', 污染物: 'O3', 最大8小时浓度: 165, 说明: '臭氧高值需关注VOCs和NOx协同管控' }
 ], null, 2))
+const uploadFiles = reactive({
+  consultationFile: null,
+  monthlyReportFile: null,
+  stage5ReportFile: null
+})
 
 function parseList(text) {
   return text.split(/[,，\n]/).map(item => item.trim()).filter(Boolean)
@@ -211,11 +261,90 @@ function parseTableRows() {
   return parsed
 }
 
+function setUploadFile(key, event) {
+  uploadFiles[key] = event.target.files?.[0] || null
+}
+
+function applyParsedInputFiles(parsed) {
+  parsedConsultationTables.value = parsed.consultation_tables || []
+  parseWarnings.value = parsed.warnings || []
+
+  if (parsedConsultationTables.value.length) {
+    const rows = parsedConsultationTables.value.flatMap(table =>
+      (table.rows || []).map(row => ({
+        来源表: table.name,
+        ...row
+      }))
+    )
+    uploadedTablesText.value = JSON.stringify(rows, null, 2)
+    tablesText.value = uploadedTablesText.value
+  }
+  if (parsed.monthly_report_text) {
+    form.monthlyReportText = parsed.monthly_report_text
+  }
+  if (parsed.stage5_report_text) {
+    form.stage5ReportText = parsed.stage5_report_text
+  }
+}
+
+function buildConsultationTables() {
+  if (
+    parsedConsultationTables.value.length &&
+    uploadedTablesText.value &&
+    tablesText.value === uploadedTablesText.value
+  ) {
+    return parsedConsultationTables.value
+  }
+
+  return [
+    {
+      name: '会商输入表',
+      source_type: 'consultation_table',
+      rows: parseTableRows()
+    }
+  ]
+}
+
+async function parseInputFiles() {
+  error.value = ''
+  parseWarnings.value = []
+
+  if (!uploadFiles.consultationFile && !uploadFiles.monthlyReportFile && !uploadFiles.stage5ReportFile) {
+    error.value = '请先选择至少一个事实文件'
+    return
+  }
+
+  parsingFiles.value = true
+  try {
+    const parsed = await parseExpertDeliberationInputFiles(uploadFiles)
+    applyParsedInputFiles(parsed)
+  } catch (err) {
+    error.value = normalizeError(err)
+  } finally {
+    parsingFiles.value = false
+  }
+}
+
+async function loadDefaultInputFiles(showError = true) {
+  error.value = ''
+  parseWarnings.value = []
+  loadingDefaultFiles.value = true
+  try {
+    const parsed = await loadDefaultExpertDeliberationInputFiles()
+    applyParsedInputFiles(parsed)
+  } catch (err) {
+    if (showError) {
+      error.value = normalizeError(err)
+    }
+  } finally {
+    loadingDefaultFiles.value = false
+  }
+}
+
 async function runDeliberation() {
   error.value = ''
   running.value = true
   try {
-    const rows = parseTableRows()
     const payload = {
       topic: form.topic,
       region: form.region,
@@ -223,13 +352,7 @@ async function runDeliberation() {
         display: form.timeRangeDisplay
       },
       pollutants: parseList(pollutantsText.value),
-      consultation_tables: [
-        {
-          name: '会商输入表',
-          source_type: 'consultation_table',
-          rows
-        }
-      ],
+      consultation_tables: buildConsultationTables(),
       monthly_report_text: form.monthlyReportText,
       stage5_report_text: form.stage5ReportText,
       data_ids: parseList(dataIdsText.value)
@@ -243,6 +366,16 @@ async function runDeliberation() {
   }
 }
 
+function normalizeError(err) {
+  const message = err.message || '操作失败'
+  try {
+    const parsed = JSON.parse(message)
+    return parsed.detail || message
+  } catch {
+    return message
+  }
+}
+
 function sourceLabel(sourceType) {
   const labels = {
     consultation_table: '会商表格',
@@ -252,6 +385,10 @@ function sourceLabel(sourceType) {
   }
   return labels[sourceType] || sourceType
 }
+
+onMounted(() => {
+  loadDefaultInputFiles(false)
+})
 </script>
 
 <style lang="scss" scoped>
@@ -292,7 +429,8 @@ function sourceLabel(sourceType) {
 }
 
 .nav-button,
-.primary-button {
+.primary-button,
+.secondary-button {
   height: 36px;
   padding: 0 14px;
   border-radius: 6px;
@@ -313,6 +451,17 @@ function sourceLabel(sourceType) {
   color: #fff;
   border: 1px solid #166534;
   background: #16703f;
+
+  &:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+}
+
+.secondary-button {
+  color: #175cd3;
+  border: 1px solid #b2ddff;
+  background: #eff8ff;
 
   &:disabled {
     opacity: 0.65;
@@ -367,6 +516,75 @@ function sourceLabel(sourceType) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.upload-box {
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: #f8fafc;
+}
+
+.upload-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+
+  h3 {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  p {
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.upload-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.upload-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.file-field {
+  display: grid;
+  gap: 6px;
+
+  span {
+    color: #475467;
+    font-size: 13px;
+  }
+
+  input {
+    width: 100%;
+    font-size: 12px;
+    color: #475467;
+  }
+}
+
+.warning-list {
+  margin-top: 10px;
+  border: 1px solid #fedf89;
+  border-radius: 6px;
+  background: #fffaeb;
+  padding: 8px 10px;
+
+  p {
+    color: #92400e;
+    font-size: 12px;
+    line-height: 1.5;
+  }
 }
 
 .field {
@@ -607,4 +825,3 @@ function sourceLabel(sourceType) {
   }
 }
 </style>
-
