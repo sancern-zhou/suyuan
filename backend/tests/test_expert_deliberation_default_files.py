@@ -10,6 +10,8 @@ async def test_parse_default_input_files_reads_consultation_folder(tmp_path, mon
     (input_dir / "会商数据.csv").write_text("城市,污染物,浓度\n广州,PM2.5,28\n", encoding="utf-8")
     (input_dir / "上月污染特征报告.txt").write_text("上月报告内容", encoding="utf-8")
     (input_dir / "阶段5深度分析成果.md").write_text("阶段5成果内容", encoding="utf-8")
+    (input_dir / "report.html").write_text("<html><body><h1>HTML报告</h1><p>上月HTML报告内容</p><script>ignore()</script></body></html>", encoding="utf-8")
+    (input_dir / "阶段5补充.qmd").write_text("# QMD报告\n\n阶段5 QMD成果内容", encoding="utf-8")
 
     monkeypatch.setattr(expert_deliberation, "DEFAULT_INPUT_DIR", input_dir)
 
@@ -18,7 +20,10 @@ async def test_parse_default_input_files_reads_consultation_folder(tmp_path, mon
     assert result.consultation_tables
     assert result.consultation_tables[0].rows[0]["城市"] == "广州"
     assert "上月报告内容" in result.monthly_report_text
+    assert "上月HTML报告内容" in result.monthly_report_text
+    assert "ignore()" not in result.monthly_report_text
     assert "阶段5成果内容" in result.stage5_report_text
+    assert "阶段5 QMD成果内容" in result.stage5_report_text
     assert result.warnings == []
 
 

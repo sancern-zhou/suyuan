@@ -45,7 +45,7 @@
           <div class="upload-title">
             <div>
               <h3>事实文件</h3>
-              <p>默认读取 /tmp/A会商文件；也可手动上传 Excel/CSV、Markdown/TXT/DOCX 覆盖。</p>
+              <p>默认读取 /tmp/A会商文件；也可手动上传 Excel/CSV、Markdown/QMD/TXT/DOCX/HTML 覆盖。</p>
             </div>
             <div class="upload-actions">
               <button class="secondary-button" :disabled="loadingDefaultFiles || parsingFiles" @click="loadDefaultInputFiles(false)">
@@ -64,11 +64,11 @@
             </label>
             <label class="file-field">
               <span>上月报告</span>
-              <input accept=".md,.markdown,.txt,.docx" type="file" @change="setUploadFile('monthlyReportFile', $event)" />
+              <input accept=".md,.markdown,.qmd,.txt,.docx,.html,.htm" type="file" @change="setUploadFile('monthlyReportFile', $event)" />
             </label>
             <label class="file-field">
               <span>阶段5成果</span>
-              <input accept=".md,.markdown,.txt,.docx" type="file" @change="setUploadFile('stage5ReportFile', $event)" />
+              <input accept=".md,.markdown,.qmd,.txt,.docx,.html,.htm" type="file" @change="setUploadFile('stage5ReportFile', $event)" />
             </label>
           </div>
 

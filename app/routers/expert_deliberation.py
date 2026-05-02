@@ -1,7 +1,9 @@
 """Fact-driven expert deliberation API."""
 
 from datetime import date, datetime
+from html.parser import HTMLParser
 from io import BytesIO
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,7 +25,9 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/expert-deliberation", tags=["expert-deliberation"])
 
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
-REPORT_EXTENSIONS = {".md", ".markdown", ".txt", ".docx"}
+REPORT_EXTENSIONS = {".md", ".markdown", ".qmd", ".txt", ".docx", ".html", ".htm"}
+DEFAULT_INPUT_DIR = Path(os.getenv("EXPERT_DELIBERATION_INPUT_DIR", "/tmp/A会商文件"))
+STAGE5_REPORT_KEYWORDS = ("阶段5", "阶段五", "stage5", "stage_5", "深度分析", "成果")
 
 
 @router.post("/run", response_model=DeliberationResult)
@@ -102,6 +106,74 @@ async def parse_input_files(
         raise HTTPException(status_code=500, detail=f"解析事实文件失败：{exc}") from exc
 
 
+@router.get("/default-input-files", response_model=ParsedInputFilesResult)
+async def parse_default_input_files() -> ParsedInputFilesResult:
+    """Parse default fact source files from /tmp/A会商文件."""
+    warnings: List[str] = []
+    consultation_tables: List[TableInput] = []
+    monthly_report_parts: List[str] = []
+    stage5_report_parts: List[str] = []
+
+    input_dir = DEFAULT_INPUT_DIR
+    if not input_dir.exists():
+        return ParsedInputFilesResult(warnings=[f"默认会商文件目录不存在：{input_dir}"])
+    if not input_dir.is_dir():
+        return ParsedInputFilesResult(warnings=[f"默认会商文件路径不是目录：{input_dir}"])
+
+    files = sorted(
+        [path for path in input_dir.iterdir() if path.is_file()],
+        key=lambda path: path.name,
+    )
+    supported_files = [
+        path for path in files
+        if path.suffix.lower() in SPREADSHEET_EXTENSIONS | REPORT_EXTENSIONS
+    ]
+    if not supported_files:
+        return ParsedInputFilesResult(warnings=[f"默认会商文件目录中没有可解析文件：{input_dir}"])
+
+    for path in supported_files:
+        try:
+            raw_bytes = path.read_bytes()
+            extension = path.suffix.lower()
+            if extension in SPREADSHEET_EXTENSIONS:
+                tables, table_warnings = _parse_consultation_bytes(raw_bytes, path.name)
+                consultation_tables.extend(tables)
+                warnings.extend(table_warnings)
+                continue
+
+            report_text, report_warnings = _parse_report_bytes(raw_bytes, path.name, path.stem)
+            warnings.extend(report_warnings)
+            if not report_text:
+                continue
+
+            report_entry = f"# {path.name}\n\n{report_text}"
+            if _is_stage5_report(path.name):
+                stage5_report_parts.append(report_entry)
+            else:
+                monthly_report_parts.append(report_entry)
+        except Exception as exc:
+            warnings.append(f"{path.name} 解析失败：{exc}")
+
+    if not consultation_tables and not monthly_report_parts and not stage5_report_parts:
+        warnings.append(f"默认会商文件目录未解析到有效内容：{input_dir}")
+
+    logger.info(
+        "expert_deliberation_default_input_files_parsed",
+        input_dir=str(input_dir),
+        files=len(supported_files),
+        tables=len(consultation_tables),
+        monthly_report_chars=sum(len(text) for text in monthly_report_parts),
+        stage5_report_chars=sum(len(text) for text in stage5_report_parts),
+        warnings=len(warnings),
+    )
+    return ParsedInputFilesResult(
+        consultation_tables=consultation_tables,
+        monthly_report_text="\n\n".join(monthly_report_parts).strip(),
+        stage5_report_text="\n\n".join(stage5_report_parts).strip(),
+        warnings=warnings,
+    )
+
+
 @router.get("/health")
 async def health_check():
     return {
@@ -113,11 +185,15 @@ async def health_check():
 
 async def _parse_consultation_file(file: UploadFile) -> Tuple[List[TableInput], List[str]]:
     filename = file.filename or "会商表格"
+    raw_bytes = await file.read()
+    return _parse_consultation_bytes(raw_bytes, filename)
+
+
+def _parse_consultation_bytes(raw_bytes: bytes, filename: str) -> Tuple[List[TableInput], List[str]]:
     extension = Path(filename).suffix.lower()
     if extension not in SPREADSHEET_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"会商表格不支持 {extension or '无扩展名'} 文件")
 
-    raw_bytes = await file.read()
     if not raw_bytes:
         raise HTTPException(status_code=400, detail=f"{filename} 文件为空")
 
@@ -145,17 +221,28 @@ async def _parse_consultation_file(file: UploadFile) -> Tuple[List[TableInput], 
 
 async def _parse_report_file(file: UploadFile, label: str) -> Tuple[str, List[str]]:
     filename = file.filename or label
+    raw_bytes = await file.read()
+    return _parse_report_bytes(raw_bytes, filename, label)
+
+
+def _parse_report_bytes(raw_bytes: bytes, filename: str, label: str) -> Tuple[str, List[str]]:
     extension = Path(filename).suffix.lower()
     if extension not in REPORT_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"{label} 不支持 {extension or '无扩展名'} 文件")
 
-    raw_bytes = await file.read()
     if not raw_bytes:
         return "", [f"{filename} 文件为空"]
 
     if extension == ".docx":
         return convert_docx_to_markdown(raw_bytes).strip(), []
+    if extension in {".html", ".htm"}:
+        return _html_to_text(_decode_text(raw_bytes)).strip(), []
     return _decode_text(raw_bytes).strip(), []
+
+
+def _is_stage5_report(filename: str) -> bool:
+    normalized = filename.lower()
+    return any(keyword.lower() in normalized for keyword in STAGE5_REPORT_KEYWORDS)
 
 
 def _read_csv(raw_bytes: bytes) -> pd.DataFrame:
@@ -177,6 +264,46 @@ def _decode_text(raw_bytes: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return raw_bytes.decode("utf-8", errors="ignore")
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: List[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+            return
+        if tag in {"p", "div", "section", "article", "header", "footer", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+            return
+        if tag in {"p", "div", "section", "article", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        text = data.strip()
+        if text:
+            self._parts.append(text)
+
+    def text(self) -> str:
+        raw_text = " ".join(self._parts)
+        lines = [" ".join(line.split()) for line in raw_text.splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _html_to_text(html_text: str) -> str:
+    parser = _HTMLTextExtractor()
+    parser.feed(html_text)
+    parser.close()
+    return parser.text()
 
 
 def _dataframe_to_table(dataframe: pd.DataFrame, name: str) -> TableInput:
