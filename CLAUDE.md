@@ -71,6 +71,8 @@ backend/app/
 
 **技能管理** (2026-04-19): 采用"MD文档即技能"的轻量级设计，Agent通过 `list_skills()` 工具主动发现和阅读 `backend/docs/skills/` 目录下的技能文档，修改MD文档即生效，无需注册机制，支持动态更新和关键词过滤。
 
+**上下文压缩机制** (2026-05-02): 三层渐进式压缩 - ①工具输出预截断（observation 3000字符/action 1000字符）→ ②Snip Compact（保留头部2条+尾部4轮，中间直接裁剪）→ ③LLM全量压缩（消息数>30时调用LLM摘要）；保护段机制保留最近2轮对话不压缩；Reactive Compact：当API返回prompt-too-long错误时自动触发压缩并重试（`llm_service.py:_is_context_overflow_error`），通过`_reactive_compact_attempted`标志防无限循环。
+
 **站点映射分离** (2026-04-26): 系统使用两个独立的站点映射器 - `GeoMatcher` 用于常规空气质量/气象站点（数据源：`station_district_results_with_type_id.json`），`ParticulateGeoMatcher` 专门用于PM2.5组分站点（数据源：`geo_mappings.json` 的 `stations` 字段），分别服务不同的查询工具，互不干扰。
 
 ## 核心架构原则
