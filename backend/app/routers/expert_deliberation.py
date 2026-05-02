@@ -1,6 +1,7 @@
 """Fact-driven expert deliberation API."""
 
 from datetime import date, datetime
+from html.parser import HTMLParser
 from io import BytesIO
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/expert-deliberation", tags=["expert-deliberation"])
 
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
-REPORT_EXTENSIONS = {".md", ".markdown", ".txt", ".docx"}
+REPORT_EXTENSIONS = {".md", ".markdown", ".qmd", ".txt", ".docx", ".html", ".htm"}
 DEFAULT_INPUT_DIR = Path(os.getenv("EXPERT_DELIBERATION_INPUT_DIR", "/tmp/A会商文件"))
 STAGE5_REPORT_KEYWORDS = ("阶段5", "阶段五", "stage5", "stage_5", "深度分析", "成果")
 
@@ -234,6 +235,8 @@ def _parse_report_bytes(raw_bytes: bytes, filename: str, label: str) -> Tuple[st
 
     if extension == ".docx":
         return convert_docx_to_markdown(raw_bytes).strip(), []
+    if extension in {".html", ".htm"}:
+        return _html_to_text(_decode_text(raw_bytes)).strip(), []
     return _decode_text(raw_bytes).strip(), []
 
 
@@ -261,6 +264,46 @@ def _decode_text(raw_bytes: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return raw_bytes.decode("utf-8", errors="ignore")
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: List[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+            return
+        if tag in {"p", "div", "section", "article", "header", "footer", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+            return
+        if tag in {"p", "div", "section", "article", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        text = data.strip()
+        if text:
+            self._parts.append(text)
+
+    def text(self) -> str:
+        raw_text = " ".join(self._parts)
+        lines = [" ".join(line.split()) for line in raw_text.splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _html_to_text(html_text: str) -> str:
+    parser = _HTMLTextExtractor()
+    parser.feed(html_text)
+    parser.close()
+    return parser.text()
 
 
 def _dataframe_to_table(dataframe: pd.DataFrame, name: str) -> TableInput:
