@@ -1597,6 +1597,100 @@ class LLMService:
                     "raw_content": ""
                 }
 
+
+    @staticmethod
+    def _is_context_overflow_error(error: Exception) -> bool:
+        """判断是否是上下文过长错误（各 Provider 错误格式不统一）
+
+        各 Provider 的上下文溢出错误特征：
+        - OpenAI/DeepSeek: "maximum context length" / "token limit exceeded"
+        - Anthropic: "prompt is too long"
+        - MIMO/火山: "context length exceeded" / "token limit"
+        - 智谱 GLM: "maximum context length"
+
+        Args:
+            error: 异常对象
+
+        Returns:
+            True 如果是上下文过长错误
+        """
+        error_msg = str(error).lower()
+        keywords = [
+            "prompt is too long",
+            "maximum context length",
+            "token limit",
+            "context length exceeded",
+            "tokens exceeds",
+            "too many tokens",
+            "request too large",
+            "max_tokens",
+            "context_window",
+        ]
+        return any(kw in error_msg for kw in keywords)
+
+    def _add_cache_control(self, api_params: Dict[str, Any]) -> Dict[str, Any]:
+        """为支持 Prompt Cache 的 Provider 添加 cache_control 标记
+
+        根据 Anthropic Prompt Cache 规范：
+        - system 消息：标记为可缓存
+        - tools 定义：标记为可缓存
+        - 历史消息中的早期部分：标记为可缓存（保留最近 2 轮不标记）
+
+        Args:
+            api_params: Anthropic API 调用参数
+
+        Returns:
+            添加 cache_control 后的参数副本
+        """
+        import copy
+        params = copy.deepcopy(api_params)
+
+        # 1. 标记 system 消息为可缓存
+        # 注意：只在 system 已经是列表格式时添加 cache_control
+        # 字符串格式保持不变，避免 API 兼容性问题
+        if "system" in params and params["system"]:
+            system = params["system"]
+            if isinstance(system, list) and len(system) > 0:
+                # 列表格式：标记最后一个 block
+                if isinstance(system[-1], dict):
+                    system[-1]["cache_control"] = {"type": "ephemeral"}
+                    logger.debug("cache_control_added_to_system_list")
+            # 字符串格式不转换，保持原样
+
+        # 2. 标记 tools 定义为可缓存
+        if "tools" in params and params["tools"]:
+            tools = params["tools"]
+            if isinstance(tools, list) and len(tools) > 0:
+                # 标记最后一个工具定义
+                if isinstance(tools[-1], dict):
+                    tools[-1]["cache_control"] = {"type": "ephemeral"}
+                    logger.debug("cache_control_added_to_tools")
+
+        # 3. 标记历史消息中的早期部分（保留最近 2 轮不标记）
+        if "messages" in params and params["messages"]:
+            messages = params["messages"]
+            protected_turns = 2  # 保留最近 2 轮不标记
+
+            # 计算需要标记的消息索引（排除最近 2 轮）
+            # 一轮 = 1 条 user + 1 条 assistant
+            messages_to_mark = len(messages) - (protected_turns * 2)
+
+            # 确保 messages_to_mark 为正数且索引有效
+            if messages_to_mark > 0 and (messages_to_mark - 1) < len(messages):
+                # 标记可压缩部分的最后一条消息
+                if isinstance(messages[messages_to_mark - 1], dict):
+                    messages[messages_to_mark - 1]["cache_control"] = {"type": "ephemeral"}
+                    logger.debug("cache_control_added_to_message", index=messages_to_mark - 1)
+
+        logger.debug(
+            "cache_control_added",
+            has_system="system" in params,
+            has_tools=bool(params.get("tools")),
+            messages_count=len(params.get("messages", []))
+        )
+
+        return params
+
     async def chat_anthropic(
         self,
         messages: List[Dict[str, str]],
@@ -1835,8 +1929,23 @@ class LLMService:
             if system:
                 api_params["system"] = system
 
-            # 调用 Anthropic API
-            response = await self.anthropic_client.messages.create(**api_params)
+            # ✅ Prompt Cache 优化：对支持的 Provider 添加 cache_control 标记
+            # MIMO 和 Anthropic 支持 cache_control，DeepSeek 不支持（Ignored）
+            if self.provider in ["mimo", "anthropic"] or "claude" in self.model.lower():
+                api_params = self._add_cache_control(api_params)
+                logger.info(
+                    "prompt_cache_enabled",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Provider supports cache_control"
+                )
+            else:
+                logger.debug(
+                    "prompt_cache_skipped",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Provider does not support cache_control (auto KV cache or not supported)"
+                )
 
             # 提取响应数据
             result = {
@@ -1894,6 +2003,43 @@ class LLMService:
             return result
 
         except Exception as e:
+            # ✅ Reactive Compact：上下文溢出自动恢复
+            # 捕获各 Provider 的上下文过长错误，触发压缩后重试
+            if self._is_context_overflow_error(e):
+                logger.warning(
+                    "context_overflow_detected",
+                    provider=self.provider,
+                    model=self.model,
+                    error=str(e)[:200],
+                    action="triggering_reactive_compact"
+                )
+                # 防止无限重试循环
+                if not getattr(self, '_reactive_compact_attempted', False):
+                    self._reactive_compact_attempted = True
+                    try:
+                        # 触发上下文压缩
+                        from app.agent.memory.context_compressor import ContextCompressor
+                        compressor = ContextCompressor(self)
+                        compressed_messages = await compressor.compress_messages(messages)
+
+                        logger.info(
+                            "reactive_compact_completed",
+                            original_count=len(messages),
+                            compressed_count=len(compressed_messages)
+                        )
+
+                        # 重试请求
+                        result = await self.chat_anthropic(
+                            messages=compressed_messages,
+                            tools=tools,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            system=system
+                        )
+                        return result
+                    finally:
+                        self._reactive_compact_attempted = False
+
             logger.error(
                 "llm_anthropic_chat_failed",
                 provider=self.provider,
@@ -2238,6 +2384,18 @@ class LLMService:
                         }
 
         except Exception as e:
+            # ✅ Reactive Compact：流式模式上下文溢出处理
+            # 注意：流式模式下无法直接重试（generator 已经开始产出）
+            # 只记录日志，调用方需要处理重试逻辑
+            if self._is_context_overflow_error(e):
+                logger.warning(
+                    "context_overflow_detected_streaming",
+                    provider=self.provider,
+                    model=self.model,
+                    error=str(e)[:200],
+                    action="streaming_cannot_retry_in_generator"
+                )
+
             logger.error(
                 "llm_anthropic_streaming_failed",
                 provider=self.provider,
