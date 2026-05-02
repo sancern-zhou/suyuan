@@ -18,6 +18,8 @@ logger = structlog.get_logger()
 class ReadDataRegistryTool(LLMTool):
     """读取数据注册表中的文件"""
 
+    DEFAULT_MAX_RECORDS = 200
+
     # 常见时间字段名（用于自动识别）
     TIME_FIELDS = [
         'timestamp', 'time', 'datetime', 'date',
@@ -30,7 +32,8 @@ class ReadDataRegistryTool(LLMTool):
             name="read_data_registry",
             description=(
                 "读取DataRegistry中已保存的数据。先用list_fields=true查看字段和时间范围；"
-                "正式读取必须传time_range以避免加载大量原始数据。支持fields字段筛选和jq_filter高级过滤。"
+                "正式读取必须传time_range以避免加载大量原始数据。支持fields字段筛选和jq_filter高级过滤；"
+                f"明细数组最多返回{self.DEFAULT_MAX_RECORDS}条，超限需缩小time_range或使用jq聚合。"
             ),
             category=ToolCategory.QUERY,
             version="2.1.0",
@@ -54,7 +57,10 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "读取数据必填，格式'开始,结束'；任一端可省略，支持日期或日期时间"
+                        "description": (
+                            "读取数据必填，格式'开始,结束'；任一端可省略，支持日期或日期时间。"
+                            f"过滤后明细超过{self.DEFAULT_MAX_RECORDS}条时不会直接返回完整data。"
+                        )
                     },
                     "fields": {
                         "type": "array",
@@ -206,6 +212,8 @@ class ReadDataRegistryTool(LLMTool):
                 if result.returncode == 0:
                     data = json.loads(result.stdout)
                     filter_info["jq_filter"] = jq_filter
+                    if isinstance(data, list):
+                        filter_info["jq_result_count"] = len(data)
                 else:
                     # 提供更友好的错误提示
                     error_hint = self._get_jq_error_hint(result.stderr, jq_filter)
@@ -219,6 +227,9 @@ class ReadDataRegistryTool(LLMTool):
                 filter_info["jq_warning"] = "jq 未安装，跳过 jq 过滤"
             except Exception as e:
                 return {"success": False, "error": f"jq 执行失败: {str(e)}"}
+
+        if isinstance(data, list) and len(data) > self.DEFAULT_MAX_RECORDS:
+            return self._reject_large_detail_result(data, data_id, time_range, fields, jq_filter, filter_info)
 
         # ✅ 修复：处理 jq_filter 返回的不同类型（聚合操作可能返回 int/str/bool）
         # 检查 data 类型，确定返回记录数
@@ -249,6 +260,56 @@ class ReadDataRegistryTool(LLMTool):
                 "tool_name": "read_data_registry"
             },
             "summary": self._generate_summary(data, filter_info)
+        }
+
+    def _reject_large_detail_result(
+        self,
+        data: List[Any],
+        data_id: str,
+        time_range: Optional[str],
+        fields: Optional[List[str]],
+        jq_filter: Optional[str],
+        filter_info: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """拒绝返回过大的明细数组，避免工具结果撑爆LLM上下文。"""
+        returned_count = len(data)
+        return {
+            "success": False,
+            "data": {
+                "error_type": "too_many_records",
+                "data_id": data_id,
+                "time_range": time_range,
+                "requested_fields": fields,
+                "jq_filter": jq_filter,
+                "filtered_records": returned_count,
+                "max_records": self.DEFAULT_MAX_RECORDS,
+                "suggestion": (
+                    f"过滤后有 {returned_count} 条明细，超过最大返回 {self.DEFAULT_MAX_RECORDS} 条。"
+                    "请缩小 time_range、选择更少 fields，或使用 jq_filter 做聚合后再读取。"
+                ),
+                "examples": [
+                    '缩小 time_range，例如 "2025-11-23 00:00:00,2025-11-25 23:59:59"',
+                    '选择 fields，例如 ["timestamp", "station_name", "measurements.PM2_5"]',
+                    '使用 jq_filter="length" 获取数量',
+                    '使用 jq_filter="map(.measurements.PM2_5) | add / length" 获取均值'
+                ]
+            },
+            "metadata": {
+                "total_records": filter_info.get("original_count", returned_count),
+                "filtered_records": returned_count,
+                "max_records": self.DEFAULT_MAX_RECORDS,
+                "filter_applied": bool(filter_info),
+                "filter_details": filter_info,
+                "source": "data_registry",
+                "generator": "read_data_registry",
+                "tool_name": "read_data_registry",
+                "error": "too_many_records"
+            },
+            "summary": (
+                f"拒绝返回完整明细: 过滤后 {returned_count} 条，"
+                f"超过最大允许 {self.DEFAULT_MAX_RECORDS} 条。"
+                "请缩小 time_range、减少 fields，或使用 jq_filter 聚合。"
+            )
         }
 
     def _apply_filters(

@@ -1838,9 +1838,6 @@ class LLMService:
             # 调用 Anthropic API
             response = await self.anthropic_client.messages.create(**api_params)
 
-            # 调用 Anthropic API
-            response = await self.anthropic_client.messages.create(**api_params)
-
             # 提取响应数据
             result = {
                 "content": response.content,
