@@ -105,7 +105,7 @@ EXPERT_TOOLS = {
     "query_standard_comparison": "【第一优先级】新旧标准对比统计查询（返回综合指数、超标天数、达标率等统计指标）。⚠️ 优先使用此工具获取统计结果，不要手动计算。参数: cities(list), start_date(str), end_date(str), enable_sand_deduction(bool, 可选, 默认true, 启用扣沙处理)",
     "compare_standard_reports": "【第一优先级】新标准报表对比分析（对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 同比环比查询必须使用此工具，禁止手动计算。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
     "compare_old_standard_reports": "【第一优先级】旧标准报表对比分析（基于 HJ 633-2013 旧标准，对比两个时间段的综合指数、超标天数、达标率、六参数统计、单项质量指数、首要污染物统计等全部指标）。⚠️ 旧标准同比环比查询必须使用此工具，禁止手动计算。参数: cities(list), query_period{start_date, end_date}, comparison_period{start_date, end_date}, enable_sand_deduction(bool, 可选, 默认true)",
-    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。⚠️ 过滤后明细超过200条会拒绝返回完整data，请缩小time_range、减少fields或使用jq_filter聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
 
     # 分析工具（需先获取数据）
     "calculate_pm_pmf": "PM2.5 PMF源解析（需先调用get_pm25_ionic和get_pm25_carbon获取数据）。参数: data_ids(list), n_factors(int, 可选, 默认5)",
@@ -185,7 +185,7 @@ QUERY_TOOLS = {
     "query_national_city_air_quality": "查询全国各城市空气质量统计数据（六参数均值、AQI达标率、综合指数）。⚠️ 数据来源：参考项目 GDQFWS_SYS（广东省环境监测中心预报预警系统）。⚠️ 必需参数: start_date(str, 开始日期'YYYY-MM-DD'), end_date(str, 结束日期'YYYY-MM-DD')。可选: province_code(str, 省份代码, 如'440000'表示广东省, 不填则查询全国所有城市), ns_type(str, 数据类型, 默认'NS')。返回数据: AreaCode(城市代码), AreaName(城市名称), SO2/NO2/CO/O3_8h/PM10/PM2_5(六参数均值), SumIndex(综合指数), AQIStandardRate(AQI达标率%)",
 
     # === 数据注册表工具 ===
-    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择、jq聚合。⚠️ 过滤后明细超过200条会拒绝返回完整data，请缩小time_range、减少fields或使用jq_filter聚合。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list), jq_filter(可选, str, ⚠️ **聚合操作返回标量值**：length/max/min/add 返回数字，不是数组)",
 
     # === 知识库检索（预报会商场景） ===
     "knowledge_qa_workflow": "知识库检索入口。⚠️ 调用前应先把用户原问题改写成组合检索词：保留原始问题全文，并追加3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写；不要只传抽象摘要。示例: 用户问'HJ 633-2026 综合指数怎么算'，query可写为'HJ 633-2026 综合指数怎么算 综合指数 计算方法 评价项目 分指数 IAQI AQI HJ633-2026 环境空气质量指数'。参数: query(str, 原问题+补充关键词的组合检索词), knowledge_base_ids(list, 可选, 指定知识库ID), top_k(int, 可选, 默认3, 最多10), reranker(str, 可选, auto/always/never, 默认auto)。返回sources和document_read_targets；严肃知识问答应继续调用knowledge_document_reader读取相邻chunks后再答。",
@@ -224,7 +224,7 @@ REPORT_TOOLS = {
     "compare_station_standard_reports": "站点级新标准报表对比分析（对比两个时间段的站点统计数据，返回差值和变化率）。⚠️ 站点级同比环比查询必须使用此工具，禁止手动计算。参数: query_period{start_date, end_date}, comparison_period{start_date, end_date}, cities(list, 可选, 城市名自动展开站点), stations(list, 可选, 站点名称), aggregate(bool, 可选, 是否计算多站点汇总对比, 默认false)",
 
     # 数据读取
-    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list)",
+    "read_data_registry": "读取已保存的数据。⚠️ **必须指定 time_range 参数（list_fields 模式除外）**，支持时间范围、字段选择。⚠️ 过滤后明细超过200条会拒绝返回完整data，请缩小time_range或减少fields。参数: data_id(str), time_range(str, **数据读取时必填**), list_fields(bool, 可选, 查看字段时使用), fields(可选, list)",
 
     # 文件操作
     "read_file": "读取文件内容（统一入口，支持文本/图片/PDF/DOCX）。⚠️ **Excel文件（.xlsx/.xls/.xlsm）需要使用 execute_python 工具读取**（read_file会自动检测并提示）。参数: path(str), offset(int, 可选, 起始行号), limit(int, 可选, 读取行数), pages(str, 可选, PDF/DOCX页面范围如'1-5'), extract_tables(bool, 可选, PDF提取表格, 默认true), extract_images(bool, 可选, PDF提取图片, 默认false), enable_preview(bool, 可选, PDF/DOCX生成预览, 默认true), encoding(str, 可选, 默认utf-8)",

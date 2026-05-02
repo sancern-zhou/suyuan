@@ -71,7 +71,7 @@ class ReadFileTool(LLMTool):
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
 
-    # 默认分页行数
+    # 建议分页行数（用于大文件提示；未显式传 limit 时不自动分页）
     DEFAULT_LIMIT = 1000
 
     def __init__(self):
@@ -124,7 +124,7 @@ class ReadFileTool(LLMTool):
         Args:
             path: 文件路径（绝对路径或相对路径）
             offset: 起始行号（从0开始，默认0）
-            limit: 读取行数（默认1000，None表示不限制）
+            limit: 读取行数（默认不限制；大文件应显式分页读取）
             max_size: 最大文件大小（字节，默认100KB）
             encoding: 文本文件编码（默认 utf-8）
             auto_analyze: 是否自动分析图片（默认 True）
@@ -266,14 +266,34 @@ class ReadFileTool(LLMTool):
         读取文本文件（支持分页和智能大小限制）
 
         策略：
-        1. 如果指定了 limit，按 limit 读取（不超过 max_size）
-        2. 如果文件超过 max_size 且未指定 limit，自动截断并提示
+        1. 如果文件超过 max_size 且未指定 limit，直接拒绝，提示分页或搜索
+        2. 如果指定了 limit，按 limit 读取，允许从大文件中读取指定行段
         3. 返回行号信息，方便后续分页
         """
         try:
             # 检查文件是否过大
             is_large_file = file_size > max_size
-            effective_limit = limit or self.DEFAULT_LIMIT
+            if is_large_file and limit is None:
+                return {
+                    "success": False,
+                    "data": {
+                        "type": "text",
+                        "format": file_path.suffix[1:] if file_path.suffix else "txt",
+                        "path": str(file_path),
+                        "size": file_size,
+                        "max_size": max_size,
+                        "error": (
+                            f"文件内容 ({file_size} bytes) 超过最大允许大小 ({max_size} bytes)。"
+                            f"请使用 offset 和 limit 分页读取，或先用 grep 搜索定位内容。"
+                        ),
+                    },
+                    "summary": (
+                        f"文件过大: {file_path.name} ({file_size} bytes > {max_size} bytes)。"
+                        f"请使用 offset=0,limit={self.DEFAULT_LIMIT} 分页读取，或先用 grep 搜索定位行号"
+                    )
+                }
+
+            effective_limit = limit
 
             # 读取文件内容
             try:
@@ -291,14 +311,14 @@ class ReadFileTool(LLMTool):
 
             # 计算实际读取范围
             start_line = offset
-            end_line = min(offset + effective_limit, total_lines) if limit else total_lines
+            end_line = min(offset + effective_limit, total_lines) if effective_limit is not None else total_lines
 
             # 提取指定范围的内容
             selected_lines = lines[start_line:end_line]
             content = "\n".join(selected_lines)
 
             # 检查是否需要截断
-            is_truncated = is_large_file or (limit and end_line < total_lines)
+            is_truncated = effective_limit is not None and end_line < total_lines
 
             # 构建返回数据
             data = {
@@ -321,18 +341,7 @@ class ReadFileTool(LLMTool):
                 }
 
             # 构建摘要信息
-            if is_large_file and limit is None:
-                # 文件过大，自动截断
-                data["truncation_reason"] = "file_size_exceeded"
-                data["max_size"] = max_size
-                summary = (
-                    f"读取成功: {file_path.name} ({file_size} bytes, {total_lines} 行)\n"
-                    f"已返回第 {start_line + 1}-{end_line} 行（共{total_lines}行）\n"
-                    f"提示: 文件超过{max_size}bytes，已自动截断。"
-                    f"使用 offset={end_line},limit={effective_limit} 继续读取，"
-                    f"或先用 grep 搜索定位行号"
-                )
-            elif limit and end_line < total_lines:
+            if effective_limit is not None and end_line < total_lines:
                 # 用户指定了 limit 但未读完
                 summary = (
                     f"读取成功: {file_path.name} ({file_size} bytes)\n"
@@ -1196,8 +1205,7 @@ class ReadFileTool(LLMTool):
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "分页读取行数，默认1000",
-                        "default": 1000
+                        "description": "分页读取行数；仅当文件太大或只需读取部分内容时提供"
                     },
                     "max_size": {
                         "type": "integer",
