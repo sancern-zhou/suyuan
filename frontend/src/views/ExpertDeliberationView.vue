@@ -101,6 +101,24 @@
           <input v-model="dataIdsText" type="text" placeholder="air_quality:v1:xxx, weather:v1:xxx" />
         </label>
 
+        <label class="field">
+          <span>追加讨论/追问</span>
+          <textarea
+            v-model="discussionPrompt"
+            spellcheck="false"
+            placeholder="例如：请气象专家重新判断静稳条件影响；质疑高共识结论；补充读取某个 data_id。"
+          />
+        </label>
+
+        <label class="field">
+          <span>指定专家（可选）</span>
+          <input
+            v-model="targetExpertsText"
+            type="text"
+            placeholder="meteorology_expert, chemistry_expert 或 气象扩散专家"
+          />
+        </label>
+
         <p v-if="error" class="error-message">{{ error }}</p>
       </section>
 
@@ -239,6 +257,8 @@ const form = reactive({
 
 const pollutantsText = ref('PM2.5, O3')
 const dataIdsText = ref('air_quality:v1:example, weather:v1:example')
+const discussionPrompt = ref('')
+const targetExpertsText = ref('')
 const tablesText = ref(JSON.stringify([
   { 城市: '广州', 污染物: 'PM2.5', 月均浓度: 28, 同比: '10%', 说明: '污染过程受静稳气象影响' },
   { 城市: '东莞', 污染物: 'O3', 最大8小时浓度: 165, 说明: '臭氧高值需关注VOCs和NOx协同管控' }
@@ -355,7 +375,9 @@ async function runDeliberation() {
       consultation_tables: buildConsultationTables(),
       monthly_report_text: form.monthlyReportText,
       stage5_report_text: form.stage5ReportText,
-      data_ids: parseList(dataIdsText.value)
+      data_ids: parseList(dataIdsText.value),
+      discussion_prompt: discussionPrompt.value,
+      target_experts: parseList(targetExpertsText.value)
     }
     result.value = await runExpertDeliberation(payload)
     activeTab.value = 'facts'

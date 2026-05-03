@@ -26,6 +26,10 @@ class ParsedInputFilesResult(BaseModel):
 class DeliberationOptions(BaseModel):
     max_facts_per_expert: int = 12
     enable_supplement_planning: bool = True
+    enable_llm_fact_extraction: bool = True
+    enable_llm_experts: bool = True
+    enable_tool_supplement: bool = True
+    max_discussion_rounds: int = 2
 
 
 class DeliberationRequest(BaseModel):
@@ -37,6 +41,8 @@ class DeliberationRequest(BaseModel):
     monthly_report_text: str = ""
     stage5_report_text: str = ""
     data_ids: List[str] = Field(default_factory=list)
+    discussion_prompt: str = ""
+    target_experts: List[str] = Field(default_factory=list)
     options: DeliberationOptions = Field(default_factory=DeliberationOptions)
 
 
@@ -66,6 +72,9 @@ class ToolCallPlan(BaseModel):
     tool_name: str
     purpose: str
     expected_fact_type: str = "supplement"
+    params: Dict[str, Any] = Field(default_factory=dict)
+    executed: bool = False
+    status: str = "planned"
 
 
 class ExpertCard(BaseModel):

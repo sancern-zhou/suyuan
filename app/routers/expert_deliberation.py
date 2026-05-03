@@ -41,7 +41,7 @@ async def run_deliberation(request: DeliberationRequest) -> DeliberationResult:
             tables=len(request.consultation_tables),
             data_ids=len(request.data_ids),
         )
-        result = ExpertDeliberationEngine().run(request)
+        result = await ExpertDeliberationEngine().run_async(request)
         logger.info(
             "expert_deliberation_completed",
             facts=len(result.facts),
