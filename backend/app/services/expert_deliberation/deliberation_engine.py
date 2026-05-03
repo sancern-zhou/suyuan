@@ -8,7 +8,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from .expert_registry import get_default_experts
+from .expert_agent_runner import LLMExpertAgentRunner
 from .fact_ingestor import FactIngestor
+from .fact_ledger import FactLedger
 from .schemas import (
     ClaimRecord,
     ConsensusConclusion,
@@ -54,6 +56,77 @@ class ExpertDeliberationEngine:
             report_markdown=report_markdown,
             output_files=output_files,
         )
+
+    async def run_async(self, request: DeliberationRequest) -> DeliberationResult:
+        ledger = await FactIngestor().build_async(request)
+        experts = get_default_experts()
+        analyses = await self._build_expert_analyses(
+            request=request,
+            experts=experts,
+            ledger=ledger,
+            round_index=1,
+        )
+
+        if request.options.enable_supplement_planning and request.options.max_discussion_rounds > 1:
+            new_facts = [fact for fact in ledger.all() if fact.source_type == "tool_supplement"]
+            if new_facts:
+                analyses = await self._build_expert_analyses(
+                    request=request,
+                    experts=experts,
+                    ledger=ledger,
+                    round_index=2,
+                )
+
+        facts = ledger.all()
+        conclusions = self._build_consensus(analyses, facts)
+        dissents = self._build_dissents(analyses)
+        forbidden_claims = self._build_forbidden_claims(analyses)
+        report_markdown = self._render_report(request, facts, analyses, conclusions, dissents, forbidden_claims)
+        output_files = self._persist(request, facts, experts, analyses, conclusions, dissents, forbidden_claims, report_markdown)
+
+        return DeliberationResult(
+            topic=request.topic,
+            region=request.region,
+            time_range=request.time_range,
+            pollutants=request.pollutants,
+            facts=facts,
+            experts=experts,
+            analyses=analyses,
+            conclusions=conclusions,
+            dissents=dissents,
+            forbidden_claims=forbidden_claims,
+            report_markdown=report_markdown,
+            output_files=output_files,
+        )
+
+    async def _build_expert_analyses(
+        self,
+        request: DeliberationRequest,
+        experts: list[ExpertCard],
+        ledger: FactLedger,
+        round_index: int,
+    ) -> list[ExpertAnalysis]:
+        llm_runner = LLMExpertAgentRunner()
+        analyses: list[ExpertAnalysis] = []
+        target_experts = set(request.target_experts)
+        for expert in experts:
+            if target_experts and expert.expert_id not in target_experts and expert.display_name not in target_experts:
+                continue
+            facts = ledger.all()
+            relevant = facts[: request.options.max_facts_per_expert]
+            if not request.options.enable_llm_experts:
+                raise RuntimeError("专家会商必须启用 ReAct/LLM 专家，当前请求关闭了 enable_llm_experts")
+            analysis, new_facts = await llm_runner.analyze(
+                expert=expert,
+                request=request,
+                facts=facts,
+                relevant=relevant,
+                round_index=round_index,
+                start_fact_index=len(facts) + 1,
+            )
+            ledger.extend(new_facts)
+            analyses.append(analysis)
+        return analyses
 
     def _analyze_expert(self, expert: ExpertCard, facts: list[FactRecord], limit: int) -> ExpertAnalysis:
         relevant = self._select_relevant_facts(expert, facts, limit)
@@ -193,7 +266,7 @@ class ExpertDeliberationEngine:
         return [{"target_expert": target, "question": question, "reason": "用于交叉验证候选结论"}]
 
     def _build_consensus(self, analyses: list[ExpertAnalysis], facts: list[FactRecord]) -> list[ConsensusConclusion]:
-        domain_analyses = [a for a in analyses if a.expert_id != "skeptic_reviewer" and a.used_fact_ids]
+        domain_analyses = [a for a in analyses if a.expert_id not in {"skeptic_reviewer", "moderator_writer"} and a.used_fact_ids]
         if not domain_analyses:
             return [
                 ConsensusConclusion(
