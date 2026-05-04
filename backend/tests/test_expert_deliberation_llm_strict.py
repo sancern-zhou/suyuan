@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.services.expert_deliberation.fact_ingestor import FactIngestor
 from app.services.expert_deliberation.expert_registry import get_default_experts
+from app.services.expert_deliberation.llm_fact_extractor import LLMFactExtractor
 from app.services.expert_deliberation.schemas import DeliberationRequest, FactQuality, FactRecord, TableInput
 
 
@@ -23,6 +24,24 @@ class FakeExtractor:
 
     async def extract_data_asset_facts(self, request, start_index):
         return self.data_facts
+
+
+class FakeAnthropicMessages:
+    async def create(self, **kwargs):
+        text_block = type("TextBlock", (), {"text": '{"facts": []}'})()
+        return type("Response", (), {"content": [text_block]})()
+
+
+class FakeAnthropicService:
+    base_url = "https://api.xiaomimimo.com/anthropic"
+    model = "mimo-v2.5-pro"
+    temperature = 0.3
+
+    def __init__(self):
+        self.anthropic_client = type("Client", (), {"messages": FakeAnthropicMessages()})()
+
+    async def call_llm_with_json_response(self, prompt, max_retries=2):
+        raise AssertionError("OpenAI-compatible JSON endpoint should not be used when anthropic_client is available")
 
 
 def make_fact(fact_id="fact_consultation_table_llm_0001"):
@@ -65,6 +84,15 @@ async def test_fact_ingestor_fails_when_llm_returns_no_table_facts():
 def test_sync_fact_ingestor_is_disabled():
     with pytest.raises(RuntimeError, match="异步 LLM 抽取路径"):
         FactIngestor(llm_extractor=FakeExtractor()).build(DeliberationRequest())
+
+
+@pytest.mark.asyncio
+async def test_llm_fact_extractor_uses_anthropic_client_for_json():
+    extractor = LLMFactExtractor(llm_service=FakeAnthropicService())
+
+    payload = await extractor._call_llm_json("输出JSON")
+
+    assert payload == {"facts": []}
 
 
 def test_deliberation_modes_are_isolated_from_generic_expert_mode():

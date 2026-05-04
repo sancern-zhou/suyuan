@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import structlog
@@ -102,7 +103,7 @@ class LLMFactExtractor:
     ) -> list[FactRecord]:
         self.is_available()
         try:
-            payload = await self.llm_service.call_llm_with_json_response(prompt, max_retries=2)
+            payload = await self._call_llm_json(prompt)
         except Exception as exc:
             logger.error("llm_fact_extraction_failed", source_type=source_type, error=str(exc))
             raise RuntimeError(f"LLM fact extraction failed for {source_type}: {exc}") from exc
@@ -126,7 +127,10 @@ class LLMFactExtractor:
 
             tags = item.get("tags") if isinstance(item.get("tags"), list) else []
             metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
-            source_ref: dict[str, Any] = {"llm_extracted": True, "source_type": source_type}
+            source_ref: dict[str, Any] = {
+                "llm_extracted": True,
+                "source_type": source_type,
+            }
             if item.get("evidence_quote"):
                 source_ref["evidence_quote"] = str(item["evidence_quote"])[:500]
 
@@ -152,6 +156,59 @@ class LLMFactExtractor:
                 )
             )
         return facts
+
+    async def _call_llm_json(self, prompt: str) -> dict[str, Any]:
+        """Call the configured LLM for strict JSON without assuming OpenAI URL shape."""
+        anthropic_client = getattr(self.llm_service, "anthropic_client", None)
+        if anthropic_client is not None:
+            response = await anthropic_client.messages.create(
+                model=self.llm_service.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=8192,
+                temperature=getattr(self.llm_service, "temperature", 0.3),
+            )
+            content = self._anthropic_text(response)
+            payload = self._loads_json(content)
+            if payload is None:
+                raise RuntimeError(f"LLM returned non-JSON content: {content[:400]}")
+            return payload
+
+        return await self.llm_service.call_llm_with_json_response(prompt, max_retries=2)
+
+    def _anthropic_text(self, response: Any) -> str:
+        parts: list[str] = []
+        for block in getattr(response, "content", []) or []:
+            text = getattr(block, "text", None)
+            if text:
+                parts.append(str(text))
+            elif isinstance(block, dict) and block.get("text"):
+                parts.append(str(block["text"]))
+        return "\n".join(parts).strip()
+
+    def _loads_json(self, content: str) -> dict[str, Any] | None:
+        if not content:
+            return None
+        text = content.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        try:
+            payload = json.loads(text)
+            return payload if isinstance(payload, dict) else None
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    payload = json.loads(text[start : end + 1])
+                    return payload if isinstance(payload, dict) else None
+                except json.JSONDecodeError:
+                    return None
+        return None
 
     def _build_text_prompt(self, request: DeliberationRequest, text: str, source_type: str) -> str:
         pollutants = "、".join(request.pollutants) or "未指定"
