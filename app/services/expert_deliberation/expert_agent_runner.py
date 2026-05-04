@@ -28,6 +28,7 @@ class LLMExpertAgentRunner:
         round_index: int,
         start_fact_index: int,
     ) -> tuple[ExpertAnalysis, list[FactRecord]]:
+        deliberation_mode = expert.deliberation_mode
         prompt = self._build_prompt(expert, request, facts, relevant, round_index)
         events: list[dict[str, Any]] = []
         final_answer = ""
@@ -46,7 +47,7 @@ class LLMExpertAgentRunner:
             session_id=f"expert_deliberation_{expert.expert_id}_{round_index}",
             enhance_with_history=False,
             reset_session=True,
-            manual_mode="expert",
+            manual_mode=deliberation_mode,
         ):
             events.append(event)
             if event.get("type") == "complete":
@@ -66,7 +67,13 @@ class LLMExpertAgentRunner:
         return analysis, new_facts
 
     def _filter_tool_registry(self, registry: dict[str, Any], expert: ExpertCard) -> dict[str, Any]:
-        allowed = set(expert.tool_whitelist) | {"load_data_from_memory", "TodoWrite"}
+        try:
+            from app.agent.prompts.tool_registry import get_tools_by_mode
+
+            mode_tools = set(get_tools_by_mode(expert.deliberation_mode).keys())
+        except Exception:
+            mode_tools = set()
+        allowed = (set(expert.tool_whitelist) & mode_tools) | {"TodoWrite"}
         return {name: tool for name, tool in registry.items() if name in allowed}
 
     def _build_prompt(
@@ -86,7 +93,7 @@ class LLMExpertAgentRunner:
         user_discussion = request.discussion_prompt.strip() or "无"
         data_ids = ", ".join(request.data_ids) or "无"
         return f"""
-你是“{expert.display_name}”，必须使用完整 ReAct 循环完成第 {round_index} 轮专家会商。
+你是“{expert.display_name}”，必须使用会商专用 ReAct 模式 `{expert.deliberation_mode}` 完成第 {round_index} 轮专家会商。
 
 ## 专家提示词
 {prompt_text}
@@ -106,7 +113,7 @@ class LLMExpertAgentRunner:
 {global_context}
 
 ## 工具要求
-- 你可以调用的工具：{", ".join(expert.tool_whitelist) or "无"}；读取已有数据资产时使用 load_data_from_memory。
+- 你可以调用的工具：{", ".join(expert.tool_whitelist) or "无"}；读取已有数据资产时使用 read_data_registry、load_data_from_memory 或当前模式提供的数据读取工具。
 - 如果事实不足以支持你的判断，必须先调用工具补证；工具 Observation 会被转成新 FactRecord。
 - 不得编造事实编号，不得把未经工具读取的数据内容写成已知事实。
 
@@ -236,7 +243,7 @@ class LLMExpertAgentRunner:
             )
 
         plans: list[ToolCallPlan] = []
-        allowed_tools = set(expert.tool_whitelist) | {"load_data_from_memory"}
+        allowed_tools = set(expert.tool_whitelist) | {"read_data_registry", "load_data_from_memory"}
         raw_plans = payload.get("tool_call_plan", []) if isinstance(payload.get("tool_call_plan"), list) else []
         for item in raw_plans:
             if not isinstance(item, dict):
@@ -246,7 +253,7 @@ class LLMExpertAgentRunner:
                 continue
             plans.append(
                 ToolCallPlan(
-                    tool_name=tool_name or "load_data_from_memory",
+                    tool_name=tool_name or ("read_data_registry" if "read_data_registry" in allowed_tools else "load_data_from_memory"),
                     purpose=str(item.get("purpose") or "补充验证"),
                     expected_fact_type=str(item.get("expected_fact_type") or "supplement"),
                     params=item.get("params") if isinstance(item.get("params"), dict) else {},
@@ -303,7 +310,7 @@ class LLMExpertAgentRunner:
                     statement=statement,
                     method=f"ReAct补证工具执行：{tool_name}",
                     quality=FactQuality(completeness="medium", temporal_coverage=request.time_range.display or "unknown", confidence=0.78),
-                    tags=["补证", "工具结果", "数据资产" if tool_name == "load_data_from_memory" else "ReAct"],
+                    tags=["补证", "工具结果", "数据资产" if tool_name in {"read_data_registry", "load_data_from_memory"} else "ReAct"],
                 )
             )
         return facts

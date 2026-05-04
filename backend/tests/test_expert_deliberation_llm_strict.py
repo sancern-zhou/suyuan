@@ -1,6 +1,9 @@
 import pytest
+import importlib.util
+from pathlib import Path
 
 from app.services.expert_deliberation.fact_ingestor import FactIngestor
+from app.services.expert_deliberation.expert_registry import get_default_experts
 from app.services.expert_deliberation.schemas import DeliberationRequest, FactQuality, FactRecord, TableInput
 
 
@@ -62,3 +65,34 @@ async def test_fact_ingestor_fails_when_llm_returns_no_table_facts():
 def test_sync_fact_ingestor_is_disabled():
     with pytest.raises(RuntimeError, match="异步 LLM 抽取路径"):
         FactIngestor(llm_extractor=FakeExtractor()).build(DeliberationRequest())
+
+
+def test_deliberation_modes_are_isolated_from_generic_expert_mode():
+    registry_path = Path(__file__).resolve().parents[1] / "app" / "agent" / "prompts" / "tool_registry.py"
+    spec = importlib.util.spec_from_file_location("backend_tool_registry_for_test", registry_path)
+    assert spec and spec.loader
+    tool_registry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool_registry)
+    get_tools_by_mode = tool_registry.get_tools_by_mode
+
+    meteorology_tools = get_tools_by_mode("deliberation_meteorology")
+    chemistry_tools = get_tools_by_mode("deliberation_chemistry")
+    reviewer_tools = get_tools_by_mode("deliberation_reviewer")
+
+    assert "meteorological_trajectory_analysis" in meteorology_tools
+    assert "analyze_upwind_enterprises" in meteorology_tools
+    assert "calculate_pm_pmf" not in meteorology_tools
+
+    assert "get_vocs_data" in chemistry_tools
+    assert "calculate_pm_pmf" in chemistry_tools
+    assert "meteorological_trajectory_analysis" not in chemistry_tools
+
+    assert set(reviewer_tools) == {"read_data_registry", "TodoWrite"}
+    assert "call_sub_agent" not in reviewer_tools
+
+    modes = {expert.expert_id: expert.deliberation_mode for expert in get_default_experts()}
+    assert modes["meteorology_expert"] == "deliberation_meteorology"
+    assert modes["transport_expert"] == "deliberation_meteorology"
+    assert modes["chemistry_expert"] == "deliberation_chemistry"
+    assert modes["source_apportionment_expert"] == "deliberation_chemistry"
+    assert modes["skeptic_reviewer"] == "deliberation_reviewer"
