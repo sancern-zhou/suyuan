@@ -1,8 +1,11 @@
 import pytest
 import importlib.util
+import sys
+import types
 from pathlib import Path
 
 from app.services.expert_deliberation.fact_ingestor import FactIngestor
+from app.services.expert_deliberation.expert_agent_runner import LLMExpertAgentRunner
 from app.services.expert_deliberation.expert_registry import get_default_experts
 from app.services.expert_deliberation.llm_fact_extractor import LLMFactExtractor
 from app.services.expert_deliberation.schemas import DeliberationRequest, FactQuality, FactRecord, TableInput
@@ -32,6 +35,21 @@ class FakeAnthropicMessages:
         return type("Response", (), {"content": [text_block]})()
 
 
+class FakeNormalizeAnthropicMessages:
+    async def create(self, **kwargs):
+        text_block = type(
+            "TextBlock",
+            (),
+            {
+                "text": (
+                    '{"position":"归一化观点","used_fact_ids":[],"claims":[],'
+                    '"tool_call_plan":[],"questions_to_others":[],"uncertainties":[]}'
+                )
+            },
+        )()
+        return type("Response", (), {"content": [text_block]})()
+
+
 class FakeAnthropicService:
     base_url = "https://api.xiaomimimo.com/anthropic"
     model = "mimo-v2.5-pro"
@@ -42,6 +60,11 @@ class FakeAnthropicService:
 
     async def call_llm_with_json_response(self, prompt, max_retries=2):
         raise AssertionError("OpenAI-compatible JSON endpoint should not be used when anthropic_client is available")
+
+
+class FakeNormalizeAnthropicService(FakeAnthropicService):
+    def __init__(self):
+        self.anthropic_client = type("Client", (), {"messages": FakeNormalizeAnthropicMessages()})()
 
 
 def make_fact(fact_id="fact_consultation_table_llm_0001"):
@@ -93,6 +116,26 @@ async def test_llm_fact_extractor_uses_anthropic_client_for_json():
     payload = await extractor._call_llm_json("输出JSON")
 
     assert payload == {"facts": []}
+
+
+@pytest.mark.asyncio
+async def test_expert_json_normalization_uses_anthropic_client(monkeypatch):
+    class FakeLLMServiceFactory:
+        def __new__(cls):
+            return FakeNormalizeAnthropicService()
+
+    fake_module = types.ModuleType("app.services.llm_service")
+    fake_module.LLMService = FakeLLMServiceFactory
+    monkeypatch.setitem(sys.modules, "app.services.llm_service", fake_module)
+    expert = get_default_experts()[0]
+
+    payload = await LLMExpertAgentRunner()._parse_or_normalize_json(
+        expert,
+        "不是JSON的最终回答",
+        [{"type": "thought", "data": {"text": "需要归一化"}}],
+    )
+
+    assert payload["position"] == "归一化观点"
 
 
 def test_deliberation_modes_are_isolated_from_generic_expert_mode():
