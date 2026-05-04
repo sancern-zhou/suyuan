@@ -12,12 +12,28 @@ from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .chart_prompt import build_chart_prompt
+from .deliberation_prompt import (
+    build_deliberation_chemistry_prompt,
+    build_deliberation_meteorology_prompt,
+    build_deliberation_reviewer_prompt,
+)
 from .tool_registry import get_tools_by_mode, get_tool_order
 import structlog
 
 logger = structlog.get_logger()
 
-AgentMode = Literal["assistant", "expert", "code", "query", "report", "social", "chart"]
+AgentMode = Literal[
+    "assistant",
+    "expert",
+    "code",
+    "query",
+    "report",
+    "social",
+    "chart",
+    "deliberation_meteorology",
+    "deliberation_chemistry",
+    "deliberation_reviewer",
+]
 
 
 def build_react_system_prompt(
@@ -63,8 +79,8 @@ def build_react_system_prompt(
         mode_tools = get_tools_by_mode(mode)
         filtered_tools = [t for t in available_tools if t in mode_tools]
 
-        # 确保call_sub_agent工具在列表中
-        if "call_sub_agent" not in filtered_tools:
+        # 确保call_sub_agent工具在通用模式中可用；会商专用模式不暴露模式互调。
+        if not mode.startswith("deliberation_") and "call_sub_agent" not in filtered_tools:
             filtered_tools.append("call_sub_agent")
 
     logger.info(
@@ -95,6 +111,12 @@ def build_react_system_prompt(
         return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, heartbeat_file_path, memory_context, soul_context, user_context)
     elif mode == "chart":
         return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "deliberation_meteorology":
+        return build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "deliberation_chemistry":
+        return build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "deliberation_reviewer":
+        return build_deliberation_reviewer_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "memory_consolidator":
         from .memory_consolidator_prompt import build_memory_consolidator_prompt
         return build_memory_consolidator_prompt(filtered_tools)

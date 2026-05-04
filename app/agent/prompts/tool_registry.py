@@ -95,6 +95,36 @@ EXPERT_TOOLS = {
     "FINISH_SUMMARY": "生成数据分析报告（数据查询完成后使用）",
 }
 
+# ===== 会商专用模式工具（仅专家会商内部使用） =====
+DELIBERATION_METEOROLOGY_TOOLS = {
+    "get_weather_data": EXPERT_TOOLS["get_weather_data"],
+    "meteorological_trajectory_analysis": EXPERT_TOOLS["meteorological_trajectory_analysis"],
+    "analyze_upwind_enterprises": EXPERT_TOOLS["analyze_upwind_enterprises"],
+    "analyze_trajectory_sources": EXPERT_TOOLS["analyze_trajectory_sources"],
+    "load_data_from_memory": EXPERT_TOOLS["load_data_from_memory"],
+}
+
+DELIBERATION_CHEMISTRY_TOOLS = {
+    "get_vocs_data": EXPERT_TOOLS["get_vocs_data"],
+    "get_pm25_ionic": EXPERT_TOOLS["get_pm25_ionic"],
+    "get_pm25_carbon": EXPERT_TOOLS["get_pm25_carbon"],
+    "get_pm25_crustal": EXPERT_TOOLS["get_pm25_crustal"],
+    "calculate_pm_pmf": EXPERT_TOOLS["calculate_pm_pmf"],
+    "calculate_vocs_pmf": EXPERT_TOOLS["calculate_vocs_pmf"],
+    "calculate_pmf": EXPERT_TOOLS["calculate_pmf"],
+    "calculate_obm_ofp": EXPERT_TOOLS["calculate_obm_ofp"],
+    "calculate_obm_full_chemistry": EXPERT_TOOLS["calculate_obm_full_chemistry"],
+    "calculate_reconstruction": EXPERT_TOOLS["calculate_reconstruction"],
+    "calculate_carbon": EXPERT_TOOLS["calculate_carbon"],
+    "calculate_soluble": EXPERT_TOOLS["calculate_soluble"],
+    "calculate_crustal": EXPERT_TOOLS["calculate_crustal"],
+    "load_data_from_memory": EXPERT_TOOLS["load_data_from_memory"],
+}
+
+DELIBERATION_REVIEWER_TOOLS = {
+    "load_data_from_memory": EXPERT_TOOLS["load_data_from_memory"],
+}
+
 # ===== 工具排序（影响展示顺序） =====
 ASSISTANT_TOOL_ORDER = [
     "bash", "read_file", "edit_file", "grep", "write_file", "list_directory", "search_files",
@@ -134,6 +164,35 @@ EXPERT_TOOL_ORDER = [
     "FINISH_SUMMARY"
 ]
 
+DELIBERATION_METEOROLOGY_TOOL_ORDER = [
+    "get_weather_data",
+    "meteorological_trajectory_analysis",
+    "analyze_upwind_enterprises",
+    "analyze_trajectory_sources",
+    "load_data_from_memory",
+]
+
+DELIBERATION_CHEMISTRY_TOOL_ORDER = [
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    "calculate_pm_pmf",
+    "calculate_vocs_pmf",
+    "calculate_pmf",
+    "calculate_obm_ofp",
+    "calculate_obm_full_chemistry",
+    "calculate_reconstruction",
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "load_data_from_memory",
+]
+
+DELIBERATION_REVIEWER_TOOL_ORDER = [
+    "load_data_from_memory",
+]
+
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
     """
@@ -149,6 +208,12 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return ASSISTANT_TOOLS
     elif mode == "expert":
         return EXPERT_TOOLS
+    elif mode == "deliberation_meteorology":
+        return DELIBERATION_METEOROLOGY_TOOLS
+    elif mode == "deliberation_chemistry":
+        return DELIBERATION_CHEMISTRY_TOOLS
+    elif mode == "deliberation_reviewer":
+        return DELIBERATION_REVIEWER_TOOLS
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -167,5 +232,11 @@ def get_tool_order(mode: str) -> List[str]:
         return ASSISTANT_TOOL_ORDER
     elif mode == "expert":
         return EXPERT_TOOL_ORDER
+    elif mode == "deliberation_meteorology":
+        return DELIBERATION_METEOROLOGY_TOOL_ORDER
+    elif mode == "deliberation_chemistry":
+        return DELIBERATION_CHEMISTRY_TOOL_ORDER
+    elif mode == "deliberation_reviewer":
+        return DELIBERATION_REVIEWER_TOOL_ORDER
     else:
         raise ValueError(f"Unknown mode: {mode}")

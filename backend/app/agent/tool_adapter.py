@@ -750,7 +750,9 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     if mode:
         from app.agent.prompts.tool_registry import get_tools_by_mode
         mode_tools = get_tools_by_mode(mode)
-        allowed_tools = set(mode_tools.keys()) | {"call_sub_agent"}  # 始终包含call_sub_agent
+        allowed_tools = set(mode_tools.keys())
+        if not mode.startswith("deliberation_"):
+            allowed_tools.add("call_sub_agent")
     else:
         allowed_tools = None
 

@@ -366,6 +366,40 @@ MEMORY_CONSOLIDATOR_TOOLS = {
     "remove_memory": "删除过时或错误记忆。⚠️ **使用场景**：当记忆文件接近上限（>80%）或已满（100%）时使用。删除优先级：环境信息（临时）> 历史结论（可能过时）> 领域知识（相对稳定）> 用户偏好（最重要）。参数：text(str, 要删除的内容，支持子串匹配), category(str, 可选，用于精确匹配)",
 }
 
+# ===== 会商专用模式工具（仅专家会商内部使用） =====
+DELIBERATION_METEOROLOGY_TOOLS = {
+    "get_weather_forecast": EXPERT_TOOLS["get_weather_forecast"],
+    "query_gd_suncere_city_hour": EXPERT_TOOLS["query_gd_suncere_city_hour"],
+    "query_gd_suncere_station_hour_new": EXPERT_TOOLS["query_gd_suncere_station_hour_new"],
+    "meteorological_trajectory_analysis": EXPERT_TOOLS["meteorological_trajectory_analysis"],
+    "analyze_upwind_enterprises": EXPERT_TOOLS["analyze_upwind_enterprises"],
+    "analyze_trajectory_sources": EXPERT_TOOLS["analyze_trajectory_sources"],
+    "read_data_registry": EXPERT_TOOLS["read_data_registry"],
+    "TodoWrite": EXPERT_TOOLS["TodoWrite"],
+}
+
+DELIBERATION_CHEMISTRY_TOOLS = {
+    "get_vocs_data": EXPERT_TOOLS["get_vocs_data"],
+    "get_pm25_ionic": EXPERT_TOOLS["get_pm25_ionic"],
+    "get_pm25_carbon": EXPERT_TOOLS["get_pm25_carbon"],
+    "get_pm25_crustal": EXPERT_TOOLS["get_pm25_crustal"],
+    "calculate_pm_pmf": EXPERT_TOOLS["calculate_pm_pmf"],
+    "calculate_vocs_pmf": EXPERT_TOOLS["calculate_vocs_pmf"],
+    "calculate_pmf": EXPERT_TOOLS["calculate_pmf"],
+    "calculate_obm_ofp": EXPERT_TOOLS["calculate_obm_ofp"],
+    "calculate_reconstruction": EXPERT_TOOLS["calculate_reconstruction"],
+    "calculate_carbon": EXPERT_TOOLS["calculate_carbon"],
+    "calculate_soluble": EXPERT_TOOLS["calculate_soluble"],
+    "calculate_crustal": EXPERT_TOOLS["calculate_crustal"],
+    "read_data_registry": EXPERT_TOOLS["read_data_registry"],
+    "TodoWrite": EXPERT_TOOLS["TodoWrite"],
+}
+
+DELIBERATION_REVIEWER_TOOLS = {
+    "read_data_registry": EXPERT_TOOLS["read_data_registry"],
+    "TodoWrite": EXPERT_TOOLS["TodoWrite"],
+}
+
 # ===== 工具排序（影响展示顺序） =====
 ASSISTANT_TOOL_ORDER = [
     "bash", "read_file", "edit_file", "grep", "write_file", "list_directory", "search_files",
@@ -607,6 +641,39 @@ SOCIAL_TOOL_ORDER = [
     "call_sub_agent",
 ]
 
+DELIBERATION_METEOROLOGY_TOOL_ORDER = [
+    "get_weather_forecast",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_station_hour_new",
+    "meteorological_trajectory_analysis",
+    "analyze_upwind_enterprises",
+    "analyze_trajectory_sources",
+    "read_data_registry",
+    "TodoWrite",
+]
+
+DELIBERATION_CHEMISTRY_TOOL_ORDER = [
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    "calculate_pm_pmf",
+    "calculate_vocs_pmf",
+    "calculate_pmf",
+    "calculate_obm_ofp",
+    "calculate_reconstruction",
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "read_data_registry",
+    "TodoWrite",
+]
+
+DELIBERATION_REVIEWER_TOOL_ORDER = [
+    "read_data_registry",
+    "TodoWrite",
+]
+
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
     """
@@ -634,6 +701,12 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return CHART_TOOLS
     elif mode == "memory_consolidator":
         return MEMORY_CONSOLIDATOR_TOOLS
+    elif mode == "deliberation_meteorology":
+        return DELIBERATION_METEOROLOGY_TOOLS
+    elif mode == "deliberation_chemistry":
+        return DELIBERATION_CHEMISTRY_TOOLS
+    elif mode == "deliberation_reviewer":
+        return DELIBERATION_REVIEWER_TOOLS
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -664,5 +737,11 @@ def get_tool_order(mode: str) -> List[str]:
         return CHART_TOOL_ORDER
     elif mode == "memory_consolidator":
         return ["remember_fact", "replace_memory", "remove_memory"]
+    elif mode == "deliberation_meteorology":
+        return DELIBERATION_METEOROLOGY_TOOL_ORDER
+    elif mode == "deliberation_chemistry":
+        return DELIBERATION_CHEMISTRY_TOOL_ORDER
+    elif mode == "deliberation_reviewer":
+        return DELIBERATION_REVIEWER_TOOL_ORDER
     else:
         raise ValueError(f"Unknown mode: {mode}")

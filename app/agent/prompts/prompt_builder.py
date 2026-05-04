@@ -5,17 +5,30 @@ ReAct系统提示词构建器（双模式架构）
 from typing import Literal, List, Optional
 from .assistant_prompt import build_assistant_prompt
 from .expert_prompt import build_expert_prompt
+from .deliberation_prompt import (
+    build_deliberation_chemistry_prompt,
+    build_deliberation_meteorology_prompt,
+    build_deliberation_reviewer_prompt,
+)
 from .tool_registry import get_tools_by_mode, get_tool_order
 import structlog
 
 logger = structlog.get_logger()
 
-AgentMode = Literal["assistant", "expert"]
+AgentMode = Literal["assistant", "expert", "deliberation_meteorology", "deliberation_chemistry", "deliberation_reviewer"]
 
 
 def build_react_system_prompt(
     mode: AgentMode,
-    available_tools: Optional[List[str]] = None
+    available_tools: Optional[List[str]] = None,
+    user_preferences: Optional[dict] = None,
+    memory_file_path: Optional[str] = None,
+    soul_file_path: Optional[str] = None,
+    user_file_path: Optional[str] = None,
+    heartbeat_file_path: Optional[str] = None,
+    memory_context: Optional[str] = None,
+    soul_context: Optional[str] = None,
+    user_context: Optional[str] = None,
 ) -> str:
     """
     构建ReAct系统提示词（双模式架构）
@@ -36,8 +49,8 @@ def build_react_system_prompt(
     mode_tools = get_tools_by_mode(mode)
     filtered_tools = [t for t in available_tools if t in mode_tools]
 
-    # 确保call_sub_agent工具在列表中
-    if "call_sub_agent" not in filtered_tools:
+    # 确保call_sub_agent工具在通用模式中可用；会商专用模式不暴露模式互调。
+    if not mode.startswith("deliberation_") and "call_sub_agent" not in filtered_tools:
         filtered_tools.append("call_sub_agent")
 
     logger.info(
@@ -51,6 +64,12 @@ def build_react_system_prompt(
         return build_assistant_prompt(filtered_tools)
     elif mode == "expert":
         return build_expert_prompt(filtered_tools)
+    elif mode == "deliberation_meteorology":
+        return build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "deliberation_chemistry":
+        return build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "deliberation_reviewer":
+        return build_deliberation_reviewer_prompt(filtered_tools, memory_context, memory_file_path)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 

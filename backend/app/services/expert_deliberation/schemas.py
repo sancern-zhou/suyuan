@@ -81,6 +81,7 @@ class ExpertCard(BaseModel):
     expert_id: str
     display_name: str
     prompt_file: str
+    deliberation_mode: str = "deliberation_reviewer"
     tags_any: List[str] = Field(default_factory=list)
     tool_whitelist: List[str] = Field(default_factory=list)
 
