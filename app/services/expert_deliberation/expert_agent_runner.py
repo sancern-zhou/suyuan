@@ -169,6 +169,7 @@ class LLMExpertAgentRunner:
 
         try:
             from app.services.llm_service import LLMService
+            from app.services.expert_deliberation.llm_fact_extractor import LLMFactExtractor
 
             llm_service = LLMService()
             prompt = f"""
@@ -182,7 +183,7 @@ class LLMExpertAgentRunner:
 
 输出 JSON 字段：position, used_fact_ids, claims, tool_call_plan, questions_to_others, uncertainties。
 """.strip()
-            payload = await llm_service.call_llm_with_json_response(prompt, max_retries=1)
+            payload = await LLMFactExtractor(llm_service=llm_service)._call_llm_json(prompt)
         except Exception as exc:
             raise RuntimeError(f"ReAct expert {expert.expert_id} returned non-JSON final answer: {exc}") from exc
         if not isinstance(payload, dict):
