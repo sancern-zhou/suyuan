@@ -740,6 +740,7 @@ class ExpertDeliberationEngine:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         files = {
+            "request": run_dir / "request.json",
             "fact_ledger": run_dir / "fact_ledger.jsonl",
             "expert_analyses": run_dir / "expert_analyses.json",
             "discussion_ledger": run_dir / "discussion_ledger.json",
@@ -749,6 +750,7 @@ class ExpertDeliberationEngine:
             "forbidden_claims": run_dir / "forbidden_claims.json",
             "report_markdown": run_dir / "expert_deliberation.md",
         }
+        files["request"].write_text(json.dumps(request.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
         with files["fact_ledger"].open("w", encoding="utf-8") as f:
             for fact in facts:
                 f.write(json.dumps(fact.model_dump(), ensure_ascii=False) + "\n")

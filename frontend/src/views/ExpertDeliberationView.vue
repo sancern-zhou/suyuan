@@ -77,6 +77,35 @@
           </div>
         </section>
 
+        <section class="history-box">
+          <div class="history-title">
+            <div>
+              <h3>历史会商结论</h3>
+              <p>查看已完成会商的共识结论、事实账本和讨论过程。</p>
+            </div>
+            <button class="secondary-button" :disabled="loadingHistory" @click="loadHistoryRuns">
+              {{ loadingHistory ? '刷新中...' : '刷新' }}
+            </button>
+          </div>
+          <div v-if="historyRuns.length" class="history-list">
+            <article
+              v-for="run in historyRuns"
+              :key="run.run_id"
+              :class="{ active: selectedRunId === run.run_id }"
+              class="history-item"
+            >
+              <button type="button" :disabled="loadingHistoryDetail" @click="loadHistoryRun(run.run_id)">
+                <strong>{{ run.topic || '历史专家会商' }}</strong>
+                <span>{{ formatHistoryTime(run.created_at) }} · {{ run.region || '未知区域' }}</span>
+                <em>{{ run.facts_count || 0 }} 事实 · {{ run.conclusions_count || 0 }} 共识</em>
+              </button>
+            </article>
+          </div>
+          <div v-else class="empty-history">
+            {{ loadingHistory ? '正在读取历史记录...' : '暂无历史会商记录' }}
+          </div>
+        </section>
+
         <label class="field">
           <span>会商表格 JSON</span>
           <textarea
@@ -354,6 +383,8 @@ import { onMounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import {
+  getExpertDeliberationRun,
+  listExpertDeliberationRuns,
   loadDefaultExpertDeliberationInputFiles,
   parseExpertDeliberationInputFiles,
   runExpertDeliberation,
@@ -371,6 +402,10 @@ const parsedConsultationTables = ref([])
 const uploadedTablesText = ref('')
 const progressEvents = ref([])
 const latestProgressText = ref('正在准备会商任务')
+const historyRuns = ref([])
+const loadingHistory = ref(false)
+const loadingHistoryDetail = ref(false)
+const selectedRunId = ref('')
 let deliberationController = null
 
 const tabs = [
@@ -495,6 +530,35 @@ async function loadDefaultInputFiles(showError = true) {
   }
 }
 
+async function loadHistoryRuns() {
+  loadingHistory.value = true
+  try {
+    const payload = await listExpertDeliberationRuns()
+    historyRuns.value = payload.runs || []
+  } catch (err) {
+    error.value = normalizeError(err)
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+async function loadHistoryRun(runId) {
+  error.value = ''
+  loadingHistoryDetail.value = true
+  selectedRunId.value = runId
+  try {
+    const payload = await getExpertDeliberationRun(runId)
+    result.value = normalizeHistoryResult(payload)
+    progressEvents.value = []
+    latestProgressText.value = `已加载历史会商：${payload.topic || runId}`
+    activeTab.value = 'consensus'
+  } catch (err) {
+    error.value = normalizeError(err)
+  } finally {
+    loadingHistoryDetail.value = false
+  }
+}
+
 async function runDeliberation() {
   error.value = ''
   running.value = true
@@ -522,6 +586,7 @@ async function runDeliberation() {
       onEvent: handleProgressEvent
     })
     result.value = streamedResult || await runExpertDeliberation(payload)
+    await loadHistoryRuns()
     activeTab.value = 'discussion'
   } catch (err) {
     if (err.name !== 'AbortError') {
@@ -555,6 +620,31 @@ function normalizeError(err) {
   }
 }
 
+function normalizeHistoryResult(payload) {
+  return {
+    topic: payload.topic || '历史专家会商',
+    region: payload.region || '未知',
+    time_range: payload.time_range || {},
+    pollutants: payload.pollutants || [],
+    facts: payload.facts || [],
+    experts: payload.experts || [],
+    analyses: payload.analyses || [],
+    discussion_turns: payload.discussion_turns || [],
+    evidence_matrix: payload.evidence_matrix || [],
+    timeline_events: payload.timeline_events || [],
+    conclusions: payload.conclusions || [],
+    dissents: payload.dissents || [],
+    forbidden_claims: payload.forbidden_claims || [],
+    report_markdown: payload.report_markdown || '',
+    output_files: payload.output_files || {}
+  }
+}
+
+function formatHistoryTime(value) {
+  if (!value) return ''
+  return value.replace('T', ' ').slice(0, 16)
+}
+
 function sourceLabel(sourceType) {
   const labels = {
     consultation_table: '会商表格',
@@ -576,6 +666,7 @@ function turnTypeLabel(turnType) {
 
 onMounted(() => {
   loadDefaultInputFiles(false)
+  loadHistoryRuns()
 })
 </script>
 
@@ -743,6 +834,78 @@ onMounted(() => {
 .upload-grid {
   display: grid;
   gap: 10px;
+}
+
+.history-box {
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: #fff;
+}
+
+.history-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+
+  h3 {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  p {
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.history-item {
+  border: 1px solid #eef1f4;
+  border-radius: 6px;
+  background: #f8fafc;
+
+  &.active {
+    border-color: #16703f;
+    background: #f0fdf4;
+  }
+
+  button {
+    width: 100%;
+    display: grid;
+    gap: 4px;
+    border: 0;
+    background: transparent;
+    padding: 9px 10px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  strong {
+    color: #1f2933;
+    font-size: 13px;
+  }
+
+  span,
+  em {
+    color: #667085;
+    font-size: 12px;
+    font-style: normal;
+  }
+}
+
+.empty-history {
+  color: #667085;
+  font-size: 12px;
+  padding: 8px 0 2px;
 }
 
 .file-field {

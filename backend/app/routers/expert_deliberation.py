@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -31,6 +32,7 @@ SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 REPORT_EXTENSIONS = {".md", ".markdown", ".qmd", ".txt", ".docx", ".html", ".htm"}
 DEFAULT_INPUT_DIR = Path(os.getenv("EXPERT_DELIBERATION_INPUT_DIR", "/tmp/A会商文件"))
 STAGE5_REPORT_KEYWORDS = ("阶段5", "阶段五", "stage5", "stage_5", "深度分析", "成果")
+RUN_ID_PATTERN = re.compile(r"^delib_[A-Za-z0-9_-]+$")
 
 
 @router.post("/run", response_model=DeliberationResult)
@@ -114,6 +116,31 @@ async def run_deliberation_stream(request: DeliberationRequest) -> StreamingResp
 
 def _sse_data(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+
+@router.get("/runs")
+async def list_deliberation_runs(limit: int = 30) -> dict[str, Any]:
+    """List persisted expert deliberation runs for historical conclusion review."""
+    output_root = ExpertDeliberationEngine().output_root
+    if not output_root.exists():
+        return {"runs": []}
+
+    run_dirs = [
+        path for path in output_root.iterdir()
+        if path.is_dir() and RUN_ID_PATTERN.match(path.name)
+    ]
+    run_dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    capped_limit = max(1, min(limit, 200))
+    return {"runs": [_build_run_summary(path) for path in run_dirs[:capped_limit]]}
+
+
+@router.get("/runs/{run_id}")
+async def get_deliberation_run(run_id: str) -> dict[str, Any]:
+    """Load a persisted expert deliberation run without re-running LLM or tools."""
+    run_dir = _resolve_run_dir(run_id)
+    if not run_dir.exists() or not run_dir.is_dir():
+        raise HTTPException(status_code=404, detail="历史会商记录不存在")
+    return _build_run_detail(run_dir)
 
 
 @router.post("/parse-input-files", response_model=ParsedInputFilesResult)
@@ -243,6 +270,154 @@ async def health_check():
         "service": "expert-deliberation",
         "version": "0.1.0",
     }
+
+
+def _resolve_run_dir(run_id: str) -> Path:
+    if not RUN_ID_PATTERN.match(run_id):
+        raise HTTPException(status_code=400, detail="非法会商记录编号")
+    output_root = ExpertDeliberationEngine().output_root.resolve()
+    run_dir = (output_root / run_id).resolve()
+    try:
+        run_dir.relative_to(output_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="非法会商记录路径") from exc
+    return run_dir
+
+
+def _build_run_summary(run_dir: Path) -> dict[str, Any]:
+    request = _read_json(run_dir / "request.json", {})
+    consensus = _read_json(run_dir / "consensus.json", {})
+    analyses = _read_json(run_dir / "expert_analyses.json", [])
+    facts = _read_jsonl(run_dir / "fact_ledger.jsonl")
+    report_markdown = _read_text(run_dir / "expert_deliberation.md")
+    created_at = _run_created_at(run_dir)
+    conclusions = consensus.get("conclusions") if isinstance(consensus, dict) else []
+
+    return {
+        "run_id": run_dir.name,
+        "created_at": created_at,
+        "topic": request.get("topic") or _infer_topic(report_markdown),
+        "region": request.get("region") or "未知",
+        "time_range": request.get("time_range") or {},
+        "pollutants": request.get("pollutants") or [],
+        "facts_count": len(facts),
+        "analyses_count": len(analyses) if isinstance(analyses, list) else 0,
+        "conclusions_count": len(conclusions) if isinstance(conclusions, list) else 0,
+        "report_preview": _report_preview(report_markdown),
+        "output_files": _run_output_files(run_dir),
+    }
+
+
+def _build_run_detail(run_dir: Path) -> dict[str, Any]:
+    request = _read_json(run_dir / "request.json", {})
+    consensus = _read_json(run_dir / "consensus.json", {})
+    report_markdown = _read_text(run_dir / "expert_deliberation.md")
+    facts = _read_jsonl(run_dir / "fact_ledger.jsonl")
+    analyses = _read_json(run_dir / "expert_analyses.json", [])
+    discussion_turns = _read_json(run_dir / "discussion_ledger.json", [])
+    timeline_events = _read_json(run_dir / "timeline_events.json", [])
+    forbidden_claims = _read_json(run_dir / "forbidden_claims.json", [])
+
+    if not isinstance(consensus, dict):
+        consensus = {}
+
+    return {
+        "run_id": run_dir.name,
+        "created_at": _run_created_at(run_dir),
+        "topic": request.get("topic") or _infer_topic(report_markdown),
+        "region": request.get("region") or "未知",
+        "time_range": request.get("time_range") or {},
+        "pollutants": request.get("pollutants") or [],
+        "facts": facts,
+        "experts": consensus.get("experts") or [],
+        "analyses": analyses if isinstance(analyses, list) else [],
+        "discussion_turns": discussion_turns if isinstance(discussion_turns, list) else [],
+        "evidence_matrix": consensus.get("evidence_matrix") or _read_json(run_dir / "evidence_matrix.json", []),
+        "timeline_events": timeline_events if isinstance(timeline_events, list) else [],
+        "conclusions": consensus.get("conclusions") or [],
+        "dissents": consensus.get("dissents") or [],
+        "forbidden_claims": forbidden_claims if isinstance(forbidden_claims, list) else [],
+        "report_markdown": report_markdown,
+        "output_files": _run_output_files(run_dir),
+        "request": request,
+    }
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        if not path.exists():
+            return default
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("expert_deliberation_history_json_read_failed", path=str(path), error=str(exc))
+        return default
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            for line in file:
+                text = line.strip()
+                if text:
+                    rows.append(json.loads(text))
+    except Exception as exc:
+        logger.warning("expert_deliberation_history_jsonl_read_failed", path=str(path), error=str(exc))
+    return rows
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+    except Exception as exc:
+        logger.warning("expert_deliberation_history_text_read_failed", path=str(path), error=str(exc))
+        return ""
+
+
+def _run_output_files(run_dir: Path) -> dict[str, str]:
+    names = {
+        "request": "request.json",
+        "fact_ledger": "fact_ledger.jsonl",
+        "expert_analyses": "expert_analyses.json",
+        "discussion_ledger": "discussion_ledger.json",
+        "evidence_matrix": "evidence_matrix.json",
+        "timeline_events": "timeline_events.json",
+        "consensus": "consensus.json",
+        "forbidden_claims": "forbidden_claims.json",
+        "report_markdown": "expert_deliberation.md",
+    }
+    return {
+        key: str(run_dir / filename)
+        for key, filename in names.items()
+        if (run_dir / filename).exists()
+    }
+
+
+def _run_created_at(run_dir: Path) -> str:
+    parts = run_dir.name.split("_")
+    if len(parts) >= 3:
+        try:
+            return datetime.strptime(f"{parts[1]}_{parts[2]}", "%Y%m%d_%H%M%S").isoformat(timespec="seconds")
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(run_dir.stat().st_mtime).isoformat(timespec="seconds")
+
+
+def _infer_topic(report_markdown: str) -> str:
+    for line in report_markdown.splitlines():
+        if line.startswith("**会商主题**"):
+            return line.split("：", 1)[-1].strip() or "历史专家会商"
+    return "历史专家会商"
+
+
+def _report_preview(report_markdown: str) -> str:
+    for line in report_markdown.splitlines():
+        text = line.strip()
+        if text and not text.startswith("#") and not text.startswith("|") and not text.startswith("**"):
+            return text[:180]
+    return ""
 
 
 async def _parse_consultation_file(file: UploadFile) -> Tuple[List[TableInput], List[str]]:
