@@ -154,52 +154,82 @@ export const useReactStore = defineStore('react', {
     },
 
     // ✅ 向后兼容：sessionId
-    sessionId: (state) => state.modeStates[state.currentMode]?.sessionId || null,
+    sessionId() {
+      return this.currentState?.sessionId || null
+    },
 
     // ✅ 向后兼容：isAnalyzing
-    isAnalyzing: (state) => state.modeStates[state.currentMode]?.isAnalyzing || false,
+    isAnalyzing() {
+      return this.currentState?.isAnalyzing || false
+    },
 
     // ✅ 向后兼容：messages
-    messages: (state) => state.modeStates[state.currentMode]?.messages || [],
+    messages() {
+      return this.currentState?.messages || []
+    },
 
     // ✅ 向后兼容：agentMode (返回currentMode)
     agentMode: (state) => state.currentMode,
 
     // ✅ 向后兼容：error
-    error: (state) => state.modeStates[state.currentMode]?.error || null,
+    error() {
+      return this.currentState?.error || null
+    },
 
     // ✅ 向后兼容：finalAnswer
-    finalAnswer: (state) => state.modeStates[state.currentMode]?.finalAnswer || '',
+    finalAnswer() {
+      return this.currentState?.finalAnswer || ''
+    },
 
     // ✅ 向后兼容：hasResults
-    hasResults: (state) => state.modeStates[state.currentMode]?.hasResults || false,
+    hasResults() {
+      return this.currentState?.hasResults || false
+    },
 
     // ✅ 向后兼容：visualizationHistory
-    visualizationHistory: (state) => state.modeStates[state.currentMode]?.visualizationHistory || [],
+    visualizationHistory() {
+      return this.currentState?.visualizationHistory || []
+    },
 
     // ✅ 向后兼容：lastExpertResults
-    lastExpertResults: (state) => state.modeStates[state.currentMode]?.lastExpertResults || null,
+    lastExpertResults() {
+      return this.currentState?.lastExpertResults || null
+    },
 
     // ✅ 向后兼容：lastOfficeDocument
-    lastOfficeDocument: (state) => state.modeStates[state.currentMode]?.lastOfficeDocument || null,
+    lastOfficeDocument() {
+      return this.currentState?.lastOfficeDocument || null
+    },
 
     // ✅ 向后兼容：groupedVisualizations
-    groupedVisualizations: (state) => state.modeStates[state.currentMode]?.groupedVisualizations || { weather: [], component: [] },
+    groupedVisualizations() {
+      return this.currentState?.groupedVisualizations || { weather: [], component: [] }
+    },
 
     // ✅ 向后兼容：currentVisualization
-    currentVisualization: (state) => state.modeStates[state.currentMode]?.currentVisualization || null,
+    currentVisualization() {
+      return this.currentState?.currentVisualization || null
+    },
 
     // ✅ 向后兼容：isComplete
-    isComplete: (state) => state.modeStates[state.currentMode]?.isComplete || false,
+    isComplete() {
+      return this.currentState?.isComplete || false
+    },
 
     // ✅ 向后兼容：iterations
-    iterations: (state) => state.modeStates[state.currentMode]?.iterations || 0,
+    iterations() {
+      return this.currentState?.iterations || 0
+    },
 
     // ✅ 向后兼容：maxIterations
-    maxIterations: (state) => state.modeStates[state.currentMode]?.maxIterations || 30,
+    maxIterations() {
+      return this.currentState?.maxIterations || 30
+    },
 
     // ✅ 向后兼容：sessionRound
-    sessionRound: (state) => state.modeStates[state.currentMode]?.sessionRound || 0,
+    sessionRound() {
+      return this.currentState?.sessionRound || 0
+    },
 
     // 新增：获取所有正在运行的模式
     runningModes: (state) => {
