@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "markdown-it-multimd-table": "^4.2.3"
+    "markdown-it-multimd-table": "^4.2.3",
+    "pptxgenjs": "^4.0.1"
   }
 }

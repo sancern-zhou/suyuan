@@ -66,8 +66,12 @@ ASSISTANT_TOOLS = {
     "pack_office": "打包XML为Office文件。参数: input_dir(str, XML目录), output_file(str, 可选, 输出文件路径)",
     "word_edit": "Word高级编辑（替换文本、插入内容）。参数: path(str, DOCX文件路径), operation(str, 操作类型: replace_text/replace_paragraph/insert_after/insert_before/delete_paragraph), search(str, 可选, 要查找的文本), replace(str, 可选, 替换后的文本), contains(str, 可选, 段落包含的文本), marker(str, 可选, 标记文本), content(str, 可选, 新内容), new_content(str, 可选, 新内容的别名), output_file(str, 可选, 输出文件路径), backup(bool, 可选, 是否创建备份, 默认true)",
     "accept_word_changes": "接受Word文档的所有修订。参数: input_file(str, DOCX文件路径), output_file(str, 可选, 输出文件路径)",
-    "recalc_excel": "Excel公式重算。参数: path(str, XLSX文件路径), timeout(int, 可选, 超时秒数, 默认30)",
-    "add_ppt_slide": "PPT添加幻灯片（需要先解包PPTX）。参数: unpacked_dir(str, 解包后的PPTX目录), source(str, 源文件名, 如slideLayout1.xml或slide1.xml)",
+    "read_pptx": "读取PPTX演示文稿，提取每页文本、表格、图片信息、备注并可生成PDF预览。参数: path(str), include_notes(bool, 可选), include_images(bool, 可选), export_images(bool, 可选, 是否导出内嵌图片), image_output_dir(str, 可选), max_slides(int, 可选), enable_preview(bool, 可选)",
+    "analyze_pptx_template": "分析PPTX模板结构，输出页面分类、版式、占位符、文本/图片/表格/图表槽位和可替换slot地图。参数: path(str), max_slides(int, 可选), include_layouts(bool, 可选), include_hidden_text(bool, 可选), write_report(bool, 可选), output_dir(str, 可选)",
+    "create_pptx_from_template": "基于PPTX模板和slot映射替换文本/表格/图片，生成新的可编辑PPTX。参数: template_path(str), replacements(dict, slot_id到新内容的映射), output_file(str, 可选), run_validation(bool, 可选), quality(str, 可选: draft/standard/strict)",
+    "edit_pptx": "编辑现有PPTX，支持全局文本替换、按slot替换文本/表格/图片、删除页、重排页。参数: path(str), operations(list, 可选), replacements(dict, 可选slot映射), output_file(str, 可选), run_validation(bool, 可选), quality(str, 可选: draft/standard/strict)",
+    "create_pptx": "使用PptxGenJS从结构化slides JSON生成可编辑PPTX并返回下载链接/PDF预览。参数: title(str), slides(list), output_file(str, 可选), theme(dict, 可选, 推荐字段primary/secondary/accent/text/muted/bg/surface/line/headFontFace/bodyFontFace，颜色用6位hex), layout(str, 可选), enable_preview(bool, 可选), run_validation(bool, 可选), quality(str, 可选: draft/standard/strict)",
+    "validate_pptx": "渲染PPTX为PDF/PNG并执行QA：montage总览、空页、形状越界、渲染级溢出、字体检测。参数: path(str), output_dir(str, 可选), expected_fonts(list, 可选), render_png(bool, 可选), create_overview(bool, 可选), render_overflow_check(bool, 可选), dpi(int, 可选)",
 
     # 任务管理
     "TodoWrite": "更新任务清单（完整替换）。参数: items([{content, status}])",
@@ -407,7 +411,7 @@ ASSISTANT_TOOL_ORDER = [
     "read_docx",  # 读取DOCX文档（优先使用）
     "parse_pdf",  # 解析PDF文件
     "unpack_office", "pack_office", "word_edit", "accept_word_changes",
-    "recalc_excel", "add_ppt_slide",
+    "read_pptx", "analyze_pptx_template", "create_pptx_from_template", "edit_pptx", "create_pptx", "validate_pptx",
     "TodoWrite",  # 任务管理工具
     "execute_python",  # 数值计算工具
     "create_scheduled_task", "analyze_image",
