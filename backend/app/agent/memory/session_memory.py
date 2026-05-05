@@ -26,6 +26,21 @@ logger = structlog.get_logger()
 _llm_service = None
 
 
+def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
+    """Return a bounded text preview for arbitrary persisted message content."""
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        except Exception:
+            text = str(value)
+
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+
 def _get_llm_service():
     """Lazy import for the optional LLM compression service."""
     global _llm_service
@@ -894,8 +909,7 @@ class SessionMemory:
                     elif msg_type == "tool_result":
                         result = data.get("result", "")
                         if result:
-                            # 截断过长的结果
-                            summary = result[:500] + "..." if len(str(result)) > 500 else result
+                            summary = _safe_content_preview(result, 500)
                             self.conversation_history.append(
                                 ConversationTurn(
                                     role="user",
