@@ -382,6 +382,20 @@ DELIBERATION_METEOROLOGY_TOOLS = {
     "TodoWrite": EXPERT_TOOLS["TodoWrite"],
 }
 
+DELIBERATION_MONITORING_TOOLS = {
+    "query_gd_suncere_city_hour": EXPERT_TOOLS["query_gd_suncere_city_hour"],
+    "query_gd_suncere_city_day_new": EXPERT_TOOLS["query_gd_suncere_city_day_new"],
+    "query_gd_suncere_station_hour_new": EXPERT_TOOLS["query_gd_suncere_station_hour_new"],
+    "query_gd_suncere_station_day_new": EXPERT_TOOLS["query_gd_suncere_station_day_new"],
+    "query_new_standard_report": EXPERT_TOOLS["query_new_standard_report"],
+    "query_old_standard_report": EXPERT_TOOLS["query_old_standard_report"],
+    "query_standard_comparison": EXPERT_TOOLS["query_standard_comparison"],
+    "compare_standard_reports": EXPERT_TOOLS["compare_standard_reports"],
+    "read_data_registry": EXPERT_TOOLS["read_data_registry"],
+    "execute_python": EXPERT_TOOLS["execute_python"],
+    "TodoWrite": EXPERT_TOOLS["TodoWrite"],
+}
+
 DELIBERATION_CHEMISTRY_TOOLS = {
     "get_vocs_data": EXPERT_TOOLS["get_vocs_data"],
     "get_pm25_ionic": EXPERT_TOOLS["get_pm25_ionic"],
@@ -656,6 +670,20 @@ DELIBERATION_METEOROLOGY_TOOL_ORDER = [
     "TodoWrite",
 ]
 
+DELIBERATION_MONITORING_TOOL_ORDER = [
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day_new",
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
+    "query_new_standard_report",
+    "query_old_standard_report",
+    "query_standard_comparison",
+    "compare_standard_reports",
+    "read_data_registry",
+    "execute_python",
+    "TodoWrite",
+]
+
 DELIBERATION_CHEMISTRY_TOOL_ORDER = [
     "get_vocs_data",
     "get_pm25_ionic",
@@ -707,6 +735,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return MEMORY_CONSOLIDATOR_TOOLS
     elif mode == "deliberation_meteorology":
         return DELIBERATION_METEOROLOGY_TOOLS
+    elif mode == "deliberation_monitoring":
+        return DELIBERATION_MONITORING_TOOLS
     elif mode == "deliberation_chemistry":
         return DELIBERATION_CHEMISTRY_TOOLS
     elif mode == "deliberation_reviewer":
@@ -743,6 +773,8 @@ def get_tool_order(mode: str) -> List[str]:
         return ["remember_fact", "replace_memory", "remove_memory"]
     elif mode == "deliberation_meteorology":
         return DELIBERATION_METEOROLOGY_TOOL_ORDER
+    elif mode == "deliberation_monitoring":
+        return DELIBERATION_MONITORING_TOOL_ORDER
     elif mode == "deliberation_chemistry":
         return DELIBERATION_CHEMISTRY_TOOL_ORDER
     elif mode == "deliberation_reviewer":

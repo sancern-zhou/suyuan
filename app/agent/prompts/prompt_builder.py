@@ -8,6 +8,7 @@ from .expert_prompt import build_expert_prompt
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
+    build_deliberation_monitoring_prompt,
     build_deliberation_reviewer_prompt,
 )
 from .tool_registry import get_tools_by_mode, get_tool_order
@@ -15,7 +16,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-AgentMode = Literal["assistant", "expert", "deliberation_meteorology", "deliberation_chemistry", "deliberation_reviewer"]
+AgentMode = Literal["assistant", "expert", "deliberation_meteorology", "deliberation_monitoring", "deliberation_chemistry", "deliberation_reviewer"]
 
 
 def build_react_system_prompt(
@@ -66,6 +67,8 @@ def build_react_system_prompt(
         return build_expert_prompt(filtered_tools)
     elif mode == "deliberation_meteorology":
         return build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "deliberation_monitoring":
+        return build_deliberation_monitoring_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_chemistry":
         return build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_reviewer":

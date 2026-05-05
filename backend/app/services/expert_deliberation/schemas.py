@@ -29,7 +29,7 @@ class DeliberationOptions(BaseModel):
     enable_llm_fact_extraction: bool = True
     enable_llm_experts: bool = True
     enable_tool_supplement: bool = True
-    max_discussion_rounds: int = 2
+    max_discussion_rounds: int = 5
 
 
 class DeliberationRequest(BaseModel):
@@ -110,6 +110,21 @@ class ExpertAnalysis(BaseModel):
     uncertainties: List[str] = Field(default_factory=list)
 
 
+class DiscussionTurn(BaseModel):
+    turn_id: str
+    round_index: int
+    expert_id: str
+    display_name: str
+    turn_type: str = "initial_opinion"
+    position: str
+    used_fact_ids: List[str] = Field(default_factory=list)
+    new_fact_ids: List[str] = Field(default_factory=list)
+    claims: List[ClaimRecord] = Field(default_factory=list)
+    questions_to_others: List[Dict[str, str]] = Field(default_factory=list)
+    tool_call_plan: List[ToolCallPlan] = Field(default_factory=list)
+    uncertainties: List[str] = Field(default_factory=list)
+
+
 class ConsensusConclusion(BaseModel):
     claim: str
     consensus_level: str
@@ -117,6 +132,31 @@ class ConsensusConclusion(BaseModel):
     evidence_fact_ids: List[str] = Field(default_factory=list)
     confidence: float = 0.6
     report_sentence: str
+
+
+class EvidenceMatrixRow(BaseModel):
+    conclusion_id: str
+    claim: str
+    status: str = "candidate"
+    supporting_experts: List[str] = Field(default_factory=list)
+    opposing_experts: List[str] = Field(default_factory=list)
+    evidence_fact_ids: List[str] = Field(default_factory=list)
+    contradicting_fact_ids: List[str] = Field(default_factory=list)
+    missing_facts: List[str] = Field(default_factory=list)
+    risk_flags: List[str] = Field(default_factory=list)
+    confidence: float = 0.6
+    writability: str = "降级写"
+
+
+class TimelineEvent(BaseModel):
+    event_id: str
+    stage: str
+    title: str
+    description: str
+    round_index: Optional[int] = None
+    expert_id: Optional[str] = None
+    fact_ids: List[str] = Field(default_factory=list)
+    turn_id: Optional[str] = None
 
 
 class DeliberationResult(BaseModel):
@@ -127,6 +167,9 @@ class DeliberationResult(BaseModel):
     facts: List[FactRecord]
     experts: List[ExpertCard]
     analyses: List[ExpertAnalysis]
+    discussion_turns: List[DiscussionTurn] = Field(default_factory=list)
+    evidence_matrix: List[EvidenceMatrixRow] = Field(default_factory=list)
+    timeline_events: List[TimelineEvent] = Field(default_factory=list)
     conclusions: List[ConsensusConclusion]
     dissents: List[Dict[str, Any]]
     forbidden_claims: List[Dict[str, str]]

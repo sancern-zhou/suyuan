@@ -115,7 +115,7 @@
           <input
             v-model="targetExpertsText"
             type="text"
-            placeholder="meteorology_expert, chemistry_expert 或 气象扩散专家"
+            placeholder="monitoring_feature_expert, weather_transport_expert 或 常规监测与污染特征专家"
           />
         </label>
 
@@ -139,8 +139,16 @@
               <span>专家意见</span>
             </div>
             <div>
+              <strong>{{ result.discussion_turns?.length || 0 }}</strong>
+              <span>讨论轮次</span>
+            </div>
+            <div>
               <strong>{{ result.conclusions.length }}</strong>
               <span>共识</span>
+            </div>
+            <div>
+              <strong>{{ result.evidence_matrix?.length || 0 }}</strong>
+              <span>证据矩阵</span>
             </div>
             <div>
               <strong>{{ result.dissents.length }}</strong>
@@ -203,12 +211,63 @@
               </article>
             </div>
 
+            <h3 class="subheading">结论-证据矩阵</h3>
+            <div class="matrix-table">
+              <div class="matrix-row matrix-head">
+                <span>结论</span>
+                <span>可写性</span>
+                <span>支持专家</span>
+                <span>关键事实</span>
+                <span>风险</span>
+              </div>
+              <div v-for="row in result.evidence_matrix || []" :key="row.conclusion_id" class="matrix-row">
+                <span>{{ row.claim }}</span>
+                <span>{{ row.writability }}</span>
+                <span>{{ row.supporting_experts.join('、') || '暂无' }}</span>
+                <span>{{ row.evidence_fact_ids.slice(0, 5).join('、') || '暂无' }}</span>
+                <span>{{ row.risk_flags.join('；') || '暂无' }}</span>
+              </div>
+            </div>
+
             <h3 class="subheading">禁写结论</h3>
             <div class="forbidden-list">
               <p v-for="item in result.forbidden_claims" :key="item.claim">
                 <strong>{{ item.claim }}</strong>：{{ item.reason }}
               </p>
             </div>
+          </div>
+
+          <div v-else-if="activeTab === 'discussion'" class="result-section discussion-list">
+            <div class="timeline-list">
+              <article v-for="event in result.timeline_events || []" :key="event.event_id" class="timeline-item">
+                <div class="expert-title">
+                  <h3>{{ event.title }}</h3>
+                  <span>{{ event.stage }}<template v-if="event.round_index"> · 第 {{ event.round_index }} 轮</template></span>
+                </div>
+                <p>{{ event.description }}</p>
+                <div v-if="event.fact_ids.length" class="tag-line">
+                  <span v-for="factId in event.fact_ids.slice(0, 8)" :key="factId">{{ factId }}</span>
+                </div>
+              </article>
+            </div>
+            <h3 class="subheading">专家讨论记录</h3>
+            <article v-for="turn in result.discussion_turns || []" :key="turn.turn_id" class="discussion-item">
+              <div class="expert-title">
+                <h3>{{ turn.turn_id }} · {{ turn.display_name }}</h3>
+                <span>第 {{ turn.round_index }} 轮 · {{ turnTypeLabel(turn.turn_type) }}</span>
+              </div>
+              <p>{{ turn.position }}</p>
+              <div v-if="turn.used_fact_ids.length" class="tag-line">
+                <span v-for="factId in turn.used_fact_ids.slice(0, 8)" :key="factId">{{ factId }}</span>
+              </div>
+              <p v-if="turn.questions_to_others.length" class="supplement">
+                提问：{{ turn.questions_to_others.map(item => `${item.target_expert}：${item.question}`).join('；') }}
+              </p>
+              <p v-if="turn.new_fact_ids.length" class="supplement">
+                新增补证事实：{{ turn.new_fact_ids.join('、') }}
+              </p>
+            </article>
+            <div v-if="!(result.discussion_turns || []).length" class="empty-inline">暂无共享讨论记录</div>
           </div>
 
           <div v-else class="result-section markdown-panel">
@@ -244,6 +303,7 @@ const tabs = [
   { key: 'facts', label: '事实账本' },
   { key: 'experts', label: '专家意见' },
   { key: 'consensus', label: '共识审查' },
+  { key: 'discussion', label: '讨论过程' },
   { key: 'report', label: '报告章节' }
 ]
 
@@ -406,6 +466,15 @@ function sourceLabel(sourceType) {
     data_id: '数据资产'
   }
   return labels[sourceType] || sourceType
+}
+
+function turnTypeLabel(turnType) {
+  const labels = {
+    initial_opinion: '初判',
+    cross_review: '交叉复议',
+    review_moderation: '审查统稿'
+  }
+  return labels[turnType] || turnType
 }
 
 onMounted(() => {
@@ -669,7 +738,7 @@ onMounted(() => {
 
 .summary-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   background: #dfe3e8;
   border: 1px solid #dfe3e8;
@@ -726,6 +795,31 @@ onMounted(() => {
   min-width: 920px;
 }
 
+.matrix-table {
+  min-width: 980px;
+  border-top: 1px solid #eef1f4;
+}
+
+.matrix-row {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.4fr) 90px 150px 190px 180px;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef1f4;
+  font-size: 13px;
+  line-height: 1.6;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.matrix-head {
+  background: #f8fafc;
+  font-weight: 650;
+  color: #475467;
+}
+
 .facts-row {
   display: grid;
   grid-template-columns: 160px 100px minmax(360px, 1fr) 160px;
@@ -749,11 +843,14 @@ onMounted(() => {
 
 .expert-list,
 .consensus-list,
+.discussion-list,
 .markdown-panel {
   padding: 16px;
 }
 
 .expert-item,
+.discussion-item,
+.timeline-item,
 .consensus-list article {
   border-bottom: 1px solid #eef1f4;
   padding: 14px 0;
@@ -772,6 +869,18 @@ onMounted(() => {
     color: #344054;
     margin-top: 8px;
   }
+}
+
+.timeline-list {
+  border-bottom: 1px solid #dfe3e8;
+  margin-bottom: 16px;
+  padding-bottom: 4px;
+}
+
+.empty-inline {
+  color: #667085;
+  font-size: 13px;
+  padding: 18px;
 }
 
 .expert-title {

@@ -27,9 +27,11 @@ class LLMExpertAgentRunner:
         relevant: list[FactRecord],
         round_index: int,
         start_fact_index: int,
+        turn_type: str = "initial_opinion",
+        discussion_context: str = "",
     ) -> tuple[ExpertAnalysis, list[FactRecord]]:
         deliberation_mode = expert.deliberation_mode
-        prompt = self._build_prompt(expert, request, facts, relevant, round_index)
+        prompt = self._build_prompt(expert, request, facts, relevant, round_index, turn_type, discussion_context)
         events: list[dict[str, Any]] = []
         final_answer = ""
 
@@ -83,6 +85,8 @@ class LLMExpertAgentRunner:
         facts: list[FactRecord],
         relevant: list[FactRecord],
         round_index: int,
+        turn_type: str = "initial_opinion",
+        discussion_context: str = "",
     ) -> str:
         prompt_text = self._read_prompt_file(expert.prompt_file)
         fact_lines = [
@@ -94,6 +98,7 @@ class LLMExpertAgentRunner:
         data_ids = ", ".join(request.data_ids) or "无"
         return f"""
 你是“{expert.display_name}”，必须使用会商专用 ReAct 模式 `{expert.deliberation_mode}` 完成第 {round_index} 轮专家会商。
+本轮讨论阶段：{turn_type}
 
 ## 专家提示词
 {prompt_text}
@@ -112,10 +117,14 @@ class LLMExpertAgentRunner:
 ## 全局事实账本
 {global_context}
 
+## 共享讨论上下文
+{discussion_context or "初判阶段暂无其他专家讨论记录。"}
+
 ## 工具要求
 - 你可以调用的工具：{", ".join(expert.tool_whitelist) or "无"}；读取已有数据资产时使用 read_data_registry 或当前模式提供的数据读取工具。
 - 如果事实不足以支持你的判断，必须先调用工具补证；工具 Observation 会被转成新 FactRecord。
 - 不得编造事实编号，不得把未经工具读取的数据内容写成已知事实。
+- 如果共享讨论上下文中有指向你的问题，必须在 position、claims 或 questions_to_others 中明确回应；仍缺证据时列入 missing_facts 或 tool_call_plan。
 
 ## 最终输出
 完成必要工具调用后，最终回答只能输出严格 JSON，不要 Markdown，不要解释：

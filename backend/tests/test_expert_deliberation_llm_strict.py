@@ -5,6 +5,8 @@ import types
 from pathlib import Path
 
 from app.services.expert_deliberation.fact_ingestor import FactIngestor
+from app.services.expert_deliberation.discussion_ledger import DiscussionLedger
+from app.services.expert_deliberation.deliberation_engine import ExpertDeliberationEngine
 from app.services.expert_deliberation.expert_agent_runner import LLMExpertAgentRunner
 from app.services.expert_deliberation.expert_registry import get_default_experts
 from app.services.expert_deliberation.llm_fact_extractor import LLMFactExtractor
@@ -109,6 +111,12 @@ def test_sync_fact_ingestor_is_disabled():
         FactIngestor(llm_extractor=FakeExtractor()).build(DeliberationRequest())
 
 
+def test_default_discussion_rounds_are_maximum_not_fixed_two():
+    request = DeliberationRequest()
+
+    assert request.options.max_discussion_rounds == 5
+
+
 @pytest.mark.asyncio
 async def test_llm_fact_extractor_uses_anthropic_client_for_json():
     extractor = LLMFactExtractor(llm_service=FakeAnthropicService())
@@ -148,7 +156,14 @@ def test_deliberation_modes_are_isolated_from_generic_expert_mode():
 
     meteorology_tools = get_tools_by_mode("deliberation_meteorology")
     chemistry_tools = get_tools_by_mode("deliberation_chemistry")
+    monitoring_tools = get_tools_by_mode("deliberation_monitoring")
     reviewer_tools = get_tools_by_mode("deliberation_reviewer")
+
+    assert "query_new_standard_report" in monitoring_tools
+    assert "execute_python" in monitoring_tools
+    assert "calculate_iaqi" not in monitoring_tools
+    assert "meteorological_trajectory_analysis" not in monitoring_tools
+    assert "calculate_pm_pmf" not in monitoring_tools
 
     assert "meteorological_trajectory_analysis" in meteorology_tools
     assert "analyze_upwind_enterprises" in meteorology_tools
@@ -162,8 +177,126 @@ def test_deliberation_modes_are_isolated_from_generic_expert_mode():
     assert "call_sub_agent" not in reviewer_tools
 
     modes = {expert.expert_id: expert.deliberation_mode for expert in get_default_experts()}
-    assert modes["meteorology_expert"] == "deliberation_meteorology"
-    assert modes["transport_expert"] == "deliberation_meteorology"
-    assert modes["chemistry_expert"] == "deliberation_chemistry"
-    assert modes["source_apportionment_expert"] == "deliberation_chemistry"
-    assert modes["skeptic_reviewer"] == "deliberation_reviewer"
+    assert modes == {
+        "monitoring_feature_expert": "deliberation_monitoring",
+        "weather_transport_expert": "deliberation_meteorology",
+        "chemistry_source_expert": "deliberation_chemistry",
+        "reviewer_moderator": "deliberation_reviewer",
+    }
+
+
+def test_discussion_ledger_routes_questions_and_keeps_latest_analysis():
+    ledger = DiscussionLedger()
+    first = get_default_experts()[0]
+    second = get_default_experts()[1]
+    analysis = LLMExpertAgentRunner()._to_analysis(
+        first,
+        {
+            "position": "气象输送初判",
+            "used_fact_ids": [],
+            "claims": [{"claim": "存在输送待核查", "confidence": 0.6}],
+            "questions_to_others": [
+                {
+                    "target_expert": second.expert_id,
+                    "question": "组分证据是否支持输送影响？",
+                    "reason": "交叉验证",
+                }
+            ],
+            "tool_call_plan": [],
+            "uncertainties": [],
+        },
+        [],
+    )
+    ledger.add_analysis(analysis, round_index=1, turn_type="initial_opinion")
+
+    assert ledger.question_targets({second.expert_id}) == {second.expert_id}
+    context = ledger.summary_for_expert(second.expert_id, "cross_review")
+    assert "指向你的问题" in context
+    assert "组分证据是否支持输送影响" in context
+
+    revised = analysis.model_copy(update={"position": "气象输送复议"})
+    ledger.add_analysis(revised, round_index=2, turn_type="cross_review")
+
+    latest = {item.expert_id: item.position for item in ledger.latest_analyses()}
+    assert latest[first.expert_id] == "气象输送复议"
+
+
+def test_reviewer_controls_discussion_stop():
+    engine = ExpertDeliberationEngine()
+    reviewer = get_default_experts()[-1]
+    stop_analysis = LLMExpertAgentRunner()._to_analysis(
+        reviewer,
+        {
+            "position": "证据链完整，可以结束讨论。",
+            "used_fact_ids": [],
+            "claims": [{"claim": "可形成会商结论", "confidence": 0.8}],
+            "questions_to_others": [],
+            "tool_call_plan": [],
+            "uncertainties": [],
+        },
+        [],
+    )
+    continue_analysis = stop_analysis.model_copy(
+        update={
+            "position": "仍需补证后再判断。",
+            "questions_to_others": [
+                {"target_expert": "chemistry_source_expert", "question": "请补充PMF依据", "reason": "审查"}
+            ],
+        }
+    )
+
+    assert engine._reviewer_allows_stop(stop_analysis) is True
+    assert engine._reviewer_allows_stop(continue_analysis) is False
+
+
+def test_evidence_matrix_and_timeline_are_built_from_discussion():
+    engine = ExpertDeliberationEngine()
+    expert = get_default_experts()[0]
+    fact = make_fact()
+    analysis = LLMExpertAgentRunner()._to_analysis(
+        expert,
+        {
+            "position": "气象输送证据支持污染累积。",
+            "used_fact_ids": [fact.fact_id],
+            "claims": [
+                {
+                    "claim": "气象输送证据支持污染累积",
+                    "supporting_facts": [fact.fact_id],
+                    "missing_facts": [],
+                    "confidence": 0.82,
+                }
+            ],
+            "questions_to_others": [],
+            "tool_call_plan": [],
+            "uncertainties": [],
+        },
+        [fact],
+    )
+    discussion = DiscussionLedger()
+    discussion.add_analysis(analysis, round_index=1, turn_type="initial_opinion")
+
+    matrix = engine._build_evidence_matrix([analysis])
+    timeline = engine._build_timeline_events([fact], discussion, matrix)
+
+    assert matrix[0].writability == "可写"
+    assert matrix[0].evidence_fact_ids == [fact.fact_id]
+    assert timeline[0].stage == "fact_ingestion"
+    assert any(event.stage == "initial_opinion" for event in timeline)
+    assert timeline[-1].stage == "evidence_matrix"
+
+
+def test_deliberation_prompt_files_match_merged_expert_roles():
+    prompt_root = Path(__file__).resolve().parents[2] / "backend" / "config" / "prompts"
+    monitoring_prompt = (prompt_root / "monitoring_expert.md").read_text(encoding="utf-8")
+    weather_prompt = (prompt_root / "weather_expert.md").read_text(encoding="utf-8")
+    chemistry_prompt = (prompt_root / "chemical_expert_pm.md").read_text(encoding="utf-8")
+    reviewer_prompt = (prompt_root / "report_expert.md").read_text(encoding="utf-8")
+
+    assert "常规监测与污染特征专家" in monitoring_prompt
+    assert "气象-输送会商专家" in weather_prompt
+    assert "化学-来源会商专家" in chemistry_prompt
+    assert "会商审查与统稿员" in reviewer_prompt
+
+    for prompt in [monitoring_prompt, weather_prompt, chemistry_prompt, reviewer_prompt]:
+        assert "最终回答必须严格服从用户消息中的 JSON schema" in prompt
+        assert "不要输出 Markdown 报告" in prompt
