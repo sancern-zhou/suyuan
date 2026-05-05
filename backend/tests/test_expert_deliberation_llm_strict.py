@@ -37,6 +37,29 @@ class FakeAnthropicMessages:
         return type("Response", (), {"content": [text_block]})()
 
 
+class FakeChunkingAnthropicMessages:
+    def __init__(self):
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        statement = f"第{len(self.calls)}块报告明确记录广州 PM2.5 污染特征。"
+        text_block = type(
+            "TextBlock",
+            (),
+            {
+                "text": (
+                    '{"facts":[{"statement":"'
+                    + statement
+                    + '","fact_type":"report_finding","region":"广东省","city":"广州",'
+                    '"pollutant":"PM2.5","metrics":{},"tags":["监测","PM2.5"],'
+                    '"evidence_quote":"报告原文","confidence":0.8}]}'
+                )
+            },
+        )()
+        return type("Response", (), {"content": [text_block]})()
+
+
 class FakeNormalizeAnthropicMessages:
     async def create(self, **kwargs):
         text_block = type(
@@ -62,6 +85,12 @@ class FakeAnthropicService:
 
     async def call_llm_with_json_response(self, prompt, max_retries=2):
         raise AssertionError("OpenAI-compatible JSON endpoint should not be used when anthropic_client is available")
+
+
+class FakeChunkingAnthropicService(FakeAnthropicService):
+    def __init__(self):
+        self.messages = FakeChunkingAnthropicMessages()
+        self.anthropic_client = type("Client", (), {"messages": self.messages})()
 
 
 class FakeNormalizeAnthropicService(FakeAnthropicService):
@@ -124,6 +153,23 @@ async def test_llm_fact_extractor_uses_anthropic_client_for_json():
     payload = await extractor._call_llm_json("输出JSON")
 
     assert payload == {"facts": []}
+
+
+@pytest.mark.asyncio
+async def test_report_fact_extraction_splits_long_text_for_llm():
+    service = FakeChunkingAnthropicService()
+    extractor = LLMFactExtractor(llm_service=service)
+    request = DeliberationRequest(region="广东省")
+    long_report = "\n".join([f"第{i}段：广州 PM2.5 污染过程描述。" + "监测事实" * 60 for i in range(8)])
+
+    facts = await extractor.extract_report_facts(request, long_report, "monthly_trace_report", start_index=10)
+
+    assert len(service.messages.calls) > 1
+    assert all(call["timeout"] == extractor.FACT_EXTRACTION_TIMEOUT_SECONDS for call in service.messages.calls)
+    assert [fact.fact_id for fact in facts] == [
+        f"fact_monthly_trace_report_llm_{index:04d}"
+        for index in range(10, 10 + len(facts))
+    ]
 
 
 @pytest.mark.asyncio
