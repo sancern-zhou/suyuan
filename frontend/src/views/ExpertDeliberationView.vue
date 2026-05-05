@@ -129,11 +129,62 @@
             <p>{{ latestProgressText }}</p>
             <div class="progress-list">
               <article v-for="event in progressEvents" :key="event.id" class="progress-item">
-                <div>
-                  <strong>{{ event.title || event.type }}</strong>
+                <div class="progress-item-head">
+                  <div>
+                    <strong>{{ event.title || event.type }}</strong>
+                    <em v-if="event.display_name">{{ event.display_name }}</em>
+                  </div>
                   <span>{{ event.timestamp || '' }}</span>
                 </div>
                 <p>{{ event.message }}</p>
+                <p v-if="event.position" class="progress-position">{{ event.position }}</p>
+                <div v-if="event.facts?.length" class="progress-block">
+                  <h4>入账事实</h4>
+                  <ul>
+                    <li v-for="fact in event.facts" :key="fact.fact_id">
+                      <code>{{ fact.fact_id }}</code>
+                      <span>{{ fact.statement }}</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="event.pending_questions?.length" class="progress-block">
+                  <h4>待回应问题</h4>
+                  <ul>
+                    <li v-for="question in event.pending_questions" :key="`${question.from_expert}_${question.question}`">
+                      <strong>{{ question.from_expert }}</strong>
+                      <span>{{ question.question }}</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="event.claims?.length" class="progress-block">
+                  <h4>专家判断</h4>
+                  <ul>
+                    <li v-for="claim in event.claims" :key="claim.claim_id || claim.claim">
+                      <span>{{ claim.claim }}</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="event.questions_to_others?.length" class="progress-block">
+                  <h4>提出问题</h4>
+                  <ul>
+                    <li v-for="question in event.questions_to_others" :key="`${question.target_expert}_${question.question}`">
+                      <code>{{ question.target_expert }}</code>
+                      <span>{{ question.question }}</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="event.used_fact_ids?.length || event.new_fact_ids?.length" class="progress-tags">
+                  <span v-for="factId in (event.used_fact_ids || []).slice(0, 8)" :key="`used_${event.id}_${factId}`">{{ factId }}</span>
+                  <span v-for="factId in (event.new_fact_ids || []).slice(0, 6)" :key="`new_${event.id}_${factId}`" class="new-fact">{{ factId }}</span>
+                </div>
+                <div v-if="event.uncertainties?.length" class="progress-block risk">
+                  <h4>不确定性/需补证</h4>
+                  <ul>
+                    <li v-for="item in event.uncertainties" :key="item">
+                      <span>{{ item }}</span>
+                    </li>
+                  </ul>
+                </div>
               </article>
             </div>
           </template>
@@ -803,7 +854,7 @@ onMounted(() => {
     border-bottom: 0;
   }
 
-  div {
+  .progress-item-head {
     display: flex;
     justify-content: space-between;
     gap: 12px;
@@ -815,11 +866,88 @@ onMounted(() => {
     font-size: 13px;
   }
 
+  em {
+    display: block;
+    color: #667085;
+    font-size: 12px;
+    font-style: normal;
+    margin-top: 2px;
+  }
+
   span,
   p {
     color: #667085;
     font-size: 12px;
     line-height: 1.6;
+  }
+}
+
+.progress-position {
+  color: #344054 !important;
+  background: #f8fafc;
+  border-left: 3px solid #16703f;
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+
+.progress-block {
+  margin-top: 10px;
+  border-top: 1px solid #eef1f4;
+  padding-top: 8px;
+
+  h4 {
+    font-size: 12px;
+    color: #475467;
+    margin-bottom: 6px;
+  }
+
+  ul {
+    display: grid;
+    gap: 6px;
+  }
+
+  li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  code {
+    color: #175cd3;
+    background: #eff8ff;
+    border: 1px solid #b2ddff;
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  &.risk {
+    h4 {
+      color: #92400e;
+    }
+  }
+}
+
+.progress-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+
+  span {
+    color: #175cd3;
+    background: #eff8ff;
+    border: 1px solid #b2ddff;
+    border-radius: 999px;
+    padding: 2px 7px;
+  }
+
+  .new-fact {
+    color: #166534;
+    background: #f0fdf4;
+    border-color: #bbf7d0;
   }
 }
 
