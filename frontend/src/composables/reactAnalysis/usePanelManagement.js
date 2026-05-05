@@ -69,6 +69,10 @@ export function usePanelManagement(store = null) {
   const hasOfficeDocuments = computed(() => {
     if (!store || !store.messages) return false
 
+    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview) {
+      return true
+    }
+
     return store.messages.some(msg => {
       if (msg?.type === 'tool_result' && msg?.data?.result) {
         const metadata = msg.data.result.metadata || {}
@@ -77,6 +81,8 @@ export function usePanelManagement(store = null) {
         const isOfficeTool = [
           'word_edit', 'find_replace_word', 'accept_word_changes',
           'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide',
+          'read_pptx', 'create_pptx', 'analyze_pptx_template',
+          'create_pptx_from_template', 'edit_pptx', 'validate_pptx',
           'read_file'
         ].includes(generator)
 
@@ -301,7 +307,7 @@ export function usePanelManagement(store = null) {
           officePanelVisible.value = true
           activeRightTab.value = 'document'
         }
-      })
+      }, { immediate: true })
     }
   }
 
