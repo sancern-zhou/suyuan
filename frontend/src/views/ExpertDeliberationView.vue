@@ -8,7 +8,7 @@
       <nav class="header-actions">
         <RouterLink to="/" class="nav-button">返回分析</RouterLink>
         <button class="primary-button" :disabled="running" @click="runDeliberation">
-          {{ running ? '生成中...' : '开始会商' }}
+          {{ running ? '会商中...' : '开始会商' }}
         </button>
       </nav>
     </header>
@@ -124,11 +124,30 @@
 
       <section class="result-pane">
         <div v-if="!result" class="empty-state">
-          <h2>等待会商结果</h2>
-          <p>运行后将展示事实账本、专家意见、共识结论和可插入报告的 Markdown 章节。</p>
+          <template v-if="running || progressEvents.length">
+            <h2>会商进行中</h2>
+            <p>{{ latestProgressText }}</p>
+            <div class="progress-list">
+              <article v-for="event in progressEvents" :key="event.id" class="progress-item">
+                <div>
+                  <strong>{{ event.title || event.type }}</strong>
+                  <span>{{ event.timestamp || '' }}</span>
+                </div>
+                <p>{{ event.message }}</p>
+              </article>
+            </div>
+          </template>
+          <template v-else>
+            <h2>等待会商结果</h2>
+            <p>运行后将展示事实账本、专家意见、共识结论和可插入报告的 Markdown 章节。</p>
+          </template>
         </div>
 
         <template v-else>
+          <div v-if="progressEvents.length" class="live-progress-bar">
+            <strong>{{ running ? '实时进展' : '本次会商过程' }}</strong>
+            <span>{{ latestProgressText }}</span>
+          </div>
           <div class="summary-strip">
             <div>
               <strong>{{ result.facts.length }}</strong>
@@ -286,7 +305,8 @@ import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import {
   loadDefaultExpertDeliberationInputFiles,
   parseExpertDeliberationInputFiles,
-  runExpertDeliberation
+  runExpertDeliberation,
+  runExpertDeliberationStream
 } from '@/services/expertDeliberationApi'
 
 const running = ref(false)
@@ -298,6 +318,9 @@ const activeTab = ref('facts')
 const parseWarnings = ref([])
 const parsedConsultationTables = ref([])
 const uploadedTablesText = ref('')
+const progressEvents = ref([])
+const latestProgressText = ref('正在准备会商任务')
+let deliberationController = null
 
 const tabs = [
   { key: 'facts', label: '事实账本' },
@@ -424,6 +447,10 @@ async function loadDefaultInputFiles(showError = true) {
 async function runDeliberation() {
   error.value = ''
   running.value = true
+  result.value = null
+  progressEvents.value = []
+  latestProgressText.value = '正在提交会商任务'
+  deliberationController = new AbortController()
   try {
     const payload = {
       topic: form.topic,
@@ -439,13 +466,32 @@ async function runDeliberation() {
       discussion_prompt: discussionPrompt.value,
       target_experts: parseList(targetExpertsText.value)
     }
-    result.value = await runExpertDeliberation(payload)
-    activeTab.value = 'facts'
+    const streamedResult = await runExpertDeliberationStream(payload, {
+      signal: deliberationController.signal,
+      onEvent: handleProgressEvent
+    })
+    result.value = streamedResult || await runExpertDeliberation(payload)
+    activeTab.value = 'discussion'
   } catch (err) {
-    error.value = err.message || '会商生成失败'
+    if (err.name !== 'AbortError') {
+      error.value = err.message || '会商生成失败'
+    }
   } finally {
     running.value = false
+    deliberationController = null
   }
+}
+
+function handleProgressEvent(event) {
+  if (!event || event.event === 'connected' || event.event === 'result') {
+    return
+  }
+  const progress = {
+    ...event,
+    id: `${Date.now()}_${progressEvents.value.length}`
+  }
+  progressEvents.value.push(progress)
+  latestProgressText.value = progress.message || progress.title || latestProgressText.value
 }
 
 function normalizeError(err) {
@@ -726,13 +772,73 @@ onMounted(() => {
 .empty-state {
   min-height: 320px;
   display: grid;
-  place-content: center;
+  align-content: center;
+  justify-items: center;
   text-align: center;
   color: #667085;
+  padding: 24px;
 
   h2 {
     color: #1f2933;
     margin-bottom: 8px;
+  }
+}
+
+.progress-list {
+  width: min(760px, 100%);
+  margin-top: 18px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  background: #fff;
+  text-align: left;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.progress-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid #eef1f4;
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  strong {
+    color: #1f2933;
+    font-size: 13px;
+  }
+
+  span,
+  p {
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+}
+
+.live-progress-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  color: #166534;
+  font-size: 13px;
+
+  span {
+    color: #475467;
+    text-align: right;
   }
 }
 
