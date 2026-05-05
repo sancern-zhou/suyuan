@@ -1,14 +1,17 @@
 """Fact-driven expert deliberation API."""
 
+import asyncio
 from datetime import date, datetime
 from html.parser import HTMLParser
 from io import BytesIO
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 import structlog
 
 from app.routers.utils_docx import convert_docx_to_markdown
@@ -52,6 +55,65 @@ async def run_deliberation(request: DeliberationRequest) -> DeliberationResult:
     except Exception as exc:
         logger.error("expert_deliberation_failed", error=str(exc), exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/run-stream")
+async def run_deliberation_stream(request: DeliberationRequest) -> StreamingResponse:
+    """Run expert deliberation and stream progress events with SSE."""
+
+    async def event_stream():
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        async def publish(event: dict[str, Any]) -> None:
+            await queue.put({"event": "progress", **event})
+
+        async def run_engine() -> DeliberationResult:
+            logger.info(
+                "expert_deliberation_started",
+                topic=request.topic,
+                region=request.region,
+                tables=len(request.consultation_tables),
+                data_ids=len(request.data_ids),
+                streamed=True,
+            )
+            return await ExpertDeliberationEngine().run_async(request, progress_callback=publish)
+
+        task = asyncio.create_task(run_engine())
+        yield _sse_data({"event": "connected", "message": "会商进度流已连接"})
+
+        while not task.done() or not queue.empty():
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=0.5)
+                yield _sse_data(item)
+            except asyncio.TimeoutError:
+                continue
+
+        try:
+            result = await task
+            logger.info(
+                "expert_deliberation_completed",
+                facts=len(result.facts),
+                analyses=len(result.analyses),
+                conclusions=len(result.conclusions),
+                streamed=True,
+            )
+            yield _sse_data({"event": "result", "result": result.model_dump(mode="json")})
+        except Exception as exc:
+            logger.error("expert_deliberation_failed", error=str(exc), streamed=True, exc_info=True)
+            yield _sse_data({"event": "error", "message": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _sse_data(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
 @router.post("/parse-input-files", response_model=ParsedInputFilesResult)

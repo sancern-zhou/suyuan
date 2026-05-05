@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from .expert_registry import get_default_experts
@@ -63,13 +64,37 @@ class ExpertDeliberationEngine:
             output_files=output_files,
         )
 
-    async def run_async(self, request: DeliberationRequest) -> DeliberationResult:
+    async def run_async(
+        self,
+        request: DeliberationRequest,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> DeliberationResult:
+        await self._emit_progress(
+            progress_callback,
+            "started",
+            "会商启动",
+            f"开始处理 {len(request.consultation_tables)} 张表、{len(request.data_ids)} 个 data_id。",
+        )
+        await self._emit_progress(
+            progress_callback,
+            "fact_ingestion_started",
+            "事实入账",
+            "正在使用 LLM 抽取会商表格、报告和数据资产事实。",
+        )
         ledger = await FactIngestor().build_async(request)
+        await self._emit_progress(
+            progress_callback,
+            "fact_ingestion_completed",
+            "事实入账完成",
+            f"已入账 {len(ledger.all())} 条事实。",
+            facts_count=len(ledger.all()),
+        )
         experts = get_default_experts()
         discussion = DiscussionLedger()
         domain_experts = [expert for expert in experts if expert.expert_id != "reviewer_moderator"]
         reviewer_experts = [expert for expert in experts if expert.expert_id == "reviewer_moderator"]
 
+        await self._emit_progress(progress_callback, "round_started", "第 1 轮初判", "领域专家开始基于事实账本进行初判。", round_index=1)
         await self._build_expert_analyses(
             request,
             domain_experts,
@@ -77,6 +102,7 @@ class ExpertDeliberationEngine:
             round_index=1,
             turn_type="initial_opinion",
             discussion=discussion,
+            progress_callback=progress_callback,
         )
 
         pending_targets = discussion.question_targets({expert.expert_id for expert in domain_experts})
@@ -84,6 +110,13 @@ class ExpertDeliberationEngine:
         max_rounds = max(2, request.options.max_discussion_rounds)
         if request.options.enable_supplement_planning:
             for round_index in range(2, max_rounds + 1):
+                await self._emit_progress(
+                    progress_callback,
+                    "round_started",
+                    f"第 {round_index} 轮复议",
+                    "根据专家提问、补证结果和审查要求继续讨论。",
+                    round_index=round_index,
+                )
                 current_tool_fact_count = len([fact for fact in ledger.all() if fact.source_type == "tool_supplement"])
                 if current_tool_fact_count > last_tool_fact_count:
                     pending_targets.update(expert.expert_id for expert in domain_experts)
@@ -95,6 +128,7 @@ class ExpertDeliberationEngine:
                     round_index=round_index,
                     turn_type="cross_review",
                     discussion=discussion,
+                    progress_callback=progress_callback,
                 )
                 await self._build_expert_analyses(
                     request,
@@ -103,9 +137,17 @@ class ExpertDeliberationEngine:
                     round_index=round_index,
                     turn_type="review_moderation",
                     discussion=discussion,
+                    progress_callback=progress_callback,
                 )
                 reviewer_analysis = discussion.latest_for("reviewer_moderator")
                 if reviewer_analysis is not None and self._reviewer_allows_stop(reviewer_analysis):
+                    await self._emit_progress(
+                        progress_callback,
+                        "reviewer_stopped",
+                        "审查员结束讨论",
+                        "审查员判断当前证据链可以进入共识输出。",
+                        round_index=round_index,
+                    )
                     break
                 pending_targets = {
                     str(question.get("target_expert"))
@@ -123,10 +165,12 @@ class ExpertDeliberationEngine:
                 round_index=2,
                 turn_type="review_moderation",
                 discussion=discussion,
+                progress_callback=progress_callback,
             )
 
         facts = ledger.all()
         analyses = discussion.latest_analyses()
+        await self._emit_progress(progress_callback, "consensus_started", "生成共识", "正在构建结论-证据矩阵和会商报告。")
         evidence_matrix = self._build_evidence_matrix(analyses)
         timeline_events = self._build_timeline_events(facts, discussion, evidence_matrix)
         conclusions = self._build_consensus(analyses, facts)
@@ -135,7 +179,7 @@ class ExpertDeliberationEngine:
         report_markdown = self._render_report(request, facts, analyses, conclusions, dissents, forbidden_claims, evidence_matrix)
         output_files = self._persist(request, facts, experts, analyses, discussion, evidence_matrix, timeline_events, conclusions, dissents, forbidden_claims, report_markdown)
 
-        return DeliberationResult(
+        result = DeliberationResult(
             topic=request.topic,
             region=request.region,
             time_range=request.time_range,
@@ -152,6 +196,16 @@ class ExpertDeliberationEngine:
             report_markdown=report_markdown,
             output_files=output_files,
         )
+        await self._emit_progress(
+            progress_callback,
+            "completed",
+            "会商完成",
+            f"完成 {len(facts)} 条事实、{len(analyses)} 条专家意见、{len(conclusions)} 条共识。",
+            facts_count=len(facts),
+            analyses_count=len(analyses),
+            conclusions_count=len(conclusions),
+        )
+        return result
 
     async def _build_expert_analyses(
         self,
@@ -161,6 +215,7 @@ class ExpertDeliberationEngine:
         round_index: int,
         turn_type: str,
         discussion: DiscussionLedger,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> list[ExpertAnalysis]:
         llm_runner = LLMExpertAgentRunner()
         target_experts = set(request.target_experts)
@@ -168,6 +223,16 @@ class ExpertDeliberationEngine:
         for expert in experts:
             if target_experts and expert.expert_id not in target_experts and expert.display_name not in target_experts:
                 continue
+            await self._emit_progress(
+                progress_callback,
+                "expert_started",
+                f"{expert.display_name}开始",
+                f"{self._turn_type_label(turn_type)}：正在调用会商专用 ReAct 专家。",
+                round_index=round_index,
+                turn_type=turn_type,
+                expert_id=expert.expert_id,
+                display_name=expert.display_name,
+            )
             facts = ledger.all()
             relevant = facts[: request.options.max_facts_per_expert]
             if not request.options.enable_llm_experts:
@@ -185,7 +250,40 @@ class ExpertDeliberationEngine:
             ledger.extend(new_facts)
             discussion.add_analysis(analysis, round_index=round_index, turn_type=turn_type)
             analyses.append(analysis)
+            await self._emit_progress(
+                progress_callback,
+                "expert_completed",
+                f"{expert.display_name}完成",
+                analysis.position,
+                round_index=round_index,
+                turn_type=turn_type,
+                expert_id=expert.expert_id,
+                display_name=expert.display_name,
+                used_fact_ids=analysis.used_fact_ids,
+                new_fact_ids=[fact.fact_id for fact in new_facts],
+                questions_to_others=analysis.questions_to_others,
+            )
         return analyses
+
+    async def _emit_progress(
+        self,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        event_type: str,
+        title: str,
+        message: str,
+        **payload: Any,
+    ) -> None:
+        if progress_callback is None:
+            return
+        await progress_callback(
+            {
+                "type": event_type,
+                "title": title,
+                "message": message,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                **payload,
+            }
+        )
 
     def _reviewer_allows_stop(self, analysis: ExpertAnalysis) -> bool:
         if analysis.tool_call_plan:
