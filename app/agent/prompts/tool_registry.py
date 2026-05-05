@@ -104,6 +104,13 @@ DELIBERATION_METEOROLOGY_TOOLS = {
     "load_data_from_memory": EXPERT_TOOLS["load_data_from_memory"],
 }
 
+DELIBERATION_MONITORING_TOOLS = {
+    "get_guangdong_regular_stations": EXPERT_TOOLS["get_guangdong_regular_stations"],
+    "get_air_quality": EXPERT_TOOLS["get_air_quality"],
+    "load_data_from_memory": EXPERT_TOOLS["load_data_from_memory"],
+    "execute_python": EXPERT_TOOLS["execute_python"],
+}
+
 DELIBERATION_CHEMISTRY_TOOLS = {
     "get_vocs_data": EXPERT_TOOLS["get_vocs_data"],
     "get_pm25_ionic": EXPERT_TOOLS["get_pm25_ionic"],
@@ -172,6 +179,13 @@ DELIBERATION_METEOROLOGY_TOOL_ORDER = [
     "load_data_from_memory",
 ]
 
+DELIBERATION_MONITORING_TOOL_ORDER = [
+    "get_guangdong_regular_stations",
+    "get_air_quality",
+    "load_data_from_memory",
+    "execute_python",
+]
+
 DELIBERATION_CHEMISTRY_TOOL_ORDER = [
     "get_vocs_data",
     "get_pm25_ionic",
@@ -210,6 +224,8 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         return EXPERT_TOOLS
     elif mode == "deliberation_meteorology":
         return DELIBERATION_METEOROLOGY_TOOLS
+    elif mode == "deliberation_monitoring":
+        return DELIBERATION_MONITORING_TOOLS
     elif mode == "deliberation_chemistry":
         return DELIBERATION_CHEMISTRY_TOOLS
     elif mode == "deliberation_reviewer":
@@ -234,6 +250,8 @@ def get_tool_order(mode: str) -> List[str]:
         return EXPERT_TOOL_ORDER
     elif mode == "deliberation_meteorology":
         return DELIBERATION_METEOROLOGY_TOOL_ORDER
+    elif mode == "deliberation_monitoring":
+        return DELIBERATION_MONITORING_TOOL_ORDER
     elif mode == "deliberation_chemistry":
         return DELIBERATION_CHEMISTRY_TOOL_ORDER
     elif mode == "deliberation_reviewer":
