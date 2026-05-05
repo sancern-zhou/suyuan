@@ -65,7 +65,9 @@
               <div class="session-query">{{ truncateQuery(session.query) }}</div>
               <div class="session-meta">
                 <span class="session-id">{{ getShortId(session.session_id) }}</span>
-                <span v-if="session.has_error" class="error-icon">❌</span>
+                <span class="session-status" :class="`status-${getSessionStatus(session).key}`">
+                  {{ getSessionStatus(session).label }}
+                </span>
                 <span class="session-time">{{ formatTime(session.updated_at) }}</span>
               </div>
             </div>
@@ -103,6 +105,19 @@ const truncateQuery = (query, maxLength = 80) => {
 const getShortId = (sessionId) => {
   if (!sessionId) return '未知'
   return sessionId.substring(0, 8)
+}
+
+const getSessionStatus = (session) => {
+  if (session?.is_running || session?.status === 'running' || session?.state === 'running') {
+    return { key: 'running', label: '进行中' }
+  }
+  if (session?.has_error || session?.status === 'error' || session?.state === 'error') {
+    return { key: 'error', label: '失败' }
+  }
+  if (session?.status === 'active' || session?.state === 'active') {
+    return { key: 'active', label: '已保存' }
+  }
+  return { key: 'completed', label: '完成' }
 }
 
 const formatTime = (timestamp) => {
@@ -306,11 +321,6 @@ defineEmits([
   box-shadow: 0 2px 8px rgba(25, 118, 210, 0.15);
 }
 
-.error-icon {
-  font-size: 14px;
-  margin-left: 8px;
-}
-
 .session-info {
   flex: 1;
   min-width: 0;
@@ -328,8 +338,41 @@ defineEmits([
 
 .session-meta {
   display: flex;
+  align-items: center;
   gap: 10px;
   font-size: 12px;
   color: #6c757d;
+}
+
+.session-status {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.status-running {
+  color: #0f7b3b;
+  background: #e8f6ee;
+  border-color: #b9e3c8;
+}
+
+.status-completed {
+  color: #31507a;
+  background: #eef3f8;
+  border-color: #d5e0ec;
+}
+
+.status-active {
+  color: #8a5a00;
+  background: #fff6df;
+  border-color: #f1d48a;
+}
+
+.status-error {
+  color: #b42318;
+  background: #fff1f0;
+  border-color: #ffccc7;
 }
 </style>

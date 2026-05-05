@@ -292,11 +292,8 @@ const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
 const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
 
 const inputDisabled = computed(() => {
-  // 【根本原因修复】输入框禁用逻辑
-  // 1. 如果正在分析中，禁用输入框（避免重复提交）
-  // 2. 如果系统明确不允许输入，禁用输入框
-  // 移除 readyAssistants 限制，所有模式都应该允许输入
-  return store.currentState.isAnalyzing || !store.canInput
+  // 执行中允许用户预编辑下一条消息；发送由 InputBox 的 isAnalyzing 保护阻止。
+  return false
 })
 
 // ========== 事件处理 ==========

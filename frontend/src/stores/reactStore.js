@@ -134,6 +134,10 @@ export const useReactStore = defineStore('react', {
         tracing: createEmptyModeState()
       },
 
+      // 同一模式下的多会话状态，key 为完整 sessionId
+      sessionStates: {},
+      activeSessionByMode: {},
+
       // 工具列表（全局共享）
       availableTools: []
     }
@@ -142,6 +146,10 @@ export const useReactStore = defineStore('react', {
   getters: {
     // ✅ 向后兼容：当前模式的状态（核心getter）
     currentState: (state) => {
+      const activeSessionId = state.activeSessionByMode[state.currentMode]
+      if (activeSessionId && state.sessionStates[activeSessionId]) {
+        return state.sessionStates[activeSessionId]
+      }
       return state.modeStates[state.currentMode] || state.modeStates.assistant
     },
 
@@ -195,9 +203,14 @@ export const useReactStore = defineStore('react', {
 
     // 新增：获取所有正在运行的模式
     runningModes: (state) => {
-      return Object.entries(state.modeStates)
+      const modes = new Set()
+      Object.entries(state.modeStates)
         .filter(([_, modeState]) => modeState.isAnalyzing)
-        .map(([mode, _]) => mode)
+        .forEach(([mode]) => modes.add(mode))
+      Object.values(state.sessionStates)
+        .filter(sessionState => sessionState.isAnalyzing)
+        .forEach(sessionState => modes.add(sessionState.mode || state.currentMode))
+      return Array.from(modes)
     },
 
     // 新增：获取每个模式的消息数量
@@ -253,6 +266,55 @@ export const useReactStore = defineStore('react', {
   actions: {
     // ========== 新增：模式切换核心逻辑 ==========
 
+    _getModeForSessionId(sessionId) {
+      return this.extractModeFromSessionId(sessionId) || this.currentMode
+    },
+
+    _ensureSessionState(sessionId, mode = null) {
+      if (!sessionId) return this.currentState
+
+      const sessionMode = mode || this._getModeForSessionId(sessionId)
+      if (!this.sessionStates[sessionId]) {
+        const initialState = createEmptyModeState()
+        initialState.sessionId = sessionId
+        initialState.mode = sessionMode
+        this.sessionStates[sessionId] = initialState
+      } else {
+        this.sessionStates[sessionId].sessionId = sessionId
+        this.sessionStates[sessionId].mode = this.sessionStates[sessionId].mode || sessionMode
+      }
+
+      return this.sessionStates[sessionId]
+    },
+
+    _activateSession(sessionId, mode = null) {
+      if (!sessionId) {
+        delete this.activeSessionByMode[this.currentMode]
+        return this.currentState
+      }
+
+      const sessionMode = mode || this._getModeForSessionId(sessionId)
+      const sessionState = this._ensureSessionState(sessionId, sessionMode)
+      this.activeSessionByMode[sessionMode] = sessionId
+      this.currentMode = sessionMode
+      localStorage.setItem('current-mode', sessionMode)
+      return sessionState
+    },
+
+    _addMessageToState(targetState, type, content, data = null, attachments = null, extraFields = {}) {
+      const message = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        content,
+        data,
+        attachments,
+        timestamp: new Date().toISOString(),
+        ...extraFields
+      }
+      targetState.messages.push(message)
+      return message.id
+    },
+
     /**
      * 切换到指定模式
      * - 保存当前模式状态到localStorage
@@ -281,7 +343,9 @@ export const useReactStore = defineStore('react', {
       localStorage.setItem('current-mode', newMode)
 
       // 3. 恢复目标模式状态
-      this._restoreModeState(newMode)
+      if (!this.activeSessionByMode[newMode]) {
+        this._restoreModeState(newMode)
+      }
 
       console.log('[switchMode] Mode switched successfully')
       console.log('[switchMode] Old mode running:', this.modeStates[oldMode]?.isAnalyzing)
@@ -506,7 +570,9 @@ export const useReactStore = defineStore('react', {
         console.warn('[setSessionId] Invalid sessionId:', sessionId)
         return
       }
-      this.currentState.sessionId = sessionId
+      const mode = this._getModeForSessionId(sessionId)
+      const targetState = this._activateSession(sessionId, mode)
+      targetState.sessionId = sessionId
       console.log(`[setSessionId] Set sessionId for mode ${this.currentMode}:`, sessionId)
     },
 
@@ -736,23 +802,35 @@ export const useReactStore = defineStore('react', {
 
     // 创建会话ID（按模式隔离）
     createSessionId() {
-      const current = this.currentState
+      let current = this.currentState
       if (!current.sessionId) {
         const mode = this.currentMode
-        current.sessionId = `${mode}_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        const sessionId = `${mode}_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        current = this._activateSession(sessionId, mode)
+        current.sessionId = sessionId
         console.log('[createSessionId] Created session for', mode, ':', current.sessionId)
       }
     },
 
     // 重置当前模式的会话
     reset() {
+      const mode = this.currentMode
       const current = this.currentState
       const emptyState = createEmptyModeState()
 
       // 保留一些字段
       emptyState.maxIterations = current.maxIterations
 
-      Object.assign(current, emptyState)
+      if (current.sessionId && current.isAnalyzing) {
+        delete this.activeSessionByMode[mode]
+        Object.assign(this.modeStates[mode], emptyState)
+      } else if (current.sessionId) {
+        delete this.sessionStates[current.sessionId]
+        delete this.activeSessionByMode[mode]
+        Object.assign(this.modeStates[mode], emptyState)
+      } else {
+        Object.assign(current, emptyState)
+      }
 
       console.log('[reset] Reset current mode:', this.currentMode)
     },
@@ -900,6 +978,9 @@ export const useReactStore = defineStore('react', {
      */
     getEventTargetState(eventData) {
       const sessionId = eventData?.session_id
+      if (sessionId) {
+        return this._ensureSessionState(sessionId)
+      }
       const eventMode = this.extractModeFromSessionId(sessionId)
 
       if (!eventMode) {
@@ -955,7 +1036,9 @@ export const useReactStore = defineStore('react', {
         })
       }
 
-      const targetState = this.modeStates[targetMode] || this.currentState
+      const targetState = sessionId
+        ? this._ensureSessionState(sessionId, targetMode)
+        : (this.modeStates[targetMode] || this.currentState)
       console.log('[handleEvent] targetState:', targetState)
       console.log('[handleEvent] targetState.messages.length:', targetState?.messages?.length)
 
@@ -971,8 +1054,8 @@ export const useReactStore = defineStore('react', {
 
         const preview = contentStr.substring(0, 50)
         console.log(`[handleEvent] addMessage called: mode=${targetMode}, type=${msgType}, content=${preview}...`)
-        const msgId = this.addMessageToMode(targetMode, msgType, contentStr, msgData, msgAttachments, msgExtraFields)
-        console.log(`[handleEvent] Message added to ${targetMode}, total messages: ${this.modeStates[targetMode]?.messages?.length}`)
+        const msgId = this._addMessageToState(targetState, msgType, contentStr, msgData, msgAttachments, msgExtraFields)
+        console.log(`[handleEvent] Message added to ${targetMode}/${targetState.sessionId || 'draft'}, total messages: ${targetState.messages?.length}`)
         return msgId
       }
 
@@ -1280,13 +1363,13 @@ export const useReactStore = defineStore('react', {
           // 处理可视化数据
           if (data?.visualization) {
             console.log('[event:complete] 处理visualization字段')
-            this.handleResult(data.visualization)
+            this.handleResult(data.visualization, targetState)
           }
 
           // 【关键修复】处理多专家系统的最终结果
           if (data?.expert_results) {
             console.log('[event:complete] 调用 _processExpertResultsForVisualization')
-            this._processExpertResultsForVisualization(data.expert_results)
+            this._processExpertResultsForVisualization(data.expert_results, targetState)
             // 【重要】同时存储完整的专家结果供前端使用
             targetState.lastExpertResults = {
               expert_results: data.expert_results
@@ -1403,7 +1486,7 @@ export const useReactStore = defineStore('react', {
           // 处理多专家系统的最终结果（即使未完成也可能有部分结果）
           if (data?.expert_results) {
             console.log('[incomplete] 处理多专家系统最终结果:', data.expert_results)
-            this._processExpertResultsForVisualization(data.expert_results)
+            this._processExpertResultsForVisualization(data.expert_results, targetState)
             // 【重要】同时存储完整的专家结果供前端使用
             targetState.lastExpertResults = {
               expert_results: data.expert_results
@@ -1432,7 +1515,7 @@ export const useReactStore = defineStore('react', {
 
         case 'result': {
           // 处理结果事件（原有工作流逻辑）
-          this.handleResult(data)
+          this.handleResult(data, targetState)
           break
         }
 
@@ -1525,7 +1608,7 @@ export const useReactStore = defineStore('react', {
 
             // 【关键修复】从专家结果中提取visuals并传递给可视化面板
             console.log('[event:expert_result] 调用 _processExpertResultsForVisualization')
-            this._processExpertResultsForVisualization(data.expert_results)
+            this._processExpertResultsForVisualization(data.expert_results, targetState)
 
             // 【重要】确保lastExpertResults具有正确的结构
             targetState.lastExpertResults = {
@@ -1581,12 +1664,12 @@ export const useReactStore = defineStore('react', {
 
       // 更新迭代次数
       if (type === 'thought' || type === 'tool_use' || type === 'tool_result') {
-        this.currentState.iterations += 0.5 // 每个循环算作0.5，因为thought+action+observation是一个完整循环
+        targetState.iterations += 0.5 // 每个循环算作0.5，因为thought+action+observation是一个完整循环
       }
     },
 
     // 记录可视化历史，并同步当前展示
-    recordVisualization(visualization) {
+    recordVisualization(visualization, targetState = this.currentState) {
       if (!visualization) return
 
       const record = {
@@ -1595,12 +1678,12 @@ export const useReactStore = defineStore('react', {
         timestamp: visualization.timestamp || new Date().toISOString()
       }
 
-      this.currentState.currentVisualization = record
-      this.currentState.visualizationHistory.push(record)
+      targetState.currentVisualization = record
+      targetState.visualizationHistory.push(record)
     },
 
     // 处理结果（UDF v2.0格式 + v3.0图表格式）
-    handleResult(resultData) {
+    handleResult(resultData, targetState = this.currentState) {
       if (!resultData) return
 
       console.log('[handleResult] 处理结果:', resultData)
@@ -1638,19 +1721,19 @@ export const useReactStore = defineStore('react', {
           }
 
           // 添加到历史记录
-          this.recordVisualization(visualization)
+          this.recordVisualization(visualization, targetState)
           console.log('[handleResult] 添加visual到历史记录:', visualization)
         })
 
         console.log('[handleResult] UDF v2.0 visuals处理完成，已添加', resultData.visuals.length, '个图表到历史记录')
-        this.currentState.hasResults = true
+        targetState.hasResults = true
         return
       }
 
       // 处理v3.0格式或其他格式
       if (resultData.type === 'map' || resultData.mapConfig) {
         const mapData = resultData.mapConfig || resultData
-        this.currentState.results.map = mapData
+        targetState.results.map = mapData
 
         const mapVisualization = {
           ...mapData,
@@ -1659,12 +1742,12 @@ export const useReactStore = defineStore('react', {
           data: mapData.data || mapData.config || mapData
         }
 
-        this.recordVisualization(mapVisualization)
+        this.recordVisualization(mapVisualization, targetState)
         console.log('[handleResult] 设置地图可视化')
       } else if (['chart', 'pie', 'bar', 'line', 'timeseries', 'radar', 'wind_rose', 'profile'].includes(resultData.type) || resultData.chartConfig) {
         // 处理v3.0图表格式：支持所有图表类型
         const chartData = resultData.chartConfig || resultData
-        this.currentState.results.charts.push(chartData)
+        targetState.results.charts.push(chartData)
 
         const chartVisualization = {
           ...chartData,
@@ -1675,11 +1758,11 @@ export const useReactStore = defineStore('react', {
           meta: chartData.meta || {}
         }
 
-        this.recordVisualization(chartVisualization)
+        this.recordVisualization(chartVisualization, targetState)
         console.log('[handleResult] 设置图表可视化 (v3.0):', chartVisualization)
       } else if (resultData.type === 'table' || resultData.tableConfig) {
         const tableData = resultData.tableConfig || resultData
-        this.currentState.results.tables.push(tableData)
+        targetState.results.tables.push(tableData)
 
         const tableVisualization = {
           type: 'table',
@@ -1687,7 +1770,7 @@ export const useReactStore = defineStore('react', {
           data: tableData
         }
 
-        this.recordVisualization(tableVisualization)
+        this.recordVisualization(tableVisualization, targetState)
         console.log('[handleResult] 设置表格可视化')
       } else if (resultData.type === 'image' || resultData.image) {
         const imageVisualization = {
@@ -1696,11 +1779,11 @@ export const useReactStore = defineStore('react', {
           data: resultData.data || resultData.image
         }
 
-        this.recordVisualization(imageVisualization)
+        this.recordVisualization(imageVisualization, targetState)
         console.log('[handleResult] 设置图片可视化')
       } else if (resultData.type === 'text' || resultData.text) {
         const text = resultData.text || resultData.content || ''
-        this.currentState.results.text = this.currentState.results.text ? `${this.currentState.results.text}\n${text}` : text
+        targetState.results.text = targetState.results.text ? `${targetState.results.text}\n${text}` : text
 
         const textVisualization = {
           type: 'text',
@@ -1708,14 +1791,14 @@ export const useReactStore = defineStore('react', {
           content: text
         }
 
-        this.recordVisualization(textVisualization)
+        this.recordVisualization(textVisualization, targetState)
         console.log('[handleResult] 设置文本可视化')
       } else {
-        this.recordVisualization(resultData)
+        this.recordVisualization(resultData, targetState)
         console.log('[handleResult] 设置通用可视化')
       }
 
-      this.currentState.hasResults = true
+      targetState.hasResults = true
     },
 
     // ✅ 向后兼容别名：analyze -> startAnalysis
@@ -1740,44 +1823,47 @@ export const useReactStore = defineStore('react', {
 
       // 【修复】确定使用的模式：优先从 sessionId 提取，否则使用 currentMode
       let actualMode = agentMode
-      if (this.currentState.sessionId) {
-        const sessionMode = this.extractModeFromSessionId(this.currentState.sessionId)
+      let sessionState = this.currentState
+      if (sessionState.sessionId) {
+        const sessionMode = this.extractModeFromSessionId(sessionState.sessionId)
         if (sessionMode) {
           actualMode = sessionMode
-          console.log(`[startAnalysis] sessionId=${this.currentState.sessionId}, 提取模式=${sessionMode}, currentMode=${this.currentMode}`)
+          console.log(`[startAnalysis] sessionId=${sessionState.sessionId}, 提取模式=${sessionMode}, currentMode=${this.currentMode}`)
         }
       }
 
       // 首次分析或继续分析
-      if (!this.currentState.sessionId) {
+      if (!sessionState.sessionId) {
         this.createSessionId()
-        this.currentState.sessionRound = 1
-        this.currentState.finalAnswers = []
+        sessionState = this.currentState
+        sessionState.sessionRound = 1
+        sessionState.finalAnswers = []
       } else {
         this.continueSession()
+        sessionState = this.currentState
       }
 
       // 重置状态
-      this.addMessage('user', query, null, attachments)
-      this.currentState.currentMessage = ''
-      this.currentState.isAnalyzing = true
-      this.currentState.isComplete = false
-      this.currentState.error = null
-      this.currentState.iterations = 0
+      this._addMessageToState(sessionState, 'user', query, null, attachments)
+      sessionState.currentMessage = ''
+      sessionState.isAnalyzing = true
+      sessionState.isComplete = false
+      sessionState.error = null
+      sessionState.iterations = 0
 
       // 如果是中断状态，传递给后端，然后重置标志
-      const isInterruption = this.currentState.isInterruption
+      const isInterruption = sessionState.isInterruption
       if (isInterruption) {
         console.log('[ReAct] 检测到用户中断，将传递给后端')
-        this.currentState.isInterruption = false  // 重置标志
+        sessionState.isInterruption = false  // 重置标志
       }
 
       // 重置Reflexion状态
-      this.currentState.showReflexion = false
-      this.currentState.reflexionCount = 0
+      sessionState.showReflexion = false
+      sessionState.reflexionCount = 0
 
       // 清空本轮结果
-      this.currentState.results = {
+      sessionState.results = {
         map: null,
         charts: [],
         tables: [],
@@ -1789,17 +1875,21 @@ export const useReactStore = defineStore('react', {
         if (actualMode === 'tracing') {
           console.log('[startAnalysis] 使用 ExpertRouterV3 旧架构（多专家并行）')
           await agentAPI.analyzeV3(query, {
-            sessionId: this.currentState.sessionId,
+            sessionId: sessionState.sessionId,
+            requestKey: sessionState.sessionId,
             precision: 'standard',  // fast/standard/full
             enableCheckpoint: false,
             onEvent: (event) => {
+              if (!event.data) event.data = {}
+              if (!event.data.session_id) event.data.session_id = sessionState.sessionId
               this.handleEvent(event)
             }
           })
         } else {
           // 调用新架构 ReAct Agent
           await agentAPI.analyze(query, {
-            sessionId: this.currentState.sessionId,
+            sessionId: sessionState.sessionId,
+            requestKey: sessionState.sessionId,
             userIdentifier: this.userIdentifier,  // ✅ 传递用户标识（跨会话持久化）
             enhanceWithHistory: true,
             maxIterations: this.maxIterations,
@@ -1811,6 +1901,8 @@ export const useReactStore = defineStore('react', {
             knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
             attachments: attachments,  // ✅ 传递附件列表
             onEvent: (event) => {
+              if (!event.data) event.data = {}
+              if (!event.data.session_id) event.data.session_id = sessionState.sessionId
               this.handleEvent(event)
             }
           })
@@ -1823,9 +1915,9 @@ export const useReactStore = defineStore('react', {
           // isAnalyzing已在pauseAnalysis中设置为false
         } else {
           console.error('Analysis failed:', error)
-          this.currentState.isAnalyzing = false
-          this.currentState.error = error.message
-          this.addMessage('error', `分析失败: ${error.message}`)
+          sessionState.isAnalyzing = false
+          sessionState.error = error.message
+          this._addMessageToState(sessionState, 'error', `分析失败: ${error.message}`)
         }
       }
     },
@@ -1837,7 +1929,7 @@ export const useReactStore = defineStore('react', {
         if (!confirmStop) {
           return
         }
-        agentAPI.cancel()
+        agentAPI.cancel(this.currentState.sessionId)
         this.currentState.isAnalyzing = false
       }
 
@@ -1847,14 +1939,14 @@ export const useReactStore = defineStore('react', {
 
     // 停止分析
     stopAnalysis() {
-      agentAPI.cancel()
+      agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       // 不添加系统消息
     },
 
     // 暂停分析（与stopAnalysis相同）
     pauseAnalysis() {
-      agentAPI.cancel()
+      agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       this.currentState.isComplete = false
       this.currentState.error = null
@@ -1868,7 +1960,7 @@ export const useReactStore = defineStore('react', {
     },
 
     // 【新增方法】从专家结果中提取visuals并传递给可视化面板
-    _processExpertResultsForVisualization(expertResults) {
+    _processExpertResultsForVisualization(expertResults, targetState = this.currentState) {
       if (!expertResults) {
         console.warn('[expert_result] 专家结果为空，跳过处理')
         return
@@ -1876,11 +1968,11 @@ export const useReactStore = defineStore('react', {
 
       // 防重复检查
       const expertResultsHash = JSON.stringify(expertResults)
-      if (this._lastProcessedExpertResultsHash === expertResultsHash) {
+      if (targetState._lastProcessedExpertResultsHash === expertResultsHash) {
         console.log('[processExpertResults] 跳过重复处理')
         return
       }
-      this._lastProcessedExpertResultsHash = expertResultsHash
+      targetState._lastProcessedExpertResultsHash = expertResultsHash
 
       console.log('[processExpertResults] 开始处理专家结果')
       console.log('[processExpertResults] expertResults keys:', Object.keys(expertResults))
@@ -1988,7 +2080,7 @@ export const useReactStore = defineStore('react', {
             console.log(`[processExpertResults] 分类结果: ${viz.id} -> ${targetGroup}`)
             viz.meta.expert_source = targetGroup  // 确保 meta 中有正确的分类
             groups[targetGroup].push(viz)
-            this.currentState.visualizationHistory.push(viz)
+            targetState.visualizationHistory.push(viz)
           }
 
           // 兼容直接的可视化格式（包括EKMA专业图表的image类型）
@@ -2006,15 +2098,15 @@ export const useReactStore = defineStore('react', {
             console.log(`[processExpertResults] 直接格式分类: ${result.type} -> ${targetGroup}`)
             viz.meta.expert_source = targetGroup
             groups[targetGroup].push(viz)
-            this.currentState.visualizationHistory.push(viz)
+            targetState.visualizationHistory.push(viz)
           }
         }
       }
 
       // 更新分组状态
-      this.currentState.groupedVisualizations = groups
-      this.currentState.expertResults = expertResults
-      this.currentState.lastExpertResults = { expert_results: expertResults }
+      targetState.groupedVisualizations = groups
+      targetState.expertResults = expertResults
+      targetState.lastExpertResults = { expert_results: expertResults }
 
       console.log(`[processExpertResults] 完成: weather=${groups.weather.length}, component=${groups.component.length}`)
       console.log(`[processExpertResults] weather图表详情:`, groups.weather.map(v => ({ id: v.id, type: v.type, title: v.title })))

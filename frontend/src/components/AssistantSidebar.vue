@@ -52,7 +52,7 @@
     </div>
 
     <!-- 最近对话列表 -->
-    <div v-if="!isCollapsed && recentSessions.length > 0" class="recent-sessions-section">
+    <div v-if="!isCollapsed && displayedRecentSessions.length > 0" class="recent-sessions-section">
       <div class="recent-sessions-header">
         <span class="recent-sessions-title">最近对话</span>
         <button class="refresh-icon" @click="refreshRecentSessions" title="刷新">
@@ -61,13 +61,14 @@
       </div>
       <div class="recent-sessions-list">
         <div
-          v-for="session in recentSessions"
+          v-for="session in displayedRecentSessions"
           :key="session.session_id"
           class="recent-session-item"
+          :class="{ running: session.is_running }"
           @click="loadSession(session)"
         >
           <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
-          <span class="session-time">{{ formatTime(session.updated_at) }}</span>
+          <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
         </div>
       </div>
     </div>
@@ -75,10 +76,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useReactStore } from '@/stores/reactStore'
 
 const router = useRouter()
+const store = useReactStore()
 
 const props = defineProps({
   activeModule: {
@@ -108,6 +111,41 @@ watch(() => props.collapsed, (newValue) => {
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
+let recentSessionsTimer = null
+
+const displayedRecentSessions = computed(() => {
+  const localSessions = Object.values(store.sessionStates || {})
+    .filter(session => session.sessionId)
+    .map(session => {
+      const firstUser = session.messages?.find(m => m.type === 'user')
+      const lastMessage = session.messages?.[session.messages.length - 1]
+      return {
+        session_id: session.sessionId,
+        query: firstUser?.content || '新对话',
+        updated_at: lastMessage?.timestamp || new Date().toISOString(),
+        is_running: !!session.isAnalyzing,
+        is_local: true
+      }
+    })
+
+  const byId = new Map()
+  for (const session of recentSessions.value) {
+    byId.set(session.session_id, session)
+  }
+  for (const session of localSessions) {
+    byId.set(session.session_id, {
+      ...(byId.get(session.session_id) || {}),
+      ...session
+    })
+  }
+
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      if (a.is_running !== b.is_running) return a.is_running ? -1 : 1
+      return new Date(b.updated_at) - new Date(a.updated_at)
+    })
+    .slice(0, 10)
+})
 
 const modules = [
   {
@@ -194,8 +232,9 @@ const handleModuleSelect = (moduleId) => {
 const isActive = (moduleId) => props.activeModule === moduleId
 
 // 获取最近会话
-const refreshRecentSessions = async () => {
-  refreshingSessions.value = true
+const refreshRecentSessions = async (options = {}) => {
+  const { silent = false } = options
+  if (!silent) refreshingSessions.value = true
   try {
     const response = await fetch('/api/sessions?limit=10')
     if (!response.ok) throw new Error('Failed to fetch sessions')
@@ -208,7 +247,7 @@ const refreshRecentSessions = async () => {
   } catch (error) {
     console.error('Failed to fetch recent sessions:', error)
   } finally {
-    refreshingSessions.value = false
+    if (!silent) refreshingSessions.value = false
   }
 }
 
@@ -255,6 +294,16 @@ const formatTime = (timestamp) => {
 // 组件挂载时加载最近会话
 onMounted(() => {
   refreshRecentSessions()
+  recentSessionsTimer = window.setInterval(() => {
+    refreshRecentSessions({ silent: true })
+  }, 15000)
+})
+
+onUnmounted(() => {
+  if (recentSessionsTimer) {
+    window.clearInterval(recentSessionsTimer)
+    recentSessionsTimer = null
+  }
 })
 </script>
 
@@ -491,6 +540,10 @@ onMounted(() => {
 
   &:hover {
     background: rgba(0, 0, 0, 0.04);
+  }
+
+  &.running {
+    background: #eef7f1;
   }
 }
 

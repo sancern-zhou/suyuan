@@ -2,15 +2,60 @@
  * 会话管理 Composable
  * 处理会话的创建、恢复、清理等操作
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { restoreSession, getSessionMessages } from '@/api/session'
 
 export function useSessionManagement(store) {
   // ========== 状态 ==========
   const showSessionManager = ref(false)
   const sessionHistoryLoading = ref(false)
-  const sessionHistoryData = ref([])
+  const persistedSessionHistoryData = ref([])
   const sessionHistoryStats = ref(null)
+  let autoRefreshTimer = null
+  let refreshInFlight = null
+
+  const localSessionHistoryData = computed(() => {
+    return Object.values(store.sessionStates || {})
+      .filter(session => session.sessionId)
+      .map(session => {
+        const firstUser = session.messages?.find(m => m.type === 'user')
+        const lastMessage = session.messages?.[session.messages.length - 1]
+        const hasError = session.messages?.some(m => m.type === 'error') || !!session.error
+        return {
+          session_id: session.sessionId,
+          query: firstUser?.content || '新对话',
+          updated_at: lastMessage?.timestamp || new Date().toISOString(),
+          created_at: session.createdAt,
+          has_error: hasError,
+          state: session.isAnalyzing ? 'running' : (hasError ? 'error' : 'completed'),
+          status: session.isAnalyzing ? 'running' : (hasError ? 'error' : 'completed'),
+          is_running: !!session.isAnalyzing,
+          is_local: true,
+          message_count: session.messages?.length || 0
+        }
+      })
+  })
+
+  const sessionHistoryData = computed(() => {
+    const byId = new Map()
+    for (const session of persistedSessionHistoryData.value) {
+      byId.set(session.session_id, {
+        ...session,
+        status: session.status || session.state || (session.has_error ? 'error' : 'completed')
+      })
+    }
+    for (const session of localSessionHistoryData.value) {
+      byId.set(session.session_id, {
+        ...(byId.get(session.session_id) || {}),
+        ...session
+      })
+    }
+
+    return Array.from(byId.values()).sort((a, b) => {
+      if (!!a.is_running !== !!b.is_running) return a.is_running ? -1 : 1
+      return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
+    })
+  })
 
   // ========== 计算属性 ==========
 
@@ -55,7 +100,11 @@ export function useSessionManagement(store) {
     }
 
     // 使用store的分析方法
-    await store.analyze(query, options)
+    try {
+      await store.analyze(query, options)
+    } finally {
+      refreshSessionHistory({ silent: true })
+    }
   }
 
   /**
@@ -99,6 +148,11 @@ export function useSessionManagement(store) {
     } = options
 
     try {
+      if (store.sessionStates?.[sessionId]) {
+        store._activateSession(sessionId)
+        return { success: true, session: store.sessionStates[sessionId], local: true }
+      }
+
       // 1. 调用恢复API
       const restoreResult = await restoreSession(sessionId, { messageLimit })
 
@@ -382,21 +436,52 @@ export function useSessionManagement(store) {
   /**
    * 刷新会话历史
    */
-  const refreshSessionHistory = async () => {
-    sessionHistoryLoading.value = true
-    try {
-      const response = await fetch('/api/sessions')
-      if (!response.ok) throw new Error('Failed to fetch sessions')
+  const refreshSessionHistory = async (options = {}) => {
+    const { silent = false } = options
+    if (refreshInFlight) return refreshInFlight
 
-      const data = await response.json()
-      sessionHistoryData.value = data.sessions || []
-      sessionHistoryStats.value = data.stats || null
+    if (!silent) sessionHistoryLoading.value = true
+    try {
+      refreshInFlight = (async () => {
+        const response = await fetch('/api/sessions')
+        if (!response.ok) throw new Error('Failed to fetch sessions')
+
+        const data = await response.json()
+        persistedSessionHistoryData.value = data.sessions || []
+        sessionHistoryStats.value = data.stats || null
+      })()
+      await refreshInFlight
     } catch (error) {
       console.error('Failed to refresh session history:', error)
     } finally {
-      sessionHistoryLoading.value = false
+      refreshInFlight = null
+      if (!silent) sessionHistoryLoading.value = false
     }
   }
+
+  const localSessionSignature = computed(() => {
+    return localSessionHistoryData.value
+      .map(session => `${session.session_id}:${session.status}:${session.message_count}:${session.updated_at}`)
+      .join('|')
+  })
+
+  watch(localSessionSignature, () => {
+    refreshSessionHistory({ silent: true })
+  })
+
+  onMounted(() => {
+    refreshSessionHistory({ silent: true })
+    autoRefreshTimer = window.setInterval(() => {
+      refreshSessionHistory({ silent: true })
+    }, 15000)
+  })
+
+  onUnmounted(() => {
+    if (autoRefreshTimer) {
+      window.clearInterval(autoRefreshTimer)
+      autoRefreshTimer = null
+    }
+  })
 
   /**
    * 清理会话
