@@ -1947,6 +1947,15 @@ class LLMService:
                     reason="Provider does not support cache_control (auto KV cache or not supported)"
                 )
 
+            logger.info(
+                "llm_anthropic_chat_request",
+                provider=self.provider,
+                model=self.model,
+                messages_count=len(api_params.get("messages", [])),
+                has_tools=bool(api_params.get("tools")),
+            )
+            response = await self.anthropic_client.messages.create(**api_params)
+
             # 提取响应数据
             result = {
                 "content": response.content,
