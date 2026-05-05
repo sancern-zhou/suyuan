@@ -166,6 +166,7 @@ async def test_report_fact_extraction_splits_long_text_for_llm():
 
     assert len(service.messages.calls) > 1
     assert all(call["timeout"] == extractor.FACT_EXTRACTION_TIMEOUT_SECONDS for call in service.messages.calls)
+    assert all(call["max_tokens"] == 8192 for call in service.messages.calls)
     assert [fact.fact_id for fact in facts] == [
         f"fact_monthly_trace_report_llm_{index:04d}"
         for index in range(10, 10 + len(facts))

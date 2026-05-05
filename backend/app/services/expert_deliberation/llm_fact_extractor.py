@@ -17,6 +17,7 @@ class LLMFactExtractor:
 
     MAX_SOURCE_CHARS = 12000
     REPORT_CHUNK_CHARS = 1800
+    REPORT_CHUNK_MAX_FACTS = 12
     FACT_EXTRACTION_TIMEOUT_SECONDS = 180.0
 
     def __init__(self, llm_service: object | None = None) -> None:
@@ -51,7 +52,7 @@ class LLMFactExtractor:
                 prompt=self._build_text_prompt(request, chunk, source_type, chunk_index, len(chunks)),
                 source_type=source_type,
                 start_index=start_index + len(facts),
-                max_facts=30,
+                max_facts=self.REPORT_CHUNK_MAX_FACTS,
             )
             facts.extend(chunk_facts)
         return facts[:80]
@@ -171,7 +172,7 @@ class LLMFactExtractor:
             response = await anthropic_client.messages.create(
                 model=self.llm_service.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=4096,
+                max_tokens=8192,
                 temperature=getattr(self.llm_service, "temperature", 0.3),
                 timeout=self.FACT_EXTRACTION_TIMEOUT_SECONDS,
             )
@@ -276,6 +277,9 @@ class LLMFactExtractor:
 3. 数值、同比、环比、浓度、贡献率等放入 metrics。
 4. evidence_quote 填原文短证据。
 5. tags 可使用：监测、气象、传输、组分、源解析、PM2.5、O3、数据资产、管控。
+6. 最多抽取 {self.REPORT_CHUNK_MAX_FACTS} 条最重要事实，优先保留包含城市、污染物、浓度、AQI、同比环比、过程时段、气象或来源判断的事实。
+7. evidence_quote 必须短于 80 个中文字符。
+8. 只输出一个 JSON 对象，不要输出 Markdown 代码块、解释文字或省略号。
 
 输出 JSON 格式：
 {{
