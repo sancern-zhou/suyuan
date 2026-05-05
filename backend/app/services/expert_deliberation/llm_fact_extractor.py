@@ -16,6 +16,8 @@ class LLMFactExtractor:
     """Extract auditable FactRecord candidates with LLM JSON output."""
 
     MAX_SOURCE_CHARS = 12000
+    REPORT_CHUNK_CHARS = 1800
+    FACT_EXTRACTION_TIMEOUT_SECONDS = 180.0
 
     def __init__(self, llm_service: object | None = None) -> None:
         self.llm_service = llm_service
@@ -41,13 +43,18 @@ class LLMFactExtractor:
     ) -> list[FactRecord]:
         if not text.strip():
             return []
-        return await self._extract_from_prompt(
-            request=request,
-            prompt=self._build_text_prompt(request, text[: self.MAX_SOURCE_CHARS], source_type),
-            source_type=source_type,
-            start_index=start_index,
-            max_facts=80,
-        )
+        facts: list[FactRecord] = []
+        chunks = self._split_text_chunks(text[: self.MAX_SOURCE_CHARS], self.REPORT_CHUNK_CHARS)
+        for chunk_index, chunk in enumerate(chunks, start=1):
+            chunk_facts = await self._extract_from_prompt(
+                request=request,
+                prompt=self._build_text_prompt(request, chunk, source_type, chunk_index, len(chunks)),
+                source_type=source_type,
+                start_index=start_index + len(facts),
+                max_facts=30,
+            )
+            facts.extend(chunk_facts)
+        return facts[:80]
 
     async def extract_table_facts(
         self,
@@ -164,8 +171,9 @@ class LLMFactExtractor:
             response = await anthropic_client.messages.create(
                 model=self.llm_service.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=8192,
+                max_tokens=4096,
                 temperature=getattr(self.llm_service, "temperature", 0.3),
+                timeout=self.FACT_EXTRACTION_TIMEOUT_SECONDS,
             )
             content = self._anthropic_text(response)
             payload = self._loads_json(content)
@@ -210,8 +218,48 @@ class LLMFactExtractor:
                     return None
         return None
 
-    def _build_text_prompt(self, request: DeliberationRequest, text: str, source_type: str) -> str:
+    def _split_text_chunks(self, text: str, chunk_chars: int) -> list[str]:
+        clean_text = text.strip()
+        if len(clean_text) <= chunk_chars:
+            return [clean_text]
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        paragraphs = [part.strip() for part in clean_text.splitlines() if part.strip()]
+        for paragraph in paragraphs:
+            if current and current_len + len(paragraph) + 1 > chunk_chars:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+            if len(paragraph) > chunk_chars:
+                for start in range(0, len(paragraph), chunk_chars):
+                    piece = paragraph[start : start + chunk_chars].strip()
+                    if piece:
+                        if current:
+                            chunks.append("\n".join(current))
+                            current = []
+                            current_len = 0
+                        chunks.append(piece)
+                continue
+            current.append(paragraph)
+            current_len += len(paragraph) + 1
+        if current:
+            chunks.append("\n".join(current))
+        return chunks or [clean_text[:chunk_chars]]
+
+    def _build_text_prompt(
+        self,
+        request: DeliberationRequest,
+        text: str,
+        source_type: str,
+        chunk_index: int | None = None,
+        chunk_count: int | None = None,
+    ) -> str:
         pollutants = "、".join(request.pollutants) or "未指定"
+        chunk_note = ""
+        if chunk_index is not None and chunk_count is not None and chunk_count > 1:
+            chunk_note = f"\n材料分块：第 {chunk_index}/{chunk_count} 块。只抽取本块明确支持的事实。"
         return f"""
 你是空气质量会商的事实入账引擎。请从材料中抽取可审计事实，输出严格 JSON。
 
@@ -220,6 +268,7 @@ class LLMFactExtractor:
 时段：{request.time_range.display or request.time_range.start or ""}
 重点污染物：{pollutants}
 来源类型：{source_type}
+{chunk_note}
 
 抽取要求：
 1. 只抽取材料明确支持的事实，不要推理补全。
