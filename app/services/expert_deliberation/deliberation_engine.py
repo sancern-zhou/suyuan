@@ -88,12 +88,21 @@ class ExpertDeliberationEngine:
             "事实入账完成",
             f"已入账 {len(ledger.all())} 条事实。",
             facts_count=len(ledger.all()),
+            facts=self._fact_snapshots(ledger.all(), limit=10),
         )
         experts = get_default_experts()
         discussion = DiscussionLedger()
         domain_experts = [expert for expert in experts if expert.expert_id != "reviewer_moderator"]
         reviewer_experts = [expert for expert in experts if expert.expert_id == "reviewer_moderator"]
 
+        await self._emit_progress(
+            progress_callback,
+            "topic_announced",
+            "主持人提出会商议题",
+            self._build_agenda_message(request, ledger.all()),
+            round_index=1,
+            facts=self._fact_snapshots(ledger.all(), limit=6),
+        )
         await self._emit_progress(progress_callback, "round_started", "第 1 轮初判", "领域专家开始基于事实账本进行初判。", round_index=1)
         await self._build_expert_analyses(
             request,
@@ -227,11 +236,12 @@ class ExpertDeliberationEngine:
                 progress_callback,
                 "expert_started",
                 f"{expert.display_name}开始",
-                f"{self._turn_type_label(turn_type)}：正在调用会商专用 ReAct 专家。",
+                self._expert_start_message(expert, turn_type, discussion),
                 round_index=round_index,
                 turn_type=turn_type,
                 expert_id=expert.expert_id,
                 display_name=expert.display_name,
+                pending_questions=self._pending_questions_for_expert(discussion, expert.expert_id),
             )
             facts = ledger.all()
             relevant = facts[: request.options.max_facts_per_expert]
@@ -253,15 +263,20 @@ class ExpertDeliberationEngine:
             await self._emit_progress(
                 progress_callback,
                 "expert_completed",
-                f"{expert.display_name}完成",
-                analysis.position,
+                f"{expert.display_name}发言",
+                self._expert_completion_message(analysis, turn_type, new_facts),
                 round_index=round_index,
                 turn_type=turn_type,
                 expert_id=expert.expert_id,
                 display_name=expert.display_name,
+                position=analysis.position,
+                claims=[claim.model_dump(mode="json") for claim in analysis.key_findings],
                 used_fact_ids=analysis.used_fact_ids,
                 new_fact_ids=[fact.fact_id for fact in new_facts],
+                new_facts=self._fact_snapshots(new_facts, limit=8),
                 questions_to_others=analysis.questions_to_others,
+                tool_call_plan=[plan.model_dump(mode="json") for plan in analysis.tool_call_plan],
+                uncertainties=analysis.uncertainties,
             )
         return analyses
 
@@ -284,6 +299,64 @@ class ExpertDeliberationEngine:
                 **payload,
             }
         )
+
+    def _fact_snapshots(self, facts: list[FactRecord], limit: int = 8) -> list[dict[str, Any]]:
+        return [
+            {
+                "fact_id": fact.fact_id,
+                "source_type": fact.source_type,
+                "city": fact.city,
+                "pollutant": fact.pollutant,
+                "statement": fact.statement,
+                "tags": fact.tags[:5],
+            }
+            for fact in facts[:limit]
+        ]
+
+    def _build_agenda_message(self, request: DeliberationRequest, facts: list[FactRecord]) -> str:
+        pollutants = "、".join(request.pollutants) or "主要污染物"
+        sources = "、".join(sorted({fact.source_type for fact in facts})) or "事实材料"
+        return f"围绕{request.region}{request.time_range.display or ''}的{pollutants}污染特征、气象输送、化学来源和证据可写性开展会商；当前事实来源包括{sources}。"
+
+    def _pending_questions_for_expert(self, discussion: DiscussionLedger, expert_id: str) -> list[dict[str, str]]:
+        questions: list[dict[str, str]] = []
+        for turn in discussion.all():
+            for question in turn.questions_to_others:
+                if str(question.get("target_expert") or "") == expert_id:
+                    questions.append(
+                        {
+                            "from_expert": turn.display_name,
+                            "question": str(question.get("question") or ""),
+                            "reason": str(question.get("reason") or ""),
+                        }
+                    )
+        return questions[-6:]
+
+    def _expert_start_message(self, expert: ExpertCard, turn_type: str, discussion: DiscussionLedger) -> str:
+        pending_count = len(self._pending_questions_for_expert(discussion, expert.expert_id))
+        if turn_type == "initial_opinion":
+            return "阅读事实账本，形成初判并提出需要其他专家交叉验证的问题。"
+        if turn_type == "cross_review" and pending_count:
+            return f"回应 {pending_count} 个指向本专家的问题，并结合补证事实修正判断。"
+        if turn_type == "review_moderation":
+            return "审查事实链、专家观点、补证结果和结论可写性，判断是否结束讨论。"
+        return f"{self._turn_type_label(turn_type)}：继续补充会商意见。"
+
+    def _expert_completion_message(
+        self,
+        analysis: ExpertAnalysis,
+        turn_type: str,
+        new_facts: list[FactRecord],
+    ) -> str:
+        question_count = len(analysis.questions_to_others)
+        claim_count = len(analysis.key_findings)
+        used_count = len(analysis.used_fact_ids)
+        new_fact_count = len(new_facts)
+        if turn_type == "review_moderation":
+            return f"审查员形成统稿意见，审查 {used_count} 条事实，提出 {question_count} 个复议问题。"
+        if turn_type == "cross_review":
+            return f"完成交叉复议，形成 {claim_count} 条判断，引用 {used_count} 条事实，新增 {new_fact_count} 条补证事实。"
+        return f"完成初判，形成 {claim_count} 条判断，引用 {used_count} 条事实，提出 {question_count} 个交叉验证问题。"
 
     def _reviewer_allows_stop(self, analysis: ExpertAnalysis) -> bool:
         if analysis.tool_call_plan:
