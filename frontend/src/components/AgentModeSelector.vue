@@ -89,7 +89,8 @@ const store = useReactStore()
 
 // 检查模式是否正在运行
 const isModeRunning = (mode) => {
-  return store.modeStates[mode]?.isAnalyzing || false
+  return !!store.modeStates[mode]?.isAnalyzing ||
+    Object.values(store.sessionStates || {}).some(session => session.mode === mode && session.isAnalyzing)
 }
 
 // 获取后台运行的模式（排除当前模式）

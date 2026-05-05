@@ -6,6 +6,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/
 class ReactAgentAPI {
   constructor() {
     this.controller = null
+    this.controllers = new Map()
   }
 
   // 清理JSON数据中的无效值
@@ -29,14 +30,9 @@ class ReactAgentAPI {
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
       attachments = null,  // ✅ 附件列表
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
+      requestKey = sessionId,
       onEvent
     } = options
-
-    // 取消之前的请求
-    if (this.controller) {
-      this.controller.abort()
-    }
-    this.controller = new AbortController()
 
     const url = `${API_BASE_URL}/agent/analyze`
     const body = {
@@ -52,7 +48,7 @@ class ReactAgentAPI {
       attachments: attachments  // ✅ 传递附件列表
     }
 
-    return this._streamRequest(url, body, onEvent)
+    return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)
   }
 
   // ✅ 新增：ExpertRouterV3 多专家并行快速溯源（旧架构）
@@ -61,14 +57,9 @@ class ReactAgentAPI {
       sessionId = null,
       precision = 'standard',  // fast/standard/full
       enableCheckpoint = false,
+      requestKey = sessionId,
       onEvent
     } = options
-
-    // 取消之前的请求
-    if (this.controller) {
-      this.controller.abort()
-    }
-    this.controller = new AbortController()
 
     const url = `${API_BASE_URL}/agent/analyze-v3`
     const body = {
@@ -78,11 +69,20 @@ class ReactAgentAPI {
       enable_checkpoint: enableCheckpoint
     }
 
-    return this._streamRequest(url, body, onEvent)
+    return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)
   }
 
   // ✅ 新增：内部方法 - 统一的SSE流处理
-  async _streamRequest(url, body, onEvent) {
+  async _streamRequest(url, body, onEvent, requestKey = 'default') {
+    if (this.controllers.has(requestKey)) {
+      this.controllers.get(requestKey).abort()
+      this.controllers.delete(requestKey)
+    }
+
+    const controller = new AbortController()
+    this.controllers.set(requestKey, controller)
+    this.controller = controller
+
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -90,7 +90,7 @@ class ReactAgentAPI {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal: this.controller.signal
+        signal: controller.signal
       })
 
       if (!response.ok) {
@@ -139,13 +139,19 @@ class ReactAgentAPI {
       }
 
       await processStream()
-      this.controller = null
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Request was aborted')
       } else {
         console.error('Analysis failed:', error)
         throw error
+      }
+    } finally {
+      if (this.controllers.get(requestKey) === controller) {
+        this.controllers.delete(requestKey)
+      }
+      if (this.controller === controller) {
+        this.controller = null
       }
     }
   }
@@ -197,11 +203,24 @@ class ReactAgentAPI {
   }
 
   // 取消请求
-  cancel() {
-    if (this.controller) {
-      this.controller.abort()
-      this.controller = null
+  cancel(requestKey = null) {
+    if (requestKey) {
+      const controller = this.controllers.get(requestKey)
+      if (controller) {
+        controller.abort()
+        this.controllers.delete(requestKey)
+      }
+      if (this.controller === controller) {
+        this.controller = null
+      }
+      return
     }
+
+    for (const controller of this.controllers.values()) {
+      controller.abort()
+    }
+    this.controllers.clear()
+    this.controller = null
   }
 }
 

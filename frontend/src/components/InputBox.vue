@@ -98,7 +98,7 @@
             class="action-button"
             :class="{ 'pause-button': isAnalyzing, 'send-button': !isAnalyzing }"
             @click="isAnalyzing ? handlePause() : handleSend()"
-            :disabled="(!localValue.trim() && attachments.length === 0 && !isAnalyzing) || disabled"
+            :disabled="actionButtonDisabled"
             :title="isAnalyzing ? '暂停分析 (Esc)' : '发送 (Enter)'"
           >
             <svg v-if="!isAnalyzing" viewBox="0 0 24 24" class="send-icon">
@@ -175,6 +175,13 @@ const agentMode = ref(localStorage.getItem('current-mode') || 'assistant')
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
+
+const actionButtonDisabled = computed(() => {
+  if (props.isAnalyzing) {
+    return false
+  }
+  return (!localValue.value.trim() && attachments.value.length === 0) || props.disabled
+})
 
 // 工作流工具列表
 const workflowTools = [
