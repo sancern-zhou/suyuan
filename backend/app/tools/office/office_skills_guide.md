@@ -24,7 +24,12 @@
 **Excel/PPT**：
 ```
 Excel → execute_python（使用 openpyxl、pandas 等库）
-PPT → execute_python（使用 python-pptx 库）
+读取PPT → read_pptx
+分析PPT模板 → analyze_pptx_template
+基于模板生成PPT → create_pptx_from_template
+编辑现有PPT → edit_pptx
+创建PPT → create_pptx（PptxGenJS，可编辑PPTX）
+复杂自定义PPT处理 → execute_python（使用 python-pptx 库）
 ```
 
 **核心原则**：
@@ -338,7 +343,172 @@ df_filtered.to_excel('/home/xckj/suyuan/backend_data_registry/output.xlsx', inde
 
 ## 3. PPT 操作说明
 
-所有PPT操作请使用 `execute_python` 工具，配合 **python-pptx** 库：
+### 3.1 读取 PPT
+
+优先使用 `read_pptx` 工具，直接提取每页文本、表格、图片元数据和备注，并可自动生成PDF预览。
+
+```text
+read_pptx(path="演示文稿.pptx", include_notes=true, include_images=true, export_images=true)
+```
+
+### 3.2 创建 PPT
+
+### 3.2 分析 PPT 模板
+
+当用户提供现有PPT作为模板，优先使用 `analyze_pptx_template` 获取模板地图，再决定是否新建或后续编辑。
+
+```text
+analyze_pptx_template(path="template.pptx", include_layouts=true, write_report=true)
+```
+
+返回内容包括：
+
+```text
+slides[].classification        → 页面类型推断
+slides[].layout                → 使用的版式名称/索引
+slides[].placeholders          → 占位符类型、位置、当前文本
+slides[].replaceable_slots     → 可替换槽位，包括 text/image/table/chart
+slides[].pictures/tables/charts → 图片、表格、图表结构
+report_path                    → template_map.json
+```
+
+模板化生成或编辑时，先根据 `replaceable_slots` 做内容映射，不要直接猜测 XML 位置。
+
+### 3.3 基于模板生成 PPT
+
+当用户要保留已有模板样式，只替换模板中的内容，使用 `create_pptx_from_template`。
+
+推荐流程：
+
+```text
+1. analyze_pptx_template(path="template.pptx")
+2. 根据返回的 replaceable_slots 组织 replacements
+3. create_pptx_from_template(template_path="template.pptx", replacements={...}, quality="standard")
+```
+
+`replacements` 使用 slot_id 映射：
+
+```json
+{
+  "s001_slot001": "新的标题",
+  "s002_slot006": [["指标", "值"], ["AQI", "85"]],
+  "s003_slot009": {"type": "image", "path": "backend/backend_data_registry/images/photo.png"}
+}
+```
+
+当前支持：
+
+```text
+text / placeholder → 替换文本
+table              → 填充现有表格单元格
+image              → 按原槽位位置替换图片
+```
+
+注意：`create_pptx_from_template` 只负责从模板复制并填充内容；如果需要对已有PPT做删除页、重排页或局部文本替换，使用 `edit_pptx`。
+
+### 3.4 编辑 PPT
+
+当用户要求修改现有PPT，优先使用 `edit_pptx`，并在复杂替换前先用 `read_pptx` 或 `analyze_pptx_template` 确认页码和 slot_id。
+
+支持操作：
+
+```text
+replace_text   → 全局或指定页替换文本
+replace_slot   → 按 analyze_pptx_template 返回的 slot_id 替换文本/表格/图片
+delete_slides  → 删除指定页，页码从 1 开始
+reorder_slides → 重排全部页面，order 必须包含当前全部页码
+```
+
+示例：
+
+```json
+{
+  "path": "backend/backend_data_registry/presentations/report.pptx",
+  "operations": [
+    {"type": "replace_text", "old_text": "旧结论", "new_text": "新结论"},
+    {"type": "delete_slides", "slides": [2]},
+    {"type": "reorder_slides", "order": [2, 1]}
+  ],
+  "output_file": "backend/backend_data_registry/presentations/report_edited.pptx",
+  "quality": "standard"
+}
+```
+
+按 slot 编辑：
+
+```json
+{
+  "path": "backend/backend_data_registry/presentations/template_filled.pptx",
+  "replacements": {
+    "s001_slot001": "更新后的标题",
+    "s002_slot006": [["指标", "值"], ["AQI", "85"]]
+  }
+}
+```
+
+### 3.5 创建 PPT
+
+优先使用 `create_pptx` 工具。该工具使用 PptxGenJS 生成可编辑的 `.pptx`，适合一步生成正式演示文稿。
+
+主题字段使用固定合同：
+
+```text
+primary, secondary, accent, text, muted, bg, surface, line, headFontFace, bodyFontFace
+```
+
+颜色使用 6 位 hex，传 `#2563EB` 或 `2563EB` 都可以，工具会统一清洗为 `2563EB`。不要使用 8 位 hex 透明色、渐变、动画或 Unicode 项目符号；列表内容传纯文本数组，工具会使用 PptxGenJS 原生 bullet。
+
+常用 slide 类型：
+
+```text
+title, section, bullets, text, two_column, table, image, image_text, chart, quote,
+toc, summary, comparison, timeline, process, metrics
+```
+
+质量参数：
+
+```text
+quality="draft"    → 只生成PPTX
+quality="standard" → 生成后渲染PDF/PNG并生成montage/report
+quality="strict"   → 额外执行渲染级溢出检测
+```
+
+示例：
+
+```json
+{
+  "title": "项目汇报",
+  "theme": {
+    "primary": "2563EB",
+    "secondary": "0F766E",
+    "accent": "DC2626",
+    "text": "1F2937",
+    "bg": "FFFFFF",
+    "headFontFace": "Microsoft YaHei",
+    "bodyFontFace": "Microsoft YaHei"
+  },
+  "slides": [
+    {"type": "title", "title": "项目汇报", "subtitle": "2026年"},
+    {"type": "bullets", "title": "核心结论", "bullets": ["结论一", "结论二"]},
+    {"type": "table", "title": "指标对比", "table": [["指标", "数值"], ["AQI", "85"]]}
+  ],
+  "output_file": "backend/backend_data_registry/presentations/report.pptx"
+}
+```
+
+### 3.6 复杂自定义处理
+
+复杂的局部编辑、特殊模板处理、非常规版式可使用 `execute_python` 工具，配合 **python-pptx** 库：
+
+### 3.7 验证 PPT
+
+交付前建议使用 `validate_pptx`。它会将PPTX渲染为PDF/PNG，生成montage总览图，并检查空页、形状越界、渲染级溢出和字体信息。渲染转换支持直接PPTX转PDF失败后的ODP fallback。
+
+```text
+validate_pptx(path="backend/backend_data_registry/presentations/report.pptx", expected_fonts=["Microsoft YaHei"])
+```
+
+`create_pptx` 也支持 `run_validation=true` 或 `quality="standard"/"strict"`，可在生成后直接返回验证报告。
 
 **推荐库**：
 - **python-pptx** - PPT文件读写和编辑

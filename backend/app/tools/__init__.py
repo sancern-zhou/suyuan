@@ -655,6 +655,48 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="find_replace_word", error=str(e))
 
+    try:
+        from app.tools.office.read_pptx_tool import ReadPptxTool
+        registry.register(ReadPptxTool(), priority=594)
+        logger.info("tool_loaded", tool="read_pptx")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="read_pptx", error=str(e))
+
+    try:
+        from app.tools.office.create_pptx_tool import CreatePptxTool
+        registry.register(CreatePptxTool(), priority=595)
+        logger.info("tool_loaded", tool="create_pptx")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_pptx", error=str(e))
+
+    try:
+        from app.tools.office.analyze_pptx_template_tool import AnalyzePptxTemplateTool
+        registry.register(AnalyzePptxTemplateTool(), priority=591)
+        logger.info("tool_loaded", tool="analyze_pptx_template")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="analyze_pptx_template", error=str(e))
+
+    try:
+        from app.tools.office.create_pptx_from_template_tool import CreatePptxFromTemplateTool
+        registry.register(CreatePptxFromTemplateTool(), priority=590)
+        logger.info("tool_loaded", tool="create_pptx_from_template")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_pptx_from_template", error=str(e))
+
+    try:
+        from app.tools.office.edit_pptx_tool import EditPptxTool
+        registry.register(EditPptxTool(), priority=589)
+        logger.info("tool_loaded", tool="edit_pptx")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="edit_pptx", error=str(e))
+
+    try:
+        from app.tools.office.validate_pptx_tool import ValidatePptxTool
+        registry.register(ValidatePptxTool(), priority=592)
+        logger.info("tool_loaded", tool="validate_pptx")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="validate_pptx", error=str(e))
+
 
     # ========================================
     # Scheduled Tasks Tools（定时任务工具）
