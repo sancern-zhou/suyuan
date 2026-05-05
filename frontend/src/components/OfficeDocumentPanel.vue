@@ -355,6 +355,29 @@ function toggleDownloadMenu() {
   showDownloadMenu.value = !showDownloadMenu.value
 }
 
+function getResponseFilename(response, fallback) {
+  const contentDisposition = response.headers.get('Content-Disposition')
+  if (!contentDisposition) {
+    return fallback
+  }
+
+  const encodedMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (encodedMatch?.[1]) {
+    try {
+      return decodeURIComponent(encodedMatch[1])
+    } catch (error) {
+      console.warn('[OfficeDocumentPanel] Failed to decode filename*:', error)
+    }
+  }
+
+  const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+  if (match?.[1]) {
+    return match[1].replace(/['"]/g, '')
+  }
+
+  return fallback
+}
+
 // Download PDF file
 async function downloadPDF(doc) {
   if (!doc.pdf_url) {
@@ -418,15 +441,7 @@ async function downloadWord(doc) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    // 获取文件名
-    const contentDisposition = response.headers.get('Content-Disposition')
-    let fileName = doc.file_name || 'document.docx'
-    if (contentDisposition) {
-      const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-      if (match && match[1]) {
-        fileName = match[1].replace(/['"]/g, '')
-      }
-    }
+    const fileName = getResponseFilename(response, doc.file_name || 'document.docx')
 
     // 下载文件
     const blob = await response.blob()
@@ -469,14 +484,7 @@ async function downloadPPT(doc) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
 
-    const contentDisposition = response.headers.get('Content-Disposition')
-    let fileName = doc.file_name || 'document.pptx'
-    if (contentDisposition) {
-      const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-      if (match && match[1]) {
-        fileName = match[1].replace(/['"]/g, '')
-      }
-    }
+    const fileName = getResponseFilename(response, doc.file_name || 'document.pptx')
 
     const blob = await response.blob()
     const url = URL.createObjectURL(blob)
