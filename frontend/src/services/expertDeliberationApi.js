@@ -102,3 +102,25 @@ export async function loadDefaultExpertDeliberationInputFiles() {
 
   return response.json()
 }
+
+export async function listExpertDeliberationRuns(limit = 30) {
+  const response = await fetch(`${API_BASE_URL}/expert-deliberation/runs?limit=${encodeURIComponent(limit)}`)
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(text || `HTTP ${response.status}`)
+  }
+
+  return response.json()
+}
+
+export async function getExpertDeliberationRun(runId) {
+  const response = await fetch(`${API_BASE_URL}/expert-deliberation/runs/${encodeURIComponent(runId)}`)
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(text || `HTTP ${response.status}`)
+  }
+
+  return response.json()
+}
