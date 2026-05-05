@@ -94,6 +94,7 @@ class SessionManagerDB:
                     current_expert=session.current_expert,
                     data_ids=session.data_ids,
                     visual_ids=session.visual_ids,
+                    office_documents=session.office_documents,
                     error=session.error,
                     metadata=session.metadata
                 )
@@ -103,7 +104,8 @@ class SessionManagerDB:
                     session_id=session.session_id,
                     query=session.query,
                     mode=session.metadata.get("mode"),
-                    metadata=session.metadata
+                    metadata=session.metadata,
+                    office_documents=session.office_documents
                 )
 
             # 保存对话历史
@@ -171,6 +173,7 @@ class SessionManagerDB:
                 conversation_history=session_dict["conversation_history"],
                 data_ids=session_dict["data_ids"],
                 visual_ids=session_dict["visual_ids"],
+                office_documents=session_dict.get("office_documents", []),
                 metadata=session_dict["metadata"],
                 error=session_dict["error"],
                 current_step=session_dict.get("current_step"),
@@ -272,6 +275,7 @@ class SessionManagerDB:
                 conversation_history=session_dict["conversation_history"],  # 只包含最新N条
                 data_ids=session_dict["data_ids"],
                 visual_ids=session_dict["visual_ids"],
+                office_documents=session_dict.get("office_documents", []),
                 metadata=session_dict["metadata"],
                 error=session_dict["error"],
                 current_step=session_dict.get("current_step"),
