@@ -30,6 +30,47 @@ function text(value) {
   return value === undefined || value === null ? "" : String(value);
 }
 
+function bodyText(value) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => bodyText(item)).filter(Boolean).join("\n");
+  }
+  if (typeof value === "object") {
+    const parts = [];
+    if (value.title || value.label) parts.push(text(value.title || value.label));
+    if (value.text || value.body || value.description || value.value) {
+      parts.push(text(value.text || value.body || value.description || value.value));
+    }
+    if (Array.isArray(value.bullets)) {
+      parts.push(value.bullets.map((item) => `• ${bodyText(item)}`).join("\n"));
+    }
+    if (Array.isArray(value.items)) {
+      parts.push(value.items.map((item) => `• ${bodyText(item)}`).join("\n"));
+    }
+    return parts.filter(Boolean).join("\n");
+  }
+  return String(value);
+}
+
+function bulletItems(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") {
+    if (Array.isArray(value.bullets)) return value.bullets;
+    if (Array.isArray(value.items)) return value.items;
+  }
+  return [];
+}
+
+function panelTitle(value, fallback) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return text(value.title || value.label || fallback || "");
+  }
+  return text(fallback || "");
+}
+
 function fontSize(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 6 && parsed <= 60 ? parsed : fallback;
@@ -92,10 +133,10 @@ function addTitle(slide, title, subtitle) {
 }
 
 function addBullets(slide, items, x, y, w, h, opts = {}) {
-  const rich = (items || []).map((item) => ({
-    text: text(typeof item === "string" ? item : item.text || ""),
+  const rich = bulletItems(items).map((item) => ({
+    text: bodyText(item),
     options: { bullet: { type: "bullet" }, breakLine: true },
-  }));
+  })).filter((item) => item.text);
   slide.addText(rich.length ? rich : " ", {
     x, y, w, h,
     ...fitTextOptions(rich.length ? rich : " ", fonts.body, { x, y, w, h, fontSize: fontSize(opts.fontSize, 15), minFontSize: opts.minFontSize ?? 8 }),
@@ -107,10 +148,11 @@ function addBullets(slide, items, x, y, w, h, opts = {}) {
   });
 }
 
-function addBodyText(slide, text, x, y, w, h, opts = {}) {
-  slide.addText(text || " ", {
+function addBodyText(slide, value, x, y, w, h, opts = {}) {
+  const content = bodyText(value) || " ";
+  slide.addText(content, {
     x, y, w, h,
-    ...fitTextOptions(text || " ", opts.fontFace || fonts.body, { x, y, w, h, fontSize: fontSize(opts.fontSize, 14), minFontSize: opts.minFontSize ?? 8 }),
+    ...fitTextOptions(content, opts.fontFace || fonts.body, { x, y, w, h, fontSize: fontSize(opts.fontSize, 14), minFontSize: opts.minFontSize ?? 8 }),
     color: color(opts.color, palette.text),
     margin: 0.07,
     fit: "shrink",
@@ -120,7 +162,8 @@ function addBodyText(slide, text, x, y, w, h, opts = {}) {
 }
 
 function addTable(slide, table, x, y, w, h) {
-  const rows = Array.isArray(table) ? table : table?.rows || [];
+  const rows = tableRows(table);
+  if (!rows.length) return;
   slide.addTable(rows, {
     x, y, w, h,
     fontFace: fonts.body,
@@ -135,14 +178,26 @@ function addTable(slide, table, x, y, w, h) {
 
 function addImage(slide, image, x, y, w, h) {
   if (!image) return;
-  const imagePath = image.path ? path.resolve(image.path) : null;
-  const sizing = image.fit === "crop" ? imageSizingCrop : imageSizingContain;
+  const imageSpec = typeof image === "string" ? { path: image } : image;
+  const imagePath = imageSpec.path ? path.resolve(imageSpec.path) : null;
+  const sizing = imageSpec.fit === "crop" ? imageSizingCrop : imageSizingContain;
   if (imagePath && fs.existsSync(imagePath)) {
     const box = sizing(imagePath, x, y, w, h);
     slide.addImage({ path: imagePath, x: box.x, y: box.y, w: box.w, h: box.h });
-  } else if (image.data) {
-    slide.addImage({ data: image.data, x, y, w, h });
+  } else if (imageSpec.data) {
+    slide.addImage({ data: imageSpec.data, x, y, w, h });
   }
+}
+
+function tableRows(tableLike) {
+  if (Array.isArray(tableLike)) return tableLike;
+  if (!tableLike || typeof tableLike !== "object") return [];
+  const rows = Array.isArray(tableLike.rows) ? tableLike.rows : [];
+  const headers = Array.isArray(tableLike.headers) ? tableLike.headers : tableLike.columns;
+  if (Array.isArray(headers) && headers.length) {
+    return [headers, ...rows];
+  }
+  return rows;
 }
 
 function addChart(slide, chart, x, y, w, h) {
@@ -245,19 +300,24 @@ function renderSlide(slideSpec, idx) {
     addTitle(slide, slideSpec.title, slideSpec.subtitle);
 
     if (type === "two_column") {
-      addBodyText(slide, slideSpec.leftTitle || "", 0.75, 1.55, 5.7, 0.3, { fontSize: 13, color: palette.primary });
-      addBodyText(slide, slideSpec.rightTitle || "", 6.9, 1.55, 5.7, 0.3, { fontSize: 13, color: palette.primary });
-      if (Array.isArray(slideSpec.left)) addBullets(slide, slideSpec.left, 0.75, 1.95, 5.65, 4.75);
+      addBodyText(slide, slideSpec.leftTitle || panelTitle(slideSpec.left, ""), 0.75, 1.55, 5.7, 0.3, { fontSize: 13, color: palette.primary });
+      addBodyText(slide, slideSpec.rightTitle || panelTitle(slideSpec.right, ""), 6.9, 1.55, 5.7, 0.3, { fontSize: 13, color: palette.primary });
+      const leftBullets = bulletItems(slideSpec.left);
+      const rightBullets = bulletItems(slideSpec.right);
+      if (leftBullets.length) addBullets(slide, leftBullets, 0.75, 1.95, 5.65, 4.75);
       else addBodyText(slide, slideSpec.left || "", 0.75, 1.95, 5.65, 4.75);
-      if (Array.isArray(slideSpec.right)) addBullets(slide, slideSpec.right, 6.9, 1.95, 5.65, 4.75);
+      if (rightBullets.length) addBullets(slide, rightBullets, 6.9, 1.95, 5.65, 4.75);
       else addBodyText(slide, slideSpec.right || "", 6.9, 1.95, 5.65, 4.75);
     } else if (type === "table") {
-      addTable(slide, slideSpec.table, 0.65, 1.55, 12.05, 5.25);
+      addTable(slide, slideSpec.table || slideSpec, 0.65, 1.55, 12.05, 5.25);
     } else if (type === "toc") {
       addItems(slide, slideSpec.items || slideSpec.sections || slideSpec.bullets, 1.15, 1.65, 10.9, 4.75, { badgeColor: palette.accent, titleSize: 15, bodySize: 10 });
     } else if (type === "summary") {
       addItems(slide, slideSpec.items || slideSpec.takeaways || slideSpec.bullets, 1.1, 1.55, 11.1, 4.8, { badgeColor: palette.secondary, titleSize: 14, bodySize: 10.5 });
     } else if (type === "comparison") {
+      if (Array.isArray(slideSpec.columns) || Array.isArray(slideSpec.headers)) {
+        addTable(slide, slideSpec, 0.65, 1.55, 12.05, 5.25);
+      } else {
       const leftTitle = slideSpec.leftTitle || slideSpec.aTitle || "A";
       const rightTitle = slideSpec.rightTitle || slideSpec.bTitle || "B";
       slide.addShape(pptx.ShapeType.rect, { x: 0.85, y: 1.55, w: 5.55, h: 5.25, fill: { color: palette.surface }, line: { color: palette.line, width: 0.5 } });
@@ -268,6 +328,7 @@ function renderSlide(slideSpec, idx) {
       else addBodyText(slide, slideSpec.left || "", 1.1, 2.3, 5.05, 4.1, { fontSize: 12.5 });
       if (Array.isArray(slideSpec.right)) addBullets(slide, slideSpec.right, 7.15, 2.3, 5.05, 4.1, { fontSize: 12.5 });
       else addBodyText(slide, slideSpec.right || "", 7.15, 2.3, 5.05, 4.1, { fontSize: 12.5 });
+      }
     } else if (type === "timeline" || type === "process") {
       const items = slideSpec.items || slideSpec.steps || [];
       const count = Math.max(1, items.length);
@@ -312,7 +373,7 @@ function renderSlide(slideSpec, idx) {
         italic: true, color: palette.text,
         align: "center", margin: 0.03, fit: "shrink",
       });
-      if (slideSpec.attribution) addBodyText(slide, slideSpec.attribution, 2.0, 3.65, 9.4, 0.36, { fontSize: 12, color: palette.muted });
+      if (slideSpec.attribution || slideSpec.author) addBodyText(slide, slideSpec.attribution || slideSpec.author, 2.0, 3.65, 9.4, 0.36, { fontSize: 12, color: palette.muted });
     } else {
       if (Array.isArray(slideSpec.bullets)) addBullets(slide, slideSpec.bullets, 0.9, 1.55, 11.5, 5.25);
       else addBodyText(slide, slideSpec.text || "", 0.85, 1.55, 11.65, 5.25);
