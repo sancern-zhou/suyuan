@@ -6,12 +6,26 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 import logging
 from typing import Optional
+from urllib.parse import quote
 
 from app.services.pdf_converter import pdf_converter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/office", tags=["office"])
+
+
+def content_disposition(disposition: str, filename: str) -> str:
+    """Build an ASCII-safe Content-Disposition header for Unicode filenames."""
+    safe_name = Path(filename).name or "download"
+    ascii_fallback = "".join(
+        ch if 32 <= ord(ch) < 127 and ch not in {'"', "\\", ";"} else "_"
+        for ch in safe_name
+    ).strip("._ ")
+    if not ascii_fallback:
+        ascii_fallback = "download"
+    encoded_name = quote(safe_name.encode("utf-8"))
+    return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
 
 
 @router.get("/pdf/{pdf_id}")
@@ -34,7 +48,7 @@ async def get_pdf(pdf_id: str):
         path=str(pdf_path),
         media_type="application/pdf",
         filename=f"{pdf_id}.pdf",
-        headers={"Content-Disposition": "inline; filename=preview.pdf"}
+        headers={"Content-Disposition": content_disposition("inline", "preview.pdf")}
     )
 
 
@@ -62,8 +76,8 @@ async def download_pdf(pdf_id: str, filename: Optional[str] = None):
     return FileResponse(
         path=str(pdf_path),
         media_type="application/pdf",
-        filename=safe_name,
-        headers={"Content-Disposition": f"attachment; filename=\"{safe_name}\""}
+        filename=Path(safe_name).name,
+        headers={"Content-Disposition": content_disposition("attachment", safe_name)}
     )
 
 
@@ -222,7 +236,7 @@ async def download_word(request: Request):
             path=str(resolved_path),
             media_type=media_type,
             filename=filename,
-            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
+            headers={"Content-Disposition": content_disposition("attachment", filename)}
         )
 
     except HTTPException:
@@ -279,7 +293,7 @@ async def download_ppt(request: Request):
             path=str(resolved_path),
             media_type=media_type,
             filename=filename,
-            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
+            headers={"Content-Disposition": content_disposition("attachment", filename)}
         )
 
     except HTTPException:
