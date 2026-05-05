@@ -1377,6 +1377,21 @@ export const useReactStore = defineStore('react', {
             console.log('[event:complete] lastExpertResults已设置')
           }
 
+          // ✅ 兜底处理Office文档预览：后端会在complete事件中附带本轮文档元数据
+          // 避免前端错过实时office_document事件时无法打开预览面板。
+          const officeDoc = data?.last_office_document ||
+            (Array.isArray(data?.office_documents) && data.office_documents.length > 0
+              ? data.office_documents[data.office_documents.length - 1]
+              : null)
+          if (officeDoc?.pdf_preview || officeDoc?.markdown_preview || officeDoc?.html_preview) {
+            targetState.lastOfficeDocument = officeDoc
+            console.log('[event:complete] Office文档预览已从complete事件恢复:', {
+              generator: officeDoc.generator,
+              pdf_id: officeDoc.pdf_preview?.pdf_id,
+              file_path: officeDoc.file_path
+            })
+          }
+
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）
           if (data?.sources && Array.isArray(data.sources) && data.sources.length > 0) {
             console.log('[event:complete] 保存sources到最后消息，count:', data.sources.length)

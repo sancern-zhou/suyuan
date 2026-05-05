@@ -468,6 +468,15 @@ async def analyze_stream(request: AgentAnalyzeRequest):
 
                     # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
                     if event["type"] == "complete":
+                        # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
+                        # office_document 实时事件后无法打开预览面板。
+                        office_documents = multi_expert_agent_instance._session_store.get(
+                            actual_session_id, {}
+                        ).get("office_documents", [])
+                        if office_documents:
+                            event.setdefault("data", {})["office_documents"] = office_documents
+                            event["data"]["last_office_document"] = office_documents[-1]
+
                         # ✅ 添加最终答案消息
                         if event.get("data", {}).get("answer"):
                             event_data = event.get("data", {})
