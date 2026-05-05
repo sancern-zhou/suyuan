@@ -54,6 +54,14 @@
                     📝 下载Word文档
                   </button>
                   <button
+                    v-if="doc.doc_type === 'ppt'"
+                    @click="downloadPPT(doc)"
+                    class="download-item"
+                    :disabled="!doc.file_path || doc.file_path === ''"
+                  >
+                    📊 下载PPT文件
+                  </button>
+                  <button
                     v-if="doc.doc_type === 'excel'"
                     @click="downloadExcel(doc)"
                     class="download-item"
@@ -348,7 +356,7 @@ function toggleDownloadMenu() {
 }
 
 // Download PDF file
-function downloadPDF(doc) {
+async function downloadPDF(doc) {
   if (!doc.pdf_url) {
     console.error('[OfficeDocumentPanel] PDF URL not available')
     showDownloadMenu.value = false
@@ -356,16 +364,30 @@ function downloadPDF(doc) {
   }
 
   try {
-    // 创建下载链接
+    const baseName = doc.file_name
+      ? doc.file_name.replace(/\.[^.]+$/, '')
+      : 'document'
+    const fileName = `${baseName}.pdf`
+    const downloadUrl = doc.pdf_id
+      ? `/api/office/pdf/${encodeURIComponent(doc.pdf_id)}/download?filename=${encodeURIComponent(fileName)}`
+      : doc.pdf_url
+
+    const response = await fetch(downloadUrl)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = doc.pdf_url
-    link.download = `${doc.file_name || 'document'}.pdf`
-    link.target = '_blank'
+    link.href = url
+    link.download = fileName
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+    URL.revokeObjectURL(url)
 
-    console.log('[OfficeDocumentPanel] PDF download started:', doc.file_name)
+    console.log('[OfficeDocumentPanel] PDF download started:', fileName)
     showDownloadMenu.value = false
   } catch (error) {
     console.error('[OfficeDocumentPanel] PDF download failed:', error)
@@ -421,6 +443,55 @@ async function downloadWord(doc) {
     showDownloadMenu.value = false
   } catch (error) {
     console.error('[OfficeDocumentPanel] Word download failed:', error)
+  }
+}
+
+// Download PowerPoint document
+async function downloadPPT(doc) {
+  if (!doc.file_path || doc.file_path === '') {
+    console.error('[OfficeDocumentPanel] PPT file path not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    const response = await fetch('/api/office/download-ppt', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        file_path: doc.file_path
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const contentDisposition = response.headers.get('Content-Disposition')
+    let fileName = doc.file_name || 'document.pptx'
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+      if (match && match[1]) {
+        fileName = match[1].replace(/['"]/g, '')
+      }
+    }
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    console.log('[OfficeDocumentPanel] PPT download started:', fileName)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] PPT download failed:', error)
   }
 }
 

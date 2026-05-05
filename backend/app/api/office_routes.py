@@ -38,6 +38,35 @@ async def get_pdf(pdf_id: str):
     )
 
 
+@router.get("/pdf/{pdf_id}/download")
+async def download_pdf(pdf_id: str, filename: Optional[str] = None):
+    """
+    Download generated PDF preview by ID.
+
+    Args:
+        pdf_id: Unique PDF identifier
+        filename: Optional download filename
+
+    Returns:
+        PDF file as attachment
+    """
+    pdf_path = pdf_converter.get_pdf_path(pdf_id)
+
+    if not pdf_converter.pdf_exists(pdf_id):
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    safe_name = Path(filename).name if filename else f"{pdf_id}.pdf"
+    if not safe_name.lower().endswith(".pdf"):
+        safe_name = f"{safe_name}.pdf"
+
+    return FileResponse(
+        path=str(pdf_path),
+        media_type="application/pdf",
+        filename=safe_name,
+        headers={"Content-Disposition": f"attachment; filename=\"{safe_name}\""}
+    )
+
+
 @router.get("/pdf/{pdf_id}/info")
 async def get_pdf_info(pdf_id: str):
     """
@@ -200,4 +229,61 @@ async def download_word(request: Request):
         raise
     except Exception as e:
         logger.error(f"Error downloading Word document: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/download-ppt")
+async def download_ppt(request: Request):
+    """
+    Download PowerPoint document
+
+    Args:
+        file_path: Path to the PowerPoint document
+
+    Returns:
+        PowerPoint document as FileResponse
+    """
+    try:
+        data = await request.json()
+        file_path = data.get("file_path")
+
+        if not file_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required field: file_path"
+            )
+
+        resolved_path = Path(file_path).resolve()
+
+        if not resolved_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        suffix = resolved_path.suffix.lower()
+        if suffix not in ['.pptx', '.ppt']:
+            raise HTTPException(
+                status_code=400,
+                detail="Only PowerPoint documents (.pptx, .ppt) are supported"
+            )
+
+        filename = resolved_path.name
+
+        logger.info(f"Downloading PowerPoint document: {file_path}")
+
+        media_type = (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            if suffix == '.pptx'
+            else "application/vnd.ms-powerpoint"
+        )
+
+        return FileResponse(
+            path=str(resolved_path),
+            media_type=media_type,
+            filename=filename,
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading PowerPoint document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
