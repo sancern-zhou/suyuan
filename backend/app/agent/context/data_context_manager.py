@@ -27,6 +27,7 @@ import structlog
 from pydantic import BaseModel
 
 from app.agent.context.typed_data_handle import TypedDataHandle
+from app.agent.context.execution_context import DataReference
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.schemas.common import DataQualityReport, FieldStats
 from app.schemas.particulate import ParticulateSample, UnifiedParticulateData
@@ -115,7 +116,7 @@ class DataContextManager:
         quality_report: Optional[DataQualityReport] = None,
         field_stats: Optional[List[FieldStats]] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> DataReference:
         """
         Save data and return the data ID string.
 
@@ -547,7 +548,7 @@ class DataContextManager:
             field_mapping_applied=field_mapping_applied  # 记录是否应用了标准化
         )
 
-        # ✅ 返回字典包含 data_id 和 file_path
+        # ✅ 返回字符串兼容对象，同时支持 ref["data_id"] / ref["file_path"]
         # 计算绝对路径（供 Agent 使用）
         try:
             # path 可能是字符串或 Path 对象，统一转换为 Path
@@ -570,10 +571,7 @@ class DataContextManager:
             # 回退到原始路径
             file_path = str(path)
 
-        return {
-            "data_id": full_id,
-            "file_path": file_path
-        }
+        return DataReference(full_id, file_path)
 
     def get_data(
         self,

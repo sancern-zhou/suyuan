@@ -25,6 +25,33 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+class DataReference(str):
+    """String data_id that also supports legacy dict-style access."""
+
+    def __new__(cls, data_id: str, file_path: Optional[str] = None):
+        obj = str.__new__(cls, data_id)
+        obj.data_id = data_id
+        obj.file_path = file_path
+        return obj
+
+    def __getitem__(self, key: str) -> str:
+        if key == "data_id":
+            return self.data_id
+        if key == "file_path":
+            return self.file_path or ""
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "data_id":
+            return self.data_id
+        if key == "file_path":
+            return self.file_path if self.file_path is not None else default
+        return default
+
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        return {"data_id": self.data_id, "file_path": self.file_path}
+
+
 class ExecutionContext:
     """
     Tool execution context providing data access and session information.
@@ -151,7 +178,7 @@ class ExecutionContext:
         schema: str,
         field_stats: Optional[List[Any]] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> DataReference:
         """
         Save data and return a reference ID.
 
@@ -162,7 +189,9 @@ class ExecutionContext:
             metadata: Optional metadata to attach
 
         Returns:
-            Data reference ID (e.g., "vocs:v1:abc123")
+            Data reference ID as a string-compatible object. It can be used
+            directly as ``str`` or accessed as ``ref["data_id"]`` /
+            ``ref["file_path"]`` for older tools.
 
         Example:
             result_id = context.save_data(
@@ -185,11 +214,19 @@ class ExecutionContext:
             metadata=metadata
         )
 
-        # ✅ 提取字符串 ID
+        # ✅ 提取字符串 ID，同时保留 file_path 兼容旧工具的字典式访问
         if isinstance(saved_ref, dict):
             data_id = saved_ref.get("data_id")
+            file_path = saved_ref.get("file_path")
+        elif hasattr(saved_ref, "get"):
+            data_id = saved_ref.get("data_id")
+            file_path = saved_ref.get("file_path")
         else:
             data_id = saved_ref
+            file_path = None
+
+        if not data_id:
+            raise ValueError(f"Data manager returned empty data_id for schema: {schema}")
 
         # ✅ 直接使用字符串ID进行跟踪
         self.current_data_id = data_id
@@ -203,7 +240,7 @@ class ExecutionContext:
             session_id=self.session_id
         )
 
-        return data_id
+        return DataReference(data_id, file_path)
 
     def get_handle(self, data_id: str) -> TypedDataHandle:
         """
