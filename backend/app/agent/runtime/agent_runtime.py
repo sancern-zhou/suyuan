@@ -126,18 +126,22 @@ class AgentRuntime:
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
-        planner_result, streaming_tool_executor = await self._run_planner_stream(
-            state,
-            context_result,
-            conversation_history,
-        )
+        planner_result = None
+        streaming_tool_executor = None
+        async for event in self._run_planner_stream(state, context_result, conversation_history):
+            if event.get("type") == "_planner_done":
+                planner_result = event["planner_result"]
+                streaming_tool_executor = event["streaming_tool_executor"]
+            else:
+                yield event
+
+        if planner_result is None or streaming_tool_executor is None:
+            raise RuntimeError("Planner stream ended without a result")
 
         action = planner_result.action or {"type": "ERROR", "error": "no action"}
         action_type = action.get("type", "ERROR")
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
-            for event in planner_result.pop_events:
-                yield event
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
                 yield event
             return
@@ -146,7 +150,7 @@ class AgentRuntime:
             action = {"type": "FINAL_ANSWER", "answer": action.get("answer", "")}
             action_type = "FINAL_ANSWER"
 
-        if action_type == "FINAL_ANSWER" and self._has_streamed_assistant_text(planner_result):
+        if action_type == "FINAL_ANSWER" and planner_result.streamed_assistant_text:
             state.response_streamed = True
 
         for event in planner_result.pop_events:
@@ -202,7 +206,7 @@ class AgentRuntime:
         state: RunState,
         context_result: Dict[str, Any],
         conversation_history: List[Dict[str, Any]],
-    ):
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         from app.agent.tool_adapter import get_tool_schemas
         from ..core.streaming_tool_executor import StreamingToolExecutor
 
@@ -254,15 +258,14 @@ class AgentRuntime:
                 is_complete = event["data"].get("is_complete", False)
                 visible = buffer.append(chunk)
                 if visible:
-                    planner_result.pop_events.append(self.events.assistant_delta(state, visible, is_complete=False))
-                elif is_complete and not state.has_seen_tool_use:
-                    planner_result.pop_events.append(self.events.assistant_delta(state, "", is_complete=True))
+                    planner_result.streamed_assistant_text = True
+                    yield self.events.assistant_delta(state, visible, is_complete=False)
+                elif is_complete and not buffer.suppress_after_tool_use:
+                    yield self.events.assistant_delta(state, "", is_complete=True)
 
             elif event_type == "thought":
                 planner_result.thought = event["data"].get("thought")
-                planner_result.pop_events.append(
-                    self.events.thought(state, planner_result.thought)
-                )
+                yield self.events.thought(state, planner_result.thought)
 
             elif event_type == "tool_use":
                 tool_data = event["data"]
@@ -278,9 +281,9 @@ class AgentRuntime:
                     tool_input=tool_input,
                     iteration=state.iteration,
                 )
-                planner_result.pop_events.append(self.events.tool_use(state, tool_use_id, tool_name, tool_input))
+                yield self.events.tool_use(state, tool_use_id, tool_name, tool_input)
                 for completed_result in streaming_tool_executor.getCompletedResults():
-                    planner_result.pop_events.append(completed_result["message"])
+                    yield completed_result["message"]
 
             elif event_type == "action":
                 data = event["data"]
@@ -305,16 +308,11 @@ class AgentRuntime:
         if planner_result.action and planner_result.action.get("type") in ("TOOL_CALL", "TOOL_CALLS"):
             planner_result.tool_calls = self.tool_coordinator.tool_calls_from_action(planner_result.action)
 
-        return planner_result, streaming_tool_executor
-
-    def _has_streamed_assistant_text(self, planner_result: PlannerResult) -> bool:
-        for event in planner_result.pop_events:
-            if event.get("type") != "streaming_text":
-                continue
-            data = event.get("data", {})
-            if data.get("chunk"):
-                return True
-        return False
+        yield {
+            "type": "_planner_done",
+            "planner_result": planner_result,
+            "streaming_tool_executor": streaming_tool_executor,
+        }
 
     async def _fallback_non_streaming(
         self,
