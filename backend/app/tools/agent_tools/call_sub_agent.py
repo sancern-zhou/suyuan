@@ -24,8 +24,8 @@ logger = structlog.get_logger()
 # 获取全局session管理器
 session_manager = get_session_manager()
 
-# ⚠️ 支持5种模式：assistant, code, query, report, social
-AgentMode = Literal["assistant", "code", "query", "report", "social"]
+# ⚠️ 支持6种模式：assistant, code, query, report, social, chart
+AgentMode = Literal["assistant", "code", "query", "report", "social", "chart"]
 
 
 class CallSubAgentTool(LLMTool):
@@ -53,7 +53,7 @@ class CallSubAgentTool(LLMTool):
                 "properties": {
                     "target_mode": {
                         "type": "string",
-                        "enum": ["assistant", "code", "query", "report", "social"],
+                        "enum": ["assistant", "code", "query", "report", "social", "chart"],
                         "description": "目标Agent模式"
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
@@ -87,6 +87,10 @@ class CallSubAgentTool(LLMTool):
                     "force_new_session": {
                         "type": "boolean",
                         "description": "是否强制创建新会话，默认false；新话题时使用"
+                    },
+                    "_force_isolated_session": {
+                        "type": "boolean",
+                        "description": "[内部使用] 并发调用时强制session隔离，避免多个子Agent共享同一个session"
                     }
                 },
                 "required": ["target_mode"]  # ✅ 改为：target_mode必需，goal和task_description二选一
@@ -118,6 +122,7 @@ class CallSubAgentTool(LLMTool):
         workspace_path: Optional[str] = None,  # ✅ 新参数：工作目录
         session_id: Optional[str] = None,
         force_new_session: bool = False,
+        _force_isolated_session: bool = False,  # ⚠️ 内部使用：并发时强制隔离
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
         """
@@ -133,6 +138,7 @@ class CallSubAgentTool(LLMTool):
             workspace_path: 工作目录路径（可选）
             session_id: 可选，子Agent会话ID（传入则继续已有对话）
             force_new_session: 是否强制创建新会话
+            _force_isolated_session: [内部使用] 并发调用时强制session隔离
 
         Returns:
             {
@@ -231,11 +237,16 @@ class CallSubAgentTool(LLMTool):
                     }
                 conversation_history = session.conversation_history
                 logger.info(f"继续指定session: {session_id}, 历史消息数: {len(conversation_history)}")
-            elif force_new_session:
+            elif force_new_session or _force_isolated_session:
                 # 强制创建新session
+                # - force_new_session: 用户显式指定
+                # - _force_isolated_session: 并发调用时自动隔离
                 session_id = self._generate_session_id(parent_mode, target_mode)
                 is_new_session = True
-                logger.info(f"强制创建新session: {session_id}")
+                if _force_isolated_session:
+                    logger.info(f"🔄 并发调用隔离：创建独立session: {session_id}")
+                else:
+                    logger.info(f"强制创建新session: {session_id}")
             else:
                 # 自动查找并复用最近的session（默认行为）
                 logger.info(f"尝试自动查找最近的session: parent_mode={parent_mode}, child_mode={target_mode}")

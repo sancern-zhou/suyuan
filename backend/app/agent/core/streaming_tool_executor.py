@@ -73,6 +73,7 @@ DEFAULT_CONCURRENCY_SAFE_TOOLS = frozenset({
     "get_weather_data", "get_vocs_data", "get_pm25_ionic",
     "get_pm25_carbon", "get_pm25_elements", "get_guangdong_regular_stations",
     "analyze_image", "list_skills",
+    "call_sub_agent",  # 子Agent调用：独立session_id、模式专属记忆、只读数据传递
 })
 
 
@@ -171,6 +172,36 @@ class StreamingToolExecutor:
         if self._discarded:
             logger.warning("streaming_tool_executor_discarded", tool_name=tool_name)
             return
+
+        # ⚠️ 检测并发 call_sub_agent 调用，强制 session 隔离
+        if tool_name == "call_sub_agent":
+            # 检查是否已有其他 call_sub_agent 在执行列表中
+            existing_sub_agents = [
+                e for e in self._executions
+                if e.tool_name == "call_sub_agent"
+            ]
+            if len(existing_sub_agents) > 0:
+                # 检测到并发调用，为当前和已存在的 call_sub_agent 添加隔离标记
+                logger.info(
+                    "concurrent_sub_agent_detected_in_streaming",
+                    existing_count=len(existing_sub_agents),
+                    action="force_isolated_sessions"
+                )
+                # 为当前调用添加标记
+                if not tool_input:
+                    tool_input = {}
+                tool_input["_force_isolated_session"] = True
+
+                # 为已存在的调用也添加标记（如果还未开始执行）
+                for existing in existing_sub_agents:
+                    if existing.status == ToolStatus.PENDING:
+                        if not existing.tool_input:
+                            existing.tool_input = {}
+                        existing.tool_input["_force_isolated_session"] = True
+                        logger.info(
+                            "marked_existing_sub_agent_for_isolation",
+                            tool_use_id=existing.tool_use_id[:12]
+                        )
 
         is_safe = self._is_concurrency_safe(tool_name, tool_input)
 
