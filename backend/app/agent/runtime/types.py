@@ -31,6 +31,7 @@ class PlannerResult:
     thought: Optional[str] = None
     action: Optional[Dict[str, Any]] = None
     text: str = ""
+    streamed_assistant_text: bool = False
     raw_thinking_blocks: Optional[List[Dict[str, Any]]] = None
     yielded_tool_use_count: int = 0
     tool_calls: List[ToolCall] = field(default_factory=list)
