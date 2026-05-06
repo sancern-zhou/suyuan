@@ -352,7 +352,7 @@ class GetWeatherDataTool(LLMTool):
         if standardized_records and context is not None:
             try:
                 # save_data() 返回字符串 ID
-                saved_data_id = await context.save_data(
+                saved_data_id = context.save_data(
                     data=standardized_records,
                     schema="weather"
                 )
@@ -591,7 +591,7 @@ class GetWeatherDataTool(LLMTool):
         if standardized_records and context is not None:
             try:
                 # save_data() 返回字符串 ID
-                saved_data_id = await context.save_data(
+                saved_data_id = context.save_data(
                     data=standardized_records,
                     schema="weather"
                 )

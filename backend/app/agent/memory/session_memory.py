@@ -24,6 +24,9 @@ logger = structlog.get_logger()
 
 
 _llm_service = None
+MAX_TOOL_RESULT_RECORDS = 24
+MAX_TOOL_RESULT_STRING_CHARS = 8_000
+MAX_TOOL_RESULT_JSON_CHARS = 24_000
 
 
 def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
@@ -39,6 +42,117 @@ def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
     if len(text) > max_chars:
         return text[:max_chars] + "..."
     return text
+
+
+def _sample_sequence(items: List[Any], max_items: int = MAX_TOOL_RESULT_RECORDS) -> List[Any]:
+    if len(items) <= max_items:
+        return items
+    head_count = max_items // 2
+    tail_count = max_items - head_count
+    return items[:head_count] + items[-tail_count:]
+
+
+def _truncate_string(value: str, max_chars: int = MAX_TOOL_RESULT_STRING_CHARS) -> str:
+    if len(value) <= max_chars:
+        return value
+    omitted = len(value) - max_chars
+    return f"{value[:max_chars]}\n\n...[truncated {omitted} chars]"
+
+
+def _compact_tool_result_value(value: Any, *, path: str = "") -> Any:
+    """Return a bounded copy suitable for LLM-facing tool_result history."""
+    if isinstance(value, str):
+        return _truncate_string(value)
+
+    if isinstance(value, list):
+        sampled = _sample_sequence(value)
+        compacted = [
+            _compact_tool_result_value(item, path=f"{path}[]")
+            for item in sampled
+        ]
+        if len(value) > len(sampled):
+            compacted.append({
+                "_truncated": True,
+                "original_count": len(value),
+                "sampled_count": len(sampled),
+                "strategy": "head_tail",
+            })
+        return compacted
+
+    if isinstance(value, dict):
+        compacted: Dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"data", "rows", "records", "resultData"} and isinstance(item, list):
+                sampled = _sample_sequence(item)
+                compacted[key] = [
+                    _compact_tool_result_value(row, path=f"{path}.{key}[]")
+                    for row in sampled
+                ]
+                if len(item) > len(sampled):
+                    metadata = compacted.setdefault("metadata", {})
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                        compacted["metadata"] = metadata
+                    metadata["tool_result_sampling"] = {
+                        "field": key,
+                        "original_count": len(item),
+                        "sampled_count": len(sampled),
+                        "strategy": "head_tail",
+                    }
+                continue
+            compacted[key] = _compact_tool_result_value(item, path=f"{path}.{key}")
+        return compacted
+
+    return value
+
+
+def _minimal_tool_result(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {
+            "success": True,
+            "summary": _safe_content_preview(value, 2_000),
+            "tool_result_truncated": True,
+        }
+
+    keep_keys = {
+        "success", "status", "summary", "error", "error_type", "data_id",
+        "data_ids", "file_path", "count", "total_count", "sample_count",
+        "original_count", "metadata", "has_chart", "chart_summary",
+    }
+    minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
+    if "summary" not in minimal:
+        minimal["summary"] = _safe_content_preview(value, 2_000)
+    minimal["tool_result_truncated"] = True
+    minimal["truncation_reason"] = "serialized tool_result exceeded history budget"
+    return minimal
+
+
+def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
+    compacted = _compact_tool_result_value(result)
+    try:
+        serialized = json.dumps(compacted, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        return _minimal_tool_result(result)
+
+    if len(serialized) <= MAX_TOOL_RESULT_JSON_CHARS:
+        return compacted
+
+    minimal = _minimal_tool_result(compacted)
+    try:
+        serialized = json.dumps(minimal, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        return {
+            "success": bool(result.get("success", False)) if isinstance(result, dict) else True,
+            "summary": _safe_content_preview(result, 2_000),
+            "tool_result_truncated": True,
+        }
+
+    if len(serialized) <= MAX_TOOL_RESULT_JSON_CHARS:
+        return minimal
+
+    minimal["summary"] = _truncate_string(str(minimal.get("summary", "")), 4_000)
+    minimal["metadata"] = _safe_content_preview(minimal.get("metadata"), 4_000)
+    return minimal
 
 
 def _get_llm_service():
@@ -108,7 +222,6 @@ class SessionMemory:
         # 使用项目目录而不是系统临时目录，避免 /tmp 下产生大量空文件夹
         if base_dir is None:
             # 使用 backend_data_registry/sessions 作为会话目录
-            from pathlib import Path
             project_root = Path(__file__).parent.parent.parent.parent  # backend 目录
             base_dir = project_root / "backend_data_registry" / "sessions"
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"
@@ -674,8 +787,9 @@ class SessionMemory:
             result: 工具执行结果
             is_error: 是否为错误结果
         """
-        # 序列化结果为 JSON 字符串
-        result_json = json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        history_result = _prepare_tool_result_for_history(result)
+        # 序列化瘦身后的结果为 JSON 字符串，避免单条 tool_result 占满上下文
+        result_json = json.dumps(history_result, ensure_ascii=False, indent=2, default=str)
 
         # 构建 Anthropic content block 格式
         content_block = {
@@ -699,7 +813,7 @@ class SessionMemory:
                     "tool_use_id": tool_use_id,
                     "tool_name": result.get("metadata", {}).get("generator", "") if isinstance(result, dict) else "",
                     "is_error": is_error,
-                    "result": result
+                    "result": history_result
                 }
             )
         )
@@ -797,8 +911,11 @@ class SessionMemory:
 
         # 2. 构建 user 消息：包含所有 tool_result content blocks
         user_content_blocks = []
+        history_results: List[Dict[str, Any]] = []
         for te in tool_executions:
-            result_json = json.dumps(te["result"], ensure_ascii=False, indent=2, default=str)
+            history_result = _prepare_tool_result_for_history(te["result"])
+            history_results.append(history_result)
+            result_json = json.dumps(history_result, ensure_ascii=False, indent=2, default=str)
             user_content_blocks.append({
                 "type": "tool_result",
                 "content": result_json,
@@ -816,7 +933,7 @@ class SessionMemory:
                 "tool_use_id": te["tool_use_id"],
                 "tool_name": te["tool_name"],
                 "is_error": te.get("is_error", False),
-                "result": te["result"]
+                "result": history_results[0]
             }
         else:
             # 多个工具：使用 results 格式
@@ -824,7 +941,7 @@ class SessionMemory:
                 "tool_use_id": tool_executions[0]["tool_use_id"],  # 主工具ID
                 "tool_name": tool_executions[0]["tool_name"],  # 主工具名称
                 "is_error": any(te.get("is_error", False) for te in tool_executions),
-                "results": [te["result"] for te in tool_executions]
+                "results": history_results
             }
 
         self.conversation_history.append(
