@@ -493,18 +493,23 @@ class HeartbeatService:
         for task in tasks:
             next_run_str = task.get("next_run_at")
             if not next_run_str:
-                continue
+                # Missing next_run_at usually means an old HEARTBEAT.md or a
+                # manually edited task. Wake immediately so _tick can compute it.
+                return now_ms
 
             try:
                 # 解析ISO格式时间字符串
                 next_run = datetime.fromisoformat(next_run_str.replace("Z", "+00:00"))
                 next_run_ms = int(next_run.timestamp() * 1000)
 
-                # 只考虑未来的任务
-                if next_run_ms > now_ms:
-                    wake_times.append(next_run_ms)
+                # 过期任务需要立即唤醒执行，不能被过滤后进入默认30分钟睡眠
+                if next_run_ms <= now_ms:
+                    return now_ms
+
+                wake_times.append(next_run_ms)
             except Exception as e:
                 logger.warning("parse_next_run_failed", task=task.get("name"), error=str(e))
+                return now_ms
 
         return min(wake_times) if wake_times else None
 
