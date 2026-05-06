@@ -126,8 +126,21 @@ export function useSessionRecovery(store, options = {}) {
     const docs = []
 
     for (const msg of messages) {
-      if (msg.type === 'tool_result' && msg.data?.result?.data?.pdf_preview) {
-        docs.push(msg.data.result.data.pdf_preview)
+      if (msg.type === 'tool_result') {
+        const result = msg.data?.result
+        const resultData = result?.data
+        if (!resultData) continue
+
+        if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview) {
+          docs.push({
+            pdf_preview: resultData.pdf_preview,
+            markdown_preview: resultData.markdown_preview,
+            html_preview: resultData.html_preview,
+            file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
+            generator: resultData.generator || result?.metadata?.generator,
+            summary: result.summary
+          })
+        }
       }
     }
 

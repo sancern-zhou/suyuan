@@ -357,7 +357,7 @@ class ReadFileTool(LLMTool):
             read_state = get_file_read_state()
             read_state.set(
                 str(file_path),
-                content=full_content if is_full_read else None,
+                content=full_content if is_full_read else content,
                 offset=offset if not is_full_read else None,
                 limit=limit if not is_full_read else None,
                 is_partial_view=not is_full_read,

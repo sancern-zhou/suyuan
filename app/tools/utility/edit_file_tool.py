@@ -210,6 +210,14 @@ class EditFileTool(LLMTool):
 
             # 7. 写回文件
             resolved_path.write_text(new_content, encoding=encoding)
+            edit_preview = self._build_edit_preview(
+                file_path=resolved_path,
+                content=new_content,
+                changed_text=new_string,
+                fallback_index=content.find(old_string),
+                changes=changes,
+                replace_all=replace_all
+            )
 
             logger.info(
                 "edit_file_success",
@@ -222,10 +230,23 @@ class EditFileTool(LLMTool):
                 "success": True,
                 "data": {
                     "path": str(resolved_path),
+                    "file_path": str(resolved_path),
                     "changes": changes,
                     "old_string_preview": old_string[:80] + ("..." if len(old_string) > 80 else ""),
                     "new_string_preview": new_string[:80] + ("..." if len(new_string) > 80 else ""),
-                    "replace_all": replace_all
+                    "replace_all": replace_all,
+                    "markdown_preview": {
+                        "content": edit_preview,
+                        "title": f"编辑预览: {resolved_path.name}",
+                        "preview_type": "edit_file",
+                        "format": "markdown"
+                    },
+                    "generator": "edit_file"
+                },
+                "metadata": {
+                    "schema_version": "v1.0",
+                    "generator": "edit_file",
+                    "file_type": resolved_path.suffix[1:] if resolved_path.suffix else "text"
                 },
                 "summary": f"编辑成功：{resolved_path.name}，替换了 {changes} 处"
             }
@@ -263,6 +284,80 @@ class EditFileTool(LLMTool):
         except Exception as e:
             logger.error("edit_file_path_resolution_failed", path=path, error=str(e))
             return None
+
+    def _build_edit_preview(
+        self,
+        file_path: Path,
+        content: str,
+        changed_text: str,
+        fallback_index: int,
+        changes: int,
+        replace_all: bool
+    ) -> str:
+        """构建编辑后的片段预览，用于前端右侧预览面板。"""
+        lines = content.splitlines()
+        line_starts = []
+        pos = 0
+        for line in lines:
+            line_starts.append(pos)
+            pos += len(line) + 1
+
+        indices = []
+        if changed_text:
+            start = 0
+            while len(indices) < 3:
+                idx = content.find(changed_text, start)
+                if idx == -1:
+                    break
+                indices.append(idx)
+                start = idx + max(len(changed_text), 1)
+
+        if not indices:
+            indices = [max(0, min(fallback_index if fallback_index >= 0 else 0, len(content)))]
+
+        def line_number_for_index(index: int) -> int:
+            if not line_starts:
+                return 1
+            current = 0
+            for i, start_pos in enumerate(line_starts):
+                if start_pos > index:
+                    break
+                current = i
+            return current + 1
+
+        ext = file_path.suffix[1:] or "text"
+        preview_parts = [
+            f"### 编辑预览: `{file_path.name}`",
+            "",
+            f"- 文件: `{file_path}`",
+            f"- 替换次数: {changes}",
+            f"- 替换范围: {'全部匹配' if replace_all else '首个唯一匹配'}",
+            ""
+        ]
+
+        for snippet_index, char_index in enumerate(indices, start=1):
+            line_no = line_number_for_index(char_index)
+            start_line = max(1, line_no - 3)
+            end_line = min(len(lines), line_no + 3)
+            snippet_lines = lines[start_line - 1:end_line] if lines else [content]
+            numbered = [
+                f"{start_line + offset:>4}: {line}"
+                for offset, line in enumerate(snippet_lines)
+            ]
+
+            preview_parts.extend([
+                f"#### 编辑后片段 {snippet_index}",
+                "",
+                f"```{ext}",
+                "\n".join(numbered),
+                "```",
+                ""
+            ])
+
+        if changes > len(indices):
+            preview_parts.append(f"> 仅显示前 {len(indices)} 处编辑片段，共修改 {changes} 处。")
+
+        return "\n".join(preview_parts)
 
     def get_function_schema(self) -> Dict[str, Any]:
         """获取 Function Calling Schema"""

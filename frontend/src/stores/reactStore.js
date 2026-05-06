@@ -1200,6 +1200,19 @@ export const useReactStore = defineStore('react', {
             iteration: toolResultData.iteration,
             timestamp: toolResultData.timestamp
           })
+
+          const resultData = result?.data || {}
+          if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview) {
+            targetState.lastOfficeDocument = {
+              pdf_preview: resultData.pdf_preview,
+              markdown_preview: resultData.markdown_preview,
+              html_preview: resultData.html_preview,
+              file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
+              generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
+              summary: result.summary,
+              timestamp: toolResultData.timestamp
+            }
+          }
           break
         }
 

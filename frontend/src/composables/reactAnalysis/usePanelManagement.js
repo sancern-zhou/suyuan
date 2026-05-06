@@ -83,13 +83,13 @@ export function usePanelManagement(store = null) {
           'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide',
           'read_pptx', 'create_pptx', 'analyze_pptx_template',
           'create_pptx_from_template', 'edit_pptx', 'validate_pptx',
-          'read_file'
+          'read_file', 'edit_file'
         ].includes(generator)
 
-        // 对于 read_file，需要检查是否有 markdown_preview 或 pdf_preview
-        if (generator === 'read_file') {
+        // 对于通用文件工具，需要检查是否有可预览内容
+        if (['read_file', 'edit_file'].includes(generator)) {
           const result = msg.data.result
-          return !!(result.data?.pdf_preview || result.data?.markdown_preview)
+          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview)
         }
 
         return isOfficeTool
