@@ -13,6 +13,16 @@ import structlog
 from config.settings import settings
 import httpx
 from app.utils.llm_context_logger import get_llm_context_logger
+from app.services.llm_failover import (
+    LLMFailoverError,
+    classify_llm_failure,
+    get_cooldown_failure,
+    get_global_llm_semaphore,
+    mark_provider_cooldown,
+    parse_fallback_candidates,
+    should_fallback,
+    summarize_attempts,
+)
 
 logger = structlog.get_logger()
 
@@ -489,6 +499,7 @@ class LLMService:
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
         self.temperature = settings.llm_temperature
+        self._provider_state_lock = asyncio.Lock()
 
         # 调试信息：检查配置是否正确
         logger.debug(
@@ -508,6 +519,126 @@ class LLMService:
             base_url=self.base_url,
             temperature=self.temperature
         )
+
+    def _snapshot_provider_state(self) -> Dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "base_url": getattr(self, "base_url", None),
+            "api_key": getattr(self, "api_key", None),
+            "model": getattr(self, "model", None),
+            "anthropic_client": getattr(self, "anthropic_client", None),
+        }
+
+    def _restore_provider_state(self, state: Dict[str, Any]) -> None:
+        self.provider = state["provider"]
+        self.base_url = state["base_url"]
+        self.api_key = state["api_key"]
+        self.model = state["model"]
+        self.anthropic_client = state["anthropic_client"]
+
+    def _switch_provider_for_attempt(self, provider: str, model: Optional[str] = None) -> None:
+        """Switch this service instance to a fallback candidate for one attempt."""
+        original_provider = self.provider
+        self.provider = provider.lower()
+        self._load_provider_config()
+        if model:
+            self.model = model
+        logger.info(
+            "llm_fallback_candidate_selected",
+            original_provider=original_provider,
+            provider=self.provider,
+            model=self.model,
+        )
+
+    async def _run_llm_request_with_global_limit(self, operation: str, call):
+        semaphore = get_global_llm_semaphore()
+        logger.debug(
+            "llm_global_concurrency_waiting",
+            provider=self.provider,
+            model=self.model,
+            operation=operation,
+        )
+        async with semaphore:
+            logger.debug(
+                "llm_global_concurrency_acquired",
+                provider=self.provider,
+                model=self.model,
+                operation=operation,
+            )
+            return await call()
+
+    async def _run_anthropic_with_fallback(self, operation: str, call):
+        """Run an Anthropic-compatible request with configured model fallback."""
+        async with self._provider_state_lock:
+            original_state = self._snapshot_provider_state()
+            candidates = parse_fallback_candidates(original_state["provider"], original_state["model"])
+            attempts = []
+
+            try:
+                for index, candidate in enumerate(candidates, start=1):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+                    cooldown_failure = get_cooldown_failure(self.provider)
+                    if cooldown_failure and index < len(candidates):
+                        attempts.append({
+                            "provider": self.provider,
+                            "model": self.model,
+                            "reason": cooldown_failure.reason,
+                            "status": cooldown_failure.status,
+                            "code": cooldown_failure.code,
+                            "error": "provider is in cooldown",
+                        })
+                        logger.warning(
+                            "llm_fallback_candidate_skipped_cooldown",
+                            provider=self.provider,
+                            model=self.model,
+                            reason=cooldown_failure.reason,
+                        )
+                        continue
+
+                    try:
+                        result = await self._run_llm_request_with_global_limit(operation, call)
+                        if attempts:
+                            logger.warning(
+                                "llm_fallback_candidate_succeeded",
+                                provider=self.provider,
+                                model=self.model,
+                                attempts=summarize_attempts(attempts),
+                            )
+                        return result
+                    except Exception as exc:
+                        failure = classify_llm_failure(exc)
+                        attempts.append({
+                            "provider": self.provider,
+                            "model": self.model,
+                            "reason": failure.reason,
+                            "status": failure.status,
+                            "code": failure.code,
+                            "error": failure.message,
+                        })
+                        if failure.reason == "context_overflow":
+                            raise
+                        if should_fallback(failure):
+                            mark_provider_cooldown(self.provider, failure)
+                        has_next = index < len(candidates)
+                        logger.warning(
+                            "llm_fallback_candidate_failed",
+                            provider=self.provider,
+                            model=self.model,
+                            reason=failure.reason,
+                            status=failure.status,
+                            code=failure.code,
+                            has_next=has_next,
+                            error=failure.message[:300],
+                        )
+                        if not has_next or not should_fallback(failure):
+                            raise
+                raise LLMFailoverError(summarize_attempts(attempts))
+            except Exception:
+                if attempts:
+                    logger.error("llm_fallback_failed", attempts=summarize_attempts(attempts))
+                raise
+            finally:
+                self._restore_provider_state(original_state)
 
     def _load_provider_config(self):
         """根据provider加载对应配置"""
@@ -688,6 +819,7 @@ class LLMService:
                     )
                     return
 
+                request_timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
                 if self.provider == "mimo":
                     # Mimo 使用 api-key 头，不是 x-api-key
                     # 使用空 api_key 禁用默认认证，通过 default_headers 添加 api-key
@@ -696,13 +828,15 @@ class LLMService:
                         auth_token=None,  # 禁用 Authorization 头
                         base_url=anthropic_base_url,
                         default_headers={"api-key": self.api_key},
-                        timeout=60.0,
+                        timeout=request_timeout,
                         max_retries=2
                     )
                 else:
                     self.anthropic_client = AsyncAnthropic(
                         api_key=self.api_key,
-                        base_url=anthropic_base_url
+                        base_url=anthropic_base_url,
+                        timeout=request_timeout,
+                        max_retries=2
                     )
                 logger.info(
                     "llm_anthropic_client_initialized",
@@ -1954,7 +2088,19 @@ class LLMService:
                 messages_count=len(api_params.get("messages", [])),
                 has_tools=bool(api_params.get("tools")),
             )
-            response = await self.anthropic_client.messages.create(**api_params)
+
+            async def create_message():
+                if not self.anthropic_client:
+                    raise RuntimeError(
+                        f"Anthropic-compatible client not initialized for provider '{self.provider}'."
+                    )
+                api_params["model"] = self.model
+                return await self.anthropic_client.messages.create(**api_params)
+
+            response = await self._run_anthropic_with_fallback(
+                "anthropic_chat",
+                create_message,
+            )
 
             # 提取响应数据
             result = {
@@ -2302,116 +2448,192 @@ class LLMService:
         import time
         start_time = time.time()
 
+        await self._provider_state_lock.acquire()
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(original_state["provider"], original_state["model"])
+        attempts = []
+
         try:
-            async with self.anthropic_client.messages.stream(**api_params) as stream:
-                async for event in stream:
-                    event_type = event.type
+            for index, candidate in enumerate(candidates, start=1):
+                self._switch_provider_for_attempt(candidate.provider, candidate.model)
+                api_params["model"] = self.model
 
-                    if event_type == "message_start":
-                        yield {
-                            "type": "message_start",
-                            "data": {
-                                "usage": {
-                                    "input_tokens": event.message.usage.input_tokens,
-                                    "output_tokens": event.message.usage.output_tokens,
-                                }
-                            }
-                        }
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_streaming_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
 
-                    elif event_type == "content_block_start":
-                        yield {
-                            "type": "content_block_start",
-                            "data": {
-                                "index": event.index,
-                                "block": event.content_block,
-                            }
-                        }
+                try:
+                    if not self.anthropic_client:
+                        raise RuntimeError(
+                            f"Anthropic-compatible client not initialized for provider '{self.provider}'."
+                        )
+                    semaphore = get_global_llm_semaphore()
+                    async with semaphore:
+                        async with self.anthropic_client.messages.stream(**api_params) as stream:
+                            async for event in stream:
+                                event_type = event.type
 
-                    elif event_type == "content_block_delta":
-                        # 记录首token时间
-                        if not first_token_received:
-                            first_token_received = True
-                            ttft = time.time() - start_time
-                            logger.info(
-                                "llm_first_token_received",
-                                provider=self.provider,
-                                model=self.model,
-                                ttft_seconds=round(ttft, 3),
-                            )
+                                if event_type == "message_start":
+                                    yield {
+                                        "type": "message_start",
+                                        "data": {
+                                            "usage": {
+                                                "input_tokens": event.message.usage.input_tokens,
+                                                "output_tokens": event.message.usage.output_tokens,
+                                            }
+                                        }
+                                    }
 
-                        yield {
-                            "type": "content_block_delta",
-                            "data": {
-                                "index": event.index,
-                                "delta": event.delta,
-                            }
-                        }
+                                elif event_type == "content_block_start":
+                                    yield {
+                                        "type": "content_block_start",
+                                        "data": {
+                                            "index": event.index,
+                                            "block": event.content_block,
+                                        }
+                                    }
 
-                    elif event_type == "content_block_stop":
-                        yield {
-                            "type": "content_block_stop",
-                            "data": {"index": event.index}
-                        }
+                                elif event_type == "content_block_delta":
+                                    # 记录首token时间
+                                    if not first_token_received:
+                                        first_token_received = True
+                                        ttft = time.time() - start_time
+                                        logger.info(
+                                            "llm_first_token_received",
+                                            provider=self.provider,
+                                            model=self.model,
+                                            ttft_seconds=round(ttft, 3),
+                                        )
 
-                    elif event_type == "message_delta":
-                        yield {
-                            "type": "message_delta",
-                            "data": {
-                                "stop_reason": event.delta.stop_reason,
-                                "usage": {
-                                    "output_tokens": event.usage.output_tokens,
-                                }
-                            }
-                        }
+                                    yield {
+                                        "type": "content_block_delta",
+                                        "data": {
+                                            "index": event.index,
+                                            "delta": event.delta,
+                                        }
+                                    }
 
-                    elif event_type == "message_stop":
-                        # 记录总时间
-                        total_time = time.time() - start_time
+                                elif event_type == "content_block_stop":
+                                    yield {
+                                        "type": "content_block_stop",
+                                        "data": {"index": event.index}
+                                    }
 
-                        # 打印流式响应总结
-                        logger.info("========== LLM流式响应完成 ==========")
-                        logger.info(
-                            "【流式响应总结】",
+                                elif event_type == "message_delta":
+                                    yield {
+                                        "type": "message_delta",
+                                        "data": {
+                                            "stop_reason": event.delta.stop_reason,
+                                            "usage": {
+                                                "output_tokens": event.usage.output_tokens,
+                                            }
+                                        }
+                                    }
+
+                                elif event_type == "message_stop":
+                                    # 记录总时间
+                                    total_time = time.time() - start_time
+
+                                    # 打印流式响应总结
+                                    logger.info("========== LLM流式响应完成 ==========")
+                                    logger.info(
+                                        "【流式响应总结】",
+                                        provider=self.provider,
+                                        model=self.model,
+                                        total_seconds=round(total_time, 3),
+                                        first_token_received=first_token_received,
+                                        blocks_yielded=blocks_yielded if 'blocks_yielded' in locals() else 'N/A'
+                                    )
+                                    logger.info("========== LLM流式响应结束 ==========")
+
+                                    logger.info(
+                                        "llm_streaming_completed",
+                                        provider=self.provider,
+                                        model=self.model,
+                                        total_seconds=round(total_time, 3),
+                                        first_token_received=first_token_received,
+                                    )
+                                    yield {
+                                        "type": "message_stop",
+                                        "data": {}
+                                    }
+                    if attempts:
+                        logger.warning(
+                            "llm_streaming_fallback_candidate_succeeded",
                             provider=self.provider,
                             model=self.model,
-                            total_seconds=round(total_time, 3),
-                            first_token_received=first_token_received,
-                            blocks_yielded=blocks_yielded if 'blocks_yielded' in locals() else 'N/A'
+                            attempts=summarize_attempts(attempts),
                         )
-                        logger.info("========== LLM流式响应结束 ==========")
-
-                        logger.info(
-                            "llm_streaming_completed",
+                    return
+                except Exception as e:
+                    # ✅ Reactive Compact：流式模式上下文溢出处理
+                    # 注意：流式模式下无法直接重试（generator 已经开始产出）
+                    # 只记录日志，调用方需要处理重试逻辑
+                    if self._is_context_overflow_error(e):
+                        logger.warning(
+                            "context_overflow_detected_streaming",
                             provider=self.provider,
                             model=self.model,
-                            total_seconds=round(total_time, 3),
-                            first_token_received=first_token_received,
+                            error=str(e)[:200],
+                            action="streaming_cannot_retry_in_generator"
                         )
-                        yield {
-                            "type": "message_stop",
-                            "data": {}
-                        }
 
-        except Exception as e:
-            # ✅ Reactive Compact：流式模式上下文溢出处理
-            # 注意：流式模式下无法直接重试（generator 已经开始产出）
-            # 只记录日志，调用方需要处理重试逻辑
-            if self._is_context_overflow_error(e):
-                logger.warning(
-                    "context_overflow_detected_streaming",
-                    provider=self.provider,
-                    model=self.model,
-                    error=str(e)[:200],
-                    action="streaming_cannot_retry_in_generator"
-                )
-
-            logger.error(
-                "llm_anthropic_streaming_failed",
-                provider=self.provider,
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            raise
+                    failure = classify_llm_failure(e)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow" or first_token_received:
+                        logger.error(
+                            "llm_anthropic_streaming_failed",
+                            provider=self.provider,
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_streaming_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        logger.error(
+                            "llm_anthropic_streaming_failed",
+                            provider=self.provider,
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        finally:
+            self._restore_provider_state(original_state)
+            self._provider_state_lock.release()
 
 
 # 全局LLM服务实例
