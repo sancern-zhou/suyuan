@@ -448,7 +448,7 @@ class HeartbeatService:
 
     def _compute_next_run(self, cron_expr: str, current_time: datetime) -> Optional[datetime]:
         """
-        计算任务的下一次运行时间（使用croniter）
+        计算任务的下一次运行时间（使用项目已有的 APScheduler）
 
         Args:
             cron_expr: cron表达式
@@ -458,17 +458,16 @@ class HeartbeatService:
             下次运行时间（时区感知），如果无法计算则返回None
         """
         try:
-            from croniter import croniter
+            from apscheduler.triggers.cron import CronTrigger
 
-            # 使用croniter计算下次执行时间
-            cron = croniter(cron_expr, current_time)
-            next_run = cron.get_next(datetime)
+            trigger = CronTrigger.from_crontab(cron_expr, timezone=self.timezone)
+            next_run = trigger.get_next_fire_time(None, current_time)
 
             logger.debug(
                 "computed_next_run",
                 cron_expr=cron_expr,
                 current_time=current_time.strftime("%Y-%m-%d %H:%M:%S"),
-                next_run=next_run.strftime("%Y-%m-%d %H:%M:%S")
+                next_run=next_run.strftime("%Y-%m-%d %H:%M:%S") if next_run else None
             )
 
             return next_run
