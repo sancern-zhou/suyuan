@@ -113,6 +113,14 @@ class AgentBridge:
         if self.subagent_manager:
             await self.subagent_manager.start()
 
+        # ✅ 后端重启后恢复已有用户的社交定时任务心跳循环
+        if self.user_heartbeat_manager and self.mode == "social":
+            try:
+                restored_count = await self.user_heartbeat_manager.restore_existing_heartbeats()
+                logger.info("user_heartbeat_restore_completed", restored_count=restored_count)
+            except Exception as e:
+                logger.error("user_heartbeat_restore_failed", error=str(e), exc_info=True)
+
         # ✅ 执行迁移：为现有用户创建 USER.md（如果不存在）
         if self.mode == "social":
             try:

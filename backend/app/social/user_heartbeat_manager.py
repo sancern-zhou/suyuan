@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Callable, Optional
 import asyncio
 import structlog
+import json
 
 from app.social.heartbeat_service import HeartbeatService
 
@@ -51,6 +52,69 @@ class UserHeartbeatManager:
             max_cache_size=max_cache_size
         )
 
+    def _metadata_file(self, user_workspace: Path) -> Path:
+        """Return the metadata file used to preserve the original user id."""
+        return user_workspace / ".user_id"
+
+    def _write_user_metadata(self, user_workspace: Path, user_id: str) -> None:
+        """Persist original user id because directory names replace ':' with '_'."""
+        try:
+            self._metadata_file(user_workspace).write_text(user_id, encoding="utf-8")
+        except Exception as e:
+            logger.warning("write_heartbeat_user_metadata_failed", user_id=user_id, error=str(e))
+
+    def _recover_user_id_from_workspace(self, user_workspace: Path) -> Optional[str]:
+        """Recover original user id for a persisted heartbeat workspace."""
+        metadata_file = self._metadata_file(user_workspace)
+        if metadata_file.exists():
+            try:
+                user_id = metadata_file.read_text(encoding="utf-8").strip()
+                if user_id:
+                    return user_id
+            except Exception as e:
+                logger.warning(
+                    "read_heartbeat_user_metadata_failed",
+                    workspace=str(user_workspace),
+                    error=str(e)
+                )
+
+        # Prefer session mappings when available because safe directory names are lossy.
+        mappings_file = self.base_workspace.parent / "session_mappings.json"
+        if mappings_file.exists():
+            try:
+                mappings = json.loads(mappings_file.read_text(encoding="utf-8"))
+                for social_user_id in mappings.keys():
+                    if social_user_id.replace(":", "_") == user_workspace.name:
+                        return social_user_id
+            except Exception as e:
+                logger.warning("recover_user_id_from_mapping_failed", error=str(e))
+
+        # Backward-compatible fallback for old workspaces. This assumes
+        # channel and bot account do not contain underscores.
+        parts = user_workspace.name.split("_", 2)
+        if len(parts) == 3:
+            return f"{parts[0]}:{parts[1]}:{parts[2]}"
+
+        logger.warning(
+            "unable_to_recover_heartbeat_user_id",
+            workspace=str(user_workspace)
+        )
+        return None
+
+    async def _create_user_heartbeat_locked(self, user_id: str, user_workspace: Path) -> HeartbeatService:
+        heartbeat = HeartbeatService(
+            interval_s=30 * 60,
+            workspace=user_workspace,
+            user_id=user_id,
+            on_execute=lambda tasks: self._on_execute_callback(tasks, user_id),
+            on_notify=lambda response: self._on_notify_callback(response, user_id)
+        )
+        await heartbeat.start()
+        self._heartbeat_cache[user_id] = heartbeat
+        self._write_user_metadata(user_workspace, user_id)
+        logger.info("user_heartbeat_created", user_id=user_id)
+        return heartbeat
+
     async def get_user_heartbeat(self, user_id: str) -> HeartbeatService:
         """
         获取或创建用户 HeartbeatService
@@ -72,17 +136,7 @@ class UserHeartbeatManager:
 
                 # 创建用户专属 HeartbeatService
                 user_workspace = self._init_user_workspace(user_id)
-                heartbeat = HeartbeatService(
-                    interval_s=30 * 60,
-                    workspace=user_workspace,
-                    user_id=user_id,
-                    on_execute=lambda tasks: self._on_execute_callback(tasks, user_id),
-                    on_notify=lambda response: self._on_notify_callback(response, user_id)
-                )
-                await heartbeat.start()
-                self._heartbeat_cache[user_id] = heartbeat
-
-                logger.info("user_heartbeat_created", user_id=user_id)
+                heartbeat = await self._create_user_heartbeat_locked(user_id, user_workspace)
 
             return self._heartbeat_cache[user_id]
 
@@ -101,8 +155,42 @@ class UserHeartbeatManager:
             safe_user_id = user_id.replace(":", "_")
             user_dir = self.base_workspace / safe_user_id
             user_dir.mkdir(parents=True, exist_ok=True)
+            self._write_user_metadata(user_dir, user_id)
             return user_dir
         return self.base_workspace
+
+    async def restore_existing_heartbeats(self) -> int:
+        """
+        Restore persisted user heartbeat loops after backend restart.
+
+        Scheduled social tasks live in per-user HEARTBEAT.md files. The manager's
+        cache is in-memory, so restart must scan persisted workspaces and recreate
+        HeartbeatService instances before any user sends a new message.
+        """
+        restored = 0
+        async with self._lock:
+            heartbeat_files = sorted(self.base_workspace.glob("*/HEARTBEAT.md"))
+            for heartbeat_file in heartbeat_files:
+                user_workspace = heartbeat_file.parent
+                user_id = self._recover_user_id_from_workspace(user_workspace)
+                if not user_id:
+                    continue
+
+                if user_id in self._heartbeat_cache:
+                    continue
+
+                if len(self._heartbeat_cache) >= self._max_cache_size:
+                    logger.warning(
+                        "heartbeat_restore_cache_limit_reached",
+                        max_cache_size=self._max_cache_size
+                    )
+                    break
+
+                await self._create_user_heartbeat_locked(user_id, user_workspace)
+                restored += 1
+
+        logger.info("existing_user_heartbeats_restored", count=restored)
+        return restored
 
     async def cleanup_user_heartbeat(self, user_id: str) -> None:
         """
