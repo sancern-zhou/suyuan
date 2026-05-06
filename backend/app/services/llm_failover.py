@@ -176,7 +176,7 @@ def classify_llm_failure(err: object) -> LLMFailure:
 
 
 def should_fallback(failure: LLMFailure) -> bool:
-    return failure.reason in {"rate_limit", "overloaded", "timeout", "billing", "unknown"}
+    return failure.reason in {"rate_limit", "overloaded", "timeout", "billing", "format", "unknown"}
 
 
 def summarize_attempts(attempts: Iterable[dict]) -> list[dict]:
