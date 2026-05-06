@@ -5,12 +5,15 @@
 复用SQLValidator进行安全验证。
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import pyodbc
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.sql_validator import SQLValidator
+
+if TYPE_CHECKING:
+    from app.agent.context import ExecutionContext
 
 
 logger = structlog.get_logger()
@@ -96,11 +99,11 @@ class ExecuteSQLQueryTool(LLMTool):
             description="Execute SQL queries on SQL Server database or get table structure",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="2.2.0",
-            requires_context=False
+            version="2.3.0",
+            requires_context=True  # 启用ExecutionContext以支持数据外部化
         )
 
-    async def execute(self, describe_table: Optional[str] = None, sql: Optional[str] = None, database: Optional[str] = None, limit: Optional[int] = None, **kwargs) -> Dict[str, Any]:
+    async def execute(self, describe_table: Optional[str] = None, sql: Optional[str] = None, database: Optional[str] = None, limit: Optional[int] = None, context: Optional["ExecutionContext"] = None, **kwargs) -> Dict[str, Any]:
         """
         执行工具
 
@@ -109,6 +112,7 @@ class ExecuteSQLQueryTool(LLMTool):
             sql: SQL查询语句（与describe_table二选一）
             database: 数据库名称（可选，默认'XcAiDb'）
             limit: 返回记录数限制
+            context: 执行上下文（用于数据外部化）
 
         Returns:
             查询结果或表结构信息
@@ -153,7 +157,7 @@ class ExecuteSQLQueryTool(LLMTool):
         if describe_table:
             return self._describe_table(describe_table, database)
         else:
-            return await self._execute_sql_query(sql, database, limit)
+            return await self._execute_sql_query(sql, database, limit, context)
 
     def _describe_table(self, table_name: str, database: str) -> Dict[str, Any]:
         """
@@ -311,7 +315,7 @@ class ExecuteSQLQueryTool(LLMTool):
                 "summary": f"查询表结构失败: {str(e)}"
             }
 
-    async def _execute_sql_query(self, sql: str, database: str, limit: Optional[int] = None) -> Dict[str, Any]:
+    async def _execute_sql_query(self, sql: str, database: str, limit: Optional[int], context: Optional["ExecutionContext"]) -> Dict[str, Any]:
         """
         执行SQL查询
 
@@ -319,9 +323,10 @@ class ExecuteSQLQueryTool(LLMTool):
             sql: SQL查询语句
             database: 数据库名称
             limit: 返回记录数限制
+            context: 执行上下文
 
         Returns:
-            查询结果
+            查询结果（data外部化）
         """
 
         # 设置默认限制
@@ -335,7 +340,8 @@ class ExecuteSQLQueryTool(LLMTool):
             "sql_query_start",
             database=database,
             sql_preview=sql[:100] if len(sql) > 100 else sql,
-            limit=limit
+            limit=limit,
+            session_id=getattr(context, 'session_id', 'unknown') if context else 'unknown'
         )
 
         try:
@@ -366,9 +372,70 @@ class ExecuteSQLQueryTool(LLMTool):
                 sql_preview=sql[:100]
             )
 
+            # 4. 数据外部化：超过24条记录时采样
+            sample_data = results
+            data_id = None
+
+            if context and len(results) > 24:
+                try:
+                    # 动态提取列名作为元数据
+                    if results:
+                        columns = list(results[0].keys())
+                    else:
+                        columns = []
+
+                    # 保存完整数据
+                    data_id = context.save_data(
+                        data=results,
+                        schema="sql_query_result",  # 通用schema
+                        metadata={
+                            "database": database,
+                            "sql": sql,
+                            "row_count": len(results),
+                            "columns": columns,
+                            "limit": limit
+                        }
+                    )
+
+                    # 智能采样：前12条 + 后12条（Head-Tail采样）
+                    sample_count = 24
+                    head_size = sample_count // 2
+                    tail_size = sample_count - head_size
+                    head = results[:head_size]
+                    tail = results[-tail_size:]
+                    sample_data = head + tail
+
+                    logger.info(
+                        "sql_query_data_externalized",
+                        total_count=len(results),
+                        sample_count=len(sample_data),
+                        data_id=data_id
+                    )
+
+                    return {
+                        "success": True,
+                        "data": sample_data,  # 只返回样本数据
+                        "data_id": data_id,    # 完整数据ID
+                        "count": len(results),
+                        "sample_count": len(sample_data),
+                        "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）",
+                        "metadata": {
+                            "database": database,
+                            "columns": columns,
+                            "externalized": True
+                        }
+                    }
+                except Exception as save_error:
+                    logger.warning("sql_query_save_failed", error=str(save_error))
+                    # 外部化失败，降级到返回全部数据
+                    data_id = None
+
+            # 未外部化，返回全部数据
             return {
                 "success": True,
                 "data": results,
+                "data_id": data_id,
+                "count": len(results),
                 "summary": f"查询到{len(results)}条记录"
             }
 

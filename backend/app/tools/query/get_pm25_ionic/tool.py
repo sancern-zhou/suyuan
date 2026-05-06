@@ -231,26 +231,50 @@ class GetPM25IonicTool(LLMTool):
             records = _filter_mark_fields(records)
             logger.info("pm25_ionic_filtered", original_count=len(records), filtered_count=len(records))
 
-            # 保存数据到上下文
+            # 数据外部化：保存完整数据到文件系统
             data_id = None
             file_path = None
-            try:
-                data_id = context.save_data(
-                    data=records,
-                    schema="particulate_unified",
-                    metadata={
-                        "component_type": "ionic",
-                        "station": station,
-                        "code": code,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "record_count": len(records),
-                        "data_type": data_type,
-                        "time_type": time_type
-                    }
-                )
-            except Exception as save_error:
-                logger.warning("pm25_ionic_save_failed", error=str(save_error))
+            sample_data = records
+
+            if len(records) > 24:
+                # 超过24条，进行采样并外部化
+                try:
+                    data_id = context.save_data(
+                        data=records,
+                        schema="particulate_unified",
+                        metadata={
+                            "component_type": "ionic",
+                            "station": station,
+                            "code": code,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "record_count": len(records),
+                            "data_type": data_type,
+                            "time_type": time_type
+                        }
+                    )
+
+                    # 智能采样：前12条 + 中间采样 + 后12条
+                    sample_count = min(24, len(records))
+                    if len(records) <= 24:
+                        sample_data = records
+                    else:
+                        # Head-Tail采样策略
+                        head_size = sample_count // 2
+                        tail_size = sample_count - head_size
+                        head = records[:head_size]
+                        tail = records[-tail_size:]
+                        sample_data = head + tail
+
+                    logger.info(
+                        "pm25_ionic_data_externalized",
+                        total_count=len(records),
+                        sample_count=len(sample_data),
+                        data_id=data_id
+                    )
+                except Exception as save_error:
+                    logger.warning("pm25_ionic_save_failed", error=str(save_error))
+                    data_id = None
 
             # 分析数据质量
             quality_report = self._analyze_quality(records)
@@ -266,20 +290,29 @@ class GetPM25IonicTool(LLMTool):
                     "components": first.get("components")
                 }
 
+            # 构建返回消息
+            if data_id:
+                summary_msg = f"成功获取{len(records)}条PM2.5水溶性离子数据（已外部化，返回样本{len(sample_data)}条）"
+            else:
+                summary_msg = f"成功获取{len(records)}条PM2.5水溶性离子数据"
+
             return {
                 "success": True,
-                "data": records,
-                "data_id": data_id,
+                "data": sample_data,  # 只返回样本数据
+                "data_id": data_id,    # 完整数据ID
                 "file_path": file_path,
                 "count": len(records),
+                "sample_count": len(sample_data),
                 "station": station,
                 "code": code,
                 "data_type": data_type,
                 "time_type": time_type,
                 "quality_report": quality_report,
-                "summary": f"[OK] 成功获取{len(records)}条PM2.5水溶性离子数据，已保存为 {data_id}（路径: {file_path}）。",
+                "summary": summary_msg,
                 "metadata": {
-                    "sample_record": sample_record
+                    "sample_record": sample_record,
+                    "total_count": len(records),
+                    "externalized": data_id is not None
                 }
             }
 

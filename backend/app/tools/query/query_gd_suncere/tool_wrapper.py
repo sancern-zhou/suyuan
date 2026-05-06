@@ -14,6 +14,98 @@ from app.agent.context.execution_context import ExecutionContext
 logger = structlog.get_logger()
 
 
+def _apply_externalization_if_needed(result: Dict[str, Any], context: ExecutionContext, tool_name: str) -> Dict[str, Any]:
+    """
+    应用数据外部化检查（通用函数）
+
+    如果结果包含大量数据（>24条），自动进行采样和外部化
+
+    Args:
+        result: 原始查询结果
+        context: 执行上下文
+        tool_name: 工具名称（用于日志）
+
+    Returns:
+        处理后的结果（可能已外部化）
+    """
+    if not isinstance(result, dict):
+        return result
+
+    # 检查是否有 data_id 且数据量大
+    has_data_id = 'data_id' in result and result.get('data_id')
+    data = result.get('data', [])
+
+    if not isinstance(data, list):
+        return result
+
+    has_large_data = len(data) > 24
+
+    if has_data_id and has_large_data:
+        # 已外部化，只返回样本数据
+        original_data = result['data']
+        sample_data = original_data[:24]  # 前24条作为样本
+
+        # 更新返回结果
+        result['data'] = sample_data
+        result['original_count'] = len(original_data)
+        result['sample_count'] = len(sample_data)
+        result['externalized'] = True
+
+        # 更新摘要
+        original_summary = result.get('summary', '')
+        if original_summary:
+            result['summary'] = f"{original_summary}（已外部化，返回样本{len(sample_data)}条）"
+
+        logger.info(
+            "gd_suncere_tool_data_externalized",
+            tool=tool_name,
+            original_count=len(original_data),
+            sample_count=len(sample_data),
+            data_id=result.get('data_id')[:50] if result.get('data_id') else None
+        )
+
+    elif not has_data_id and has_large_data:
+        # 未外部化但数据量大，需要外部化
+        try:
+            data_id = context.save_data(
+                data=data,
+                schema="air_quality_unified",
+                metadata={
+                    "tool": tool_name,
+                    "record_count": len(data),
+                    "auto_externalized": True
+                }
+            )
+
+            sample_data = data[:24]
+            result['data'] = sample_data
+            result['data_id'] = data_id
+            result['original_count'] = len(data)
+            result['sample_count'] = len(sample_data)
+            result['externalized'] = True
+
+            # 更新摘要
+            original_summary = result.get('summary', '')
+            if original_summary:
+                result['summary'] = f"{original_summary}（已外部化，返回样本{len(sample_data)}条）"
+
+            logger.info(
+                "gd_suncere_tool_auto_externalized",
+                tool=tool_name,
+                original_count=len(data),
+                sample_count=len(sample_data),
+                data_id=data_id[:50] if data_id else None
+            )
+        except Exception as save_error:
+            logger.warning(
+                "gd_suncere_tool_externalize_failed",
+                tool=tool_name,
+                error=str(save_error)
+            )
+
+    return result
+
+
 class QueryGDSuncereCityHourTool(LLMTool):
     """
     广东省城市小时数据查询工具
@@ -104,6 +196,9 @@ class QueryGDSuncereCityHourTool(LLMTool):
             context=context,
             include_weather=include_weather
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_city_hour")
 
         return result
 
@@ -251,6 +346,9 @@ class QueryGDSuncereStationHourTool(LLMTool):
             include_weather=include_weather
         )
 
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_station_hour_new")
+
         return result
 
 
@@ -388,6 +486,9 @@ class QueryGDSuncereStationDayTool(LLMTool):
             station_type=effective_station_type
         )
 
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_station_day_new")
+
         return result
 
 
@@ -480,6 +581,9 @@ class QueryGDSuncereRegionalComparisonTool(LLMTool):
             end_time=end_time,
             context=context
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_regional_comparison")
 
         return result
 
@@ -586,6 +690,9 @@ class QueryGDSuncereCityDayTool(LLMTool):
             data_type=data_type,
             enable_sand_deduction=enable_sand_deduction
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_city_day")
 
         return result
 
@@ -737,6 +844,9 @@ time_type=8  # 任意时间报表
             pollutant_codes=pollutant_codes,
             context=context
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_report")
 
         return result
 
@@ -890,6 +1000,9 @@ contrast_time=["2025-02-01 00:00:00", "2025-02-28 23:59:59"]
             context=context
         )
 
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_report_compare")
+
         return result
 
 
@@ -986,6 +1099,9 @@ class QueryStandardComparisonTool(LLMTool):
             context=context,
             enable_sand_deduction=enable_sand_deduction
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_standard_comparison")
 
         return result
 
@@ -1093,6 +1209,9 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             data_type=data_type,
             enable_sand_deduction=enable_sand_deduction
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_city_day_new")
 
         return result
 
@@ -1212,6 +1331,9 @@ class QueryGDSuncereCityDayOldStandardTool(LLMTool):
             data_source=data_source
         )
 
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_city_day_old_standard")
+
         return result
 
 
@@ -1303,5 +1425,8 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
             use_new_composite_algorithm=use_new_composite_algorithm,
             context=context
         )
+
+        # 应用数据外部化检查
+        result = _apply_externalization_if_needed(result, context, "query_old_standard_report")
 
         return result
