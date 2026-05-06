@@ -63,6 +63,7 @@ class RunState:
     response_text: str = ""
     response_streamed: bool = False
     assistant_message_written: bool = False
+    user_message_written: bool = False
     has_seen_tool_use: bool = False
     workflow_sources: List[Any] = field(default_factory=list)
     # ❌ 移除：workflow_visuals（不再使用，visuals从tool_result获取）
