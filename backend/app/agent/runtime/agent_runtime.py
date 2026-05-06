@@ -94,7 +94,6 @@ class AgentRuntime:
 
             self.planner.is_interruption = self.config.is_interruption
             self.writer.load_initial_history_if_needed(initial_messages)
-            self.writer.add_user_message(state.user_query)
 
             yield self.events.start(state)
 
@@ -116,11 +115,13 @@ class AgentRuntime:
                         break
 
             if not state.task_completed:
+                self._ensure_user_message_written(state)
                 async for event in self.finalizer.timeout(state):
                     yield event
 
         except Exception as exc:
             logger.error("agent_runtime_fatal_error", error=str(exc), exc_info=True)
+            self._ensure_user_message_written(state)
             async for event in self.finalizer.fatal_error(state, exc):
                 yield event
 
@@ -168,6 +169,7 @@ class AgentRuntime:
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
+            self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
             self.writer.add_iteration(planner_result.thought, action, observation)
             for event in tool_events:
@@ -181,6 +183,7 @@ class AgentRuntime:
             "error": f"Unknown action type: {action_type}",
             "summary": "任务失败：未知的 action type",
         }
+        self._ensure_user_message_written(state)
         self.writer.add_iteration(planner_result.thought, action, observation)
 
     async def _build_context(self, state: RunState) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -349,6 +352,7 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
+        self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)
         self.writer.add_iteration(planner_result.thought, action, observation)
 
@@ -376,11 +380,13 @@ class AgentRuntime:
                 "guard_warning": guard_result["warning_message"],
             }
             action = {"type": "FINAL_ANSWER", "answer": answer}
+            self._ensure_user_message_written(state)
             self.writer.add_iteration(planner_result.thought, action, observation)
             yield self.events.tool_result(state, "task_guard", observation, True, "task_guard")
             return
 
         self.observation_processor.capture_last_knowledge_sources(state)
+        self._ensure_user_message_written(state)
         self.writer.add_iteration(
             planner_result.thought,
             {"type": "FINAL_ANSWER", "answer": answer},
@@ -408,6 +414,7 @@ class AgentRuntime:
                 "summary": f"有 {guard_result['incomplete_count']} 个任务尚未完成，不能生成最终答案。请先完成所有任务。",
                 "guard_warning": guard_result["warning_message"],
             }
+            self._ensure_user_message_written(state)
             self.writer.add_iteration(planner_result.thought, {"type": "FINISH_SUMMARY"}, observation)
             yield self.events.tool_result(state, "task_guard", observation, True, "task_guard")
             return
@@ -424,6 +431,7 @@ class AgentRuntime:
         yield self.events.assistant_delta(state, "", is_complete=True)
         state.response_streamed = True
 
+        self._ensure_user_message_written(state)
         self.writer.add_iteration(
             planner_result.thought,
             {"type": "FINISH_SUMMARY"},
@@ -443,6 +451,13 @@ class AgentRuntime:
             thought=planner_result.thought,
         ):
             yield event
+
+    def _ensure_user_message_written(self, state: RunState) -> None:
+        """Persist the current user turn exactly once, after planning context is built."""
+        if state.user_message_written:
+            return
+        self.writer.add_user_message(state.user_query)
+        state.user_message_written = True
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         import json

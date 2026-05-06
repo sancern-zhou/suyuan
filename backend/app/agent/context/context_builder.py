@@ -227,7 +227,7 @@ class SimplifiedContextBuilder:
         """
         # ✅ 使用新的提示词构建器，传递记忆上下文、soul上下文和用户上下文
         from ..prompts.prompt_builder import build_react_system_prompt
-        return build_react_system_prompt(
+        mode_prompt = build_react_system_prompt(
             mode=self.current_mode,
             user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
             memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅social模式使用）
@@ -237,6 +237,17 @@ class SimplifiedContextBuilder:
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
             user_context=self.user_context  # ✅ 传递用户上下文内容（USER.md）
+        )
+        return f"{mode_prompt.rstrip()}\n\n{self._build_agent_control_prompt()}"
+
+    def _build_agent_control_prompt(self) -> str:
+        """Build system-level loop control rules for every agent mode."""
+        return (
+            "<agent_control>\n"
+            "本轮开始前先判断用户任务是否已经完成。\n"
+            "如果已有对话和工具结果足以回答，直接给出最终答案。\n"
+            "如果仍缺少必要信息，才调用工具；不要重复调用已成功且结果仍有效的工具。\n"
+            "</agent_control>"
         )
 
     def _apply_mode_context_policy(self, mode: str) -> None:
@@ -365,6 +376,7 @@ class SimplifiedContextBuilder:
         memory_section = ""
         user_question_section = ""
         attachment_section = ""
+        current_input_section = f"## 当前进行的任务\n{query}\n"
 
         if has_memory_enhancement:
             # 提取记忆部分（在"用户问题："之前）
@@ -403,20 +415,27 @@ class SimplifiedContextBuilder:
                     preview=attachment_section[:200]
                 )
 
+        if has_memory_enhancement or has_attachments:
+            current_input_section = (
+                "## 当前进行的任务\n"
+                f"{memory_section}"
+                f"{user_question_section}"
+                f"{attachment_section}"
+            )
+
         if conversation_history:
             # 已有对话历史：结构化 history 已通过 messages 单独传递。
-            # 此处只放当前轮状态，不重复展开工具调用和工具结果。
+            # 此处只放当前轮状态，不重复展开工具调用、工具结果或通用控制规则。
             status_section = (
                 f"## 当前状态\n"
-                f"**迭代次数**: {iteration} | **当前时间**: {current_time}\n\n"
-                f"{memory_section}"  # ✅ 添加记忆增强内容
-                f"{user_question_section}"  # ✅ 添加用户问题
-                f"{attachment_section}"  # ✅ 添加附件信息（关键修复）
-                f"请根据已传入的结构化对话历史和工具执行结果，判断用户任务是否已完成。\n"
-                f"- 如果已完成：直接给出最终答案回复用户\n"
-                f"- 如果未完成：继续调用必要的工具，但**不要重复执行已经成功过的工具调用**"
+                f"**迭代次数**: {iteration} | **当前时间**: {current_time}"
             )
             sections.append(status_section)
+
+            # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
+            # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
+            if iteration == 1:
+                sections.append(current_input_section)
 
             # ✅ 调试日志：确认记忆和用户问题内容已添加
             if has_memory_enhancement or has_attachments:
@@ -431,7 +450,7 @@ class SimplifiedContextBuilder:
                 )
         else:
             # 首次迭代：显示完整查询
-            sections.append(f"## 当前进行的任务\n{query}\n\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
+            sections.append(f"{current_input_section}\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）
         # conversation_history已包含所有历史对话，包括完整的observation数据
