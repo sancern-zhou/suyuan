@@ -165,6 +165,22 @@ class Settings(BaseSettings):
         default=0.3,
         description="Default temperature for LLM generation"
     )
+    llm_global_max_concurrency: int = Field(
+        default=2,
+        description="Global concurrent LLM request limit shared by all providers"
+    )
+    llm_request_timeout_seconds: float = Field(
+        default=180.0,
+        description="Timeout in seconds for LLM provider requests"
+    )
+    llm_fallbacks: str = Field(
+        default="",
+        description="Comma-separated fallback models, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2-pro"
+    )
+    llm_failover_cooldown_seconds: int = Field(
+        default=60,
+        description="Cooldown seconds for transiently failing LLM providers"
+    )
 
     # 千问3配置
     qwen_api_key: Optional[str] = Field(default=None, description="Qwen3 API key")
