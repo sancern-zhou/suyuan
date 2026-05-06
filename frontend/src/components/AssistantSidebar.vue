@@ -111,6 +111,7 @@ watch(() => props.collapsed, (newValue) => {
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
+const RECENT_SESSIONS_LIMIT = 30
 let recentSessionsTimer = null
 
 const displayedRecentSessions = computed(() => {
@@ -144,7 +145,7 @@ const displayedRecentSessions = computed(() => {
       if (a.is_running !== b.is_running) return a.is_running ? -1 : 1
       return new Date(b.updated_at) - new Date(a.updated_at)
     })
-    .slice(0, 10)
+    .slice(0, RECENT_SESSIONS_LIMIT)
 })
 
 const modules = [
@@ -236,14 +237,14 @@ const refreshRecentSessions = async (options = {}) => {
   const { silent = false } = options
   if (!silent) refreshingSessions.value = true
   try {
-    const response = await fetch('/api/sessions?limit=10')
+    const response = await fetch(`/api/sessions?limit=${RECENT_SESSIONS_LIMIT}`)
     if (!response.ok) throw new Error('Failed to fetch sessions')
     const data = await response.json()
-    // 按更新时间排序，取最近10条
+    // 按更新时间排序，取最近会话
     const sessions = (data.sessions || []).sort((a, b) => {
       return new Date(b.updated_at) - new Date(a.updated_at)
     })
-    recentSessions.value = sessions.slice(0, 10)
+    recentSessions.value = sessions.slice(0, RECENT_SESSIONS_LIMIT)
   } catch (error) {
     console.error('Failed to fetch recent sessions:', error)
   } finally {
@@ -327,14 +328,14 @@ onUnmounted(() => {
 .sidebar-header {
   position: sticky;
   top: 0;
-  z-index: 10;
-  margin-bottom: 16px;
+  z-index: 20;
+  margin-bottom: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   background: #fafbff;
   padding-top: 4px;
-  padding-bottom: 8px;
+  padding-bottom: 16px;
 
   .header-title-wrapper {
     display: flex;
@@ -376,10 +377,11 @@ onUnmounted(() => {
 .new-session-section {
   position: sticky;
   top: 84px;
-  z-index: 9;
+  z-index: 19;
   background: #fafbff;
   padding-bottom: 8px;
   margin-bottom: 8px;
+  box-shadow: 0 10px 0 #fafbff;
 
   .collapsed & {
     position: static;
