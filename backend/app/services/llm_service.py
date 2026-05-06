@@ -131,6 +131,207 @@ class LLMService:
 
         return filtered
 
+    @staticmethod
+    def _sanitize_anthropic_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Return messages valid for Anthropic Messages API.
+
+        The Messages API only accepts user/assistant roles. Internal compact
+        boundary markers are useful for local memory, but must not be sent as
+        provider messages.
+        """
+        import copy
+
+        sanitized: List[Dict[str, Any]] = []
+        dropped_roles: Dict[str, int] = {}
+
+        for msg in messages:
+            role = msg.get("role")
+            if role in ("user", "assistant"):
+                sanitized.append(copy.deepcopy(msg))
+                continue
+
+            dropped_roles[str(role)] = dropped_roles.get(str(role), 0) + 1
+
+        if dropped_roles:
+            logger.warning(
+                "anthropic_invalid_message_roles_dropped",
+                dropped_roles=dropped_roles,
+                original_count=len(messages),
+                sanitized_count=len(sanitized),
+            )
+
+        return sanitized
+
+    @staticmethod
+    def _detect_thinking_blocks(messages: List[Dict[str, Any]]) -> Tuple[bool, List[str], List[Dict[str, Any]]]:
+        """Detect thinking/redacted_thinking blocks for provider-specific handling."""
+        has_thinking_blocks = False
+        thinking_blocks_found: List[str] = []
+        messages_structure: List[Dict[str, Any]] = []
+
+        for msg in messages:
+            content = msg.get("content", [])
+            msg_info = {
+                "role": msg.get("role"),
+                "content_type": type(content).__name__,
+                "content_length": len(content) if isinstance(content, list) else 0,
+                "content_types": [],
+            }
+
+            if isinstance(content, list):
+                for block in content:
+                    block_type = block.get("type") if isinstance(block, dict) else "unknown"
+                    msg_info["content_types"].append(block_type)
+                    if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
+                        has_thinking_blocks = True
+                        thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
+                        break
+            messages_structure.append(msg_info)
+
+            if has_thinking_blocks:
+                break
+
+        return has_thinking_blocks, thinking_blocks_found, messages_structure
+
+    @staticmethod
+    def _is_deepseek_tool_continuation(messages: List[Dict[str, Any]]) -> bool:
+        """Whether the request continues the same tool-use chain."""
+        if len(messages) < 2:
+            return False
+
+        last_msg = messages[-1]
+        second_last_msg = messages[-2]
+        if last_msg.get("role") != "user" or second_last_msg.get("role") != "assistant":
+            return False
+
+        last_content = last_msg.get("content", [])
+        second_last_content = second_last_msg.get("content", [])
+        has_tool_result = any(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in (last_content if isinstance(last_content, list) else [])
+        )
+        has_tool_use = any(
+            isinstance(block, dict) and block.get("type") == "tool_use"
+            for block in (second_last_content if isinstance(second_last_content, list) else [])
+        )
+        return has_tool_result and has_tool_use
+
+    def _build_anthropic_api_params(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict]],
+        max_tokens: Optional[int],
+        temperature: float,
+        system: Optional[str],
+        streaming: bool = False,
+    ) -> Dict[str, Any]:
+        """Build provider-specific Anthropic-compatible request parameters.
+
+        This must run after selecting a fallback candidate because message
+        normalization, thinking mode, and prompt-cache support differ by
+        provider.
+        """
+        sanitized_messages = self._sanitize_anthropic_messages(messages)
+
+        is_real_anthropic = (
+            self.provider in ["anthropic", "claude"] or
+            "claude" in self.model.lower() or
+            "anthropic" in self.model.lower()
+        )
+        is_deepseek = (
+            self.provider == "deepseek" or
+            "deepseek" in self.model.lower()
+        )
+
+        has_thinking_blocks, thinking_blocks_found, messages_structure = self._detect_thinking_blocks(
+            sanitized_messages
+        )
+
+        logger.info(
+            "thinking_blocks_detection_streaming" if streaming else "thinking_blocks_detection",
+            provider=self.provider,
+            model=self.model,
+            has_thinking_blocks=has_thinking_blocks,
+            is_deepseek=is_deepseek,
+            found_blocks=thinking_blocks_found,
+            messages_count=len(sanitized_messages),
+            messages_structure=messages_structure,
+        )
+
+        api_params: Dict[str, Any] = {
+            "model": self.model,
+            "messages": sanitized_messages,
+            "max_tokens": max_tokens or 16384,
+            "temperature": temperature,
+        }
+
+        if tools:
+            api_params["tools"] = tools
+
+        logger.debug(
+            "thinking_mode_decision_streaming" if streaming else "thinking_mode_decision",
+            provider=self.provider,
+            model=self.model,
+            is_real_anthropic=is_real_anthropic,
+            is_deepseek=is_deepseek,
+            has_thinking_blocks_in_history=has_thinking_blocks,
+        )
+
+        if is_real_anthropic:
+            api_params["thinking"] = {
+                "type": "extended",
+                "budget_tokens": 20000,
+            }
+            logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
+        elif is_deepseek:
+            if self._is_deepseek_tool_continuation(sanitized_messages) and has_thinking_blocks:
+                api_params["messages"] = self._filter_redacted_thinking_for_deepseek(sanitized_messages)
+                logger.info(
+                    "deepseek_thinking_blocks_preserved",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)",
+                )
+            else:
+                api_params["thinking"] = {"type": "disabled"}
+                api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
+                logger.info(
+                    "deepseek_thinking_mode_disabled",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="New user turn, disabling thinking mode and stripping thinking blocks",
+                )
+        else:
+            api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
+            logger.info(
+                "extended_thinking_skipped",
+                provider=self.provider,
+                model=self.model,
+                reason="Not a real Anthropic API",
+            )
+
+        if system:
+            api_params["system"] = system
+
+        if self.provider in ["mimo", "anthropic"] or "claude" in self.model.lower():
+            api_params = self._add_cache_control(api_params)
+            logger.info(
+                "prompt_cache_enabled",
+                provider=self.provider,
+                model=self.model,
+                reason="Provider supports cache_control",
+            )
+        else:
+            logger.debug(
+                "prompt_cache_skipped",
+                provider=self.provider,
+                model=self.model,
+                reason="Provider does not support cache_control (auto KV cache or not supported)",
+            )
+
+        return api_params
+
     async def _parse_sse_stream(
         self,
         response: httpx.Response
@@ -576,7 +777,11 @@ class LLMService:
 
             try:
                 for index, candidate in enumerate(candidates, start=1):
-                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+                    if not (
+                        candidate.provider == original_state["provider"].lower()
+                        and (candidate.model or original_state["model"]) == original_state["model"]
+                    ):
+                        self._switch_provider_for_attempt(candidate.provider, candidate.model)
                     cooldown_failure = get_cooldown_failure(self.provider)
                     if cooldown_failure and index < len(candidates):
                         attempts.append({
@@ -1924,177 +2129,26 @@ class LLMService:
         logger.info("========== LLM调用上下文结束 ==========")
 
         try:
-            is_real_anthropic = (
-                self.provider in ["anthropic", "claude"] or
-                "claude" in self.model.lower() or
-                "anthropic" in self.model.lower()
-            )
-            # DeepSeek 的 deepseek-v4-flash 默认开启 thinking，Anthropic API 文档确认 thinking 参数 Supported
-            is_deepseek = (
-                self.provider == "deepseek" or
-                "deepseek" in self.model.lower()
-            )
-
-            # ✅ 检测消息历史中是否包含 thinking blocks
-            # DeepSeek 等兼容 API 要求：如果历史中有 thinking blocks，
-            # 后续请求必须启用 thinking mode 并原样回传，否则报 400 错误
-            has_thinking_blocks_in_history = False
-            thinking_blocks_found = []  # 调试信息
-            messages_structure = []  # ✅ 新增：记录消息结构
-
-            for msg in messages:
-                content = msg.get("content", [])
-                msg_info = {
-                    "role": msg.get("role"),
-                    "content_type": type(content).__name__,
-                    "content_length": len(content) if isinstance(content, list) else 0,
-                    "content_types": []
-                }
-
-                if isinstance(content, list):
-                    for block in content:
-                        block_type = block.get("type") if isinstance(block, dict) else "unknown"
-                        msg_info["content_types"].append(block_type)
-
-                        # 检测 thinking blocks（DeepSeek 只支持 thinking，不支持 redacted_thinking）
-                        # 注意：DeepSeek 分支会在 continuation 时过滤掉 redacted_thinking
-                        if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
-                            has_thinking_blocks_in_history = True
-                            thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
-                            break
-                messages_structure.append(msg_info)
-
-                if has_thinking_blocks_in_history:
-                    break
-
-            logger.info(
-                "thinking_blocks_detection",
-                provider=self.provider,
-                model=self.model,
-                has_thinking_blocks=has_thinking_blocks_in_history,
-                is_deepseek=is_deepseek,
-                found_blocks=thinking_blocks_found,
-                messages_count=len(messages),
-                messages_structure=messages_structure  # ✅ 打印消息结构
-            )
-
-            # 构建 API 调用参数
-            api_params = {
-                "model": self.model,
-                "messages": messages,
-                "max_tokens": max_tokens or 16384,
-                "temperature": temperature
-            }
-
-            # 只在有工具时才添加tools参数（某些API如Mimo不支持空tools）
-            if tools:
-                api_params["tools"] = tools
-
-            logger.debug(
-                "thinking_mode_decision",
-                provider=self.provider,
-                model=self.model,
-                is_real_anthropic=is_real_anthropic,
-                is_deepseek=is_deepseek,
-                has_thinking_blocks_in_history=has_thinking_blocks_in_history
-            )
-
-            if is_real_anthropic:
-                api_params["thinking"] = {
-                    "type": "extended",
-                    "budget_tokens": 20000
-                }
-                logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
-            elif is_deepseek:
-                # ⚠️ DeepSeek 特殊处理：根据上下文判断是否保留 thinking blocks
-                # DeepSeek 官方要求：
-                # 1. 同一次工具调用链路中，assistant 的 thinking + tool_use 必须与后续 tool_result 一起回传
-                # 2. 新一轮用户问题开始时，才移除 thinking blocks
-                # 参考：https://api-docs.deepseek.com/zh-cn/guides/anthropic_api
-
-                # 检测是否是同一轮工具调用链路
-                is_continuation = False
-                if messages and len(messages) >= 2:
-                    last_msg = messages[-1]
-                    second_last_msg = messages[-2]
-
-                    # 如果最后一条是 user 消息（tool_result），倒数第二条是 assistant 消息（tool_use）
-                    # 说明是工具调用链路的继续
-                    if (last_msg.get("role") == "user" and
-                        second_last_msg.get("role") == "assistant"):
-                        last_content = last_msg.get("content", [])
-                        second_last_content = second_last_msg.get("content", [])
-
-                        # 检查是否包含 tool_result 和 tool_use
-                        has_tool_result = any(
-                            isinstance(block, dict) and block.get("type") == "tool_result"
-                            for block in (last_content if isinstance(last_content, list) else [])
-                        )
-                        has_tool_use = any(
-                            isinstance(block, dict) and block.get("type") == "tool_use"
-                            for block in (second_last_content if isinstance(second_last_content, list) else [])
-                        )
-
-                        if has_tool_result and has_tool_use:
-                            is_continuation = True
-
-                if is_continuation and has_thinking_blocks_in_history:
-                    # 同一轮工具调用链路：保留 thinking blocks，但过滤掉 redacted_thinking
-                    # DeepSeek 只支持 thinking 类型，不支持 redacted_thinking
-                    messages = self._filter_redacted_thinking_for_deepseek(messages)
-                    api_params["messages"] = messages
-                    logger.info("deepseek_thinking_blocks_preserved", provider=self.provider, model=self.model,
-                               reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)")
-                else:
-                    # 新用户轮次：禁用 thinking mode，剥离 thinking blocks
-                    api_params["thinking"] = {"type": "disabled"}
-                    messages = self._strip_thinking_blocks(messages)
-                    api_params["messages"] = messages
-                    logger.info("deepseek_thinking_mode_disabled", provider=self.provider, model=self.model,
-                               reason="New user turn, disabling thinking mode and stripping thinking blocks")
-            else:
-                # ✅ 其他非 Anthropic API：剥离 thinking blocks，避免兼容 API 触发 thinking mode 要求
-                # 参考 Claude Code 的 stripSignatureBlocks 策略
-                messages = self._strip_thinking_blocks(messages)
-                api_params["messages"] = messages
-                logger.info("extended_thinking_skipped", provider=self.provider, model=self.model, reason="Not a real Anthropic API")
-
-            # 添加 system 参数（如果提供）
-            if system:
-                api_params["system"] = system
-
-            # ✅ Prompt Cache 优化：对支持的 Provider 添加 cache_control 标记
-            # MIMO 和 Anthropic 支持 cache_control，DeepSeek 不支持（Ignored）
-            if self.provider in ["mimo", "anthropic"] or "claude" in self.model.lower():
-                api_params = self._add_cache_control(api_params)
-                logger.info(
-                    "prompt_cache_enabled",
-                    provider=self.provider,
-                    model=self.model,
-                    reason="Provider supports cache_control"
-                )
-            else:
-                logger.debug(
-                    "prompt_cache_skipped",
-                    provider=self.provider,
-                    model=self.model,
-                    reason="Provider does not support cache_control (auto KV cache or not supported)"
-                )
-
-            logger.info(
-                "llm_anthropic_chat_request",
-                provider=self.provider,
-                model=self.model,
-                messages_count=len(api_params.get("messages", [])),
-                has_tools=bool(api_params.get("tools")),
-            )
-
             async def create_message():
                 if not self.anthropic_client:
                     raise RuntimeError(
                         f"Anthropic-compatible client not initialized for provider '{self.provider}'."
                     )
-                api_params["model"] = self.model
+                api_params = self._build_anthropic_api_params(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                    streaming=False,
+                )
+                logger.info(
+                    "llm_anthropic_chat_request",
+                    provider=self.provider,
+                    model=self.model,
+                    messages_count=len(api_params.get("messages", [])),
+                    has_tools=bool(api_params.get("tools")),
+                )
                 return await self.anthropic_client.messages.create(**api_params)
 
             response = await self._run_anthropic_with_fallback(
@@ -2299,150 +2353,6 @@ class LLMService:
 
         logger.info("========== LLM流式调用上下文结束 ==========")
 
-        is_real_anthropic = (
-            self.provider in ["anthropic", "claude"] or
-            "claude" in self.model.lower() or
-            "anthropic" in self.model.lower()
-        )
-        # DeepSeek 的 deepseek-v4-flash 默认开启 thinking，Anthropic API 文档确认 thinking 参数 Supported
-        is_deepseek = (
-            self.provider == "deepseek" or
-            "deepseek" in self.model.lower()
-        )
-
-        # ✅ 检测消息历史中是否包含 thinking blocks
-        # DeepSeek 要求：如果历史中有 thinking blocks，后续请求必须启用 thinking mode
-        has_thinking_blocks_in_history = False
-        thinking_blocks_found = []  # 调试信息
-        messages_structure = []  # ✅ 新增：记录消息结构
-
-        for msg in messages:
-            content = msg.get("content", [])
-            msg_info = {
-                "role": msg.get("role"),
-                "content_type": type(content).__name__,
-                "content_length": len(content) if isinstance(content, list) else 0,
-                "content_types": []
-            }
-
-            if isinstance(content, list):
-                for block in content:
-                    block_type = block.get("type") if isinstance(block, dict) else "unknown"
-                    msg_info["content_types"].append(block_type)
-
-                    # 检测 thinking blocks（DeepSeek 只支持 thinking，不支持 redacted_thinking）
-                    # 注意：DeepSeek 分支会在 continuation 时过滤掉 redacted_thinking
-                    if isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"):
-                        has_thinking_blocks_in_history = True
-                        thinking_blocks_found.append(f"role={msg.get('role')}, type={block_type}")
-                        break
-            messages_structure.append(msg_info)
-
-            if has_thinking_blocks_in_history:
-                break
-
-        logger.info(
-            "thinking_blocks_detection_streaming",
-            provider=self.provider,
-            model=self.model,
-            has_thinking_blocks=has_thinking_blocks_in_history,
-            is_deepseek=is_deepseek,
-            found_blocks=thinking_blocks_found,
-            messages_count=len(messages),
-            messages_structure=messages_structure  # ✅ 打印消息结构
-        )
-
-        api_params = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": max_tokens or 16384,
-            "temperature": temperature
-        }
-
-        # 只在有工具时才添加tools参数（某些API如Mimo不支持空tools）
-        if tools:
-            api_params["tools"] = tools
-
-        logger.debug(
-            "thinking_mode_decision_streaming",
-            provider=self.provider,
-            model=self.model,
-            is_real_anthropic=is_real_anthropic,
-            is_deepseek=is_deepseek,
-            has_thinking_blocks_in_history=has_thinking_blocks_in_history
-        )
-
-        if is_real_anthropic:
-            api_params["thinking"] = {
-                "type": "extended",
-                "budget_tokens": 20000
-            }
-            logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
-        elif is_deepseek:
-            # ⚠️ DeepSeek 特殊处理：根据上下文判断是否保留 thinking blocks
-            # DeepSeek 官方要求：
-            # 1. 同一次工具调用链路中，assistant 的 thinking + tool_use 必须与后续 tool_result 一起回传
-            # 2. 新一轮用户问题开始时，才移除 thinking blocks
-            # 参考：https://api-docs.deepseek.com/zh-cn/guides/anthropic_api
-
-            # 检测是否是同一轮工具调用链路
-            is_continuation = False
-            if messages and len(messages) >= 2:
-                last_msg = messages[-1]
-                second_last_msg = messages[-2]
-
-                # 如果最后一条是 user 消息（tool_result），倒数第二条是 assistant 消息（tool_use）
-                # 说明是工具调用链路的继续
-                if (last_msg.get("role") == "user" and
-                    second_last_msg.get("role") == "assistant"):
-                    last_content = last_msg.get("content", [])
-                    second_last_content = second_last_msg.get("content", [])
-
-                    # 检查是否包含 tool_result 和 tool_use
-                    has_tool_result = any(
-                        isinstance(block, dict) and block.get("type") == "tool_result"
-                        for block in (last_content if isinstance(last_content, list) else [])
-                    )
-                    has_tool_use = any(
-                        isinstance(block, dict) and block.get("type") == "tool_use"
-                        for block in (second_last_content if isinstance(second_last_content, list) else [])
-                    )
-
-                    if has_tool_result and has_tool_use:
-                        is_continuation = True
-
-            if is_continuation and has_thinking_blocks_in_history:
-                # 同一轮工具调用链路：保留 thinking blocks，但过滤掉 redacted_thinking
-                # DeepSeek 只支持 thinking 类型，不支持 redacted_thinking
-                messages = self._filter_redacted_thinking_for_deepseek(messages)
-                api_params["messages"] = messages
-                logger.info("deepseek_thinking_blocks_preserved", provider=self.provider, model=self.model,
-                           reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)")
-            else:
-                # 新用户轮次：禁用 thinking mode，剥离 thinking blocks
-                api_params["thinking"] = {"type": "disabled"}
-                messages = self._strip_thinking_blocks(messages)
-                api_params["messages"] = messages
-                logger.info("deepseek_thinking_mode_disabled", provider=self.provider, model=self.model,
-                           reason="New user turn, disabling thinking mode and stripping thinking blocks")
-        else:
-            # ✅ 其他非 Anthropic API：剥离 thinking blocks，避免兼容 API 触发 thinking mode 要求
-            # 参考 Claude Code 的 stripSignatureBlocks 策略
-            messages = self._strip_thinking_blocks(messages)
-            api_params["messages"] = messages
-            logger.info("extended_thinking_skipped", provider=self.provider, model=self.model, reason="Not a real Anthropic API")
-
-        if system:
-            api_params["system"] = system
-
-        logger.info(
-            "llm_anthropic_streaming_request",
-            provider=self.provider,
-            model=self.model,
-            messages_count=len(messages),
-            has_tools=tools is not None,
-        )
-
         # 追踪首token时间（TTFT - Time to First Token）
         first_token_received = False
         import time
@@ -2455,8 +2365,11 @@ class LLMService:
 
         try:
             for index, candidate in enumerate(candidates, start=1):
-                self._switch_provider_for_attempt(candidate.provider, candidate.model)
-                api_params["model"] = self.model
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
 
                 cooldown_failure = get_cooldown_failure(self.provider)
                 if cooldown_failure and index < len(candidates):
@@ -2481,6 +2394,21 @@ class LLMService:
                         raise RuntimeError(
                             f"Anthropic-compatible client not initialized for provider '{self.provider}'."
                         )
+                    api_params = self._build_anthropic_api_params(
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        system=system,
+                        streaming=True,
+                    )
+                    logger.info(
+                        "llm_anthropic_streaming_request",
+                        provider=self.provider,
+                        model=self.model,
+                        messages_count=len(api_params.get("messages", [])),
+                        has_tools=bool(api_params.get("tools")),
+                    )
                     semaphore = get_global_llm_semaphore()
                     async with semaphore:
                         async with self.anthropic_client.messages.stream(**api_params) as stream:
