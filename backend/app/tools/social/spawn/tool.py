@@ -71,8 +71,8 @@ class SpawnTool(LLMTool):
                     },
                     "manual_mode": {
                         "type": "string",
-                        "description": "后台子Agent运行模式（可选：assistant/expert/query/code，默认assistant）",
-                        "enum": ["assistant", "expert", "query", "code"],
+                        "description": "后台子Agent运行模式（可选：assistant/expert/query/code/chart，默认assistant）",
+                        "enum": ["assistant", "expert", "query", "code", "chart"],
                         "default": "assistant"
                     }
                 },
@@ -132,7 +132,7 @@ class SpawnTool(LLMTool):
         if not isinstance(timeout, int) or timeout < 60 or timeout > 86400:
             timeout = 3600
 
-        allowed_modes = {"assistant", "expert", "query", "code"}
+        allowed_modes = {"assistant", "expert", "query", "code", "chart"}
         if manual_mode not in allowed_modes:
             manual_mode = "assistant"
 

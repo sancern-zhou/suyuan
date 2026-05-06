@@ -1,6 +1,8 @@
-# 浏览器工具技能指导（v3.3）
+# 浏览器工具技能指导（v3.4）
 
 > **MANDATORY**: 复杂浏览任务或浏览器调用失败后必读；简单打开网页、截图、提取页面文本等任务可直接调用工具
+>
+> **v3.4更新**: 新增百度搜索企业官网最佳实践，修正搜索引擎推荐优先级
 >
 > **v3.3更新**: 修复execute_js工具使用方法，移除错误的arguments用法
 
@@ -29,21 +31,79 @@
 
 ### 搜索引擎
 
-**必应 (Bing)** ⭐ 推荐搜索引擎：
+**百度 (Baidu)** ⭐⭐⭐⭐⭐ 搜索中文企业官网首选：
 ```python
-# 直接搜索（无验证码，推荐）
+# 直接搜索（推荐用于查找企业官网）
+from urllib.parse import quote
+search_url = f"https://www.baidu.com/s?wd={quote('广东旭诚科技有限公司 官网')}"
+browser(action="navigate", url=search_url)
+browser(action="wait", load_state="domcontentloaded", timeout=5000)
+```
+
+**必应 (Bing)** ⭐⭐⭐ 通用搜索：
+```python
+# 直接搜索
 from urllib.parse import quote
 search_url = f"https://www.bing.com/search?q={quote('广东旭诚科技有限公司')}"
 browser(action="navigate", url=search_url)
 browser(action="wait", load_state="domcontentloaded", timeout=5000)
 ```
 
-
 ### 搜索结果操作
 
-**必应 (Bing) 搜索结果提取** ⭐ 推荐：
+#### 百度搜索结果提取 ⭐⭐⭐⭐⭐ 推荐（查找企业官网）
+
+**重要经验**：百度搜索结果中，每个结果容器的 `mu` 属性直接存储目标网址，比必应的跳转链接更可靠！
+
+**方法1：通过snapshot的refs提取mu属性** ⭐⭐⭐⭐⭐ 最可靠：
 ```python
-# 提取搜索结果
+# 第1步：获取snapshot
+snapshot = browser(action="snapshot", format="ai", compact=True)
+refs = snapshot['data']['refs']
+
+# 第2步：从refs中提取官网URL（mu属性存储真实网址）
+browser(action="execute_js", code="""
+    (refs) => {
+        for (const [refId, refData] of Object.entries(refs)) {
+            if (refData.html_attrs && refData.html_attrs.mu) {
+                const mu = refData.html_attrs.mu;
+                // 过滤掉百度内部链接和广告链接
+                if (mu.startsWith('http') && !mu.includes('baidu.com') && !mu.includes('recommend')) {
+                    return mu;
+                }
+            }
+        }
+        return null;
+    }
+""", refs=refs)
+```
+
+**方法2：直接DOM提取mu属性** ⭐⭐⭐⭐：
+```python
+browser(action="execute_js", code="""
+    () => {
+        const results = [];
+        document.querySelectorAll('div.result[mu], div.c-container[mu]').forEach(container => {
+            const mu = container.getAttribute('mu');
+            const h3 = container.querySelector('h3');
+            if (mu && h3 && mu.startsWith('http')) {
+                results.push({
+                    title: h3.textContent.trim(),
+                    url: mu
+                });
+            }
+        });
+        return results;
+    }
+""")
+```
+
+#### 必应搜索结果提取 ⭐⭐⭐
+
+**⚠️ 重要限制**：必应搜索结果的链接是跳转URL（如 `http://www.baidu.com/link?url=...`），不包含目标网站的真实域名，无法通过关键词过滤找到特定企业官网！
+
+```python
+# 提取搜索结果（注意：链接是跳转URL，不是真实网址）
 browser(action="execute_js", code="""
     () => {
         const results = [];
@@ -60,6 +120,7 @@ browser(action="execute_js", code="""
         return results;
     }
 """)
+```
 ```
 
 **方法1：直接DOM提取** ⭐⭐⭐⭐⭐
