@@ -371,6 +371,10 @@ class HeartbeatService:
         # TODO: 后续可以使用更完善的YAML解析
         import re
 
+        # HEARTBEAT.md contains documentation examples in fenced code blocks.
+        # Those examples must not be treated as real scheduled tasks.
+        content = re.sub(r"```[\s\S]*?```", "", content)
+
         tasks = []
         # 修复：支持多行description（使用[\s\S]+?代替.+?）
         # 修复：允许enabled和next_run_at之间有其他字段（如channels）
