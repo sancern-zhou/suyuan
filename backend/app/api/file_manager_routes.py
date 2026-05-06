@@ -11,6 +11,7 @@ import os
 from typing import List, Dict, Any
 from datetime import datetime
 import logging
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -217,10 +218,12 @@ async def download_file(path: str = Query(..., description="文件路径，相�
 
         # HTML文件在线展示，其他文件下载
         headers = {}
+        # 使用 RFC 2231 标准编码中文文件名
+        filename_encoded = quote(target_path.name, safe='')
         if media_type == 'text/html':
-            headers['Content-Disposition'] = 'inline; filename="{}"'.format(target_path.name)
+            headers['Content-Disposition'] = f"inline; filename*=UTF-8''{filename_encoded}"
         else:
-            headers['Content-Disposition'] = 'attachment; filename="{}"'.format(target_path.name)
+            headers['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename_encoded}"
 
         # 返回文件
         return FileResponse(

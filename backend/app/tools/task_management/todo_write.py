@@ -96,6 +96,8 @@ class TodoWriteTool(LLMTool):
             Execution result with rendered todo list
         """
         try:
+            import json
+
             # Import TodoList
             from app.agent.task.todo_models import TodoList
 
@@ -105,6 +107,11 @@ class TodoWriteTool(LLMTool):
 
             if not items:
                 raise ValueError("必须提供 items 或 task_list_file 参数")
+
+            # Handle JSON string input (LLM sometimes serializes to string)
+            if isinstance(items, str):
+                logger.info("detected_json_string_input", parsing=True)
+                items = json.loads(items)
 
             # Get todo_list from context
             todo_list = context.get_task_list()

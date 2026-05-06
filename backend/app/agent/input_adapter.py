@@ -399,6 +399,19 @@ TOOL_RULES = {
             "source_file": "source"
         }
     },
+    # ========================================
+    # 任务管理工具
+    # ========================================
+    "TodoWrite": {
+        "required_fields": ["items"],
+        "optional_fields": ["task_list_file"],
+        "field_mapping": {
+            "todos": "items",  # LLM可能使用todos，映射到items
+            "tasks": "items",  # LLM可能使用tasks，映射到items
+            "任务列表": "items",
+            "任务": "items"
+        }
+    },
 }
 
 
