@@ -2,7 +2,7 @@
 EditFile 工具 V2 - 完整对标 Claude Code 官方实现
 
 改进点（对标官方 FileEditTool.ts + utils.ts）：
-1. ✅ 预读取验证（强制要求先read_file）
+1. ✅ 预读取验证（要求先read_file；分页读取命中已读片段时允许精确编辑）
 2. ✅ 引号规范化（弯引号↔直引号自动转换）
 3. ✅ Trailing空格处理（自动去除，Markdown除外）
 4. ✅ 文件修改检查（时间戳+内容双重验证）
@@ -253,7 +253,7 @@ class EditFileToolV2(LLMTool):
     文件精确编辑工具 V2（完整对标 Claude Code 官方实现）
 
     核心改进：
-    1. 强制预读取验证（必须先调用read_file）
+    1. 预读取验证（必须先调用read_file；分页读取命中已读片段时允许精确编辑）
     2. 引号规范化（自动处理弯引号）
     3. Trailing空格处理（自动去除）
     4. 文件修改检查（防止并发冲突）
@@ -282,7 +282,7 @@ class EditFileToolV2(LLMTool):
 - ✅ 适用于：代码文件（.py, .js, .ts 等）、配置文件（.json, .yaml, .xml 等）、文本文件（.txt, .md 等）
 
 核心功能：
-1. 强制预读验证：必须先使用 read_file 读取文件
+1. 预读验证：必须先使用 read_file 读取文件；分页读取命中 old_string 时也可编辑
 2. 引号规范化：自动处理弯引号（"..." ↔ "..."）
 3. Trailing空格处理：自动去除每行末尾空格（Markdown除外）
 4. 文件修改检查：检测文件是否在读取后被修改
@@ -314,7 +314,7 @@ class EditFileToolV2(LLMTool):
 - 示例：多行文本应该是 "line1\\nline2\\nline3" 而不是直接换行
 
 注意：
-- 必须先使用 read_file 读取文件，否则会报错
+- 必须先使用 read_file 读取文件，否则会报错；分页读取只允许编辑已读取片段中的唯一匹配内容
 - old_string 在文件中不存在时会提供详细诊断信息
 - old_string 在文件中出现多次且 replace_all=False 时报错
 - 自动处理引号规范化和trailing空格
@@ -398,9 +398,9 @@ class EditFileToolV2(LLMTool):
                 }
 
             # ============================================================
-            # 4. 预读取验证（强制要求先read_file）
+            # 4. 预读取验证（要求先read_file，支持已读分页片段）
             # ============================================================
-            pre_read_check = self._check_pre_read(resolved_path)
+            pre_read_check = self._check_pre_read(resolved_path, old_string, replace_all)
             if not pre_read_check["valid"]:
                 return {
                     "success": False,
@@ -546,19 +546,48 @@ class EditFileToolV2(LLMTool):
             logger.error("edit_file_v2_path_resolution_failed", path=path, error=str(e))
             return None
 
-    def _check_pre_read(self, file_path: Path) -> Dict[str, Any]:
+    def _check_pre_read(
+        self,
+        file_path: Path,
+        old_string: str,
+        replace_all: bool = False
+    ) -> Dict[str, Any]:
         """
-        预读取验证（强制要求先read_file）
+        预读取验证。
 
-        参考：FileEditTool.ts:275-286
+        完整读取始终允许编辑。分页读取时，如果 old_string 命中已读取片段，
+        允许非 replace_all 的精确编辑；最终仍会基于全文件做唯一性检查。
         """
         read_record = self.read_state.get(str(file_path))
 
-        if read_record is None or read_record.is_partial_view:
+        if read_record is None:
             return {
                 "valid": False,
                 "error": "File has not been read yet. Use read_file first before editing.",
                 "summary": "编辑失败：请先使用 read_file 读取文件"
+            }
+
+        if read_record.is_full_read:
+            return {"valid": True}
+
+        if replace_all:
+            return {
+                "valid": False,
+                "error": "replace_all=True requires a full read before editing.",
+                "summary": "编辑失败：replace_all=True 需要先完整读取文件"
+            }
+
+        viewed_content = read_record.content or ""
+        if find_actual_string(viewed_content, old_string) is None:
+            line_hint = ""
+            if read_record.offset is not None and read_record.limit is not None:
+                start_line = read_record.offset + 1
+                end_line = read_record.offset + read_record.limit
+                line_hint = f"（已读范围约第 {start_line}-{end_line} 行）"
+            return {
+                "valid": False,
+                "error": "old_string is not present in the previously read file segment. Read the target segment first, or read the full file.",
+                "summary": f"编辑失败：old_string 不在已读取片段中{line_hint}"
             }
 
         return {"valid": True}

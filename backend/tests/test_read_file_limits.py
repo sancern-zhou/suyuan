@@ -1,6 +1,16 @@
 import pytest
 
+from app.tools.utility.edit_file_tool_v2 import EditFileToolV2
+from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.utility.read_file_tool import ReadFileTool
+
+
+@pytest.fixture(autouse=True)
+def clear_read_state():
+    state = get_file_read_state()
+    state.clear()
+    yield
+    state.clear()
 
 
 @pytest.mark.asyncio
@@ -44,3 +54,69 @@ async def test_read_text_allows_large_file_when_limit_is_explicit(tmp_path):
     assert result["data"]["line_range"] == [2, 3]
     assert result["data"]["total_lines"] == 4
     assert result["data"]["is_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_edit_allows_old_string_from_partial_read(tmp_path):
+    file_path = tmp_path / "partial_edit.txt"
+    file_path.write_text(
+        "line 1\nline 2\ntarget line\nline 4\nunread target\n",
+        encoding="utf-8",
+    )
+
+    read_tool = ReadFileTool()
+    read_tool.allowed_dirs.append(tmp_path)
+    edit_tool = EditFileToolV2()
+    edit_tool.working_dir = tmp_path
+
+    read_result = await read_tool.execute(
+        path=str(file_path),
+        offset=1,
+        limit=3,
+        encoding="utf-8",
+    )
+    assert read_result["success"] is True
+    assert read_result["data"]["is_truncated"] is True
+
+    edit_result = await edit_tool.execute(
+        path=str(file_path),
+        old_string="target line",
+        new_string="updated line",
+        encoding="utf-8",
+    )
+
+    assert edit_result["success"] is True
+    assert "updated line" in file_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_edit_rejects_old_string_outside_partial_read(tmp_path):
+    file_path = tmp_path / "partial_edit.txt"
+    file_path.write_text(
+        "line 1\nline 2\ntarget line\nline 4\nunread target\n",
+        encoding="utf-8",
+    )
+
+    read_tool = ReadFileTool()
+    read_tool.allowed_dirs.append(tmp_path)
+    edit_tool = EditFileToolV2()
+    edit_tool.working_dir = tmp_path
+
+    read_result = await read_tool.execute(
+        path=str(file_path),
+        offset=0,
+        limit=2,
+        encoding="utf-8",
+    )
+    assert read_result["success"] is True
+
+    edit_result = await edit_tool.execute(
+        path=str(file_path),
+        old_string="unread target",
+        new_string="updated target",
+        encoding="utf-8",
+    )
+
+    assert edit_result["success"] is False
+    assert "old_string 不在已读取片段中" in edit_result["summary"]
+    assert "unread target" in file_path.read_text(encoding="utf-8")

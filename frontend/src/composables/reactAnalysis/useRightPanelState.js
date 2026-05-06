@@ -40,12 +40,12 @@ export function useRightPanelState(store = null) {
         const isOfficeTool = [
           'word_edit', 'find_replace_word', 'accept_word_changes',
           'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide',
-          'read_file'
+          'read_file', 'edit_file'
         ].includes(generator)
 
-        if (generator === 'read_file') {
+        if (['read_file', 'edit_file'].includes(generator)) {
           const result = msg.data.result
-          return !!(result.data?.pdf_preview || result.data?.markdown_preview)
+          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview)
         }
 
         return isOfficeTool
@@ -185,7 +185,7 @@ export function useRightPanelState(store = null) {
     // 监听office_document事件
     if (store) {
       watch(() => store.lastOfficeDocument, (doc) => {
-        if (doc?.pdf_preview) {
+        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview) {
           officePanelVisible.value = true
           activeRightTab.value = 'document'
         }
