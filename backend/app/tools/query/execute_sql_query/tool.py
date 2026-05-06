@@ -103,16 +103,16 @@ class ExecuteSQLQueryTool(LLMTool):
             requires_context=True  # 启用ExecutionContext以支持数据外部化
         )
 
-    async def execute(self, describe_table: Optional[str] = None, sql: Optional[str] = None, database: Optional[str] = None, limit: Optional[int] = None, context: Optional["ExecutionContext"] = None, **kwargs) -> Dict[str, Any]:
+    async def execute(self, context: Optional["ExecutionContext"] = None, describe_table: Optional[str] = None, sql: Optional[str] = None, database: Optional[str] = None, limit: Optional[int] = None, **kwargs) -> Dict[str, Any]:
         """
         执行工具
 
         Args:
+            context: 执行上下文（用于数据外部化）
             describe_table: 查看表结构（与sql二选一，不能为空）
             sql: SQL查询语句（与describe_table二选一）
             database: 数据库名称（可选，默认'XcAiDb'）
             limit: 返回记录数限制
-            context: 执行上下文（用于数据外部化）
 
         Returns:
             查询结果或表结构信息
