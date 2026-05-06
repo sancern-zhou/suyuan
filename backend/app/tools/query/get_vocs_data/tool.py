@@ -113,31 +113,40 @@ class GetVOCsDataTool(LLMTool):
         # 使用验证后的数据（如果验证失败则使用原始数据）
         data_to_save = validated_data if validated_data else data
 
-        # Context-Aware V2: 保存数据到执行上下文
-        # 【修复】使用 vocs_unified schema，数据会通过Schema层的model_validator自动转换
-        # 【关键修复】同时传入 field_stats，供 PMF 验证时检查物种数量
-        data_ref = None
+        # 数据外部化：超过24条记录时采样
+        data_id = None
         file_path = None
+        sample_data = data
+        sample_count = len(data)
         field_stats = validation_result["field_stats"] if validation_result else None
-        try:
-            data_ref = context.save_data(
-                data=data_to_save,  # 【修复】使用验证后的数据，包含完整的 species 字段
-                schema="vocs_unified",
-                field_stats=field_stats,  # 传入验证器生成的字段统计
-                metadata={
-                    "question": question,
-                    "record_count": count,
-                    "data_type": "vocs",
-                }
-            )
-            data_id = data_ref["data_id"]
-            file_path = data_ref["file_path"]
-            logger.info("vocs_data_saved", data_id=data_id, file_path=file_path, record_count=count, field_stats_count=len(field_stats) if field_stats else 0)
-        except Exception as save_error:
-            logger.warning("vocs_data_save_failed", error=str(save_error))
+
+        if len(data) > 24:
+            try:
+                data_ref = context.save_data(
+                    data=data_to_save,
+                    schema="vocs_unified",
+                    field_stats=field_stats,
+                    metadata={
+                        "question": question,
+                        "record_count": count,
+                        "data_type": "vocs",
+                    }
+                )
+                data_id = data_ref["data_id"]
+                file_path = data_ref["file_path"]
+                logger.info("vocs_data_saved", data_id=data_id, file_path=file_path, record_count=count, field_stats_count=len(field_stats) if field_stats else 0)
+
+                # 智能采样：Head-Tail策略
+                head_size = 12
+                tail_size = 12
+                sample_data = data[:head_size] + data[-tail_size:]
+                sample_count = len(sample_data)
+
+            except Exception as save_error:
+                logger.warning("vocs_data_save_failed", error=str(save_error))
 
         # 生成数据样本（第一条记录，用于LLM快速了解数据结构）
-        sample_record = data[0] if data else None
+        sample_record = sample_data[0] if sample_data else None
         if sample_record:
             # 提取关键字段用于样本展示
             sample_summary = {
@@ -149,24 +158,31 @@ class GetVOCsDataTool(LLMTool):
         else:
             sample_summary = None
 
+        # 构建返回消息
+        if data_id:
+            summary_msg = f"[OK] 成功获取{count}条VOCs数据（已外部化，返回样本{sample_count}条），已保存为 {data_id}（路径: {file_path}）。"
+        else:
+            summary_msg = f"[OK] 成功获取{count}条VOCs数据，已保存为 {data_id}（路径: {file_path}）。"
+
         return {
             "success": True,
             "status": "success",
-            "data": data,
-            "data_id": data_id,
-            "file_path": file_path,  # 顶层 data_id
-            "file_path": file_path,  # 新增：文件路径（混合方案）
+            "data": sample_data,  # 只返回样本数据
             "count": count,
+            "sample_count": sample_count,
+            "data_id": data_id,
+            "file_path": file_path,
             "question": question,
             "data_type": data_type,
-            "summary": f"[OK] 成功获取{count}条VOCs数据，已保存为 {data_id}（路径: {file_path}）。",
+            "summary": summary_msg,
             "metadata": {
                 "schema_version": "v2.0",
                 "generator": "get_vocs_data",
                 "question": question,
                 "record_count": count,
                 "data_type": "vocs",
-                "sample_record": sample_summary,  # 添加数据样本
+                "sample_record": sample_summary,
+                "externalized": data_id is not None,
             },
             "registry_schema": "vocs",
             "registry_metadata": {

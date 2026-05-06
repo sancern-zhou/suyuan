@@ -56,7 +56,7 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
-            requires_context=False  # 不需要ExecutionContext
+            requires_context=True  # 启用ExecutionContext以支持数据外部化
         )
 
     async def execute(
@@ -71,13 +71,13 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
         执行全国省份空气质量数据查询
 
         Args:
-            context: 执行上下文（可选）
+            context: 执行上下文（必需）
             start_date: 开始日期
             end_date: 结束日期
             ns_type: 数据类型
 
         Returns:
-            查询结果字典
+            查询结果字典（data外部化）
         """
         from app.tools.query.query_national_air_quality import get_national_air_quality_tool
 
@@ -105,13 +105,39 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
                 province_count=len(data)
             )
 
-            # 返回标准格式结果
-            return {
-                "status": "success",
-                "success": True,
-                "data": data,
-                "summary": f"成功获取{len(data)}个省份的空气质量统计数据"
-            }
+            # 数据外部化存储
+            if context and len(data) > 24:
+                data_id = context.save_data(
+                    data=data,
+                    schema="national_province_statistics"
+                )
+
+                # 返回样本数据（前24条）
+                sample_data = data[:24]
+
+                return {
+                    "status": "success",
+                    "success": True,
+                    "data": sample_data,  # 只返回样本数据
+                    "data_id": data_id,    # 完整数据ID
+                    "metadata": {
+                        "total_count": len(data),
+                        "sample_count": len(sample_data),
+                        "schema": "national_province_statistics",
+                        "schema_version": "v2.0",
+                        "generator": "query_national_province_air_quality",
+                        "field_mapping_applied": False
+                    },
+                    "summary": f"成功获取{len(data)}个省份的空气质量统计数据（已外部化，样本前24条）"
+                }
+            else:
+                # 数据量小，直接返回
+                return {
+                    "status": "success",
+                    "success": True,
+                    "data": data,
+                    "summary": f"成功获取{len(data)}个省份的空气质量统计数据"
+                }
 
         except Exception as e:
             logger.error(
@@ -173,7 +199,7 @@ class QueryNationalCityAirQualityTool(LLMTool):
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
-            requires_context=False
+            requires_context=True  # 启用ExecutionContext以支持数据外部化
         )
 
     async def execute(
@@ -189,14 +215,14 @@ class QueryNationalCityAirQualityTool(LLMTool):
         执行全国城市空气质量数据查询
 
         Args:
-            context: 执行上下文（可选）
+            context: 执行上下文（必需）
             start_date: 开始日期
             end_date: 结束日期
             province_code: 省份代码（可选）
             ns_type: 数据类型
 
         Returns:
-            查询结果字典
+            查询结果字典（data外部化）
         """
         from app.tools.query.query_national_air_quality import get_national_air_quality_tool
 
@@ -205,7 +231,8 @@ class QueryNationalCityAirQualityTool(LLMTool):
             start_date=start_date,
             end_date=end_date,
             province_code=province_code,
-            ns_type=ns_type
+            ns_type=ns_type,
+            session_id=getattr(context, 'session_id', 'unknown') if context else 'unknown'
         )
 
         try:
@@ -225,17 +252,45 @@ class QueryNationalCityAirQualityTool(LLMTool):
                 city_count=len(data)
             )
 
-            return {
-                "status": "success",
-                "success": True,
-                "data": data,
-                "summary": f"成功获取{len(data)}个城市的空气质量统计数据"
-            }
+            # 数据外部化存储
+            if context and len(data) > 24:
+                data_id = context.save_data(
+                    data=data,
+                    schema="national_city_statistics"
+                )
+
+                # 返回样本数据（前24条）
+                sample_data = data[:24]
+
+                return {
+                    "status": "success",
+                    "success": True,
+                    "data": sample_data,  # 只返回样本数据
+                    "data_id": data_id,    # 完整数据ID
+                    "metadata": {
+                        "total_count": len(data),
+                        "sample_count": len(sample_data),
+                        "schema": "national_city_statistics",
+                        "schema_version": "v2.0",
+                        "generator": "query_national_city_air_quality",
+                        "field_mapping_applied": False
+                    },
+                    "summary": f"成功获取{len(data)}个城市的空气质量统计数据（已外部化，样本前24条）"
+                }
+            else:
+                # 数据量小，直接返回
+                return {
+                    "status": "success",
+                    "success": True,
+                    "data": data,
+                    "summary": f"成功获取{len(data)}个城市的空气质量统计数据"
+                }
 
         except Exception as e:
             logger.error(
                 "query_national_city_air_quality_failed",
-                error=str(e)
+                error=str(e),
+                error_type=type(e).__name__
             )
             return {
                 "status": "failed",

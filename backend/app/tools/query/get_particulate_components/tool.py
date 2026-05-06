@@ -212,38 +212,56 @@ class GetParticulateComponentsTool(LLMTool):
                     "requested_components": self.DETECTION_ITEM_CODES
                 }
 
-            # 保存数据
-            data_ref = None
+            # 数据外部化：超过24条记录时采样
+            data_id = None
             file_path = None
-            try:
-                data_ref = context.save_data(
-                    data=records,
-                    schema="particulate_unified",
-                    metadata={
-                        "component_type": "pm25_components",
-                        "station": station,
-                        "code": code,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "record_count": len(records),
-                        "data_type": data_type,
-                        "time_granularity": time_granularity,
-                        "detection_item_codes": self.DETECTION_ITEM_CODES
-                    }
-                )
-                data_id = data_ref["data_id"]
-                file_path = data_ref["file_path"]
-                logger.info("pm25_components_saved", data_id=data_id, file_path=file_path, count=len(records))
-            except Exception as save_error:
-                logger.warning("pm25_components_save_failed", error=str(save_error))
+            sample_data = records
+            sample_count = len(records)
+
+            if len(records) > 24:
+                try:
+                    data_ref = context.save_data(
+                        data=records,
+                        schema="particulate_unified",
+                        metadata={
+                            "component_type": "pm25_components",
+                            "station": station,
+                            "code": code,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "record_count": len(records),
+                            "data_type": data_type,
+                            "time_granularity": time_granularity,
+                            "detection_item_codes": self.DETECTION_ITEM_CODES
+                        }
+                    )
+                    data_id = data_ref["data_id"]
+                    file_path = data_ref["file_path"]
+                    logger.info("pm25_components_saved", data_id=data_id, file_path=file_path, count=len(records))
+
+                    # 智能采样：Head-Tail策略
+                    head_size = 12
+                    tail_size = 12
+                    sample_data = records[:head_size] + records[-tail_size:]
+                    sample_count = len(sample_data)
+
+                except Exception as save_error:
+                    logger.warning("pm25_components_save_failed", error=str(save_error))
 
             # 分析数据质量
             quality_report = self._analyze_quality(records)
 
+            # 构建返回消息
+            if data_id:
+                summary_msg = f"Retrieved {len(records)} PM2.5 component records for {station} ({code}), including {component_list} (externalized, returning {sample_count} samples)"
+            else:
+                summary_msg = f"Retrieved {len(records)} PM2.5 component records for {station} ({code}), including {component_list}"
+
             return {
                 "success": True,
-                "data": records,
+                "data": sample_data,  # 只返回样本数据
                 "count": len(records),
+                "sample_count": sample_count,
                 "data_id": data_id,
                 "file_path": file_path,
                 "station": station,
@@ -253,10 +271,7 @@ class GetParticulateComponentsTool(LLMTool):
                 "components": self.DETECTION_ITEM_CODES,
                 "component_names": [self.COMPONENT_NAMES.get(code, code) for code in self.DETECTION_ITEM_CODES],
                 "quality_report": quality_report,
-                "summary": (
-                    f"Retrieved {len(records)} PM2.5 component records for {station} ({code}), "
-                    f"including {component_list}. Saved as {data_id} (path: {file_path})"
-                )
+                "summary": summary_msg
             }
 
         except Exception as e:
