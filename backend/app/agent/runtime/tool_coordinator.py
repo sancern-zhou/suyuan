@@ -47,6 +47,21 @@ class ToolCoordinator:
             for tool in tools:
                 if tool.get("tool") == "knowledge_qa_workflow":
                     tool["args"] = self.normalize_tool_input(tool.get("tool", ""), tool.get("args", {}))
+
+            # ⚠️ 方案A：检测并发的 call_sub_agent 调用，强制 session 隔离
+            sub_agent_tools = [t for t in tools if t.get("tool") == "call_sub_agent"]
+            if len(sub_agent_tools) > 1:
+                logger.info(
+                    "concurrent_sub_agent_calls_detected",
+                    count=len(sub_agent_tools),
+                    action="force_isolated_sessions"
+                )
+                # 为每个 call_sub_agent 添加隔离标记
+                for tool in sub_agent_tools:
+                    if not tool.get("args"):
+                        tool["args"] = {}
+                    tool["args"]["_force_isolated_session"] = True
+
             parallel_result = await self.executor.execute_tools_parallel(tools=tools, iteration=state.iteration)
             observation = self._observation_from_parallel_result(parallel_result)
             for tool_result in observation.get("tool_results", []):
