@@ -45,6 +45,7 @@ class SQLValidator:
         'dat_station_day',  # 站点日数据
         'dat_station_hour',  # 站点小时数据
         'dat_weather_hour',  # 气象小时数据
+        'WeatherForecast7Day',  # 7天空气质量预报数据（全国319个城市，包含AQI范围、首要污染物、气象条件等）
         'city_168_statistics_new_standard',  # 168城市空气质量统计表（新标准 HJ 633-2026）
         'city_168_statistics_old_standard',  # 168城市空气质量统计表（旧标准 HJ 633-2013）
         'province_statistics_new_standard',  # 省级空气质量统计表（新标准 HJ 633-2026）

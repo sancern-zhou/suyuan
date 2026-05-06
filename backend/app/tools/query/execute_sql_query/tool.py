@@ -59,6 +59,12 @@ class ExecuteSQLQueryTool(LLMTool):
                 "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回100条。"
                 "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
                 "database默认为XcAiDb；质控/工单/站点基础信息通常用AirPollutionAnalysis。"
+                "\n\n常用表说明："
+                "\n- WeatherForecast7Day（XcAiDb）：7天空气质量预报数据，全国319个城市，包含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint等字段"
+                "\n- CityDayAQIPublishHistory（XcAiDb）：城市日空气质量历史数据"
+                "\n- CityAQIPublishHistory（XcAiDb）：城市小时空气质量历史数据"
+                "\n- city_168_statistics_new_standard（XcAiDb）：168城市空气质量统计表（新标准）"
+                "\n- qc_history（AirPollutionAnalysis）：自动质控历史数据"
             ),
             "parameters": {
                 "type": "object",
