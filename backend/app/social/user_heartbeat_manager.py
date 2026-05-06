@@ -222,76 +222,12 @@ class UserHeartbeatManager:
 
     async def auto_load_existing_tasks(self) -> None:
         """
-        启动时自动扫描所有用户的 HEARTBEAT.md 文件，为有任务的用户创建并启动 HeartbeatService。
+        Backward-compatible wrapper for older startup code.
 
-        解决问题：后台重启后，即使用户没有发消息，定时任务也能自动执行。
+        Use restore_existing_heartbeats(), which preserves original user ids via
+        metadata/session mappings instead of guessing from directory names.
         """
-        import re
-
-        loaded_count = 0
-        skipped_count = 0
-
-        try:
-            # 扫描 heartbeat 目录下的所有用户子目录
-            if not self.base_workspace.exists():
-                logger.info("heartbeat_workspace_not_exist", path=str(self.base_workspace))
-                return
-
-            for user_dir in self.base_workspace.iterdir():
-                if not user_dir.is_dir():
-                    continue
-
-                heartbeat_file = user_dir / "HEARTBEAT.md"
-                if not heartbeat_file.exists():
-                    continue
-
-                # 检查文件中是否有启用的任务
-                try:
-                    content = heartbeat_file.read_text(encoding="utf-8")
-                    # 简单检查是否有 enabled: true 的任务
-                    if "enabled: true" not in content:
-                        skipped_count += 1
-                        continue
-
-                    # 还原 user_id（将路径中的 _ 替换回 :）
-                    user_id = user_dir.name.replace("_", ":")
-
-                    # 创建并启动 HeartbeatService
-                    async with self._lock:
-                        if user_id not in self._heartbeat_cache:
-                            heartbeat = HeartbeatService(
-                                interval_s=30 * 60,
-                                workspace=user_dir,
-                                user_id=user_id,
-                                on_execute=lambda tasks, uid=user_id: self._on_execute_callback(tasks, uid),
-                                on_notify=lambda response, uid=user_id: self._on_notify_callback(response, uid)
-                            )
-                            await heartbeat.start()
-                            self._heartbeat_cache[user_id] = heartbeat
-                            loaded_count += 1
-                            logger.info(
-                                "auto_loaded_user_heartbeat",
-                                user_id=user_id,
-                                heartbeat_file=str(heartbeat_file)
-                            )
-
-                except Exception as e:
-                    logger.warning(
-                        "auto_load_user_failed",
-                        user_dir=str(user_dir),
-                        error=str(e)
-                    )
-                    skipped_count += 1
-
-            logger.info(
-                "auto_load_existing_tasks_completed",
-                loaded=loaded_count,
-                skipped=skipped_count,
-                total_cached=len(self._heartbeat_cache)
-            )
-
-        except Exception as e:
-            logger.error("auto_load_existing_tasks_failed", error=str(e), exc_info=True)
+        await self.restore_existing_heartbeats()
 
     async def shutdown(self) -> None:
         """停止所有用户心跳服务"""
