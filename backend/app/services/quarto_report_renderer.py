@@ -17,10 +17,13 @@ from typing import Any, Dict
 
 import structlog
 
+from app.utils.path_config import get_reports_dir
+
 logger = structlog.get_logger()
 
 
-REPORT_ROOT = (Path(__file__).resolve().parents[3] / "backend_data_registry" / "reports").resolve()
+# ✅ 使用统一路径配置（避免路径混乱）
+REPORT_ROOT = get_reports_dir()
 
 
 class ReportRenderError(RuntimeError):

@@ -77,8 +77,9 @@ class MemoryStore(BaseMemoryStore):
 
         # 解析相对路径为绝对路径（避免工作目录问题）
         if workspace is None:
-            # 默认使用绝对路径
-            social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+            # ✅ 使用统一路径配置
+            from app.utils.path_config import get_social_memory_dir
+            social_workspace = get_social_memory_dir()
         elif not workspace.is_absolute():
             # 如果是相对路径，转换为绝对路径（相对于backend目录）
             current_file = Path(__file__).resolve()
@@ -149,7 +150,9 @@ class ImprovedMemoryStore(BaseImprovedMemoryStore):
         # 解析社交模式专用工作空间
         if workspace is None:
             from pathlib import Path
-            social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+            # ✅ 使用统一路径配置
+            from app.utils.path_config import get_social_memory_dir
+            social_workspace = get_social_memory_dir()
         elif not workspace.is_absolute():
             from pathlib import Path
             current_file = Path(__file__).resolve()

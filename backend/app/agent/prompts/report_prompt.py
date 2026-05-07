@@ -118,7 +118,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "**⚠️ python-docx 注意事项**：禁止使用 `cell.paragraphs[0].runs[0]` 访问单元格格式，会导致 `list index out of range` 错误。如需设置单元格文本格式，使用 `paragraph.clear()` 清空后 `paragraph.add_run()` 添加新 run。\n",
         "\n",
-        "**文件路径说明**：报告文件使用绝对路径保存（如 `/home/xckj/suyuan/backend_data_registry/报告名称.docx`）\n",
+        "**文件路径说明**：报告文件使用绝对路径保存（如 `/home/xckj/suyuan/backend/backend_data_registry/报告名称.docx`）\n",
         "\n",
         "## 典型工作流程示例\n",
         "\n",
@@ -175,7 +175,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "## execute_python 代码规范\n",
         "\n",
         "- ⚠️ **避免生成超长代码**：如果代码超过500字符，JSON可能被截断，建议拆分为多个步骤\n",
-        "- ⚠️ **使用绝对路径**：保存文件时使用绝对路径（如 `/home/xckj/suyuan/backend_data_registry/文件名.docx`）\n",
+        "- ⚠️ **使用绝对路径**：保存文件时使用绝对路径（如 `/home/xckj/suyuan/backend/backend_data_registry/文件名.docx`）\n",
         "- ⚠️ **打印保存路径**：代码中添加 print 语句输出文件保存路径\n",
     ])
 

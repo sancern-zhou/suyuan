@@ -26,7 +26,7 @@ logger = structlog.get_logger()
 _llm_service = None
 MAX_TOOL_RESULT_RECORDS = 24
 MAX_TOOL_RESULT_STRING_CHARS = 8_000
-MAX_TOOL_RESULT_JSON_CHARS = 24_000
+MAX_TOOL_RESULT_JSON_CHARS = 200_000  # 支持完整的21城市统计对比结果
 
 
 def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
@@ -82,6 +82,7 @@ def _compact_tool_result_value(value: Any, *, path: str = "") -> Any:
     if isinstance(value, dict):
         compacted: Dict[str, Any] = {}
         for key, item in value.items():
+            # 列表类型字段采样（data/rows/records/resultData）
             if key in {"data", "rows", "records", "resultData"} and isinstance(item, list):
                 sampled = _sample_sequence(item)
                 compacted[key] = [
@@ -100,7 +101,12 @@ def _compact_tool_result_value(value: Any, *, path: str = "") -> Any:
                         "strategy": "head_tail",
                     }
                 continue
+
+            # 字典类型字段（result/visuals）不进行键采样
+            # 这些字段包含聚合统计或可视化配置，应该是"全有或全无"
+            # 只在JSON序列化超过60,000字符时才触发最小化截断
             compacted[key] = _compact_tool_result_value(item, path=f"{path}.{key}")
+
         return compacted
 
     return value
@@ -131,11 +137,32 @@ def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
     compacted = _compact_tool_result_value(result)
     try:
         serialized = json.dumps(compacted, ensure_ascii=False, indent=2, default=str)
-    except Exception:
+    except Exception as e:
+        logger.warning(
+            "tool_result_json_serialize_failed",
+            error=str(e),
+            error_type=type(e).__name,
+            result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict"
+        )
         return _minimal_tool_result(result)
+
+    logger.info(
+        "tool_result_compacted",
+        serialized_len=len(serialized),
+        max_allowed=MAX_TOOL_RESULT_JSON_CHARS,
+        exceeds_threshold=len(serialized) > MAX_TOOL_RESULT_JSON_CHARS,
+        compacted_keys=list(compacted.keys()) if isinstance(compacted, dict) else "not_dict"
+    )
 
     if len(serialized) <= MAX_TOOL_RESULT_JSON_CHARS:
         return compacted
+
+    logger.warning(
+        "tool_result_exceeds_threshold",
+        serialized_len=len(serialized),
+        max_allowed=MAX_TOOL_RESULT_JSON_CHARS,
+        will_apply_minimal=True
+    )
 
     minimal = _minimal_tool_result(compacted)
     try:

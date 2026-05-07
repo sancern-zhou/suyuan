@@ -335,7 +335,7 @@ async def startup_event():
             await session_mapper.load()
 
             # 创建Agent桥接层（使用社交模式）
-            agent = create_react_agent()  # 使用默认 max_iterations=30
+            agent = create_react_agent()  # 使用默认 max_iterations=60
             agent_bridge = AgentBridge(
                 agent=agent,
                 message_bus=message_bus,

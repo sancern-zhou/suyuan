@@ -32,7 +32,7 @@ class AgentRuntimeConfig:
     tool_executor: Any
     context_builder: Any
     task_completion_guard: Any
-    max_iterations: int = 30
+    max_iterations: int = 60
     enhance_with_history: bool = True
     enable_reasoning: bool = False
     is_interruption: bool = False
