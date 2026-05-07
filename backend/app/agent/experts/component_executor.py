@@ -118,11 +118,11 @@ class ComponentExecutor(ExpertExecutor):
         except ImportError as e:
             logger.warning("济宁市区域对比工具加载失败", tool="get_jining_regular_stations", error=str(e))
 
-        # VOCs组分数据工具（端口9092）
+        # VOCs组分数据工具（直接调用广东超站API）
         try:
-            from app.tools.query.get_vocs_data.tool import GetVOCsDataTool
+            from app.tools.query.get_vocs_data import GetVOCsDataTool
             tools["get_vocs_data"] = GetVOCsDataTool()
-            logger.info("VOCs数据工具加载成功: get_vocs_data（端口9092）")
+            logger.info("VOCs数据工具加载成功: get_vocs_data（结构化查询，广东超站API）")
         except ImportError as e:
             logger.warning("VOCs数据工具加载失败", tool="get_vocs_data", error=str(e))
 
