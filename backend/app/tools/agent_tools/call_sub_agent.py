@@ -47,7 +47,11 @@ class CallSubAgentTool(LLMTool):
         # 定义 function_schema（参考Hermes设计：分离goal和context）
         function_schema = {
             "name": "call_sub_agent",
-            "description": "调用另一个Agent模式作为子Agent执行任务，支持session连续对话。",
+            "description": (
+                "调用另一个Agent模式作为子Agent执行任务，支持session连续对话。"
+                "注意：target_mode=\"assistant\" 时默认不会自动复用旧的 assistant 子会话；"
+                "如需继续某个 assistant 子会话，必须显式传入 session_id。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -82,11 +86,18 @@ class CallSubAgentTool(LLMTool):
                     },
                     "session_id": {
                         "type": "string",
-                        "description": "子Agent会话ID，可选；一般不需要传"
+                        "description": (
+                            "子Agent会话ID，可选；传入则继续指定会话。"
+                            "target_mode=\"assistant\" 时只有显式传入 session_id 才会复用旧会话。"
+                        )
                     },
                     "force_new_session": {
                         "type": "boolean",
-                        "description": "是否强制创建新会话，默认false；新话题时使用"
+                        "description": (
+                            "是否强制创建新会话，默认false；新话题时使用。"
+                            "assistant 子会话未传 session_id 时默认已创建新会话；"
+                            "其他模式可用该参数阻止自动复用最近会话。"
+                        )
                     },
                     "_force_isolated_session": {
                         "type": "boolean",
@@ -181,6 +192,12 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            should_auto_reuse_session = self._should_auto_reuse_session(
+                target_mode=target_mode,
+                session_id=session_id,
+                force_new_session=force_new_session,
+                force_isolated_session=_force_isolated_session
+            )
 
             logger.info(
                 "calling_sub_agent",
@@ -191,7 +208,7 @@ class CallSubAgentTool(LLMTool):
                 workspace_path=workspace_path,
                 provided_session_id=session_id,
                 force_new_session=force_new_session,
-                will_attempt_auto_reuse=session_id is None and not force_new_session
+                will_attempt_auto_reuse=should_auto_reuse_session
             )
 
             # ✅ 从context获取依赖（如果工具初始化时没有传递）
@@ -247,6 +264,12 @@ class CallSubAgentTool(LLMTool):
                     logger.info(f"🔄 并发调用隔离：创建独立session: {session_id}")
                 else:
                     logger.info(f"强制创建新session: {session_id}")
+            elif not should_auto_reuse_session:
+                # assistant 子Agent默认不复用旧session，避免跨任务串上下文。
+                # 如需连续对话，调用方必须显式传入 session_id。
+                session_id = self._generate_session_id(parent_mode, target_mode)
+                is_new_session = True
+                logger.info(f"assistant子Agent默认创建新session: {session_id}")
             else:
                 # 自动查找并复用最近的session（默认行为）
                 logger.info(f"尝试自动查找最近的session: parent_mode={parent_mode}, child_mode={target_mode}")
@@ -615,6 +638,23 @@ class CallSubAgentTool(LLMTool):
             if hasattr(mm, 'mode'):
                 return mm.mode
         return "social"  # 默认社交模式
+
+    def _should_auto_reuse_session(
+        self,
+        target_mode: Optional[str],
+        session_id: Optional[str],
+        force_new_session: bool,
+        force_isolated_session: bool
+    ) -> bool:
+        """
+        判断是否允许自动复用最近的子Agent session。
+
+        assistant 子Agent默认创建新session，避免复用旧办公任务上下文。
+        需要连续对话时，调用方应显式传入 session_id。
+        """
+        if session_id or force_new_session or force_isolated_session:
+            return False
+        return target_mode != "assistant"
 
     def _generate_session_id(self, parent_mode: str, child_mode: str) -> str:
         """生成子Agent session_id"""
