@@ -6,6 +6,7 @@ historical ``ReActLoop`` entry point used by callers while avoiding a second,
 stale loop implementation in ``core``.
 """
 
+import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
@@ -41,6 +42,7 @@ class ReActLoop:
         enable_reasoning: bool = False,
         is_interruption: bool = False,
         knowledge_base_ids: Optional[list] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ):
         self.memory = memory_manager
         self.planner = llm_planner
@@ -49,6 +51,7 @@ class ReActLoop:
         self.stream_enabled = stream_enabled
         self.is_interruption = is_interruption
         self.knowledge_base_ids = knowledge_base_ids
+        self.cancel_event = cancel_event
 
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = (
@@ -107,6 +110,7 @@ class ReActLoop:
             knowledge_base_ids=self.knowledge_base_ids,
             agent_logger=self.agent_logger,
             schema_injector=self.schema_injector,
+            cancel_event=self.cancel_event,
         ))
 
         async for event in runtime.run(

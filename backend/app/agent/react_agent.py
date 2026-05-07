@@ -140,7 +140,8 @@ class ReActAgent:
         social_user_file_path: Optional[str] = None,  # ✅ 新增：社交模式 USER.md 文件路径
         social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
-        social_user_context: Optional[str] = None  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        cancel_event: Optional[Any] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -311,7 +312,8 @@ class ReActAgent:
                 stream_enabled=True,
                 is_interruption=is_interruption,
                 enable_reasoning=enable_reasoning,
-                knowledge_base_ids=knowledge_base_ids  # ✅ 传递知识库ID列表
+                knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
+                cancel_event=cancel_event,
             )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）

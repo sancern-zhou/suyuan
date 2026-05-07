@@ -9,11 +9,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+import asyncio
 import json
 import structlog
 
 from app.agent import create_react_agent
 from app.agent.session import Session, get_session_manager
+from app.agent.runtime.cancellation import cancellation_registry
 
 from app.agent.experts.expert_router_v3 import ExpertRouterV3, PipelineResult  # ✅ 旧架构多专家路由器
 logger = structlog.get_logger()
@@ -322,6 +324,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
         async def event_generator():
             """SSE 事件生成器"""
             nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, seen_visual_ids
+            cancel_event = None
 
             # ✅ 用于统计（不输出日志）
             event_count = 0
@@ -359,6 +362,9 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                 logger.info("session_created", session_id=actual_session_id)
                 # 更新 analyze_kwargs 中的 session_id
                 analyze_kwargs["session_id"] = actual_session_id
+
+            cancel_event = await cancellation_registry.register(actual_session_id)
+            analyze_kwargs["cancel_event"] = cancel_event
 
             # 保存初始会话
             await session_manager.save_session(session)
@@ -521,7 +527,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                             data_ids_count=len(collected_data_ids),
                             visuals_count=len(collected_visuals)
                         )
-                    elif event["type"] in ["incomplete", "fatal_error"]:
+                    elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
                         # ✅ 优化：压缩中间过程，只保留必要信息
                         compressed_history = []
                         for msg in conversation_history:
@@ -544,10 +550,17 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
                         multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                         multi_expert_agent_instance._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
-                        multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = True
+                        multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                         multi_expert_agent_instance._session_store[actual_session_id]["error_type"] = event["type"]
                         if "data" in event and "error" in event["data"]:
                             multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
+                        if event["type"] == "interrupted":
+                            compressed_history.append({
+                                "type": "interrupted",
+                                "content": event.get("data", {}).get("reason", "用户已暂停本轮分析"),
+                                "timestamp": datetime.now().isoformat()
+                            })
+                        await session_manager.save_session(session)
 
                         logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
@@ -556,9 +569,21 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     yield f"data: {event_data}\n\n"
 
                     # 如果是完成或致命错误，结束循环
-                    if event["type"] in ["complete", "incomplete", "fatal_error"]:
+                    if event["type"] in ["complete", "incomplete", "fatal_error", "interrupted"]:
                         break
 
+            except asyncio.CancelledError:
+                if actual_session_id:
+                    await cancellation_registry.cancel(actual_session_id)
+                    session.conversation_history = conversation_history + [{
+                        "type": "interrupted",
+                        "content": "客户端已断开，本轮分析已取消",
+                        "timestamp": datetime.now().isoformat()
+                    }]
+                    session.data_ids = list(set(collected_data_ids))
+                    session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+                    await session_manager.save_session(session)
+                raise
             except Exception as e:
                 logger.error(
                     "stream_generation_error",
@@ -584,6 +609,9 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                     }
                 }
                 yield f"data: {json.dumps(error_event, ensure_ascii=False, default=str)}\n\n"
+            finally:
+                if actual_session_id and cancel_event is not None:
+                    await cancellation_registry.unregister(actual_session_id, cancel_event)
 
         return StreamingResponse(
             event_generator(),
@@ -605,6 +633,18 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             status_code=500,
             detail=f"分析失败: {str(e)}"
         )
+
+
+@router.post("/{session_id}/cancel")
+async def cancel_analysis(session_id: str):
+    """Cancel an in-flight streaming analysis for a session."""
+    cancelled = await cancellation_registry.cancel(session_id)
+    return {
+        "success": True,
+        "cancelled": cancelled,
+        "session_id": session_id,
+        "message": "已发送取消信号" if cancelled else "没有找到运行中的分析任务",
+    }
 
 
 @router.post("/query", response_model=AgentQueryResponse)
