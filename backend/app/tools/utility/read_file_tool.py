@@ -91,8 +91,8 @@ class ReadFileTool(LLMTool):
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
         self.working_dir = get_project_root()
-        # 允许访问的额外目录（如临时目录）
-        self.allowed_dirs = [self.working_dir, Path("/tmp")]
+        # 允许访问的目录：整个项目目录（包含backend_data_registry）和临时目录
+        self.allowed_dirs = [Path("/home/xckj/suyuan"), Path("/tmp")]
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB

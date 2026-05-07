@@ -930,6 +930,17 @@ class AgentBridge:
         # ✅ 使用复用函数加载社交上下文
         social_context = await self._load_social_agent_context(user_id)
 
+        # ✅ 修复：从 user_id 解析 channel/chat_id/bot_account 并设置到全局单例
+        # 否则 send_notification 工具无法确定发送通道
+        from app.social.message_bus_singleton import set_current_channel, set_current_chat_id, set_current_bot_account
+        parts = user_id.rsplit(":", 2)
+        if len(parts) >= 3:
+            channel, bot_account, sender_id = parts
+            set_current_channel(channel)
+            set_current_chat_id(sender_id)
+            set_current_bot_account(bot_account)
+            logger.info("heartbeat_context_set", channel=channel, sender_id=sender_id)
+
         task_description = "\n".join([
             f"- {task.get('name', 'task')}: {task.get('description', '')}"
             for task in tasks

@@ -245,8 +245,11 @@ class GetWeatherForecastTool(LLMTool):
                 daily_data = forecast_data["daily"]
                 max_temps = daily_data.get("temperature_2m_max", [])
                 min_temps = daily_data.get("temperature_2m_min", [])
-                if max_temps and min_temps:
-                    temp_range = f"{min(min_temps):.1f}~{max(max_temps):.1f}°C"
+                # 过滤 None 值（API 对较远日期可能返回 null）
+                valid_max_temps = [t for t in max_temps if t is not None]
+                valid_min_temps = [t for t in min_temps if t is not None]
+                if valid_max_temps and valid_min_temps:
+                    temp_range = f"{min(valid_min_temps):.1f}~{max(valid_max_temps):.1f}°C"
                     daily_summary = f"未来{len(max_temps)}天预报，温度范围{temp_range}"
 
             # 根据 past_days 调整摘要说明
