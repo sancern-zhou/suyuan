@@ -225,10 +225,12 @@ class AgentBridge:
                        mode=self.mode)
 
 
-            from app.social.message_bus_singleton import set_current_chat_id, set_current_channel, set_current_bot_account
-            set_current_chat_id(msg.chat_id)
-            set_current_channel(msg.channel)
-            set_current_bot_account(bot_account)  # ✅ 新增：设置 bot_account 到上下文
+            from app.social.message_bus_singleton import set_current_context
+            set_current_context(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                bot_account=bot_account,
+            )
             logger.debug("current_context_set", chat_id=msg.chat_id, channel=msg.channel, bot_account=bot_account)
 
             
@@ -930,16 +932,21 @@ class AgentBridge:
         # ✅ 使用复用函数加载社交上下文
         social_context = await self._load_social_agent_context(user_id)
 
-        # ✅ 修复：从 user_id 解析 channel/chat_id/bot_account 并设置到全局单例
-        # 否则 send_notification 工具无法确定发送通道
-        from app.social.message_bus_singleton import set_current_channel, set_current_chat_id, set_current_bot_account
+        # 从 user_id 恢复本次心跳执行的 social 上下文。
+        # user_id 格式：{channel}:{bot_account}:{chat_id}，channel 本身可能包含 ':'。
+        from app.social.message_bus_singleton import set_current_context, reset_current_context
         parts = user_id.rsplit(":", 2)
-        if len(parts) >= 3:
-            channel, bot_account, sender_id = parts
-            set_current_channel(channel)
-            set_current_chat_id(sender_id)
-            set_current_bot_account(bot_account)
-            logger.info("heartbeat_context_set", channel=channel, sender_id=sender_id)
+        if len(parts) != 3:
+            logger.error("invalid_heartbeat_user_id_format", user_id=user_id)
+            return {"should_notify": True, "summary": f"Invalid heartbeat user_id: {user_id}"}
+
+        channel, bot_account, chat_id = parts
+        context_tokens = set_current_context(
+            channel=channel,
+            chat_id=chat_id,
+            bot_account=bot_account,
+        )
+        logger.info("heartbeat_context_set", channel=channel, chat_id=chat_id, bot_account=bot_account)
 
         task_description = "\n".join([
             f"- {task.get('name', 'task')}: {task.get('description', '')}"
@@ -991,6 +998,8 @@ Example: If task says "Send a test message", then send the message directly, don
         except Exception as e:
             logger.error("heartbeat_execute_failed", user_id=user_id, error=str(e), exc_info=True)
             return {"should_notify": True, "summary": f"Task execution failed: {e}"}
+        finally:
+            reset_current_context(context_tokens)
     async def _on_heartbeat_notify(self, response: dict, user_id: str) -> None:
         """
         发送心跳任务通知。
