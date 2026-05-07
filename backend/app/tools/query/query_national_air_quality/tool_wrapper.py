@@ -61,10 +61,10 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
 
     async def execute(
         self,
-        start_date: str,
-        end_date: str,
-        ns_type: str = "NS",
         context: Optional[ExecutionContext] = None,
+        start_date: str = None,
+        end_date: str = None,
+        ns_type: str = "NS",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -204,11 +204,11 @@ class QueryNationalCityAirQualityTool(LLMTool):
 
     async def execute(
         self,
-        start_date: str,
-        end_date: str,
+        context: Optional[ExecutionContext] = None,
+        start_date: str = None,
+        end_date: str = None,
         province_code: Optional[str] = None,
         ns_type: str = "NS",
-        context: Optional[ExecutionContext] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """

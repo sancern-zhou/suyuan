@@ -169,6 +169,7 @@ class GrepTool(LLMTool):
         multiline: bool = False,
         head_limit: int = DEFAULT_HEAD_LIMIT,
         offset: int = 0,
+        context: Optional[int] = None,  # ✅ 显式声明 context 参数（避免与框架的 context 参数冲突）
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -191,6 +192,11 @@ class GrepTool(LLMTool):
             }
         """
         try:
+            # ✅ 处理 context 参数（如果用户提供了 context，映射到 context_lines）
+            if context is not None:
+                # 如果用户提供了 context 参数，覆盖 context_lines
+                context_lines = context
+
             # 1. 验证路径
             search_path = self._resolve_path(path)
             if not search_path or not search_path.exists():

@@ -1058,7 +1058,7 @@ for _font_path in _font_configs:
             font_manager.fontManager.addfont(str(_font_path))
             _font_prop = font_manager.FontProperties(fname=str(_font_path))
             _font_name = _font_prop.get_name()
-            plt.rcParams['font.family'] = _font_name
+            plt.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
             plt.rcParams['axes.unicode_minus'] = False
             _font_registered = True
             break
