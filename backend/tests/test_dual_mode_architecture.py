@@ -88,6 +88,44 @@ async def test_call_sub_agent_tool():
         print(f"\n[ERROR] CallSubAgentTool 注册测试失败: {e}")
 
 
+def test_call_sub_agent_assistant_session_policy():
+    """测试 assistant 子Agent默认不自动复用旧会话"""
+    from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+
+    tool = CallSubAgentTool()
+
+    assert tool._should_auto_reuse_session(
+        target_mode="assistant",
+        session_id=None,
+        force_new_session=False,
+        force_isolated_session=False,
+    ) is False
+    assert tool._should_auto_reuse_session(
+        target_mode="query",
+        session_id=None,
+        force_new_session=False,
+        force_isolated_session=False,
+    ) is True
+    assert tool._should_auto_reuse_session(
+        target_mode="assistant",
+        session_id="social__to__assistant__20260506_114504",
+        force_new_session=False,
+        force_isolated_session=False,
+    ) is False
+
+
+def test_call_sub_agent_schema_documents_assistant_session_policy():
+    """测试 schema 说明 assistant 子会话复用策略"""
+    from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+
+    schema = CallSubAgentTool().get_function_schema()
+    properties = schema["parameters"]["properties"]
+
+    assert "默认不会自动复用旧的 assistant 子会话" in schema["description"]
+    assert "只有显式传入 session_id 才会复用旧会话" in properties["session_id"]["description"]
+    assert "assistant 子会话未传 session_id 时默认已创建新会话" in properties["force_new_session"]["description"]
+
+
 def test_api_request_model():
     """测试 API 请求模型"""
     print("\n" + "=" * 60)
