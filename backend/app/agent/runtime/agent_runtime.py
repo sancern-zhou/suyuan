@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
@@ -18,6 +19,7 @@ from .session_queue import SessionRunQueue
 from .tool_coordinator import ToolCoordinator
 from .transcript_repairer import TranscriptRepairer
 from .types import PlannerResult, RunState, ToolCall
+from .cancellation import AgentRunCancelled, cancellation_registry
 from ..context.context_diagnostics import ContextDiagnostics
 
 logger = structlog.get_logger()
@@ -37,6 +39,7 @@ class AgentRuntimeConfig:
     knowledge_base_ids: Optional[list] = None
     agent_logger: Any = None
     schema_injector: Any = None
+    cancel_event: Optional[asyncio.Event] = None
 
 
 class AgentRuntime:
@@ -98,10 +101,16 @@ class AgentRuntime:
             yield self.events.start(state)
 
             while state.iteration < self.config.max_iterations and not state.task_completed:
+                self._raise_if_cancelled()
                 state.iteration += 1
                 try:
                     async for event in self._run_iteration(state):
+                        self._raise_if_cancelled()
                         yield event
+                except AgentRunCancelled:
+                    self._ensure_user_message_written(state)
+                    yield self.events.interrupted(state)
+                    return
                 except Exception as exc:
                     logger.error(
                         "agent_runtime_iteration_failed",
@@ -120,6 +129,10 @@ class AgentRuntime:
                     yield event
 
         except Exception as exc:
+            if isinstance(exc, AgentRunCancelled):
+                self._ensure_user_message_written(state)
+                yield self.events.interrupted(state)
+                return
             logger.error("agent_runtime_fatal_error", error=str(exc), exc_info=True)
             self._ensure_user_message_written(state)
             async for event in self.finalizer.fatal_error(state, exc):
@@ -127,9 +140,11 @@ class AgentRuntime:
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
+        self._raise_if_cancelled()
         planner_result = None
         streaming_tool_executor = None
         async for event in self._run_planner_stream(state, context_result, conversation_history):
+            self._raise_if_cancelled()
             if event.get("type") == "_planner_done":
                 planner_result = event["planner_result"]
                 streaming_tool_executor = event["streaming_tool_executor"]
@@ -144,6 +159,7 @@ class AgentRuntime:
 
         if streaming_tool_executor.total_count > 0 and action_type in ("TOOL_CALL", "TOOL_CALLS"):
             async for event in self._handle_streamed_tools(state, planner_result, streaming_tool_executor):
+                self._raise_if_cancelled()
                 yield event
             return
 
@@ -168,6 +184,7 @@ class AgentRuntime:
             return
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
+            self._raise_if_cancelled()
             observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
@@ -242,6 +259,7 @@ class AgentRuntime:
             tool_executor=self.executor,
             tool_registry=self.executor.tool_registry if hasattr(self.executor, "tool_registry") else {},
         )
+        await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
         buffer = AssistantStreamBuffer()
         planner_result = PlannerResult()
 
@@ -254,6 +272,7 @@ class AgentRuntime:
             mode=state.mode,
             conversation_history=conversation_history,
         ):
+            self._raise_if_cancelled()
             event_type = event["type"]
 
             if event_type == "streaming_text":
@@ -325,6 +344,7 @@ class AgentRuntime:
         tool_schemas: List[Dict[str, Any]],
         partial: PlannerResult,
     ) -> PlannerResult:
+        self._raise_if_cancelled()
         result = await self.planner.think_and_action(
             query=state.user_query,
             system_prompt=context_result["system_prompt"],
@@ -346,7 +366,9 @@ class AgentRuntime:
         planner_result: PlannerResult,
         streaming_tool_executor,
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        self._raise_if_cancelled()
         async for remaining_result in streaming_tool_executor.getRemainingResults():
+            self._raise_if_cancelled()
             yield remaining_result["message"]
         for completed_result in streaming_tool_executor.getCompletedResults():
             yield completed_result["message"]
@@ -426,6 +448,7 @@ class AgentRuntime:
         )
         response_text = ""
         async for chunk in self.planner.stream_user_answer(prompt):
+            self._raise_if_cancelled()
             response_text += chunk
             yield self.events.assistant_delta(state, chunk, is_complete=False)
         yield self.events.assistant_delta(state, "", is_complete=True)
@@ -458,6 +481,10 @@ class AgentRuntime:
             return
         self.writer.add_user_message(state.user_query)
         state.user_message_written = True
+
+    def _raise_if_cancelled(self) -> None:
+        if self.config.cancel_event and self.config.cancel_event.is_set():
+            raise AgentRunCancelled("用户已暂停本轮分析")
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         import json

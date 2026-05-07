@@ -1562,6 +1562,16 @@ export const useReactStore = defineStore('react', {
           break
         }
 
+        case 'interrupted': {
+          targetState.isAnalyzing = false
+          targetState.isComplete = false
+          targetState.error = null
+          targetState.isInterruption = true
+          targetState.streamingAnswerMessageId = null
+          targetState.streamingThinkingMessageId = null
+          break
+        }
+
         case 'fatal_error': {
           // 致命错误
           targetState.isAnalyzing = false
@@ -1987,7 +1997,7 @@ export const useReactStore = defineStore('react', {
         if (!confirmStop) {
           return
         }
-        agentAPI.cancel(this.currentState.sessionId)
+        await agentAPI.cancel(this.currentState.sessionId)
         this.currentState.isAnalyzing = false
       }
 
@@ -1996,15 +2006,15 @@ export const useReactStore = defineStore('react', {
     },
 
     // 停止分析
-    stopAnalysis() {
-      agentAPI.cancel(this.currentState.sessionId)
+    async stopAnalysis() {
+      await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       // 不添加系统消息
     },
 
     // 暂停分析（与stopAnalysis相同）
-    pauseAnalysis() {
-      agentAPI.cancel(this.currentState.sessionId)
+    async pauseAnalysis() {
+      await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       this.currentState.isComplete = false
       this.currentState.error = null

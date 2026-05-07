@@ -156,6 +156,18 @@ class RuntimeEventBus:
             },
         }
 
+    def interrupted(self, state: RunState, reason: str = "用户已暂停本轮分析") -> Dict[str, Any]:
+        return {
+            "type": "interrupted",
+            "stream": "error",
+            "data": {
+                "reason": reason,
+                "session_id": state.session_id,
+                "iteration": state.iteration,
+                "timestamp": datetime.now().isoformat(),
+            },
+        }
+
     def fatal_error(self, state: RunState, error: Exception) -> Dict[str, Any]:
         return {
             "type": "fatal_error",
