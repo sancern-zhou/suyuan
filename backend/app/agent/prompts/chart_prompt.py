@@ -150,7 +150,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "```python\n",
         "# ❌ 错误：硬编码文件路径（违反系统设计）\n",
         "import json\n",
-        "data_file = '/home/xckj/suyuan/backend_data_registry/data_registry/air_quality_5min:v1:abc123.json'\n",
+        "data_file = '/home/xckj/suyuan/backend/backend_data_registry/datasets/air_quality_5min:v1:abc123.json'\n",
         "with open(data_file, 'r') as f:\n",
         "    data = json.load(f)\n",
         "```\n",

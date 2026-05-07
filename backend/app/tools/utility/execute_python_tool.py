@@ -1017,11 +1017,176 @@ def get_raw_data(data_id: str):
 
         return injected_code
 
+    def _convert_unicode_subscript_to_latex(self, code: str) -> str:
+        """
+        自动转换Python代码字符串中的Unicode下标/上标字符为LaTeX格式
+
+        策略：
+        1. 使用正则表达式匹配所有字符串字面量
+        2. 在字符串中检测Unicode下标/上标字符
+        3. 转换为matplotlib mathtext兼容的LaTeX格式
+        4. 智能处理多位数字（如2.5）
+
+        转换示例：
+        - 'PM₂.₅浓度' → r'PM$_{2.5}$浓度'
+        - 'μg/m³' → r'$\mu$g/m$^3$'
+        - 'NO₂' → r'NO$_2$'
+        """
+        import re
+
+        def convert_string_content(content: str) -> tuple:
+            """
+            转换字符串内容
+
+            Returns:
+                (converted_content, needs_r_prefix)
+            """
+            # 定义常见模式的替换规则
+            replacements = [
+                # μ符号
+                (r'μ', r'$\mu$'),
+
+                # PM2.5（特殊处理：小数形式）
+                (r'PM₂\.?₅', r'PM$_{2.5}$'),
+                (r'pm₂\.?₅', r'pm$_{2.5}$'),
+
+                # 化学式下标（单个数字）
+                (r'O₃', r'O$_3$'),
+                (r'NO₂', r'NO$_2$'),
+                (r'SO₂', r'SO$_2$'),
+                (r'CO₂', r'CO$_2$'),
+                (r'CH₄', r'CH$_4$'),
+                (r'N₂O', r'N$_2$O'),
+                (r'VOCs', r'VOCs'),  # 保持原样
+
+                # 单位上标
+                (r'm³', r'm$^3$'),
+                (r'm²', r'm$^2$'),
+                (r'km²', r'km$^2$'),
+                (r'km³', r'km$^3$'),
+                (r'μg', r'$\mu$g'),
+
+                # 其他上标数字（需要小数点前面的m等）
+                (r'/m³', r'/m$^3$'),
+                (r'/m²', r'/m$^2$'),
+            ]
+
+            new_content = content
+            needs_r = False
+
+            # 应用替换规则
+            for old, new in replacements:
+                if old in new_content:
+                    new_content = new_content.replace(old, new)
+                    needs_r = True
+
+            # 处理剩余的Unicode下标/上标（兜底）
+            subscript_digits = {
+                '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4',
+                '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
+            }
+            superscript_digits = {
+                '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
+                '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+            }
+
+            # 检查是否还有未处理的下标
+            has_remaining = any(c in new_content for c in subscript_digits.keys())
+            has_remaining = has_remaining or any(c in new_content for c in superscript_digits.keys())
+
+            if has_remaining:
+                # 对于剩余的Unicode字符，简单替换（可能不完美，但比显示方块好）
+                for unicode_char, normal_char in subscript_digits.items():
+                    if unicode_char in new_content:
+                        # 查找上下文
+                        idx = new_content.find(unicode_char)
+                        if idx > 0:
+                            prefix = new_content[idx-1]
+                            # 如果是字母后跟下标数字，转换为化学式格式
+                            if prefix.isalpha():
+                                new_content = new_content.replace(
+                                    prefix + unicode_char,
+                                    f'{prefix}$_{{{normal_char}}}$'
+                                )
+                                needs_r = True
+
+                for unicode_char, normal_char in superscript_digits.items():
+                    if unicode_char in new_content:
+                        new_content = new_content.replace(
+                            unicode_char,
+                            f'$^{{{normal_char}}}$'
+                        )
+                        needs_r = True
+
+            return new_content, needs_r
+
+        def process_match(match):
+            """处理正则匹配的字符串"""
+            full_match = match.group(0)
+
+            # 提取引号类型和内容
+            if full_match.startswith("'''") or full_match.startswith('"""'):
+                # 三引号字符串，暂不处理
+                return full_match
+            elif full_match.startswith("'"):
+                quote = "'"
+                content = full_match[1:-1]
+            elif full_match.startswith('"'):
+                quote = '"'
+                content = full_match[1:-1]
+            else:
+                return full_match
+
+            # 转换内容
+            converted_content, needs_r = convert_string_content(content)
+
+            # 如果需要转换，添加r前缀
+            if needs_r and quote in ('"', "'"):
+                return f'r{quote}{converted_content}{quote}'
+
+            return f'{quote}{converted_content}{quote}'
+
+        # 匹配Python字符串字面量（排除已经有r前缀的）
+        # 使用负向后查找排除r前缀
+        string_pattern = r"""
+            (?<![rR])                      # 前面不能有r或R
+            (?:
+                '''(?:[^\\]|\\.)*?'''     # 三单引号
+                |\"\"\"(?:[^\\]|\\.)*?\"\"\"  # 三双引号
+                |'(?:[^'\\]|\\.)*'        # 单引号
+                |"(?:[^"\\]|\\.)*"        # 双引号
+            )
+        """
+        string_pattern = re.compile(string_pattern, re.VERBOSE | re.DOTALL)
+
+        # 执行转换
+        converted_code = string_pattern.sub(process_match, code)
+
+        # 统计转换次数
+        original_matches = list(string_pattern.finditer(code))
+        conversion_count = 0
+        for m in original_matches:
+            content = m.group(0)
+            if any(c in content for c in ['₂', '₃', '⁵', '⁴', '⁶', '⁷', '⁸', '⁹', '⁰',
+                                          '²', '³', '¹', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹', '⁰', 'μ']):
+                conversion_count += 1
+
+        if conversion_count > 0:
+            logger.info(
+                "unicode_subscript_converted",
+                strings_converted=conversion_count
+            )
+
+        return converted_code
+
     def _inject_chinese_font_support(self, code: str) -> str:
         """
         自动注入中文字体支持代码
 
-        策略：在代码开头注册字体，并替换用户错误的字体设置
+        策略：
+        1. 在代码开头注册字体
+        2. 自动转换Unicode下标/上标字符为LaTeX格式
+        3. 替换用户错误的字体设置
         """
         # 检测是否使用了matplotlib
         has_matplotlib_import = any([
@@ -1060,6 +1225,22 @@ for _font_path in _font_configs:
             _font_name = _font_prop.get_name()
             plt.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
             plt.rcParams['axes.unicode_minus'] = False
+
+            # ✅ 配置matplotlib的mathtext以支持LaTeX格式上下标
+            # 这样可以使用 r'PM$_{2.5}$' 和 r'$\mu$g/m$^3$' 等LaTeX格式
+            # 避免使用Unicode下标字符（₂₅³μ）导致的显示问题
+            # 使用dejavu字体作为mathtext字体（更好的符号支持）
+            plt.rcParams['mathtext.fontset'] = 'dejavusans'  # 使用dejavu字体渲染数学公式
+            plt.rcParams['mathtext.default'] = 'it'  # 数学公式默认斜体（更符合数学符号惯例）
+
+            # 确保中文字体和数学符号字体共存
+            # 中文字体用于普通文本，mathtext用于数学符号
+            plt.rcParams['axes.titlesize'] = 12  # 标题字体大小
+            plt.rcParams['axes.labelsize'] = 11  # 轴标签字体大小
+            plt.rcParams['xtick.labelsize'] = 10  # x轴刻度字体大小
+            plt.rcParams['ytick.labelsize'] = 10  # y轴刻度字体大小
+            # 注意：不使用 text.usetex=True，因为需要安装完整的LaTeX系统，速度较慢
+
             _font_registered = True
             break
         except Exception:
@@ -1081,7 +1262,11 @@ for _font_path in _font_configs:
             else:
                 modified_lines.append(line)
 
+        # 步骤3：拼接代码
         injected_code = '\n'.join(modified_lines)
+
+        # 步骤4：自动转换Unicode下标/上标字符为LaTeX格式
+        injected_code = self._convert_unicode_subscript_to_latex(injected_code)
 
         logger.info(
             "font_injection_completed",

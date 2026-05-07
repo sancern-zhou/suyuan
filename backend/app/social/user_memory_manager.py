@@ -34,8 +34,9 @@ class UserMemoryManager:
         """
         # 解析相对路径为绝对路径（避免工作目录问题）
         if base_workspace is None:
-            # 默认使用绝对路径
-            base_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+            # ✅ 使用统一路径配置
+            from app.utils.path_config import get_social_memory_dir
+            base_workspace = get_social_memory_dir()
         elif not base_workspace.is_absolute():
             # 如果是相对路径，转换为绝对路径（相对于backend目录）
             current_file = Path(__file__).resolve()

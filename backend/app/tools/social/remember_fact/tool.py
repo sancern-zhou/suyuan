@@ -167,7 +167,8 @@ class RememberFactTool(LLMTool):
 
             # 2. 社交模式：使用与 social/memory_store.py 一致的用户隔离路径
             if mode == 'social':
-                base_path = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+                from app.utils.path_config import get_social_memory_dir
+                base_path = get_social_memory_dir()
                 if user_id and user_id != 'global':
                     # 与 social/memory_store.py 的路径对齐：user_id中的:替换为_
                     safe_user_id = user_id.replace(":", "_")
@@ -177,7 +178,8 @@ class RememberFactTool(LLMTool):
                     memory_dir = base_path / "social"
             else:
                 # 非社交模式：使用通用记忆路径
-                base_path = Path("/home/xckj/suyuan/backend_data_registry/memory")
+                from app.utils.path_config import get_memory_dir
+                base_path = get_memory_dir()
                 memory_dir = base_path / mode
 
             memory_dir.mkdir(parents=True, exist_ok=True)

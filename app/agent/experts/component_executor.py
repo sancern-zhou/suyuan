@@ -128,9 +128,9 @@ class ComponentExecutor(ExpertExecutor):
 
         # VOCs组分数据工具（端口9092）
         try:
-            from app.tools.query.get_vocs_data.tool import GetVOCsDataTool
+            from app.tools.query.get_vocs_data import GetVOCsDataTool
             tools["get_vocs_data"] = GetVOCsDataTool()
-            logger.info("VOCs数据工具加载成功: get_vocs_data（端口9092）")
+            logger.info("VOCs数据工具加载成功: get_vocs_data（端口9092，结构化参数版本）")
         except ImportError as e:
             logger.warning("VOCs数据工具加载失败", tool="get_vocs_data", error=str(e))
 

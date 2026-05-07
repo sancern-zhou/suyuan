@@ -260,6 +260,7 @@ class GetWeatherForecastTool(LLMTool):
 
             # 【Context-Aware V2】保存数据到 session_memory
             saved_data_ref = None
+            saved_data_id = None  # ✅ 修复：初始化变量，避免 UnboundLocalError
             saved_file_path = None
 
             logger.info(

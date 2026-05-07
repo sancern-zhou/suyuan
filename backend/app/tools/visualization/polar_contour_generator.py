@@ -939,7 +939,7 @@ function getDirection(wd) {{
 # 便捷函数：从data_id加载数据并生成图表
 def generate_from_data_id(
     data_id: str,
-    data_dir: str = "/home/xckj/suyuan/backend_data_registry/data_registry",
+    data_dir: str = None,  # ✅ 使用path_config自动获取
     method: str = "matplotlib",
     **kwargs
 ) -> Any:
@@ -962,6 +962,11 @@ def generate_from_data_id(
     """
     import json
     import os
+
+    # ✅ 使用统一路径配置
+    if data_dir is None:
+        from app.utils.path_config import get_datasets_dir
+        data_dir = str(get_datasets_dir())
 
     # 构建数据文件路径
     data_file = os.path.join(data_dir, f"{data_id}.json")

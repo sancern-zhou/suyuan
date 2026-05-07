@@ -32,7 +32,7 @@ class AgentAnalyzeRequest(BaseModel):
     query: str = Field(..., description="用户自然语言查询")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
-    max_iterations: int = Field(30, ge=1, le=30, description="最大迭代次数")
+    max_iterations: int = Field(60, ge=1, le=60, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
         description="✅ Agent模式（七模式架构）：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'code' - 编程模式（工具开发），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化）"
@@ -84,7 +84,7 @@ class AgentAnalyzeRequest(BaseModel):
 class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
     query: str = Field(..., description="用户查询")
-    max_iterations: int = Field(30, ge=1, le=30, description="最大迭代次数")
+    max_iterations: int = Field(60, ge=1, le=60, description="最大迭代次数")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于保持会话连续性和记忆）")
     user_identifier: Optional[str] = Field(None, description="用户标识（可选，用于跨会话记忆共享）")
     assistant_mode: Optional[str] = Field(
@@ -133,7 +133,7 @@ class ToolListResponse(BaseModel):
 # Global Agent Instances
 # ========================================
 
-# 通用Agent实例（使用默认 max_iterations=30）
+# 通用Agent实例（使用默认 max_iterations=60）
 multi_expert_agent_instance = create_react_agent(
     with_test_tools=False
 )

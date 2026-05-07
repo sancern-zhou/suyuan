@@ -94,14 +94,19 @@ class MemoryStore:
         Returns:
             模式专属工作空间路径
         """
-        base = workspace or Path("/home/xckj/suyuan/backend_data_registry/memory")
+        # ✅ 使用统一路径配置
+        if workspace is None:
+            from app.utils.path_config import get_memory_dir
+            base = get_memory_dir()
+        else:
+            base = workspace
 
         # 按mode分组存储（不考虑用户登录场景）
         mode_dir = base / mode
         mode_dir.mkdir(parents=True, exist_ok=True)
 
         # 直接返回模式目录
-        # 例如：/home/xckj/suyuan/backend_data_registry/memory/query/MEMORY.md
+        # 例如：backend/backend_data_registry/memory/query/MEMORY.md
         return mode_dir
 
     def _init_files(self) -> None:

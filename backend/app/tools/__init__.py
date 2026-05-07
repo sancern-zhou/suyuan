@@ -124,7 +124,7 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
 
     try:
-        from app.tools.query.get_vocs_data.tool import GetVOCsDataTool
+        from app.tools.query.get_vocs_data import GetVOCsDataTool
         registry.register(GetVOCsDataTool(), priority=61)
         logger.info("tool_loaded", tool="get_vocs_data")
     except ImportError as e:

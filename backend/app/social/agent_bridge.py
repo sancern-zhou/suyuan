@@ -708,8 +708,9 @@ class AgentBridge:
         from datetime import datetime
 
         try:
-            
-            social_workspace = Path("/home/xckj/suyuan/backend_data_registry/social/memory")
+            # ✅ 使用统一路径配置
+            from app.utils.path_config import get_social_memory_dir
+            social_workspace = get_social_memory_dir()
             memory_store = ImprovedMemoryStore(user_id=social_user_id, workspace=social_workspace)
 
             existing_memory = memory_store.read_long_term()

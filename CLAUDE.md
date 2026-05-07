@@ -73,7 +73,7 @@ backend/app/
 
 **上下文压缩机制** (2026-05-02): 三层渐进式压缩 - ①工具输出预截断（observation 3000字符/action 1000字符）→ ②Snip Compact（保留头部2条+尾部4轮，中间直接裁剪）→ ③LLM全量压缩（消息数>30时调用LLM摘要）；保护段机制保留最近2轮对话不压缩；Reactive Compact：当API返回prompt-too-long错误时自动触发压缩并重试（`llm_service.py:_is_context_overflow_error`），通过`_reactive_compact_attempted`标志防无限循环。
 
-**站点映射分离** (2026-04-26): 系统使用两个独立的站点映射器 - `GeoMatcher` 用于常规空气质量/气象站点（数据源：`station_district_results_with_type_id.json`），`ParticulateGeoMatcher` 专门用于PM2.5组分站点（数据源：`geo_mappings.json` 的 `stations` 字段），分别服务不同的查询工具，互不干扰。
+**站点映射分离** (2026-04-26): 系统使用两个独立的站点映射器 - `GeoMatcher` 用于常规空气质量/气象站点（数据源：`station_district_results_with_type_id.json`），`ParticulateGeoMatcher` 用于超站组分站点（数据源：`geo_mappings.json` 的 `stations` 字段），服务PM2.5组分和VOCs组分查询工具。两类站点使用同一套编码系统（格式如 1025b）。
 
 ## 核心架构原则
 

@@ -32,7 +32,7 @@ class ExecuteSQLQueryTool(LLMTool):
     - 只允许SELECT查询
     - 禁止DROP/DELETE/UPDATE/INSERT等操作
     - 表名白名单验证
-    - 最大返回100条记录
+    - 最大返回200条记录
     """
 
     # 默认返回记录数限制
@@ -42,7 +42,7 @@ class ExecuteSQLQueryTool(LLMTool):
         """初始化工具"""
 
         # 初始化SQL验证器，扩展表名白名单
-        self.sql_validator = SQLValidator(max_limit=100)
+        self.sql_validator = SQLValidator(max_limit=200)
         # 注意：qc_history 和 working_orders 已在 SQLValidator 类的白名单中，无需重复添加
         # 添加业务表到白名单
         self.sql_validator.ALLOWED_TABLES.extend([
@@ -59,7 +59,7 @@ class ExecuteSQLQueryTool(LLMTool):
             "description": (
                 "通用SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
                 "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的表清单。"
-                "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回100条。"
+                "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
                 "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
                 "database默认为XcAiDb；质控/工单/站点基础信息通常用AirPollutionAnalysis。"
                 "\n\n常用表说明："
@@ -87,7 +87,7 @@ class ExecuteSQLQueryTool(LLMTool):
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "返回记录数限制（默认50，最大100，仅用于sql查询）",
+                        "description": "返回记录数限制（默认50，最大200，仅用于sql查询）",
                         "default": 50
                     }
                 }
@@ -295,7 +295,7 @@ class ExecuteSQLQueryTool(LLMTool):
 {fields_text}
 
 字段总数: {len(columns)}
-{sample_text}提示：使用 execute_sql_query(sql='SELECT TOP 100 * FROM {full_table_name}', database='{database}') 查看更多数据"""
+{sample_text}提示：使用 execute_sql_query(sql='SELECT TOP 200 * FROM {full_table_name}', database='{database}') 查看更多数据"""
             }
 
             logger.info(
