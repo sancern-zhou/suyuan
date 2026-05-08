@@ -453,16 +453,37 @@ reorder_slides → 重排全部页面，order 必须包含当前全部页码
 主题字段使用固定合同：
 
 ```text
-primary, secondary, accent, text, muted, bg, surface, line, headFontFace, bodyFontFace
+primary, secondary, accent, text, muted, bg, surface, line, headFontFace, bodyFontFace,
+spacingPageMargin, spacingBlockGap, radiusCard, fontTitle, fontBody, fontCaption
 ```
 
 颜色使用 6 位 hex，传 `#2563EB` 或 `2563EB` 都可以，工具会统一清洗为 `2563EB`。不要使用 8 位 hex 透明色、渐变、动画或 Unicode 项目符号；列表内容传纯文本数组，工具会使用 PptxGenJS 原生 bullet。
+
+创建 PPT 时必须优先组织设计简报，而不是直接堆叠正文。`create_pptx` 支持 `design_brief` 和 `auto_design`：
+
+```json
+{
+  "design_brief": {
+    "audience": "管理汇报/技术汇报/公众展示",
+    "tone": "professional, evidence-led, concise",
+    "style": "Sharp & Compact",
+    "content_density": "dense",
+    "rules": [
+      "one core message per slide",
+      "prefer cards, charts, callouts, and timelines over dense paragraphs"
+    ]
+  },
+  "auto_design": true
+}
+```
+
+`auto_design=true` 时，工具会自动将高密度 `text` 或 `bullets` 转为 `key_message` / `card_grid` 等更适合展示的结构，并在返回结果中提供 `slide_plan` 和 `density_report`。除非用户明确要求原文排版，不要关闭 `auto_design`。
 
 常用 slide 类型：
 
 ```text
 title, section, bullets, text, two_column, table, image, image_text, chart, quote,
-toc, summary, comparison, timeline, process, metrics
+toc, summary, comparison, timeline, process, metrics, key_message, card_grid, data_story
 ```
 
 质量参数：
@@ -508,7 +529,29 @@ quality="strict"   → 额外执行渲染级溢出检测
 validate_pptx(path="backend/backend_data_registry/presentations/report.pptx", expected_fonts=["Microsoft YaHei"])
 ```
 
-`create_pptx` 也支持 `run_validation=true` 或 `quality="standard"/"strict"`，可在生成后直接返回验证报告。
+`create_pptx` 也支持 `run_validation=true` 或 `quality="standard"/"strict"`，可在生成后直接返回验证报告。验证报告现在包含 `design_quality` 和 `visual_quality`：前者检查文字密度、纯文字页、字号层级、重复版式；后者基于渲染 PNG 检查空白率、视觉拥挤和贴边风险。`visual_quality` 依赖 PyMuPDF/fitz；缺失时会返回 `enabled=false` 和不可用原因，不会阻断结构设计检查。
+
+启用验证后，`create_pptx` 会返回 `quality_gate`：
+
+```json
+{
+  "quality_gate": {
+    "status": "pass | warning | rewrite_required | unknown",
+    "rewrite_required": true,
+    "rewrite_pages": [
+      {
+        "slide": 2,
+        "issues": [{"type": "high_text_density", "slide": 2}],
+        "action": "拆分内容，改为主结论+图表/卡片/流程，减少同页文字。"
+      }
+    ],
+    "reasons": ["第 2 页：文字密度过高。"],
+    "recommendations": ["拆分高文字密度页面，或改为主结论+卡片/图表结构。"]
+  }
+}
+```
+
+如果发现 `high_text_density`、`text_only_slide`、`rendered_visual_overcrowding`、`rendered_low_margin`、`rendered_content_overflow` 或 `repeated_layout_pattern`，应优先根据 `quality_gate.rewrite_pages` 调整相关页面。
 
 **推荐库**：
 - **python-pptx** - PPT文件读写和编辑
