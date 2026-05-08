@@ -81,10 +81,6 @@ def build_react_system_prompt(
         mode_tools = get_tools_by_mode(mode)
         filtered_tools = [t for t in available_tools if t in mode_tools]
 
-        # 确保call_sub_agent工具在通用模式中可用；会商专用模式不暴露模式互调。
-        if not mode.startswith("deliberation_") and "call_sub_agent" not in filtered_tools:
-            filtered_tools.append("call_sub_agent")
-
     logger.info(
         "building_prompt",
         mode=mode,

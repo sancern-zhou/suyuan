@@ -24,7 +24,7 @@ def build_query_prompt(available_tools: List[str], memory_context: Optional[str]
     - 专注本地PostgreSQL/TimescaleDB数据库查询
     - 支持自然语言转SQL
     - 支持数据聚合分析
-    - 可调用专家模式进行深度分析
+    - 只负责数据取证和结构化查询结果返回
     - 四层金字塔架构，决策清晰无歧义
     - 记忆注入（从快照获取，直接注入到系统提示词）
 
@@ -67,7 +67,7 @@ def build_query_prompt(available_tools: List[str], memory_context: Optional[str]
         "2. SQL生成与执行",
         "3. 数据聚合分析",
         "4. 知识库检索（⭐预报会商场景）",
-        "5. 模式互调（专家/助手Agent）",
+        "5. 结构化证据返回（data_id、表格、字段说明、数据限制）",
         "",
         "",
     ])
