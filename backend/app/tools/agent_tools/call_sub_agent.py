@@ -463,6 +463,19 @@ class CallSubAgentTool(LLMTool):
         hint = mode_hints.get(target_mode, "")
         parts.append(hint)
 
+        # ⚠️ 添加data_id返回要求（所有子Agent必须遵守）
+        parts.append("\n## ⚠️ 子Agent返回格式要求（CRITICAL）\n")
+        parts.append("**必须在最终回复中明确列出所有data_id**，格式如下：\n")
+        parts.append("```markdown\n")
+        parts.append("**数据溯源**：\n")
+        parts.append("- data_id: xxx-xxx (说明)\n")
+        parts.append("- data_id: yyy-yyy (说明)\n")
+        parts.append("```\n\n")
+        parts.append("**提取规则**：\n")
+        parts.append("- 从工具返回的 `data_id`、`metadata.data_id`、`data.data_ids` 字段提取\n")
+        parts.append("- 父Agent依赖此信息收集数据溯源\n")
+        parts.append("- 即使只有一个data_id也必须列出\n")
+
         return "\n".join(parts)
 
     def _extract_final_result(self, events: list) -> Dict:
