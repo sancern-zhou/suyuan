@@ -1306,14 +1306,18 @@ export const useReactStore = defineStore('react', {
               // targetState.streamingAnswerMessageId = null  // ← 删除这行
             }
 
-            // ✅ 自动保存会话：每次AI回复完成时保存
+            // ❌ 移除前端自动保存（避免与后端保存冲突）
+            // 后端 react_agent.py 已经在分析完成时保存会话（line 498）
+            // 前端如果再保存会导致消息重复（删除旧消息 → 插入新消息 → 两次保存 = 两份数据）
+            // 保留注释说明为什么这里不保存
+            /*
             if (targetState.sessionId && targetState.messages.length > 0) {
               console.log('[autoSave] AI回复完成，自动保存会话')
-              // 使用 fire-and-forget 方式，不阻塞UI
               autoSaveSession(targetState.sessionId, targetState.messages, 'active').catch(err => {
                 console.warn('[autoSave] 自动保存失败:', err)
               })
             }
+            */
           }
           break
         }
