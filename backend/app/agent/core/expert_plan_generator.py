@@ -85,10 +85,11 @@ class ExpertPlanGenerator:
             }
         },
         "get_vocs_data": {
-            "param_type": "natural_language",
-            "required_param": "question",
-            "description": "通过自然语言查询VOCs组分数据（端口9092）",
-            "example": "查询{location}的VOCs组分数据，包括苯系物、烷烃、烯烃等物种浓度"
+            "param_type": "structured",
+            "required_params": ["start_time", "end_time"],
+            "optional_params": ["locations", "station", "code", "table_type", "data_type"],
+            "description": "查询VOCs组分数据（端口9092），支持城市/站点自动映射",
+            "example": {"locations": ["阳江"], "start_time": "2026-05-07 00:00:00", "end_time": "2026-05-07 23:59:59", "table_type": 1}
         },
 
         # 结构化参数型工具
@@ -1854,8 +1855,8 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
             if param in context and context[param] is not None:
                 params[param] = context[param]
 
-        # 【新增】颗粒物组分查询工具的特殊处理
-        if tool_name in ["get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal", "get_particulate_components"]:
+        # 【新增】VOCs/颗粒物组分查询工具的特殊处理
+        if tool_name in ["get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal", "get_particulate_components"]:
             # 自动生成 locations 参数（数组格式）
             location = context.get("location", "")
             if location and "locations" not in params:
@@ -1868,6 +1869,11 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
                     original_location=location,
                     locations=params["locations"]
                 )
+
+            if tool_name == "get_vocs_data":
+                # VOCs接口使用小时表和原始数据作为默认查询口径。
+                params.setdefault("table_type", 1)
+                params.setdefault("data_type", 0)
 
             # 确保时间参数格式正确（保持完整的 "YYYY-MM-DD HH:MM:SS" 格式）
             # 这些工具需要完整的时间戳格式

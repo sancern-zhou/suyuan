@@ -450,6 +450,8 @@ class ToolDependencyGraph:
                             # 如果是API调用失败、网络错误等，应该重试
                             if error_type in ["api_failed", "timeout", "network_error"] or "API" in error_msg or "超时" in error_msg or "网络" in error_msg:
                                 raise Exception(f"工具返回可重试的错误: {error_msg}")
+                        last_error = error_msg
+                        break
 
                 # 【修复】在降级检查之前，先提取data_id到顶层，以便正确判断
                 if isinstance(execution_result, dict) and not execution_result.get("data_id"):
@@ -828,6 +830,12 @@ class ToolDependencyGraph:
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """为工具绑定参数"""
+        def _preview_data_id(data_id: Any) -> Optional[str]:
+            if data_id is None:
+                return None
+            data_id_str = str(data_id)
+            return data_id_str[:20] + "..." if len(data_id_str) > 20 else data_id_str
+
         try:
             if node.input_bindings:
                 # 收集所有可用的tool_results
@@ -845,7 +853,7 @@ class ToolDependencyGraph:
                         "tool_name": r.tool_name,
                         "index": r.index,
                         "has_data_id": bool(r.data_id),
-                        "data_id": r.data_id[:20] + "..." if r.data_id and len(r.data_id) > 20 else r.data_id
+                        "data_id": _preview_data_id(r.data_id)
                     } for r in all_tool_results if r is not None]
                 )
 
