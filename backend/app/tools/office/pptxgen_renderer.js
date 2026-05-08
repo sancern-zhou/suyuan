@@ -99,6 +99,14 @@ const palette = {
   surface: color(theme.surface, "F8FAFC"),
   line: color(theme.line, "D1D5DB"),
 };
+const tokens = {
+  pageMargin: Number(theme.spacingPageMargin) || 0.6,
+  blockGap: Number(theme.spacingBlockGap) || 0.35,
+  radiusCard: Number(theme.radiusCard) || 0.08,
+  fontTitle: Number(theme.fontTitle) || 28,
+  fontBody: Number(theme.fontBody) || 15,
+  fontCaption: Number(theme.fontCaption) || 10,
+};
 
 const pptx = new pptxgen();
 pptx.layout = spec.layout || "LAYOUT_WIDE";
@@ -251,6 +259,95 @@ function addItems(slide, items, x, y, w, h, opts = {}) {
   });
 }
 
+function addAccentBlock(slide, x, y, w, h, fill = palette.primary) {
+  slide.addShape(pptx.ShapeType.rect, {
+    x, y, w, h,
+    fill: { color: fill },
+    line: { transparency: 100 },
+  });
+}
+
+function addCard(slide, item, x, y, w, h, index, opts = {}) {
+  const title = text(typeof item === "string" ? `要点 ${index + 1}` : item.title || item.label || `要点 ${index + 1}`);
+  const body = text(typeof item === "string" ? item : item.body || item.description || item.text || item.value || "");
+  slide.addShape(pptx.ShapeType.roundRect, {
+    x, y, w, h,
+    rectRadius: opts.radius ?? tokens.radiusCard,
+    fill: { color: opts.fill || palette.surface },
+    line: { color: opts.line || palette.line, width: 0.5 },
+  });
+  slide.addShape(pptx.ShapeType.ellipse, {
+    x: x + 0.22, y: y + 0.22, w: 0.34, h: 0.34,
+    fill: { color: opts.badgeColor || palette.primary },
+    line: { transparency: 100 },
+  });
+  slide.addText(String(index + 1).padStart(2, "0"), {
+    x: x + 0.22, y: y + 0.29, w: 0.34, h: 0.12,
+    fontFace: fonts.body, fontSize: 6.5, bold: true,
+    color: palette.bg, align: "center", margin: 0,
+  });
+  slide.addText(title, {
+    ...fitTextOptions(title, fonts.head, { x: x + 0.68, y: y + 0.18, w: w - 0.9, h: 0.36, fontSize: opts.titleSize || 13, minFontSize: 8 }),
+    bold: true, color: opts.titleColor || palette.text, margin: 0.02,
+  });
+  if (body) {
+    slide.addText(body, {
+      ...fitTextOptions(body, fonts.body, { x: x + 0.28, y: y + 0.72, w: w - 0.56, h: h - 0.92, fontSize: opts.bodySize || 10.5, minFontSize: 7 }),
+      color: opts.bodyColor || palette.muted,
+      margin: 0.03,
+      valign: "top",
+    });
+  }
+}
+
+function addCardGrid(slide, items, x, y, w, h, opts = {}) {
+  const list = (Array.isArray(items) ? items : []).slice(0, opts.maxItems || 6);
+  if (!list.length) return;
+  const columns = list.length <= 3 ? list.length : 3;
+  const rows = Math.ceil(list.length / columns);
+  const gap = opts.gap || 0.28;
+  const cardW = (w - gap * (columns - 1)) / columns;
+  const cardH = (h - gap * (rows - 1)) / rows;
+  list.forEach((item, index) => {
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    addCard(slide, item, x + col * (cardW + gap), y + row * (cardH + gap), cardW, cardH, index, opts);
+  });
+}
+
+function addKeyMessage(slide, slideSpec) {
+  const message = slideSpec.message || slideSpec.subtitle || slideSpec.text || "";
+  addAccentBlock(slide, 0.6, 1.48, 0.12, 1.25, palette.primary);
+  slide.addText(message, {
+    x: 0.92, y: 1.45, w: 11.4, h: 0.95,
+    ...fitTextOptions(message, fonts.head, { x: 0.92, y: 1.45, w: 11.4, h: 0.95, fontSize: 25, minFontSize: 14 }),
+    bold: true,
+    color: palette.text,
+    margin: 0.02,
+    fit: "shrink",
+  });
+  const items = slideSpec.items || slideSpec.takeaways || slideSpec.bullets || [];
+  addCardGrid(slide, items, 0.85, 2.75, 11.65, 3.85, {
+    badgeColor: palette.accent,
+    titleSize: 12.5,
+    bodySize: 10.2,
+    maxItems: 6,
+  });
+}
+
+function addDataStory(slide, slideSpec) {
+  const chart = slideSpec.chart;
+  const takeaways = slideSpec.takeaways || slideSpec.items || slideSpec.bullets || [];
+  if (chart) addChart(slide, chart, 0.75, 1.55, 7.4, 4.95);
+  else addCardGrid(slide, takeaways, 0.85, 1.65, 7.2, 4.75, { maxItems: 4, badgeColor: palette.primary });
+  addAccentBlock(slide, 8.55, 1.58, 0.08, 4.85, palette.secondary);
+  addBodyText(slide, slideSpec.message || "关键发现", 8.85, 1.55, 3.45, 0.55, { fontSize: 16, color: palette.text });
+  addItems(slide, takeaways, 8.85, 2.25, 3.45, 3.85, { badgeColor: palette.accent, titleSize: 11.5, bodySize: 8.7 });
+  if (slideSpec.source) {
+    addBodyText(slide, `来源：${slideSpec.source}`, 0.85, 6.76, 11.45, 0.22, { fontSize: tokens.fontCaption, color: palette.muted });
+  }
+}
+
 function addFooter(slide, idx) {
   if (spec.footer === false) return;
   slide.addShape(pptx.ShapeType.line, {
@@ -299,7 +396,16 @@ function renderSlide(slideSpec, idx) {
   } else {
     addTitle(slide, slideSpec.title, slideSpec.subtitle);
 
-    if (type === "two_column") {
+    if (type === "key_message") {
+      addKeyMessage(slide, slideSpec);
+    } else if (type === "card_grid") {
+      addCardGrid(slide, slideSpec.items || slideSpec.bullets || [], 0.82, 1.55, 11.7, 5.15, {
+        badgeColor: palette.primary,
+        maxItems: 6,
+      });
+    } else if (type === "data_story") {
+      addDataStory(slide, slideSpec);
+    } else if (type === "two_column") {
       addBodyText(slide, slideSpec.leftTitle || panelTitle(slideSpec.left, ""), 0.75, 1.55, 5.7, 0.3, { fontSize: 13, color: palette.primary });
       addBodyText(slide, slideSpec.rightTitle || panelTitle(slideSpec.right, ""), 6.9, 1.55, 5.7, 0.3, { fontSize: 13, color: palette.primary });
       const leftBullets = bulletItems(slideSpec.left);
