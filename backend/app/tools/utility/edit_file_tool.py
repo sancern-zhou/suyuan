@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.utility.project_root import get_project_root
+from app.utils.path_config import BACKEND_ROOT
 import structlog
 
 logger = structlog.get_logger()
@@ -87,7 +87,7 @@ class EditFileTool(LLMTool):
         )
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
-        self.working_dir = get_project_root()
+        self.working_dir = BACKEND_ROOT
 
         # 临时允许的额外目录（用于处理 /tmp 等临时文件）
         self.allowed_dirs = [

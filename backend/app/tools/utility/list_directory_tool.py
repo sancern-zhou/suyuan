@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.utility.project_root import get_project_root
+from app.utils.path_config import BACKEND_ROOT
 import structlog
 
 logger = structlog.get_logger()
@@ -56,7 +56,7 @@ class ListDirectoryTool(LLMTool):
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
         # 所有相对路径都从项目根目录解析
-        self.working_dir = get_project_root()
+        self.working_dir = BACKEND_ROOT
         # 允许访问的额外目录（临时目录）
         self.allowed_dirs = [self.working_dir, Path("/tmp")]
 

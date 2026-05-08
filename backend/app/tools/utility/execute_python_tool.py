@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Execute Python Code Tool
 
@@ -77,6 +78,12 @@ class ExecutePythonTool(LLMTool):
 - 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
 - 超时时间：30秒（可调整）
 
+📊 图表保存与前端渲染：
+- 系统自动注入 save_chart() 辅助函数
+- 使用 save_chart(fig, 'chart.png') 保存图表，自动生成 /api/image/{{image_id}} URL
+- 也可以直接使用 plt.savefig()，系统会智能识别路径并缓存
+- 示例代码见下方
+
 📊 数据访问功能（自动注入）：
 当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 函数：
 - `get_raw_data(data_id)`: 根据 data_id 获取原始数据（字典列表格式）
@@ -133,6 +140,27 @@ fig, ax = plt.subplots()
 ax.set_title('中文标题', fontproperties=chinese_font)
 ax.set_xlabel('横轴', fontproperties=chinese_font)
 ax.set_ylabel('纵轴', fontproperties=chinese_font)
+```
+
+📊 图表保存示例（推荐使用save_chart辅助函数）：
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+# 创建图表
+fig, ax = plt.subplots()
+x = np.linspace(0, 10, 100)
+ax.plot(x, np.sin(x))
+ax.set_xlabel('横轴')
+ax.set_ylabel('纵轴')
+ax.set_title('示例图表')
+
+# ✅ 推荐：使用save_chart辅助函数（自动生成 /api/image/{{image_id}} URL）
+save_chart(fig, 'example_chart.png', dpi=150)
+
+# ✅ 也支持：直接使用plt.savefig（系统会智能识别路径）
+plt.savefig('chart2.png', dpi=150)
+print('图表已保存: chart2.png')  # 系统会自动提取路径
 ```
 
 示例：
@@ -815,8 +843,11 @@ doc.save('/root/report.docx')
         从 Python 代码输出中提取图表路径和base64数据
 
         检测格式：
-        1. CHART_SAVED:/path/to/chart.png (文件路径)
-        2. CHART_SAVED:data:image/png;base64,... (base64数据)
+        1. CHART_SAVED:/path/to/chart.png (标准格式)
+        2. 图表已保存: /path/to/chart.png (中文格式)
+        3. 图表已保存到: /path/to/chart.png (中文格式2)
+        4. 保存成功: /path/to/chart.png (中文格式3)
+        5. CHART_SAVED:data:image/png;base64,... (base64数据)
 
         Args:
             output: Python 代码输出
@@ -824,21 +855,42 @@ doc.save('/root/report.docx')
         Returns:
             {"paths": [文件路径列表], "base64_data": [base64数据列表]}
         """
+        import re
         result = {"paths": [], "base64_data": []}
         output_lines = output.split('\n')
 
+        # 图表文件扩展名
+        image_extensions = r'\.(?:png|jpg|jpeg|svg|pdf|gif|bmp|tiff)'
+
         for line in output_lines:
             line = line.strip()
+
+            # 检测标准格式
             if line.startswith("CHART_SAVED:"):
                 chart_data = line.split("CHART_SAVED:")[1].strip()
 
-                # 判断是文件路径还是base64数据
                 if chart_data.startswith("data:image/"):
-                    # base64格式: data:image/png;base64,...
                     result["base64_data"].append(chart_data)
                 else:
-                    # 文件路径格式
                     result["paths"].append(chart_data)
+
+            # 检测中文输出格式（智能匹配）
+            else:
+                # 常见的中文图表保存模式
+                chinese_patterns = [
+                    # 图表已保存: /path/to/chart.png
+                    rf'(?:图表已保存|图表已保存到|保存成功|图片已保存|图片已保存到|已生成图表)[:：]\s*(.+?{image_extensions})',
+                    # 保存图表到 /path/to/chart.png
+                    rf'(?:保存图表到|生成图表到|图表保存到)[:：]\s*(.+?{image_extensions})',
+                    # 直接以文件路径结尾（带图表扩展名）
+                    rf'^(.+?{image_extensions})\s*(?:$|已保存|生成完成)',
+                ]
+
+                for pattern in chinese_patterns:
+                    matches = re.findall(pattern, line)
+                    for match in matches:
+                        if match and match not in result["paths"]:
+                            result["paths"].append(match)
 
         return result
 
@@ -1024,13 +1076,19 @@ def get_raw_data(data_id: str):
         策略：
         1. 使用正则表达式匹配所有字符串字面量
         2. 在字符串中检测Unicode下标/上标字符
-        3. 转换为matplotlib mathtext兼容的LaTeX格式
+        3. 转换为简写格式（避免LaTeX与中文混合问题）
         4. 智能处理多位数字（如2.5）
 
+        ⚠️ 重要变更：
+        由于matplotlib的mathtext引擎不支持中文字符，会导致混合LaTeX和中文的
+        字符串显示异常。因此，我们采用简写格式替代LaTeX格式：
+        - PM₂.₅ → PM2.5（而非 PM$_{2.5}$）
+        - μg/m³ → ug/m3（而非 $\mu$g/m$^3$）
+
         转换示例：
-        - 'PM₂.₅浓度' → r'PM$_{2.5}$浓度'
-        - 'μg/m³' → r'$\mu$g/m$^3$'
-        - 'NO₂' → r'NO$_2$'
+        - 'PM₂.₅浓度' → 'PM2.5浓度'
+        - 'μg/m³' → 'ug/m3'
+        - 'NO₂' → 'NO2'
         """
         import re
 
@@ -1041,34 +1099,34 @@ def get_raw_data(data_id: str):
             Returns:
                 (converted_content, needs_r_prefix)
             """
-            # 定义常见模式的替换规则
+            # 定义常见模式的替换规则（使用简写格式，避免LaTeX与中文混合问题）
             replacements = [
                 # μ符号
-                (r'μ', r'$\mu$'),
+                (r'μ', r'u'),
 
                 # PM2.5（特殊处理：小数形式）
-                (r'PM₂\.?₅', r'PM$_{2.5}$'),
-                (r'pm₂\.?₅', r'pm$_{2.5}$'),
+                (r'PM₂\.?₅', r'PM2.5'),
+                (r'pm₂\.?₅', r'pm2.5'),
 
-                # 化学式下标（单个数字）
-                (r'O₃', r'O$_3$'),
-                (r'NO₂', r'NO$_2$'),
-                (r'SO₂', r'SO$_2$'),
-                (r'CO₂', r'CO$_2$'),
-                (r'CH₄', r'CH$_4$'),
-                (r'N₂O', r'N$_2$O'),
+                # 化学式下标（单个数字）- 简写格式
+                (r'O₃', r'O3'),
+                (r'NO₂', r'NO2'),
+                (r'SO₂', r'SO2'),
+                (r'CO₂', r'CO2'),
+                (r'CH₄', r'CH4'),
+                (r'N₂O', r'N2O'),
                 (r'VOCs', r'VOCs'),  # 保持原样
 
-                # 单位上标
-                (r'm³', r'm$^3$'),
-                (r'm²', r'm$^2$'),
-                (r'km²', r'km$^2$'),
-                (r'km³', r'km$^3$'),
-                (r'μg', r'$\mu$g'),
+                # 单位上标 - 简写格式
+                (r'm³', r'm3'),
+                (r'm²', r'm2'),
+                (r'km²', r'km2'),
+                (r'km³', r'km3'),
+                (r'μg', r'ug'),
 
                 # 其他上标数字（需要小数点前面的m等）
-                (r'/m³', r'/m$^3$'),
-                (r'/m²', r'/m$^2$'),
+                (r'/m³', r'/m3'),
+                (r'/m²', r'/m2'),
             ]
 
             new_content = content
@@ -1095,27 +1153,15 @@ def get_raw_data(data_id: str):
             has_remaining = has_remaining or any(c in new_content for c in superscript_digits.keys())
 
             if has_remaining:
-                # 对于剩余的Unicode字符，简单替换（可能不完美，但比显示方块好）
+                # 对于剩余的Unicode字符，使用简写格式替换
                 for unicode_char, normal_char in subscript_digits.items():
                     if unicode_char in new_content:
-                        # 查找上下文
-                        idx = new_content.find(unicode_char)
-                        if idx > 0:
-                            prefix = new_content[idx-1]
-                            # 如果是字母后跟下标数字，转换为化学式格式
-                            if prefix.isalpha():
-                                new_content = new_content.replace(
-                                    prefix + unicode_char,
-                                    f'{prefix}$_{{{normal_char}}}$'
-                                )
-                                needs_r = True
+                        new_content = new_content.replace(unicode_char, normal_char)
+                        needs_r = True
 
                 for unicode_char, normal_char in superscript_digits.items():
                     if unicode_char in new_content:
-                        new_content = new_content.replace(
-                            unicode_char,
-                            f'$^{{{normal_char}}}$'
-                        )
+                        new_content = new_content.replace(unicode_char, normal_char)
                         needs_r = True
 
             return new_content, needs_r
@@ -1137,13 +1183,10 @@ def get_raw_data(data_id: str):
             else:
                 return full_match
 
-            # 转换内容
+            # 转换内容（简写格式，不需要r前缀）
             converted_content, needs_r = convert_string_content(content)
 
-            # 如果需要转换，添加r前缀
-            if needs_r and quote in ('"', "'"):
-                return f'r{quote}{converted_content}{quote}'
-
+            # 直接返回转换后的内容（不需要r前缀）
             return f'{quote}{converted_content}{quote}'
 
         # 匹配Python字符串字面量（排除已经有r前缀的）
@@ -1203,9 +1246,55 @@ def get_raw_data(data_id: str):
         # 步骤1：在代码开头注册字体文件并设置为默认字体
         # 使用与 calendar_renderer.py 相同的字体优先级
         font_registration_code = """# ===== 自动注入中文字体支持 =====
+import os
+
+# ===== 图表保存辅助函数（自动注入） =====
+def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
+    '''
+    保存图表并触发前端缓存(自动通过ImageCache生成URL)
+
+    Args:
+        fig: matplotlib图表对象
+        filename: 文件名(如 'chart.png')
+        dpi: 分辨率(默认150)
+        bbox_inches: 边界框(默认'tight')
+        facecolor: 背景色(默认'white')
+
+    Returns:
+        str: 保存的文件路径
+
+    Example:
+        >>> import matplotlib.pyplot as plt
+        >>> fig, ax = plt.subplots()
+        >>> ax.plot([1, 2, 3], [1, 4, 9])
+        >>> save_chart(fig, 'my_chart.png')  # 自动生成 /api/image/xxx URL
+    '''
+    import matplotlib.pyplot as plt
+
+    # 确保图表目录存在
+    charts_dir = '/home/xckj/suyuan/backend_data_registry/images'
+    try:
+        os.makedirs(charts_dir, exist_ok=True)
+    except PermissionError:
+        # 如果默认目录无权限，使用临时目录
+        import tempfile
+        charts_dir = tempfile.gettempdir()
+        os.makedirs(charts_dir, exist_ok=True)
+
+    # 构建完整路径
+    filepath = os.path.join(charts_dir, filename)
+
+    # 保存图表
+    fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
+
+    # 关键：打印标准格式标记，触发ImageCache缓存
+    print(f'CHART_SAVED:{filepath}')
+
+    return filepath
+
+# ===== 字体注册 =====
 from matplotlib import font_manager
 import matplotlib.pyplot as plt
-import os
 from pathlib import Path
 
 # 字体优先级（与 calendar_renderer.py 一致）
@@ -1226,10 +1315,11 @@ for _font_path in _font_configs:
             plt.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
             plt.rcParams['axes.unicode_minus'] = False
 
-            # ✅ 配置matplotlib的mathtext以支持LaTeX格式上下标
-            # 这样可以使用 r'PM$_{2.5}$' 和 r'$\mu$g/m$^3$' 等LaTeX格式
-            # 避免使用Unicode下标字符（₂₅³μ）导致的显示问题
-            # 使用dejavu字体作为mathtext字体（更好的符号支持）
+            # 配置matplotlib的mathtext以支持LaTeX格式上下标
+            # 注意：由于中文字体不支持LaTeX数学符号，系统会自动将Unicode下标转换为简写格式
+            # 例如：PM2.5，ug/m3
+            # 这样可以避免LaTeX与中文混合导致的显示问题
+            # 如果需要严格科学符号，可以手动使用LaTeX格式（但要确保不与中文混合）
             plt.rcParams['mathtext.fontset'] = 'dejavusans'  # 使用dejavu字体渲染数学公式
             plt.rcParams['mathtext.default'] = 'it'  # 数学公式默认斜体（更符合数学符号惯例）
 
@@ -1256,7 +1346,14 @@ for _font_path in _font_configs:
         # 步骤2：处理每一行，删除错误的字体设置
         for line in lines:
             # 检测并删除错误的字体设置（已在注册代码中统一配置）
-            if "plt.rcParams['font.sans-serif']" in line or "plt.rcParams['axes.unicode_minus']" in line:
+            # 同时检测 plt.rcParams 和 matplotlib.rcParams，以及 font.sans-serif 和 axes.unicode_minus
+            has_font_setting = (
+                "font.sans-serif" in line and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
+            ) or (
+                "axes.unicode_minus" in line and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
+            )
+
+            if has_font_setting:
                 logger.debug("font_setting_removed", original_line=line.strip())
                 continue  # 跳过这行，不添加到结果中
             else:
