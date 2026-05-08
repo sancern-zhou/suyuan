@@ -5,5 +5,6 @@
 """
 
 from .notebook_edit import NotebookEditAssistant
+from .consultation_updater import ConsultationUpdaterTool
 
-__all__ = ['NotebookEditAssistant']
+__all__ = ['NotebookEditAssistant', 'ConsultationUpdaterTool']
