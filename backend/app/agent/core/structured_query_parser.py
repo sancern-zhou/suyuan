@@ -24,8 +24,8 @@ logger = structlog.get_logger()
 
 # 站点信息文件路径（使用绝对路径，backend/data/station_info.json）
 import pathlib
-# __file__ = backend/app/agent/core/xxx.py, 需要向上2级到backend目录
-STATION_INFO_FILE = str(pathlib.Path(__file__).resolve().parents[2] / "data" / "station_info.json")
+# __file__ = backend/app/agent/core/xxx.py, 需要向上3级到backend目录
+STATION_INFO_FILE = str(pathlib.Path(__file__).resolve().parents[3] / "data" / "station_info.json")
 
 
 class StructuredQuery(BaseModel):
@@ -90,6 +90,9 @@ POLLUTANT_ALIASES = {
     "ozone": "O3",
     "pm2.5": "PM2.5",
     "pm25": "PM2.5",
+    "pm": "PM2.5",
+    "颗粒物": "PM2.5",
+    "颗粒物污染": "PM2.5",
     "细颗粒物": "PM2.5",
     "pm10": "PM10",
     "可吸入颗粒物": "PM10",

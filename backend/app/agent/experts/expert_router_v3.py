@@ -37,6 +37,7 @@ class PipelineResult:
 
     def __init__(self):
         self.status: str = "pending"
+        self.session_id: str = ""
         self.query: str = ""
         self.parsed_query: Optional[StructuredQuery] = None
         self.selected_experts: List[str] = []
@@ -52,6 +53,7 @@ class PipelineResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "status": self.status,
+            "session_id": self.session_id,
             "query": self.query,
             "parsed_query": self.parsed_query.dict() if self.parsed_query else None,
             "selected_experts": self.selected_experts,
@@ -221,6 +223,8 @@ class ExpertRouterV3:
         else:
             session_id = f"session_{uuid.uuid4().hex[:8]}"
             session = Session(session_id=session_id, query=user_query)
+
+        result.session_id = session_id
 
         # 保存初始会话状态
         await self.session_manager.save_session(session)

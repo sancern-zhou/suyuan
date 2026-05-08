@@ -197,47 +197,47 @@ class GetVOCsDataTool(LLMTool):
             # 标准化数据格式
             standardized_records = self._standardize_voc_data(records)
 
-            # 数据外部化：保存完整数据到文件系统
+            # 数据外部化：下游PMF依赖data_id，即使只有24小时数据也需要保存引用。
             data_id = None
             file_path = None
             sample_data = standardized_records
 
-            if len(standardized_records) > 24:
-                # 超过24条，进行采样并外部化
-                try:
-                    data_id = context.save_data(
-                        data=standardized_records,
-                        schema="vocs_unified",
-                        metadata={
-                            "component_type": "categories",
-                            "station": station,
-                            "code": code,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "record_count": len(standardized_records),
-                            "table_type": table_type,
-                            "data_type": data_type
-                        }
-                    )
+            try:
+                data_id = context.save_data(
+                    data=standardized_records,
+                    schema="vocs_unified",
+                    metadata={
+                        "component_type": "categories",
+                        "station": station,
+                        "station_name": station,
+                        "code": code,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "record_count": len(standardized_records),
+                        "table_type": table_type,
+                        "data_type": data_type
+                    }
+                )
 
+                if len(standardized_records) > 24:
                     # 智能采样：前12条 + 后12条
                     head_size = 12
                     tail_size = 12
                     sample_data = standardized_records[:head_size] + standardized_records[-tail_size:]
 
-                    logger.info(
-                        "voc_categories_data_externalized",
-                        total_count=len(standardized_records),
-                        sample_count=len(sample_data),
-                        data_id=data_id
-                    )
-                except Exception as save_error:
-                    logger.warning("voc_categories_save_failed", error=str(save_error))
-                    data_id = None
+                logger.info(
+                    "voc_categories_data_externalized",
+                    total_count=len(standardized_records),
+                    sample_count=len(sample_data),
+                    data_id=data_id
+                )
+            except Exception as save_error:
+                logger.warning("voc_categories_save_failed", error=str(save_error))
+                data_id = None
 
             # 构建返回消息
             if data_id:
-                summary_msg = f"成功获取{len(standardized_records)}条VOCs类别数据（已外部化，返回样本{len(sample_data)}条）"
+                summary_msg = f"成功获取{len(standardized_records)}条VOCs类别数据（已保存数据引用，返回样本{len(sample_data)}条）"
             else:
                 summary_msg = f"成功获取{len(standardized_records)}条VOCs类别数据"
 
@@ -259,6 +259,10 @@ class GetVOCsDataTool(LLMTool):
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "get_vocs_data",
+                    "data_id": data_id,
+                    "station_name": station,
+                    "station": station,
+                    "code": code,
                     "total_count": len(standardized_records),
                     "externalized": data_id is not None
                 }
