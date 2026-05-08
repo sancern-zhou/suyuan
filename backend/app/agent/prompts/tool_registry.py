@@ -52,8 +52,8 @@ EXPERT_TOOL_NAMES = {
     "compare_old_standard_reports", "read_data_registry",
 
     # 分析工具
-    "calculate_pm_pmf", "calculate_vocs_pmf", "calculate_pmf",
-    "calculate_obm_ofp", "analyze_upwind_enterprises",
+    "calculate_pm_pmf", "calculate_vocs_pmf",
+    "analyze_upwind_enterprises",
     "meteorological_trajectory_analysis", "analyze_trajectory_sources",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
     "calculate_crustal", "calculate_trace", "predict_air_quality",
@@ -61,17 +61,11 @@ EXPERT_TOOL_NAMES = {
     # 可视化
     "revise_chart", "generate_map",
 
-    # 任务管理
-    "TodoWrite",
-
     # 代码执行
     "execute_python",
 
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
-
-    # 调用助手Agent
-    "call_sub_agent",
 
     # 完成
     "FINISH_SUMMARY"
@@ -86,6 +80,7 @@ QUERY_TOOL_NAMES = {
     "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
 
     # === 参数化查询工具 ===
+    "complex_query_planner",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
@@ -106,12 +101,6 @@ QUERY_TOOL_NAMES = {
 
     # === 数值计算工具 ===
     "execute_python",
-
-    # === 任务管理 ===
-    "TodoWrite",
-
-    # 模式互调
-    "call_sub_agent",
 }
 
 # ===== 报告模式工具 =====
@@ -252,7 +241,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = {
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = {
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "calculate_pmf", "calculate_vocs_pmf", "calculate_obm_ofp",
+    "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
     "calculate_crustal", "calculate_trace", "read_data_registry",
     "execute_python", "TodoWrite",
@@ -304,8 +293,7 @@ EXPERT_TOOL_ORDER = [
     "read_data_registry",
 
     # 分析工具
-    "calculate_pm_pmf", "calculate_vocs_pmf", "calculate_pmf",
-    "calculate_obm_ofp",
+    "calculate_pm_pmf", "calculate_vocs_pmf",
     "analyze_upwind_enterprises", "meteorological_trajectory_analysis", "analyze_trajectory_sources",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble", "calculate_crustal", "calculate_trace",
     "predict_air_quality",
@@ -313,17 +301,11 @@ EXPERT_TOOL_ORDER = [
     # 可视化
     "revise_chart", "generate_map",
 
-    # 任务管理
-    "TodoWrite",
-
     # 代码执行
     "execute_python",
 
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
-
-    # 调用助手Agent
-    "call_sub_agent",
 
     # 完成
     "FINISH_SUMMARY"
@@ -379,11 +361,6 @@ QUERY_TOOL_ORDER = [
     # 数值计算
     "execute_python",
 
-    # 任务管理
-    "TodoWrite",
-
-    # 模式互调
-    "call_sub_agent",
 ]
 
 # ========================================

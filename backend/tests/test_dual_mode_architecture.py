@@ -29,9 +29,10 @@ def test_prompt_builder():
     print(expert_prompt[:200])
     print(f"\n提示词长度: {len(expert_prompt)} 字符")
 
-    # 验证必要的内容
+    # 验证模式职责边界
     assert "call_sub_agent" in assistant_prompt, "Assistant prompt 缺少 call_sub_agent 工具"
-    assert "call_sub_agent" in expert_prompt, "Expert prompt 缺少 call_sub_agent 工具"
+    assert "call_sub_agent" not in expert_prompt, "Expert prompt 不应暴露 call_sub_agent"
+    assert "TodoWrite" not in expert_prompt, "Expert prompt 不应依赖任务管理工具"
     print("\n[OK] 提示词构建器测试通过")
 
 
@@ -53,13 +54,21 @@ def test_tool_registry():
     for tool_name, description in list(expert_tools.items())[:5]:
         print(f"  - {tool_name}: {description[:50]}...")
 
-    # 验证两种模式都有 call_sub_agent
+    # 验证模式工具边界
     assert "call_sub_agent" in assistant_tools, "Assistant 模式缺少 call_sub_agent"
-    assert "call_sub_agent" in expert_tools, "Expert 模式缺少 call_sub_agent"
+    assert "call_sub_agent" not in expert_tools, "Expert 模式不应暴露 call_sub_agent"
+    assert "TodoWrite" not in expert_tools, "Expert 模式不应暴露 TodoWrite"
+    assert "calculate_pmf" not in expert_tools, "Expert 模式不应暴露未注册的 calculate_pmf"
+    assert "calculate_obm_ofp" not in expert_tools, "Expert 模式不应暴露未注册的 calculate_obm_ofp"
+
+    query_tools = get_tools_by_mode("query")
+    assert "complex_query_planner" in query_tools, "Query 模式缺少 complex_query_planner"
+    assert "TodoWrite" not in query_tools, "Query 模式不应暴露 TodoWrite"
+    assert "call_sub_agent" not in query_tools, "Query 模式不应暴露 call_sub_agent"
     print("\n[OK] 工具注册表测试通过")
 
 
-async def test_call_sub_agent_tool():
+def test_call_sub_agent_tool():
     """测试 CallSubAgentTool 是否正确注册"""
     print("\n" + "=" * 60)
     print("测试3: CallSubAgentTool 注册")
@@ -159,7 +168,7 @@ async def main():
     # 运行测试
     test_prompt_builder()
     test_tool_registry()
-    await test_call_sub_agent_tool()
+    test_call_sub_agent_tool()
     test_api_request_model()
 
     print("\n" + "=" * 60)
