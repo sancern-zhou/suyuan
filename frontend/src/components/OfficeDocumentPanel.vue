@@ -628,7 +628,7 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath) {
       return 'ppt'
     } else if (['xls', 'xlsx'].includes(ext)) {
       return 'excel'
-    } else if (['md', 'markdown'].includes(ext)) {
+    } else if (['md', 'markdown', 'qmd'].includes(ext)) {
       return 'markdown'
     }
   }

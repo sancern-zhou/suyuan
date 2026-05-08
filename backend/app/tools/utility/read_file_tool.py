@@ -63,7 +63,7 @@ class ReadFileTool(LLMTool):
     EXCEL_EXTENSIONS = {'.xlsx', '.xls', '.xlsm'}
 
     # 支持的 Markdown 格式
-    MARKDOWN_EXTENSIONS = {'.md', '.markdown'}
+    MARKDOWN_EXTENSIONS = {'.md', '.markdown', '.qmd'}
 
     # 支持的 Jupyter Notebook 格式
     NOTEBOOK_EXTENSIONS = {'.ipynb'}
