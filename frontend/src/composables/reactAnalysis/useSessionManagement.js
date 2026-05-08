@@ -186,29 +186,38 @@ export function useSessionManagement(store) {
         return '[未知格式]'
       }
 
-      // 【修复】final消息按ID去重，不按内容去重（避免内容相似但不同的回复被误杀）
-      const seenFinalIds = new Set()
-      const removedFinalIds = new Set()
-
+      // 【修复】final消息按ID去重，只过滤真正重复ID的消息
+      const idMap = new Map()
       finalMessages.forEach(m => {
-        if (seenFinalIds.has(m.id)) {
-          // 发现重复ID的final消息
-          removedFinalIds.add(m.id)
-          console.warn('[会话恢复] 发现重复ID的final消息:', {
-            重复ID: m.id,
-            消息内容预览: getContentPreview(m.content)
-          })
-        } else {
-          seenFinalIds.add(m.id)
+        if (m.id) {
+          if (idMap.has(m.id)) {
+            // 发现重复ID
+            const existing = idMap.get(m.id)
+            console.warn('[会话恢复] 发现重复ID的final消息:', {
+              id: m.id,
+              原消息时间: existing.timestamp || 'N/A',
+              重复消息时间: m.timestamp || 'N/A'
+            })
+          } else {
+            idMap.set(m.id, m)
+          }
         }
       })
 
-      // 过滤掉重复ID的final消息
-      if (removedFinalIds.size > 0) {
-        const beforeCount = messages.length
-        messages = messages.filter(m => !removedFinalIds.has(m.id))
-        const afterCount = messages.length
-        console.log(`[会话恢复] 按ID过滤了 ${beforeCount - afterCount} 条重复final消息`)
+      // 只保留每个ID的第一次出现
+      const seenIds = new Set(idMap.keys())
+      const beforeCount = messages.length
+      messages = messages.filter(m => {
+        // 只检查final/assistant消息的ID
+        const msgType = (m.type || '').toLowerCase()
+        if (msgType === 'final' || msgType === 'assistant') {
+          return !m.id || seenIds.has(m.id)
+        }
+        return true
+      })
+
+      if (messages.length !== beforeCount) {
+        console.log(`[会话恢复] 按ID去重：${beforeCount} → ${messages.length} (过滤${beforeCount - messages.length}条)`)
       }
 
       // 2. 提取可视化内容（优先使用 metadata.visualizations）
