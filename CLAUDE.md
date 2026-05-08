@@ -10,6 +10,12 @@
 - **前端**: Vue 3 - 端口5174
 - **核心功能**: 基于ReAct架构的智能污染源分析
 
+## 默认工作目录
+
+**所有Agent（主Agent、子Agent）的默认工作目录**: `/home/xckj/suyuan/backend/`
+
+相对路径 `backend_data_registry/` 会自动解析为 `/home/xckj/suyuan/backend/backend_data_registry/`
+
 ## 关键目录结构
 
 ```

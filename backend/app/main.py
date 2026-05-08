@@ -245,6 +245,18 @@ if static_path.exists():
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler."""
+
+    # ✅ 第一层：设置工作目录为 backend/（确保所有Agent使用统一工作目录）
+    import os
+    from pathlib import Path
+    backend_dir = Path(__file__).resolve().parents[1]  # app/main.py -> app -> backend
+    os.chdir(backend_dir)
+    logger.info(
+        "working_directory_set",
+        cwd=os.getcwd(),
+        backend_dir=str(backend_dir)
+    )
+
     logger.info(
         "application_starting",
         environment=settings.environment,

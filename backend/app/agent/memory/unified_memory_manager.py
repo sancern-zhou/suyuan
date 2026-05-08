@@ -29,7 +29,7 @@ class UnifiedMemoryManager:
 
     def __init__(
         self,
-        base_workspace: str = "../../backend_data_registry/memory",
+        base_workspace: str = "backend_data_registry/memory",
         max_cache_size: int = 100
     ):
         """
@@ -44,7 +44,7 @@ class UnifiedMemoryManager:
         if not workspace_path.is_absolute():
             # 如果是相对路径，相对于当前文件所在目录的父目录（backend）
             current_file = Path(__file__).resolve()
-            backend_dir = current_file.parent.parent.parent  # app/agent/memory -> app -> backend
+            backend_dir = current_file.parent.parent.parent.parent  # app/agent/memory -> agent -> app -> backend
             self.base_workspace = (backend_dir / workspace_path).resolve()
         else:
             self.base_workspace = workspace_path

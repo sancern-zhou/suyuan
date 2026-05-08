@@ -7,8 +7,10 @@ Run with: python update_memory_chart.py
 """
 
 import os
+from pathlib import Path
 
-MEMORY_FILE = "/home/xckj/suyuan/backend_data_registry/memory/chart/MEMORY.md"
+# 使用统一路径配置
+MEMORY_FILE = str(Path(__file__).resolve().parents[0] / "backend_data_registry" / "memory" / "chart" / "MEMORY.md")
 
 # Read the current content
 with open(MEMORY_FILE, 'r', encoding='utf-8') as f:

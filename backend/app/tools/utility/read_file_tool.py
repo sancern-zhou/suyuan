@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.tools.utility.project_root import get_project_root
+from app.utils.path_config import BACKEND_ROOT
 import structlog
 
 logger = structlog.get_logger()
@@ -90,7 +90,7 @@ class ReadFileTool(LLMTool):
         )
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
-        self.working_dir = get_project_root()
+        self.working_dir = BACKEND_ROOT
         # 允许访问的目录：整个项目目录（包含backend_data_registry）和临时目录
         self.allowed_dirs = [Path("/home/xckj/suyuan"), Path("/tmp")]
         self.max_image_size = 5 * 1024 * 1024  # 5MB

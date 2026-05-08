@@ -24,8 +24,8 @@ logger = structlog.get_logger()
 
 # 站点信息文件路径（使用绝对路径，backend/data/station_info.json）
 import pathlib
-# __file__ = backend/app/agent/core/xxx.py, 需要向上4级到backend目录
-STATION_INFO_FILE = str(pathlib.Path(__file__).resolve().parents[3] / "data" / "station_info.json")
+# __file__ = backend/app/agent/core/xxx.py, 需要向上2级到backend目录
+STATION_INFO_FILE = str(pathlib.Path(__file__).resolve().parents[2] / "data" / "station_info.json")
 
 
 class StructuredQuery(BaseModel):

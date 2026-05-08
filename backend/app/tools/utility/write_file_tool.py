@@ -32,7 +32,7 @@ from typing import Dict, Any, Optional
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.tools.utility.project_root import get_project_root
+from app.utils.path_config import BACKEND_ROOT
 import structlog
 
 logger = structlog.get_logger()
@@ -214,7 +214,7 @@ class WriteFileTool(LLMTool):
             requires_context=False
         )
 
-        self.working_dir = get_project_root()
+        self.working_dir = BACKEND_ROOT
         self.read_state = get_file_read_state()
         # 额外允许的路径列表（用于临时文件）
         self.allowed_extra_paths = [Path("/tmp")]
