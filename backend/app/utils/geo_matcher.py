@@ -95,7 +95,18 @@ class GeoMatcher:
 
     def _load_stations(self):
         """Load stations and cities from station_district_results_with_type_id.json."""
-        station_file = Path(__file__).parent.parent.parent / "config" / "station_district_results_with_type_id.json"
+        config_dir = Path(__file__).parent.parent.parent / "config"
+        station_file = config_dir / "station_district_results_with_type_id.json"
+        if not station_file.exists():
+            for candidate_name in (
+                "station_district_results_with_type_id.json.before_final_fix",
+                "station_district_results_with_type_id.json.before_city_fix",
+                "station_district_results_with_type_id.json.backup_before_remove_disabled",
+            ):
+                candidate = config_dir / candidate_name
+                if candidate.exists():
+                    station_file = candidate
+                    break
 
         try:
             with open(station_file, 'r', encoding='utf-8') as f:
