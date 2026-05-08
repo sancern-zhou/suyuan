@@ -60,6 +60,9 @@ DOCUMENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+    "application/msword",  # .doc
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.ms-powerpoint",  # .ppt
 }
 
 
@@ -101,8 +104,9 @@ def validate_file_type(filename: str, content_type: str) -> tuple[bool, str]:
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
         # 文档
         ".pdf", ".txt", ".md", ".markdown", ".json", ".csv",
-        # Office
-        ".docx", ".xlsx", ".pptx"
+        # Office（新旧格式都支持）
+        ".docx", ".xlsx", ".pptx",
+        ".doc", ".xls", ".ppt"
     }
 
     if ext not in allowed_extensions:
@@ -138,7 +142,8 @@ async def upload_chat_file(
 
     支持的文件类型：
     - 图片: PNG, JPG, JPEG, GIF, BMP, WEBP (最大 5MB)
-    - 文档: PDF, TXT, MD, JSON, CSV, DOCX, XLSX, PPTX (最大 50MB)
+    - 文档: PDF, TXT, MD, JSON, CSV (最大 50MB)
+    - Office: DOC, DOCX, XLS, XLSX, PPT, PPTX (最大 50MB)
 
     Args:
         file: 上传的文件

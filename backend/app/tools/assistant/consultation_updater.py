@@ -26,7 +26,6 @@ from pathlib import Path
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.agent.session.session_manager import get_session_manager
 from app.tools.assistant.excel_operations import (
     ConsultationExcelOperator,
     merge_excel_files,
@@ -88,7 +87,8 @@ class ConsultationFileUpdater:
     """会商文件更新核心逻辑"""
 
     def __init__(self):
-        self.session_manager = get_session_manager()
+        # 延迟导入，避免循环依赖
+        pass
 
     def calculate_time_period(self, time_type: str) -> Dict[str, str]:
         """
@@ -139,64 +139,57 @@ class ConsultationFileUpdater:
         time_type: str
     ) -> List[float]:
         """
-        调用query模式查询数据
+        查询污染物数据（方式2：直接调用API接口）
 
         Args:
-            scope: "national" 或 "provincial"
-            pollutant: 污染物名称
+            scope: "national"（全国）或 "provincial"（全省）
+            pollutant: 污染物名称（PM2.5, PM10, NO2, O3, AQI）
             time_period: 时间段描述（如"2026年1-3月份"）
-            time_type: "ytd" 或 "last_month"
+            time_type: "ytd"（年初至今）或 "last_month"（上个月均值）
 
         Returns:
-            数据列表
+            污染物数值列表
+
+        Raises:
+            Exception: 查询失败
         """
-        # 构造查询描述
-        scope_name = "全国各省份" if scope == "national" else "全省各城市"
-        pollutant_name = pollutant
-
-        if time_type == "ytd":
-            query_desc = f"查询{scope_name}\"{time_period}\"{pollutant_name}累计达标率数据" if pollutant == "AQI" else f"查询{scope_name}\"{time_period}\"{pollutant_name}累计均值数据"
-        else:
-            query_desc = f"查询{scope_name}\"{time_period}\"{pollutant_name}月均值数据"
-
-        # 调用query子Agent
-        session = self.session_manager.create_session(
-            user_id="system",
-            mode="query",
-            goal=query_desc
+        # 延迟导入，避免循环依赖
+        from app.tools.assistant.consultation_data_query import (
+            ConsultationDataQuery
         )
 
         try:
-            # 执行查询并等待结果
-            result = await self._execute_query_and_wait(session.session_id, query_desc)
-            # 从结果中提取数据列表
-            if isinstance(result, dict) and "data" in result:
-                return result["data"]
-            elif isinstance(result, list):
-                return result
-            else:
-                logger.warning(f"Unexpected query result format: {type(result)}")
-                return []
-        finally:
-            # 清理临时session
-            self.session_manager.delete_session(session.session_id)
+            # 创建查询器
+            query = ConsultationDataQuery()
 
-    async def _execute_query_and_wait(self, session_id: str, query_desc: str) -> List[float]:
-        """
-        执行查询并等待结果
+            # 直接调用API查询
+            result = await query.query_data(
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                time_type=time_type
+            )
 
-        实际实现需要通过session的事件流获取结果
-        这里提供一个基础实现框架
-        """
-        # TODO: 实际实现需要：
-        # 1. 获取session的agent实例
-        # 2. 执行agent.run()或agent.analyze()
-        # 3. 从事件流中提取查询结果
-        # 4. 解析结果返回数据列表
+            logger.info(
+                "query_success",
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                data_count=len(result)
+            )
 
-        logger.info(f"Executing query: {query_desc}")
-        # 临时返回空列表，实际需要补充完整逻辑
-        return []
+            return result
+
+        except Exception as e:
+            logger.error(
+                "query_failed",
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                error=str(e)
+            )
+            # 返回空列表，而不是抛出异常，允许继续处理其他文件
+            return []
 
     def update_excel_file(
         self,
