@@ -329,7 +329,8 @@ class SessionRepository:
 
                             # 提取元数据（排除已知字段）
                             # ✅ 修复：tool_use_id 和 is_error 需要保存到 data 中，不要排除
-                            known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning"}
+                            # ✅ 修复：id 字段也要排除，避免污染 metadata（DB会自动生成唯一id）
+                            known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning", "id"}
                             msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
 
                             # ✅ 修复：将 tool_use_id、tool_name、is_error 合并到 data 中
@@ -410,8 +411,9 @@ class SessionRepository:
 
                 # 转换 Decimal 为 float
                 msg_data = self._convert_decimal_to_float(message.get("data"))
+                # ✅ 修复：添加 "id" 到 known_keys，避免污染 metadata
                 known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
-                              "tool_use_id", "is_error"}
+                              "tool_use_id", "is_error", "id"}
                 msg_metadata = self._convert_decimal_to_float(
                     {k: v for k, v in message.items() if k not in known_keys}
                 )
@@ -485,19 +487,24 @@ class SessionRepository:
 
         同时包含 role（LLM 恢复用）和 type（前端展示用）
         content 直接从 JSONB 读取，无需反序列化
+
+        ✅ 修复：始终使用数据库生成的唯一id，防止metadata中的旧id覆盖
         """
         msg_dict: Dict[str, Any] = {
             "role": msg.role,
             "type": msg.msg_type,
             "content": msg.content,  # JSONB 直接返回原始类型（str/list）
             "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-            "id": f"msg_{msg.id}",
+            "id": f"msg_{msg.id}",  # ✅ 始终使用DB生成的唯一id
             "sequence_number": msg.sequence_number
         }
         if msg.data:
             msg_dict["data"] = msg.data
         if msg.msg_metadata:
-            msg_dict.update(msg.msg_metadata)
+            # ✅ 从metadata中排除id字段，避免覆盖DB生成的唯一id
+            metadata_without_id = {k: v for k, v in msg.msg_metadata.items() if k != "id"}
+            if metadata_without_id:  # 只有在有内容时才update
+                msg_dict.update(metadata_without_id)
         return msg_dict
 
     async def get_messages_before(
