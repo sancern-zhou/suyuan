@@ -263,7 +263,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.query.compare_old_standard_reports.tool import CompareOldStandardReportsTool
-        registry.register(CompareOldStandardReportsTool(), priority=421)
+        registry.register(CompareOldStandardReportsTool(), priority=43)  # 修复: 421->43
         logger.info("tool_loaded", tool="compare_old_standard_reports")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="compare_old_standard_reports", error=str(e))
@@ -512,14 +512,14 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.utility.bash_tool import BashTool
-        registry.register(BashTool(), priority=500)
+        registry.register(BashTool(), priority=300)  # 修复: 500->300
         logger.info("tool_loaded", tool="bash")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="bash", error=str(e))
 
     try:
         from app.tools.utility.execute_python_tool import ExecutePythonTool
-        registry.register(ExecutePythonTool(), priority=501)
+        registry.register(ExecutePythonTool(), priority=301)  # 修复: 501->301
         logger.info("tool_loaded", tool="execute_python")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_python", error=str(e))
@@ -530,70 +530,70 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.utility.read_file_tool import ReadFileTool
-        registry.register(ReadFileTool(), priority=501)
+        registry.register(ReadFileTool(), priority=302)  # 修复: 501->302
         logger.info("tool_loaded", tool="read_file")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="read_file", error=str(e))
 
     try:
         from app.tools.utility.analyze_image_tool import AnalyzeImageTool
-        registry.register(AnalyzeImageTool(), priority=502)
+        registry.register(AnalyzeImageTool(), priority=303)  # 修复: 502->303
         logger.info("tool_loaded", tool="analyze_image")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="analyze_image", error=str(e))
 
     try:
         from app.tools.utility.edit_file_tool_v2 import EditFileToolV2 as EditFileTool
-        registry.register(EditFileTool(), priority=503)
+        registry.register(EditFileTool(), priority=304)  # 修复: 503->304
         logger.info("tool_loaded", tool="edit_file", version="v2")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="edit_file", version="v2", error=str(e))
 
     try:
         from app.tools.utility.grep_tool import GrepTool
-        registry.register(GrepTool(), priority=504)
+        registry.register(GrepTool(), priority=305)  # 修复: 504->305
         logger.info("tool_loaded", tool="grep")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="grep", error=str(e))
 
     try:
         from app.tools.utility.write_file_tool import WriteFileTool
-        registry.register(WriteFileTool(), priority=505)
+        registry.register(WriteFileTool(), priority=306)  # 修复: 505->306
         logger.info("tool_loaded", tool="write_file")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="write_file", error=str(e))
 
     try:
         from app.tools.utility.glob_tool import GlobTool
-        registry.register(GlobTool(), priority=506)
+        registry.register(GlobTool(), priority=307)  # 修复: 506->307
         logger.info("tool_loaded", tool="search_files")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_files", error=str(e))
 
     try:
         from app.tools.utility.list_directory_tool import ListDirectoryTool
-        registry.register(ListDirectoryTool(), priority=507)
+        registry.register(ListDirectoryTool(), priority=308)  # 修复: 507->308
         logger.info("tool_loaded", tool="list_directory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="list_directory", error=str(e))
 
     try:
         from app.tools.utility.vectorize_document_tool import VectorizeDocumentTool
-        registry.register(VectorizeDocumentTool(), priority=512)
+        registry.register(VectorizeDocumentTool(), priority=309)  # 修复: 512->309
         logger.info("tool_loaded", tool="vectorize_document")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="vectorize_document", error=str(e))
 
     try:
         from app.tools.utility.skill_management.list_skills_tool import ListSkillsTool
-        registry.register(ListSkillsTool(), priority=508)
+        registry.register(ListSkillsTool(), priority=310)  # 修复: 508->310
         logger.info("tool_loaded", tool="list_skills")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="list_skills", error=str(e))
 
     try:
         from app.tools.utility.parse_pdf_tool import create_parse_pdf_tool
-        registry.register(create_parse_pdf_tool(), priority=509)
+        registry.register(create_parse_pdf_tool(), priority=311)  # 修复: 509->311
         logger.info("tool_loaded", tool="parse_pdf")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
@@ -601,7 +601,7 @@ def create_global_tool_registry() -> ToolRegistry:
     try:
         # Notebook 编辑工具（支持专家模式和助手模式）
         from app.tools.utility.notebook_edit_tool import NotebookEditTool
-        registry.register(NotebookEditTool(), priority=510)
+        registry.register(NotebookEditTool(), priority=312)  # 修复: 510->312
         logger.info("tool_loaded", tool="notebook_edit")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="notebook_edit", error=str(e))
@@ -609,7 +609,7 @@ def create_global_tool_registry() -> ToolRegistry:
     try:
         # Notebook 分享HTML生成工具
         from app.tools.utility.generate_shareable_notebook.tool_wrapper import GenerateShareableNotebookTool
-        registry.register(GenerateShareableNotebookTool(), priority=511)
+        registry.register(GenerateShareableNotebookTool(), priority=313)  # 修复: 511->313
         logger.info("tool_loaded", tool="generate_shareable_notebook")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="generate_shareable_notebook", error=str(e))
@@ -621,14 +621,14 @@ def create_global_tool_registry() -> ToolRegistry:
     # Phase 1: XML 解包/打包工具（跨平台）
     try:
         from app.tools.office.unpack_tool import UnpackOfficeTool
-        registry.register(UnpackOfficeTool(), priority=598)
+        registry.register(UnpackOfficeTool(), priority=340)  # 修复: 598->340
         logger.info("tool_loaded", tool="unpack_office")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="unpack_office", error=str(e))
 
     try:
         from app.tools.office.pack_tool import PackOfficeTool
-        registry.register(PackOfficeTool(), priority=599)
+        registry.register(PackOfficeTool(), priority=341)  # 修复: 599->341
         logger.info("tool_loaded", tool="pack_office")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="pack_office", error=str(e))
@@ -636,63 +636,63 @@ def create_global_tool_registry() -> ToolRegistry:
     # Phase 2: Word 高级编辑（跨平台）
     try:
         from app.tools.office.word_edit_tool import WordEditTool
-        registry.register(WordEditTool(), priority=593)
+        registry.register(WordEditTool(), priority=342)  # 修复: 593->342
         logger.info("tool_loaded", tool="word_edit")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="word_edit", error=str(e))
 
     try:
         from app.tools.office.accept_changes_tool import AcceptChangesTool
-        registry.register(AcceptChangesTool(), priority=596)
+        registry.register(AcceptChangesTool(), priority=343)  # 修复: 596->343
         logger.info("tool_loaded", tool="accept_word_changes")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="accept_word_changes", error=str(e))
 
     try:
         from app.tools.office.find_replace_tool import FindReplaceTool
-        registry.register(FindReplaceTool(), priority=597)
+        registry.register(FindReplaceTool(), priority=344)  # 修复: 597->344
         logger.info("tool_loaded", tool="find_replace_word")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="find_replace_word", error=str(e))
 
     try:
         from app.tools.office.read_pptx_tool import ReadPptxTool
-        registry.register(ReadPptxTool(), priority=594)
+        registry.register(ReadPptxTool(), priority=345)  # 修复: 594->345
         logger.info("tool_loaded", tool="read_pptx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="read_pptx", error=str(e))
 
     try:
         from app.tools.office.create_pptx_tool import CreatePptxTool
-        registry.register(CreatePptxTool(), priority=595)
+        registry.register(CreatePptxTool(), priority=346)  # 修复: 595->346
         logger.info("tool_loaded", tool="create_pptx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_pptx", error=str(e))
 
     try:
         from app.tools.office.analyze_pptx_template_tool import AnalyzePptxTemplateTool
-        registry.register(AnalyzePptxTemplateTool(), priority=591)
+        registry.register(AnalyzePptxTemplateTool(), priority=347)  # 修复: 591->347
         logger.info("tool_loaded", tool="analyze_pptx_template")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="analyze_pptx_template", error=str(e))
 
     try:
         from app.tools.office.create_pptx_from_template_tool import CreatePptxFromTemplateTool
-        registry.register(CreatePptxFromTemplateTool(), priority=590)
+        registry.register(CreatePptxFromTemplateTool(), priority=348)  # 修复: 590->348
         logger.info("tool_loaded", tool="create_pptx_from_template")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_pptx_from_template", error=str(e))
 
     try:
         from app.tools.office.edit_pptx_tool import EditPptxTool
-        registry.register(EditPptxTool(), priority=589)
+        registry.register(EditPptxTool(), priority=349)  # 修复: 589->349
         logger.info("tool_loaded", tool="edit_pptx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="edit_pptx", error=str(e))
 
     try:
         from app.tools.office.validate_pptx_tool import ValidatePptxTool
-        registry.register(ValidatePptxTool(), priority=592)
+        registry.register(ValidatePptxTool(), priority=350)  # 修复: 592->350
         logger.info("tool_loaded", tool="validate_pptx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="validate_pptx", error=str(e))
@@ -704,7 +704,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.scheduled_tasks import create_scheduled_task_tool
-        registry.register(create_scheduled_task_tool, priority=700)
+        registry.register(create_scheduled_task_tool, priority=360)  # 修复: 700->360
         logger.info("tool_loaded", tool="create_scheduled_task")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_scheduled_task", error=str(e))
@@ -715,56 +715,56 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.social.schedule_task.tool import ScheduleTaskTool
-        registry.register(ScheduleTaskTool(), priority=701)
+        registry.register(ScheduleTaskTool(), priority=361)  # 修复: 701->361
         logger.info("tool_loaded", tool="schedule_task")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="schedule_task", error=str(e))
 
     try:
         from app.tools.social.send_notification.tool import SendNotificationTool
-        registry.register(SendNotificationTool(), priority=702)
+        registry.register(SendNotificationTool(), priority=362)  # 修复: 702->362
         logger.info("tool_loaded", tool="send_notification")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="send_notification", error=str(e))
 
     try:
         from app.tools.social.search_history.tool import SearchHistoryTool
-        registry.register(SearchHistoryTool(), priority=704)
+        registry.register(SearchHistoryTool(), priority=363)  # 修复: 704->363
         logger.info("tool_loaded", tool="search_history")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_history", error=str(e))
 
     try:
         from app.tools.social.remember_fact.tool import RememberFactTool
-        registry.register(RememberFactTool(), priority=720)
+        registry.register(RememberFactTool(), priority=370)  # 修复: 720->370
         logger.info("tool_loaded", tool="remember_fact")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="remember_fact", error=str(e))
 
     try:
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
-        registry.register(ReplaceMemoryTool(), priority=721)
+        registry.register(ReplaceMemoryTool(), priority=371)  # 修复: 721->371
         logger.info("tool_loaded", tool="replace_memory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="replace_memory", error=str(e))
 
     try:
         from app.tools.social.remove_memory.tool import RemoveMemoryTool
-        registry.register(RemoveMemoryTool(), priority=722)
+        registry.register(RemoveMemoryTool(), priority=372)  # 修复: 722->372
         logger.info("tool_loaded", tool="remove_memory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="remove_memory", error=str(e))
 
     try:
         from app.tools.social.web_search.tool import WebSearchTool
-        registry.register(WebSearchTool(), priority=705)
+        registry.register(WebSearchTool(), priority=375)  # 修复: 705->375
         logger.info("tool_loaded", tool="web_search")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="web_search", error=str(e))
 
     try:
         from app.tools.social.web_search.tool import WebFetchTool
-        registry.register(WebFetchTool(), priority=706)
+        registry.register(WebFetchTool(), priority=376)  # 修复: 706->376
         logger.info("tool_loaded", tool="web_fetch")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="web_fetch", error=str(e))
@@ -775,7 +775,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.social.spawn.tool import SpawnTool
-        registry.register(SpawnTool(), priority=710)
+        registry.register(SpawnTool(), priority=377)  # 修复: 710->377
         logger.info("tool_loaded", tool="spawn")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="spawn", error=str(e))
@@ -786,7 +786,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.task_management.todo_write import todo_write_tool
-        registry.register(todo_write_tool, priority=800)
+        registry.register(todo_write_tool, priority=380)  # 修复: 800->380
         logger.info("tool_loaded", tool="TodoWrite")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="TodoWrite", error=str(e))
@@ -797,7 +797,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.browser.tool import BrowserTool
-        registry.register(BrowserTool(), priority=550)
+        registry.register(BrowserTool(), priority=320)  # 修复: 550->320
         logger.info("tool_loaded", tool="browser")
     except (ImportError, ValueError) as e:
         # 捕获导入错误和 schema 验证错误
@@ -817,7 +817,7 @@ def create_global_tool_registry() -> ToolRegistry:
         # 注意：CallSubAgentTool需要延迟初始化（在ReActLoop中注入依赖）
         # 这里创建一个占位符工具，真实的工具实例在executor中创建
         call_sub_agent_tool = CallSubAgentTool()
-        registry.register(call_sub_agent_tool, priority=900)
+        registry.register(call_sub_agent_tool, priority=385)  # 修复: 900->385
         logger.info("tool_loaded", tool="call_sub_agent")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="call_sub_agent", error=str(e))
@@ -828,7 +828,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.code.validate_tool import ValidateToolTool
-        registry.register(ValidateToolTool(), priority=850)
+        registry.register(ValidateToolTool(), priority=386)  # 修复: 850->386
         logger.info("tool_loaded", tool="validate_tool")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="validate_tool", error=str(e))
@@ -857,7 +857,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.report.read_docx.tool import ReadDocxTool
-        registry.register(ReadDocxTool(), priority=459)
+        registry.register(ReadDocxTool(), priority=387)  # 修复: 459->387
         logger.info("tool_loaded", tool="read_docx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="read_docx", error=str(e))
