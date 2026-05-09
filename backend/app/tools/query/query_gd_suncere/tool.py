@@ -65,6 +65,9 @@ class GeoMappingResolver:
             possible_paths = [
                 Path(__file__).parent.parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json",
                 Path(__file__).parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json",
+                Path(__file__).parent.parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json.before_final_fix",
+                Path(__file__).parent.parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json.before_city_fix",
+                Path(__file__).parent.parent.parent.parent.parent / "config" / "station_district_results_with_type_id.json.backup_before_remove_disabled",
             ]
 
             station_file = None
