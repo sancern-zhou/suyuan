@@ -460,10 +460,19 @@ class ReActPlanner:
                 "type": "streaming_text",
                 "data": {"chunk": "", "is_complete": True}
             }
+
+            # ✅ 提取 text_content（用于第二个 thought 事件）
+            text_content = ""
+            for b in current_blocks:
+                if b["type"] == "text":
+                    text_content = b["text"]
+                    break
+
             yield {
                 "type": "thought",
                 "data": {
-                    "thought": result.get("thought", "")
+                    "thought": result.get("thought", ""),
+                    "text_content": text_content  # ✅ 添加 text_content 字段
                 }
             }
 
