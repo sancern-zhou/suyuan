@@ -13,6 +13,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.particulate_api_client import get_particulate_api_client
 from app.utils.geo_matcher import get_geo_matcher
 from app.utils.particulate_token_manager import get_particulate_token_manager
+from config.settings import settings
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -50,6 +51,20 @@ class GetParticulateComponentsTool(LLMTool):
         "a36008": "Ca²⁺",
         "a340101": "OC",
         "a340091": "EC"
+    }
+
+    # Runtime request/log text stays ASCII to avoid Windows GBK console errors.
+    COMPONENT_ASCII_NAMES = {
+        "a36001": "Cl-",
+        "a36002": "NO3-",
+        "a36003": "SO4(2-)",
+        "a36004": "Na+",
+        "a36006": "K+",
+        "a36005": "NH4+",
+        "a36007": "Mg(2+)",
+        "a36008": "Ca(2+)",
+        "a340101": "OC",
+        "a340091": "EC",
     }
 
     def __init__(self) -> None:
@@ -159,7 +174,7 @@ class GetParticulateComponentsTool(LLMTool):
 
         # 构建 question（参考项目模式）
         granularity_text = {1: "小时", 2: "日", 3: "月", 5: "年"}.get(time_granularity, "小时")
-        component_list = "、".join([self.COMPONENT_NAMES.get(code, code) for code in self.DETECTION_ITEM_CODES])
+        component_list = "、".join([self.COMPONENT_ASCII_NAMES.get(code, code) for code in self.DETECTION_ITEM_CODES])
         question = f"查询{station}{start_time[:10]}期间的{granularity_text}PM2.5组分数据，包含{component_list}"
 
         # 构建完整参数（参考项目模式）
@@ -183,7 +198,7 @@ class GetParticulateComponentsTool(LLMTool):
         # 调用API - 使用token_manager获取正确的base_url
         import requests
         token_manager = get_particulate_token_manager()
-        base_url = token_manager.get_base_url()
+        base_url = settings.particulate_data_api_url.rstrip("/")
         url = f"{base_url}/api/uqp/query"
 
         try:

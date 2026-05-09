@@ -986,7 +986,7 @@ async def analyze_with_expert_router_v3(request: ExpertV3AnalyzeRequest):
                         "data_ids": result.data_ids,
                         "visuals": result.visuals,
                         "confidence": result.confidence,
-                        "session_id": request.session_id
+                        "session_id": result.session_id or request.session_id
                     }
                 }, ensure_ascii=False, default=str)
                 yield f"data: {event_data}\n\n"
