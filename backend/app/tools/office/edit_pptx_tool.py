@@ -22,7 +22,10 @@ class EditPptxTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="edit_pptx",
-            description="编辑现有PPTX：全局替换文本、按slot替换内容、删除页、重排页，并可执行PPT质量验证。",
+            description=(
+                "编辑现有PPTX：全局替换文本、按slot替换内容、删除页、重排页，并可执行PPT质量验证。\n\n"
+                "⚠️ 使用前请先阅读：app/tools/office/PPT操作指南.md"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,

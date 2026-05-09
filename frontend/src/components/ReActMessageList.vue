@@ -165,14 +165,15 @@
       </div>
     </div>
 
-    <!-- 当前轮实时分析过程：最终答案到达前先展开显示，答案开始后由final消息内的details折叠承载 -->
-    <div
+    <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
+    <details
       v-if="liveProcessItems.length > 0"
-      class="live-process"
+      class="live-process-details"
+      :open="isLiveProcessExpanded"
+      @toggle="handleLiveProcessToggle"
     >
-      <div class="live-process-header">
-        <span>分析过程中</span>
-      </div>
+      <summary>分析过程中 ({{ liveProcessItems.length }} 个步骤)</summary>
+      <div class="live-process-content">
 
       <div
         v-for="item in liveProcessItems"
@@ -204,7 +205,7 @@
           </div>
         </div>
       </div>
-    </div>
+    </div></details>
 
     <!-- 图片预览模态框 -->
     <div v-if="previewedImage" class="image-preview-modal" @click="closeImagePreview">
@@ -646,6 +647,9 @@ const displayedMessages = computed(() => {
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
 
+// 【新增】实时分析过程展开状态（默认折叠）
+const isLiveProcessExpanded = ref(false)
+
 // 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
 const isInitialLoad = ref(true)
 
@@ -686,6 +690,13 @@ const handleProcessToggle = (messageId, event) => {
   } else {
     expandedProcessIds.value.delete(messageId)
   }
+}
+
+// 【新增】处理实时分析过程的toggle事件
+const handleLiveProcessToggle = (event) => {
+  // event.target 是 <details> 元素
+  // event.target.open 表示当前状态（toggle之后的状态）
+  isLiveProcessExpanded.value = event.target.open
 }
 
 // 【新增】判断是否是带PDF预览的Office工具消息（这些消息在OfficeDocumentPanel中显示，不需要在聊天列表重复显示）
@@ -2231,22 +2242,55 @@ const closeImagePreview = () => {
   }
 }
 
-.live-process {
+.live-process-details {
   margin: 6px 0 10px 0;
-  padding: 10px 14px;
   border-radius: 6px;
   font-size: 14px;
   color: #000;
+
+  summary {
+    cursor: pointer;
+    color: #000;
+    font-weight: 600;
+    font-size: 13px;
+    user-select: none;
+    padding: 10px 14px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f5f5f5;
+
+    &:hover {
+      background: #e8e8e8;
+    }
+
+    &::marker {
+      display: none;
+    }
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &::before {
+      content: '▶';
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+  }
+
+  &[open] summary::before {
+    transform: rotate(90deg);
+  }
 }
 
-.live-process-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  color: #000;
-  font-weight: 600;
-  font-size: 13px;
+.live-process-content {
+  padding: 10px 14px;
+  border-radius: 0 0 6px 6px;
+  border: 1px solid #e0e0e0;
+  border-top: none;
+  background: #fafafa;
 }
 
 .live-process-item {

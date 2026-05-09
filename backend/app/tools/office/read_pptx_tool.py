@@ -25,7 +25,10 @@ class ReadPptxTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="read_pptx",
-            description="读取PPTX演示文稿，提取每页文本、表格、图片信息、备注和基础元数据。",
+            description=(
+                "读取PPTX演示文稿，提取每页文本、表格、图片信息、备注和基础元数据。\n\n"
+                "⚠️ 使用前请先阅读：app/tools/office/PPT操作指南.md"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,

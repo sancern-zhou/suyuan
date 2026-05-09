@@ -63,6 +63,8 @@ class WordEditTool(LLMTool):
 
 ⭐ 复杂 Word 编辑的首选工具，自动处理解包/编辑/打包流程。
 
+⚠️ 使用前请先阅读：app/tools/office/WORD操作指南.md
+
 功能：
 - 自动解包 .docx 文件
 - 结构化编辑操作（替换段落、插入内容、删除节点）

@@ -6,6 +6,9 @@ Data Fetching Backend
 
 from app.fetchers.base.scheduler import FetcherScheduler
 from app.fetchers.city_statistics import CityStatisticsFetcher, ProvinceStatisticsFetcher
+from app.fetchers.consultation import ConsultationFileFetcher
+from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher
+from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -19,6 +22,9 @@ def create_scheduler() -> FetcherScheduler:
     # 注册所有Fetchers
     scheduler.register(CityStatisticsFetcher())
     scheduler.register(ProvinceStatisticsFetcher())
+    scheduler.register(ConsultationFileFetcher())  # 会商文件批量更新
+    scheduler.register(AirQualityDataQualityFetcher())  # 空气质量数据质量巡检
+    scheduler.register(CityPollutionEventFetcher())  # 城市污染过程告警
 
     return scheduler
 

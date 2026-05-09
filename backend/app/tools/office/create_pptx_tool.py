@@ -95,7 +95,17 @@ class CreatePptxTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="create_pptx",
-            description="使用PptxGenJS从结构化JSON一步生成可编辑PPTX演示文稿，并返回下载链接和PDF预览。",
+            description=(
+                "⚠️ 仅用于从头创建PPT（不基于模板）。"
+                "如果要基于现有模板生成PPT，请使用 create_pptx_from_template 工具（推荐方式）。\n\n"
+                "功能：使用 PptxGenJS 从结构化 JSON 一步生成可编辑 PPTX 演示文稿。\n\n"
+                "适用场景：\n"
+                "- ✅ 没有模板文件时使用\n"
+                "- ✅ 需要完全自定义设计时使用\n"
+                "- ❌ 不推荐：有模板时请用 create_pptx_from_template\n\n"
+                "用法：传入 title 和 slides 数组，支持多种幻灯片类型（title/bullets/image/chart等）。\n\n"
+                "详细说明：使用前请阅读 app/tools/office/PPT操作指南.md"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,

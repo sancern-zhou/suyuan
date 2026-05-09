@@ -1,6 +1,8 @@
 """社交 Agent 桥接模块，负责连接消息总线与 ReActAgent。"""
 
 import asyncio
+import re
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import structlog
@@ -259,7 +261,7 @@ class AgentBridge:
                 social_soul_context = social_context["social_soul_context"]
                 social_user_context = social_context["social_user_context"]
 
-            final_answer = await self._aggregate_agent_events(
+            final_answer, reasoning_content = await self._aggregate_agent_events(
                 content=msg.content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
@@ -276,7 +278,8 @@ class AgentBridge:
 
             logger.info("Agent analysis completed",
                        session_id=session_id,
-                       response_length=len(final_answer) if final_answer else 0)
+                       response_length=len(final_answer) if final_answer else 0,
+                       reasoning_length=len(reasoning_content) if reasoning_content else 0)
 
             
             if self.user_memory_manager and self.mode == "social":
@@ -287,23 +290,38 @@ class AgentBridge:
                     {"role": "assistant", "content": final_answer, "timestamp": datetime.now().isoformat()}
                 ]
 
-                
+
                 # 达到阈值后整理长期记忆
                 await self._check_and_consolidate_memory(session_id, social_user_id)
 
-            
+
             media_files = self._extract_media_files(final_answer)
 
-            
+
             cleaned_answer = self._clean_media_references(final_answer)
 
+            # ✅ 检查用户是否启用了思考内容显示（默认开启）
+            show_reasoning = True  # 默认开启
+            if social_user_prefs:
+                show_reasoning = social_user_prefs.get("show_reasoning", True)
+
+            # ✅ 如果启用了思考内容显示且有思考内容，则前置到最终回复前
+            final_content = cleaned_answer
+            if show_reasoning and reasoning_content:
+                final_content = reasoning_content + cleaned_answer
+
             # Publish outbound response
+            # ✅ 添加流式结束标记（如果有流式片段发送）
             outbound_msg = OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
-                content=cleaned_answer,  
+                content=final_content,
                 reply_to=msg.sender_id,
-                media=media_files  
+                media=media_files,
+                metadata={
+                    "_stream_id": "response_stream",
+                    "_stream_end": True  # 标记为流式结束
+                } if final_content else {}
             )
 
             await self.message_bus.publish_outbound(outbound_msg)
@@ -311,7 +329,9 @@ class AgentBridge:
             logger.info("Response sent",
                        channel=msg.channel,
                        chat_id=msg.chat_id,
-                       session_id=session_id)
+                       session_id=session_id,
+                       has_reasoning=bool(reasoning_content),
+                       show_reasoning=show_reasoning)
 
         except Exception as e:
             logger.error("Error in _process_message",
@@ -344,13 +364,21 @@ class AgentBridge:
         social_heartbeat_file_path: str = None,  # ✅ 新增
         social_soul_context: str = None,
         social_user_context: str = None
-    ) -> str:
-        """聚合 Agent 事件并生成最终回复。"""
+    ) -> tuple[str, str]:
+        """聚合 Agent 事件并生成最终回复。
+
+        Returns:
+            tuple: (final_answer, reasoning_content)
+                   - final_answer: 最终回复内容
+                   - reasoning_content: 思考内容（如果有，否则为空）
+        """
         events_buffer = []
         streaming_text_parts = []
         tool_calls = []
-        stream_segments = []  
-        current_buffer = []  
+        stream_segments = []
+        current_buffer = []
+        reasoning_parts = []  # ✅ 新增：收集思考内容
+        sent_text_contents = set()  # ✅ 新增：跟踪已发送的 text_content，避免重复
 
         try:
             
@@ -383,10 +411,28 @@ class AgentBridge:
                     if isinstance(data, dict):
                         # New format: {"chunk": "...", "is_complete": false}
                         chunk = data.get("chunk", "")
+                        is_complete = data.get("is_complete", False)
+
                         if isinstance(chunk, str):
                             streaming_text_parts.append(chunk)
                         else:
                             streaming_text_parts.append(str(chunk))
+
+                        # ✅ 只在流式完成时发送完整文本（避免分块）
+                        if self.mode == "social" and is_complete:
+                            complete_text = "".join(streaming_text_parts)
+                            if complete_text and complete_text not in sent_text_contents:
+                                await self._send_stream_chunk(
+                                    channel=channel,
+                                    chat_id=chat_id,
+                                    content=complete_text,
+                                    segment_id=len(stream_segments),
+                                    resuming=False
+                                )
+                                stream_segments.append(complete_text)
+                                sent_text_contents.add(complete_text)
+                                streaming_text_parts = []  # 清空缓冲
+
                     elif isinstance(data, str):
                         # Legacy format: data is directly a string
                         streaming_text_parts.append(data)
@@ -394,26 +440,55 @@ class AgentBridge:
                         # Fallback: convert to string
                         streaming_text_parts.append(str(data))
 
-                    
-                    if self.mode == "social":
-                        current_buffer.append(streaming_text_parts[-1])
-
-                        
-                        if len("".join(current_buffer)) > 500 or len(current_buffer) >= 5:
-                            await self._send_stream_chunk(
-                                chat_id=chat_id,
-                                content="".join(current_buffer),
-                                segment_id=len(stream_segments),
-                                resuming=True
-                            )
-                            stream_segments.append("".join(current_buffer))
-                            current_buffer = []
-
                 elif event_type == "agent_action":
                     # Track tool calls for progress reporting
                     action = event.get("data", {})
                     tool_name = action.get("tool", "")
                     tool_calls.append(tool_name)
+
+                elif event_type == "thought":
+                    # ✅ 提取 LLM 的普通文本（用户关心的自然语言说明）
+                    thought_data = event.get("data", {})
+                    text_content = thought_data.get("text_content", "")
+
+                    # ❌ 忽略 thought 字段（技术描述如"准备调用工具"，用户不关心）
+
+                    if text_content:
+                        reasoning_parts.append(text_content)
+
+                        # ✅ 立即发送 text_content（不缓冲），让用户快速感知进展
+                        # ✅ 去重：如果还没发送过，才发送
+                        if text_content not in sent_text_contents and self.mode == "social":
+                            await self._send_thinking_chunk(
+                                channel=channel,
+                                chat_id=chat_id,
+                                thinking_content=text_content
+                            )
+                            sent_text_contents.add(text_content)  # 标记为已发送
+
+                elif event_type == "thinking_content":
+                    # ✅ 新增：监听真实的 LLM thinking 内容
+                    thinking_data = event.get("data", {})
+                    real_thinking = thinking_data.get("content", "")
+
+                    if real_thinking:
+                        # ✅ 实时流式发送到微信端（不过滤，这是真实思考）
+                        if self.mode == "social":
+                            await self._send_thinking_chunk(
+                                channel=channel,
+                                chat_id=chat_id,
+                                thinking_content=real_thinking
+                            )
+
+                        # 同时收集到 reasoning_parts（用于向后兼容）
+                        reasoning_parts.append(real_thinking)
+
+                elif event_type == "agent_finish":
+                    # ✅ 新增：agent_finish 事件也可能包含思考内容
+                    thought_data = event.get("data", {})
+                    thought_content = thought_data.get("thought", "")
+                    if thought_content and thought_content not in reasoning_parts:
+                        reasoning_parts.append(str(thought_content))
 
                 elif event_type == "complete":
                     # Extract final answer (loop.py returns "answer" field)
@@ -421,14 +496,15 @@ class AgentBridge:
                     if isinstance(final_data, dict):
                         final_answer = final_data.get("answer", "")
                         if final_answer:
-                            return final_answer
+                            reasoning_content = self._format_reasoning_content(reasoning_parts)
+                            return final_answer, reasoning_content
 
                 elif event_type == "error":
                     # Handle error events
                     error_data = event.get("data", {})
                     error_msg = error_data.get("error", "Unknown error")
                     logger.warning("Agent error event", error=error_msg)
-                    return f"处理查询时出错: {error_msg}"
+                    return f"处理查询时出错: {error_msg}", ""
 
                 elif event_type == "fatal_error":
                     # Handle fatal error events
@@ -436,9 +512,9 @@ class AgentBridge:
                     if isinstance(error_data, dict):
                         error_msg = error_data.get("error", "未知错误")
                         logger.error("Agent fatal error event", error=error_msg)
-                        return f"系统遇到致命错误: {error_msg}\n\n请稍后重试或联系技术支持。"
+                        return f"系统遇到致命错误: {error_msg}\n\n请稍后重试或联系技术支持。", ""
 
-                    return "系统遇到致命错误，但未提供详细信息。"
+                    return "系统遇到致命错误，但未提供详细信息。", ""
 
             # If no complete event, aggregate streaming text
             if streaming_text_parts:
@@ -454,25 +530,128 @@ class AgentBridge:
                     tool_summary = f"\n\n**使用的工具**: {', '.join(set(tool_calls))}"
                     full_text += tool_summary
 
-                return full_text
+                reasoning_content = self._format_reasoning_content(reasoning_parts)
+                return full_text, reasoning_content
 
             # Fallback: extract content from last event
             if events_buffer:
                 last_event = events_buffer[-1]
                 data = last_event.get("data", {})
                 if isinstance(data, str):
-                    return data
+                    reasoning_content = self._format_reasoning_content(reasoning_parts)
+                    return data, reasoning_content
                 elif isinstance(data, dict):
-                    return data.get("content", str(data))
+                    reasoning_content = self._format_reasoning_content(reasoning_parts)
+                    return data.get("content", str(data)), reasoning_content
 
-            return "抱歉，未能生成回复。"
+            return "抱歉，未能生成回复。", ""
 
         except Exception as e:
             logger.error("Error aggregating agent events",
                         session_id=session_id,
                         error=str(e),
                         exc_info=True)
-            return f"处理请求时出错: {str(e)}"
+            return f"处理请求时出错: {str(e)}", ""
+
+    def _filter_technical_details(self, thought: str) -> str:
+        """过滤掉工具调用等技术细节，只保留真实思考内容。
+
+        Args:
+            thought: 原始思考内容
+
+        Returns:
+            过滤后的思考内容（如果全是技术细节则返回空字符串）
+        """
+        if not thought:
+            return ""
+
+        # 技术关键词列表（需要过滤）
+        technical_patterns = [
+            r"^准备调用工具[:：]",
+            r"^调用工具[:：]",
+            r"^执行工具[:：]",
+            r"^使用.*工具",
+            r"^工具调用[:：]",
+            r"^tool call[:：]",
+            r"^Tool call[:：]",
+            r"^正在调用",
+            r"^将要调用",
+        ]
+
+        lines = thought.strip().split("\n")
+        filtered_lines = []
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 检查是否是技术细节
+            is_technical = False
+            for pattern in technical_patterns:
+                if re.match(pattern, line, re.IGNORECASE):
+                    is_technical = True
+                    break
+
+            if not is_technical:
+                filtered_lines.append(line)
+
+        result = "\n".join(filtered_lines).strip()
+        return result
+
+    async def _send_thinking_chunk(
+        self,
+        channel: str,
+        chat_id: str,
+        thinking_content: str
+    ) -> None:
+        """实时流式发送思考内容到微信端。
+
+        Args:
+            channel: 微信通道ID（如 weixin:auto_mo427atx）
+            chat_id: 微信聊天ID
+            thinking_content: 思考内容片段
+        """
+        from app.social.events import OutboundMessage
+
+        # 格式化思考内容（不带"思考过程"标签）
+        formatted_thinking = f"{thinking_content}\n\n"
+
+        # 创建流式消息（标记为中间片段）
+        thinking_msg = OutboundMessage(
+            channel=channel,  # 使用具体的微信通道ID
+            chat_id=chat_id,
+            content=formatted_thinking,
+            reply_to="",
+            media=[],
+            metadata={
+                "_stream_id": "thinking_stream",
+                "_stream_end": False  # 标记为中间片段
+            }
+        )
+
+        # 发布到消息总线
+        await self.message_bus.publish_outbound(thinking_msg)
+
+        logger.debug("Thinking chunk sent",
+                    chat_id=chat_id,
+                    content_preview=thinking_content[:50])
+
+    def _format_reasoning_content(self, reasoning_parts: list[str]) -> str:
+        """格式化思考内容（参考 Hermes 的格式）。
+
+        注意：思考内容已经通过实时流式发送到微信端（通过 thinking_content 事件），
+        最终回复中不再包含格式化的思考内容，避免重复显示。
+
+        Args:
+            reasoning_parts: 思考内容片段列表
+
+        Returns:
+            始终返回空字符串（思考内容已实时发送）
+        """
+        # 思考内容已通过 _send_thinking_chunk 实时流式发送
+        # 最终回复中不再包含，避免重复显示
+        return ""
 
     def _extract_media_files(self, content: str) -> list[str]:
         """从回复内容中提取媒体文件路径。"""
@@ -550,14 +729,15 @@ class AgentBridge:
 
     async def _send_stream_chunk(
         self,
+        channel: str,
         chat_id: str,
         content: str,
         segment_id: int,
         resuming: bool = False
     ) -> None:
-        """发送流式回复片段。"""
-        
-        
+        """发送流式回复片段到微信端。"""
+        from app.social.events import OutboundMessage
+
         logger.debug(
             "stream_chunk",
             chat_id=chat_id,
@@ -565,6 +745,24 @@ class AgentBridge:
             length=len(content),
             resuming=resuming
         )
+
+        # 创建流式消息
+        stream_msg = OutboundMessage(
+            channel=channel,
+            chat_id=chat_id,
+            content=content,
+            reply_to="",
+            media=[],
+            metadata={
+                "_stream_id": "response_stream",
+                "_stream_end": False,  # 标记为中间片段
+                "_segment_id": segment_id,
+                "_resuming": resuming
+            }
+        )
+
+        # 发布到消息总线
+        await self.message_bus.publish_outbound(stream_msg)
 
     async def _load_social_agent_context(self, user_id: str) -> dict:
         """

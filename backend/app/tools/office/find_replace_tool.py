@@ -49,6 +49,8 @@ class FindReplaceTool(LLMTool):
 
 🎯 适用场景：简单的文本查找替换操作
 
+⚠️ 使用前请先阅读：app/tools/office/WORD操作指南.md
+
 ⚡ 快捷方案（推荐用于简单替换）：
 - 直接操作 DOCX 文件，无需解包
 - 自动保留文档格式（字体、颜色、样式等）
