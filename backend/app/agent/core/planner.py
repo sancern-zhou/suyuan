@@ -404,6 +404,25 @@ class ReActPlanner:
                         }
                     }
 
+                    # ✅ 新增：如果有真实的 thinking 内容，单独发送
+                    raw_thinking_blocks = result.get("raw_thinking_blocks", [])
+                    if raw_thinking_blocks:
+                        # 提取真实的 thinking 内容（过滤 redacted_thinking）
+                        real_thinking = ""
+                        for block in raw_thinking_blocks:
+                            if block.get("type") == "thinking":
+                                thinking_content = block.get("thinking", "")
+                                if thinking_content:
+                                    real_thinking += thinking_content + "\n"
+
+                        if real_thinking.strip():
+                            yield {
+                                "type": "thinking_content",
+                                "data": {
+                                    "content": real_thinking.strip()
+                                }
+                            }
+
                     # 发送 streaming_text 完成标记（如果有文本块）
                     has_text = any(b["type"] == "text" for b in current_blocks)
                     if has_text:
@@ -447,6 +466,25 @@ class ReActPlanner:
                     "thought": result.get("thought", "")
                 }
             }
+
+            # ✅ 新增：发送真实的 thinking 内容（如果有）
+            raw_thinking_blocks = result.get("raw_thinking_blocks", [])
+            if raw_thinking_blocks:
+                real_thinking = ""
+                for block in raw_thinking_blocks:
+                    if block.get("type") == "thinking":
+                        thinking_content = block.get("thinking", "")
+                        if thinking_content:
+                            real_thinking += thinking_content + "\n"
+
+                if real_thinking.strip():
+                    yield {
+                        "type": "thinking_content",
+                        "data": {
+                            "content": real_thinking.strip()
+                        }
+                    }
+
             yield {
                 "type": "action",
                 "data": result

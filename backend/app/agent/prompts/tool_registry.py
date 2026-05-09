@@ -199,6 +199,9 @@ SOCIAL_TOOL_NAMES = {
 
     # === 任务管理 ===
     "TodoWrite",
+
+    # === CLI会话管理 ===
+    "cli_session",
 }
 
 # ===== 编程模式工具 =====

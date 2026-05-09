@@ -185,6 +185,10 @@ app.include_router(file_manager_router, prefix="/api")
 from app.routers import social_routes
 app.include_router(social_routes.router)
 
+# Include Fetchers routes (数据抓取器管理)
+from app.routers import fetchers
+app.include_router(fetchers.router)
+
 # Include Social Account Management routes (多微信账号管理)
 print(f"[DEBUG] Before importing social_account_routes")
 try:

@@ -21,7 +21,19 @@ class CreatePptxFromTemplateTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="create_pptx_from_template",
-            description="基于PPTX模板和slot映射替换文本/表格/图片，生成新的可编辑PPTX。",
+            description=(
+                "✅ 基于现有PPT模板生成新PPT（推荐方式）。\n\n"
+                "功能：通过替换模板中的槽位（slot）生成新PPT，保持模板的设计风格和布局。\n\n"
+                "适用场景：\n"
+                "- ✅ 有现成的模板文件\n"
+                "- ✅ 需要保持统一的设计风格\n"
+                "- ✅ 批量生成相似结构的PPT\n"
+                "- ✅ 公司标准模板\n\n"
+                "使用流程：\n"
+                "1. 先用 analyze_pptx_template 分析模板获取 slot_id\n"
+                "2. 用本工具替换内容\n\n"
+                "详细说明：使用前请阅读 app/tools/office/PPT操作指南.md"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,

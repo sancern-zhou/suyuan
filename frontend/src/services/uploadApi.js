@@ -127,9 +127,12 @@ export function validateFile(file) {
     'text/markdown',
     'application/json',
     'text/csv',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  // .docx
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  // .xlsx
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',  // .pptx
+    'application/msword',  // .doc
+    'application/vnd.ms-excel',  // .xls
+    'application/vnd.ms-powerpoint',  // .ppt
   ];
 
   // 文件扩展名映射（备用检查，因为MIME类型在不同系统上可能不一致）
@@ -148,9 +151,13 @@ export function validateFile(file) {
     '.markdown': 'document',
     '.json': 'document',
     '.csv': 'document',
+    // Office（新旧格式都支持）
     '.docx': 'document',
     '.xlsx': 'document',
     '.pptx': 'document',
+    '.doc': 'document',
+    '.xls': 'document',
+    '.ppt': 'document',
   };
 
   // 首先通过 MIME 类型检查

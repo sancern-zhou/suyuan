@@ -467,20 +467,6 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="aggregate_data", error=str(e))
 
-    try:
-        from app.tools.analysis.city_pollution_event_monitor import CityPollutionEventMonitorTool
-        registry.register(CityPollutionEventMonitorTool(), priority=76)
-        logger.info("tool_loaded", tool="city_pollution_event_monitor")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="city_pollution_event_monitor", error=str(e))
-
-    try:
-        from app.tools.analysis.air_quality_data_quality_monitor import AirQualityDataQualityMonitorTool
-        registry.register(AirQualityDataQualityMonitorTool(), priority=77)
-        logger.info("tool_loaded", tool="air_quality_data_quality_monitor")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="air_quality_data_quality_monitor", error=str(e))
-
     # ========================================
     # Visualization Tools（可视化工具）
     # ========================================
@@ -793,6 +779,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="spawn")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="spawn", error=str(e))
+
+    try:
+        from app.tools.social.cli_session.tool import CliSessionTool
+        registry.register(CliSessionTool(), priority=378)
+        logger.info("tool_loaded", tool="cli_session")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="cli_session", error=str(e))
 
     # ========================================
     # Task Management Tools（任务管理工具）

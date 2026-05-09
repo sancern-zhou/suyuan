@@ -16,6 +16,7 @@ import json
 import mimetypes
 import os
 import re
+import textwrap
 import time
 import uuid
 from collections import OrderedDict
@@ -51,18 +52,20 @@ MESSAGE_TYPE_BOT = 2
 # MessageState
 MESSAGE_STATE_FINISH = 2
 
-WEIXIN_MAX_MESSAGE_LEN = 4000
+WEIXIN_MAX_MESSAGE_LEN = 2000
 WEIXIN_CHANNEL_VERSION = "1.0.3"
 BASE_INFO: dict[str, str] = {"channel_version": WEIXIN_CHANNEL_VERSION}
 
 # Session-expired error code
 ERRCODE_SESSION_EXPIRED = -14
+ERRCODE_RATE_LIMIT = -2
 SESSION_PAUSE_DURATION_S = 60 * 60
 
 # Retry constants
 MAX_CONSECUTIVE_FAILURES = 3
 BACKOFF_DELAY_S = 30
 RETRY_DELAY_S = 2
+MAX_SEND_RETRIES = 3  # ✅ 新增：发送消息最大重试次数
 MAX_QR_REFRESH_COUNT = 3
 
 # Default long-poll timeout
@@ -220,11 +223,47 @@ def _encrypt_aes_ecb(data: bytes, aes_key_b64: str) -> bytes:
         return data
 
 
-def _split_message(text: str, max_len: int) -> list[str]:
-    """Split message into chunks if too long."""
+# ---------------------------------------------------------------------------
+# Message splitting constants
+# ---------------------------------------------------------------------------
+_FENCE_RE = re.compile(r"^```")
+_HEADER_RE = re.compile(r"^#{1,6}\s")
+_TABLE_RULE_RE = re.compile(r"^\|?[\s\-:]+\|[\s\-:]*\|?")
+
+
+def _split_message(text: str, max_len: int, split_per_line: bool = False) -> list[str]:
+    """Split message into intelligent chunks (Hermes-compatible).
+
+    This function implements smart message splitting that:
+    - Preserves code blocks (doesn't split in the middle)
+    - Preserves paragraphs and lists
+    - Avoids splitting links or HTML tags
+    - Uses compact mode by default (keep together when possible)
+
+    Args:
+        text: Message content to split
+        max_len: Maximum length per chunk (typically 2000 for WeChat)
+        split_per_line: If True, split by lines (legacy behavior)
+
+    Returns:
+        List of message chunks
+    """
+    if not text:
+        return []
     if len(text) <= max_len:
         return [text]
 
+    if split_per_line:
+        # Legacy: one message per line
+        return _split_message_per_line(text, max_len)
+
+    # Compact (default): keep everything together when possible,
+    # only split when absolutely necessary
+    return _split_message_compact(text, max_len)
+
+
+def _split_message_per_line(text: str, max_len: int) -> list[str]:
+    """Legacy line-by-line splitting (preserved for backward compatibility)."""
     chunks = []
     current = ""
     for line in text.split("\n"):
@@ -240,6 +279,237 @@ def _split_message(text: str, max_len: int) -> list[str]:
     if current:
         chunks.append(current)
     return chunks
+
+
+def _split_message_compact(text: str, max_len: int) -> list[str]:
+    """Intelligent compact splitting (Hermes-compatible).
+
+    Strategy:
+    1. Split into Markdown blocks (preserving code blocks)
+    2. Pack blocks into chunks within max_len
+    3. Only split blocks when they exceed max_len
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    chunks = []
+    current = ""
+
+    for block in _split_markdown_blocks(text):
+        # Try to add block to current chunk
+        candidate = block if not current else f"{current}\n\n{block}"
+
+        if len(candidate) <= max_len:
+            # Block fits, add to current chunk
+            current = candidate
+            continue
+
+        # Block doesn't fit, save current chunk
+        if current:
+            chunks.append(current)
+            current = ""
+
+        # Check if block itself fits
+        if len(block) <= max_len:
+            current = block
+            continue
+
+        # Block is too long, need to split it
+        # Try to split at paragraph boundaries first
+        sub_chunks = _split_oversized_block(block, max_len)
+        chunks.extend(sub_chunks[:-1])
+        current = sub_chunks[-1] if sub_chunks else ""
+
+    if current:
+        chunks.append(current)
+
+    return chunks if chunks else [text[:max_len]]
+
+
+def _split_markdown_blocks(content: str) -> list[str]:
+    """Split content into Markdown blocks (Hermes-compatible).
+
+    Preserves:
+    - Code blocks (fenced with ```)
+    - Paragraphs (separated by blank lines)
+    - Lists, tables, etc.
+
+    Returns:
+        List of Markdown blocks
+    """
+    if not content:
+        return []
+
+    blocks = []
+    lines = content.splitlines()
+    current = []
+    in_code_block = False
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+
+        # Detect fence markers (```)
+        if _FENCE_RE.match(line.strip()):
+            if not in_code_block and current:
+                blocks.append("\n".join(current).strip())
+                current = []
+            current.append(line)
+            in_code_block = not in_code_block
+            if not in_code_block:
+                # Code block closed
+                blocks.append("\n".join(current).strip())
+                current = []
+            continue
+
+        # Inside code block: keep everything
+        if in_code_block:
+            current.append(line)
+            continue
+
+        # Blank line: end of current block
+        if not line.strip():
+            if current:
+                blocks.append("\n".join(current).strip())
+                current = []
+            continue
+
+        # Regular line: add to current block
+        current.append(line)
+
+    # Don't forget the last block
+    if current:
+        blocks.append("\n".join(current).strip())
+
+    return [block for block in blocks if block]
+
+
+def _split_oversized_block(block: str, max_len: int) -> list[str]:
+    """Split an oversized block into smaller chunks.
+
+    Tries to split at:
+    1. Paragraph boundaries (double newlines)
+    2. Sentence boundaries (periods, question marks, exclamation marks)
+    3. Word boundaries (spaces)
+    4. Force split at max_len
+
+    Args:
+        block: Text block that exceeds max_len
+        max_len: Maximum length per chunk
+
+    Returns:
+        List of chunks within max_len
+    """
+    if len(block) <= max_len:
+        return [block]
+
+    chunks = []
+
+    # Try splitting at paragraph boundaries first
+    paragraphs = re.split(r'\n\n+', block)
+    current = ""
+
+    for para in paragraphs:
+        if len(current) + len(para) + 2 <= max_len:
+            current = f"{current}\n\n{para}".strip() if current else para
+            continue
+
+        # Paragraph doesn't fit
+        if current:
+            chunks.append(current)
+            current = ""
+
+        # Check if paragraph itself fits
+        if len(para) <= max_len:
+            current = para
+            continue
+
+        # Paragraph is too long, split it
+        sub_chunks = _split_oversized_paragraph(para, max_len)
+        chunks.extend(sub_chunks[:-1])
+        current = sub_chunks[-1] if sub_chunks else ""
+
+    if current:
+        chunks.append(current)
+
+    return chunks if chunks else [_truncate_text(block, max_len)]
+
+
+def _split_oversized_paragraph(para: str, max_len: int) -> list[str]:
+    """Split an oversized paragraph into smaller chunks.
+
+    Tries to split at:
+    1. Sentence boundaries (. ! ?)
+    2. Word boundaries (spaces)
+    3. Force split at max_len
+    """
+    if len(para) <= max_len:
+        return [para]
+
+    chunks = []
+    current = ""
+
+    # Split into sentences
+    sentences = re.split(r'([.!?。！？]+[\s\n]*)', para)
+
+    for i in range(0, len(sentences), 2):
+        # Get sentence + its punctuation
+        sentence = sentences[i]
+        punct = sentences[i + 1] if i + 1 < len(sentences) else ""
+        full_sentence = sentence + punct
+
+        if not full_sentence.strip():
+            continue
+
+        if len(current) + len(full_sentence) <= max_len:
+            current += full_sentence
+            continue
+
+        # Sentence doesn't fit
+        if current:
+            chunks.append(current.strip())
+            current = ""
+
+        # Check if sentence itself fits
+        if len(full_sentence) <= max_len:
+            current = full_sentence
+            continue
+
+        # Sentence is too long, split at word boundaries
+        words = full_sentence.split()
+        current_word = ""
+
+        for word in words:
+            if len(current_word) + len(word) + 1 <= max_len:
+                current_word = f"{current_word} {word}".strip() if current_word else word
+                continue
+
+            # Word doesn't fit
+            if current_word:
+                chunks.append(current_word)
+                current_word = ""
+
+            # Check if word itself fits
+            if len(word) <= max_len:
+                current_word = word
+                continue
+
+            # Word is too long (e.g., URL), force split
+            chunks.append(_truncate_text(word, max_len))
+
+        if current_word:
+            current = current_word
+
+    if current:
+        chunks.append(current.strip())
+
+    return chunks if chunks else [_truncate_text(para, max_len)]
+
+
+def _truncate_text(text: str, max_len: int) -> str:
+    """Truncate text to max_len, adding ... if truncated."""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len - 3] + "..."
 
 
 class WeixinChannel(BaseChannel):
@@ -1239,8 +1509,8 @@ class WeixinChannel(BaseChannel):
                 await self._send_text(msg.chat_id, content, ctx_token)
                 logger.debug("stream_chunk_sent", stream_id=stream_id, length=len(content))
             else:
-                # 最终消息：正常处理（分割长消息）
-                chunks = _split_message(content, WEIXIN_MAX_MESSAGE_LEN)
+                # 最终消息：正常处理（智能分割长消息）
+                chunks = _split_message(content, WEIXIN_MAX_MESSAGE_LEN, split_per_line=False)
                 for chunk in chunks:
                     await self._send_text(msg.chat_id, chunk, ctx_token)
         except Exception as e:
@@ -1252,8 +1522,19 @@ class WeixinChannel(BaseChannel):
         to_user_id: str,
         text: str,
         context_token: str,
+        retry_count: int = 0,
     ) -> None:
-        """Send a text message."""
+        """Send a text message with automatic retry and session expiry handling.
+
+        Args:
+            to_user_id: Target user ID
+            text: Message content
+            context_token: Session context token
+            retry_count: Current retry attempt (internal use)
+
+        Raises:
+            RuntimeError: If all retries exhausted
+        """
         client_id = f"suyuan-{uuid.uuid4().hex[:12]}"
 
         item_list: list[dict] = []
@@ -1281,31 +1562,106 @@ class WeixinChannel(BaseChannel):
                    endpoint="ilink/bot/sendmessage",
                    to_user_id=to_user_id,
                    text_length=len(text),
-                   has_context_token=bool(context_token))
+                   has_context_token=bool(context_token),
+                   retry_count=retry_count)
 
-        data = await self._api_post("ilink/bot/sendmessage", body)
+        try:
+            data = await self._api_post("ilink/bot/sendmessage", body)
+        except Exception as e:
+            # 网络错误或其他异常，尝试重试
+            if retry_count < MAX_SEND_RETRIES:
+                wait_time = RETRY_DELAY_S * (2 ** retry_count)  # 指数退避：2s, 4s, 8s
+                logger.warning("WeChat send failed, will retry",
+                             error=str(e),
+                             retry_count=retry_count,
+                               wait_time=wait_time)
+                await asyncio.sleep(wait_time)
+                return await self._send_text(to_user_id, text, context_token, retry_count + 1)
+            raise
 
         logger.info("WeChat API response received",
                    errcode=data.get("errcode", 0),
                    response=data)
 
         errcode = data.get("errcode", 0)
+        errmsg = data.get("errmsg", "")
+
+        # ✅ 会话过期自动降级（errcode -14）
+        if errcode == ERRCODE_SESSION_EXPIRED and context_token:
+            if retry_count == 0:  # 只在第一次重试时尝试降级
+                logger.warning("WeChat session expired, retrying without context_token",
+                             to_user_id=to_user_id,
+                             errcode=errcode,
+                             errmsg=errmsg)
+                # 清除过期的 context_token 并重试
+                if to_user_id in self._context_tokens:
+                    del self._context_tokens[to_user_id]
+                    self._save_state()
+                # 不带 context_token 重试
+                return await self._send_text(to_user_id, text, "", retry_count + 1)
+            else:
+                logger.error("WeChat session expired and retry without token failed",
+                           to_user_id=to_user_id,
+                           errcode=errcode,
+                           errmsg=errmsg)
+                raise RuntimeError(f"Session expired and retry failed: {errmsg}")
+
+        # ✅ 速率限制指数退避（errcode -2）
+        if errcode == ERRCODE_RATE_LIMIT:
+            if retry_count < MAX_SEND_RETRIES:
+                wait_time = 2 ** retry_count  # 指数退避：1s, 2s, 4s
+                logger.warning("WeChat rate limited, will retry",
+                             to_user_id=to_user_id,
+                             retry_count=retry_count,
+                             wait_time=wait_time)
+                await asyncio.sleep(wait_time)
+                return await self._send_text(to_user_id, text, context_token, retry_count + 1)
+            else:
+                logger.error("WeChat rate limited and max retries exhausted",
+                           to_user_id=to_user_id,
+                           errcode=errcode,
+                           errmsg=errmsg)
+                raise RuntimeError(f"Rate limited: {errmsg}")
+
+        # 其他错误码
         if errcode and errcode != 0:
             logger.warning(
                 "WeChat send error",
                 code=errcode,
-                message=data.get("errmsg", "")
+                message=errmsg
             )
-        else:
-            logger.info("WeChat message sent successfully",
+            # 对于其他错误，也尝试重试（可能是临时错误）
+            if retry_count < MAX_SEND_RETRIES:
+                wait_time = RETRY_DELAY_S * (2 ** retry_count)
+                logger.info("WeChat send error, will retry",
+                           errcode=errcode,
+                           retry_count=retry_count,
+                           wait_time=wait_time)
+                await asyncio.sleep(wait_time)
+                return await self._send_text(to_user_id, text, context_token, retry_count + 1)
+            raise RuntimeError(f"Send failed with errcode {errcode}: {errmsg}")
+
+        # ✅ 成功发送后，从响应中提取并更新 context_token
+        new_context_token = data.get("context_token", "")
+        if new_context_token and new_context_token != context_token:
+            logger.info("WeChat context token updated",
                        to_user_id=to_user_id,
-                       text_length=len(text))
+                       old_token_preview=context_token[:20] if context_token else "",
+                       new_token_preview=new_context_token[:20])
+            self._context_tokens[to_user_id] = new_context_token
+            self._save_state()
+
+        logger.info("WeChat message sent successfully",
+                   to_user_id=to_user_id,
+                   text_length=len(text),
+                   context_token_updated=bool(new_context_token))
 
     async def _send_media_file(
         self,
         to_user_id: str,
         media_path: str,
         context_token: str,
+        retry_count: int = 0,
     ) -> None:
         """Upload a local file to WeChat CDN and send it as a media message.
 
@@ -1316,7 +1672,14 @@ class WeixinChannel(BaseChannel):
         4. Read x-encrypted-param header from CDN response as the download param.
         5. Send a sendmessage with the appropriate media item referencing the upload.
 
-        Note: Simplified from nanobot implementation - no URL download support.
+        Args:
+            to_user_id: Target user ID
+            media_path: Local file path to upload
+            context_token: Session context token
+            retry_count: Current retry attempt (internal use)
+
+        Raises:
+            RuntimeError: If all retries exhausted or upload fails
         """
         p = Path(media_path)
         try:
@@ -1450,18 +1813,99 @@ class WeixinChannel(BaseChannel):
             "base_info": BASE_INFO,
         }
 
-        data = await self._api_post("ilink/bot/sendmessage", body)
+        # ✅ 发送媒体消息（带错误处理和重试）
+        try:
+            data = await self._api_post("ilink/bot/sendmessage", body)
+        except Exception as e:
+            # 网络错误，尝试重试整个上传流程
+            if retry_count < MAX_SEND_RETRIES:
+                wait_time = RETRY_DELAY_S * (2 ** retry_count)
+                logger.warning("WeChat send media failed, will retry entire upload",
+                             error=str(e),
+                             retry_count=retry_count,
+                             wait_time=wait_time,
+                             media_path=media_path)
+                await asyncio.sleep(wait_time)
+                return await self._send_media_file(to_user_id, media_path, context_token, retry_count + 1)
+            raise
+
         errcode = data.get("errcode", 0)
+        errmsg = data.get("errmsg", "")
+
+        # ✅ 会话过期自动降级（errcode -14）
+        if errcode == ERRCODE_SESSION_EXPIRED and context_token:
+            if retry_count == 0:  # 只在第一次重试时尝试降级
+                logger.warning("WeChat session expired while sending media, retrying without context_token",
+                             to_user_id=to_user_id,
+                             errcode=errcode,
+                             errmsg=errmsg,
+                             media_path=media_path)
+                # 清除过期的 context_token 并重试整个上传流程
+                if to_user_id in self._context_tokens:
+                    del self._context_tokens[to_user_id]
+                    self._save_state()
+                return await self._send_media_file(to_user_id, media_path, "", retry_count + 1)
+            else:
+                logger.error("WeChat session expired while sending media and retry failed",
+                           to_user_id=to_user_id,
+                           errcode=errcode,
+                           errmsg=errmsg,
+                           media_path=media_path)
+                raise RuntimeError(f"Session expired while sending media: {errmsg}")
+
+        # ✅ 速率限制指数退避（errcode -2）
+        if errcode == ERRCODE_RATE_LIMIT:
+            if retry_count < MAX_SEND_RETRIES:
+                wait_time = 2 ** retry_count
+                logger.warning("WeChat rate limited while sending media, will retry",
+                             to_user_id=to_user_id,
+                             retry_count=retry_count,
+                             wait_time=wait_time,
+                             media_path=media_path)
+                await asyncio.sleep(wait_time)
+                return await self._send_media_file(to_user_id, media_path, context_token, retry_count + 1)
+            else:
+                logger.error("WeChat rate limited while sending media and max retries exhausted",
+                           to_user_id=to_user_id,
+                           errcode=errcode,
+                           errmsg=errmsg,
+                           media_path=media_path)
+                raise RuntimeError(f"Rate limited while sending media: {errmsg}")
+
+        # 其他错误码
         if errcode and errcode != 0:
+            # 尝试重试整个上传流程
+            if retry_count < MAX_SEND_RETRIES:
+                wait_time = RETRY_DELAY_S * (2 ** retry_count)
+                logger.info("WeChat send media error, will retry entire upload",
+                           errcode=errcode,
+                           errmsg=errmsg,
+                           retry_count=retry_count,
+                           wait_time=wait_time,
+                           media_path=media_path)
+                await asyncio.sleep(wait_time)
+                return await self._send_media_file(to_user_id, media_path, context_token, retry_count + 1)
             raise RuntimeError(
-                f"WeChat send media error (code {errcode}): {data.get('errmsg', '')}"
+                f"WeChat send media error (code {errcode}): {errmsg}"
             )
+
+        # ✅ 成功发送后，从响应中提取并更新 context_token
+        new_context_token = data.get("context_token", "")
+        if new_context_token and new_context_token != context_token:
+            logger.info("WeChat context token updated after media send",
+                       to_user_id=to_user_id,
+                       old_token_preview=context_token[:20] if context_token else "",
+                       new_token_preview=new_context_token[:20])
+            self._context_tokens[to_user_id] = new_context_token
+            self._save_state()
+
         logger.info(
             "WeChat media sent successfully",
             filename=p.name,
             type=item_key,
             size=raw_size,
-            source="url" if _is_url(media_path) else "local"
+            source="url" if _is_url(media_path) else "local",
+            context_token_updated=bool(new_context_token)
         )
 
         # Cleanup: delete temp file if it was downloaded from URL

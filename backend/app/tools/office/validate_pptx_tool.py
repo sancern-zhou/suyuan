@@ -27,7 +27,10 @@ class ValidatePptxTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="validate_pptx",
-            description="渲染PPTX并执行基础交付检查：PDF/PNG预览、montage、空页/越界/字体检测。",
+            description=(
+                "渲染PPTX并执行基础交付检查：PDF/PNG预览、montage、空页/越界/字体检测。\n\n"
+                "⚠️ 使用前请先阅读：app/tools/office/PPT操作指南.md"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,

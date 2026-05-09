@@ -23,7 +23,10 @@ class AnalyzePptxTemplateTool(LLMTool):
     def __init__(self):
         super().__init__(
             name="analyze_pptx_template",
-            description="分析PPTX模板结构，输出页面、版式、占位符、文本/图片/表格槽位和模板地图。",
+            description=(
+                "分析PPTX模板结构，输出页面、版式、占位符、文本/图片/表格槽位和模板地图。\n\n"
+                "⚠️ 使用前请先阅读：app/tools/office/PPT操作指南.md"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,

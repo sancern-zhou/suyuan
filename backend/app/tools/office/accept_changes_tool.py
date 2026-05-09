@@ -69,6 +69,9 @@ class AcceptChangesTool(LLMTool):
             name="accept_word_changes",
             description="""接受 Word 文档中的所有修订标记
 
+⚠️ 使用前请先阅读：app/tools/office/WORD操作指南.md
+
+
 功能：
 - 接受 DOCX 文件中的所有修订（Track Changes）
 - 使用 LibreOffice 自动处理
