@@ -42,7 +42,7 @@ class PipelineResult:
         self.parsed_query: Optional[StructuredQuery] = None
         self.selected_experts: List[str] = []
         self.expert_results: Dict[str, ExpertResult] = {}
-        self.final_answer: str = ""
+        self.response: str = ""
         self.conclusions: List[str] = []
         self.recommendations: List[str] = []
         self.data_ids: List[str] = []
@@ -60,7 +60,7 @@ class PipelineResult:
             "expert_results": {
                 k: v.dict() for k, v in self.expert_results.items()
             },
-            "final_answer": self.final_answer,
+            "response": self.response,
             "conclusions": self.conclusions,
             "recommendations": self.recommendations,
             "data_ids": self.data_ids,
@@ -493,7 +493,7 @@ class ExpertRouterV3:
                 },
                 {
                     "role": "assistant",
-                    "content": result.final_answer,
+                    "content": result.response,
                     "timestamp": datetime.now().isoformat(),
                     "metadata": {
                         "status": result.status,
@@ -779,23 +779,23 @@ class ExpertRouterV3:
                             content = content.replace("[CONCLUSION_SECTION_END]", "")
                             full_markdown.append(content)
 
-                    result.final_answer = "\n\n".join(full_markdown) if full_markdown else report_result.analysis.summary
+                    result.response = "\n\n".join(full_markdown) if full_markdown else report_result.analysis.summary
 
                     logger.info(
                         "full_markdown_report_extracted",
                         sections_count=len(sections),
-                        total_length=len(result.final_answer)
+                        total_length=len(result.response)
                     )
                 else:
                     # 降级：使用summary
-                    result.final_answer = report_result.analysis.summary
+                    result.response = report_result.analysis.summary
 
                 # 从报告中提取结论和建议
                 result.conclusions = report_content.get("conclusions", [])
                 result.recommendations = report_content.get("recommendations", [])
             else:
                 # 没有tool_results，使用summary
-                result.final_answer = report_result.analysis.summary
+                result.response = report_result.analysis.summary
         
         else:
             # 单专家或无报告专家，使用各专家的总结
@@ -811,7 +811,7 @@ class ExpertRouterV3:
                     total_confidence += expert_result.analysis.confidence
                     count += 1
             
-            result.final_answer = "\n".join(summaries) if summaries else "分析未完成"
+            result.response = "\n".join(summaries) if summaries else "分析未完成"
             result.conclusions = findings[:5]  # 取前5个发现作为结论
             result.confidence = total_confidence / max(count, 1)
         

@@ -261,7 +261,7 @@ class AgentBridge:
                 social_soul_context = social_context["social_soul_context"]
                 social_user_context = social_context["social_user_context"]
 
-            final_answer, reasoning_content = await self._aggregate_agent_events(
+            response_text, reasoning_content = await self._aggregate_agent_events(
                 content=msg.content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
@@ -278,7 +278,7 @@ class AgentBridge:
 
             logger.info("Agent analysis completed",
                        session_id=session_id,
-                       response_length=len(final_answer) if final_answer else 0,
+                       response_length=len(response_text) if response_text else 0,
                        reasoning_length=len(reasoning_content) if reasoning_content else 0)
 
             
@@ -287,7 +287,7 @@ class AgentBridge:
                 from datetime import datetime
                 messages = [
                     {"role": "user", "content": msg.content, "timestamp": datetime.now().isoformat()},
-                    {"role": "assistant", "content": final_answer, "timestamp": datetime.now().isoformat()}
+                    {"role": "assistant", "content": response_text, "timestamp": datetime.now().isoformat()}
                 ]
 
 
@@ -295,10 +295,10 @@ class AgentBridge:
                 await self._check_and_consolidate_memory(session_id, social_user_id)
 
 
-            media_files = self._extract_media_files(final_answer)
+            media_files = self._extract_media_files(response_text)
 
 
-            cleaned_answer = self._clean_media_references(final_answer)
+            cleaned_answer = self._clean_media_references(response_text)
 
             # ✅ 检查用户是否启用了思考内容显示（默认开启）
             show_reasoning = True  # 默认开启
@@ -368,8 +368,8 @@ class AgentBridge:
         """聚合 Agent 事件并生成最终回复。
 
         Returns:
-            tuple: (final_answer, reasoning_content)
-                   - final_answer: 最终回复内容
+            tuple: (response_text, reasoning_content)
+                   - response_text: 最终回复内容
                    - reasoning_content: 思考内容（如果有，否则为空）
         """
         events_buffer = []
@@ -494,10 +494,10 @@ class AgentBridge:
                     # Extract final answer (loop.py returns "answer" field)
                     final_data = event.get("data", {})
                     if isinstance(final_data, dict):
-                        final_answer = final_data.get("answer", "")
-                        if final_answer:
+                        response_text = final_data.get("answer", "")
+                        if response_text:
                             reasoning_content = self._format_reasoning_content(reasoning_parts)
-                            return final_answer, reasoning_content
+                            return response_text, reasoning_content
 
                 elif event_type == "error":
                     # Handle error events
@@ -1185,7 +1185,11 @@ Example: If task says "Send a test message", then send the message directly, don
                 if event.get("type") == "complete":
                     data = event.get("data", {})
                     if isinstance(data, dict):
-                        result_parts.append(data.get("final_answer", ""))
+                        result_parts.append(
+                            data.get("answer")
+                            or data.get("response")
+                            or ""
+                        )
 
             summary = "\n".join(part for part in result_parts if part).strip()
             return {

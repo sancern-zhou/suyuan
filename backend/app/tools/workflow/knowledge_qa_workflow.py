@@ -247,7 +247,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 "retrieval_summary": f"从知识库中检索到 {len(documents)} 篇相关文档"
             }
 
-            # ❌ 移除 can_be_final_answer 标记，让主 Agent 决定如何使用检索结果
+            # 让主 Agent 决定如何使用检索结果
             return self._build_udf_v2_result(
                 status="success",
                 success=True,

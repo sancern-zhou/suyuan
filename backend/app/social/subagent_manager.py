@@ -335,7 +335,7 @@ class SubagentManager:
         )
 
         events = []
-        final_answer = ""
+        response_text = ""
 
         async for event in subagent.analyze(
             user_query=task,
@@ -345,13 +345,12 @@ class SubagentManager:
         ):
             events.append(event)
 
-            # Extract final answer
+            # Extract response text
             if event.get("type") == "complete":
                 final_data = event.get("data", {})
-                final_answer = (
+                response_text = (
                     final_data.get("answer")
                     or final_data.get("response")
-                    or final_data.get("final_answer")
                     or ""
                 )
                 break
@@ -360,7 +359,7 @@ class SubagentManager:
                 error_msg = error_data.get("error", "Unknown error")
                 raise Exception(f"Subagent error: {error_msg}")
 
-        return final_answer or "任务执行完成，但未生成结果"
+        return response_text or "任务执行完成，但未生成结果"
 
     async def _send_completion_notification(
         self,

@@ -17,6 +17,7 @@ from typing import Callable, Optional, Dict, Any, List
 import structlog
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import tempfile
 
 logger = structlog.get_logger(__name__)
 
@@ -88,6 +89,20 @@ class HeartbeatService:
             user_id=self.user_id
         )
 
+    def _atomic_write_text(self, path: Path, content: str) -> None:
+        """Atomically replace a text file to avoid partial HEARTBEAT.md writes."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            delete=False,
+            newline="\n",
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+        tmp_path.replace(path)
+
     def _init_heartbeat_file(self) -> None:
         """初始化HEARTBEAT.md文件"""
         if not self.heartbeat_file.exists():
@@ -129,7 +144,7 @@ class HeartbeatService:
 - enabled: false 的任务会被跳过
 - HeartbeatService 会定期检查并执行到期的任务
 """
-            self.heartbeat_file.write_text(initial_content, encoding="utf-8")
+            self._atomic_write_text(self.heartbeat_file, initial_content)
             logger.info("heartbeat_file_created", path=str(self.heartbeat_file))
 
     async def start(self) -> None:
@@ -357,6 +372,73 @@ class HeartbeatService:
             # ✅ 重置执行标志
             self._is_executing = False
 
+    def _strip_fenced_blocks(self, content: str) -> str:
+        """Remove fenced examples so documentation blocks are not parsed as tasks."""
+        import re
+
+        return re.sub(r"```[\s\S]*?```", "", content)
+
+    def _extract_task_blocks(self, content: str) -> list[str]:
+        """Extract top-level YAML list items that start with '- name:'."""
+        content = self._strip_fenced_blocks(content)
+        blocks: list[list[str]] = []
+        current: list[str] = []
+
+        for line in content.splitlines():
+            if line.lstrip().startswith("- name:"):
+                if current:
+                    blocks.append(current)
+                current = [line]
+            elif current:
+                current.append(line)
+
+        if current:
+            blocks.append(current)
+
+        return ["\n".join(block).rstrip() for block in blocks if block]
+
+    def _parse_task_block_with_yaml(self, block: str) -> Optional[Dict[str, Any]]:
+        """Parse one HEARTBEAT.md task block using YAML when available."""
+        try:
+            import yaml
+
+            parsed = yaml.safe_load(block)
+        except Exception as e:
+            logger.debug("heartbeat_yaml_parse_failed", error=str(e), block=block[:200])
+            return None
+
+        if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+            return parsed[0]
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _parse_task_block_with_regex(self, block: str) -> Optional[Dict[str, Any]]:
+        """Fallback parser for slightly malformed legacy task blocks."""
+        import re
+
+        def pick(pattern: str) -> str:
+            match = re.search(pattern, block, re.MULTILINE | re.DOTALL)
+            return match.group(1).strip().strip('"').strip("'") if match else ""
+
+        name = pick(r"^\s*-\s*name:\s*(.+?)\s*$")
+        schedule = pick(r"^\s*schedule:\s*[\"']?(.+?)[\"']?\s*(?:#.*)?$")
+        description = pick(
+            r"^\s*description:\s*([\s\S]*?)(?=^\s*(?:enabled|channels|last_run|next_run_at|next_run):|\Z)"
+        )
+        enabled = pick(r"^\s*enabled:\s*(true|false)\s*$").lower()
+        next_run_at = pick(r"^\s*next_run_at:\s*[\"']?(.+?)[\"']?\s*$")
+
+        if not name or not schedule:
+            return None
+        return {
+            "name": name,
+            "schedule": schedule,
+            "description": description,
+            "enabled": enabled != "false",
+            "next_run_at": next_run_at,
+        }
+
     def _parse_tasks(self, content: str) -> list[Dict[str, Any]]:
         """
         解析HEARTBEAT.md文件中的任务列表
@@ -367,46 +449,41 @@ class HeartbeatService:
         Returns:
             任务列表（包含next_run_at字段）
         """
-        # 简化实现：使用正则表达式提取任务
-        # TODO: 后续可以使用更完善的YAML解析
-        import re
-
-        # HEARTBEAT.md contains documentation examples in fenced code blocks.
-        # Those examples must not be treated as real scheduled tasks.
-        content = re.sub(r"```[\s\S]*?```", "", content)
-
         tasks = []
-        # 修复：支持多行description（使用[\s\S]+?代替.+?）
-        # 修复：允许enabled和next_run_at之间有其他字段（如channels）
-        task_pattern = r'-\s*name:\s*(.+?)\s+schedule:\s*["\'](.+?)["\'].*?description:\s*([\s\S]+?)\s+enabled:\s*(true|false)(?:[\s\S]*?next_run_at:\s*["\'](.+?)["\'])?'
 
-        matches = re.findall(task_pattern, content, re.DOTALL)
-        for match in matches:
-            name, schedule, description, enabled, next_run_at = match
-            if enabled.lower() == "true":
-                task = {
-                    "name": name.strip(),
-                    "schedule": schedule.strip(),
-                    "description": description.strip(),
-                    "enabled": True
-                }
-                # 如果文件中有next_run_at，使用它；否则稍后计算
-                if next_run_at:
-                    task["next_run_at"] = next_run_at.strip()
-                    logger.debug(
-                        "task_parsed_with_next_run",
-                        name=name.strip()[:50],
-                        schedule=schedule,
-                        next_run_at=next_run_at.strip()
-                    )
-                else:
-                    logger.debug(
-                        "task_parsed_without_next_run",
-                        name=name.strip()[:50],
-                        schedule=schedule
-                    )
+        for block in self._extract_task_blocks(content):
+            parsed = self._parse_task_block_with_yaml(block) or self._parse_task_block_with_regex(block)
+            if not parsed:
+                logger.warning("heartbeat_task_parse_skipped", block_preview=block[:200])
+                continue
 
-                tasks.append(task)
+            enabled = parsed.get("enabled", True)
+            if isinstance(enabled, str):
+                enabled = enabled.strip().lower() == "true"
+            if not enabled:
+                continue
+
+            name = str(parsed.get("name", "")).strip()
+            schedule = str(parsed.get("schedule", "")).strip()
+            description = str(parsed.get("description", "") or "").strip()
+            next_run_at = str(parsed.get("next_run_at", "") or "").strip()
+            channels = parsed.get("channels") or ["weixin"]
+
+            if not name or not schedule:
+                logger.warning("heartbeat_task_missing_required_fields", block_preview=block[:200])
+                continue
+
+            task = {
+                "name": name,
+                "schedule": schedule,
+                "description": description,
+                "enabled": True,
+                "channels": channels,
+            }
+            if next_run_at:
+                task["next_run_at"] = next_run_at
+
+            tasks.append(task)
 
         logger.info("tasks_parsed", count=len(tasks), with_next_run=sum(1 for t in tasks if t.get("next_run_at")))
         return tasks
@@ -576,7 +653,7 @@ class HeartbeatService:
                         )
 
             # 写回文件
-            self.heartbeat_file.write_text(content, encoding="utf-8")
+            self._atomic_write_text(self.heartbeat_file, content)
 
             logger.debug(
                 "updated_task_next_runs",
@@ -624,7 +701,7 @@ class HeartbeatService:
         # 追加到文件
         content = self.heartbeat_file.read_text(encoding="utf-8")
         content += "\n" + new_task
-        self.heartbeat_file.write_text(content, encoding="utf-8")
+        self._atomic_write_text(self.heartbeat_file, content)
 
         # ✅ 只有在需要提前执行时才触发唤醒
         should_wake = False
@@ -679,7 +756,7 @@ class HeartbeatService:
             pattern = rf'-\s*name:\s*{re.escape(task_name)}.*?(?=-\s*name:|$)'
             new_content = re.sub(pattern, '', content, flags=re.DOTALL)
 
-            self.heartbeat_file.write_text(new_content, encoding="utf-8")
+            self._atomic_write_text(self.heartbeat_file, new_content)
 
             logger.info("task_removed_from_heartbeat", name=task_name)
             return True
