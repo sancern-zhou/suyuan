@@ -850,7 +850,8 @@ class PollutionEventMonitorService:
             return "short_spike_or_impact_process"
         if duration_hours >= 4 and low_wind:
             return "sustained_accumulation_under_low_wind"
-        if main_pollutant in {"PM10", "PM2_5"} and wind.get("max_wind_speed", 0) >= 4:
+        max_wind_speed = wind.get("max_wind_speed") or 0
+        if main_pollutant in {"PM10", "PM2_5"} and max_wind_speed >= 4:
             return "particle_process_with_wind_or_dust_signal"
         if duration_hours >= 4:
             return "sustained_pollution_process"
