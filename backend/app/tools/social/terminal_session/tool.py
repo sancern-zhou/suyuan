@@ -4,9 +4,9 @@ This tool is intentionally separate from cli_session:
 - cli_session delegates one turn to Claude Code / Codex and exits.
 - terminal_session keeps a normal stdin/stdout process alive across social turns.
 
-The first implementation uses pipes rather than a PTY. It supports ordinary
-line-oriented scripts and REPL-like programs, such as guess-number games. Full
-TUI programs and interactive Claude Code shells require a PTY backend later.
+Pipe mode supports ordinary line-oriented scripts and REPL-like programs, such
+as guess-number games. Linux PTY mode gives real terminal behavior for shells,
+Claude Code CLIs, and simple TUI programs.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import asyncio
 import os
 import re
 import shlex
-import signal
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -36,6 +35,7 @@ DEFAULT_READ_TIMEOUT = 1.0
 DEFAULT_MAX_OUTPUT_CHARS = 6000
 MAX_SESSIONS_PER_USER = 3
 IDLE_TTL_SECONDS = 1800
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 @dataclass
@@ -46,18 +46,24 @@ class ProcessSession:
     command: str
     args: List[str]
     cwd: str
-    process: asyncio.subprocess.Process
+    process: Any
+    backend: str
     started_at: float
     last_activity: float
     output_buffer: str = ""
     read_cursor: int = 0
     stdout_task: Optional[asyncio.Task] = None
     stderr_task: Optional[asyncio.Task] = None
+    pty_task: Optional[asyncio.Task] = None
+    pty_master_fd: Optional[int] = None
     exit_code: Optional[int] = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
     def running(self) -> bool:
+        poll = getattr(self.process, "poll", None)
+        if callable(poll):
+            return poll() is None
         return self.process.returncode is None
 
 
@@ -75,6 +81,9 @@ class TerminalSessionManager:
         command: str,
         args: List[str],
         cwd: Path,
+        backend: str,
+        columns: int,
+        rows: int,
         restart: bool,
         read_timeout: float,
     ) -> Tuple[bool, Optional[ProcessSession], str, str]:
@@ -103,14 +112,18 @@ class TerminalSessionManager:
             env.setdefault("TOKENIZERS_PARALLELISM", "false")
 
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *args,
-                    cwd=str(cwd),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env,
-                )
+                if backend == "pty":
+                    process, master_fd = await self._start_pty_process(args, cwd, env, columns, rows)
+                else:
+                    process = await asyncio.create_subprocess_exec(
+                        *args,
+                        cwd=str(cwd),
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=env,
+                    )
+                    master_fd = None
             except Exception as exc:
                 logger.error("terminal_session_start_failed", command=command, error=str(exc), exc_info=True)
                 return False, None, str(exc), ""
@@ -124,11 +137,16 @@ class TerminalSessionManager:
                 args=args,
                 cwd=str(cwd),
                 process=process,
+                backend=backend,
                 started_at=now,
                 last_activity=now,
+                pty_master_fd=master_fd,
             )
-            session.stdout_task = asyncio.create_task(self._reader_loop(session, process.stdout, "stdout"))
-            session.stderr_task = asyncio.create_task(self._reader_loop(session, process.stderr, "stderr"))
+            if backend == "pty":
+                session.pty_task = asyncio.create_task(self._pty_reader_loop(session))
+            else:
+                session.stdout_task = asyncio.create_task(self._reader_loop(session, process.stdout, "stdout"))
+                session.stderr_task = asyncio.create_task(self._reader_loop(session, process.stderr, "stderr"))
             self._sessions[key] = session
 
         output = await self.read(session, read_timeout=read_timeout, max_output_chars=DEFAULT_MAX_OUTPUT_CHARS)
@@ -140,15 +158,22 @@ class TerminalSessionManager:
         text: str,
         read_timeout: float,
         max_output_chars: int,
+        append_newline: bool,
     ) -> Tuple[bool, str]:
         async with session.lock:
             if not session.running:
                 return False, await self.read(session, read_timeout=0, max_output_chars=max_output_chars)
-            if session.process.stdin is None:
-                return False, "进程 stdin 不可用"
             try:
-                session.process.stdin.write((text.rstrip("\n") + "\n").encode("utf-8"))
-                await session.process.stdin.drain()
+                payload = text if not append_newline else text.rstrip("\n") + "\n"
+                if session.backend == "pty":
+                    if session.pty_master_fd is None:
+                        return False, "PTY master 不可用"
+                    os.write(session.pty_master_fd, payload.encode("utf-8"))
+                else:
+                    if session.process.stdin is None:
+                        return False, "进程 stdin 不可用"
+                    session.process.stdin.write(payload.encode("utf-8"))
+                    await session.process.stdin.drain()
                 session.last_activity = time.time()
             except Exception as exc:
                 return False, f"写入 stdin 失败: {exc}"
@@ -157,7 +182,7 @@ class TerminalSessionManager:
     async def read(self, session: ProcessSession, read_timeout: float, max_output_chars: int) -> str:
         if read_timeout > 0:
             await asyncio.sleep(read_timeout)
-        session.exit_code = session.process.returncode
+        session.exit_code = self._returncode(session)
         new_output = session.output_buffer[session.read_cursor:]
         session.read_cursor = len(session.output_buffer)
         if not new_output:
@@ -169,16 +194,22 @@ class TerminalSessionManager:
             try:
                 session.process.terminate()
                 try:
-                    await asyncio.wait_for(session.process.wait(), timeout=3)
+                    await self._wait_process(session.process, timeout=3)
                 except asyncio.TimeoutError:
                     session.process.kill()
-                    await session.process.wait()
+                    await self._wait_process(session.process, timeout=3)
             except ProcessLookupError:
                 pass
             except Exception as exc:
                 logger.warning("terminal_session_stop_failed", session_id=session.id, error=str(exc))
-        session.exit_code = session.process.returncode
-        for task in (session.stdout_task, session.stderr_task):
+        session.exit_code = self._returncode(session)
+        if session.pty_master_fd is not None:
+            try:
+                os.close(session.pty_master_fd)
+            except OSError:
+                pass
+            session.pty_master_fd = None
+        for task in (session.stdout_task, session.stderr_task, session.pty_task):
             if task and not task.done():
                 task.cancel()
         return self._tail(session.output_buffer, DEFAULT_MAX_OUTPUT_CHARS)
@@ -232,12 +263,36 @@ class TerminalSessionManager:
         except Exception as exc:
             logger.warning("terminal_session_reader_failed", session_id=session.id, stream=stream_name, error=str(exc))
 
+    async def _pty_reader_loop(self, session: ProcessSession) -> None:
+        fd = session.pty_master_fd
+        if fd is None:
+            return
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.to_thread(os.read, fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", errors="replace")
+                session.output_buffer += text
+                if len(session.output_buffer) > MAX_BUFFER_CHARS:
+                    overflow = len(session.output_buffer) - MAX_BUFFER_CHARS
+                    session.output_buffer = session.output_buffer[overflow:]
+                    session.read_cursor = max(0, session.read_cursor - overflow)
+                session.last_activity = time.time()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("terminal_session_pty_reader_failed", session_id=session.id, error=str(exc))
+
     async def _cleanup_locked(self) -> None:
         now = time.time()
         stale_keys = []
         for key, session in self._sessions.items():
             if not session.running:
-                session.exit_code = session.process.returncode
+                session.exit_code = self._returncode(session)
                 continue
             if now - session.last_activity > IDLE_TTL_SECONDS:
                 stale_keys.append(key)
@@ -250,6 +305,56 @@ class TerminalSessionManager:
         if not text or len(text) <= max_chars:
             return text or ""
         return text[-max_chars:]
+
+    async def _start_pty_process(
+        self,
+        args: List[str],
+        cwd: Path,
+        env: Dict[str, str],
+        columns: int,
+        rows: int,
+    ) -> Tuple[Any, int]:
+        if os.name == "nt":
+            raise RuntimeError("PTY backend 仅支持 Linux/macOS；Windows 请使用 backend=pipe")
+
+        import fcntl
+        import pty
+        import struct
+        import subprocess
+        import termios
+
+        master_fd, slave_fd = pty.openpty()
+        try:
+            size = struct.pack("HHHH", rows, columns, 0, 0)
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, size)
+            env = env.copy()
+            env["TERM"] = "xterm-256color"
+            process = subprocess.Popen(
+                args,
+                cwd=str(cwd),
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                env=env,
+                close_fds=True,
+                start_new_session=True,
+            )
+        finally:
+            os.close(slave_fd)
+        return process, master_fd
+
+    async def _wait_process(self, process: Any, timeout: int) -> None:
+        wait = getattr(process, "wait")
+        if callable(getattr(process, "poll", None)):
+            await asyncio.wait_for(asyncio.to_thread(wait), timeout=timeout)
+            return
+        await asyncio.wait_for(wait(), timeout=timeout)
+
+    def _returncode(self, session: ProcessSession) -> Optional[int]:
+        poll = getattr(session.process, "poll", None)
+        if callable(poll):
+            return poll()
+        return session.process.returncode
 
 
 _manager = TerminalSessionManager()
@@ -264,7 +369,8 @@ class TerminalSessionTool(LLMTool):
         function_schema = {
             "name": "terminal_session",
             "description": (
-                "托管长期运行的交互式命令行进程，适合猜数字游戏、简单REPL、等待stdin的脚本。"
+                "托管长期运行的交互式命令行进程。pipe 适合猜数字游戏、简单REPL、等待stdin的脚本；"
+                "Linux pty 适合 shell、Claude Code 交互式CLI、简单TUI。"
                 "不是Claude/Codex委托工具；如需外部编程Agent请用cli_session。"
             ),
             "parameters": {
@@ -285,11 +391,32 @@ class TerminalSessionTool(LLMTool):
                     },
                     "input": {
                         "type": "string",
-                        "description": "send 时写入 stdin 的一行内容。"
+                        "description": "send 时写入进程的内容。默认自动补换行；PTY 下可配合 append_newline=false 发送 Ctrl+C(\\u0003)、Tab(\\t)、方向键等原始按键。"
+                    },
+                    "backend": {
+                        "type": "string",
+                        "enum": ["pipe", "pty", "auto"],
+                        "description": "start 时选择后端。pipe 兼容脚本；pty 仅 Linux/macOS，提供真实终端行为；auto 在非 Windows 选 pty，Windows 选 pipe。",
+                        "default": "pipe"
                     },
                     "cwd": {
                         "type": "string",
                         "description": "工作目录，必须在项目目录内。默认项目根目录。"
+                    },
+                    "append_newline": {
+                        "type": "boolean",
+                        "description": "send 时是否自动追加换行。执行 shell 命令/脚本输入通常 true；发送 Ctrl+C、Tab、方向键等原始按键时设 false。",
+                        "default": True
+                    },
+                    "columns": {
+                        "type": "integer",
+                        "description": "PTY 终端列数，默认 120。",
+                        "default": 120
+                    },
+                    "rows": {
+                        "type": "integer",
+                        "description": "PTY 终端行数，默认 30。",
+                        "default": 30
                     },
                     "restart": {
                         "type": "boolean",
@@ -325,7 +452,11 @@ class TerminalSessionTool(LLMTool):
         session_name: str = "default",
         command: Optional[str] = None,
         input: Optional[str] = None,
+        backend: str = "pipe",
         cwd: Optional[str] = None,
+        append_newline: bool = True,
+        columns: int = 120,
+        rows: int = 30,
         restart: bool = False,
         read_timeout: float = DEFAULT_READ_TIMEOUT,
         max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
@@ -337,6 +468,9 @@ class TerminalSessionTool(LLMTool):
         user_key = self._get_user_key(context)
         read_timeout = self._clamp_float(read_timeout, 0.0, 10.0, DEFAULT_READ_TIMEOUT)
         max_output_chars = self._clamp_int(max_output_chars, 1000, 50000, DEFAULT_MAX_OUTPUT_CHARS)
+        backend = self._normalize_backend(backend)
+        columns = self._clamp_int(columns, 40, 240, 120)
+        rows = self._clamp_int(rows, 10, 80, 30)
 
         if action not in self.VALID_ACTIONS:
             return self._failed(f"不支持的 action: {action}")
@@ -355,12 +489,17 @@ class TerminalSessionTool(LLMTool):
             validation = self._validate_command(command)
             if not validation["valid"]:
                 return self._failed(validation["error"])
+            if backend == "pty" and os.name == "nt":
+                return self._failed("backend=pty 仅支持 Linux/macOS；当前系统请使用 backend=pipe")
             started, session, error, output = await _manager.start(
                 user_key=user_key,
                 session_name=session_name,
                 command=command,
                 args=validation["args"],
                 cwd=resolved_cwd,
+                backend=backend,
+                columns=columns,
+                rows=rows,
                 restart=bool(restart),
                 read_timeout=read_timeout,
             )
@@ -377,7 +516,7 @@ class TerminalSessionTool(LLMTool):
         if action == "send":
             if input is None:
                 return self._failed("action=send 时必须提供 input")
-            ok, output = await _manager.send(session, input, read_timeout, max_output_chars)
+            ok, output = await _manager.send(session, input, read_timeout, max_output_chars, bool(append_newline))
             data = self._session_data(session, include_output=True, output=output, max_output_chars=max_output_chars)
             return self._ok(action, "已写入输入并读取新输出" if ok else "写入失败", data, success=ok)
 
@@ -453,11 +592,12 @@ class TerminalSessionTool(LLMTool):
     ) -> Dict[str, Any]:
         if not session:
             return {}
-        session.exit_code = session.process.returncode
+        session.exit_code = self._session_returncode(session)
         data: Dict[str, Any] = {
             "id": session.id,
             "session_name": session.session_name,
             "command": session.command,
+            "backend": session.backend,
             "cwd": session.cwd,
             "pid": getattr(session.process, "pid", None),
             "running": session.running,
@@ -465,11 +605,16 @@ class TerminalSessionTool(LLMTool):
             "started_at": datetime.fromtimestamp(session.started_at).isoformat(),
             "last_activity": datetime.fromtimestamp(session.last_activity).isoformat(),
             "buffer_chars": len(session.output_buffer),
+            "usage_hint": self._usage_hint(session.backend),
         }
         if include_output:
             selected = output if output is not None else session.output_buffer[-max_output_chars:]
             data["output"] = selected[-max_output_chars:] if selected else ""
             data["output_chars"] = len(data["output"])
+            if session.backend == "pty":
+                plain_output = self._strip_ansi(data["output"])
+                data["plain_output"] = plain_output
+                data["plain_output_chars"] = len(plain_output)
         return data
 
     def _get_user_key(self, context: Any = None) -> str:
@@ -516,6 +661,28 @@ class TerminalSessionTool(LLMTool):
         }
         metadata.update({key: value for key, value in extra.items() if value is not None})
         return metadata
+
+    def _normalize_backend(self, value: str) -> str:
+        backend = (value or "pipe").strip().lower()
+        if backend == "auto":
+            return "pipe" if os.name == "nt" else "pty"
+        if backend in {"pipe", "pty"}:
+            return backend
+        return "pipe"
+
+    def _usage_hint(self, backend: str) -> str:
+        if backend == "pty":
+            return "PTY 会话：send 默认追加换行；发送 Ctrl+C 用 input='\\u0003', append_newline=false；方向键可发送 ANSI 序列并设 append_newline=false。"
+        return "Pipe 会话：适合行式脚本和简单 REPL；每次 send 默认写入一行并读取新输出。"
+
+    def _strip_ansi(self, text: str) -> str:
+        return ANSI_ESCAPE_RE.sub("", text or "")
+
+    def _session_returncode(self, session: ProcessSession) -> Optional[int]:
+        poll = getattr(session.process, "poll", None)
+        if callable(poll):
+            return poll()
+        return session.process.returncode
 
     def _safe_name(self, value: str) -> str:
         value = str(value or "default").strip()
