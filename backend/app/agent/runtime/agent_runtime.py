@@ -292,6 +292,7 @@ class AgentRuntime:
                     state,
                     planner_result.thought,
                     text_content=thought_data.get("text_content"),
+                    will_use_tool=bool(planner_result.tool_calls),
                 )
 
             elif event_type == "thinking_content":
