@@ -787,6 +787,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="cli_session", error=str(e))
 
+    try:
+        from app.tools.social.terminal_session.tool import TerminalSessionTool
+        registry.register(TerminalSessionTool(), priority=379)
+        logger.info("tool_loaded", tool="terminal_session")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="terminal_session", error=str(e))
+
     # ========================================
     # Task Management Tools（任务管理工具）
     # ========================================

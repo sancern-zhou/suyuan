@@ -31,6 +31,9 @@ UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 
+DEFAULT_ANSWER_CHARS = 12000
+DEFAULT_RAW_OUTPUT_CHARS = 4000
+
 
 class CliSessionTool(LLMTool):
     """Run multi-turn Claude Code or Codex sessions from social mode."""
@@ -99,10 +102,15 @@ class CliSessionTool(LLMTool):
                     },
                     "max_output_chars": {
                         "type": "integer",
-                        "description": "返回给当前 Agent 的最大输出字符数，默认 20000。",
+                        "description": "返回给当前 Agent 的 answer 最大字符数，默认 12000。原始 stdout/stderr 默认不返回。",
                         "minimum": 1000,
                         "maximum": 100000,
-                        "default": 20000
+                        "default": DEFAULT_ANSWER_CHARS
+                    },
+                    "include_raw_output": {
+                        "type": "boolean",
+                        "description": "是否在成功时也返回 stdout/stderr 摘要。默认 false；失败时会自动返回 stderr/stdout 摘要。",
+                        "default": False
                     }
                 },
                 "required": ["action"]
@@ -131,7 +139,8 @@ class CliSessionTool(LLMTool):
         permission_mode: str = "acceptEdits",
         sandbox: str = "workspace-write",
         approval_policy: str = "never",
-        max_output_chars: int = 20000,
+        max_output_chars: int = DEFAULT_ANSWER_CHARS,
+        include_raw_output: bool = False,
         context: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -139,7 +148,7 @@ class CliSessionTool(LLMTool):
         provider = (provider or "claude").strip().lower()
         session_name = self._safe_name(session_name or "default")
         timeout = self._clamp_int(timeout, 30, 3600, 600)
-        max_output_chars = self._clamp_int(max_output_chars, 1000, 100000, 20000)
+        max_output_chars = self._clamp_int(max_output_chars, 1000, 100000, DEFAULT_ANSWER_CHARS)
 
         if action not in self.VALID_ACTIONS:
             return self._failed(f"不支持的 action: {action}")
@@ -158,6 +167,7 @@ class CliSessionTool(LLMTool):
             return {
                 "status": "success",
                 "success": True,
+                "metadata": self._metadata(action=action),
                 "data": self._public_state(state),
                 "summary": self._status_summary(state),
             }
@@ -168,7 +178,12 @@ class CliSessionTool(LLMTool):
             return {
                 "status": "success",
                 "success": True,
+                "metadata": self._metadata(action=action),
                 "summary": f"已重置 CLI 会话: {session_name}",
+                "data": {
+                    "session_name": session_name,
+                    "reset": True,
+                },
             }
 
         if provider not in self.VALID_PROVIDERS:
@@ -246,25 +261,59 @@ class CliSessionTool(LLMTool):
         self._save_state(state_path, state)
 
         answer = parsed_text.strip() or result["stdout"].strip() or result["stderr"].strip()
-        truncated_answer = self._tail(answer, max_output_chars)
+        truncated_answer, answer_truncated = self._truncate_middle(answer, max_output_chars)
         success = result["exit_code"] == 0
+        raw_limit = min(max_output_chars, DEFAULT_RAW_OUTPUT_CHARS)
+
+        data: Dict[str, Any] = {
+            "provider": provider,
+            "session_name": session_name,
+            "vendor_session_id": state.get("vendor_session_id"),
+            "cwd": str(resolved_cwd),
+            "exit_code": result["exit_code"],
+            "answer": truncated_answer,
+            "answer_chars": len(answer),
+            "answer_truncated": answer_truncated,
+            "turn_count": len(state.get("turns", [])),
+        }
+
+        if include_raw_output or not success:
+            stdout_excerpt, stdout_truncated = self._truncate_middle(result["stdout"], raw_limit)
+            stderr_excerpt, stderr_truncated = self._truncate_middle(result["stderr"], raw_limit)
+            data.update({
+                "stdout_excerpt": stdout_excerpt,
+                "stderr_excerpt": stderr_excerpt,
+                "stdout_chars": len(result["stdout"]),
+                "stderr_chars": len(result["stderr"]),
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+            })
 
         return {
             "status": "success" if success else "failed",
             "success": success,
-            "data": {
-                "provider": provider,
-                "session_name": session_name,
-                "vendor_session_id": state.get("vendor_session_id"),
-                "cwd": str(resolved_cwd),
-                "exit_code": result["exit_code"],
-                "answer": truncated_answer,
-                "stdout": self._tail(result["stdout"], max_output_chars),
-                "stderr": self._tail(result["stderr"], min(max_output_chars, 20000)),
-                "command": self._redact_command(args),
-                "turn_count": len(state.get("turns", [])),
-            },
-            "summary": self._build_summary(provider, session_name, success, truncated_answer, result["stderr"]),
+            "metadata": self._metadata(
+                action=action,
+                provider=provider,
+                session_name=session_name,
+                vendor_session_id=state.get("vendor_session_id"),
+                exit_code=result["exit_code"],
+                cwd=str(resolved_cwd),
+                command=self._redact_command(args),
+                answer_chars=len(answer),
+                answer_truncated=answer_truncated,
+                include_raw_output=include_raw_output,
+            ),
+            "data": data,
+            "summary": self._build_summary(
+                provider=provider,
+                session_name=session_name,
+                success=success,
+                answer=truncated_answer,
+                stderr=result["stderr"],
+                answer_chars=len(answer),
+                answer_truncated=answer_truncated,
+            ),
         }
 
     def _build_claude_command(
@@ -336,6 +385,7 @@ class CliSessionTool(LLMTool):
         env = os.environ.copy()
         env.setdefault("NO_COLOR", "1")
         env.setdefault("TERM", "dumb")
+        env.setdefault("TOKENIZERS_PARALLELISM", "false")
 
         logger.info("cli_session_running", command=self._redact_command(args), cwd=str(cwd), timeout=timeout)
         try:
@@ -505,6 +555,7 @@ class CliSessionTool(LLMTool):
         return {
             "status": "success",
             "success": True,
+            "metadata": self._metadata(action="list"),
             "data": {"sessions": sessions, "count": len(sessions)},
             "summary": f"共有 {len(sessions)} 个 CLI 会话",
         }
@@ -560,6 +611,18 @@ class CliSessionTool(LLMTool):
             return text or ""
         return text[-max_chars:]
 
+    def _truncate_middle(self, text: str, max_chars: int) -> Tuple[str, bool]:
+        """Keep head and tail when output is too large, following Hermes' terminal pattern."""
+        if not text:
+            return "", False
+        if len(text) <= max_chars:
+            return text, False
+        head_chars = max(1, int(max_chars * 0.4))
+        tail_chars = max(1, max_chars - head_chars)
+        omitted = len(text) - head_chars - tail_chars
+        notice = f"\n\n... [truncated {omitted} chars] ...\n\n"
+        return text[:head_chars] + notice + text[-tail_chars:], True
+
     def _redact_command(self, args: List[str]) -> List[str]:
         redacted = []
         for arg in args:
@@ -584,16 +647,35 @@ class CliSessionTool(LLMTool):
         success: bool,
         answer: str,
         stderr: str,
+        answer_chars: int = 0,
+        answer_truncated: bool = False,
     ) -> str:
         if success:
-            return f"{provider} CLI 会话 `{session_name}` 本轮完成。\n\n{answer}"
+            suffix = "，answer 已截断" if answer_truncated else ""
+            return (
+                f"{provider} CLI 会话 `{session_name}` 本轮完成"
+                f"（answer_chars={answer_chars}{suffix}）。"
+                "完整会话状态已持久化，可继续使用同一 session_name 发送后续任务。"
+            )
         detail = stderr.strip() or answer or "未知错误"
-        return f"{provider} CLI 会话 `{session_name}` 本轮失败：\n{self._tail(detail, 4000)}"
+        detail_excerpt, _ = self._truncate_middle(detail, DEFAULT_RAW_OUTPUT_CHARS)
+        return f"{provider} CLI 会话 `{session_name}` 本轮失败：\n{detail_excerpt}"
 
     def _failed(self, error: str) -> Dict[str, Any]:
         return {
             "status": "failed",
             "success": False,
             "error": error,
+            "metadata": self._metadata(error_type="VALIDATION_FAILED"),
+            "data": None,
             "summary": f"CLI会话失败：{error}",
         }
+
+    def _metadata(self, **extra: Any) -> Dict[str, Any]:
+        metadata = {
+            "tool_name": "cli_session",
+            "generator": "cli_session",
+            "schema_version": "1.0",
+        }
+        metadata.update({key: value for key, value in extra.items() if value is not None})
+        return metadata

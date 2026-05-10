@@ -201,7 +201,7 @@ SOCIAL_TOOL_NAMES = {
     "TodoWrite",
 
     # === CLI会话管理 ===
-    "cli_session",
+    "cli_session", "terminal_session",
 }
 
 # ===== 编程模式工具 =====
