@@ -1,0 +1,599 @@
+"""Persistent Claude Code / Codex CLI sessions for social mode.
+
+This tool intentionally uses each CLI's non-interactive resume protocol instead
+of keeping an interactive TTY alive. Social channels are message based, so a
+turn-based process model is easier to isolate, time out, log, and recover after
+backend restarts.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import shutil
+import tempfile
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import structlog
+
+from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import PROJECT_ROOT, get_social_dir
+
+logger = structlog.get_logger(__name__)
+
+
+UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
+
+class CliSessionTool(LLMTool):
+    """Run multi-turn Claude Code or Codex sessions from social mode."""
+
+    VALID_PROVIDERS = {"claude", "codex"}
+    VALID_ACTIONS = {"start", "send", "status", "list", "reset"}
+
+    def __init__(self) -> None:
+        function_schema = {
+            "name": "cli_session",
+            "description": (
+                "通过 Claude Code 或 Codex CLI 执行多轮编程/问答任务。"
+                "会话按社交用户和 session_name 持久化，后续 send 会自动恢复同一 CLI 上下文。"
+                "适合让外部编程 Agent 修改代码、运行测试、解释工程问题。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "send", "status", "list", "reset"],
+                        "description": "操作：start/send 发起一轮；status 查看指定会话；list 列出会话；reset 删除会话状态。"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["claude", "codex"],
+                        "description": "外部 CLI：claude 或 codex。start/send 默认 claude。"
+                    },
+                    "session_name": {
+                        "type": "string",
+                        "description": "社交用户下的会话名，默认 default。不同任务请使用不同名称。"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "发送给 Claude Code/Codex 的本轮用户消息。action=start/send 时必填。"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "CLI 工作目录，必须在项目目录内。默认项目根目录 D:/溯源。"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "本轮 CLI 最大执行秒数，默认 600，范围 30-3600。",
+                        "minimum": 30,
+                        "maximum": 3600,
+                        "default": 600
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "可选模型名，透传给 CLI。"
+                    },
+                    "permission_mode": {
+                        "type": "string",
+                        "enum": ["default", "acceptEdits", "bypassPermissions", "dontAsk", "plan"],
+                        "description": "Claude Code 权限模式，默认 acceptEdits。需要完全自动化时才用 bypassPermissions。"
+                    },
+                    "sandbox": {
+                        "type": "string",
+                        "enum": ["read-only", "workspace-write", "danger-full-access"],
+                        "description": "Codex 沙箱模式，默认 workspace-write。"
+                    },
+                    "approval_policy": {
+                        "type": "string",
+                        "enum": ["untrusted", "on-failure", "on-request", "never"],
+                        "description": "Codex 审批策略，默认 never，避免社交渠道卡在交互确认。"
+                    },
+                    "max_output_chars": {
+                        "type": "integer",
+                        "description": "返回给当前 Agent 的最大输出字符数，默认 20000。",
+                        "minimum": 1000,
+                        "maximum": 100000,
+                        "default": 20000
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+        super().__init__(
+            name="cli_session",
+            description="通过 Claude Code / Codex CLI 进行可恢复的多轮对话和编程",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=False,
+        )
+        self.base_dir = get_social_dir() / "cli_sessions"
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    async def execute(
+        self,
+        action: str = "send",
+        provider: str = "claude",
+        session_name: str = "default",
+        prompt: Optional[str] = None,
+        cwd: Optional[str] = None,
+        timeout: int = 600,
+        model: Optional[str] = None,
+        permission_mode: str = "acceptEdits",
+        sandbox: str = "workspace-write",
+        approval_policy: str = "never",
+        max_output_chars: int = 20000,
+        context: Any = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        action = (action or "send").strip()
+        provider = (provider or "claude").strip().lower()
+        session_name = self._safe_name(session_name or "default")
+        timeout = self._clamp_int(timeout, 30, 3600, 600)
+        max_output_chars = self._clamp_int(max_output_chars, 1000, 100000, 20000)
+
+        if action not in self.VALID_ACTIONS:
+            return self._failed(f"不支持的 action: {action}")
+
+        user_key = self._get_user_key(context)
+
+        if action == "list":
+            return self._list_sessions(user_key)
+
+        state_path = self._state_path(user_key, session_name)
+        state = self._load_state(state_path)
+
+        if action == "status":
+            if not state:
+                return self._failed(f"CLI会话不存在: {session_name}")
+            return {
+                "status": "success",
+                "success": True,
+                "data": self._public_state(state),
+                "summary": self._status_summary(state),
+            }
+
+        if action == "reset":
+            if state_path.exists():
+                state_path.unlink()
+            return {
+                "status": "success",
+                "success": True,
+                "summary": f"已重置 CLI 会话: {session_name}",
+            }
+
+        if provider not in self.VALID_PROVIDERS:
+            return self._failed(f"不支持的 provider: {provider}")
+
+        if not prompt or not prompt.strip():
+            return self._failed("action=start/send 时必须提供 prompt")
+
+        resolved_cwd = self._resolve_cwd(cwd or state.get("cwd") if state else cwd)
+        if resolved_cwd is None:
+            return self._failed(f"工作目录无效或超出项目范围: {cwd}")
+
+        binary = self._resolve_binary(provider)
+        if not binary:
+            return self._failed(
+                f"未找到 {provider} CLI。请确认后端服务环境 PATH 中可执行 `{provider}`。"
+            )
+
+        if not state or action == "start" or state.get("provider") != provider:
+            state = self._new_state(
+                user_key=user_key,
+                session_name=session_name,
+                provider=provider,
+                cwd=str(resolved_cwd),
+            )
+        else:
+            state["cwd"] = str(resolved_cwd)
+
+        if provider == "claude":
+            args, stdin_text, output_file = self._build_claude_command(
+                binary=binary,
+                state=state,
+                prompt=prompt,
+                model=model,
+                permission_mode=permission_mode,
+            )
+        else:
+            args, stdin_text, output_file = self._build_codex_command(
+                binary=binary,
+                state=state,
+                prompt=prompt,
+                model=model,
+                sandbox=sandbox,
+                approval_policy=approval_policy,
+            )
+
+        started_at = datetime.now().isoformat()
+        result = await self._run_cli(args, stdin_text, resolved_cwd, timeout)
+        finished_at = datetime.now().isoformat()
+
+        parsed_text, vendor_session_id = self._parse_cli_output(
+            provider=provider,
+            stdout=result["stdout"],
+            stderr=result["stderr"],
+            output_file=output_file,
+        )
+        if vendor_session_id:
+            state["vendor_session_id"] = vendor_session_id
+
+        turn = {
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "prompt": prompt,
+            "exit_code": result["exit_code"],
+            "success": result["exit_code"] == 0,
+            "stdout_tail": self._tail(result["stdout"], 12000),
+            "stderr_tail": self._tail(result["stderr"], 6000),
+            "answer": self._tail(parsed_text, 30000),
+        }
+        state.setdefault("turns", []).append(turn)
+        state["updated_at"] = finished_at
+        state["last_exit_code"] = result["exit_code"]
+        state["last_success"] = result["exit_code"] == 0
+        state["last_error"] = result["stderr"] if result["exit_code"] != 0 else ""
+        self._save_state(state_path, state)
+
+        answer = parsed_text.strip() or result["stdout"].strip() or result["stderr"].strip()
+        truncated_answer = self._tail(answer, max_output_chars)
+        success = result["exit_code"] == 0
+
+        return {
+            "status": "success" if success else "failed",
+            "success": success,
+            "data": {
+                "provider": provider,
+                "session_name": session_name,
+                "vendor_session_id": state.get("vendor_session_id"),
+                "cwd": str(resolved_cwd),
+                "exit_code": result["exit_code"],
+                "answer": truncated_answer,
+                "stdout": self._tail(result["stdout"], max_output_chars),
+                "stderr": self._tail(result["stderr"], min(max_output_chars, 20000)),
+                "command": self._redact_command(args),
+                "turn_count": len(state.get("turns", [])),
+            },
+            "summary": self._build_summary(provider, session_name, success, truncated_answer, result["stderr"]),
+        }
+
+    def _build_claude_command(
+        self,
+        binary: str,
+        state: Dict[str, Any],
+        prompt: str,
+        model: Optional[str],
+        permission_mode: str,
+    ) -> Tuple[List[str], str, Optional[Path]]:
+        args = [
+            binary,
+            "--print",
+            "--output-format",
+            "json",
+            "--session-id",
+            state["vendor_session_id"],
+            "--permission-mode",
+            permission_mode if permission_mode in {"default", "acceptEdits", "bypassPermissions", "dontAsk", "plan"} else "acceptEdits",
+        ]
+        if model:
+            args.extend(["--model", model])
+        args.append(prompt)
+        return args, "", None
+
+    def _build_codex_command(
+        self,
+        binary: str,
+        state: Dict[str, Any],
+        prompt: str,
+        model: Optional[str],
+        sandbox: str,
+        approval_policy: str,
+    ) -> Tuple[List[str], str, Optional[Path]]:
+        fd, output_path = tempfile.mkstemp(prefix="codex_last_", suffix=".txt")
+        os.close(fd)
+        output_file = Path(output_path)
+
+        args = [
+            binary,
+            "exec",
+            "--json",
+            "--output-last-message",
+            str(output_file),
+            "--cd",
+            state["cwd"],
+            "--sandbox",
+            sandbox if sandbox in {"read-only", "workspace-write", "danger-full-access"} else "workspace-write",
+            "--ask-for-approval",
+            approval_policy if approval_policy in {"untrusted", "on-failure", "on-request", "never"} else "never",
+        ]
+        if model:
+            args.extend(["--model", model])
+
+        existing_session = state.get("vendor_session_id")
+        if existing_session:
+            args.extend(["resume", existing_session, "-"])
+        else:
+            args.append("-")
+        return args, prompt, output_file
+
+    async def _run_cli(
+        self,
+        args: List[str],
+        stdin_text: str,
+        cwd: Path,
+        timeout: int,
+    ) -> Dict[str, Any]:
+        env = os.environ.copy()
+        env.setdefault("NO_COLOR", "1")
+        env.setdefault("TERM", "dumb")
+
+        logger.info("cli_session_running", command=self._redact_command(args), cwd=str(cwd), timeout=timeout)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                cwd=str(cwd),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            stdout_b, stderr_b = await asyncio.wait_for(
+                process.communicate(stdin_text.encode("utf-8")),
+                timeout=timeout,
+            )
+            return {
+                "exit_code": process.returncode if process.returncode is not None else -1,
+                "stdout": stdout_b.decode("utf-8", errors="replace"),
+                "stderr": stderr_b.decode("utf-8", errors="replace"),
+            }
+        except asyncio.TimeoutError:
+            try:
+                process.kill()  # type: ignore[name-defined]
+            except Exception:
+                pass
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"CLI command timed out after {timeout}s",
+            }
+        except Exception as exc:
+            logger.error("cli_session_run_failed", error=str(exc), exc_info=True)
+            return {"exit_code": -1, "stdout": "", "stderr": str(exc)}
+
+    def _parse_cli_output(
+        self,
+        provider: str,
+        stdout: str,
+        stderr: str,
+        output_file: Optional[Path],
+    ) -> Tuple[str, Optional[str]]:
+        if provider == "claude":
+            return self._parse_claude_output(stdout, stderr)
+        return self._parse_codex_output(stdout, stderr, output_file)
+
+    def _parse_claude_output(self, stdout: str, stderr: str) -> Tuple[str, Optional[str]]:
+        text = stdout.strip()
+        session_id = None
+        try:
+            payload = json.loads(text)
+            session_id = payload.get("session_id") or payload.get("sessionId")
+            for key in ("result", "content", "message", "response", "text"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value, session_id
+            return json.dumps(payload, ensure_ascii=False, indent=2), session_id
+        except Exception:
+            pass
+        match = UUID_RE.search(stdout) or UUID_RE.search(stderr)
+        if match:
+            session_id = match.group(0)
+        return stdout, session_id
+
+    def _parse_codex_output(
+        self,
+        stdout: str,
+        stderr: str,
+        output_file: Optional[Path],
+    ) -> Tuple[str, Optional[str]]:
+        session_id = None
+        text_parts: List[str] = []
+
+        if output_file and output_file.exists():
+            try:
+                final_text = output_file.read_text(encoding="utf-8", errors="replace")
+                if final_text.strip():
+                    text_parts.append(final_text)
+            finally:
+                try:
+                    output_file.unlink()
+                except OSError:
+                    pass
+
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            event_text = json.dumps(event, ensure_ascii=False)
+            match = UUID_RE.search(event_text)
+            if match and not session_id:
+                session_id = match.group(0)
+            for key in ("message", "text", "content", "output", "delta"):
+                value = event.get(key)
+                if isinstance(value, str) and value.strip() and value not in text_parts:
+                    text_parts.append(value)
+
+        if not session_id:
+            match = UUID_RE.search(stdout) or UUID_RE.search(stderr)
+            if match:
+                session_id = match.group(0)
+
+        return ("\n".join(text_parts).strip() or stdout), session_id
+
+    def _new_state(self, user_key: str, session_name: str, provider: str, cwd: str) -> Dict[str, Any]:
+        now = datetime.now().isoformat()
+        vendor_session_id = str(uuid.uuid4()) if provider == "claude" else None
+        return {
+            "user_key": user_key,
+            "session_name": session_name,
+            "provider": provider,
+            "vendor_session_id": vendor_session_id,
+            "cwd": cwd,
+            "created_at": now,
+            "updated_at": now,
+            "turns": [],
+        }
+
+    def _get_user_key(self, context: Any = None) -> str:
+        try:
+            from app.social.message_bus_singleton import (
+                get_current_bot_account,
+                get_current_chat_id,
+                get_current_channel,
+            )
+
+            channel = get_current_channel()
+            chat_id = get_current_chat_id()
+            bot = get_current_bot_account() or "default"
+            if channel and chat_id:
+                return self._safe_name(f"{channel}:{bot}:{chat_id}")
+        except Exception:
+            pass
+
+        session_id = getattr(context, "session_id", None) if context else None
+        return self._safe_name(session_id or "default")
+
+    def _state_path(self, user_key: str, session_name: str) -> Path:
+        user_dir = self.base_dir / self._safe_name(user_key)
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir / f"{self._safe_name(session_name)}.json"
+
+    def _load_state(self, path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("cli_session_state_load_failed", path=str(path), error=str(exc))
+            return {}
+
+    def _save_state(self, path: Path, state: Dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _list_sessions(self, user_key: str) -> Dict[str, Any]:
+        user_dir = self.base_dir / self._safe_name(user_key)
+        sessions = []
+        if user_dir.exists():
+            for path in sorted(user_dir.glob("*.json")):
+                state = self._load_state(path)
+                if state:
+                    sessions.append(self._public_state(state))
+        return {
+            "status": "success",
+            "success": True,
+            "data": {"sessions": sessions, "count": len(sessions)},
+            "summary": f"共有 {len(sessions)} 个 CLI 会话",
+        }
+
+    def _public_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "session_name": state.get("session_name"),
+            "provider": state.get("provider"),
+            "vendor_session_id": state.get("vendor_session_id"),
+            "cwd": state.get("cwd"),
+            "created_at": state.get("created_at"),
+            "updated_at": state.get("updated_at"),
+            "turn_count": len(state.get("turns", [])),
+            "last_success": state.get("last_success"),
+            "last_exit_code": state.get("last_exit_code"),
+        }
+
+    def _resolve_cwd(self, cwd: Optional[str]) -> Optional[Path]:
+        try:
+            base = PROJECT_ROOT.resolve()
+            requested = Path(cwd).resolve() if cwd else base
+            if requested == base or requested.is_relative_to(base):
+                if requested.exists() and requested.is_dir():
+                    return requested
+            return None
+        except Exception:
+            return None
+
+    def _resolve_binary(self, provider: str) -> Optional[str]:
+        if os.name == "nt":
+            # Node-based CLIs often install extensionless shims plus .cmd files.
+            # subprocess on Windows is most reliable with the .cmd shim.
+            for candidate in (f"{provider}.cmd", f"{provider}.exe", provider):
+                resolved = shutil.which(candidate)
+                if resolved:
+                    return resolved
+        return shutil.which(provider)
+
+    def _safe_name(self, value: str) -> str:
+        value = str(value or "default").strip()
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+        return safe[:120] or "default"
+
+    def _clamp_int(self, value: Any, minimum: int, maximum: int, default: int) -> int:
+        try:
+            parsed = int(value)
+        except Exception:
+            return default
+        return max(minimum, min(maximum, parsed))
+
+    def _tail(self, text: str, max_chars: int) -> str:
+        if not text or len(text) <= max_chars:
+            return text or ""
+        return text[-max_chars:]
+
+    def _redact_command(self, args: List[str]) -> List[str]:
+        redacted = []
+        for arg in args:
+            text = str(arg)
+            if len(text) > 160:
+                redacted.append(text[:80] + "...<truncated>..." + text[-40:])
+            else:
+                redacted.append(text)
+        return redacted
+
+    def _status_summary(self, state: Dict[str, Any]) -> str:
+        return (
+            f"CLI会话 {state.get('session_name')} "
+            f"({state.get('provider')})，轮次 {len(state.get('turns', []))}，"
+            f"最近状态: {'成功' if state.get('last_success') else '未知/失败'}"
+        )
+
+    def _build_summary(
+        self,
+        provider: str,
+        session_name: str,
+        success: bool,
+        answer: str,
+        stderr: str,
+    ) -> str:
+        if success:
+            return f"{provider} CLI 会话 `{session_name}` 本轮完成。\n\n{answer}"
+        detail = stderr.strip() or answer or "未知错误"
+        return f"{provider} CLI 会话 `{session_name}` 本轮失败：\n{self._tail(detail, 4000)}"
+
+    def _failed(self, error: str) -> Dict[str, Any]:
+        return {
+            "status": "failed",
+            "success": False,
+            "error": error,
+            "summary": f"CLI会话失败：{error}",
+        }
