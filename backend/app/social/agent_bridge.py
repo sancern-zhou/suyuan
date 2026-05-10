@@ -311,17 +311,13 @@ class AgentBridge:
                 final_content = reasoning_content + cleaned_answer
 
             # Publish outbound response
-            # ✅ 添加流式结束标记（如果有流式片段发送）
             outbound_msg = OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
                 content=final_content,
                 reply_to=msg.sender_id,
                 media=media_files,
-                metadata={
-                    "_stream_id": "response_stream",
-                    "_stream_end": True  # 标记为流式结束
-                } if final_content else {}
+                metadata={}
             )
 
             await self.message_bus.publish_outbound(outbound_msg)
@@ -418,20 +414,10 @@ class AgentBridge:
                         else:
                             streaming_text_parts.append(str(chunk))
 
-                        # ✅ 只在流式完成时发送完整文本（避免分块）
+                        # 社交端最终回复由 complete/final outbound 统一发送；
+                        # 这里仅缓冲文本用于异常 fallback，避免中间流和最终回复重复。
                         if self.mode == "social" and is_complete:
-                            complete_text = "".join(streaming_text_parts)
-                            if complete_text and complete_text not in sent_text_contents:
-                                await self._send_stream_chunk(
-                                    channel=channel,
-                                    chat_id=chat_id,
-                                    content=complete_text,
-                                    segment_id=len(stream_segments),
-                                    resuming=False
-                                )
-                                stream_segments.append(complete_text)
-                                sent_text_contents.add(complete_text)
-                                streaming_text_parts = []  # 清空缓冲
+                            pass
 
                     elif isinstance(data, str):
                         # Legacy format: data is directly a string
@@ -453,10 +439,10 @@ class AgentBridge:
 
                     # ❌ 忽略 thought 字段（技术描述如"准备调用工具"，用户不关心）
 
-                    if text_content:
+                    if text_content and thought_data.get("will_use_tool"):
                         reasoning_parts.append(text_content)
 
-                        # ✅ 立即发送 text_content（不缓冲），让用户快速感知进展
+                        # ✅ 仅工具调用前的 text_content 作为进展发送，避免最终回答重复显示
                         # ✅ 去重：如果还没发送过，才发送
                         if text_content not in sent_text_contents and self.mode == "social":
                             await self._send_thinking_chunk(

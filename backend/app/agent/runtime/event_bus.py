@@ -36,7 +36,13 @@ class RuntimeEventBus:
             "run_id": state.run_id,
         }
 
-    def thought(self, state: RunState, thought: Any, text_content: str | None = None) -> Dict[str, Any]:
+    def thought(
+        self,
+        state: RunState,
+        thought: Any,
+        text_content: str | None = None,
+        will_use_tool: bool = False,
+    ) -> Dict[str, Any]:
         data = {
             "iteration": state.iteration,
             "thought": thought,
@@ -45,6 +51,8 @@ class RuntimeEventBus:
         }
         if text_content:
             data["text_content"] = text_content
+        if will_use_tool:
+            data["will_use_tool"] = True
         return {
             "type": "thought",
             "stream": "assistant",
