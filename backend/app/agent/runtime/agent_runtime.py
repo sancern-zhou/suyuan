@@ -286,8 +286,18 @@ class AgentRuntime:
                     yield self.events.assistant_delta(state, "", is_complete=True)
 
             elif event_type == "thought":
-                planner_result.thought = event["data"].get("thought")
-                yield self.events.thought(state, planner_result.thought)
+                thought_data = event["data"]
+                planner_result.thought = thought_data.get("thought")
+                yield self.events.thought(
+                    state,
+                    planner_result.thought,
+                    text_content=thought_data.get("text_content"),
+                )
+
+            elif event_type == "thinking_content":
+                content = event["data"].get("content", "")
+                if content:
+                    yield self.events.thinking_content(state, content)
 
             elif event_type == "tool_use":
                 tool_data = event["data"]
