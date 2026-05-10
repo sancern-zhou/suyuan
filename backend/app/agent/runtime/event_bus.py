@@ -36,13 +36,28 @@ class RuntimeEventBus:
             "run_id": state.run_id,
         }
 
-    def thought(self, state: RunState, thought: Any) -> Dict[str, Any]:
+    def thought(self, state: RunState, thought: Any, text_content: str | None = None) -> Dict[str, Any]:
+        data = {
+            "iteration": state.iteration,
+            "thought": thought,
+            "session_id": state.session_id,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if text_content:
+            data["text_content"] = text_content
         return {
             "type": "thought",
             "stream": "assistant",
+            "data": data,
+        }
+
+    def thinking_content(self, state: RunState, content: str) -> Dict[str, Any]:
+        return {
+            "type": "thinking_content",
+            "stream": "assistant",
             "data": {
+                "content": content,
                 "iteration": state.iteration,
-                "thought": thought,
                 "session_id": state.session_id,
                 "timestamp": datetime.now().isoformat(),
             },
