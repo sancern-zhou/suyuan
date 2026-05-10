@@ -396,7 +396,7 @@ class AgentLogger:
     def end_run(
         self,
         status: str = "completed",
-        final_answer: Optional[str] = None,
+        response: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ):
         """
@@ -404,7 +404,7 @@ class AgentLogger:
 
         Args:
             status: 运行状态（completed/failed/timeout）
-            final_answer: 最终答案
+            response: 最终回复
             metadata: 额外元数据
         """
         if not self.current_run:
@@ -414,8 +414,8 @@ class AgentLogger:
         self.current_run["end_time"] = end_time.isoformat()
         self.current_run["status"] = status
 
-        if final_answer:
-            self.current_run["final_answer_preview"] = final_answer[:1000]
+        if response:
+            self.current_run["response_preview"] = response[:1000]
 
         if metadata:
             self.current_run["metadata"].update(metadata)

@@ -141,7 +141,7 @@ class ReWOOExecutor:
                 }
             }
 
-            final_answer = await self._synthesize_answer(
+            response_text = await self._synthesize_answer(
                 user_query,
                 plan
             )
@@ -151,7 +151,7 @@ class ReWOOExecutor:
             yield {
                 "type": "complete",
                 "data": {
-                    "answer": final_answer,
+                    "answer": response_text,
                     "total_steps": len(plan.steps),
                     "execution_mode": "rewoo",
                     "session_id": self.memory.session_id,
@@ -578,12 +578,12 @@ class ReWOOExecutor:
 
         from app.services.llm_service import llm_service
 
-        final_answer = await llm_service.chat(
+        response_text = await llm_service.chat(
             messages=[{"role": "user", "content": synthesis_prompt}],
             temperature=0.5
         )
 
-        return final_answer
+        return response_text
 
     def _format_results_summary(self, plan: ExecutionPlan) -> str:
         """格式化结果摘要"""

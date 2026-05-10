@@ -147,7 +147,7 @@ class ReActPlanner:
             if isinstance(action_input, dict) and "type" in action_input:
                 # action_input 本身就是 action 对象
                 action = action_input
-            elif action_name == "final_answer":
+            elif action_name in {"finish", "response"}:
                 action = {
                     "type": "FINISH_SUMMARY",
                     "tool": "FINISH_SUMMARY",
@@ -256,8 +256,8 @@ class ReActPlanner:
 
         # 流式累积缓冲区
         buffer = ""
-        is_final_answer = False  # 是否已确认为最终回答
-        final_answer_buffer = ""  # 最终回答的累积缓冲区
+        is_response_action = False  # 是否已确认为最终回答
+        response_buffer = ""  # 最终回答的累积缓冲区
         chunk_count = 0
 
         try:
@@ -287,13 +287,13 @@ class ReActPlanner:
                                 action = data["action"]
                                 if action.get("type") == "FINAL_ANSWER":
                                     # 确认是最终回答，开始流式输出 answer 字段
-                                    is_final_answer = True
+                                    is_response_action = True
                                     # 提取 answer 字段（可能是部分构建的）
                                     answer = action.get("answer", "")
                                     # 计算新增的部分
-                                    new_content = answer[len(final_answer_buffer):]
+                                    new_content = answer[len(response_buffer):]
                                     if new_content:
-                                        final_answer_buffer = answer
+                                        response_buffer = answer
                                         yield {
                                             "type": "streaming_text",
                                             "data": {"chunk": new_content, "is_complete": False}
@@ -317,7 +317,7 @@ class ReActPlanner:
             return
 
         # 流式输出完成，处理最终结果
-        if is_final_answer:
+        if is_response_action:
             # 最终回答流式输出完成
             yield {
                 "type": "streaming_text",
@@ -344,7 +344,7 @@ class ReActPlanner:
                         "reasoning": "JSON解析失败",
                         "action": {
                             "type": "FINAL_ANSWER",
-                            "answer": final_answer_buffer
+                            "answer": response_buffer
                         }
                     }
                 }
@@ -387,7 +387,7 @@ class ReActPlanner:
 
                     if isinstance(action_input, dict) and "type" in action_input:
                         action = action_input
-                    elif action_name == "final_answer":
+                    elif action_name in {"finish", "response"}:
                         action = {
                             "type": "FINAL_ANSWER",
                             "answer": action_input.get("answer", "") if isinstance(action_input, dict) else str(action_input)
@@ -655,7 +655,7 @@ class ReActPlanner:
         if not parsed or "error" in parsed:
             return {
                 "thought": "无法解析LLM响应",
-                "action": "final_answer",
+                "action": "finish",
                 "action_input": {"answer": "抱歉，我无法理解当前的分析需求。"},
                 "raw_response": llm_response
             }
@@ -690,7 +690,7 @@ class ReActPlanner:
                 # 参数构造失败，返回错误
                 return {
                     "thought": thought,
-                    "action": "final_answer",
+                    "action": "finish",
                     "action_input": {"answer": f"无法为工具 {action} 构造参数。"},
                     "raw_response": llm_response
                 }
@@ -864,7 +864,7 @@ class ReActPlanner:
 ```
 
 注意:
-1. 如果需要结束分析，使用 action="final_answer"
+1. 如果需要结束分析，使用 action="finish"
 2. action_input设为null表示需要后续加载详细参数schema
 3. 优先使用已有数据，避免重复查询
 4. 仅输出JSON，不要额外解释

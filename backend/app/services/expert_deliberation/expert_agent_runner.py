@@ -33,7 +33,7 @@ class LLMExpertAgentRunner:
         deliberation_mode = expert.deliberation_mode
         prompt = self._build_prompt(expert, request, facts, relevant, round_index, turn_type, discussion_context)
         events: list[dict[str, Any]] = []
-        final_answer = ""
+        response_text = ""
 
         try:
             from app.agent.react_agent import ReActAgent
@@ -54,15 +54,15 @@ class LLMExpertAgentRunner:
             events.append(event)
             if event.get("type") == "complete":
                 data = event.get("data") if isinstance(event.get("data"), dict) else {}
-                final_answer = str(data.get("answer") or data.get("response") or "")
+                response_text = str(data.get("answer") or data.get("response") or "")
             elif event.get("type") in {"error", "fatal_error"}:
                 data = event.get("data") if isinstance(event.get("data"), dict) else {}
                 raise RuntimeError(f"ReAct expert {expert.expert_id} failed: {data.get('error') or event}")
 
-        if not final_answer.strip():
+        if not response_text.strip():
             raise RuntimeError(f"ReAct expert {expert.expert_id} did not produce a final answer")
 
-        payload = await self._parse_or_normalize_json(expert, final_answer, events)
+        payload = await self._parse_or_normalize_json(expert, response_text, events)
         analysis = self._to_analysis(expert, payload, relevant)
         new_facts = self._tool_events_to_facts(request, expert, events, start_fact_index)
         analysis.new_fact_ids = [fact.fact_id for fact in new_facts]
@@ -169,10 +169,10 @@ class LLMExpertAgentRunner:
     async def _parse_or_normalize_json(
         self,
         expert: ExpertCard,
-        final_answer: str,
+        response_text: str,
         events: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        parsed = self._loads_json_object(final_answer)
+        parsed = self._loads_json_object(response_text)
         if parsed is not None:
             return parsed
 
@@ -185,7 +185,7 @@ class LLMExpertAgentRunner:
 下面是 ReAct 专家“{expert.display_name}”的最终回答和工具事件摘要。请只做格式归一化，把其中观点转成指定 JSON，不要新增事实或结论。
 
 最终回答：
-{final_answer}
+{response_text}
 
 工具事件摘要：
 {json.dumps(self._compact_events(events), ensure_ascii=False, default=str)[:8000]}

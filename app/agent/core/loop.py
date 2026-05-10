@@ -249,7 +249,7 @@ class ReActLoop:
             # Step 2: 初始化循环状态
             iteration_count = 0
             task_completed = False
-            final_answer = None
+            response_text = None
 
             # Yield start event
             yield {
@@ -436,7 +436,7 @@ class ReActLoop:
 
                         # 没有未完成任务，正常完成
                         task_completed = True
-                        final_answer = action.get("answer", "")
+                        response_text = action.get("answer", "")
 
                         self.memory.add_iteration(
                             thought=thought,
@@ -445,12 +445,12 @@ class ReActLoop:
                         )
 
                         self.memory.session.add_assistant_message(
-                            final_answer,
+                            response_text,
                             thought=thought,
                             reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
                         )
 
-                        logger.info("task_completed_final_answer", iterations=iteration_count)
+                        logger.info("task_completed_response_text", iterations=iteration_count)
                         break
 
                     # FINISH_SUMMARY: 结束并生成最终答案
@@ -513,9 +513,9 @@ class ReActLoop:
                         )
 
                         # 调用 LLM 生成最终答案
-                        final_answer = ""
+                        response_text = ""
                         async for chunk in self.planner.stream_user_answer(prompt):
-                            final_answer += chunk
+                            response_text += chunk
 
                         self.memory.add_iteration(
                             thought=thought,
@@ -523,9 +523,9 @@ class ReActLoop:
                             observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
                         )
 
-                        if final_answer:
+                        if response_text:
                             self.memory.session.add_assistant_message(
-                                final_answer,
+                                response_text,
                                 thought=thought,
                                 reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
                             )
@@ -733,9 +733,9 @@ class ReActLoop:
                                 # ========== END DEBUG ==========
 
                                 # 调用 LLM 生成最终答案
-                                final_answer = ""
+                                response_text = ""
                                 async for chunk in self.planner.stream_user_answer(prompt):
-                                    final_answer += chunk
+                                    response_text += chunk
 
                                 self.memory.add_iteration(
                                     thought=thought,
@@ -743,9 +743,9 @@ class ReActLoop:
                                     observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
                                 )
 
-                                if final_answer:
+                                if response_text:
                                     self.memory.session.add_assistant_message(
-                                        final_answer,
+                                        response_text,
                                         thought=thought,
                                         reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
                                     )
@@ -860,13 +860,13 @@ class ReActLoop:
                 if self.agent_logger:
                     self.agent_logger.end_run(
                         status="completed",
-                        final_answer=final_answer,
+                        response_text=response_text,
                         metadata={"iterations": iteration_count}
                     )
 
                 # 记录助手回复
-                if final_answer:
-                    self.memory.session.add_assistant_response(final_answer)
+                if response_text:
+                    self.memory.session.add_assistant_response(response_text)
 
                 # 🔑 保存成功策略到长期记忆
                 await self._save_successful_strategy(
@@ -879,8 +879,8 @@ class ReActLoop:
                 yield {
                     "type": "complete",
                     "data": {
-                        "answer": final_answer,
-                        "response": final_answer,  # ✅ 同时返回response字段
+                        "answer": response_text,
+                        "response": response_text,  # ✅ 同时返回response字段
                         "iterations": iteration_count,
                         "session_id": self.memory.session_id,
                         "timestamp": datetime.now().isoformat()
@@ -1434,7 +1434,7 @@ class ReActLoop:
             # Step 2: 初始化循环状态
             iteration_count = 0
             task_completed = False
-            final_answer = None
+            response_text = None
 
             # Yield start event
             yield {
@@ -1521,7 +1521,7 @@ class ReActLoop:
                     # FINAL_ANSWER: 直接展示 LLM 的最终回答
                     if action_type == "FINAL_ANSWER":
                         task_completed = True
-                        final_answer = action.get("answer", "")
+                        response_text = action.get("answer", "")
 
                         self.memory.add_iteration(
                             thought=thought,
@@ -1530,12 +1530,12 @@ class ReActLoop:
                         )
 
                         self.memory.session.add_assistant_message(
-                            final_answer,
+                            response_text,
                             thought=thought,
                             reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
                         )
 
-                        logger.info("task_completed_final_answer", iterations=iteration_count)
+                        logger.info("task_completed_response_text", iterations=iteration_count)
                         break
 
                     # FINISH_SUMMARY: 结束并生成最终答案
@@ -1598,9 +1598,9 @@ class ReActLoop:
                         )
 
                         # 调用 LLM 生成最终答案
-                        final_answer = ""
+                        response_text = ""
                         async for chunk in self.planner.stream_user_answer(prompt):
-                            final_answer += chunk
+                            response_text += chunk
 
                         # 记录到记忆
                         self.memory.add_iteration(
@@ -1609,9 +1609,9 @@ class ReActLoop:
                             observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
                         )
 
-                        if final_answer:
+                        if response_text:
                             self.memory.session.add_assistant_message(
-                                final_answer,
+                                response_text,
                                 thought=thought,
                                 reasoning=reasoning if think_action_result is None else think_action_result.get("reasoning")
                             )
@@ -1781,12 +1781,12 @@ class ReActLoop:
                 if self.agent_logger:
                     self.agent_logger.end_run(
                         status="completed",
-                        final_answer=final_answer,
+                        response_text=response_text,
                         metadata={"iterations": iteration_count}
                     )
 
-                if final_answer:
-                    self.memory.session.add_assistant_response(final_answer)
+                if response_text:
+                    self.memory.session.add_assistant_response(response_text)
 
                 await self._save_successful_strategy(
                     self.memory.get_iterations(),
@@ -1798,8 +1798,8 @@ class ReActLoop:
                 yield {
                     "type": "complete",
                     "data": {
-                        "answer": final_answer,
-                        "response": final_answer,  # ✅ 同时返回response字段
+                        "answer": response_text,
+                        "response": response_text,  # ✅ 同时返回response字段
                         "iterations": iteration_count,
                         "session_id": self.memory.session_id,
                         "timestamp": datetime.now().isoformat()

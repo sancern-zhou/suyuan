@@ -275,13 +275,11 @@ class ScheduleTaskTool(LLMTool):
         Returns:
             是否有效
         """
-        parts = schedule.split()
-        if len(parts) != 5:
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+
+            CronTrigger.from_crontab(schedule)
+            return True
+        except Exception as e:
+            logger.warning("invalid_cron_expression", schedule=schedule, error=str(e))
             return False
-
-        # 简单验证：每个部分应该是数字或通配符
-        for part in parts:
-            if part not in ["*", "*/*", "*/"] and not part.replace("/", "").replace("*", "").replace(",", "").replace("-", "").isdigit():
-                return False
-
-        return True

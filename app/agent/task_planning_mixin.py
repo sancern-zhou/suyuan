@@ -275,7 +275,7 @@ class TaskPlanningMixin:
             result = {
                 "success": pipeline_result.status in ["success", "partial"],
                 "data_id": pipeline_result.data_ids[0] if pipeline_result.data_ids else None,
-                "answer": pipeline_result.final_answer,
+                "answer": pipeline_result.response,
                 "expert_type": task.expert_type
             }
 
@@ -316,7 +316,7 @@ class TaskPlanningMixin:
             query = f"{task.subject}: {task.description}"
 
             # 执行 ReAct 循环
-            final_answer = None
+            response_text = None
             data_id = None
 
             async for event in react_loop.run(
@@ -325,17 +325,17 @@ class TaskPlanningMixin:
                 debug_mode=False
             ):
                 if event["type"] == "complete":
-                    final_answer = event["data"].get("answer")
+                    response_text = event["data"].get("answer")
                     data_id = event["data"].get("data_id")
                     break
                 elif event["type"] == "incomplete":
-                    final_answer = event["data"].get("answer")
+                    response_text = event["data"].get("answer")
                     break
 
             result = {
-                "success": final_answer is not None,
+                "success": response_text is not None,
                 "data_id": data_id,
-                "answer": final_answer or "任务执行未获得结果"
+                "answer": response_text or "任务执行未获得结果"
             }
 
             return result

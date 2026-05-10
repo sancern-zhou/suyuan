@@ -291,7 +291,7 @@ class ReActAgent:
                         yield {
                             "type": "complete",
                             "data": {
-                                "answer": pipeline_result.final_answer,
+                                "answer": pipeline_result.response,
                                 "source": "multi_expert_system_v3",
                                 "confidence": pipeline_result.confidence,
                                 "pipeline_status": pipeline_result.status,
@@ -427,7 +427,7 @@ class ReActAgent:
         Returns:
             最终答案字符串
         """
-        final_answer = ""
+        response_text = ""
 
         async for event in self.analyze(
             user_query,
@@ -436,16 +436,16 @@ class ReActAgent:
             max_iterations=max_iterations
         ):
             if event["type"] == "complete":
-                final_answer = event["data"].get("answer", "")
+                response_text = event["data"].get("answer", "")
                 break
             elif event["type"] == "incomplete":
-                final_answer = event["data"].get("answer", "")
+                response_text = event["data"].get("answer", "")
                 break
             elif event["type"] == "fatal_error":
-                final_answer = f"分析失败：{event['data'].get('error')}"
+                response_text = f"分析失败：{event['data'].get('error')}"
                 break
 
-        return final_answer
+        return response_text
 
     async def _mark_session_used(self, session_id: str):
         """刷新会话的最后访问时间"""

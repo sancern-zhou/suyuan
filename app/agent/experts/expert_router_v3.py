@@ -42,7 +42,7 @@ class PipelineResult:
         self.parsed_query: Optional[StructuredQuery] = None
         self.selected_experts: List[str] = []
         self.expert_results: Dict[str, ExpertResult] = {}
-        self.final_answer: str = ""
+        self.response: str = ""
         self.conclusions: List[str] = []
         self.recommendations: List[str] = []
         self.data_ids: List[str] = []
@@ -59,7 +59,7 @@ class PipelineResult:
             "expert_results": {
                 k: v.dict() for k, v in self.expert_results.items()
             },
-            "final_answer": self.final_answer,
+            "response": self.response,
             "conclusions": self.conclusions,
             "recommendations": self.recommendations,
             "data_ids": self.data_ids,
@@ -691,7 +691,7 @@ class ExpertRouterV3:
         if "report" in result.expert_results and result.expert_results["report"].status == "success":
             # 使用报告专家的总结
             report_result = result.expert_results["report"]
-            result.final_answer = report_result.analysis.summary
+            result.response = report_result.analysis.summary
             result.confidence = report_result.analysis.confidence
             
             # 从报告中提取结论和建议
@@ -714,7 +714,7 @@ class ExpertRouterV3:
                     total_confidence += expert_result.analysis.confidence
                     count += 1
             
-            result.final_answer = "\n".join(summaries) if summaries else "分析未完成"
+            result.response = "\n".join(summaries) if summaries else "分析未完成"
             result.conclusions = findings[:5]  # 取前5个发现作为结论
             result.confidence = total_confidence / max(count, 1)
         

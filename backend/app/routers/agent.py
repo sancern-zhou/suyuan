@@ -507,7 +507,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                                 final_message["visuals"] = event_data["visuals"]
 
                             conversation_history.append(final_message)
-                            logger.debug("final_answer_added", answer_preview=event["data"]["answer"][:100])
+                            logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])
 
                         # ✅ 关闭流式统计日志
                         # if streaming_chunk_count > 0:
@@ -1063,7 +1063,7 @@ async def analyze_with_expert_router_v3(request: ExpertV3AnalyzeRequest):
                     "type": "pipeline_completed",
                     "data": {
                         "query": request.query,
-                        "response": result.final_answer,
+                        "response": result.response,
                         "conclusions": result.conclusions,
                         "recommendations": result.recommendations,
                         "data_ids": result.data_ids,
