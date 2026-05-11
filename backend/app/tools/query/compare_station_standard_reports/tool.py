@@ -130,8 +130,9 @@ class CompareStationStandardReportsTool(LLMTool):
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
-                        "enum": [0, 1]
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
                     }
                 },
                 "required": ["query_period", "comparison_period"]
@@ -159,7 +160,7 @@ class CompareStationStandardReportsTool(LLMTool):
         query_period = kwargs["query_period"]
         comparison_period = kwargs["comparison_period"]
         aggregate = kwargs.get("aggregate", False)
-        sand_type = kwargs.get("sand_type", 1)
+        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
 
         logger.info(
             "compare_station_standard_reports_start",
