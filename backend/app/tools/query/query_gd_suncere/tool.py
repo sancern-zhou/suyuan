@@ -995,22 +995,12 @@ class QueryGDSuncereDataTool:
                 count=len(station_codes)
             )
 
-            # 智能计算 DataSource 参数（根据结束时间判断）
-            calculated_data_type = QueryGDSuncereDataTool.calculate_data_source(end_date)
-
-            logger.info(
-                "query_station_day_data_type_calculated",
-                end_date=end_date,
-                data_type=calculated_data_type,
-                data_type_name="原始实况" if calculated_data_type == 0 else "审核实况"
-            )
-
             # 调用 API 查询站点日报数据
             response = api_client.query_station_day_data(
                 station_codes=station_codes,
                 start_date=start_date,
                 end_date=end_date,
-                data_type=calculated_data_type,
+                data_type=data_type,
                 sand_type=sand_type
             )
 
