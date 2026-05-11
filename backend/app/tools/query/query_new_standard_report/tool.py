@@ -418,7 +418,7 @@ async def query_day_data_by_segment(
     start_date: str,
     end_date: str,
     data_type: int,
-    sand_type: Optional[int] = 1
+    sand_type: Optional[int] = None
 ) -> List[Dict]:
     """
     按时间段查询日报数据
@@ -429,7 +429,7 @@ async def query_day_data_by_segment(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         data_type: 数据类型（0原始实况，1审核实况）
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
 
     Returns:
         日报数据列表
@@ -488,7 +488,7 @@ async def execute_query_new_standard_report(
     cities: List[str],
     start_date: str,
     end_date: str,
-    sand_type: Optional[int] = 1,
+    sand_type: Optional[int] = None,
     enable_sand_deduction: Optional[bool] = None,
     exclude_exceed_details: bool = False,
     use_old_composite_algorithm: bool = False,
@@ -501,7 +501,7 @@ async def execute_query_new_standard_report(
         cities: 城市列表
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
         enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
         exclude_exceed_details: 是否排除超标详情（默认False），为True时不返回exceed_details字段
         use_old_composite_algorithm: 是否使用旧综合指数算法（默认False，使用新算法）
@@ -547,35 +547,34 @@ async def execute_query_new_standard_report(
         sand_type=sand_type
     )
 
-    response = await asyncio.to_thread(
-        api_client.query_city_day_data,
-        city_codes=city_codes,
-        start_date=start_date,
-        end_date=end_date,
-        data_type=None,
-        sand_type=sand_type
-    )
+    # 计算日期分段
+    segments = calculate_date_segments(start_date, end_date)
 
-    if not response.get("success"):
-        error_msg = response.get("msg", "Unknown error")
-        return {
-            "status": "failed",
-            "success": False,
-            "data": None,
-            "metadata": {
-                "schema_version": "v2.0",
-                "tool_name": "query_new_standard_report",
-                "error": error_msg
-            },
-            "summary": f"API 查询失败: {error_msg}"
-        }
+    # 并发查询各时间段的日报数据
+    all_daily_data = []
+    query_tasks = []
+    for seg_start, seg_end, data_type in segments:
+        task = query_day_data_by_segment(
+            api_client, city_codes, seg_start, seg_end, data_type, sand_type=sand_type
+        )
+        query_tasks.append(task)
 
-    all_daily_data = response.get("result", [])
+    segment_results = await asyncio.gather(*query_tasks, return_exceptions=True)
+
+    for i, result in enumerate(segment_results):
+        if isinstance(result, Exception):
+            logger.error(
+                "segment_query_error",
+                segment=segments[i],
+                error=str(result)
+            )
+        else:
+            all_daily_data.extend(result)
 
     logger.info(
         "daily_data_collected",
         total_records=len(all_daily_data),
-        data_type_mode="auto"
+        segments_count=len(segments)
     )
 
     if not all_daily_data:
@@ -1235,10 +1234,10 @@ async def execute_query_new_standard_report(
     if len(cities) == 1 and city_stats:
         city_name = list(city_stats.keys())[0]
         result_summary_data = city_stats[city_name]
-        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（日数据底层自动使用近三天原始、三天外审核） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
     else:
         result_summary_data = city_stats
-        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（日数据底层自动使用近三天原始、三天外审核） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
         # 合并全省和各区域汇总到结果（按顺序：粤东、粤西、粤北、珠三角、非珠三角、全省）
         if regional_stats:
             result_summary_data["regional_stats"] = regional_stats
@@ -1743,8 +1742,9 @@ class QueryNewStandardReportTool(LLMTool):
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
-                        "enum": [0, 1]
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
                     },
                     "use_old_composite_algorithm": {
                         "type": "boolean",
@@ -1783,7 +1783,7 @@ class QueryNewStandardReportTool(LLMTool):
         cities = kwargs.get("cities", [])
         start_date = kwargs.get("start_date", "")
         end_date = kwargs.get("end_date", "")
-        sand_type = kwargs.get("sand_type", 1)
+        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
         exclude_exceed_details = kwargs.get("exclude_exceed_details", False)  # 默认false（保留详情）
         use_old_composite_algorithm = kwargs.get("use_old_composite_algorithm", False)  # 默认false（使用新算法）
 

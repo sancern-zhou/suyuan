@@ -600,7 +600,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             "name": "query_gd_suncere_city_day",
             "description": (
                 "查询广东省城市级日空气质量数据，适合日变化、多城市日均对比和长时间序列分析。"
-                "城市名自动映射编码；data_type不传时底层自动近三天原始、三天外审核；sand_type默认扣沙1。"
+                "城市名自动映射编码；data_type默认审核实况1；sand_type透传接口扣沙参数。"
                 "需要新标准日数据优先用query_gd_suncere_city_day_new。"
             ),
             "parameters": {
@@ -621,13 +621,14 @@ class QueryGDSuncereCityDayTool(LLMTool):
                     },
                     "data_type": {
                         "type": "integer",
-                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；不传时底层自动近三天原始、三天外审核",
+                        "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
                         "enum": [0, 1, 2, 3]
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
-                        "enum": [0, 1]
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
                     },
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -649,7 +650,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
         cities: List[str],
         start_date: str,
         end_date: str,
-        data_type: Optional[int] = None,
+        data_type: int = 1,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -660,7 +661,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；不传时底层自动
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
             **kwargs: 工具参数
                 - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
@@ -670,7 +671,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_city_day
 
         # 提取可选参数
-        sand_type = kwargs.get("sand_type", 1)
+        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
 
         logger.info(
             "query_gd_suncere_city_day_tool_start",
@@ -1040,8 +1041,9 @@ class QueryStandardComparisonTool(LLMTool):
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
-                        "enum": [0, 1]
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -1082,7 +1084,7 @@ class QueryStandardComparisonTool(LLMTool):
         from app.tools.query.query_gd_suncere.tool import execute_query_standard_comparison
 
         # 提取可选参数
-        sand_type = kwargs.get("sand_type", 1)
+        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
 
         logger.info(
             "query_standard_comparison_tool_start",
@@ -1121,7 +1123,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             "description": (
                 "查询广东省城市级日空气质量数据，并按HJ 633-2026新标准计算IAQI/AQI/首要污染物。"
                 "需要新标准日报或新旧标准分析时优先使用；城市名自动映射编码。"
-                "data_type不传时底层自动近三天原始、三天外审核；sand_type默认扣沙1。统计报表优先用query_new_standard_report。"
+                "data_type默认审核实况1；sand_type透传接口扣沙参数。统计报表优先用query_new_standard_report。"
             ),
             "parameters": {
                 "type": "object",
@@ -1141,13 +1143,14 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
                     },
                     "data_type": {
                         "type": "integer",
-                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；不传时底层自动近三天原始、三天外审核",
+                        "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
                         "enum": [0, 1, 2, 3]
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
-                        "enum": [0, 1]
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
                     },
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -1169,7 +1172,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
         cities: List[str],
         start_date: str,
         end_date: str,
-        data_type: Optional[int] = None,
+        data_type: int = 1,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -1180,7 +1183,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；不传时底层自动
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
             **kwargs: 工具参数
                 - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
@@ -1190,7 +1193,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
         from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
 
         # 提取可选参数
-        sand_type = kwargs.get("sand_type", 1)
+        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
         from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
 
         logger.info(
@@ -1374,8 +1377,9 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
-                        "enum": [0, 1]
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
                     },
                     "use_new_composite_algorithm": {
                         "type": "boolean",
@@ -1407,7 +1411,7 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
         from app.tools.query.query_gd_suncere.tool_city_day_old_standard_report import execute_query_old_standard_report
 
         # 提取可选参数
-        sand_type = kwargs.get("sand_type", 1)
+        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
         use_new_composite_algorithm = kwargs.get("use_new_composite_algorithm", False)  # 默认false（使用旧算法）
 
         logger.info(
