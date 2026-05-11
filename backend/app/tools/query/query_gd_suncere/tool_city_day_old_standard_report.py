@@ -91,7 +91,7 @@ async def execute_query_old_standard_report(
     cities: List[str],
     start_date: str,
     end_date: str,
-    sand_type: Optional[int] = None,
+    sand_type: Optional[int] = 1,
     enable_sand_deduction: Optional[bool] = None,
     use_new_composite_algorithm: bool = False,
     context: Optional[ExecutionContext] = None
@@ -103,7 +103,7 @@ async def execute_query_old_standard_report(
         cities: 城市列表
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
         enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
         use_new_composite_algorithm: 是否使用新综合指数算法（默认False，使用旧算法）
             - False（默认）: 旧综合指数算法（所有污染物权重均为1）

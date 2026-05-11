@@ -280,8 +280,8 @@ class GDSuncereAPIClient:
         city_codes: List[str],
         start_date: str,
         end_date: str,
-        data_type: int = 0,
-        sand_type: Optional[int] = None
+        data_type: Optional[int] = None,
+        sand_type: Optional[int] = 1
     ) -> Dict[str, Any]:
         """
         查询城市日报数据
@@ -298,22 +298,34 @@ class GDSuncereAPIClient:
             city_codes: 城市代码列表（如 ["440100", "440300"] 表示广州、深圳）
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
-            data_type: 数据类型，默认 0（原始实况）
-            sand_type: 扣沙类型，0不扣沙，1扣沙；None时不传该参数
+            data_type: 数据类型；None时自动使用近三天原始、三天外审核
+            sand_type: 扣沙类型，0不扣沙，1扣沙；默认1扣沙
 
         Returns:
             城市日报数据
         """
         endpoint = "/api/airprovinceproduct/airdata/DATCityDay/GetDATCityDayDisplayListAsync"
 
+        date_segments = self._split_day_range_for_daily_query(start_date, end_date, data_type)
+        if len(date_segments) > 1:
+            return self._query_city_day_data_segments(
+                endpoint=endpoint,
+                city_codes=city_codes,
+                segments=date_segments,
+                sand_type=sand_type
+            )
+
+        seg_start, seg_end, plan_type, resolved_data_type = date_segments[0]
+
         # GET 请求：参数通过查询字符串传递
         params = {
             "codes": city_codes,  # 数组参数会被 requests 展开为 ?codes=x&codes=y
             "timePoint": [
-                f"{start_date} 00:00:00",
-                f"{end_date} 23:59:59"
+                f"{seg_start} 00:00:00",
+                f"{seg_end} 23:59:59"
             ],
-            "dataType": data_type
+            "dataType": resolved_data_type,
+            "planType": plan_type
         }
         if sand_type is not None:
             params["sandType"] = sand_type
@@ -321,13 +333,66 @@ class GDSuncereAPIClient:
         logger.info(
             "query_city_day_data",
             city_codes=city_codes,
-            start_date=start_date,
-            end_date=end_date,
-            data_type=data_type,
-            sand_type=sand_type
+            start_date=seg_start,
+            end_date=seg_end,
+            data_type=resolved_data_type,
+            sand_type=sand_type,
+            plan_type=plan_type
         )
 
         return self._make_request(endpoint, params, method="GET")
+
+    def _query_city_day_data_segments(
+        self,
+        endpoint: str,
+        city_codes: List[str],
+        segments: List[tuple],
+        sand_type: Optional[int]
+    ) -> Dict[str, Any]:
+        """按站点属性 planType 分段查询城市日报并合并结果。"""
+        merged_result = []
+        base_response: Optional[Dict[str, Any]] = None
+
+        for seg_start, seg_end, plan_type, resolved_data_type in segments:
+            params = {
+                "codes": city_codes,
+                "timePoint": [
+                    f"{seg_start} 00:00:00",
+                    f"{seg_end} 23:59:59"
+                ],
+                "dataType": resolved_data_type,
+                "planType": plan_type
+            }
+            if sand_type is not None:
+                params["sandType"] = sand_type
+
+            logger.info(
+                "query_city_day_data_segment",
+                city_codes=city_codes,
+                start_date=seg_start,
+                end_date=seg_end,
+                data_type=resolved_data_type,
+                sand_type=sand_type,
+                plan_type=plan_type
+            )
+
+            response = self._make_request(endpoint, params, method="GET")
+            if base_response is None:
+                base_response = response
+
+            if not response.get("success"):
+                return response
+
+            segment_result = response.get("result", [])
+            if isinstance(segment_result, list):
+                merged_result.extend(segment_result)
+
+        if base_response is None:
+            return {"success": True, "result": [], "msg": None, "state": 200}
+
+        base_response = dict(base_response)
+        base_response["result"] = merged_result
+        return base_response
 
     def query_city_hour_data(
         self,
@@ -434,8 +499,8 @@ class GDSuncereAPIClient:
         station_codes: List[str],
         start_date: str,
         end_date: str,
-        data_type: int = 0,
-        sand_type: Optional[int] = None
+        data_type: Optional[int] = None,
+        sand_type: Optional[int] = 1
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -454,22 +519,34 @@ class GDSuncereAPIClient:
             station_codes: 站点代码列表（如 ["1001A", "1002A"]）
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
-            data_type: 数据类型，默认 0（原始实况）
-            sand_type: 扣沙类型，0不扣沙，1扣沙；None时不传该参数
+            data_type: 数据类型；None时自动使用近三天原始、三天外审核
+            sand_type: 扣沙类型，0不扣沙，1扣沙；默认1扣沙
 
         Returns:
             站点日报数据
         """
         endpoint = "/api/airprovinceproduct/airdata/DATStationDay/GetDATStationDayDisplayListAsync"
 
+        date_segments = self._split_day_range_for_daily_query(start_date, end_date, data_type)
+        if len(date_segments) > 1:
+            return self._query_station_day_data_segments(
+                endpoint=endpoint,
+                station_codes=station_codes,
+                segments=date_segments,
+                sand_type=sand_type
+            )
+
+        seg_start, seg_end, plan_type, resolved_data_type = date_segments[0]
+
         # POST 请求：参数通过 JSON body 传递
         payload = {
             "codes": station_codes,
             "timePoint": [
-                f"{start_date} 00:00:00",
-                f"{end_date} 23:59:59"
+                f"{seg_start} 00:00:00",
+                f"{seg_end} 23:59:59"
             ],
-            "dataType": data_type
+            "dataType": resolved_data_type,
+            "planType": plan_type
         }
         if sand_type is not None:
             payload["sandType"] = sand_type
@@ -477,13 +554,118 @@ class GDSuncereAPIClient:
         logger.info(
             "query_station_day_data",
             station_codes=station_codes,
-            start_date=start_date,
-            end_date=end_date,
-            data_type=data_type,
-            sand_type=sand_type
+            start_date=seg_start,
+            end_date=seg_end,
+            data_type=resolved_data_type,
+            sand_type=sand_type,
+            plan_type=plan_type
         )
 
         return self._make_request(endpoint, payload, method="POST")
+
+    def _query_station_day_data_segments(
+        self,
+        endpoint: str,
+        station_codes: List[str],
+        segments: List[tuple],
+        sand_type: Optional[int]
+    ) -> Dict[str, Any]:
+        """按站点属性 planType 分段查询站点日报并合并结果。"""
+        merged_result = []
+        base_response: Optional[Dict[str, Any]] = None
+
+        for seg_start, seg_end, plan_type, resolved_data_type in segments:
+            payload = {
+                "codes": station_codes,
+                "timePoint": [
+                    f"{seg_start} 00:00:00",
+                    f"{seg_end} 23:59:59"
+                ],
+                "dataType": resolved_data_type,
+                "planType": plan_type
+            }
+            if sand_type is not None:
+                payload["sandType"] = sand_type
+
+            logger.info(
+                "query_station_day_data_segment",
+                station_codes=station_codes,
+                start_date=seg_start,
+                end_date=seg_end,
+                data_type=resolved_data_type,
+                sand_type=sand_type,
+                plan_type=plan_type
+            )
+
+            response = self._make_request(endpoint, payload, method="POST")
+            if base_response is None:
+                base_response = response
+
+            if not response.get("success"):
+                return response
+
+            segment_result = response.get("result", [])
+            if isinstance(segment_result, list):
+                merged_result.extend(segment_result)
+
+        if base_response is None:
+            return {"success": True, "result": [], "msg": None, "state": 200}
+
+        base_response = dict(base_response)
+        base_response["result"] = merged_result
+        return base_response
+
+    @staticmethod
+    def _split_day_range_for_daily_query(
+        start_date: str,
+        end_date: str,
+        data_type: Optional[int]
+    ) -> List[tuple]:
+        """
+        按站点属性 planType 和数据类型 dataType 切分日数据查询范围。
+
+        planType:
+        - 2020-01-01 前：十三五站点，planType=135
+        - 2020-01-01 及之后：十五五站点，planType=0
+
+        dataType:
+        - 显式传入时完全尊重用户选择
+        - None时自动：近三天使用原始实况0，三天外使用审核实况1
+        """
+        plan_boundary = datetime.strptime("2020-01-01", "%Y-%m-%d").date()
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+        plan_segments = []
+        if end < plan_boundary:
+            plan_segments.append((start, end, 135))
+        elif start >= plan_boundary:
+            plan_segments.append((start, end, 0))
+        else:
+            pre_end = plan_boundary - timedelta(days=1)
+            plan_segments.append((start, pre_end, 135))
+            plan_segments.append((plan_boundary, end, 0))
+
+        if data_type is not None:
+            return [
+                (seg_start.isoformat(), seg_end.isoformat(), plan_type, data_type)
+                for seg_start, seg_end, plan_type in plan_segments
+            ]
+
+        today = datetime.now().date()
+        recent_start = today - timedelta(days=3)
+        segments = []
+        for seg_start, seg_end, plan_type in plan_segments:
+            if seg_end < recent_start:
+                segments.append((seg_start.isoformat(), seg_end.isoformat(), plan_type, 1))
+            elif seg_start >= recent_start:
+                segments.append((seg_start.isoformat(), seg_end.isoformat(), plan_type, 0))
+            else:
+                historical_end = recent_start - timedelta(days=1)
+                segments.append((seg_start.isoformat(), historical_end.isoformat(), plan_type, 1))
+                segments.append((recent_start.isoformat(), seg_end.isoformat(), plan_type, 0))
+
+        return segments
 
     def query_report_data(
         self,

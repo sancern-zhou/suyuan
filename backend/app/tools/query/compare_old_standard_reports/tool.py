@@ -128,7 +128,7 @@ class CompareOldStandardReportsTool(LLMTool):
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
                         "enum": [0, 1]
                     }
                 },
@@ -155,7 +155,7 @@ class CompareOldStandardReportsTool(LLMTool):
         cities = kwargs["cities"]
         query_period = kwargs["query_period"]
         comparison_period = kwargs["comparison_period"]
-        sand_type = kwargs.get("sand_type")
+        sand_type = kwargs.get("sand_type", 1)
 
         logger.info(
             "compare_old_standard_reports_start",
