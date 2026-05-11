@@ -18,13 +18,11 @@ else:
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['mathtext.fontset'] = 'stix'
 
+# 导入三元图工具（从 backend/ 目录执行，使用 app 路径）
 try:
-    from backend.app.utils.ternary_plot import to_ternary_coordinates
+    from app.utils.ternary_plot import to_ternary_coordinates
 except ModuleNotFoundError:
-    try:
-        from app.utils.ternary_plot import to_ternary_coordinates
-    except ModuleNotFoundError:
-        to_ternary_coordinates = None
+    to_ternary_coordinates = None
 
 
 def render_soluble_from_payload(payload: Dict[str, Any], out_path: str, dpi: int = 400, fmt: str = "svg"):

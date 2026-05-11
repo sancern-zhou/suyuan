@@ -156,7 +156,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "**模式选择指南**：\n",
         "- `target_mode=\"query\"` - 数据查询（空气质量、站点数据、统计报表、同比环比）\n",
         "- `target_mode=\"expert\"` - 深度分析（污染溯源、PMF源解析、OBM/OFP分析、综合报告）\n",
-        "- `target_mode=\"code\"` - 编程任务（开发工具、复杂脚本、代码重构）\n",
         "\n",
         "**专家模式典型场景**：\n",
         "- 快速溯源分析：@快速溯源（告警响应，~18秒）\n",

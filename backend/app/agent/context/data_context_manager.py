@@ -420,63 +420,51 @@ class DataContextManager:
                 first_field=field_stats[0].name if field_stats else None
             )
 
-        # 6.2 【关键修复】数据标准化后，从species_data/components字段重新提取物种作为field_stats
-        # 【修复】查找第一条有实际数据的记录，而非总是用第0条（可能为空）
-        if field_mapping_applied and schema in ("vocs_unified", "particulate_unified"):
-            if serialized_data and isinstance(serialized_data[0], dict):
-                first_record = serialized_data[0]
-                if schema == "vocs_unified" and "species_data" in first_record:
-                    # 【修复】查找第一条有species数据的记录
-                    species_record = None
-                    for record in serialized_data:
-                        if isinstance(record, dict) and record.get("species_data"):
-                            species_record = record
-                            break
+        # 6.2 【关键修复】无条件从species_data/components字段提取field_stats
+        # 【修复】即使field_mapping_applied=False，也尝试提取field_stats（支持手动构造的数据）
+        if not field_stats and serialized_data and isinstance(serialized_data[0], dict):
+            first_record = serialized_data[0]
 
-                    if species_record:
-                        species_keys = list(species_record["species_data"].keys())
-                        field_stats = [
-                            FieldStats(name=species, minimum=0, maximum=0, mean=0, missing=0, total=len(serialized_data))
-                            for species in species_keys
-                        ]
-                        logger.info(
-                            "field_stats_rebuilt_from_species_data",
-                            species_count=len(species_keys),
-                            species_names=species_keys[:5],
-                            found_at_record=serialized_data.index(species_record)
-                        )
-                    else:
-                        logger.warning(
-                            "no_valid_species_data_found",
-                            total_records=len(serialized_data),
-                            message="所有记录的species_data都为空，保留原有field_stats"
-                        )
-                elif schema == "particulate_unified" and "components" in first_record:
-                    # 【修复】查找第一条有components数据的记录
-                    component_record = None
-                    for record in serialized_data:
-                        if isinstance(record, dict) and record.get("components"):
-                            component_record = record
-                            break
+            # VOCs数据：从species_data提取
+            if schema == "vocs_unified" and "species_data" in first_record:
+                species_record = None
+                for record in serialized_data:
+                    if isinstance(record, dict) and record.get("species_data"):
+                        species_record = record
+                        break
 
-                    if component_record:
-                        component_keys = list(component_record["components"].keys())
-                        field_stats = [
-                            FieldStats(name=comp, minimum=0, maximum=0, mean=0, missing=0, total=len(serialized_data))
-                            for comp in component_keys
-                        ]
-                        logger.info(
-                            "field_stats_rebuilt_from_components",
-                            component_count=len(component_keys),
-                            component_names=component_keys[:5],
-                            found_at_record=serialized_data.index(component_record)
-                        )
-                    else:
-                        logger.warning(
-                            "no_valid_components_found",
-                            total_records=len(serialized_data),
-                            message="所有记录的components都为空，保留原有field_stats"
-                        )
+                if species_record:
+                    species_keys = list(species_record["species_data"].keys())
+                    field_stats = [
+                        FieldStats(name=species, minimum=0, maximum=0, mean=0, missing=0, total=len(serialized_data))
+                        for species in species_keys
+                    ]
+                    logger.info(
+                        "field_stats_rebuilt_from_species_data",
+                        species_count=len(species_keys),
+                        species_names=species_keys[:5]
+                    )
+
+            # 颗粒物数据：从components提取
+            elif schema == "particulate_unified" and "components" in first_record:
+                component_record = None
+                for record in serialized_data:
+                    if isinstance(record, dict) and record.get("components"):
+                        component_record = record
+                        break
+
+                if component_record:
+                    component_keys = list(component_record["components"].keys())
+                    field_stats = [
+                        FieldStats(name=comp, minimum=0, maximum=0, mean=0, missing=0, total=len(serialized_data))
+                        for comp in component_keys
+                    ]
+                    logger.info(
+                        "field_stats_rebuilt_from_components",
+                        component_count=len(component_keys),
+                        component_names=component_keys[:10],
+                        found_at_record=serialized_data.index(component_record)
+                    )
 
         # 7. Generate data ID
         data_id = uuid4().hex

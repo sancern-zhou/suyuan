@@ -7,7 +7,6 @@ ReAct系统提示词构建器（七模式架构）
 from typing import Literal, List, Optional
 from .assistant_prompt import build_assistant_prompt
 from .expert_prompt import build_expert_prompt
-from .code_prompt import build_code_prompt
 from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
@@ -26,7 +25,6 @@ logger = structlog.get_logger()
 AgentMode = Literal[
     "assistant",
     "expert",
-    "code",
     "query",
     "report",
     "social",
@@ -99,8 +97,6 @@ def build_react_system_prompt(
         return build_assistant_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "expert":
         return build_expert_prompt(filtered_tools, memory_context, memory_file_path)
-    elif mode == "code":
-        return build_code_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "query":
         return build_query_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "report":

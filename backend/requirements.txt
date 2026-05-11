@@ -10,7 +10,7 @@ aiohttp==3.10.10
 
 # Data Processing
 pandas==2.2.3
-numpy>=1.20.0  # Required for nimfa (using np.asmatrix for compatibility)
+numpy>=1.20.0,<2.0.0  # Required for nimfa (np.mat removed in NumPy 2.0)
 scipy>=1.10.0  # Sparse matrix optimization for OBM calculations
 nimfa>=1.0.0   # Non-negative matrix factorization for PMF dual-mode
 defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)

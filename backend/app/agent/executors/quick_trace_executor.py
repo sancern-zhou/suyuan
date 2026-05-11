@@ -1632,6 +1632,172 @@ class DailyQuickTraceScheduler:
         self.report_dir = project_root / "backend_data_registry" / "quick_trace_reports"
         self.report_dir.mkdir(parents=True, exist_ok=True)
 
+    # 预警阈值配置（单位：μg/m³，CO为mg/m³）
+    ALERT_THRESHOLDS = {
+        "PM2.5": 75.0,   # 轻度污染阈值
+        "PM10": 150.0,   # 轻度污染阈值
+        "O3": 160.0,     # 轻度污染阈值（日最大8小时）
+        "NO2": 200.0,    # 轻度污染阈值
+        "SO2": 150.0,    # 轻度污染阈值
+        "CO": 10.0       # 轻度污染阈值（mg/m³）
+    }
+
+    async def _get_realtime_pollutant_levels(
+        self,
+        city: str = "济宁市"
+    ) -> Dict[str, Any]:
+        """
+        从SQL Server数据库查询当天最新的实时污染物浓度
+
+        数据库: XcAiDb @ 180.184.30.94:1433
+        表名: CityAQIPublishHistory
+
+        Args:
+            city: 城市名称
+
+        Returns:
+            Dict: 包含各污染物浓度和时间戳
+        """
+        import pyodbc
+        from datetime import datetime, timedelta
+
+        # SQL Server 连接配置
+        sql_server_config = {
+            'driver': '{ODBC Driver 17 for SQL Server}',
+            'server': '180.184.30.94',
+            'port': 1433,
+            'database': 'XcAiDb',
+            'uid': 'sa',
+            'pwd': '#Ph981,6J2bOkWYT7p?5slH$I~g_0itR'
+        }
+
+        conn = None
+        cursor = None
+
+        try:
+            # 构建连接字符串
+            conn_str = (
+                f"DRIVER={sql_server_config['driver']};"
+                f"SERVER={sql_server_config['server']},{sql_server_config['port']};"
+                f"DATABASE={sql_server_config['database']};"
+                f"UID={sql_server_config['uid']};"
+                f"PWD={sql_server_config['pwd']};"
+                f"TrustServerCertificate=yes;"
+            )
+
+            # 连接数据库
+            conn = pyodbc.connect(conn_str, timeout=10)
+            cursor = conn.cursor()
+
+            # 查询最近一条数据（不限定今天，使用N前缀处理中文参数）
+            sql_query = f"""
+                SELECT TOP 1
+                    TimePoint, Area, CityCode,
+                    CO, NO2, O3, PM10, PM2_5, SO2,
+                    AQI, PrimaryPollutant, Quality
+                FROM CityAQIPublishHistory WITH (NOLOCK)
+                WHERE Area = N'{city}'
+                ORDER BY TimePoint DESC
+            """
+
+            cursor.execute(sql_query)
+            row = cursor.fetchone()
+
+            if row:
+                columns = [column[0] for column in cursor.description]
+                row_dict = dict(zip(columns, row))
+
+                def safe_float(value):
+                    if value is None or value == '':
+                        return None
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return None
+
+                # 检查数据延迟（超过24小时标注）
+                data_time = row_dict['TimePoint']
+                now = datetime.now()
+                data_delay_hours = (now - data_time).total_seconds() / 3600 if data_time else None
+                is_delayed = data_delay_hours is not None and data_delay_hours > 24
+
+                result = {
+                    "timestamp": data_time.strftime("%Y-%m-%d %H:%M:%S") if data_time else "",
+                    "city": row_dict['Area'],
+                    "pollutants": {
+                        "PM2.5": safe_float(row_dict.get('PM2_5')),
+                        "PM10": safe_float(row_dict.get('PM10')),
+                        "O3": safe_float(row_dict.get('O3')),
+                        "NO2": safe_float(row_dict.get('NO2')),
+                        "SO2": safe_float(row_dict.get('SO2')),
+                        "CO": safe_float(row_dict.get('CO'))
+                    },
+                    "aqi": row_dict.get('AQI'),
+                    "primary_pollutant": row_dict.get('PrimaryPollutant'),
+                    "quality": row_dict.get('Quality'),
+                    "data_delay_hours": round(data_delay_hours, 1) if data_delay_hours else None,
+                    "is_delayed": is_delayed
+                }
+
+                if is_delayed:
+                    logger.warning(
+                        "realtime_data_delayed",
+                        city=city,
+                        data_time=result["timestamp"],
+                        delay_hours=data_delay_hours
+                    )
+
+                logger.info(
+                    "realtime_pollutant_query_success",
+                    city=city,
+                    timestamp=result["timestamp"],
+                    pollutants=result["pollutants"],
+                    is_delayed=is_delayed,
+                    delay_hours=result.get("data_delay_hours")
+                )
+
+                return {
+                    "success": True,
+                    "data": result
+                }
+            else:
+                logger.warning(
+                    "no_realtime_data_found",
+                    city=city
+                )
+                return {
+                    "success": False,
+                    "error": "今天暂无监测数据"
+                }
+
+        except pyodbc.Error as e:
+            logger.error(
+                "sqlserver_connection_error",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return {
+                "success": False,
+                "error": f"数据库连接失败: {str(e)}"
+            }
+
+        except Exception as e:
+            logger.error(
+                "realtime_pollutant_query_error",
+                error=str(e),
+                exc_info=True
+            )
+            return {
+                "success": False,
+                "error": f"查询失败: {str(e)}"
+            }
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
     async def run_daily_report(self):
         """执行每日报告生成任务"""
         try:
@@ -1641,16 +1807,75 @@ class DailyQuickTraceScheduler:
             now = datetime.now()
             alert_time = now.strftime("%Y-%m-%d %H:%M:%S")
 
-            # 默认参数（可从配置文件读取）
+            # 默认参数
             city = "济宁市"
-            pollutant = "PM2.5"
-            alert_value = 75.0  # 默认值，实际应从监测数据获取
+
+            # 1. 从数据库查询实时污染物浓度
+            realtime_result = await self._get_realtime_pollutant_levels(city)
+
+            if not realtime_result["success"]:
+                logger.warning(
+                    "daily_quick_trace_skipped",
+                    reason=realtime_result.get("error", "无法获取实时数据")
+                )
+                return {
+                    "success": False,
+                    "skipped": True,
+                    "reason": realtime_result.get("error", "无法获取实时数据")
+                }
+
+            pollutants = realtime_result["data"]["pollutants"]
+
+            # 2. 检查是否有污染物超过阈值
+            alert_pollutants = []
+            for pollutant, concentration in pollutants.items():
+                if concentration is not None:
+                    threshold = self.ALERT_THRESHOLDS.get(pollutant)
+                    if threshold and concentration > threshold:
+                        alert_pollutants.append({
+                            "name": pollutant,
+                            "concentration": concentration,
+                            "threshold": threshold
+                        })
+
+            # 3. 选择分析目标污染物（超标优先，否则选浓度最高的）
+            if alert_pollutants:
+                # 有超标：选浓度最高的超标污染物
+                alert_pollutants.sort(key=lambda x: x["concentration"], reverse=True)
+                primary_alert = alert_pollutants[0]
+                pollutant = primary_alert["name"]
+                alert_value = primary_alert["concentration"]
+                analysis_mode = "alert"
+            else:
+                # 无超标：选浓度最高的污染物做常规分析
+                sorted_pollutants = sorted(
+                    [(k, v) for k, v in pollutants.items() if v is not None],
+                    key=lambda x: x[1], reverse=True
+                )
+                if not sorted_pollutants:
+                    return {
+                        "success": False,
+                        "skipped": True,
+                        "reason": "无有效污染物数据",
+                        "pollutants": pollutants
+                    }
+                pollutant, alert_value = sorted_pollutants[0]
+                analysis_mode = "routine"
+                logger.info(
+                    "daily_quick_trace_routine",
+                    reason="所有污染物浓度在正常范围内，执行常规分析",
+                    pollutant=pollutant,
+                    alert_value=alert_value,
+                    pollutants=pollutants
+                )
 
             logger.info(
                 "executing_daily_quick_trace",
                 city=city,
                 alert_time=alert_time,
-                pollutant=pollutant
+                pollutant=pollutant,
+                alert_value=alert_value,
+                all_alerts=alert_pollutants
             )
 
             # 执行分析
@@ -1663,8 +1888,16 @@ class DailyQuickTraceScheduler:
 
             # 保存报告
             if result.get("summary_text"):
+                # 在报告摘要中添加其他超标污染物信息
+                additional_info = ""
+                if len(alert_pollutants) > 1:
+                    other_alerts = [f"{p['name']}({p['concentration']}μg/m³)" for p in alert_pollutants[1:]]
+                    additional_info = f"\n\n其他超标污染物: {', '.join(other_alerts)}"
+
+                enhanced_summary = result["summary_text"] + additional_info
+
                 save_result = await self.executor.save_report(
-                    summary_text=result["summary_text"],
+                    summary_text=enhanced_summary,
                     city=city,
                     alert_time=alert_time,
                     pollutant=pollutant,
@@ -1681,7 +1914,8 @@ class DailyQuickTraceScheduler:
                     report_path=save_result.get("filepath"),
                     db_id=save_result.get("db_id"),
                     has_trajectory=result.get("has_trajectory", False),
-                    warning_message=result.get("warning_message")
+                    warning_message=result.get("warning_message"),
+                    all_alert_pollutants=alert_pollutants
                 )
 
                 return {
@@ -1689,7 +1923,9 @@ class DailyQuickTraceScheduler:
                     "report_path": save_result.get("filepath"),
                     "db_id": save_result.get("db_id"),
                     "has_trajectory": result.get("has_trajectory", False),
-                    "warning_message": result.get("warning_message")
+                    "warning_message": result.get("warning_message"),
+                    "analyzed_pollutant": pollutant,
+                    "all_alert_pollutants": alert_pollutants
                 }
             else:
                 logger.error("daily_quick_trace_failed", error="No summary text generated")
@@ -1703,8 +1939,49 @@ class DailyQuickTraceScheduler:
             )
             return {"success": False, "error": str(e)}
 
+    async def run_daily_report_with_retry(self, max_retries: int = 2, retry_interval: int = 60):
+        """
+        带重试机制的每日报告执行
+
+        Args:
+            max_retries: 最大重试次数（默认2次）
+            retry_interval: 重试间隔秒数（默认60秒）
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                result = await self.run_daily_report()
+                if result.get("success"):
+                    logger.info("daily_report_succeeded", attempt=attempt + 1)
+                    return result
+                else:
+                    logger.warning(
+                        "daily_report_failed",
+                        attempt=attempt + 1,
+                        error=result.get("error", "Unknown error")
+                    )
+                    if attempt < max_retries:
+                        logger.info("retrying_daily_report", wait_seconds=retry_interval)
+                        await asyncio.sleep(retry_interval)
+                    else:
+                        logger.error("daily_report_failed_after_retries", max_retries=max_retries)
+                        return result
+            except Exception as e:
+                logger.error(
+                    "daily_report_exception",
+                    attempt=attempt + 1,
+                    error=str(e),
+                    exc_info=True
+                )
+                if attempt < max_retries:
+                    logger.info("retrying_daily_report_after_exception", wait_seconds=retry_interval)
+                    await asyncio.sleep(retry_interval)
+                else:
+                    logger.error("daily_report_failed_after_retries", max_retries=max_retries)
+                    return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Max retries exceeded"}
+
     def start_scheduler(self):
-        """启动定时调度器（每天8:30执行）"""
+        """启动定时调度器（每天8:30执行）- 同步版本（向后兼容）"""
         try:
             from apscheduler.schedulers.asyncio import AsyncIOScheduler
             from apscheduler.triggers.cron import CronTrigger
@@ -1712,9 +1989,9 @@ class DailyQuickTraceScheduler:
             # 创建调度器（北京时区）
             self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 
-            # 添加定时任务：每天8:30执行
+            # 添加定时任务：每天8:30执行（直接传递协程函数）
             self.scheduler.add_job(
-                func=lambda: asyncio.create_task(self.run_daily_report()),
+                func=self.run_daily_report_with_retry,
                 trigger=CronTrigger(hour=8, minute=30, timezone="Asia/Shanghai"),
                 id="daily_quick_trace",
                 name="每日快速溯源报告",
@@ -1739,6 +2016,47 @@ class DailyQuickTraceScheduler:
         except Exception as e:
             logger.error("scheduler_start_failed", error=str(e), exc_info=True)
             return False
+
+    async def start_scheduler_async(self):
+        """
+        启动定时调度器（每天8:30执行）- 异步版本
+
+        返回调度器实例，可用于健康检查
+        """
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+            from apscheduler.triggers.cron import CronTrigger
+
+            # 创建调度器（北京时区）
+            self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+
+            # 添加定时任务：每天8:30执行（直接传递协程函数）
+            self.scheduler.add_job(
+                func=self.run_daily_report_with_retry,
+                trigger=CronTrigger(hour=8, minute=30, timezone="Asia/Shanghai"),
+                id="daily_quick_trace",
+                name="每日快速溯源报告",
+                replace_existing=True,
+                misfire_grace_time=300  # 允许5分钟延迟
+            )
+
+            # 启动调度器
+            self.scheduler.start()
+            logger.info("scheduler_started_async", schedule="每天8:30")
+
+            # 显示下次运行时间
+            job = self.scheduler.get_job("daily_quick_trace")
+            if job:
+                logger.info("next_run_time", next_run=job.next_run_time)
+
+            return self.scheduler
+
+        except ImportError:
+            logger.error("apscheduler_not_installed", error="请安装: pip install apscheduler")
+            return None
+        except Exception as e:
+            logger.error("scheduler_start_failed", error=str(e), exc_info=True)
+            return None
 
     def stop_scheduler(self):
         """停止调度器"""

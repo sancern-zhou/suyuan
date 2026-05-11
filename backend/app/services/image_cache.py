@@ -38,6 +38,7 @@ class ImageCache:
                 os.path.join(os.path.dirname(__file__), "..", "..", "backend_data_registry"),  # 相对于 app/services/
                 os.path.join(os.getcwd(), "backend_data_registry"),  # 相对于当前工作目录
                 "backend_data_registry",  # 相对路径
+                "/tmp/backend_images_cache",  # 回退到临时目录
             ]
 
             for base in possible_bases:
@@ -56,8 +57,13 @@ class ImageCache:
                 except (OSError, IOError) as e:
                     continue
             else:
-                # 如果所有路径都失败，使用最后一个路径
-                self.cache_dir = os.path.abspath(os.path.join(possible_bases[0], "images"))
+                # 如果所有路径都失败，使用临时目录
+                import tempfile
+                self.cache_dir = os.path.join(tempfile.gettempdir(), "backend_images_cache")
+                try:
+                    os.makedirs(self.cache_dir, exist_ok=True)
+                except Exception:
+                    pass
 
         logger.info(
             "image_cache_initialized",
@@ -133,6 +139,21 @@ class ImageCache:
         if os.path.exists(filepath):
             with open(filepath, 'rb') as f:
                 return base64.b64encode(f.read()).decode('utf-8')
+        return None
+
+    def get_image_bytes(self, image_id: str) -> Optional[bytes]:
+        """获取图片二进制数据
+
+        Args:
+            image_id: 图片ID
+
+        Returns:
+            图片二进制数据，如果不存在返回None
+        """
+        filepath = os.path.join(self.cache_dir, f"{image_id}.png")
+        if os.path.exists(filepath):
+            with open(filepath, 'rb') as f:
+                return f.read()
         return None
 
     def get_full(self, image_id: str) -> Optional[str]:
@@ -217,3 +238,7 @@ def get_image_cache() -> ImageCache:
     if _image_cache is None:
         _image_cache = ImageCache()
     return _image_cache
+
+
+# 导出单例实例（供直接导入使用）
+image_cache = get_image_cache()

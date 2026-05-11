@@ -615,7 +615,7 @@ doc.save('/root/report.docx')
                         data_format=list(echarts_data.keys()) if isinstance(echarts_data, dict) else type(echarts_data).__name__
                     )
                     # 更新摘要
-                    if not chart_paths:  # 如果没有matplotlib图表，使用ECharts摘要
+                    if not chart_data.get("paths") and not chart_data.get("base64_data"):  # 如果没有matplotlib图表，使用ECharts摘要
                         result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{display_title}"
                 except Exception as e:
                     logger.warning(

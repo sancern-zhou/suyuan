@@ -7,7 +7,7 @@ AQI日历图生成器 - execute_python 调用示例
     在 LLM 对话中，使用 execute_python 工具执行以下代码：
 
     ```python
-    from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+    from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
 
     # 生成日历图
     img_base64 = generate_calendar_from_data_id(
@@ -65,7 +65,7 @@ def example_basic_usage():
     print("=" * 60)
 
     code = '''
-from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
 
 # 生成日历图
 img_base64 = generate_calendar_from_data_id(
@@ -90,7 +90,7 @@ def example_multi_city():
     print("=" * 60)
 
     code = '''
-from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
 
 # 生成珠三角9城市日历图
 cities = ["广州", "深圳", "珠海", "佛山", "东莞", "中山", "江门", "惠州", "肇庆"]
@@ -117,7 +117,7 @@ def example_pollutants():
     print("=" * 60)
 
     code = '''
-from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
 
 # 支持的污染物指标
 pollutants = ["AQI", "SO2", "NO2", "CO", "O3_8h", "PM2_5", "PM10"]
@@ -146,7 +146,7 @@ def example_error_handling():
     print("=" * 60)
 
     code = '''
-from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
 
 try:
     # 测试错误的数据 ID
@@ -173,7 +173,7 @@ def example_comparison_with_polar():
 
     code = '''
 # 日历图：时间维度展示
-from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
 
 calendar_img = generate_calendar_from_data_id(
     data_id="air_quality_unified:v1:xxx",
@@ -186,7 +186,7 @@ print("CHART_SAVED:data:image/png;base64," + calendar_img)
 print("# 日历图：展示整个月每天的 PM10 浓度变化")
 
 # 极坐标图：风向-风速-浓度关系
-from backend.app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour
+from app.tools.visualization.polar_contour_generator import generate_pollution_rose_contour
 
 polar_img = generate_pollution_rose_contour(
     data_id="air_quality_5min:v1:xxx",

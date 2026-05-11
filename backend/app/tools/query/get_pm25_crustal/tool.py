@@ -286,47 +286,47 @@ class GetPM25CrustalTool(LLMTool):
             records = _filter_mark_fields(records)
             logger.info("crustal_filtered", original_count=len(records), filtered_count=len(records))
 
-            # 数据外部化：超过24条记录时采样
+            # 数据外部化：无条件保存完整数据到文件系统
             data_id = None
             file_path = None
             sample_data = records
 
-            if len(records) > 24:
-                try:
-                    data_id = context.save_data(
-                        data=records,
-                        schema="particulate_unified",
-                        metadata={
-                            "component_type": "crustal",
-                            "station": station,
-                            "code": code,
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "record_count": len(records),
-                            "elements": elements
-                        }
-                    )
+            # 无条件外部化数据（确保下游分析工具能通过data_id获取数据）
+            try:
+                data_id = context.save_data(
+                    data=records,
+                    schema="particulate_unified",
+                    metadata={
+                        "component_type": "crustal",
+                        "station": station,
+                        "code": code,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "record_count": len(records),
+                        "elements": elements
+                    }
+                )
 
-                    # 智能采样
-                    sample_count = min(24, len(records))
-                    if len(records) <= 24:
-                        sample_data = records
-                    else:
-                        head_size = sample_count // 2
-                        tail_size = sample_count - head_size
-                        head = records[:head_size]
-                        tail = records[-tail_size:]
-                        sample_data = head + tail
+                # 智能采样：超过24条时进行Head-Tail采样
+                if len(records) <= 24:
+                    sample_data = records
+                else:
+                    sample_count = 24
+                    head_size = sample_count // 2
+                    tail_size = sample_count - head_size
+                    head = records[:head_size]
+                    tail = records[-tail_size:]
+                    sample_data = head + tail
 
-                    logger.info(
-                        "pm25_crustal_data_externalized",
-                        total_count=len(records),
-                        sample_count=len(sample_data),
-                        data_id=data_id
-                    )
-                except Exception as save_error:
-                    logger.warning("pm25_crustal_save_failed", error=str(save_error))
-                    data_id = None
+                logger.info(
+                    "pm25_crustal_data_externalized",
+                    total_count=len(records),
+                    sample_count=len(sample_data),
+                    data_id=data_id
+                )
+            except Exception as save_error:
+                logger.warning("pm25_crustal_save_failed", error=str(save_error))
+                data_id = None
 
             # 分析数据质量
             quality_report = self._analyze_quality(records, elements)

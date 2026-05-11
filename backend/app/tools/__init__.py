@@ -735,6 +735,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="search_history", error=str(e))
 
     try:
+        from app.tools.social.session_search.tool import SessionSearchTool
+        registry.register(SessionSearchTool(), priority=364)
+        logger.info("tool_loaded", tool="session_search")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="session_search", error=str(e))
+
+    try:
         from app.tools.social.remember_fact.tool import RememberFactTool
         registry.register(RememberFactTool(), priority=370)  # 修复: 720->370
         logger.info("tool_loaded", tool="remember_fact")
@@ -889,6 +896,17 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="knowledge_document_reader")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_document_reader", error=str(e))
+
+    # ========================================
+    # Reporting Tools（报告工具）
+    # ========================================
+
+    try:
+        from app.tools.reporting.generate_tracing_report import register_tool
+        register_tool(registry)
+        logger.info("tool_loaded", tool="generate_tracing_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="generate_tracing_report", error=str(e))
 
     # ========================================
     # Planning Tools（规划工具）
