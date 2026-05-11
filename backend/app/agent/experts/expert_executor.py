@@ -413,6 +413,9 @@ class ExpertExecutor(ABC):
             # 【修复】返回更完整的结果，保留原始字段以便降级检查
             # 保留 success, data, summary, metadata, visuals 等字段用于降级判断和前端展示
             # 扁平化结构，不嵌套 result 层（符合 UDF v2.0 规范）
+            # 【新增】保留 role 信息用于参数绑定
+            tool_role = plan.role if hasattr(plan, 'role') else None
+
             if result.get("status") == "success" or result.get("success") is not False:
                 return {
                     "tool_name": tool_name,
@@ -422,7 +425,8 @@ class ExpertExecutor(ABC):
                     "visuals": result.get("visuals") or [],
                     "data_id": result.get("data_id") or result.get("metadata", {}).get("data_id") if isinstance(result.get("metadata"), dict) else None,
                     "summary": result.get("summary"),
-                    "metadata": result.get("metadata") or {}
+                    "metadata": result.get("metadata") or {},
+                    "role": tool_role  # 保留 role 信息
                 }
             else:
                 return {
@@ -434,7 +438,8 @@ class ExpertExecutor(ABC):
                     "visuals": result.get("visuals") or [],
                     "data_id": result.get("data_id") or result.get("metadata", {}).get("data_id") if isinstance(result.get("metadata"), dict) else None,
                     "summary": result.get("summary"),
-                    "metadata": result.get("metadata") or {}
+                    "metadata": result.get("metadata") or {},
+                    "role": tool_role  # 保留 role 信息
                 }
 
         # 使用工具依赖图执行工具链
@@ -449,8 +454,15 @@ class ExpertExecutor(ABC):
             # 转换为扁平化格式（符合 UDF v2.0 规范）
             results = []
             for exec_result in execution_results:
+                # 【新增】从 tool_plans 中查找对应的 role 信息
+                tool_role = None
+                for plan in tool_plans:
+                    if plan.tool == exec_result.tool_name:
+                        tool_role = plan.role
+                        break
+
                 if exec_result.status == ToolTaskStatus.SUCCESS:
-                    results.append({
+                    result_dict = {
                         "tool": exec_result.tool_name,
                         "status": "success",
                         "success": True,
@@ -460,9 +472,13 @@ class ExpertExecutor(ABC):
                         "summary": exec_result.result.get("summary") if isinstance(exec_result.result, dict) else None,
                         "metadata": exec_result.result.get("metadata") if isinstance(exec_result.result, dict) else {},
                         "bound_params": exec_result.bound_params
-                    })
+                    }
+                    # 【新增】添加 role 信息（如果有）
+                    if tool_role:
+                        result_dict["role"] = tool_role
+                    results.append(result_dict)
                 else:
-                    results.append({
+                    result_dict = {
                         "tool": exec_result.tool_name,
                         "status": "error",
                         "success": False,
@@ -473,7 +489,11 @@ class ExpertExecutor(ABC):
                         "summary": None,
                         "metadata": {},
                         "retry_count": exec_result.retry_count
-                    })
+                    }
+                    # 【新增】添加 role 信息（如果有）
+                    if tool_role:
+                        result_dict["role"] = tool_role
+                    results.append(result_dict)
 
             # 记录执行摘要
             summary = tool_graph.get_execution_summary()
@@ -931,10 +951,13 @@ class ExpertExecutor(ABC):
         for i, result in enumerate(previous_results):
             if result and isinstance(result, dict):
                 tool_name = result.get("tool", f"tool_{i}")
+                # 【新增】提取 role 信息（如果有）
+                tool_role = result.get("role")
                 tool_results.append(ToolResult(
                     tool_name=tool_name,
                     index=i,
-                    result=result
+                    result=result,
+                    role=tool_role  # 传递 role 信息
                 ))
 
         # 使用参数绑定器进行绑定（简化版本：直接返回参数，不使用input_bindings）

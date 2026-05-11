@@ -104,6 +104,25 @@ async def get_report_asset(report_id: str, asset_path: str):
     return FileResponse(path=str(file_path), media_type=media_type)
 
 
+@router.get("/{report_id}/report_files/{file_path:path}")
+async def get_report_generated_file(report_id: str, file_path: str):
+    """Serve Quarto-generated files (CSS/JS libs) from report_files/ directory."""
+    try:
+        report_dir = quarto_report_renderer.get_report_dir(report_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    report_files_dir = (report_dir / "report_files").resolve()
+    target_path = (report_files_dir / file_path).resolve()
+    try:
+        target_path.relative_to(report_files_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+    if not target_path.exists() or not target_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    media_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
+    return FileResponse(path=str(target_path), media_type=media_type)
+
+
 @router.get("/{report_id}/download/{format_name}")
 async def download_report(report_id: str, format_name: str):
     formats = {

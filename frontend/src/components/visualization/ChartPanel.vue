@@ -331,6 +331,21 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
     if (chartType === 'polar_bar' && 'polar' in chartData && 'series' in chartData) {
       isCompleteConfig = true
     }
+
+    // heatmap 类型的完整配置检测（支持多 grid 配置）
+    if (chartType === 'heatmap' && 'series' in chartData && 'grid' in chartData) {
+      // 检查是否包含完整的 ECharts 配置（title, tooltip, grid, xAxis, yAxis, visualMap, series）
+      const hasAllComponents = 'title' in chartData &&
+                                'tooltip' in chartData &&
+                                'xAxis' in chartData &&
+                                'yAxis' in chartData &&
+                                'visualMap' in chartData &&
+                                Array.isArray(chartData.series) &&
+                                chartData.series.length > 0
+      if (hasAllComponents) {
+        isCompleteConfig = true
+      }
+    }
   }
 
   // 极坐标图表检测
@@ -452,23 +467,38 @@ const optimizeChartLayout = (option) => {
 
   // 优化 grid 位置：为标题和图例预留空间
   if (optimized.grid) {
-    const grid = optimized.grid
     const minTop = TITLE_HEIGHT + TITLE_PADDING
 
-    // 强制调整 grid.top
-    if (typeof grid.top === 'string' && grid.top.includes('%')) {
-      const topValue = parseInt(grid.top)
-      if (topValue < 15) {
+    // 处理 grid 数组（多 grid 配置，如日历热力图）
+    if (Array.isArray(optimized.grid)) {
+      optimized.grid = optimized.grid.map(g => {
+        if (typeof g.top === 'string' && g.top.includes('%')) {
+          const topValue = parseInt(g.top)
+          if (topValue < 15) {
+            return { ...g, top: '18%' }
+          }
+        } else if (typeof g.top !== 'number' || g.top < minTop) {
+          return { ...g, top: minTop }
+        }
+        return g
+      })
+    }
+    // 处理单个 grid 对象
+    else {
+      const grid = optimized.grid
+      if (typeof grid.top === 'string' && grid.top.includes('%')) {
+        const topValue = parseInt(grid.top)
+        if (topValue < 15) {
+          optimized.grid = {
+            ...grid,
+            top: '18%'
+          }
+        }
+      } else {
         optimized.grid = {
           ...grid,
-          top: '18%'
+          top: minTop
         }
-      }
-    } else {
-      // 强制设置数值
-      optimized.grid = {
-        ...grid,
-        top: minTop
       }
     }
   }
@@ -1139,6 +1169,12 @@ const buildHeatmapOption = (chartData, title, meta) => {
   // 检测完整 ECharts 配置格式
   const optimizedConfig = detectAndOptimizeEChartsConfig(chartData, 'heatmap')
   if (optimizedConfig) {
+    console.log('[buildHeatmapOption] 检测到完整 ECharts 配置，直接返回')
+    console.log('[buildHeatmapOption] grid 类型:', Array.isArray(optimizedConfig.grid) ? '数组' : typeof optimizedConfig.grid)
+    console.log('[buildHeatmapOption] grid 长度:', Array.isArray(optimizedConfig.grid) ? optimizedConfig.grid.length : 'N/A')
+    console.log('[buildHeatmapOption] xAxis 类型:', Array.isArray(optimizedConfig.xAxis) ? '数组' : typeof optimizedConfig.xAxis)
+    console.log('[buildHeatmapOption] yAxis 类型:', Array.isArray(optimizedConfig.yAxis) ? '数组' : typeof optimizedConfig.yAxis)
+    console.log('[buildHeatmapOption] series 数量:', Array.isArray(optimizedConfig.series) ? optimizedConfig.series.length : 'N/A')
     return optimizedConfig
   }
 

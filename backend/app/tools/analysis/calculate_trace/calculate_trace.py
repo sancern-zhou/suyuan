@@ -75,6 +75,9 @@ def trace_elements_normalize(trace_data: pd.DataFrame, al_data: pd.Series) -> Op
 
 
 def divide_by_taylor(normalized_data: pd.DataFrame, taylor_dict: Dict[str, float]) -> Optional[pd.DataFrame]:
+    # 添加空值检查
+    if normalized_data is None:
+        return None
     valid_cols = [col for col in normalized_data.columns if col in taylor_dict]
     if not valid_cols:
         return None

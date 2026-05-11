@@ -152,7 +152,27 @@ class ChartImageRenderer(LLMTool):
             # Step 3: 生成输出文件名
             image_filename = f"chart_{uuid.uuid4().hex[:12]}.png"
             image_path = OUTPUT_DIR / image_filename
-            
+
+            # Step 3.5: 验证 ECharts 配置有效性
+            validation_result = self._validate_echarts_option(echarts_option)
+            if not validation_result["valid"]:
+                logger.error(
+                    "echarts_option_invalid",
+                    validation_errors=validation_result["errors"],
+                    echarts_keys=list(echarts_option.keys())
+                )
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "data": None,
+                    "metadata": {
+                        "tool_name": "render_chart_to_image",
+                        "error_type": "invalid_option",
+                        "validation_errors": validation_result["errors"]
+                    },
+                    "summary": f"[FAIL] ECharts配置无效: {', '.join(validation_result['errors'])}"
+                }
+
             # Step 4: 使用Playwright渲染
             logger.info(
                 "chart_render_start",
@@ -169,11 +189,22 @@ class ChartImageRenderer(LLMTool):
             )
             
             if not success or not image_path.exists():
+                logger.error(
+                    "chart_render_failed_final",
+                    success=success,
+                    image_exists=image_path.exists() if image_path else False,
+                    image_path=str(image_path) if image_path else None,
+                    echarts_option_keys=list(echarts_option.keys()) if echarts_option else []
+                )
                 return {
                     "status": "failed",
                     "success": False,
                     "data": None,
-                    "metadata": {"tool_name": "render_chart_to_image", "error_type": "render_failed"},
+                    "metadata": {
+                        "tool_name": "render_chart_to_image",
+                        "error_type": "render_failed",
+                        "echarts_keys": list(echarts_option.keys()) if echarts_option else []
+                    },
                     "summary": "[FAIL] 图表渲染失败"
                 }
             
@@ -211,7 +242,58 @@ class ChartImageRenderer(LLMTool):
                 "metadata": {"tool_name": "render_chart_to_image", "error_type": "execution_failed"},
                 "summary": f"[FAIL] 图表渲染失败: {str(e)}"
             }
-    
+
+    def _validate_echarts_option(self, option: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        验证 ECharts 配置的有效性
+
+        Args:
+            option: ECharts 配置字典
+
+        Returns:
+            验证结果：{"valid": bool, "errors": List[str]}
+        """
+        errors = []
+
+        # 检查必需字段
+        if not option.get("series"):
+            errors.append("缺少 series 配置")
+        elif not isinstance(option["series"], list):
+            errors.append("series 必须是数组")
+        elif len(option["series"]) == 0:
+            errors.append("series 数组为空")
+
+        # 检查 xAxis（如果有 series，必须有 xAxis）
+        if option.get("series") and not option.get("xAxis"):
+            errors.append("缺少 xAxis 配置")
+
+        # 检查 xAxis 数据
+        if option.get("xAxis"):
+            xaxis = option["xAxis"]
+            if isinstance(xaxis, dict):
+                xdata = xaxis.get("data", [])
+                if not xdata or not isinstance(xdata, list) or len(xdata) == 0:
+                    errors.append("xAxis.data 为空或无效")
+
+        # 检查 yAxis
+        if option.get("series") and not option.get("yAxis"):
+            errors.append("缺少 yAxis 配置")
+
+        # 检查 yAxis 配置
+        if option.get("yAxis"):
+            yaxis = option["yAxis"]
+            # yAxis 可以是数组（双Y轴）或对象（单Y轴）
+            if isinstance(yaxis, list):
+                if len(yaxis) == 0:
+                    errors.append("yAxis 数组为空")
+            elif not isinstance(yaxis, dict):
+                errors.append("yAxis 必须是对象或数组")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors
+        }
+
     async def _render_with_playwright(
         self,
         echarts_option: Dict[str, Any],
@@ -287,7 +369,17 @@ class ChartImageRenderer(LLMTool):
             logger.error("playwright_not_installed", error="playwright package not found")
             return False
         except Exception as e:
-            logger.error("playwright_render_failed", error=str(e), exc_info=True)
+            logger.error(
+                "playwright_render_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                echarts_option_keys=list(echarts_option.keys()) if echarts_option else [],
+                has_xaxis="xAxis" in echarts_option if echarts_option else False,
+                has_yaxis="yAxis" in echarts_option if echarts_option else False,
+                has_series="series" in echarts_option if echarts_option else False,
+                series_count=len(echarts_option.get("series", [])) if echarts_option else 0,
+                exc_info=True
+            )
             return False
 
 

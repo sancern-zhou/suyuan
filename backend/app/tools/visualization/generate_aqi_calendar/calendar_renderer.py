@@ -616,8 +616,8 @@ def generate_calendar_from_data_id(
 
     示例：
     ---
-    >>> # 在 execute_python 中调用
-    >>> from backend.app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
+    >>> # 在 execute_python 中调用（注意：使用 app 而非 backend.app）
+    >>> from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
     >>>
     >>> img_base64 = generate_calendar_from_data_id(
     ...     data_id="air_quality_unified:v1:xxx",

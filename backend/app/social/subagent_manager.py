@@ -122,7 +122,7 @@ class SubagentManager:
         if not (60 <= timeout <= 86400):
             timeout = self.DEFAULT_TIMEOUT
 
-        allowed_modes = {"assistant", "expert", "query", "code"}
+        allowed_modes = {"assistant", "expert", "query"}
         if manual_mode not in allowed_modes:
             manual_mode = "assistant"
 
@@ -309,7 +309,7 @@ class SubagentManager:
         Returns:
             Final answer from subagent
         """
-        allowed_modes = {"assistant", "expert", "query", "code"}
+        allowed_modes = {"assistant", "expert", "query"}
         if manual_mode not in allowed_modes:
             manual_mode = "assistant"
 

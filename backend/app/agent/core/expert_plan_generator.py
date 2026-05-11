@@ -1078,7 +1078,7 @@ class ExpertPlanGenerator:
                         input_bindings=input_bindings,
                         purpose=f"{item.get('purpose', '')} [数据源 {idx + 1}/{len(upstream_data_ids)}]",
                         depends_on=item.get("depends_on", []),
-                        role=item.get("role")  # 传递角色标识
+                        role=item.get("role") or self._get_default_role(tool_name)  # 传递角色标识，回退到默认值
                     )
 
                     tool_plans.append(tool_plan)
@@ -1111,7 +1111,7 @@ class ExpertPlanGenerator:
                     input_bindings=input_bindings,
                     purpose=item.get("purpose", ""),
                     depends_on=item.get("depends_on", []),
-                    role=item.get("role"),  # 传递角色标识
+                    role=item.get("role") or self._get_default_role(tool_name),  # 传递角色标识，回退到默认值
                     skip_viz=skip_viz
                 )
 
@@ -1126,6 +1126,24 @@ class ExpertPlanGenerator:
                 tool_plans.append(tool_plan)
 
         return tool_plans
+
+    def _get_default_role(self, tool_name: str) -> Optional[str]:
+        """
+        获取工具的默认角色标识
+
+        用于回退机制，当配置中没有指定role时使用。
+        """
+        default_roles = {
+            "get_pm25_ionic": "water-soluble",
+            "get_pm25_carbon": "carbon",
+            "get_pm25_crustal": "crustal",
+            "get_vocs_data": "vocs",
+            "get_weather_data": "weather",
+            "get_weather_forecast": "weather",
+            "meteorological_trajectory_analysis": "weather",
+            "analyze_upwind_enterprises": "weather"
+        }
+        return default_roles.get(tool_name)
 
     def _generate_sync_params(
         self,

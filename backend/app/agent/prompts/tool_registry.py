@@ -38,6 +38,9 @@ ASSISTANT_TOOL_NAMES = {
 
     # 其他工具
     "create_scheduled_task", "analyze_image", "browser", "call_sub_agent",
+
+    # 报告生成
+    "generate_tracing_report",
 }
 
 # ===== 专家模式工具 =====
@@ -133,6 +136,9 @@ REPORT_TOOL_NAMES = {
 
     # 规划工具
     "complex_query_planner",
+
+    # 报告生成
+    "generate_tracing_report",
 }
 
 # ===== 图表模式工具 =====
@@ -202,21 +208,12 @@ SOCIAL_TOOL_NAMES = {
 
     # === CLI会话管理 ===
     "cli_session", "terminal_session",
-}
 
-# ===== 编程模式工具 =====
-CODE_TOOL_NAMES = {
-    # 文件操作
-    "read_file", "write_file", "edit_file", "grep", "search_files", "list_directory",
+    # === 历史会话搜索 ===
+    "session_search",
 
-    # Shell命令
-    "bash",
-
-    # 编程工具
-    "validate_tool",
-
-    # 模式互调
-    "call_sub_agent"
+    # === 报告生成 ===
+    "generate_tracing_report",
 }
 
 # ===== 记忆整合器工具（后台专用） =====
@@ -278,6 +275,9 @@ ASSISTANT_TOOL_ORDER = [
     # 任务管理
     "TodoWrite", "create_scheduled_task", "list_skills",
 
+    # 报告生成
+    "generate_tracing_report",
+
     # 模式互调
     "call_sub_agent"
 ]
@@ -312,23 +312,6 @@ EXPERT_TOOL_ORDER = [
 
     # 完成
     "FINISH_SUMMARY"
-]
-
-CODE_TOOL_ORDER = [
-    # 浏览
-    "list_directory", "search_files", "read_file",
-
-    # 搜索
-    "grep", "search_files",
-
-    # 编辑
-    "write_file", "edit_file",
-
-    # 执行
-    "bash", "validate_tool",
-
-    # 模式互调
-    "call_sub_agent"
 ]
 
 QUERY_TOOL_ORDER = [
@@ -389,7 +372,6 @@ QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
-CODE_TOOLS = _build_tool_dict(CODE_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
 DELIBERATION_MONITORING_TOOLS = _build_tool_dict(DELIBERATION_MONITORING_TOOL_NAMES)
@@ -410,7 +392,6 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     mode_mapping = {
         "assistant": ASSISTANT_TOOLS,
         "expert": EXPERT_TOOLS,
-        "code": CODE_TOOLS,
         "query": QUERY_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
@@ -441,7 +422,6 @@ def get_tool_order(mode: str) -> List[str]:
     order_mapping = {
         "assistant": ASSISTANT_TOOL_ORDER,
         "expert": EXPERT_TOOL_ORDER,
-        "code": CODE_TOOL_ORDER,
         "query": QUERY_TOOL_ORDER,
     }
 

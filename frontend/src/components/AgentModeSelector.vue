@@ -30,15 +30,6 @@
     </button>
     <button
       class="mode-button"
-      :class="{ active: store.currentMode === 'code', running: isModeRunning('code') }"
-      @click="selectMode('code')"
-      title="编程模式 - 工具开发：创建、编辑、测试工具，查看代码"
-    >
-      <span v-if="isModeRunning('code')" class="running-indicator">●</span>
-      💻 编程
-    </button>
-    <button
-      class="mode-button"
       :class="{ active: store.currentMode === 'report', running: isModeRunning('report') }"
       @click="selectMode('report')"
       title="报告模式 - 报告生成：基于模板和数据生成DOCX格式报告"
@@ -80,7 +71,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'expert', 'code', 'query', 'report', 'chart', 'tracing'].includes(value)
+    validator: (value) => ['assistant', 'expert', 'query', 'report', 'chart', 'tracing'].includes(value)
   }
 })
 
@@ -104,7 +95,6 @@ const getModeLabel = (mode) => {
     'assistant': '助手',
     'expert': '专家',
     'query': '问数',
-    'code': '编程',
     'report': '报告',
     'chart': '图表',
     'tracing': '溯源'

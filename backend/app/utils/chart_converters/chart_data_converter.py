@@ -348,10 +348,25 @@ class ChartDataConverter:
         # 排序时间点
         time_points = sorted(all_timestamps)
         if not time_points:
+            logger.warning(
+                "particulate_stacked_timeseries_no_timepoints",
+                record_count=len(records)
+            )
             return {"error": "颗粒物数据缺少时间字段"}
 
         # 构建堆叠面积图数据
         component_names = sorted(list(all_components))
+
+        # 验证是否有有效数据
+        if not component_names and not pm25_data:
+            logger.warning(
+                "particulate_stacked_timeseries_no_valid_data",
+                record_count=len(records),
+                time_points=len(time_points),
+                components_found=len(component_names),
+                pm25_data_points=len(pm25_data)
+            )
+            return {"error": "颗粒物数据中没有有效的离子组分或PM2.5数据"}
 
         # 颜色映射（常用组分颜色）
         color_map = {

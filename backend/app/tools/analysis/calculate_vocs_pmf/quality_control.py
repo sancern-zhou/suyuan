@@ -545,6 +545,10 @@ class NIMFAWrapper:
     def __init__(self):
         """初始化nimfa包装器"""
         try:
+            import numpy as np
+            # 兼容 NumPy 2.x：np.mat 被移除，用 np.asmatrix 替代
+            if not hasattr(np, 'mat'):
+                np.mat = np.asmatrix
             import nimfa
             self.nimfa = nimfa
             self.available = True

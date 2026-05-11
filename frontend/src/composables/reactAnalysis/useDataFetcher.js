@@ -50,7 +50,16 @@ export function useDataFetcher() {
     fetcherOperating.value = true
 
     try {
-      const response = await fetch(`/api/fetchers/${fetcherId}/${action}`, {
+      // 映射前端操作到后端API路径
+      const actionPathMap = {
+        [FETCHER_ACTIONS.START]: 'trigger',
+        [FETCHER_ACTIONS.PAUSE]: 'pause',
+        [FETCHER_ACTIONS.RESUME]: 'resume',
+        [FETCHER_ACTIONS.STOP]: 'pause'  // 后端没有stop接口，使用pause代替
+      }
+
+      const backendAction = actionPathMap[action] || 'trigger'
+      const response = await fetch(`/api/fetchers/${backendAction}/${fetcherId}`, {
         method: 'POST'
       })
 

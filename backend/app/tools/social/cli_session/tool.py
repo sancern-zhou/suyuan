@@ -33,6 +33,8 @@ UUID_RE = re.compile(
 
 DEFAULT_ANSWER_CHARS = 12000
 DEFAULT_RAW_OUTPUT_CHARS = 4000
+MAX_STDOUT_BYTES = 50 * 1024 * 1024  # 50 MB hard cap per CLI invocation
+MAX_STDERR_BYTES = 10 * 1024 * 1024  # 10 MB hard cap for stderr
 
 
 class CliSessionTool(LLMTool):
@@ -401,6 +403,21 @@ class CliSessionTool(LLMTool):
                 process.communicate(stdin_text.encode("utf-8")),
                 timeout=timeout,
             )
+            # Hard cap: truncate raw stdout/stderr to prevent disk bombs
+            if len(stdout_b) > MAX_STDOUT_BYTES:
+                logger.warning(
+                    "cli_session_stdout_truncated",
+                    original_bytes=len(stdout_b),
+                    max_bytes=MAX_STDOUT_BYTES,
+                )
+                stdout_b = stdout_b[:MAX_STDOUT_BYTES]
+            if len(stderr_b) > MAX_STDERR_BYTES:
+                logger.warning(
+                    "cli_session_stderr_truncated",
+                    original_bytes=len(stderr_b),
+                    max_bytes=MAX_STDERR_BYTES,
+                )
+                stderr_b = stderr_b[:MAX_STDERR_BYTES]
             return {
                 "exit_code": process.returncode if process.returncode is not None else -1,
                 "stdout": stdout_b.decode("utf-8", errors="replace"),

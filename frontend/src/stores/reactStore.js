@@ -128,7 +128,6 @@ export const useReactStore = defineStore('react', {
         assistant: createEmptyModeState(),
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
-        code: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
         tracing: createEmptyModeState()
@@ -352,7 +351,7 @@ export const useReactStore = defineStore('react', {
      * - 恢复目标模式状态
      */
     switchMode(newMode) {
-      if (!['assistant', 'expert', 'query', 'code', 'report', 'chart', 'tracing'].includes(newMode)) {
+      if (!['assistant', 'expert', 'query', 'report', 'chart', 'tracing'].includes(newMode)) {
         console.warn('[switchMode] Invalid mode:', newMode)
         return
       }
@@ -512,7 +511,7 @@ export const useReactStore = defineStore('react', {
      * 重置所有模式的状态
      */
     resetAllModes() {
-      for (const mode of ['assistant', 'expert', 'query', 'code', 'report', 'chart']) {
+      for (const mode of ['assistant', 'expert', 'query', 'report', 'chart']) {
         this.resetMode(mode)
       }
       console.log('[resetAllModes] All modes reset')
@@ -525,7 +524,7 @@ export const useReactStore = defineStore('react', {
       const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
       let cleanedCount = 0
 
-      for (const mode of ['assistant', 'expert', 'query', 'code', 'report', 'chart']) {
+      for (const mode of ['assistant', 'expert', 'query', 'report', 'chart']) {
         const stateKey = `mode-state-${mode}`
         const savedStateJSON = localStorage.getItem(stateKey)
 
@@ -801,7 +800,7 @@ export const useReactStore = defineStore('react', {
         console.log('Available tools:', this.availableTools)
 
         // 恢复所有模式的状态
-        for (const mode of ['assistant', 'expert', 'query', 'code', 'report', 'chart']) {
+        for (const mode of ['assistant', 'expert', 'query', 'report', 'chart']) {
           this._restoreModeState(mode)
         }
       } catch (error) {
