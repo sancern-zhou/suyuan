@@ -743,7 +743,7 @@ def execute_query_station_new_standard_report(
     aggregate: bool = False,
     context: ExecutionContext = None,
     station_type: Optional[str] = None,
-    sand_type: Optional[int] = None
+    sand_type: Optional[int] = 1
 ) -> Dict[str, Any]:
     """
     执行站点新标准统计报表查询
@@ -756,7 +756,7 @@ def execute_query_station_new_standard_report(
         aggregate: 是否计算多站点汇总统计
         context: 执行上下文
         station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
 
     Returns:
         查询结果
@@ -971,7 +971,7 @@ class QueryStationNewStandardReportTool(LLMTool):
                     },
                     "sand_type": {
                         "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1扣沙",
                         "enum": [0, 1]
                     }
                 },
@@ -997,7 +997,7 @@ class QueryStationNewStandardReportTool(LLMTool):
         cities = kwargs.get("cities")
         stations = kwargs.get("stations")
         aggregate = kwargs.get("aggregate", False)
-        sand_type = kwargs.get("sand_type")
+        sand_type = kwargs.get("sand_type", 1)
 
         if not start_date or not end_date:
             return {

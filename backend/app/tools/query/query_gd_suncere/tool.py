@@ -723,8 +723,8 @@ class QueryGDSuncereDataTool:
         start_date: str,
         end_date: str,
         context: ExecutionContext,
-        data_type: int = 1,
-        sand_type: Optional[int] = None,
+        data_type: Optional[int] = None,
+        sand_type: Optional[int] = 1,
         enable_sand_deduction: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -735,8 +735,8 @@ class QueryGDSuncereDataTool:
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             context: 执行上下文
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
-            sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
+            sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
             enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
         Returns:
@@ -903,9 +903,9 @@ class QueryGDSuncereDataTool:
         start_date: str = None,
         end_date: str = None,
         context: ExecutionContext = None,
-        data_type: int = 1,
+        data_type: Optional[int] = None,
         station_type: Optional[str] = None,
-        sand_type: Optional[int] = None
+        sand_type: Optional[int] = 1
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -916,9 +916,9 @@ class QueryGDSuncereDataTool:
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             context: 执行上下文
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
             station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
-            sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+            sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
 
         Returns:
             查询结果
@@ -1859,8 +1859,8 @@ def execute_query_gd_suncere_city_day(
     start_date: str,
     end_date: str,
     context: ExecutionContext,
-    data_type: int = 1,
-    sand_type: Optional[int] = None,
+    data_type: Optional[int] = None,
+    sand_type: Optional[int] = 1,
     enable_sand_deduction: Optional[bool] = None
 ) -> Dict[str, Any]:
     """
@@ -1871,8 +1871,8 @@ def execute_query_gd_suncere_city_day(
         start_date: 开始日期，格式 "YYYY-MM-DD"
         end_date: 结束日期，格式 "YYYY-MM-DD"
         context: 执行上下文
-        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
         enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
     Returns:
@@ -2794,7 +2794,7 @@ def execute_query_gd_suncere_station_day(
     start_date: str = None,
     end_date: str = None,
     context: Optional[ExecutionContext] = None,
-    data_type: int = 1,
+    data_type: Optional[int] = None,
     station_type: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -2809,7 +2809,7 @@ def execute_query_gd_suncere_station_day(
         start_date: 开始日期，格式 "YYYY-MM-DD"
         end_date: 结束日期，格式 "YYYY-MM-DD"
         context: 执行上下文
-        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
         station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
 
     Returns:
@@ -3386,7 +3386,7 @@ async def query_day_data_by_segment(
     start_date: str,
     end_date: str,
     data_type: int,
-    sand_type: Optional[int] = None
+    sand_type: Optional[int] = 1
 ) -> List[Dict]:
     """
     按时间段查询日报数据
@@ -3397,7 +3397,7 @@ async def query_day_data_by_segment(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         data_type: 数据类型（0原始实况，1审核实况）
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
 
     Returns:
         日报数据列表
@@ -3838,7 +3838,7 @@ async def execute_query_standard_comparison(
     start_date: str,
     end_date: str,
     context: ExecutionContext,
-    sand_type: Optional[int] = None,
+    sand_type: Optional[int] = 1,
     enable_sand_deduction: Optional[bool] = None
 ) -> Dict[str, Any]:
     """
@@ -3851,7 +3851,7 @@ async def execute_query_standard_comparison(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         context: 执行上下文
-        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
         enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
     Returns:
@@ -4094,11 +4094,11 @@ async def execute_query_standard_comparison(
         # 构建摘要
         if len(cities) == 1:
             city = list(city_comparison.keys())[0] if city_comparison else cities[0]
-            summary_text = f"{city} 新旧标准对比查询完成（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            summary_text = f"{city} 新旧标准对比查询完成（日数据底层自动使用近三天原始、三天外审核） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
             # if day_data_id:
             #     summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
         else:
-            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市（日数据底层自动使用近三天原始、三天外审核） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
             # if day_data_id:
             #     summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
 
