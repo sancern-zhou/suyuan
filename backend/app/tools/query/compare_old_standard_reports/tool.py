@@ -126,9 +126,10 @@ class CompareOldStandardReportsTool(LLMTool):
                         },
                         "required": ["start_date", "end_date"]
                     },
-                    "enable_sand_deduction": {
-                        "type": "boolean",
-                        "description": "是否启用扣沙处理，默认true"
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
                     }
                 },
                 "required": ["cities", "query_period", "comparison_period"]
@@ -154,14 +155,14 @@ class CompareOldStandardReportsTool(LLMTool):
         cities = kwargs["cities"]
         query_period = kwargs["query_period"]
         comparison_period = kwargs["comparison_period"]
-        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)
+        sand_type = kwargs.get("sand_type")
 
         logger.info(
             "compare_old_standard_reports_start",
             cities=cities,
             query_period=query_period,
             comparison_period=comparison_period,
-            enable_sand_deduction=enable_sand_deduction
+            sand_type=sand_type
         )
 
         # 2. 并发查询两个时间段的数据（排除超标详情）
@@ -169,7 +170,7 @@ class CompareOldStandardReportsTool(LLMTool):
             cities=cities,
             start_date=query_period["start_date"],
             end_date=query_period["end_date"],
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             context=context
         )
 
@@ -177,7 +178,7 @@ class CompareOldStandardReportsTool(LLMTool):
             cities=cities,
             start_date=comparison_period["start_date"],
             end_date=comparison_period["end_date"],
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             context=context
         )
 
@@ -248,7 +249,7 @@ class CompareOldStandardReportsTool(LLMTool):
                 "comparison_period": comparison_period,
                 "source_data_ids": [current_data_id, comparison_data_id] if current_data_id and comparison_data_id else [],
                 "cities": cities,
-                "enable_sand_deduction": enable_sand_deduction
+                "sand_type": sand_type
             }
         }
 

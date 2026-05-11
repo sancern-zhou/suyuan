@@ -127,6 +127,11 @@ class CompareStationStandardReportsTool(LLMTool):
                     "aggregate": {
                         "type": "boolean",
                         "description": "是否计算多站点汇总对比（默认false）"
+                    },
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
                     }
                 },
                 "required": ["query_period", "comparison_period"]
@@ -154,6 +159,7 @@ class CompareStationStandardReportsTool(LLMTool):
         query_period = kwargs["query_period"]
         comparison_period = kwargs["comparison_period"]
         aggregate = kwargs.get("aggregate", False)
+        sand_type = kwargs.get("sand_type")
 
         logger.info(
             "compare_station_standard_reports_start",
@@ -161,7 +167,8 @@ class CompareStationStandardReportsTool(LLMTool):
             stations=stations,
             query_period=query_period,
             comparison_period=comparison_period,
-            aggregate=aggregate
+            aggregate=aggregate,
+            sand_type=sand_type
         )
 
         # 2. 查询两个时间段的数据（顺序执行）
@@ -171,7 +178,8 @@ class CompareStationStandardReportsTool(LLMTool):
             start_date=query_period["start_date"],
             end_date=query_period["end_date"],
             aggregate=aggregate,
-            context=context
+            context=context,
+            sand_type=sand_type
         )
 
         comparison_result = execute_query_station_new_standard_report(
@@ -180,7 +188,8 @@ class CompareStationStandardReportsTool(LLMTool):
             start_date=comparison_period["start_date"],
             end_date=comparison_period["end_date"],
             aggregate=aggregate,
-            context=context
+            context=context,
+            sand_type=sand_type
         )
 
         # 3. 错误处理
@@ -225,6 +234,7 @@ class CompareStationStandardReportsTool(LLMTool):
                 "cities": cities or [],
                 "stations": stations or [],
                 "aggregate": aggregate,
+                "sand_type": sand_type,
                 "station_count": station_count,
             }
         }

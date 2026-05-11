@@ -280,7 +280,8 @@ class GDSuncereAPIClient:
         city_codes: List[str],
         start_date: str,
         end_date: str,
-        data_type: int = 0
+        data_type: int = 0,
+        sand_type: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         查询城市日报数据
@@ -291,12 +292,14 @@ class GDSuncereAPIClient:
           - codes: 城市代码数组（可重复传多个）
           - timePoint: 时间数组，格式 ["YYYY-MM-DD 00:00:00", "YYYY-MM-DD 23:59:59"]
           - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+          - sandType: 扣沙类型（0不扣沙，1扣沙；如接口支持则透传）
 
         Args:
             city_codes: 城市代码列表（如 ["440100", "440300"] 表示广州、深圳）
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             data_type: 数据类型，默认 0（原始实况）
+            sand_type: 扣沙类型，0不扣沙，1扣沙；None时不传该参数
 
         Returns:
             城市日报数据
@@ -312,13 +315,16 @@ class GDSuncereAPIClient:
             ],
             "dataType": data_type
         }
+        if sand_type is not None:
+            params["sandType"] = sand_type
 
         logger.info(
             "query_city_day_data",
             city_codes=city_codes,
             start_date=start_date,
             end_date=end_date,
-            data_type=data_type
+            data_type=data_type,
+            sand_type=sand_type
         )
 
         return self._make_request(endpoint, params, method="GET")
@@ -428,7 +434,8 @@ class GDSuncereAPIClient:
         station_codes: List[str],
         start_date: str,
         end_date: str,
-        data_type: int = 0
+        data_type: int = 0,
+        sand_type: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -441,12 +448,14 @@ class GDSuncereAPIClient:
           - codes: 站点代码数组，如 ["1001A", "1002A"]
           - timePoint: 时间数组，格式 ["YYYY-MM-DD 00:00:00", "YYYY-MM-DD 23:59:59"]
           - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+          - sandType: 扣沙类型（0不扣沙，1扣沙；如接口支持则透传）
 
         Args:
             station_codes: 站点代码列表（如 ["1001A", "1002A"]）
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
             data_type: 数据类型，默认 0（原始实况）
+            sand_type: 扣沙类型，0不扣沙，1扣沙；None时不传该参数
 
         Returns:
             站点日报数据
@@ -462,13 +471,16 @@ class GDSuncereAPIClient:
             ],
             "dataType": data_type
         }
+        if sand_type is not None:
+            payload["sandType"] = sand_type
 
         logger.info(
             "query_station_day_data",
             station_codes=station_codes,
             start_date=start_date,
             end_date=end_date,
-            data_type=data_type
+            data_type=data_type,
+            sand_type=sand_type
         )
 
         return self._make_request(endpoint, payload, method="POST")
