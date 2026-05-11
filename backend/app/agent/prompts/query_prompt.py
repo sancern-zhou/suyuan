@@ -198,7 +198,7 @@ def build_query_prompt(available_tools: List[str], memory_context: Optional[str]
         "### 广东省数据查询公共参数",
         "- `cities`: 城市名称列表（如['广州', '深圳']，自动映射到编码）",
         "- `start_date/end_date`: 日期范围（必需，格式'YYYY-MM-DD'）",
-        "- `enable_sand_deduction`: 是否启用扣沙处理（默认true）",
+        "- `enable_sand_deduction`: 是否启用扣沙处理（默认true，已废弃；扣沙由接口 sand_type 参数处理，默认1扣沙）",
         "",
         "### jq_filter关键点",
         "- **primary_pollutant特殊处理**：可能包含组合污染物（如\"PM2_5,NO2\"），需用contains匹配",
