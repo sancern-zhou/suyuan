@@ -407,13 +407,14 @@ async def analyze_stream(request: AgentAnalyzeRequest):
 
                         # 【验证】检查 tool_result 事件的 data 字段
                         if event["type"] == "tool_result":
+                            result = event_data.get("result") or {}
                             logger.info("[tool_result_debug] 验证 event.data 结构",
                                 has_data="data" in event,
                                 data_keys=list(event_data.keys()) if isinstance(event_data, dict) else "not_dict",
                                 has_result="result" in event_data,
-                                result_keys=list(event_data.get("result", {}).keys()) if isinstance(event_data.get("result"), dict) else "not_dict",
-                                has_visuals="visuals" in event_data.get("result", {}),
-                                visuals_count=len(event_data.get("result", {}).get("visuals", []))
+                                result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
+                                has_visuals="visuals" in result,
+                                visuals_count=len(result.get("visuals", []))
                             )
 
                         frontend_message = {
@@ -493,13 +494,13 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                             event["data"]["last_office_document"] = office_documents[-1]
 
                         # ✅ 添加最终答案消息
-                        if event.get("data", {}).get("answer"):
-                            event_data = event.get("data", {})
+                        event_data = event.get("data") or {}
+                        if event_data.get("answer"):
                             final_message = {
                                 "type": "final",
-                                "content": event["data"]["answer"],
-                                "data": event.get("data", {}),
-                                "timestamp": event.get("data", {}).get("timestamp", datetime.now().isoformat())
+                                "content": event_data["answer"],
+                                "data": event_data,
+                                "timestamp": event_data.get("timestamp", datetime.now().isoformat())
                             }
 
                             # ✅ 将visuals提取到消息顶层，确保能被正确存储和恢复
@@ -564,9 +565,10 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                         if "data" in event and "error" in event["data"]:
                             multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
                         if event["type"] == "interrupted":
+                            event_data = event.get("data") or {}
                             compressed_history.append({
                                 "type": "interrupted",
-                                "content": event.get("data", {}).get("reason", "用户已暂停本轮分析"),
+                                "content": event_data.get("reason", "用户已暂停本轮分析"),
                                 "timestamp": datetime.now().isoformat()
                             })
                         await session_manager.save_session(session)
