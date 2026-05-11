@@ -724,7 +724,8 @@ class QueryGDSuncereDataTool:
         end_date: str,
         context: ExecutionContext,
         data_type: int = 1,
-        enable_sand_deduction: bool = True
+        sand_type: Optional[int] = None,
+        enable_sand_deduction: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         查询城市日报数据
@@ -735,7 +736,8 @@ class QueryGDSuncereDataTool:
             end_date: 结束日期 (YYYY-MM-DD)
             context: 执行上下文
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
-            enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
+            sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+            enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
         Returns:
             查询结果
@@ -745,7 +747,8 @@ class QueryGDSuncereDataTool:
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            enable_sand_deduction=enable_sand_deduction
+            data_type=data_type,
+            sand_type=sand_type
         )
 
         try:
@@ -762,7 +765,8 @@ class QueryGDSuncereDataTool:
                 city_codes=city_codes,
                 start_date=start_date,
                 end_date=end_date,
-                data_type=data_type
+                data_type=data_type,
+                sand_type=sand_type
             )
 
             if not response.get("success"):
@@ -806,22 +810,6 @@ class QueryGDSuncereDataTool:
                 standardized_count=len(standardized_records)
             )
 
-            # 扣沙处理（在修约之前）
-            sand_dates = {}
-            if enable_sand_deduction:
-                from app.tools.query.query_new_standard_report.tool import load_sand_deduction_dates, clean_sand_deduction_data
-
-                sand_dates = load_sand_deduction_dates()
-                if sand_dates:
-                    standardized_records = clean_sand_deduction_data(standardized_records, sand_dates)
-                    logger.info(
-                        "sand_deduction_applied",
-                        cities_count=len(sand_dates),
-                        total_dates=sum(len(dates) for dates in sand_dates.values())
-                    )
-                else:
-                    logger.info("sand_deduction_skipped", reason="no_sand_data_loaded")
-
             # 对日数据浓度值应用修约规则（按原始监测数据规则：保留整数位）
             def safe_float(value, default=0.0):
                 """安全转换为浮点数"""
@@ -835,19 +823,11 @@ class QueryGDSuncereDataTool:
             for record in standardized_records:
                 measurements = record.get("measurements", {})
 
-                # 检查是否为扣沙日
-                is_sand_day = record.get("is_sand_deduction_day", False)
-
                 # 提取原始浓度值
-                if is_sand_day:
-                    # 扣沙日：PM2.5/PM10为"-"，不参与修约
-                    pm25_raw = 0
-                    pm10_raw = 0
-                else:
-                    pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
-                                        record.get("pm2_5") or record.get("PM2_5"))
-                    pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
-                                        record.get("pm10") or record.get("PM10"))
+                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                                    record.get("pm2_5") or record.get("PM2_5"))
+                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                                    record.get("pm10") or record.get("PM10"))
 
                 so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
                                    record.get("so2") or record.get("SO2"))
@@ -859,12 +839,9 @@ class QueryGDSuncereDataTool:
                                     record.get("o3_8h") or record.get("O3_8h"))
 
                 # 应用修约规则并更新 measurements
-                if not is_sand_day:
-                    # 非扣沙日：正常修约
-                    # 0位小数转为整数类型，避免显示 .0
-                    measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
-                    measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
-                # 扣沙日的PM2.5/PM10保持"-"（已在 clean_sand_deduction_data 中设置）
+                # 0位小数转为整数类型，避免显示 .0
+                measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
+                measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
 
                 measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
                 measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))
@@ -883,8 +860,7 @@ class QueryGDSuncereDataTool:
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "field_mapping_applied": True,
                     "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {},
-                    "enable_sand_deduction": enable_sand_deduction,
-                    "sand_deduction_applied": bool(sand_dates)
+                    "sand_type": sand_type
                 }
             )
 
@@ -928,7 +904,8 @@ class QueryGDSuncereDataTool:
         end_date: str = None,
         context: ExecutionContext = None,
         data_type: int = 1,
-        station_type: Optional[str] = None
+        station_type: Optional[str] = None,
+        sand_type: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -941,6 +918,7 @@ class QueryGDSuncereDataTool:
             context: 执行上下文
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
             station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
+            sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
 
         Returns:
             查询结果
@@ -1032,7 +1010,8 @@ class QueryGDSuncereDataTool:
                 station_codes=station_codes,
                 start_date=start_date,
                 end_date=end_date,
-                data_type=calculated_data_type
+                data_type=calculated_data_type,
+                sand_type=sand_type
             )
 
             if not response.get("success"):
@@ -1881,7 +1860,8 @@ def execute_query_gd_suncere_city_day(
     end_date: str,
     context: ExecutionContext,
     data_type: int = 1,
-    enable_sand_deduction: bool = True
+    sand_type: Optional[int] = None,
+    enable_sand_deduction: Optional[bool] = None
 ) -> Dict[str, Any]:
     """
     执行城市日报数据查询
@@ -1892,7 +1872,8 @@ def execute_query_gd_suncere_city_day(
         end_date: 结束日期，格式 "YYYY-MM-DD"
         context: 执行上下文
         data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
-        enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
     Returns:
         查询结果字典
@@ -1903,7 +1884,7 @@ def execute_query_gd_suncere_city_day(
         end_date=end_date,
         context=context,
         data_type=data_type,
-        enable_sand_deduction=enable_sand_deduction
+        sand_type=sand_type
     )
 
 
@@ -3404,7 +3385,8 @@ async def query_day_data_by_segment(
     city_codes: List[str],
     start_date: str,
     end_date: str,
-    data_type: int
+    data_type: int,
+    sand_type: Optional[int] = None
 ) -> List[Dict]:
     """
     按时间段查询日报数据
@@ -3415,6 +3397,7 @@ async def query_day_data_by_segment(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         data_type: 数据类型（0原始实况，1审核实况）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
 
     Returns:
         日报数据列表
@@ -3426,6 +3409,7 @@ async def query_day_data_by_segment(
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
+            sand_type=sand_type,
             data_type_name="原始实况" if data_type == 0 else "审核实况"
         )
 
@@ -3433,7 +3417,8 @@ async def query_day_data_by_segment(
             city_codes=city_codes,
             start_date=start_date,
             end_date=end_date,
-            data_type=data_type
+            data_type=data_type,
+            sand_type=sand_type
         )
 
         if response.get("success"):
@@ -3471,12 +3456,11 @@ def calculate_old_standard_stats_from_daily(
 
     业务规则：
     - 使用旧标准限值和IAQI断点表
-    - 扣沙日数据已由上游清洗（PM2.5/PM10为None，原始值保存在 PM2_5_original/PM10_original）
     - 旧标准PM2.5断点：IAQI=100时75μg/m³（新标准60）
     - 旧标准PM10断点：IAQI=100时150μg/m³（新标准120）
 
     Args:
-        daily_records: 日报数据列表（已清洗扣沙日）
+        daily_records: 日报数据列表
         city_name: 城市名称
 
     Returns:
@@ -3493,8 +3477,8 @@ def calculate_old_standard_stats_from_daily(
     exceed_details = []
     pm25_sum = 0
     pm10_sum = 0
-    pm25_valid_count = 0  # PM2.5有效天数（剔除扣沙日）
-    pm10_valid_count = 0  # PM10有效天数（剔除扣沙日）
+    pm25_valid_count = 0
+    pm10_valid_count = 0
     so2_sum = 0
     no2_sum = 0
     co_sum = 0
@@ -3529,9 +3513,6 @@ def calculate_old_standard_stats_from_daily(
             except (TypeError, ValueError):
                 return default
 
-        # 检查是否为扣沙日
-        is_sand_day = record.get("is_sand_deduction_day", False)
-
         # 提取浓度值
         pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
                 record.get("pm2_5") or record.get("PM2_5"))
@@ -3554,17 +3535,10 @@ def calculate_old_standard_stats_from_daily(
         co = apply_rounding(co_raw, 'CO', 'raw_data')
         o3_8h = apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data')
 
-        # 扣沙日的AQI和首要污染物使用原始值计算
-        if is_sand_day:
-            pm25_original_raw = safe_float(record.get("PM2_5_original"))
-            pm10_original_raw = safe_float(record.get("PM10_original"))
-            pm25_for_aqi = apply_rounding(pm25_original_raw, 'PM2_5', 'raw_data')
-            pm10_for_aqi = apply_rounding(pm10_original_raw, 'PM10', 'raw_data')
-        else:
-            pm25_for_aqi = pm25
-            pm10_for_aqi = pm10
+        pm25_for_aqi = pm25
+        pm10_for_aqi = pm10
 
-        # 累加修约后的浓度值（扣沙日PM2.5/PM10为0，不计入）
+        # 累加修约后的浓度值
         if pm25 > 0:
             pm25_sum += pm25
             pm25_valid_count += 1
@@ -3864,7 +3838,8 @@ async def execute_query_standard_comparison(
     start_date: str,
     end_date: str,
     context: ExecutionContext,
-    enable_sand_deduction: bool = True
+    sand_type: Optional[int] = None,
+    enable_sand_deduction: Optional[bool] = None
 ) -> Dict[str, Any]:
     """
     查询新旧标准对比统计指标（重构版）
@@ -3876,7 +3851,8 @@ async def execute_query_standard_comparison(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         context: 执行上下文
-        enable_sand_deduction: 是否启用扣沙处理（默认True）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
     Returns:
         新旧标准对比结果
@@ -3929,7 +3905,7 @@ async def execute_query_standard_comparison(
     python tests/test_api_response_structure.py
 
     【重构说明】
-    - 复用 query_new_standard_report 获取新标准统计（含扣沙处理）
+    - 复用 query_new_standard_report 获取新标准统计
     - 基于日数据计算旧标准统计（使用旧标准限值和IAQI断点）
     - 合并新旧标准对比结果
     """
@@ -3937,7 +3913,8 @@ async def execute_query_standard_comparison(
         "query_standard_comparison_start",
         cities=cities,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        sand_type=sand_type
     )
 
     try:
@@ -3948,7 +3925,7 @@ async def execute_query_standard_comparison(
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             context=context
         )
 

@@ -20,16 +20,6 @@ import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
 import structlog
-import os
-
-# 尝试导入xlrd，如果失败则禁用扣沙功能
-try:
-    import xlrd
-    XLRD_AVAILABLE = True
-except ImportError:
-    XLRD_AVAILABLE = False
-    logger = structlog.get_logger()
-    logger.warning("xlrd_not_installed", message="xlrd包未安装，扣沙功能将被禁用")
 
 from app.tools.base import LLMTool, ToolCategory
 from app.agent.context.execution_context import ExecutionContext
@@ -70,346 +60,6 @@ for region, cities in GUANGDONG_REGIONS.items():
         if city not in CITY_TO_REGION:
             CITY_TO_REGION[city] = []
         CITY_TO_REGION[city].append(region)
-
-
-# =============================================================================
-# 扣沙数据处理函数
-# =============================================================================
-
-# 扣沙数据表格路径（优先使用CSV格式）
-_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-SAND_DEDUCTION_FILE_CSV = os.path.join(_CURRENT_DIR, "扣沙数据.csv")
-SAND_DEDUCTION_FILE_XLS = os.path.join(_CURRENT_DIR, "城市扣沙数据查询2015-12-01到2026-03-18.xls")
-
-# 全局缓存：城市 -> 日期 -> 扣沙完整信息（包括首要污染物）
-_sand_deduction_cache: Dict[str, Dict[str, Dict]] = {}
-
-
-def load_sand_deduction_dates() -> Dict[str, Dict[str, Dict]]:
-    """
-    从扣沙表格中加载扣沙日期和完整信息
-
-    支持两种格式：
-    1. CSV格式（优先）：扣沙数据.csv
-    2. Excel格式（备用）：城市扣沙数据查询2015-12-01到2026-03-18.xls
-
-    Returns:
-        城市名称 -> 日期 -> 扣沙完整信息（包括首要污染物）
-        例如：{"广州": {"2023-03-13": {"primary_pollutant": "PM10", ...}, ...}, ...}
-    """
-    global _sand_deduction_cache
-
-    # 如果已经加载，直接返回缓存
-    if _sand_deduction_cache:
-        return _sand_deduction_cache
-
-    # 优先尝试CSV格式
-    if os.path.exists(SAND_DEDUCTION_FILE_CSV):
-        return _load_sand_deduction_dates_csv()
-
-    # 备用：尝试Excel格式
-    if os.path.exists(SAND_DEDUCTION_FILE_XLS):
-        return _load_sand_deduction_dates_xls()
-
-    # 都不存在
-    logger.warning(
-        "sand_deduction_file_not_found",
-        csv_file=SAND_DEDUCTION_FILE_CSV,
-        xls_file=SAND_DEDUCTION_FILE_XLS,
-        message="扣沙数据表格不存在，将不进行扣沙处理"
-    )
-    return {}
-
-
-def _load_sand_deduction_dates_csv() -> Dict[str, Dict[str, Dict]]:
-    """从CSV文件加载扣沙日期和完整信息（包括首要污染物）"""
-    global _sand_deduction_cache
-
-    import csv
-
-    sand_data = {}
-
-    try:
-        # CSV文件使用GBK编码
-        with open(SAND_DEDUCTION_FILE_CSV, 'r', encoding='gbk') as f:
-            reader = csv.DictReader(f)
-
-            for row in reader:
-                city = row.get('name', '').strip()
-                date_str = row.get('timepoint', '').strip()
-                pm10 = row.get('pm10', '').strip()
-                pm25 = row.get('pm2_5', '').strip()
-                primary_pollutant = row.get('primarypollutant', '').strip()
-
-                # 检查是否为扣沙日（PM10或PM2.5为"—"）
-                if pm10 == '—' or pm25 == '—':
-                    try:
-                        # 转换日期格式：2023/3/13 0:00 -> 2023-03-13
-                        # 先移除时间部分
-                        date_part = date_str.split()[0] if ' ' in date_str else date_str
-                        # 解析日期
-                        date_obj = datetime.strptime(date_part, '%Y/%m/%d')
-                        standardized_date = date_obj.strftime('%Y-%m-%d')
-
-                        # 初始化城市数据
-                        if city not in sand_data:
-                            sand_data[city] = {}
-
-                        # 保存完整的扣沙信息（包括首要污染物）
-                        # 处理首要污染物格式：O3_8H -> O3_8h
-                        primary_normalized = primary_pollutant if primary_pollutant != '—' else None
-                        if primary_normalized == 'O3_8H':
-                            primary_normalized = 'O3_8h'
-
-                        sand_data[city][standardized_date] = {
-                            'primary_pollutant': primary_normalized,
-                            'pm10': pm10,
-                            'pm2_5': pm25,
-                            'so2': row.get('so2', '').strip(),
-                            'no2': row.get('no2', '').strip(),
-                            'co': row.get('co', '').strip(),
-                            'o3_8h': row.get('o3_8h', '').strip(),
-                            'o3': row.get('o3', '').strip(),
-                            'no': row.get('no', '').strip(),
-                            'nox': row.get('nox', '').strip(),
-                            'aqi': row.get('aqi', '').strip(),
-                            'qualitytype': row.get('qualitytype', '').strip(),
-                            'is_sand_day': True
-                        }
-                    except ValueError as e:
-                        logger.warning(
-                            "invalid_sand_deduction_date",
-                            city=city,
-                            date_str=date_str,
-                            error=str(e)
-                        )
-                        continue
-
-        _sand_deduction_cache = sand_data
-        logger.info(
-            "sand_deduction_dates_loaded_from_csv",
-            cities_count=len(sand_data),
-            total_dates=sum(len(dates) for dates in sand_data.values()),
-            details={city: len(dates) for city, dates in sand_data.items()}
-        )
-
-        return sand_data
-
-    except Exception as e:
-        logger.error(
-            "failed_to_load_sand_deduction_csv",
-            file=SAND_DEDUCTION_FILE_CSV,
-            error=str(e)
-        )
-        return {}
-
-
-def _load_sand_deduction_dates_xls() -> Dict[str, Dict[str, Dict]]:
-    """从Excel文件加载扣沙日期和完整信息（备用方案）"""
-    global _sand_deduction_cache
-
-    # 检查xlrd是否可用
-    if not XLRD_AVAILABLE:
-        logger.warning(
-            "sand_deduction_disabled",
-            message="xlrd包未安装，扣沙功能被禁用"
-        )
-        return {}
-
-    try:
-        # 读取Excel文件
-        workbook = xlrd.open_workbook(SAND_DEDUCTION_FILE_XLS)
-        sheet = workbook.sheet_by_index(0)
-
-        # 解析扣沙日期和完整信息
-        sand_data = {}
-        for row_idx in range(1, sheet.nrows):
-            row = sheet.row_values(row_idx)
-            city = row[0]
-            date_str = row[2]
-            pm10 = row[5]
-            pm25 = row[8]
-            primary_pollutant = row[10] if len(row) > 10 else ''
-
-            # 检查是否为扣沙日（PM10或PM2.5为"—"）
-            if pm10 == '—' or pm25 == '—':
-                # 转换日期格式：2025年04月13日 -> 2025-04-13
-                try:
-                    # 替换中文
-                    date_str = date_str.replace('年', '-').replace('月', '-').replace('日', '')
-                    # 标准化格式
-                    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-                    standardized_date = date_obj.strftime('%Y-%m-%d')
-
-                    # 初始化城市数据
-                    if city not in sand_data:
-                        sand_data[city] = {}
-
-                    # 保存完整的扣沙信息（包括首要污染物）
-                    primary_normalized = primary_pollutant.strip() if primary_pollutant and primary_pollutant != '—' else None
-                    if primary_normalized == 'O3_8H':
-                        primary_normalized = 'O3_8h'
-
-                    sand_data[city][standardized_date] = {
-                        'primary_pollutant': primary_normalized,
-                        'pm10': pm10,
-                        'pm2_5': pm25,
-                        'aqi': str(row[11] if len(row) > 11 else '').strip(),  # 保存AQI值（第12列）
-                        'is_sand_day': True
-                    }
-                except ValueError as e:
-                    logger.warning(
-                        "invalid_sand_deduction_date",
-                        city=city,
-                        date_str=date_str,
-                        error=str(e)
-                    )
-                    continue
-
-        _sand_deduction_cache = sand_data
-        logger.info(
-            "sand_deduction_dates_loaded_from_xls",
-            cities_count=len(sand_data),
-            total_dates=sum(len(dates) for dates in sand_data.values()),
-            details={city: len(dates) for city, dates in sand_data.items()}
-        )
-
-        return sand_data
-
-    except Exception as e:
-        logger.error(
-            "failed_to_load_sand_deduction_xls",
-            file=SAND_DEDUCTION_FILE_XLS,
-            error=str(e)
-        )
-        return {}
-
-
-def clean_sand_deduction_data(records: List[Dict], sand_dates: Dict[str, Dict[str, Dict]]) -> List[Dict]:
-    """
-    根据扣沙表格清洗数据（单一数据源原则）
-
-    业务规则：
-    - 扣沙日：完全使用扣沙表数据，不依赖API原始数据
-    - 非扣沙日：使用API原始数据
-    - 添加is_sand_deduction_day标记，前端可显示"已扣沙"
-
-    单一数据源原则：
-    - 扣沙日的所有字段（measurements、首要污染物、AQI等）全部从扣沙表读取
-    - 避免API数据和扣沙表数据混合导致的数据覆盖问题
-
-    Args:
-        records: 原始日报数据列表
-        sand_dates: 城市 -> 日期 -> 扣沙完整信息（包括首要污染物和AQI）
-
-    Returns:
-        清洗后的数据列表
-    """
-    if not sand_dates:
-        return records
-
-    cleaned_records = []
-
-    for record in records:
-        # 获取城市名称和日期
-        city = (
-            record.get("city") or
-            record.get("city_name") or
-            record.get("cityName") or
-            record.get("name") or
-            ""
-        )
-
-        # 从timePoint、timestamp或time_date中提取日期部分
-        date_field = (
-            record.get("timePoint") or      # API原始字段
-            record.get("timestamp") or       # 标准化后字段
-            record.get("time_date", "")      # 备用字段
-        )
-
-        if isinstance(date_field, str):
-            date_part = date_field.split('T')[0].split()[0] if date_field else ""
-        else:
-            date_part = ""
-
-        # 检查该日期是否为扣沙日
-        is_sand_day = False
-        sand_info = None
-        if city and date_part and city in sand_dates:
-            if date_part in sand_dates[city]:
-                is_sand_day = True
-                sand_info = sand_dates[city][date_part]
-
-        if is_sand_day and sand_info:
-            # ====================================================================
-            # 扣沙日：完全使用扣沙表数据（单一数据源原则）
-            # ====================================================================
-            def sand_val(v):
-                """扣沙表中'—'转为'-'，None转为None，其他保持原值"""
-                if v is None:
-                    return None
-                return "-" if v in ('—', '') else v
-
-            # 从API原始数据读取PM2.5/PM10原始值（用于统计计算）
-            measurements = record.get("measurements", {})
-            pm25_original = measurements.get("PM2_5") or measurements.get("pm2_5") or record.get("PM2_5") or record.get("pm2_5")
-            pm10_original = measurements.get("PM10") or measurements.get("pm10") or record.get("PM10") or record.get("pm10")
-
-            # 构造新的记录，完全从扣沙表读取数据
-            cleaned_record = {
-                # 保留元数据字段（从API原始数据）
-                "city": city,
-                "city_name": city,
-                "name": city,
-                "timestamp": date_part,
-                "timePoint": date_field,
-                "is_sand_deduction_day": True,
-
-                # 污染物浓度（从扣沙表读取）
-                "measurements": {
-                    "SO2": sand_val(sand_info.get('so2')),
-                    "NO2": sand_val(sand_info.get('no2')),
-                    "PM10": sand_val(sand_info.get('pm10')),
-                    "CO": sand_val(sand_info.get('co')),
-                    "O3_8h": sand_val(sand_info.get('o3_8h')),
-                    "O3": sand_val(sand_info.get('o3')),
-                    "PM2_5": sand_val(sand_info.get('pm2_5')),
-                    "NO": sand_val(sand_info.get('no')),
-                    "NOx": sand_val(sand_info.get('nox')),
-                },
-
-                # AQI（从扣沙表读取）
-                "AQI": int(float(sand_info.get('aqi', 0))) if sand_info.get('aqi') and sand_info.get('aqi') not in ('—', '', None) else 0,
-
-                # 首要污染物（从扣沙表读取，None表示AQI ≤ 50）
-                "primary_pollutant": sand_info.get('primary_pollutant'),
-
-                # 空气质量等级（从扣沙表读取）
-                "air_quality_level": sand_info.get('qualitytype') or sand_val(sand_info.get('qualitytype')),
-
-                # 【关键】保存原始PM2.5/PM10值（从API原始数据读取，用于统计计算）
-                "PM2_5_original": pm25_original,
-                "PM10_original": pm10_original,
-            }
-
-            logger.info(
-                "sand_deduction_applied",
-                city=city,
-                date=date_part,
-                primary_pollutant=sand_info.get('primary_pollutant'),
-                aqi=sand_info.get('aqi'),
-                note="完全使用扣沙表数据（单一数据源原则）"
-            )
-        else:
-            # ====================================================================
-            # 非扣沙日：使用API原始数据
-            # ====================================================================
-            cleaned_record = record.copy()
-            cleaned_record["is_sand_deduction_day"] = False
-
-        cleaned_records.append(cleaned_record)
-
-    return cleaned_records
 
 
 # =============================================================================
@@ -767,7 +417,8 @@ async def query_day_data_by_segment(
     city_codes: List[str],
     start_date: str,
     end_date: str,
-    data_type: int
+    data_type: int,
+    sand_type: Optional[int] = None
 ) -> List[Dict]:
     """
     按时间段查询日报数据
@@ -778,6 +429,7 @@ async def query_day_data_by_segment(
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         data_type: 数据类型（0原始实况，1审核实况）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
 
     Returns:
         日报数据列表
@@ -789,6 +441,7 @@ async def query_day_data_by_segment(
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
+            sand_type=sand_type,
             data_type_name="原始实况" if data_type == 0 else "审核实况"
         )
 
@@ -797,7 +450,8 @@ async def query_day_data_by_segment(
             city_codes=city_codes,
             start_date=start_date,
             end_date=end_date,
-            data_type=data_type
+            data_type=data_type,
+            sand_type=sand_type
         )
 
         if response.get("success"):
@@ -834,7 +488,8 @@ async def execute_query_new_standard_report(
     cities: List[str],
     start_date: str,
     end_date: str,
-    enable_sand_deduction: bool = True,
+    sand_type: Optional[int] = None,
+    enable_sand_deduction: Optional[bool] = None,
     exclude_exceed_details: bool = False,
     use_old_composite_algorithm: bool = False,
     context: Optional[ExecutionContext] = None
@@ -846,7 +501,8 @@ async def execute_query_new_standard_report(
         cities: 城市列表
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
-        enable_sand_deduction: 是否启用扣沙处理（默认True，剔除沙尘暴天气的PM2.5/PM10数据）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
+        enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
         exclude_exceed_details: 是否排除超标详情（默认False），为True时不返回exceed_details字段
         use_old_composite_algorithm: 是否使用旧综合指数算法（默认False，使用新算法）
             - False（默认）: PM2.5权重3，NO2权重2，O3权重2，其他权重1
@@ -888,7 +544,7 @@ async def execute_query_new_standard_report(
         city_codes=city_codes,
         start_date=start_date,
         end_date=end_date,
-        enable_sand_deduction=enable_sand_deduction
+        sand_type=sand_type
     )
 
     # 计算日期分段
@@ -899,7 +555,7 @@ async def execute_query_new_standard_report(
     query_tasks = []
     for seg_start, seg_end, data_type in segments:
         task = query_day_data_by_segment(
-            api_client, city_codes, seg_start, seg_end, data_type
+            api_client, city_codes, seg_start, seg_end, data_type, sand_type=sand_type
         )
         query_tasks.append(task)
 
@@ -936,33 +592,11 @@ async def execute_query_new_standard_report(
             "summary": f"未查询到 {', '.join(cities)} 在 {start_date} 至 {end_date} 期间的日报数据"
         }
 
-    # 清洗扣沙日数据（在数据标准化之前）
-    # 只有启用扣沙时才加载扣沙表格和清洗数据
-    sand_dates = {}
-    cleaned_data = all_daily_data
-
-    if enable_sand_deduction:
-        sand_dates = load_sand_deduction_dates()
-        cleaned_data = clean_sand_deduction_data(all_daily_data, sand_dates)
-        logger.info(
-            "sand_deduction_data_cleaned",
-            total_records=len(cleaned_data),
-            cleaned_count=sum(1 for r in cleaned_data if r.get("PM2_5") is None or r.get("PM10") is None),
-            sand_cities_count=len(sand_dates),
-            note="扣沙处理已启用"
-        )
-    else:
-        logger.info(
-            "sand_deduction_skipped",
-            total_records=len(all_daily_data),
-            note="扣沙处理未启用，使用原始数据"
-        )
-
     # 数据标准化（如果提供了context）
-    standardized_data = cleaned_data
+    standardized_data = all_daily_data
     if context and data_standardizer:
         standardized_data = []
-        for record in cleaned_data:
+        for record in all_daily_data:
             try:
                 standardized = data_standardizer.standardize(record)
                 standardized_data.append(standardized)
@@ -1089,19 +723,11 @@ async def execute_query_new_standard_report(
                 except (TypeError, ValueError):
                     return default
 
-            # 检查是否为扣沙日
-            is_sand_day = record.get("is_sand_deduction_day", False)
-
             # 优先从 measurements 中提取，其次从顶层字段提取
-            if is_sand_day:
-                # 扣沙日：PM2.5/PM10为"-"，使用原始值计算统计指标
-                pm25_raw = safe_float(record.get("PM2_5_original"))
-                pm10_raw = safe_float(record.get("PM10_original"))
-            else:
-                pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
-                        record.get("pm2_5") or record.get("PM2_5"))
-                pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
-                        record.get("pm10") or record.get("PM10"))
+            pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
+                    record.get("pm2_5") or record.get("PM2_5"))
+            pm10_raw = safe_float(measurements.get("PM10") or measurements.get("pm10") or
+                    record.get("pm10") or record.get("PM10"))
 
             so2_raw = safe_float(measurements.get("SO2") or measurements.get("so2") or
                    record.get("so2") or record.get("SO2"))
@@ -1113,7 +739,7 @@ async def execute_query_new_standard_report(
                     record.get("o3_8h") or record.get("O3_8h"))
 
             # 按原始监测数据规则修约日数据
-            # 这些值用于计算均值、分指数、综合指数（扣沙日PM2.5/PM10使用原始值但不参与均值）
+            # 这些值用于计算均值、分指数、综合指数
             pm25 = apply_rounding(pm25_raw, 'PM2_5', 'raw_data')
             pm10 = apply_rounding(pm10_raw, 'PM10', 'raw_data')
             so2 = apply_rounding(so2_raw, 'SO2', 'raw_data')
@@ -1155,7 +781,6 @@ async def execute_query_new_standard_report(
                 daily_pm25_values.append(pm25)
 
             # 计算该日各污染物的单项质量指数 Ii = Ci / Si
-            # 业务规则：扣沙日的PM2.5/PM10分指数使用扣沙后值（为0），用于综合指数计算
             pm25_index_new = pm25 / STANDARD_LIMITS['PM2_5']
             pm10_index_new = pm10 / STANDARD_LIMITS['PM10']
             so2_index_new = so2 / STANDARD_LIMITS['SO2']
@@ -1168,9 +793,8 @@ async def execute_query_new_standard_report(
                                        no2_index_new, co_index_new, o3_8h_index_new)
 
             # 计算各污染物的 IAQI（calculate_iaqi 内部已使用 ceil 向上取整）
-            # 扣沙日的PM2.5/PM10 IAQI设为0，不参与AQI计算
-            pm25_iaqi_new = 0 if is_sand_day else calculate_iaqi(pm25, 'PM2_5', 'new')
-            pm10_iaqi_new = 0 if is_sand_day else calculate_iaqi(pm10, 'PM10', 'new')
+            pm25_iaqi_new = calculate_iaqi(pm25, 'PM2_5', 'new')
+            pm10_iaqi_new = calculate_iaqi(pm10, 'PM10', 'new')
             so2_iaqi_new = calculate_iaqi(so2, 'SO2', 'new')
             no2_iaqi_new = calculate_iaqi(no2, 'NO2', 'new')
             co_iaqi_new = calculate_iaqi(co, 'CO', 'new')
@@ -1185,11 +809,7 @@ async def execute_query_new_standard_report(
                 'CO': co_iaqi_new,
                 'O3_8h': o3_8h_iaqi_new
             }
-            # 扣沙日：AQI不重算，使用扣沙表中的值；非扣沙日：正常计算
-            if is_sand_day:
-                aqi_new = record.get("AQI", 0)
-            else:
-                aqi_new = math.ceil(max(pollutants_with_iaqi_new.values()))
+            aqi_new = math.ceil(max(pollutants_with_iaqi_new.values()))
 
             # 【调试日志】输出每天的详细计算结果
             timestamp = record.get("timestamp", "unknown")
@@ -1226,79 +846,33 @@ async def execute_query_new_standard_report(
                     },
                     aqi_new=f"{aqi_new:.1f}",
                     max_single_index_new=f"{max_single_index_new:.3f}",
-                    is_sand_day=is_sand_day
+                    sand_type=sand_type
                 )
 
-            # 业务规则：扣沙日的AQI和首要污染物使用扣沙表中的值
-            if is_sand_day:
-                # 扣沙日：直接使用扣沙表中的首要污染物
-                primary_from_sand = record.get("primary_pollutant")
-
-                # 修复1：支持中文逗号和英文逗号分割（数据中可能使用 "O3_8h，NO2"）
-                # 修复2：使用大小写不敏感的统计，避免因 O3_8h vs O3_8H 导致的统计遗漏
-                # 修复3：处理 PM2.5（点号）到 PM2_5（下划线）的映射
-                if primary_from_sand:
-                    import re
-                    # 同时支持中文逗号（，）和英文逗号（,）分割
-                    sand_pollutants = re.split(r'[，,]', primary_from_sand)
-                    primary_pollutants_this_day = [p.strip() for p in sand_pollutants if p.strip()]
-                    # 统计每个首要污染物
-                    for p in primary_pollutants_this_day:
-                        # 标准化污染物名称（处理大小写和点号/下划线差异）
-                        dict_key = p
-
-                        # 处理 PM2.5 → PM2_5 映射
-                        if p == 'PM2.5':
-                            dict_key = 'PM2_5'
-                        # 处理 O3_8h 大小写
-                        elif p.upper() == 'O3_8H':
-                            dict_key = 'O3_8h'
-
-                        if dict_key in primary_pollutant_days:
-                            primary_pollutant_days[dict_key] += 1
-                            # 【新增】记录首要污染物日期
-                            primary_pollutant_dates[dict_key].append(date_only)
-                            # 【调试】韶关所有首要污染物追踪
-                            if city_name == '韶关':
-                                logger.info(
-                                    "sand_day_primary_pollutant_counted",
-                                    city=city_name,
-                                    date=date_only,
-                                    primary_from_sand=primary_from_sand,
-                                    normalized_pollutant=dict_key,
-                                    all_candidates=primary_pollutants_this_day
-                                )
-                else:
-                    primary_pollutants_this_day = []
-            else:
-                # 非扣沙日：重新计算首要污染物
-                primary_pollutants_this_day = []
-                if aqi_new > 50:
-                    for pollutant, iaqi in pollutants_with_iaqi_new.items():
-                        if iaqi == aqi_new:
-                            primary_pollutant_days[pollutant] += 1
-                            # 【新增】记录首要污染物日期
-                            primary_pollutant_dates[pollutant].append(date_only)
-                            primary_pollutants_this_day.append(pollutant)
-                            # 【调试】韶关所有首要污染物追踪
-                            if city_name == '韶关':
-                                logger.info(
-                                    "non_sand_day_primary_pollutant_counted",
-                                    city=city_name,
-                                    date=date_only,
-                                    pollutant=pollutant,
-                                    aqi_new=f"{aqi_new:.1f}",
-                                    pm25_iaqi=f"{pm25_iaqi_new:.1f}",
-                                    pm10_iaqi=f"{pm10_iaqi_new:.1f}",
-                                    o3_8h_iaqi=f"{o3_8h_iaqi_new:.1f}",
-                                    no2_iaqi=f"{no2_iaqi_new:.1f}",
-                                    so2_iaqi=f"{so2_iaqi_new:.1f}",
-                                    co_iaqi=f"{co_iaqi_new:.1f}"
-                                )
+            primary_pollutants_this_day = []
+            if aqi_new > 50:
+                for pollutant, iaqi in pollutants_with_iaqi_new.items():
+                    if iaqi == aqi_new:
+                        primary_pollutant_days[pollutant] += 1
+                        primary_pollutant_dates[pollutant].append(date_only)
+                        primary_pollutants_this_day.append(pollutant)
+                        if city_name == '韶关':
+                            logger.info(
+                                "primary_pollutant_counted",
+                                city=city_name,
+                                date=date_only,
+                                pollutant=pollutant,
+                                aqi_new=f"{aqi_new:.1f}",
+                                pm25_iaqi=f"{pm25_iaqi_new:.1f}",
+                                pm10_iaqi=f"{pm10_iaqi_new:.1f}",
+                                o3_8h_iaqi=f"{o3_8h_iaqi_new:.1f}",
+                                no2_iaqi=f"{no2_iaqi_new:.1f}",
+                                so2_iaqi=f"{so2_iaqi_new:.1f}",
+                                co_iaqi=f"{co_iaqi_new:.1f}"
+                            )
 
             # ====================================================================
             # 将新标准计算结果写入record（保存到 data-id）
-            # 扣沙日：AQI和首要污染物已由 clean_sand_deduction_data 设置，不覆盖
             # ====================================================================
             record["IAQI_PM2_5"] = pm25_iaqi_new
             record["IAQI_PM10"] = pm10_iaqi_new
@@ -1306,12 +880,11 @@ async def execute_query_new_standard_report(
             record["IAQI_NO2"] = no2_iaqi_new
             record["IAQI_CO"] = co_iaqi_new
             record["IAQI_O3_8h"] = o3_8h_iaqi_new
-            if not is_sand_day:
-                record["AQI"] = aqi_new
-                if primary_pollutants_this_day:
-                    record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
-                else:
-                    record["primary_pollutant"] = None
+            record["AQI"] = aqi_new
+            if primary_pollutants_this_day:
+                record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
+            else:
+                record["primary_pollutant"] = None
 
             # 单项质量指数（原始API没有此字段，保留 _new 后缀以区分）
             record["single_index_PM2_5_new"] = safe_round(pm25_index_new, 3)
@@ -1332,8 +905,8 @@ async def execute_query_new_standard_report(
                     aqi_new=f"{aqi_new:.1f}",
                     aqi_gt_50=aqi_new > 50,
                     primary_pollutants=primary_pollutants_this_day,
-                    is_sand_day=is_sand_day,
-                    primary_from_sand=record.get("primary_pollutant") if is_sand_day else None,
+                    sand_type=sand_type,
+                    primary_from_sand=None,
                     pm25_iaqi=f"{pm25_iaqi_new:.1f}",
                     pm10_iaqi=f"{pm10_iaqi_new:.1f}",
                     o3_8h_iaqi=f"{o3_8h_iaqi_new:.1f}",
@@ -1592,13 +1165,11 @@ async def execute_query_new_standard_report(
             composite_index=avg_composite_index,
             exceed_days=exceed_days,
             compliance_rate=compliance_rate,
-            sand_deduction_stats={
-                "total_days": total_days,
-                "pm25_valid_count": pm25_valid_count,
-                "pm10_valid_count": pm10_valid_count,
-                "pm25_sand_days": total_days - pm25_valid_count,
-                "pm10_sand_days": total_days - pm10_valid_count
-            },
+        data_validity_stats={
+            "total_days": total_days,
+            "pm25_valid_count": pm25_valid_count,
+            "pm10_valid_count": pm10_valid_count,
+        },
             primary_pollutant_days=primary_pollutant_days,
             primary_pollutant_ratio=primary_pollutant_ratio,
             total_primary_days=total_primary_days,
@@ -1688,13 +1259,7 @@ async def execute_query_new_standard_report(
         "date_range": f"{start_date} to {end_date}",
         "total_days": sum(s.get("total_days", 0) for s in city_stats.values()) if city_stats else 0,
         "composite_algorithm": "old" if use_old_composite_algorithm else "new",  # 综合指数算法标识
-        "sand_deduction_applied": enable_sand_deduction and bool(sand_dates),  # 是否应用了扣沙处理
-        "sand_deduction_info": {
-            "enabled": enable_sand_deduction,
-            "loaded": bool(sand_dates),
-            "cities_with_sand_days": list(sand_dates.keys()) if sand_dates else [],
-            "total_sand_days": sum(len(dates) for dates in sand_dates.values()) if sand_dates else 0
-        }
+        "sand_type": sand_type
     }
 
     # 添加 data_id 到元数据
@@ -2175,9 +1740,10 @@ class QueryNewStandardReportTool(LLMTool):
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
                     },
-                    "enable_sand_deduction": {
-                        "type": "boolean",
-                        "description": "是否启用扣沙处理（剔除沙尘暴天气的PM2.5/PM10数据，默认true）"
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
                     },
                     "use_old_composite_algorithm": {
                         "type": "boolean",
@@ -2207,7 +1773,7 @@ class QueryNewStandardReportTool(LLMTool):
                 - cities: 城市列表
                 - start_date: 开始日期 (YYYY-MM-DD)
                 - end_date: 结束日期 (YYYY-MM-DD)
-                - enable_sand_deduction: 是否启用扣沙处理（默认true）
+                - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
         Returns:
             新标准统计报表结果（UDF v2.0格式）
@@ -2216,7 +1782,7 @@ class QueryNewStandardReportTool(LLMTool):
         cities = kwargs.get("cities", [])
         start_date = kwargs.get("start_date", "")
         end_date = kwargs.get("end_date", "")
-        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        sand_type = kwargs.get("sand_type")
         exclude_exceed_details = kwargs.get("exclude_exceed_details", False)  # 默认false（保留详情）
         use_old_composite_algorithm = kwargs.get("use_old_composite_algorithm", False)  # 默认false（使用新算法）
 
@@ -2269,7 +1835,7 @@ class QueryNewStandardReportTool(LLMTool):
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             exclude_exceed_details=exclude_exceed_details,
             use_old_composite_algorithm=use_old_composite_algorithm,
             context=context

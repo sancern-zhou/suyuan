@@ -742,7 +742,8 @@ def execute_query_station_new_standard_report(
     end_date: str = None,
     aggregate: bool = False,
     context: ExecutionContext = None,
-    station_type: Optional[str] = None
+    station_type: Optional[str] = None,
+    sand_type: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     执行站点新标准统计报表查询
@@ -755,6 +756,7 @@ def execute_query_station_new_standard_report(
         aggregate: 是否计算多站点汇总统计
         context: 执行上下文
         station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；None时不传该参数）
 
     Returns:
         查询结果
@@ -766,7 +768,8 @@ def execute_query_station_new_standard_report(
         start_date=start_date,
         end_date=end_date,
         aggregate=aggregate,
-        station_type=station_type
+        station_type=station_type,
+        sand_type=sand_type
     )
 
     try:
@@ -777,7 +780,8 @@ def execute_query_station_new_standard_report(
             start_date=start_date,
             end_date=end_date,
             context=context,
-            station_type=station_type
+            station_type=station_type,
+            sand_type=sand_type
         )
 
         if query_result.get("status") == "empty":
@@ -893,6 +897,7 @@ def execute_query_station_new_standard_report(
                 "start_date": start_date,
                 "end_date": end_date,
                 "aggregate": aggregate,
+                "sand_type": sand_type,
                 "station_count": len(station_results),
             }
         }
@@ -963,6 +968,11 @@ class QueryStationNewStandardReportTool(LLMTool):
                     "aggregate": {
                         "type": "boolean",
                         "description": "是否计算多站点汇总统计（默认false）"
+                    },
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
                     }
                 },
                 "required": ["start_date", "end_date"]
@@ -987,6 +997,7 @@ class QueryStationNewStandardReportTool(LLMTool):
         cities = kwargs.get("cities")
         stations = kwargs.get("stations")
         aggregate = kwargs.get("aggregate", False)
+        sand_type = kwargs.get("sand_type")
 
         if not start_date or not end_date:
             return {
@@ -1044,5 +1055,6 @@ class QueryStationNewStandardReportTool(LLMTool):
             end_date=end_date,
             aggregate=aggregate,
             context=context,
-            station_type=effective_station_type
+            station_type=effective_station_type,
+            sand_type=sand_type
         )

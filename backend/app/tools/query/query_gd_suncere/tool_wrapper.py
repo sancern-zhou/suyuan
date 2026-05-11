@@ -600,7 +600,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             "name": "query_gd_suncere_city_day",
             "description": (
                 "查询广东省城市级日空气质量数据，适合日变化、多城市日均对比和长时间序列分析。"
-                "城市名自动映射编码；data_type默认审核实况1；enable_sand_deduction默认true。"
+                "城市名自动映射编码；data_type默认审核实况1；sand_type透传接口扣沙参数。"
                 "需要新标准日数据优先用query_gd_suncere_city_day_new。"
             ),
             "parameters": {
@@ -624,10 +624,11 @@ class QueryGDSuncereCityDayTool(LLMTool):
                         "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
                         "enum": [0, 1, 2, 3]
                     },
-                    "enable_sand_deduction": {
-                        "type": "boolean",
-                        "description": "是否启用扣沙处理，默认true"
-                    }
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
+                    },
                 },
                 "required": ["cities", "start_date", "end_date"]
             }
@@ -661,7 +662,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             end_date: 结束日期
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
             **kwargs: 工具参数
-                - enable_sand_deduction: 是否启用扣沙处理（默认true）
+                - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
         Returns:
             UDF v2.0格式的查询结果
@@ -669,7 +670,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_city_day
 
         # 提取可选参数
-        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        sand_type = kwargs.get("sand_type")
 
         logger.info(
             "query_gd_suncere_city_day_tool_start",
@@ -677,7 +678,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -688,7 +689,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             end_date=end_date,
             context=context,
             data_type=data_type,
-            enable_sand_deduction=enable_sand_deduction
+            sand_type=sand_type
         )
 
         # 应用数据外部化检查
@@ -1037,9 +1038,10 @@ class QueryStandardComparisonTool(LLMTool):
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
                     },
-                    "enable_sand_deduction": {
-                        "type": "boolean",
-                        "description": "是否启用扣沙处理，默认true"
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
                     }
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -1072,7 +1074,7 @@ class QueryStandardComparisonTool(LLMTool):
             start_date: 开始日期
             end_date: 结束日期
             **kwargs: 工具参数
-                - enable_sand_deduction: 是否启用扣沙处理（默认true）
+                - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
         Returns:
             新旧标准对比结果
@@ -1080,14 +1082,14 @@ class QueryStandardComparisonTool(LLMTool):
         from app.tools.query.query_gd_suncere.tool import execute_query_standard_comparison
 
         # 提取可选参数
-        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        sand_type = kwargs.get("sand_type")
 
         logger.info(
             "query_standard_comparison_tool_start",
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -1097,7 +1099,7 @@ class QueryStandardComparisonTool(LLMTool):
             start_date=start_date,
             end_date=end_date,
             context=context,
-            enable_sand_deduction=enable_sand_deduction
+            sand_type=sand_type
         )
 
         # 应用数据外部化检查
@@ -1119,7 +1121,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             "description": (
                 "查询广东省城市级日空气质量数据，并按HJ 633-2026新标准计算IAQI/AQI/首要污染物。"
                 "需要新标准日报或新旧标准分析时优先使用；城市名自动映射编码。"
-                "data_type默认审核实况1；enable_sand_deduction默认true。统计报表优先用query_new_standard_report。"
+                "data_type默认审核实况1；sand_type透传接口扣沙参数。统计报表优先用query_new_standard_report。"
             ),
             "parameters": {
                 "type": "object",
@@ -1142,10 +1144,11 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
                         "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
                         "enum": [0, 1, 2, 3]
                     },
-                    "enable_sand_deduction": {
-                        "type": "boolean",
-                        "description": "是否启用扣沙处理，默认true"
-                    }
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
+                    },
                 },
                 "required": ["cities", "start_date", "end_date"]
             }
@@ -1179,7 +1182,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             end_date: 结束日期
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
             **kwargs: 工具参数
-                - enable_sand_deduction: 是否启用扣沙处理（默认true）
+                - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
         Returns:
             UDF v2.0 格式的查询结果
@@ -1187,7 +1190,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
         from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
 
         # 提取可选参数
-        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        sand_type = kwargs.get("sand_type")
         from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
 
         logger.info(
@@ -1196,7 +1199,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -1207,7 +1210,7 @@ class QueryGDSuncereCityDayNewStandardTool(LLMTool):
             end_date=end_date,
             context=context,
             data_type=data_type,
-            enable_sand_deduction=enable_sand_deduction
+            sand_type=sand_type
         )
 
         # 应用数据外部化检查
@@ -1369,9 +1372,10 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
                     },
-                    "enable_sand_deduction": {
-                        "type": "boolean",
-                        "description": "是否启用扣沙处理，默认true"
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；不传则不向接口透传sandType",
+                        "enum": [0, 1]
                     },
                     "use_new_composite_algorithm": {
                         "type": "boolean",
@@ -1403,7 +1407,7 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
         from app.tools.query.query_gd_suncere.tool_city_day_old_standard_report import execute_query_old_standard_report
 
         # 提取可选参数
-        enable_sand_deduction = kwargs.get("enable_sand_deduction", True)  # 默认true
+        sand_type = kwargs.get("sand_type")
         use_new_composite_algorithm = kwargs.get("use_new_composite_algorithm", False)  # 默认false（使用旧算法）
 
         logger.info(
@@ -1411,7 +1415,7 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             use_new_composite_algorithm=use_new_composite_algorithm,
             session_id=getattr(context, 'session_id', 'unknown')
         )
@@ -1421,7 +1425,7 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
             cities=cities,
             start_date=start_date,
             end_date=end_date,
-            enable_sand_deduction=enable_sand_deduction,
+            sand_type=sand_type,
             use_new_composite_algorithm=use_new_composite_algorithm,
             context=context
         )
