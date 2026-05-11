@@ -52,6 +52,12 @@ GUANGDONG_REGIONS["非珠三角"] = (
     GUANGDONG_REGIONS["粤西"] +
     GUANGDONG_REGIONS["粤北"]
 )
+GUANGDONG_REGIONS["粤东西北"] = GUANGDONG_REGIONS["非珠三角"]
+GUANGDONG_REGIONS["全省"] = (
+    GUANGDONG_REGIONS["珠三角"] +
+    GUANGDONG_REGIONS["非珠三角"]
+)
+GUANGDONG_REGIONS["广东省"] = GUANGDONG_REGIONS["全省"]
 
 # 城市到区域的反向映射（用于快速查找）
 CITY_TO_REGION = {}
@@ -60,6 +66,23 @@ for region, cities in GUANGDONG_REGIONS.items():
         if city not in CITY_TO_REGION:
             CITY_TO_REGION[city] = []
         CITY_TO_REGION[city].append(region)
+
+
+def expand_region_city_names(cities: List[str]) -> List[str]:
+    """展开统计报表支持的区域别名，并按首次出现顺序去重。"""
+    expanded = []
+    seen = set()
+
+    for item in cities:
+        name = str(item).strip()
+        region_cities = GUANGDONG_REGIONS.get(name)
+        candidates = region_cities if region_cities is not None else [name]
+        for city in candidates:
+            if city not in seen:
+                seen.add(city)
+                expanded.append(city)
+
+    return expanded
 
 
 # =============================================================================
@@ -512,6 +535,9 @@ async def execute_query_new_standard_report(
     Returns:
         新标准统计报表结果（UDF v2.0格式）
     """
+    requested_cities = list(cities)
+    cities = expand_region_city_names(cities)
+
     # 初始化
     api_client = get_gd_suncere_api_client()
     data_standardizer = DataStandardizer() if context else None
@@ -540,6 +566,7 @@ async def execute_query_new_standard_report(
 
     logger.info(
         "query_new_standard_report_start",
+        requested_cities=requested_cities,
         cities=cities,
         city_codes=city_codes,
         start_date=start_date,
@@ -1256,6 +1283,7 @@ async def execute_query_new_standard_report(
         "schema_version": "v2.0",
         "tool_name": "query_new_standard_report",
         "cities": cities,
+        "requested_cities": requested_cities,
         "date_range": f"{start_date} to {end_date}",
         "total_days": sum(s.get("total_days", 0) for s in city_stats.values()) if city_stats else 0,
         "composite_algorithm": "old" if use_old_composite_algorithm else "new",  # 综合指数算法标识
