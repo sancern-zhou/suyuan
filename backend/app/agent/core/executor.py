@@ -305,26 +305,34 @@ class ToolExecutor:
                 "available_tools": available_tools
             }
 
-        # ✅ Step 2: Input Adapter 规范化（Phase 2.2 新增）
+        # Step 2: 按需输入适配。
+        # Anthropic tool_use schema 是主参数契约；这里只保留少数历史兼容/上下文推断工具的兜底适配。
         try:
-            from app.agent.input_adapter import InputAdapterEngine, InputValidationError
+            from app.agent.input_adapter import InputAdapterEngine, InputValidationError, TOOL_RULES
 
-            adapter = InputAdapterEngine()
-            normalized_args, adapter_report = adapter.normalize(
-                tool_name=tool_name,
-                raw_args=tool_args,
-                context=adapter_context  # TODO: 未来可以传入更多上下文
-            )
+            if tool_name in TOOL_RULES:
+                adapter = InputAdapterEngine()
+                normalized_args, adapter_report = adapter.normalize(
+                    tool_name=tool_name,
+                    raw_args=tool_args,
+                    context=adapter_context
+                )
 
-            logger.info(
-                "input_adapter_success",
-                tool_name=tool_name,
-                corrections=len(adapter_report.get("corrections", [])),
-                inferences=len(adapter_report.get("inferences", []))
-            )
+                logger.info(
+                    "input_adapter_success",
+                    tool_name=tool_name,
+                    corrections=len(adapter_report.get("corrections", [])),
+                    inferences=len(adapter_report.get("inferences", []))
+                )
 
-            # 使用规范化后的参数替换原始参数
-            tool_args = normalized_args
+                # 使用规范化后的参数替换原始参数
+                tool_args = normalized_args
+            else:
+                logger.debug(
+                    "input_adapter_skipped",
+                    tool_name=tool_name,
+                    reason="no_explicit_adapter_rules"
+                )
 
         except InputValidationError as e:
             # ✅ 返回结构化错误（供 Reflexion 使用）

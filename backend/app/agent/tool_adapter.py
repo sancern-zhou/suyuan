@@ -216,6 +216,12 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
     - summary: 摘要信息
     - data或visuals: 数据内容（v2.0工具使用visuals，v1.0工具使用data）
     """
+    def normalize_standard_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize collection fields at the tool boundary."""
+        if payload.get("visuals") is None:
+            payload["visuals"] = []
+        return payload
+
     # 验证标准格式
     if isinstance(result, dict):
         # 检查核心必需字段
@@ -233,7 +239,7 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
             # ✅ 标准格式验证通过
             global_tool_registry.record_success(tool_name)
             global_tool_registry._update_execution_time(tool_name, execution_time)
-            return result
+            return normalize_standard_result(result)
         else:
             # ❌ 非标准格式，需要转换
             missing_fields = [k for k in required_core_fields if k not in result]
@@ -251,7 +257,7 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
 
             # 转换为标准格式
             converted_result = _convert_to_standard_format(result, tool_name, execution_time)
-            return converted_result
+            return normalize_standard_result(converted_result)
 
     # 非字典结果，包装为标准格式（容错处理）
     logger.warning(
@@ -265,6 +271,7 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
         "status": "success",
         "success": True,
         "data": result,
+        "visuals": [],
         "metadata": {
             "tool_name": tool_name,
             "execution_time": execution_time
@@ -365,6 +372,8 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         elif data is not None:
             standard_result["data"] = data
             standard_result["visuals"] = []  # v1.0格式不包含visuals
+        else:
+            standard_result["visuals"] = []
 
         # 保留 result 字段（包含详细的结构化数据，如对比结果）
         # 例如：compare_standard_reports 工具返回的详细对比数据
