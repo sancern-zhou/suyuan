@@ -17,7 +17,6 @@
 
 import asyncio
 import math
-import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
 import structlog
@@ -26,6 +25,10 @@ from app.tools.base import LLMTool, ToolCategory
 from app.agent.context.execution_context import ExecutionContext
 from app.utils.data_standardizer import DataStandardizer
 from app.tools.query.query_gd_suncere.tool import QueryGDSuncereDataTool
+from app.tools.query.query_gd_suncere.tool_city_day_new import (
+    parse_primary_pollutants,
+    should_use_api_primary_pollutants_for_new_standard,
+)
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
 
 logger = structlog.get_logger()
@@ -84,69 +87,6 @@ def expand_region_city_names(cities: List[str]) -> List[str]:
                 expanded.append(city)
 
     return expanded
-
-
-def parse_primary_pollutants(primary: Any) -> List[str]:
-    """解析首要污染物字符串，支持双/多首要污染物的常见分隔写法。"""
-    if not primary:
-        return []
-
-    aliases = {
-        "PM2.5": "PM2_5",
-        "PM2_5": "PM2_5",
-        "PM25": "PM2_5",
-        "PM10": "PM10",
-        "SO2": "SO2",
-        "NO2": "NO2",
-        "CO": "CO",
-        "O3": "O3_8h",
-        "O3_8H": "O3_8h",
-        "O3-8H": "O3_8h",
-        "O3_8": "O3_8h",
-        "臭氧": "O3_8h",
-        "二氧化氮": "NO2",
-        "二氧化硫": "SO2",
-        "一氧化碳": "CO",
-    }
-    valid_pollutants = {"PM2_5", "PM10", "SO2", "NO2", "CO", "O3_8h"}
-
-    normalized = str(primary).strip()
-    if not normalized or normalized in {"-", "无", "None", "null"}:
-        return []
-
-    parts = re.split(r"[，,、；;/|]+|和|及|与|\s+", normalized)
-    pollutants = []
-    seen = set()
-    for part in parts:
-        token = part.strip()
-        if not token:
-            continue
-
-        token_key = token.upper().replace(" ", "")
-        token_key = token_key.replace("PM2.5", "PM2_5")
-        pollutant = aliases.get(token) or aliases.get(token_key)
-
-        if pollutant in valid_pollutants and pollutant not in seen:
-            pollutants.append(pollutant)
-            seen.add(pollutant)
-
-    return pollutants
-
-
-def should_use_api_primary_pollutants_for_new_standard(
-    api_primary_pollutants: List[str],
-    calculated_primary_pollutants: List[str],
-    pm25: float,
-    pm10: float,
-) -> bool:
-    """仅在扣沙后颗粒物置零且接口双首污补充 NO2 时使用接口首污。"""
-    if len(api_primary_pollutants) <= 1:
-        return False
-
-    if "NO2" not in api_primary_pollutants or "NO2" in calculated_primary_pollutants:
-        return False
-
-    return pm25 <= 0 and pm10 <= 0
 
 
 # =============================================================================
