@@ -335,7 +335,7 @@ class UnifiedData(BaseModel):
     legacy_fields: Optional[Dict[str, Any]] = Field(default=None, description="旧格式兼容字段")
 
     # v2.0 新增：可视化块（用于多图表场景）
-    visuals: Optional[List[VisualBlock]] = Field(default=None, description="可视化块列表（v2.0新增）")
+    visuals: List[VisualBlock] = Field(default_factory=list, description="可视化块列表（v2.0新增）")
 
     # v2.0 新增：数据流信息
     data_flow: Optional[Dict[str, Any]] = Field(default=None, description="数据流信息：{source_tool, target_tool, transformation}")
@@ -348,6 +348,11 @@ class UnifiedData(BaseModel):
         if not v and values.get('status') == DataStatus.SUCCESS:
             raise ValueError("Success=False 但 status=SUCCESS 矛盾")
         return v
+
+    @validator('visuals', pre=True, always=True)
+    def normalize_visuals(cls, v):
+        """工具不生成可视化时统一输出空列表，避免消费端对 None 做 len/遍历。"""
+        return [] if v is None else v
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""

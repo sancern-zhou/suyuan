@@ -414,7 +414,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                                 has_result="result" in event_data,
                                 result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
                                 has_visuals="visuals" in result,
-                                visuals_count=len(result.get("visuals", []))
+                                visuals_count=len(result.get("visuals") or [])
                             )
 
                         frontend_message = {

@@ -472,7 +472,7 @@ class InputAdapterEngine:
 
         # 检查工具是否有规则
         if tool_name not in self.tool_rules:
-            logger.warning(
+            logger.debug(
                 "tool_has_no_rules",
                 tool_name=tool_name,
                 message="Using raw_args without adaptation"
