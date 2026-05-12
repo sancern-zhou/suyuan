@@ -27,7 +27,7 @@ from app.utils.data_standardizer import DataStandardizer
 from app.tools.query.query_gd_suncere.tool import QueryGDSuncereDataTool
 from app.tools.query.query_gd_suncere.tool_city_day_new import (
     parse_primary_pollutants,
-    should_use_api_primary_pollutants_for_new_standard,
+    update_to_new_standard,
 )
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
 
@@ -635,6 +635,8 @@ async def execute_query_new_standard_report(
                 logger.warning("data_standardization_failed", record=record, error=str(e))
                 standardized_data.append(record)
 
+        update_to_new_standard(standardized_data)
+
     # 按城市分组日报数据
     daily_data_by_city: Dict[str, List[Dict]] = {}
     for record in standardized_data:
@@ -745,7 +747,6 @@ async def execute_query_new_standard_report(
         for record in daily_records:
             # 提取浓度值
             measurements = record.get("measurements", {})
-            original_primary_pollutants = parse_primary_pollutants(record.get("primary_pollutant", ""))
 
             def safe_float(value, default=0.0):
                 if value is None or value == '' or value == '-':
@@ -881,24 +882,7 @@ async def execute_query_new_standard_report(
                     sand_type=sand_type
                 )
 
-            calculated_primary_pollutants = []
-            if aqi_new > 50:
-                calculated_primary_pollutants = [
-                    pollutant for pollutant, iaqi in pollutants_with_iaqi_new.items()
-                    if iaqi == aqi_new
-                ]
-
-            primary_pollutants_this_day = []
-            use_api_primary_pollutants = should_use_api_primary_pollutants_for_new_standard(
-                original_primary_pollutants,
-                calculated_primary_pollutants,
-                pm25,
-                pm10,
-            )
-            if use_api_primary_pollutants:
-                primary_pollutants_this_day = original_primary_pollutants
-            else:
-                primary_pollutants_this_day = calculated_primary_pollutants
+            primary_pollutants_this_day = parse_primary_pollutants(record.get("primary_pollutant", ""))
 
             for pollutant in primary_pollutants_this_day:
                 primary_pollutant_days[pollutant] += 1
@@ -916,7 +900,7 @@ async def execute_query_new_standard_report(
                         no2_iaqi=f"{no2_iaqi_new:.1f}",
                         so2_iaqi=f"{so2_iaqi_new:.1f}",
                         co_iaqi=f"{co_iaqi_new:.1f}",
-                        source="api_primary_pollutant_tie" if use_api_primary_pollutants else "calculated_iaqi"
+                        source="preprocessed_day_data"
                     )
 
             # ====================================================================
@@ -929,12 +913,6 @@ async def execute_query_new_standard_report(
             record["IAQI_CO"] = co_iaqi_new
             record["IAQI_O3_8h"] = o3_8h_iaqi_new
             record["AQI"] = aqi_new
-            if primary_pollutants_this_day:
-                record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
-                if use_api_primary_pollutants:
-                    record["primary_pollutant_calc_new"] = ",".join(calculated_primary_pollutants) if calculated_primary_pollutants else None
-            else:
-                record["primary_pollutant"] = None
 
             # 单项质量指数（原始API没有此字段，保留 _new 后缀以区分）
             record["single_index_PM2_5_new"] = safe_round(pm25_index_new, 3)
