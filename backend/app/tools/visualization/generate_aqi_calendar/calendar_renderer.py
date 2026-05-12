@@ -562,6 +562,74 @@ class AQICalendarRenderer:
 
         return image_base64
 
+    def render_calendar_to_bytes(self, city_data_map, year, month, pollutant):
+        """渲染日历图（返回bytes，用于图片缓存）
+
+        与render_calendar的区别：
+        - render_calendar: 返回base64字符串
+        - render_calendar_to_bytes: 返回bytes（避免base64编码/解码开销）
+        """
+        # 初始化布局参数
+        sorted_days = sorted({
+            day for city_data in city_data_map.values()
+            for day in city_data.keys()
+        })
+
+        n_days = len(sorted_days)
+        n_cities = len(city_data_map)
+
+        # 计算画布高度
+        fixed_cell_height_pt = 12
+        dpi = 100.0
+        fixed_cell_height_inch = fixed_cell_height_pt / dpi
+        margin_height_inch = 1.1
+        grid_height = n_cities
+        fig_height = grid_height * fixed_cell_height_inch + margin_height_inch
+        fig_width = 15.0
+
+        logger.info(
+            "figure_layout",
+            fig_width=fig_width,
+            fig_height=fig_height,
+            fixed_cell_height_inch=fixed_cell_height_inch,
+            fixed_cell_height_pt=fixed_cell_height_pt,
+            margin_height_inch=margin_height_inch,
+            n_cities=n_cities,
+            n_days_with_data=n_days,
+            sorted_days=sorted_days
+        )
+
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+        # 添加总标题（使用已配置的中文字体）
+        pollutant_name = self._get_pollutant_name(pollutant)
+        title = f'{year}年{month}月 广东省{pollutant_name}日历'
+
+        ax.set_title(title, fontsize=24, pad=20)
+
+        logger.info("title_set", title=title)
+
+        # 绘制矩阵热力图
+        self.draw_matrix_heatmap(ax, city_data_map, year, month, pollutant)
+
+        # 添加颜色图例
+        self.add_color_legend(fig)
+
+        # 调整布局：给右侧图例留出空间
+        plt.tight_layout(rect=[0, 0.08, 0.9, 0.95])
+
+        # 保存到BytesIO
+        buffer = BytesIO()
+        fig.savefig(buffer, format='png', dpi=120, bbox_inches='tight')
+
+        # 直接返回bytes
+        image_bytes = buffer.getvalue()
+
+        plt.close(fig)
+        buffer.close()
+
+        return image_bytes
+
     def _get_pollutant_name(self, pollutant: str) -> str:
         """获取污染物的中文名称（使用 LaTeX 下标）"""
         # matplotlib 支持 LaTeX 格式的下标
@@ -586,12 +654,11 @@ def generate_calendar_from_data_id(
     year: int,
     month: int,
     pollutant: str = "AQI",
-    cities: Optional[List[str]] = None
+    cities: Optional[List[str]] = None,
+    return_url: bool = True
 ) -> str:
     """
-    从 data_id 生成 AQI 日历图（返回 base64）
-
-    专为 execute_python 工具设计，提供与 polar_contour_generator 一致的调用接口。
+    从 data_id 生成 AQI 日历图
 
     参数：
     ---
@@ -605,10 +672,13 @@ def generate_calendar_from_data_id(
         污染物指标（AQI/SO2/NO2/CO/O3_8h/PM2_5/PM10）
     cities : List[str], optional
         城市列表（默认为广东省21个城市）
+    return_url : bool
+        True: 返回图片URL（推荐，/api/image/{image_id}）
+        False: 返回base64字符串（兼容旧代码）
 
     返回：
     ---
-    str : base64 编码的 PNG 图片
+    str : 图片URL或base64编码的PNG图片
 
     异常：
     ---
@@ -616,17 +686,24 @@ def generate_calendar_from_data_id(
 
     示例：
     ---
-    >>> # 在 execute_python 中调用（注意：使用 app 而非 backend.app）
+    >>> # 推荐用法：返回图片URL
     >>> from app.tools.visualization.generate_aqi_calendar.calendar_renderer import generate_calendar_from_data_id
     >>>
-    >>> img_base64 = generate_calendar_from_data_id(
+    >>> image_url = generate_calendar_from_data_id(
     ...     data_id="air_quality_unified:v1:xxx",
     ...     year=2026,
     ...     month=4,
     ...     pollutant="PM10"
     ... )
+    >>> print(f"图片已生成: {image_url}")
     >>>
-    >>> print("CHART_SAVED:data:image/png;base64," + img_base64)
+    >>> # 兼容旧代码：返回base64
+    >>> img_base64 = generate_calendar_from_data_id(
+    ...     data_id="air_quality_unified:v1:xxx",
+    ...     year=2026,
+    ...     month=4,
+    ...     return_url=False
+    ... )
     """
     import json
     from pathlib import Path
@@ -704,7 +781,7 @@ def generate_calendar_from_data_id(
 
     # ========== 阶段3：渲染日历图 ==========
     renderer = AQICalendarRenderer()
-    image_base64 = renderer.render_calendar(
+    image_bytes = renderer.render_calendar_to_bytes(
         city_data_map, year, month, pollutant
     )
 
@@ -714,10 +791,26 @@ def generate_calendar_from_data_id(
         year=year,
         month=month,
         pollutant=pollutant,
-        image_size_kb=len(image_base64) / 1024
+        image_size_kb=len(image_bytes) / 1024,
+        return_url=return_url
     )
 
-    return image_base64
+    # 根据参数决定返回格式
+    if return_url:
+        # 保存到图片缓存，返回URL
+        from app.services.image_cache import get_image_cache
+        import base64
+        # get_image_cache返回ImageCache实例
+        cache = get_image_cache()
+        # ImageCache.save需要base64字符串，不是bytes
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        result = cache.save(image_base64)
+        image_id = result['image_id']
+        return f"/api/image/{image_id}"
+    else:
+        # 返回base64字符串（兼容旧代码）
+        import base64
+        return base64.b64encode(image_bytes).decode('utf-8')
 
 
 def _process_city_data_impl(
