@@ -24,6 +24,7 @@
 """
 from typing import Dict, Any, List
 import math
+import re
 import structlog
 
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
@@ -33,6 +34,69 @@ from app.tools.query.query_gd_suncere.tool import apply_rounding
 
 
 logger = structlog.get_logger()
+
+
+def parse_primary_pollutants(primary: Any) -> List[str]:
+    """解析首要污染物字符串，支持双/多首要污染物的常见分隔写法。"""
+    if not primary:
+        return []
+
+    aliases = {
+        "PM2.5": "PM2_5",
+        "PM2_5": "PM2_5",
+        "PM25": "PM2_5",
+        "PM10": "PM10",
+        "SO2": "SO2",
+        "NO2": "NO2",
+        "CO": "CO",
+        "O3": "O3_8h",
+        "O3_8H": "O3_8h",
+        "O3-8H": "O3_8h",
+        "O3_8": "O3_8h",
+        "臭氧": "O3_8h",
+        "二氧化氮": "NO2",
+        "二氧化硫": "SO2",
+        "一氧化碳": "CO",
+    }
+    valid_pollutants = {"PM2_5", "PM10", "SO2", "NO2", "CO", "O3_8h"}
+
+    normalized = str(primary).strip()
+    if not normalized or normalized in {"-", "无", "None", "null"}:
+        return []
+
+    parts = re.split(r"[，,、；;/|]+|和|及|与|\s+", normalized)
+    pollutants = []
+    seen = set()
+    for part in parts:
+        token = part.strip()
+        if not token:
+            continue
+
+        token_key = token.upper().replace(" ", "")
+        token_key = token_key.replace("PM2.5", "PM2_5")
+        pollutant = aliases.get(token) or aliases.get(token_key)
+
+        if pollutant in valid_pollutants and pollutant not in seen:
+            pollutants.append(pollutant)
+            seen.add(pollutant)
+
+    return pollutants
+
+
+def should_use_api_primary_pollutants_for_new_standard(
+    api_primary_pollutants: List[str],
+    calculated_primary_pollutants: List[str],
+    pm25: float,
+    pm10: float,
+) -> bool:
+    """仅在扣沙后颗粒物置零且接口双首污补充 NO2 时使用接口首污。"""
+    if len(api_primary_pollutants) <= 1:
+        return False
+
+    if "NO2" not in api_primary_pollutants or "NO2" in calculated_primary_pollutants:
+        return False
+
+    return pm25 <= 0 and pm10 <= 0
 
 
 # -----------------------------------------------------------------------------
@@ -173,6 +237,7 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
 
     for record in standardized_records:
         measurements = record.get("measurements", {})
+        original_primary_pollutants = parse_primary_pollutants(record.get("primary_pollutant", ""))
 
         # 提取浓度值
         pm25_raw = safe_float(measurements.get("PM2_5") or measurements.get("pm2_5") or
@@ -216,21 +281,39 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
         aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
         measurements['AQI'] = aqi
 
-        primary_pollutant = None
+        calculated_primary_pollutants = []
         if aqi > 50:
-            primary_pollutants = []
             for pollutant, iaqi in [('PM2_5', pm25_iaqi), ('PM10', pm10_iaqi),
                                     ('SO2', so2_iaqi), ('NO2', no2_iaqi),
                                     ('CO', co_iaqi), ('O3_8h', o3_8h_iaqi)]:
                 if iaqi == aqi:
-                    primary_pollutants.append(pollutant)
-            primary_pollutant = ",".join(primary_pollutants) if primary_pollutants else None
+                    calculated_primary_pollutants.append(pollutant)
+
+        use_api_primary_pollutants = should_use_api_primary_pollutants_for_new_standard(
+            original_primary_pollutants,
+            calculated_primary_pollutants,
+            pm25_raw,
+            pm10_raw,
+        )
+        primary_pollutants = (
+            original_primary_pollutants
+            if use_api_primary_pollutants
+            else calculated_primary_pollutants
+        )
+        primary_pollutant = ",".join(primary_pollutants) if primary_pollutants else None
 
         air_quality_level = get_aqi_level(aqi)
 
         # 更新顶层字段
         record['air_quality_level'] = air_quality_level
         record['primary_pollutant'] = primary_pollutant
+        if use_api_primary_pollutants:
+            record['primary_pollutant_calc_new'] = (
+                ",".join(calculated_primary_pollutants)
+                if calculated_primary_pollutants else None
+            )
+        else:
+            record.pop('primary_pollutant_calc_new', None)
 
 
 async def execute_query_city_day_new_standard(
