@@ -600,7 +600,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
             "name": "query_gd_suncere_city_day",
             "description": (
                 "查询广东省城市级日空气质量数据，适合日变化、多城市日均对比和长时间序列分析。"
-                "城市名自动映射编码；data_type默认审核实况1；sand_type透传接口扣沙参数。"
+                "城市名自动映射编码；data_type默认None自动选择近三天原始三天外审核；sand_type透传接口扣沙参数。"
                 "需要新标准日数据优先用query_gd_suncere_city_day_new。"
             ),
             "parameters": {
@@ -621,7 +621,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
                     },
                     "data_type": {
                         "type": "integer",
-                        "description": "数据类型：0原始实况，1审核实况（默认），2原始标况，3审核标况",
+                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；不传时自动选择近三天原始三天外审核",
                         "enum": [0, 1, 2, 3]
                     },
                     "sand_type": {
@@ -650,7 +650,7 @@ class QueryGDSuncereCityDayTool(LLMTool):
         cities: List[str],
         start_date: str,
         end_date: str,
-        data_type: int = 1,
+        data_type: Optional[int] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -661,7 +661,8 @@ class QueryGDSuncereCityDayTool(LLMTool):
             cities: 城市名称列表
             start_date: 开始日期
             end_date: 结束日期
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况），默认1
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；
+                      None时自动近三天原始、三天外审核，默认None
             **kwargs: 工具参数
                 - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
 
