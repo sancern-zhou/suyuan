@@ -362,7 +362,8 @@ async def execute_query_old_standard_report(
                     if iaqi == aqi_old:
                         primary_pollutants_this_day.append(pollutant)
 
-            if original_primary_pollutants:
+            use_api_primary_pollutants = len(original_primary_pollutants) > 1
+            if use_api_primary_pollutants:
                 record["primary_pollutant"] = ",".join(original_primary_pollutants)
                 record["primary_pollutant_calc_old"] = ",".join(primary_pollutants_this_day) if primary_pollutants_this_day else None
             elif primary_pollutants_this_day:
