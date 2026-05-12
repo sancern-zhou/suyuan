@@ -133,6 +133,22 @@ def parse_primary_pollutants(primary: Any) -> List[str]:
     return pollutants
 
 
+def should_use_api_primary_pollutants_for_new_standard(
+    api_primary_pollutants: List[str],
+    calculated_primary_pollutants: List[str],
+    pm25: float,
+    pm10: float,
+) -> bool:
+    """仅在扣沙后颗粒物置零且接口双首污补充 NO2 时使用接口首污。"""
+    if len(api_primary_pollutants) <= 1:
+        return False
+
+    if "NO2" not in api_primary_pollutants or "NO2" in calculated_primary_pollutants:
+        return False
+
+    return pm25 <= 0 and pm10 <= 0
+
+
 # =============================================================================
 # 常量定义
 # =============================================================================
@@ -925,15 +941,24 @@ async def execute_query_new_standard_report(
                     sand_type=sand_type
                 )
 
-            primary_pollutants_this_day = []
-            use_api_primary_pollutants = len(original_primary_pollutants) > 1
-            if use_api_primary_pollutants:
-                primary_pollutants_this_day = original_primary_pollutants
-            elif aqi_new > 50:
-                primary_pollutants_this_day = [
+            calculated_primary_pollutants = []
+            if aqi_new > 50:
+                calculated_primary_pollutants = [
                     pollutant for pollutant, iaqi in pollutants_with_iaqi_new.items()
                     if iaqi == aqi_new
                 ]
+
+            primary_pollutants_this_day = []
+            use_api_primary_pollutants = should_use_api_primary_pollutants_for_new_standard(
+                original_primary_pollutants,
+                calculated_primary_pollutants,
+                pm25,
+                pm10,
+            )
+            if use_api_primary_pollutants:
+                primary_pollutants_this_day = original_primary_pollutants
+            else:
+                primary_pollutants_this_day = calculated_primary_pollutants
 
             for pollutant in primary_pollutants_this_day:
                 primary_pollutant_days[pollutant] += 1
@@ -967,11 +992,7 @@ async def execute_query_new_standard_report(
             if primary_pollutants_this_day:
                 record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
                 if use_api_primary_pollutants:
-                    calculated_primary = [
-                        pollutant for pollutant, iaqi in pollutants_with_iaqi_new.items()
-                        if aqi_new > 50 and iaqi == aqi_new
-                    ]
-                    record["primary_pollutant_calc_new"] = ",".join(calculated_primary) if calculated_primary else None
+                    record["primary_pollutant_calc_new"] = ",".join(calculated_primary_pollutants) if calculated_primary_pollutants else None
             else:
                 record["primary_pollutant"] = None
 
