@@ -31,12 +31,12 @@ class ReadDataRegistryTool(LLMTool):
         super().__init__(
             name="read_data_registry",
             description=(
-                "读取DataRegistry中已保存的数据。先用list_fields=true查看字段和时间范围；"
-                "正式读取必须传time_range以避免加载大量原始数据。支持fields字段筛选和jq_filter高级过滤；"
-                f"明细数组最多返回{self.DEFAULT_MAX_RECORDS}条，超限需缩小time_range或使用jq聚合。"
+                "读取DataRegistry中已保存的数据。"
+                "支持时间范围过滤、字段选择和jq聚合过滤。"
+                f"明细数组最多返回{self.DEFAULT_MAX_RECORDS}条。"
             ),
             category=ToolCategory.QUERY,
-            version="2.1.0",
+            version="2.2.0",
             requires_context=True
         )
 
@@ -69,7 +69,7 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "jq_filter": {
                         "type": "string",
-                        "description": "高级jq过滤；数组数据需使用.[]或map/select"
+                        "description": "jq过滤表达式（支持聚合统计）"
                     }
                 },
                 "anyOf": [
@@ -189,6 +189,9 @@ class ReadDataRegistryTool(LLMTool):
                 "summary": f"字段名称不匹配。请求的字段 {mismatched_fields} 不存在，共有 {len(available_fields)} 个可用字段。请查看 data 字段获取完整字段列表。"
             }
 
+        # 智能判断：区分聚合操作和明细查询
+        is_aggregation = self._is_aggregation_operation(jq_filter, len(data))
+
         # 应用 jq 过滤（带智能修正）
         if jq_filter:
             try:
@@ -214,22 +217,25 @@ class ReadDataRegistryTool(LLMTool):
                     filter_info["jq_filter"] = jq_filter
                     if isinstance(data, list):
                         filter_info["jq_result_count"] = len(data)
+                        # jq执行后重新判断是否为聚合
+                        is_aggregation = True
                 else:
                     # 提供更友好的错误提示
                     error_hint = self._get_jq_error_hint(result.stderr, jq_filter)
                     return {
                         "success": False,
                         "error": f"jq 过滤失败: {result.stderr}",
-                        "hint": error_hint,
-                        "suggestion": "数据是数组格式，请使用 .[] 迭代或 map/select 函数"
+                        "hint": error_hint
                     }
             except FileNotFoundError:
                 filter_info["jq_warning"] = "jq 未安装，跳过 jq 过滤"
             except Exception as e:
                 return {"success": False, "error": f"jq 执行失败: {str(e)}"}
 
+        # 记录数限制：只拒绝明细查询，允许聚合结果
         if isinstance(data, list) and len(data) > self.DEFAULT_MAX_RECORDS:
-            return self._reject_large_detail_result(data, data_id, time_range, fields, jq_filter, filter_info)
+            if not is_aggregation:
+                return self._reject_large_detail_result(data, data_id, time_range, fields, jq_filter, filter_info)
 
         # ✅ 修复：处理 jq_filter 返回的不同类型（聚合操作可能返回 int/str/bool）
         # 检查 data 类型，确定返回记录数
@@ -262,6 +268,36 @@ class ReadDataRegistryTool(LLMTool):
             "summary": self._generate_summary(data, filter_info)
         }
 
+    def _is_aggregation_operation(self, jq_filter: Optional[str], data_count: int) -> bool:
+        """判断是否为聚合操作
+
+        Args:
+            jq_filter: jq过滤表达式
+            data_count: 过滤后的数据条数
+
+        Returns:
+            True 表示聚合操作，False 表示明细查询
+        """
+        # 标量值判断
+        if data_count == 1:
+            return True
+
+        # 没有使用jq_filter，且有大量数据 → 明细查询
+        if not jq_filter and data_count > 100:
+            return False
+
+        # 使用了jq_filter，检查是否包含聚合关键字
+        if jq_filter:
+            aggregation_keywords = [
+                "group_by", "map(", "select(", "length",
+                "add", "max", "min", "avg", "sum", "mean",
+                "unique", "sort_by", "first", "last"
+            ]
+            return any(keyword in jq_filter for keyword in aggregation_keywords)
+
+        # 默认认为是明细查询
+        return False
+
     def _reject_large_detail_result(
         self,
         data: List[Any],
@@ -271,45 +307,20 @@ class ReadDataRegistryTool(LLMTool):
         jq_filter: Optional[str],
         filter_info: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """拒绝返回过大的明细数组，避免工具结果撑爆LLM上下文。"""
+        """拒绝返回过大的明细数组"""
         returned_count = len(data)
+
+        # 生成简洁的错误提示
+        if jq_filter:
+            suggestion = f"jq_filter返回{returned_count}条，超过{self.DEFAULT_MAX_RECORDS}条限制。请添加聚合操作如group_by/map/length"
+        else:
+            suggestion = f"过滤后{returned_count}条，超过{self.DEFAULT_MAX_RECORDS}条限制。请使用jq_filter聚合或缩小time_range"
+
         return {
             "success": False,
-            "data": {
-                "error_type": "too_many_records",
-                "data_id": data_id,
-                "time_range": time_range,
-                "requested_fields": fields,
-                "jq_filter": jq_filter,
-                "filtered_records": returned_count,
-                "max_records": self.DEFAULT_MAX_RECORDS,
-                "suggestion": (
-                    f"过滤后有 {returned_count} 条明细，超过最大返回 {self.DEFAULT_MAX_RECORDS} 条。"
-                    "请缩小 time_range、选择更少 fields，或使用 jq_filter 做聚合后再读取。"
-                ),
-                "examples": [
-                    '缩小 time_range，例如 "2025-11-23 00:00:00,2025-11-25 23:59:59"',
-                    '选择 fields，例如 ["timestamp", "station_name", "measurements.PM2_5"]',
-                    '使用 jq_filter="length" 获取数量',
-                    '使用 jq_filter="map(.measurements.PM2_5) | add / length" 获取均值'
-                ]
-            },
-            "metadata": {
-                "total_records": filter_info.get("original_count", returned_count),
-                "filtered_records": returned_count,
-                "max_records": self.DEFAULT_MAX_RECORDS,
-                "filter_applied": bool(filter_info),
-                "filter_details": filter_info,
-                "source": "data_registry",
-                "generator": "read_data_registry",
-                "tool_name": "read_data_registry",
-                "error": "too_many_records"
-            },
-            "summary": (
-                f"拒绝返回完整明细: 过滤后 {returned_count} 条，"
-                f"超过最大允许 {self.DEFAULT_MAX_RECORDS} 条。"
-                "请缩小 time_range、减少 fields，或使用 jq_filter 聚合。"
-            )
+            "error": f"返回{returned_count}条记录，超过{self.DEFAULT_MAX_RECORDS}条限制",
+            "hint": suggestion,
+            "summary": f"数据量过大：{returned_count}条 > {self.DEFAULT_MAX_RECORDS}条"
         }
 
     def _apply_filters(
@@ -606,26 +617,16 @@ class ReadDataRegistryTool(LLMTool):
                 return f"数据内容: {str(data)[:200]}"
 
     def _auto_correct_jq_filter(self, jq_filter: str) -> str:
-        """智能修正 jq 过滤表达式
-
-        常见错误模式：
-        1. 直接写 .field (应该是 .[] | .field 或 map(.field))
-        2. .field == value (应该是 .[] | select(.field == value))
-        """
+        """智能修正 jq 过滤表达式（只修正最简单的错误）"""
         jq_filter = jq_filter.strip()
 
-        # 如果已经包含 .[] 或 map(，说明用户已经知道需要迭代
-        if ".[]" in jq_filter or "map(" in jq_filter or "select(" in jq_filter:
+        # 如果已经包含任何函数或操作符，说明用户知道如何使用
+        if any(keyword in jq_filter for keyword in
+               [".[]", "map(", "select(", "group_by", "length", "add", "max", "min", "|"]):
             return jq_filter
 
-        # 模式1：简单的字段比较，如 .field == null 或 .field == ""
-        if jq_filter.startswith(".") and "==" in jq_filter:
-            # 将 .field == null 转换为 map(select(.field == null))
-            return f"map(select({jq_filter}))"
-
-        # 模式2：简单的字段访问，如 .field
-        if jq_filter.startswith(".") and "==" not in jq_filter and "|" not in jq_filter:
-            # 将 .field 转换为 map(.field)
+        # 只修正最基本的错误：直接访问字段
+        if jq_filter.startswith(".") and "|" not in jq_filter:
             return f"map({jq_filter})"
 
         return jq_filter
@@ -689,15 +690,13 @@ class ReadDataRegistryTool(LLMTool):
             }
 
     def _get_jq_error_hint(self, stderr: str, jq_filter: str) -> str:
-        """根据 jq 错误信息提供友好提示"""
+        """根据 jq 错误信息提供简洁提示"""
         if "Cannot index array" in stderr:
-            return "数据是数组格式，需要使用 .[] 迭代或使用 map/select 函数"
+            return "数组需要使用 .[] 或 map/select 函数"
         elif "syntax error" in stderr:
-            return "jq 语法错误，请检查表达式格式"
-        elif "unexpected end" in stderr:
-            return "jq 表达式未结束，可能缺少括号或引号"
+            return "jq语法错误"
         else:
-            return "请检查 jq 表达式语法"
+            return ""
 
 
 # 工具注册
