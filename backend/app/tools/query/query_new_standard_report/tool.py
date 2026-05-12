@@ -926,7 +926,8 @@ async def execute_query_new_standard_report(
                 )
 
             primary_pollutants_this_day = []
-            if original_primary_pollutants:
+            use_api_primary_pollutants = len(original_primary_pollutants) > 1
+            if use_api_primary_pollutants:
                 primary_pollutants_this_day = original_primary_pollutants
             elif aqi_new > 50:
                 primary_pollutants_this_day = [
@@ -950,7 +951,7 @@ async def execute_query_new_standard_report(
                         no2_iaqi=f"{no2_iaqi_new:.1f}",
                         so2_iaqi=f"{so2_iaqi_new:.1f}",
                         co_iaqi=f"{co_iaqi_new:.1f}",
-                        source="api_primary_pollutant" if original_primary_pollutants else "calculated_iaqi"
+                        source="api_primary_pollutant_tie" if use_api_primary_pollutants else "calculated_iaqi"
                     )
 
             # ====================================================================
@@ -965,7 +966,7 @@ async def execute_query_new_standard_report(
             record["AQI"] = aqi_new
             if primary_pollutants_this_day:
                 record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
-                if original_primary_pollutants:
+                if use_api_primary_pollutants:
                     calculated_primary = [
                         pollutant for pollutant, iaqi in pollutants_with_iaqi_new.items()
                         if aqi_new > 50 and iaqi == aqi_new
