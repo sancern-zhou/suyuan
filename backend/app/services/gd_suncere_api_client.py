@@ -625,14 +625,14 @@ class GDSuncereAPIClient:
         按站点属性 planType 和数据类型 dataType 切分日数据查询范围。
 
         planType:
-        - 2020-01-01 前：十三五站点，planType=135
-        - 2020-01-01 及之后：十五五站点，planType=0
+        - 2021-01-01 前：十三五站点，planType=135
+        - 2021-01-01 及之后：十四五站点，planType=0
 
         dataType:
         - 显式传入时完全尊重用户选择
         - None时自动：近三天使用原始实况0，三天外使用审核实况1
         """
-        plan_boundary = datetime.strptime("2020-01-01", "%Y-%m-%d").date()
+        plan_boundary = datetime.strptime("2021-01-01", "%Y-%m-%d").date()
         start = datetime.strptime(start_date, "%Y-%m-%d").date()
         end = datetime.strptime(end_date, "%Y-%m-%d").date()
 
