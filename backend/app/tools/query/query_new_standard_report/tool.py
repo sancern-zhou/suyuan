@@ -17,6 +17,7 @@
 
 import asyncio
 import math
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
 import structlog
@@ -83,6 +84,53 @@ def expand_region_city_names(cities: List[str]) -> List[str]:
                 expanded.append(city)
 
     return expanded
+
+
+def parse_primary_pollutants(primary: Any) -> List[str]:
+    """解析首要污染物字符串，支持双/多首要污染物的常见分隔写法。"""
+    if not primary:
+        return []
+
+    aliases = {
+        "PM2.5": "PM2_5",
+        "PM2_5": "PM2_5",
+        "PM25": "PM2_5",
+        "PM10": "PM10",
+        "SO2": "SO2",
+        "NO2": "NO2",
+        "CO": "CO",
+        "O3": "O3_8h",
+        "O3_8H": "O3_8h",
+        "O3-8H": "O3_8h",
+        "O3_8": "O3_8h",
+        "臭氧": "O3_8h",
+        "二氧化氮": "NO2",
+        "二氧化硫": "SO2",
+        "一氧化碳": "CO",
+    }
+    valid_pollutants = {"PM2_5", "PM10", "SO2", "NO2", "CO", "O3_8h"}
+
+    normalized = str(primary).strip()
+    if not normalized or normalized in {"-", "无", "None", "null"}:
+        return []
+
+    parts = re.split(r"[，,、；;/|]+|和|及|与|\s+", normalized)
+    pollutants = []
+    seen = set()
+    for part in parts:
+        token = part.strip()
+        if not token:
+            continue
+
+        token_key = token.upper().replace(" ", "")
+        token_key = token_key.replace("PM2.5", "PM2_5")
+        pollutant = aliases.get(token) or aliases.get(token_key)
+
+        if pollutant in valid_pollutants and pollutant not in seen:
+            pollutants.append(pollutant)
+            seen.add(pollutant)
+
+    return pollutants
 
 
 # =============================================================================
@@ -741,6 +789,7 @@ async def execute_query_new_standard_report(
         for record in daily_records:
             # 提取浓度值
             measurements = record.get("measurements", {})
+            original_primary_pollutants = parse_primary_pollutants(record.get("primary_pollutant", ""))
 
             def safe_float(value, default=0.0):
                 if value is None or value == '' or value == '-':
@@ -877,26 +926,32 @@ async def execute_query_new_standard_report(
                 )
 
             primary_pollutants_this_day = []
-            if aqi_new > 50:
-                for pollutant, iaqi in pollutants_with_iaqi_new.items():
-                    if iaqi == aqi_new:
-                        primary_pollutant_days[pollutant] += 1
-                        primary_pollutant_dates[pollutant].append(date_only)
-                        primary_pollutants_this_day.append(pollutant)
-                        if city_name == '韶关':
-                            logger.info(
-                                "primary_pollutant_counted",
-                                city=city_name,
-                                date=date_only,
-                                pollutant=pollutant,
-                                aqi_new=f"{aqi_new:.1f}",
-                                pm25_iaqi=f"{pm25_iaqi_new:.1f}",
-                                pm10_iaqi=f"{pm10_iaqi_new:.1f}",
-                                o3_8h_iaqi=f"{o3_8h_iaqi_new:.1f}",
-                                no2_iaqi=f"{no2_iaqi_new:.1f}",
-                                so2_iaqi=f"{so2_iaqi_new:.1f}",
-                                co_iaqi=f"{co_iaqi_new:.1f}"
-                            )
+            if original_primary_pollutants:
+                primary_pollutants_this_day = original_primary_pollutants
+            elif aqi_new > 50:
+                primary_pollutants_this_day = [
+                    pollutant for pollutant, iaqi in pollutants_with_iaqi_new.items()
+                    if iaqi == aqi_new
+                ]
+
+            for pollutant in primary_pollutants_this_day:
+                primary_pollutant_days[pollutant] += 1
+                primary_pollutant_dates[pollutant].append(date_only)
+                if city_name == '韶关':
+                    logger.info(
+                        "primary_pollutant_counted",
+                        city=city_name,
+                        date=date_only,
+                        pollutant=pollutant,
+                        aqi_new=f"{aqi_new:.1f}",
+                        pm25_iaqi=f"{pm25_iaqi_new:.1f}",
+                        pm10_iaqi=f"{pm10_iaqi_new:.1f}",
+                        o3_8h_iaqi=f"{o3_8h_iaqi_new:.1f}",
+                        no2_iaqi=f"{no2_iaqi_new:.1f}",
+                        so2_iaqi=f"{so2_iaqi_new:.1f}",
+                        co_iaqi=f"{co_iaqi_new:.1f}",
+                        source="api_primary_pollutant" if original_primary_pollutants else "calculated_iaqi"
+                    )
 
             # ====================================================================
             # 将新标准计算结果写入record（保存到 data-id）
@@ -910,6 +965,12 @@ async def execute_query_new_standard_report(
             record["AQI"] = aqi_new
             if primary_pollutants_this_day:
                 record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
+                if original_primary_pollutants:
+                    calculated_primary = [
+                        pollutant for pollutant, iaqi in pollutants_with_iaqi_new.items()
+                        if aqi_new > 50 and iaqi == aqi_new
+                    ]
+                    record["primary_pollutant_calc_new"] = ",".join(calculated_primary) if calculated_primary else None
             else:
                 record["primary_pollutant"] = None
 
