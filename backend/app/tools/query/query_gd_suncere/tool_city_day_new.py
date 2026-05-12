@@ -189,10 +189,9 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
                               record.get("o3_8h") or record.get("O3_8h"))
 
         # 应用修约规则并更新 measurements（日数据：0位小数转为整数）
-        # 扣沙日中值为"-"的字段保持"-"不修约
-        if pm25_raw > 0 or not is_sand_day:
+        if pm25_raw > 0:
             measurements['PM2_5'] = int(apply_rounding(pm25_raw, 'PM2_5', 'raw_data'))
-        if pm10_raw > 0 or not is_sand_day:
+        if pm10_raw > 0:
             measurements['PM10'] = int(apply_rounding(pm10_raw, 'PM10', 'raw_data'))
         measurements['SO2'] = int(apply_rounding(so2_raw, 'SO2', 'raw_data'))
         measurements['NO2'] = int(apply_rounding(no2_raw, 'NO2', 'raw_data'))

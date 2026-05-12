@@ -1083,7 +1083,7 @@ def get_raw_data(data_id: str):
         由于matplotlib的mathtext引擎不支持中文字符，会导致混合LaTeX和中文的
         字符串显示异常。因此，我们采用简写格式替代LaTeX格式：
         - PM₂.₅ → PM2.5（而非 PM$_{2.5}$）
-        - μg/m³ → ug/m3（而非 $\mu$g/m$^3$）
+        - μg/m³ → ug/m3（而非 $\\mu$g/m$^3$）
 
         转换示例：
         - 'PM₂.₅浓度' → 'PM2.5浓度'

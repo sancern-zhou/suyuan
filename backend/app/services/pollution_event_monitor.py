@@ -74,7 +74,7 @@ WEATHER_FIELDS = (
 class MonitorConfig:
     cities: List[str]
     hours: int = 24
-    station_type: str = "国控"
+    station_type: List[str] = field(default_factory=lambda: ["国控", "省控"])  # 同时抓取国控和省控
     output_root: Optional[Path] = None
     force_collect: bool = False
     include_components: bool = True
@@ -331,21 +331,39 @@ class PollutionEventMonitorService:
     def _fetch_station_hour_data(self, city: str, start_time: datetime, end_time: datetime) -> Dict[str, Any]:
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_station_hour_real
 
-        result = execute_query_gd_suncere_station_hour_real(
-            cities=[city],
-            stations=None,
-            station_type=self.config.station_type,
-            start_time=self._format_api_time(start_time),
-            end_time=self._format_api_time(end_time),
-            context=self.context,
-            include_weather=True,
-        )
-        data_id = self._extract_data_id(result)
-        records = self._load_data_records(data_id, result)
+        # 支持多个站点类型：分别调用API并合并结果
+        all_records = []
+        all_data_ids = []
+        source_results = {}
+
+        for station_type in self.config.station_type:
+            result = execute_query_gd_suncere_station_hour_real(
+                cities=[city],
+                stations=None,
+                station_type=station_type,
+                start_time=self._format_api_time(start_time),
+                end_time=self._format_api_time(end_time),
+                context=self.context,
+                include_weather=True,
+            )
+            data_id = self._extract_data_id(result)
+            records = self._load_data_records(data_id, result)
+            all_records.extend(records)
+            all_data_ids.append(data_id)
+            source_results[station_type] = self._compact_result(result)
+
+            logger.info(
+                "station_hour_data_fetched",
+                city=city,
+                station_type=station_type,
+                record_count=len(records),
+                data_id=data_id,
+            )
+
         return {
-            "data_id": data_id,
-            "records": records,
-            "source_result": self._compact_result(result),
+            "data_id": ",".join(all_data_ids),  # 多个data_id用逗号分隔
+            "records": all_records,
+            "source_result": source_results,
         }
 
     async def _fetch_component_data(
