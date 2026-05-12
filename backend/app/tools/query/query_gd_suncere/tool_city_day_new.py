@@ -219,12 +219,13 @@ def update_to_new_standard(standardized_records: List[Dict]) -> None:
 
         primary_pollutant = None
         if aqi > 50:
+            primary_pollutants = []
             for pollutant, iaqi in [('PM2_5', pm25_iaqi), ('PM10', pm10_iaqi),
                                     ('SO2', so2_iaqi), ('NO2', no2_iaqi),
                                     ('CO', co_iaqi), ('O3_8h', o3_8h_iaqi)]:
                 if iaqi == aqi:
-                    primary_pollutant = pollutant
-                    break
+                    primary_pollutants.append(pollutant)
+            primary_pollutant = ",".join(primary_pollutants) if primary_pollutants else None
 
         air_quality_level = get_aqi_level(aqi)
 
