@@ -31,6 +31,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
+import re
 import structlog
 
 from app.tools.base import LLMTool, ToolCategory
@@ -104,6 +105,53 @@ def expand_region_city_names(cities: List[str]) -> List[str]:
                 expanded.append(city)
 
     return expanded
+
+
+def parse_primary_pollutants(primary: Any) -> List[str]:
+    """解析首要污染物字符串，支持双/多首要污染物的常见分隔写法。"""
+    if not primary:
+        return []
+
+    aliases = {
+        "PM2.5": "PM2_5",
+        "PM2_5": "PM2_5",
+        "PM25": "PM2_5",
+        "PM10": "PM10",
+        "SO2": "SO2",
+        "NO2": "NO2",
+        "CO": "CO",
+        "O3": "O3_8h",
+        "O3_8H": "O3_8h",
+        "O3-8H": "O3_8h",
+        "O3_8": "O3_8h",
+        "臭氧": "O3_8h",
+        "二氧化氮": "NO2",
+        "二氧化硫": "SO2",
+        "一氧化碳": "CO",
+    }
+    valid_pollutants = {"PM2_5", "PM10", "SO2", "NO2", "CO", "O3_8h"}
+
+    normalized = str(primary).strip()
+    if not normalized or normalized in {"-", "无", "None", "null"}:
+        return []
+
+    parts = re.split(r"[，,、；;/|]+|和|及|与|\s+", normalized)
+    pollutants = []
+    seen = set()
+    for part in parts:
+        token = part.strip()
+        if not token:
+            continue
+
+        token_key = token.upper().replace(" ", "")
+        token_key = token_key.replace("PM2.5", "PM2_5")
+        pollutant = aliases.get(token) or aliases.get(token_key)
+
+        if pollutant in valid_pollutants and pollutant not in seen:
+            pollutants.append(pollutant)
+            seen.add(pollutant)
+
+    return pollutants
 
 
 # =============================================================================
@@ -249,6 +297,7 @@ async def execute_query_old_standard_report(
         # 步骤5: 重新计算旧标准 AQI、IAQI、首要污染物
         for record in standardized_data:
             measurements = record.get("measurements", {})
+            original_primary_pollutants = parse_primary_pollutants(record.get("primary_pollutant", ""))
 
             # 提取浓度值
             def safe_float(value, default=0.0):
@@ -313,7 +362,10 @@ async def execute_query_old_standard_report(
                     if iaqi == aqi_old:
                         primary_pollutants_this_day.append(pollutant)
 
-            if primary_pollutants_this_day:
+            if original_primary_pollutants:
+                record["primary_pollutant"] = ",".join(original_primary_pollutants)
+                record["primary_pollutant_calc_old"] = ",".join(primary_pollutants_this_day) if primary_pollutants_this_day else None
+            elif primary_pollutants_this_day:
                 record["primary_pollutant"] = ",".join(primary_pollutants_this_day)
             else:
                 record["primary_pollutant"] = None
@@ -364,18 +416,13 @@ async def execute_query_old_standard_report(
             )
             city_stats[city] = city_stat
 
-        # 计算全省汇总统计（多城市查询时）
-        province_wide_stats = None
-        if len(cities) > 1:
-            # 导入全省汇总计算函数
-            from app.tools.query.query_new_standard_report.tool import calculate_province_wide_stats
-            province_wide_stats = calculate_province_wide_stats(city_stats)
-
         # 计算各区域汇总统计（多城市查询时）
         regional_stats = None
+        province_wide_stats = None
         if len(cities) > 1:
-            # 计算各区域汇总统计（珠三角、粤东、粤西、粤北、非珠三角）
+            # 计算各区域汇总统计（珠三角、粤东、粤西、粤北、非珠三角、全省）
             regional_stats = calculate_regional_stats(city_stats)
+            province_wide_stats = regional_stats.get("全省") if regional_stats else None
 
         # 步骤7: 保存完整日报数据到数据注册表
         # ⚠️ 已禁用：统计报表工具不返回 data_id，避免 LLM 尝试从 data_id 读取统计字段
@@ -582,30 +629,9 @@ def calculate_old_standard_city_stats(
                                    no2_index_old, co_index_old, o3_8h_index_old)
 
         # 统计首要污染物（从已计算的primary_pollutant字段获取）
-        # 修复1：支持中文逗号和英文逗号分割（数据中可能使用 "O3_8h，NO2"）
-        # 修复2：使用大小写不敏感的统计，避免因 O3_8h vs O3_8H 导致的统计遗漏
-        # 修复3：处理 PM2.5（点号）到 PM2_5（下划线）的映射
         primary = record.get("primary_pollutant", "")
-        if primary:
-            # 同时支持中文逗号（，）和英文逗号（,）分割
-            import re
-            pollutants = re.split(r'[，,]', primary)
-            for p in pollutants:
-                p_clean = p.strip()
-                if not p_clean:
-                    continue
-                # 标准化污染物名称（处理大小写和点号/下划线差异）
-                dict_key = p_clean
-
-                # 处理 PM2.5 → PM2_5 映射
-                if p_clean == 'PM2.5':
-                    dict_key = 'PM2_5'
-                # 处理 O3_8h 大小写
-                elif p_clean.upper() == 'O3_8H':
-                    dict_key = 'O3_8h'
-
-                if dict_key in primary_pollutant_days:
-                    primary_pollutant_days[dict_key] += 1
+        for pollutant in parse_primary_pollutants(primary):
+            primary_pollutant_days[pollutant] += 1
 
         # 统计各污染物超标天数（单项质量指数 > 1）
         if pm25_index_old > 1:
@@ -637,28 +663,10 @@ def calculate_old_standard_city_stats(
             }
 
             primary = record.get("primary_pollutant", "")
-            if primary:
-                # 同时支持中文逗号（，）和英文逗号（,）分割
-                import re
-                pollutants = re.split(r'[，,]', primary)
-                for p in pollutants:
-                    p_clean = p.strip()
-                    if not p_clean:
-                        continue
-                    # 标准化污染物名称（处理大小写和点号/下划线差异）
-                    dict_key = p_clean
-
-                    # 处理 PM2.5 → PM2_5 映射
-                    if p_clean == 'PM2.5':
-                        dict_key = 'PM2_5'
-                    # 处理 O3_8h 大小写
-                    elif p_clean.upper() == 'O3_8H':
-                        dict_key = 'O3_8h'
-
-                    if dict_key in primary_pollutant_exceed_days:
-                        # 只有当首要污染物本身超标时才计入
-                        if primary_pollutant_indexes.get(dict_key, 0) > 1:
-                            primary_pollutant_exceed_days[dict_key] += 1
+            for pollutant in parse_primary_pollutants(primary):
+                # 只有当首要污染物本身超标时才计入
+                if primary_pollutant_indexes.get(pollutant, 0) > 1:
+                    primary_pollutant_exceed_days[pollutant] += 1
 
             # 记录超标详情
             exceed_pollutants = []
@@ -687,6 +695,7 @@ def calculate_old_standard_city_stats(
     avg_pm25 = apply_rounding(pm25_sum / pm25_valid_count if pm25_valid_count > 0 else 0, 'PM2_5', 'statistical_data_old')
     avg_pm10 = apply_rounding(pm10_sum / pm10_valid_count if pm10_valid_count > 0 else 0, 'PM10', 'statistical_data_old')
     avg_so2 = apply_rounding(so2_sum / total_days, 'SO2', 'statistical_data_old') if total_days > 0 else 0
+    avg_no2_process = safe_round(no2_sum / total_days, 1) if total_days > 0 else 0
     avg_no2 = apply_rounding(no2_sum / total_days, 'NO2', 'statistical_data_old') if total_days > 0 else 0
     avg_co = apply_rounding(co_sum / total_days, 'CO', 'statistical_data_old') if total_days > 0 else 0
     avg_o3_8h = apply_rounding(o3_8h_sum / total_days, 'O3_8h', 'statistical_data_old') if total_days > 0 else 0
@@ -807,6 +816,7 @@ def calculate_old_standard_city_stats(
         "SO2": avg_so2,
         "SO2_P98": so2_percentile_98,
         "NO2": avg_no2,
+        "NO2_process_mean": avg_no2_process,
         "NO2_P98": no2_percentile_98,
         "PM10": avg_pm10,
         "PM10_P95": pm10_percentile_95,
@@ -917,9 +927,9 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         composite_index_sum = sum(s.get("composite_index", 0) for s in region_city_stats.values())
         avg_composite_index = safe_round(composite_index_sum / num_cities, 3) if num_cities > 0 else 0
 
-        # 各污染物浓度均值（旧标准使用 statistical_data_old 修约规则）
+        # 各污染物浓度均值
         so2_sum = sum(s.get("SO2", 0) for s in region_city_stats.values())
-        no2_sum = sum(s.get("NO2", 0) for s in region_city_stats.values())
+        no2_sum = sum(s.get("NO2_process_mean", s.get("NO2", 0)) for s in region_city_stats.values())
         pm10_sum = sum(s.get("PM10", 0) for s in region_city_stats.values())
         pm25_sum = sum(s.get("PM2_5", 0) for s in region_city_stats.values())
         co_p95_sum = sum(s.get("CO_P95", 0) for s in region_city_stats.values())
@@ -930,9 +940,10 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         pm10_percentile_95_sum = sum(s.get("PM10_P95", 0) for s in region_city_stats.values())
         pm25_percentile_95_sum = sum(s.get("PM2_5_P95", 0) for s in region_city_stats.values())
 
-        # 计算均值并应用旧标准修约规则
+        # 计算均值并应用旧标准修约规则。
+        # 区域 NO2 是各城市年均值的过程均值，保留 1 位，避免 18.2/22.5 被二次取整成 18/22。
         avg_so2 = apply_rounding(so2_sum / num_cities if num_cities > 0 else 0, 'SO2', 'statistical_data_old')
-        avg_no2 = apply_rounding(no2_sum / num_cities if num_cities > 0 else 0, 'NO2', 'statistical_data_old')
+        avg_no2 = safe_round(no2_sum / num_cities if num_cities > 0 else 0, 1)
         avg_pm10 = apply_rounding(pm10_sum / num_cities if num_cities > 0 else 0, 'PM10', 'statistical_data_old')
         avg_pm25 = apply_rounding(pm25_sum / num_cities if num_cities > 0 else 0, 'PM2_5', 'statistical_data_old')
         avg_co_p95 = apply_rounding(co_p95_sum / num_cities if num_cities > 0 else 0, 'CO', 'statistical_data_old')
@@ -988,6 +999,7 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
             "SO2": avg_so2,
             "SO2_P98": avg_so2_p98,
             "NO2": avg_no2,
+            "NO2_process_mean": avg_no2,
             "NO2_P98": avg_no2_p98,
             "PM10": avg_pm10,
             "PM10_P95": avg_pm10_p95,
@@ -1018,8 +1030,8 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         )
 
     # 按照指定顺序重新排列区域统计结果
-    # 顺序：粤东、粤西、粤北、珠三角、非珠三角
-    region_order = ["粤东", "粤西", "粤北", "珠三角", "非珠三角"]
+    # 顺序：粤东、粤西、粤北、珠三角、非珠三角、全省、广东省
+    region_order = ["粤东", "粤西", "粤北", "珠三角", "非珠三角", "全省", "广东省"]
     ordered_regional_stats = {}
     for region in region_order:
         if region in regional_stats:
