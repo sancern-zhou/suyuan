@@ -329,8 +329,7 @@ def _calculate_station_statistics(
         if max_iaqi > 50:
             # 找出IAQI最大的污染物
             primary_pollutants = [p for p, iaqi in iaqi_values.items() if iaqi == max_iaqi]
-            if primary_pollutants:
-                primary = primary_pollutants[0]
+            for primary in primary_pollutants:
                 primary_pollutant_days[primary] += 1
                 total_primary_days += 1
 
