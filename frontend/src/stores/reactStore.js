@@ -964,6 +964,7 @@ export const useReactStore = defineStore('react', {
         ...message,
         content: content ? contentToString(content) : message.content,
         streaming: false,
+        renderVersion: (message.renderVersion || 0) + 1,
         data: {
           ...(message.data || {}),
           ...data
@@ -1297,6 +1298,7 @@ export const useReactStore = defineStore('react', {
               const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
               if (msg) {
                 msg.streaming = false
+                msg.renderVersion = (msg.renderVersion || 0) + 1
                 // 强制触发响应式更新，确保流式完成后重新渲染
                 targetState._forceRenderCount++
               }

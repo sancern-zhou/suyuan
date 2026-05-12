@@ -61,7 +61,7 @@
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <!-- 当 streaming 从 true 变为 false 时，key 变化，组件会重新创建 -->
           <MarkdownRenderer
-            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}`"
+            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
             :content="contentToString(message.content)"
             :streaming="message.streaming === true"
           />
@@ -121,7 +121,7 @@
         <div class="message-content" v-if="useMarkdown">
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
-            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}`"
+            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
             :content="contentToString(message.content)"
             :streaming="message.streaming === true"
           />
