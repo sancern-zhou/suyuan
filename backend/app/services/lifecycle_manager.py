@@ -14,6 +14,7 @@ from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.city_statistics import CityStatisticsFetcher, CityStatisticsOldStandardFetcher, ProvinceStatisticsFetcher, ProvinceStatisticsOldStandardFetcher  # 168城市和省级统计（新旧标准）
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
+from app.fetchers.consultation import ConsultationFileFetcher  # 会商文件批量更新
 # 导入单一工具注册源
 from app.tools import global_tool_registry
 
@@ -62,6 +63,9 @@ def initialize_fetchers():
 
         # 注册城市污染过程告警Fetcher
         fetcher_scheduler.register(CityPollutionEventFetcher())
+
+        # 注册会商文件批量更新Fetcher
+        fetcher_scheduler.register(ConsultationFileFetcher())
 
         logger.info(
             "fetchers_registered",
