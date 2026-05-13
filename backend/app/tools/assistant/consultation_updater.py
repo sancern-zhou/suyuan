@@ -191,6 +191,47 @@ class ConsultationFileUpdater:
             # 返回空列表，而不是抛出异常，允许继续处理其他文件
             return []
 
+    async def query_named_data(
+        self,
+        scope: str,
+        pollutant: str,
+        time_period: str,
+        time_type: str
+    ) -> List[Dict[str, Any]]:
+        """查询污染物数据，并保留地区名称用于Excel按名称对齐。"""
+        from app.tools.assistant.consultation_data_query import (
+            ConsultationDataQuery
+        )
+
+        try:
+            query = ConsultationDataQuery()
+            result = await query.query_named_data(
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                time_type=time_type
+            )
+
+            logger.info(
+                "query_named_success",
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                data_count=len(result)
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(
+                "query_named_failed",
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                error=str(e)
+            )
+            return []
+
     def update_excel_file(
         self,
         file_path: str,
@@ -242,6 +283,49 @@ class ConsultationFileUpdater:
 
         except Exception as e:
             logger.error(f"Failed to update Excel file {file_path}: {str(e)}")
+            return {
+                "success": False,
+                "file_path": file_path,
+                "pollutant": pollutant,
+                "error": str(e)
+            }
+
+    def update_excel_file_by_name(
+        self,
+        file_path: str,
+        pollutant: str,
+        current_records: List[Dict[str, Any]],
+        last_year_records: List[Dict[str, Any]],
+        current_period: str,
+        last_year_period: str
+    ) -> Dict[str, Any]:
+        """按地区名称更新单个Excel文件，避免API顺序导致省份错配。"""
+        try:
+            operator = ConsultationExcelOperator(file_path)
+            operator.load_file()
+
+            operator.update_consultation_file_by_name(
+                current_records=current_records,
+                last_year_records=last_year_records,
+                current_period=current_period,
+                last_year_period=last_year_period
+            )
+
+            operator.save_file()
+
+            validation = validate_excel_data(
+                file_path, pollutant, current_period, last_year_period
+            )
+
+            return {
+                "success": validation["valid"],
+                "file_path": file_path,
+                "pollutant": pollutant,
+                "validation": validation
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to update Excel file by name {file_path}: {str(e)}")
             return {
                 "success": False,
                 "file_path": file_path,
@@ -427,7 +511,7 @@ class ConsultationUpdaterTool(LLMTool):
 
         try:
             # 查询当年数据
-            current_data = await self.updater.query_data(
+            current_records = await self.updater.query_named_data(
                 scope=scope,
                 pollutant=pollutant,
                 time_period=time_periods["current"],
@@ -435,7 +519,7 @@ class ConsultationUpdaterTool(LLMTool):
             )
 
             # 查询去年数据
-            last_year_data = await self.updater.query_data(
+            last_year_records = await self.updater.query_named_data(
                 scope=scope,
                 pollutant=pollutant,
                 time_period=time_periods["last_year"],
@@ -443,21 +527,23 @@ class ConsultationUpdaterTool(LLMTool):
             )
 
             # 更新Excel文件
-            result = self.updater.update_excel_file(
+            result = self.updater.update_excel_file_by_name(
                 file_path=file_path,
                 pollutant=pollutant,
-                current_data=current_data,
-                last_year_data=last_year_data,
+                current_records=current_records,
+                last_year_records=last_year_records,
                 current_period=time_periods["current"],
                 last_year_period=time_periods["last_year"]
             )
 
             return {
-                "success": True,
+                "success": result["success"],
                 "file_path": file_path,
                 "pollutant": pollutant,
                 "scope": scope,
-                "time_type": time_type
+                "time_type": time_type,
+                "validation": result.get("validation"),
+                "error": result.get("error")
             }
 
         except Exception as e:

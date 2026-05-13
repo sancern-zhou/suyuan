@@ -14,7 +14,7 @@ date: 2026-05-08
 
 import openpyxl
 from openpyxl.utils import get_column_letter
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import structlog
 from pathlib import Path
 
@@ -53,7 +53,8 @@ class ConsultationExcelOperator:
         column: str,
         data: List[float],
         start_row: int = 2,
-        precision: int = 2
+        precision: int = 2,
+        end_row: Optional[int] = None
     ):
         """
         更新列数据
@@ -68,7 +69,57 @@ class ConsultationExcelOperator:
             cell = self.sheet[f"{column}{start_row + i}"]
             cell.value = round(value, precision) if value is not None else None
 
+        if end_row is not None:
+            for row in range(start_row + len(data), end_row + 1):
+                self.sheet[f"{column}{row}"].value = None
+
         logger.info(f"Updated column {column} with {len(data)} rows")
+
+    def align_records_to_names(
+        self,
+        records: List[Dict[str, Any]],
+        name_column: str = "A",
+        start_row: int = 2,
+        end_row: int = 32
+    ) -> List[float]:
+        """按模板名称列对齐API记录，避免依赖API返回顺序。"""
+        value_by_name = {}
+        duplicates = []
+
+        for record in records:
+            name = self._normalize_area_name(record.get("name", ""))
+            if not name:
+                continue
+            if name in value_by_name:
+                duplicates.append(name)
+                continue
+            value_by_name[name] = record.get("value")
+
+        if duplicates:
+            raise ValueError(f"API数据存在重复地区: {sorted(set(duplicates))}")
+
+        aligned = []
+        missing = []
+        template_names = []
+        for row in range(start_row, end_row + 1):
+            raw_name = self.sheet[f"{name_column}{row}"].value
+            name = self._normalize_area_name(raw_name)
+            if not name:
+                continue
+            if name in template_names:
+                raise ValueError(f"模板{name_column}列存在重复地区: {name}")
+            template_names.append(name)
+
+            if name not in value_by_name:
+                missing.append(name)
+                aligned.append(None)
+            else:
+                aligned.append(value_by_name[name])
+
+        if missing:
+            raise ValueError(f"API数据缺少模板地区: {missing}")
+
+        return aligned
 
     def update_column_name(self, column: str, name: str, row: int = 1):
         """
@@ -148,7 +199,8 @@ class ConsultationExcelOperator:
         col2: str,
         output_col: str,
         start_row: int = 2,
-        precision: int = 2
+        precision: int = 2,
+        end_row: int = None
     ):
         """
         计算两列差值（col1 - col2）
@@ -160,15 +212,15 @@ class ConsultationExcelOperator:
             start_row: 起始行号
             precision: 小数位数
         """
-        data1 = self.read_column_data(col1, start_row)
-        data2 = self.read_column_data(col2, start_row)
+        data1 = self.read_column_data(col1, start_row, end_row)
+        data2 = self.read_column_data(col2, start_row, end_row)
 
         diff_data = []
         for v1, v2 in zip(data1, data2):
             diff = v1 - v2
             diff_data.append(round(diff, precision))
 
-        self.update_column_data(output_col, diff_data, start_row)
+        self.update_column_data(output_col, diff_data, start_row, end_row=end_row)
         logger.info(f"Calculated {col1} - {col2} -> {output_col}")
 
     def sort_and_update(
@@ -179,6 +231,7 @@ class ConsultationExcelOperator:
         output_data_col: str,
         output_rank_col: str,
         start_row: int = 2,
+        end_row: int = None,
         ascending: bool = True
     ):
         """
@@ -194,15 +247,27 @@ class ConsultationExcelOperator:
             ascending: 是否升序
         """
         # 读取数据
-        data = self.read_column_data(data_column, start_row)
+        if end_row is None:
+            end_row = self.sheet.max_row
+
+        data = self.read_column_data(data_column, start_row, end_row)
         names = []
-        for row in range(start_row, self.sheet.max_row + 1):
+        for row in range(start_row, end_row + 1):
             cell = self.sheet[f"{name_column}{row}"]
             names.append(cell.value or "")
 
-        # 排序
-        paired = list(zip(names, data))
+        paired = [
+            (name, value)
+            for name, value in zip(names, data)
+            if self._normalize_area_name(name)
+        ]
+        self._validate_unique_names([name for name, _ in paired], "排序源数据")
         paired.sort(key=lambda x: x[1], reverse=not ascending)
+
+        for row in range(start_row, end_row + 1):
+            self.sheet[f"{output_name_col}{row}"].value = None
+            self.sheet[f"{output_data_col}{row}"].value = None
+            self.sheet[f"{output_rank_col}{row}"].value = None
 
         # 更新排序后的数据
         for i, (name, value) in enumerate(paired):
@@ -210,6 +275,11 @@ class ConsultationExcelOperator:
             self.sheet[f"{output_name_col}{row}"].value = name
             self.sheet[f"{output_data_col}{row}"].value = value
             self.sheet[f"{output_rank_col}{row}"].value = i + 1
+
+        self._validate_unique_names(
+            [name for name, _ in paired],
+            f"{output_name_col}列排序结果"
+        )
 
         logger.info(f"Sorted {data_column} and updated to {output_data_col}")
 
@@ -235,18 +305,18 @@ class ConsultationExcelOperator:
         """
         # 步骤1：更新B列（当年数据）和列名
         self.update_column_name("B", current_period)
-        self.update_column_data("B", current_data, data_start_row)
+        self.update_column_data("B", current_data, data_start_row, end_row=data_end_row)
 
         # 步骤2：更新D列（去年数据）和列名
         self.update_column_name("D", last_year_period)
-        self.update_column_data("D", last_year_data, data_start_row)
+        self.update_column_data("D", last_year_data, data_start_row, end_row=data_end_row)
 
         # 步骤3：计算C列（B列平均值）
         avg_current = self.calculate_column_average("B", data_start_row, data_end_row)
         self.sheet[f"C{data_start_row}"].value = avg_current
 
         # 步骤4：计算E列（同比变化 = B列 - D列）
-        self.calculate_column_difference("B", "D", "E", data_start_row)
+        self.calculate_column_difference("B", "D", "E", data_start_row, end_row=data_end_row)
 
         # 步骤5：更新G-I列（去年数据排序）
         self.sort_and_update(
@@ -256,6 +326,7 @@ class ConsultationExcelOperator:
             output_data_col="H",
             output_rank_col="I",
             start_row=data_start_row,
+            end_row=data_end_row,
             ascending=True
         )
 
@@ -267,6 +338,7 @@ class ConsultationExcelOperator:
             output_data_col="L",
             output_rank_col="M",
             start_row=data_start_row,
+            end_row=data_end_row,
             ascending=True
         )
 
@@ -275,6 +347,51 @@ class ConsultationExcelOperator:
         self.sheet[f"M{data_start_row}"].value = avg_diff
 
         logger.info(f"Updated consultation file: {self.file_path}")
+
+    def update_consultation_file_by_name(
+        self,
+        current_records: List[Dict[str, Any]],
+        last_year_records: List[Dict[str, Any]],
+        current_period: str,
+        last_year_period: str,
+        data_start_row: int = 2,
+        data_end_row: int = 32
+    ):
+        """按A列地区名称对齐后更新会商文件。"""
+        current_data = self.align_records_to_names(
+            current_records,
+            start_row=data_start_row,
+            end_row=data_end_row
+        )
+        last_year_data = self.align_records_to_names(
+            last_year_records,
+            start_row=data_start_row,
+            end_row=data_end_row
+        )
+
+        self.update_consultation_file(
+            current_data=current_data,
+            last_year_data=last_year_data,
+            current_period=current_period,
+            last_year_period=last_year_period,
+            data_start_row=data_start_row,
+            data_end_row=data_end_row
+        )
+
+    @staticmethod
+    def _normalize_area_name(name: Any) -> str:
+        normalized = str(name or "").strip()
+        for suffix in ("壮族自治区", "回族自治区", "维吾尔自治区", "自治区", "省", "市"):
+            if normalized.endswith(suffix):
+                normalized = normalized[: -len(suffix)]
+                break
+        return normalized
+
+    def _validate_unique_names(self, names: List[Any], context: str):
+        normalized = [self._normalize_area_name(name) for name in names if self._normalize_area_name(name)]
+        duplicates = sorted({name for name in normalized if normalized.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"{context}存在重复地区: {duplicates}")
 
 
 def merge_excel_files(

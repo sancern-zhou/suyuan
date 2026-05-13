@@ -121,27 +121,13 @@ class ConsultationDataQuery:
             Exception: 查询失败
         """
         try:
-            # 1. 解析时间段
-            start_date, end_date = self.parse_time_period(
-                time_period, time_type
+            records = await self.query_named_data(
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                time_type=time_type
             )
-
-            # 2. 调用查询工具
-            if scope == "national":
-                data = self.query_tool.query_province_data(
-                    start_date=start_date,
-                    end_date=end_date,
-                    ns_type="NS"
-                )
-            else:  # provincial
-                data = self.query_tool.query_city_data(
-                    start_date=start_date,
-                    end_date=end_date,
-                    ns_type="NS"
-                )
-
-            # 3. 提取污染物数据
-            result = self._extract_pollutant_data(data, pollutant)
+            result = [record["value"] for record in records]
 
             logger.info(
                 "query_success",
@@ -156,6 +142,59 @@ class ConsultationDataQuery:
         except Exception as e:
             logger.error(
                 "query_failed",
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                error=str(e)
+            )
+            raise
+
+    async def query_named_data(
+        self,
+        scope: str,
+        pollutant: str,
+        time_period: str,
+        time_type: str
+    ) -> List[Dict[str, Any]]:
+        """
+        查询污染物数据，并保留地区名称。
+
+        返回格式：{"name": "广东", "value": 128.0, "raw": {...}}。
+        生成Excel时必须按名称对齐，不能依赖API返回顺序。
+        """
+        try:
+            start_date, end_date = self.parse_time_period(
+                time_period, time_type
+            )
+
+            if scope == "national":
+                data = self.query_tool.query_province_data(
+                    start_date=start_date,
+                    end_date=end_date,
+                    ns_type="NS"
+                )
+            else:
+                data = self.query_tool.query_city_data(
+                    start_date=start_date,
+                    end_date=end_date,
+                    ns_type="NS"
+                )
+
+            result = self._extract_pollutant_records(data, pollutant)
+
+            logger.info(
+                "query_named_success",
+                scope=scope,
+                pollutant=pollutant,
+                time_period=time_period,
+                data_count=len(result)
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(
+                "query_named_failed",
                 scope=scope,
                 pollutant=pollutant,
                 time_period=time_period,
@@ -181,6 +220,17 @@ class ConsultationDataQuery:
         Raises:
             ValueError: 未知污染物
         """
+        return [
+            record["value"]
+            for record in self._extract_pollutant_records(data, pollutant)
+        ]
+
+    def _extract_pollutant_records(
+        self,
+        data: List[Dict[str, Any]],
+        pollutant: str
+    ) -> List[Dict[str, Any]]:
+        """从API数据中提取地区名称和污染物数值。"""
         field = self.pollutant_field_map.get(pollutant)
         if not field:
             raise ValueError(
@@ -188,14 +238,13 @@ class ConsultationDataQuery:
                 f"Supported: {list(self.pollutant_field_map.keys())}"
             )
 
-        # 提取数值
         result = []
         for item in data:
             value = item.get(field, 0)
             if value is None:
                 value = 0
             try:
-                result.append(float(value))
+                numeric_value = float(value)
             except (ValueError, TypeError):
                 logger.warning(
                     "invalid_value",
@@ -203,9 +252,36 @@ class ConsultationDataQuery:
                     field=field,
                     value=value
                 )
-                result.append(0.0)
+                numeric_value = 0.0
+
+            name = self._extract_area_name(item)
+            if not name:
+                logger.warning(
+                    "missing_area_name",
+                    pollutant=pollutant,
+                    item_keys=list(item.keys())
+                )
+                continue
+
+            result.append({
+                "name": name,
+                "value": numeric_value,
+                "raw": item
+            })
 
         return result
+
+    @staticmethod
+    def _extract_area_name(item: Dict[str, Any]) -> str:
+        """兼容不同接口字段名，提取省份/城市名称。"""
+        for key in (
+            "AreaName", "areaName", "Area", "area",
+            "province_name", "ProvinceName", "city_name", "CityName", "name"
+        ):
+            value = item.get(key)
+            if value:
+                return str(value).strip()
+        return ""
 
 
 # 使用示例
