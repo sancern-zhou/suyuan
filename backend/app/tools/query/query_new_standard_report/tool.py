@@ -623,13 +623,27 @@ async def execute_query_new_standard_report(
             "summary": f"未查询到 {', '.join(cities)} 在 {start_date} 至 {end_date} 期间的日报数据"
         }
 
-    # 数据标准化（如果提供了context）
+    # 数据标准化
+    # 优先使用context中的data_standardizer，如果没有context则创建一个临时的
     standardized_data = all_daily_data
-    if context and data_standardizer:
+    if data_standardizer:
         standardized_data = []
         for record in all_daily_data:
             try:
                 standardized = data_standardizer.standardize(record)
+                standardized_data.append(standardized)
+            except Exception as e:
+                logger.warning("data_standardization_failed", record=record, error=str(e))
+                standardized_data.append(record)
+
+        update_to_new_standard(standardized_data)
+    elif context is None:
+        # 如果没有context，创建一个临时的data_standardizer进行数据标准化
+        temp_standardizer = DataStandardizer()
+        standardized_data = []
+        for record in all_daily_data:
+            try:
+                standardized = temp_standardizer.standardize(record)
                 standardized_data.append(standardized)
             except Exception as e:
                 logger.warning("data_standardization_failed", record=record, error=str(e))
