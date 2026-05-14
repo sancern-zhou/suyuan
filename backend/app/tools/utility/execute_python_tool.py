@@ -1336,6 +1336,18 @@ for _font_path in _font_configs:
         except Exception:
             pass
 
+# ✅ 回退机制：如果字体文件注册失败，使用系统中已知的中文字体名称
+if not _font_registered:
+    # 使用系统已安装的 Noto Sans CJK 字体（支持中文和数字）
+    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK JP', 'Noto Sans CJK SC', 'DejaVu Sans', 'sans-serif']
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams['mathtext.fontset'] = 'dejavusans'
+    plt.rcParams['mathtext.default'] = 'it'
+    plt.rcParams['axes.titlesize'] = 12
+    plt.rcParams['axes.labelsize'] = 11
+    plt.rcParams['xtick.labelsize'] = 10
+    plt.rcParams['ytick.labelsize'] = 10
+
 # ===== 字体注册完成 =====
 
 """
