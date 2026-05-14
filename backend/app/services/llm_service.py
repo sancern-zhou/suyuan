@@ -194,8 +194,12 @@ class LLMService:
         return has_thinking_blocks, thinking_blocks_found, messages_structure
 
     @staticmethod
-    def _is_deepseek_tool_continuation(messages: List[Dict[str, Any]]) -> bool:
-        """Whether the request continues the same tool-use chain."""
+    def _is_tool_continuation(messages: List[Dict[str, Any]]) -> bool:
+        """Whether the request continues the same tool-use chain.
+
+        用于判断是否是同一次工具调用链路的延续（vs 新用户轮次）。
+        适用于 DeepSeek、Mimo 等需要在工具调用链路中保留 thinking blocks 的 provider。
+        """
         if len(messages) < 2:
             return False
 
@@ -215,6 +219,9 @@ class LLMService:
             for block in (second_last_content if isinstance(second_last_content, list) else [])
         )
         return has_tool_result and has_tool_use
+
+    # 向后兼容的别名
+    _is_deepseek_tool_continuation = _is_tool_continuation
 
     def _build_anthropic_api_params(
         self,
@@ -243,6 +250,10 @@ class LLMService:
             self.provider == "deepseek" or
             "deepseek" in self.model.lower()
         )
+        is_mimo = (
+            self.provider == "mimo" or
+            "mimo" in self.model.lower()
+        )
 
         has_thinking_blocks, thinking_blocks_found, messages_structure = self._detect_thinking_blocks(
             sanitized_messages
@@ -254,6 +265,7 @@ class LLMService:
             model=self.model,
             has_thinking_blocks=has_thinking_blocks,
             is_deepseek=is_deepseek,
+            is_mimo=is_mimo,
             found_blocks=thinking_blocks_found,
             messages_count=len(sanitized_messages),
             messages_structure=messages_structure,
@@ -275,6 +287,7 @@ class LLMService:
             model=self.model,
             is_real_anthropic=is_real_anthropic,
             is_deepseek=is_deepseek,
+            is_mimo=is_mimo,
             has_thinking_blocks_in_history=has_thinking_blocks,
         )
 
@@ -284,8 +297,28 @@ class LLMService:
                 "budget_tokens": 20000,
             }
             logger.info("extended_thinking_enabled", provider=self.provider, model=self.model)
+        elif is_mimo:
+            # Mimo: 与 DeepSeek 相同的逻辑
+            # 在工具调用链路中保留 thinking blocks，新用户轮次禁用 thinking 模式
+            if self._is_tool_continuation(sanitized_messages) and has_thinking_blocks:
+                api_params["messages"] = self._filter_redacted_thinking_for_deepseek(sanitized_messages)
+                logger.info(
+                    "mimo_thinking_blocks_preserved",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)",
+                )
+            else:
+                api_params["thinking"] = {"type": "disabled"}
+                api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
+                logger.info(
+                    "mimo_thinking_mode_disabled",
+                    provider=self.provider,
+                    model=self.model,
+                    reason="New user turn, disabling thinking mode and stripping thinking blocks",
+                )
         elif is_deepseek:
-            if self._is_deepseek_tool_continuation(sanitized_messages) and has_thinking_blocks:
+            if self._is_tool_continuation(sanitized_messages) and has_thinking_blocks:
                 api_params["messages"] = self._filter_redacted_thinking_for_deepseek(sanitized_messages)
                 logger.info(
                     "deepseek_thinking_blocks_preserved",

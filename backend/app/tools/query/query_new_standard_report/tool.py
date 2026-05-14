@@ -1175,7 +1175,8 @@ async def execute_query_new_standard_report(
             "PM2_5_P95": format_pollutant_value(pm25_percentile_95, 'PM2_5', 'statistical_data', use_final_rounding=True),
             # CO和O3只展示百分位数
             "CO_P95": format_pollutant_value(co_percentile_95, 'CO', 'statistical_data', use_final_rounding=True),
-            "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data', use_final_rounding=True),
+            "O3_8h": format_pollutant_value(avg_o3_8h, 'O3_8h', 'statistical_data', use_final_rounding=True),  # O3日均值
+            "O3_8h_P90": format_pollutant_value(o3_8h_percentile_90, 'O3_8h', 'statistical_data', use_final_rounding=True),  # O3 90分位数
             # 加权单项质量指数
             "single_indexes": {
                 "SO2": so2_weighted_index,
@@ -1405,6 +1406,7 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
     pm10_sum = sum(s.get("PM10", 0) for s in valid_cities.values())
     pm25_sum = sum(s.get("PM2_5", 0) for s in valid_cities.values())
     co_p95_sum = sum(s.get("CO_P95", 0) for s in valid_cities.values())
+    o3_8h_sum = sum(s.get("O3_8h", 0) for s in valid_cities.values())  # O3日均值
     o3_8h_p90_sum = sum(s.get("O3_8h_P90", 0) for s in valid_cities.values())
 
     so2_percentile_98_sum = sum(s.get("SO2_P98", 0) for s in valid_cities.values())
@@ -1418,6 +1420,7 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
     avg_pm10_raw = pm10_sum / num_cities if num_cities > 0 else 0
     avg_pm25_raw = pm25_sum / num_cities if num_cities > 0 else 0
     avg_co_p95_raw = co_p95_sum / num_cities if num_cities > 0 else 0
+    avg_o3_8h_raw = o3_8h_sum / num_cities if num_cities > 0 else 0  # O3日均值
     avg_o3_8h_p90_raw = o3_8h_p90_sum / num_cities if num_cities > 0 else 0
 
     avg_so2_p98_raw = so2_percentile_98_sum / num_cities if num_cities > 0 else 0
@@ -1431,6 +1434,7 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
     avg_pm10 = format_pollutant_value(avg_pm10_raw, 'PM10', 'statistical_data', use_final_rounding=True)
     avg_pm25 = format_pollutant_value(avg_pm25_raw, 'PM2_5', 'statistical_data', use_final_rounding=True)
     avg_co_p95 = format_pollutant_value(avg_co_p95_raw, 'CO', 'statistical_data', use_final_rounding=True)
+    avg_o3_8h = format_pollutant_value(avg_o3_8h_raw, 'O3_8h', 'statistical_data', use_final_rounding=True)  # O3日均值
     avg_o3_8h_p90 = format_pollutant_value(avg_o3_8h_p90_raw, 'O3_8h', 'statistical_data', use_final_rounding=True)
 
     avg_so2_p98 = format_pollutant_value(avg_so2_p98_raw, 'SO2', 'statistical_data', use_final_rounding=True)
@@ -1489,7 +1493,8 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
         "PM2_5": avg_pm25,
         "PM2_5_P95": avg_pm25_p95,
         "CO_P95": avg_co_p95,
-        "O3_8h_P90": avg_o3_8h_p90,
+        "O3_8h": avg_o3_8h,  # O3日均值
+        "O3_8h_P90": avg_o3_8h_p90,  # O3 90分位数
         # 单项质量指数
         "single_indexes": single_indexes,
         # 首要污染物统计
@@ -1509,7 +1514,7 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
             "NO2": "平均值", "NO2_P98": "平均值",
             "PM10": "平均值", "PM10_P95": "平均值",
             "PM2_5": "平均值", "PM2_5_P95": "平均值",
-            "CO_P95": "平均值", "O3_8h_P90": "平均值",
+            "CO_P95": "平均值", "O3_8h": "平均值", "O3_8h_P90": "平均值",
             "single_indexes": "平均值（各城市单项质量指数的平均）",
             "total_days": "累计值（各城市总天数累加）",
             "exceed_rate": "计算值（基于累计值计算）",
@@ -1627,6 +1632,7 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         pm10_sum = sum(s.get("PM10", 0) for s in region_city_stats.values())
         pm25_sum = sum(s.get("PM2_5", 0) for s in region_city_stats.values())
         co_p95_sum = sum(s.get("CO_P95", 0) for s in region_city_stats.values())
+        o3_8h_sum = sum(s.get("O3_8h", 0) for s in region_city_stats.values())  # O3日均值
         o3_8h_p90_sum = sum(s.get("O3_8h_P90", 0) for s in region_city_stats.values())
 
         so2_percentile_98_sum = sum(s.get("SO2_P98", 0) for s in region_city_stats.values())
@@ -1640,6 +1646,7 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         avg_pm10_raw = pm10_sum / num_cities if num_cities > 0 else 0
         avg_pm25_raw = pm25_sum / num_cities if num_cities > 0 else 0
         avg_co_p95_raw = co_p95_sum / num_cities if num_cities > 0 else 0
+        avg_o3_8h_raw = o3_8h_sum / num_cities if num_cities > 0 else 0  # O3日均值
         avg_o3_8h_p90_raw = o3_8h_p90_sum / num_cities if num_cities > 0 else 0
 
         avg_so2_p98_raw = so2_percentile_98_sum / num_cities if num_cities > 0 else 0
@@ -1653,6 +1660,7 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         avg_pm10 = format_pollutant_value(avg_pm10_raw, 'PM10', 'statistical_data', use_final_rounding=True)
         avg_pm25 = format_pollutant_value(avg_pm25_raw, 'PM2_5', 'statistical_data', use_final_rounding=True)
         avg_co_p95 = format_pollutant_value(avg_co_p95_raw, 'CO', 'statistical_data', use_final_rounding=True)
+        avg_o3_8h = format_pollutant_value(avg_o3_8h_raw, 'O3_8h', 'statistical_data', use_final_rounding=True)  # O3日均值
         avg_o3_8h_p90 = format_pollutant_value(avg_o3_8h_p90_raw, 'O3_8h', 'statistical_data', use_final_rounding=True)
 
         avg_so2_p98 = format_pollutant_value(avg_so2_p98_raw, 'SO2', 'statistical_data', use_final_rounding=True)
@@ -1711,7 +1719,8 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
             "PM2_5": avg_pm25,
             "PM2_5_P95": avg_pm25_p95,
             "CO_P95": avg_co_p95,
-            "O3_8h_P90": avg_o3_8h_p90,
+            "O3_8h": avg_o3_8h,  # O3日均值
+            "O3_8h_P90": avg_o3_8h_p90,  # O3 90分位数
             # 单项质量指数
             "single_indexes": single_indexes,
             # 首要污染物统计
