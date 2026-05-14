@@ -1,5 +1,5 @@
 """
-Main FastAPI application for Air Pollution Source Traceability System.
+Main FastAPI application for Atmospheric Environment Intelligent Analysis and Decision Support Platform.
 """
 import sys
 import os
@@ -91,8 +91,8 @@ logger = structlog.get_logger()
 
 # Create FastAPI app
 app = FastAPI(
-    title="Air Pollution Source Traceability API",
-    description="Backend API for analyzing air pollution sources with LLM-powered insights",
+    title="Atmospheric Environment Intelligent Analysis and Decision Support API",
+    description="Backend API for atmospheric environment analysis, source tracing, reporting, and decision support with LLM-powered insights",
     version="1.0.0",
     debug=settings.debug,
 )
@@ -577,7 +577,7 @@ async def shutdown_event():
 async def root():
     """Root endpoint with API information."""
     return {
-        "service": "air-pollution-traceability-api",
+        "service": "atmospheric-environment-decision-support-api",
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
@@ -610,7 +610,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "service": "air-pollution-traceability-api",
+        "service": "atmospheric-environment-decision-support-api",
         "version": "1.0.0",
         "environment": settings.environment,
         "llm_provider": settings.llm_provider,
@@ -629,7 +629,7 @@ async def system_status():
     """
     try:
         status = {
-            "service": "air-pollution-traceability-api",
+            "service": "atmospheric-environment-decision-support-api",
             "version": "1.0.0",
             "timestamp": structlog.processors.TimeStamper(fmt="iso").__call__(None, None, {})["timestamp"],
         }

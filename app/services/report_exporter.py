@@ -651,7 +651,7 @@ class ReportExporter:
     {detail_section}
     
     <div class="report-footer">
-        <p>本报告由大气污染溯源分析系统自动生成</p>
+        <p>本报告由大气环境智能分析与决策支持平台自动生成</p>
         <p>报告仅供参考，具体决策请结合实际情况</p>
     </div>
 </body>
@@ -1532,7 +1532,7 @@ class ReportExporter:
             
             # 添加页脚
             doc.add_paragraph()
-            footer = doc.add_paragraph("本报告由大气污染溯源分析系统自动生成")
+            footer = doc.add_paragraph("本报告由大气环境智能分析与决策支持平台自动生成")
             footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
             
             # 保存到内存

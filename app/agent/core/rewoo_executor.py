@@ -220,7 +220,7 @@ class ReWOOExecutor:
         tools_desc = self._format_tools_description()
 
         prompt = f"""
-你是大气污染溯源分析系统的规划专家。请为以下任务生成完整的执行计划。
+你是大气环境智能分析与决策支持平台的规划专家。请为以下任务生成完整的执行计划。
 
 ## 任务
 {user_query}

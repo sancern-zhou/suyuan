@@ -562,7 +562,7 @@ class ReActPlanner:
 
         # 3. 调用LLM构造参数
         messages = [
-            {"role": "system", "content": "你是一个专业的大气污染溯源分析助手，负责为工具构造参数。"},
+            {"role": "system", "content": "你是一个专业的大气环境智能分析与决策支持助手，负责为工具构造参数。"},
             {"role": "user", "content": stage2_prompt}
         ]
 
@@ -841,7 +841,7 @@ class ReActPlanner:
                 data_items.append(f"- {data_id} ({schema}, {count}条记录)")
             data_text = "\n".join(data_items)
 
-        prompt = f"""你是一个智能的大气污染溯源分析助手。请根据用户问题选择合适的工具。
+        prompt = f"""你是一个智能的大气环境分析与决策支持助手。请根据用户问题选择合适的工具。
 
 用户问题: {query}
 
