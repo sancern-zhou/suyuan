@@ -591,7 +591,7 @@ const welcomeContent = computed(() => {
       example: '功能正在开发中，敬请期待...'
     },
     'general-agent': {
-      title: '风清气智Agent',
+      title: '大气环境智能分析与决策支持平台',
       description: '专业的污染溯源分析助手，可以通过以下方式为您服务：',
       features: [
         '分析特定时间段的空气质量',

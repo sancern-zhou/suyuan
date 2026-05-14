@@ -246,7 +246,7 @@ class ReportDocxBuilder:
                     f"数据时间范围: {time_range['start_time']} 至 {time_range['end_time']}\n"
                 )
 
-        info.add_run("生成工具: 大气污染溯源分析系统\n")
+        info.add_run("生成工具: 大气环境智能分析与决策支持平台\n")
         info.add_run("---")
 
     def save(self, output_path: str):

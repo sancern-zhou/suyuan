@@ -26,7 +26,7 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "service": "air-pollution-traceability-api",
+        "service": "atmospheric-environment-decision-support-api",
         "version": "1.0.0",
     }
 
@@ -65,7 +65,7 @@ async def get_system_status():
         from app.services.lifecycle_manager import get_fetcher_scheduler, get_tool_registry
 
         status = {
-            "service": "air-pollution-traceability-api",
+            "service": "atmospheric-environment-decision-support-api",
             "version": "1.0.0",
         }
 

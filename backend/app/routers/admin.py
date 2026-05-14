@@ -143,7 +143,7 @@ async def get_workflow() -> Dict[str, Any]:
     ]
 
     return {
-        "workflow_name": "大气污染溯源分析工作流",
+        "workflow_name": "大气环境智能分析与决策支持工作流",
         "version": "1.0.0",
         "total_steps": len(workflow_steps),
         "steps": workflow_steps,
