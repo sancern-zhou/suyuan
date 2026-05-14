@@ -29,6 +29,7 @@ import structlog
 from app.agent.context.data_context_manager import DataContextManager
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.memory.hybrid_manager import HybridMemoryManager
+from app.services.pollution_event_state_store import PollutionEventStateStore
 
 logger = structlog.get_logger()
 
@@ -79,6 +80,8 @@ class MonitorConfig:
     force_collect: bool = False
     include_components: bool = True
     event_context_hours: int = 2
+    event_merge_gap_hours: int = 3
+    event_inactive_hours: int = 6
     min_event_points: int = 2
     low_wind_speed_threshold: float = 1.5
     end_time: Optional[datetime] = None
@@ -90,9 +93,16 @@ class PollutionEventMonitorService:
 
     def __init__(self, config: MonitorConfig, context: Optional[ExecutionContext] = None):
         self.config = config
+        if isinstance(self.config.station_type, str):
+            self.config.station_type = [self.config.station_type]
         self.context = context or self._create_context(config.session_id)
         self.backend_dir = Path(__file__).resolve().parents[2]
         self.output_root = self._resolve_output_root(config.output_root)
+        self.event_state_store = PollutionEventStateStore(
+            output_root=self.output_root,
+            merge_gap_hours=self.config.event_merge_gap_hours,
+            inactive_hours=self.config.event_inactive_hours,
+        )
 
     async def run(self) -> Dict[str, Any]:
         started_at = datetime.now(TZ_SHANGHAI)
@@ -145,7 +155,13 @@ class PollutionEventMonitorService:
         city_fetch = self._fetch_city_hour_data(city, start_time, end_time)
         city_records = city_fetch.get("records", [])
         quality_report = self._quality_report(city, city_records, start_time, end_time)
-        events = self._detect_events(city, city_records, quality_report)
+        raw_events = self._detect_events(city, city_records, quality_report)
+        events = []
+        lifecycle_transitions = []
+        for raw_event in raw_events:
+            event, lifecycle = self.event_state_store.reconcile_event(raw_event, run_id=run_id)
+            events.append(event)
+            lifecycle_transitions.append(lifecycle)
 
         self._write_json(run_dir / "city_hour_monitoring.json", {
             "city": city,
@@ -153,7 +169,12 @@ class PollutionEventMonitorService:
             "records": city_records,
         })
         self._write_json(run_dir / "data_quality_report.json", quality_report)
-        self._write_json(run_dir / "detected_events.json", {"city": city, "events": events})
+        self._write_json(run_dir / "detected_events.json", {
+            "city": city,
+            "raw_events": raw_events,
+            "events": events,
+            "lifecycle_transitions": lifecycle_transitions,
+        })
 
         event_results: List[Dict[str, Any]] = []
         if events or self.config.force_collect:
@@ -169,6 +190,17 @@ class PollutionEventMonitorService:
                     full_end=end_time,
                 )
                 event_results.append(event_result)
+                lifecycle = event.get("event_lifecycle", {})
+                if lifecycle.get("status") != "routine" and event_result.get("evidence_pack"):
+                    self.event_state_store.append_artifact(
+                        event_id=event["event_id"],
+                        run_id=run_id,
+                        evidence_pack=event_result.get("evidence_pack"),
+                        analysis_request=event_result.get("analysis_request"),
+                        event_dir=event_result.get("event_dir"),
+                    )
+
+        ended_events = self.event_state_store.close_inactive_events(city=city, watermark=end_time)
 
         run_manifest = {
             "run_id": run_id,
@@ -183,6 +215,9 @@ class PollutionEventMonitorService:
             "events_file": str(run_dir / "detected_events.json"),
             "event_count": len(events),
             "events": event_results,
+            "lifecycle_transitions": lifecycle_transitions,
+            "ended_events": ended_events,
+            "event_state_index": str(self.event_state_store.index_path),
             "force_collect": self.config.force_collect,
         }
         self._write_json(run_dir / "run_manifest.json", run_manifest)
@@ -195,6 +230,8 @@ class PollutionEventMonitorService:
             "quality_issue_count": len(quality_report.get("issues", [])),
             "events": events,
             "event_artifacts": event_results,
+            "lifecycle_transitions": lifecycle_transitions,
+            "ended_events": ended_events,
             "manifest_file": str(run_dir / "run_manifest.json"),
         }
 
@@ -278,9 +315,25 @@ class PollutionEventMonitorService:
 
         event_city_records = self._filter_records_by_time(city_records, fetch_start, fetch_end)
         event_summary = self._summarize_event_data(event, event_city_records, station_records, weather_records)
+        quality_gate = self._build_quality_gate(quality_report, fetch_errors)
+        observed_signal_summary = self._build_observed_signal_summary(event, event_summary)
+        suggested_evidence_gaps = self._suggest_evidence_gaps(
+            event=event,
+            event_summary=event_summary,
+            fetch_errors=fetch_errors,
+            station_records=station_records,
+            weather_records=weather_records,
+            component_results=component_results,
+        )
 
         evidence_pack = {
             "schema_version": "pollution_event_evidence_pack/v1",
+            "schema_features": [
+                "event_lifecycle",
+                "quality_gate",
+                "observed_signal_summary",
+                "suggested_evidence_gaps",
+            ],
             "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
             "city": city,
             "event": event,
@@ -288,6 +341,7 @@ class PollutionEventMonitorService:
                 "start": self._format_api_time(fetch_start),
                 "end": self._format_api_time(fetch_end),
             },
+            "quality_gate": quality_gate,
             "data_quality": quality_report,
             "data_files": {
                 "event": str(event_dir / "event.json"),
@@ -301,10 +355,13 @@ class PollutionEventMonitorService:
                 **component_results.get("data_refs", {}),
             },
             "event_summary": event_summary,
+            "observed_signal_summary": observed_signal_summary,
+            "suggested_evidence_gaps": suggested_evidence_gaps,
             "fetch_errors": fetch_errors,
             "analysis_contract": {
+                "skill_name": "city_pollution_process_analysis",
                 "skill_file": str(self.backend_dir / "docs" / "skills" / "city_pollution_process_analysis.md"),
-                "agent_goal": "Generate hypotheses, verify them with the evidence pack, and write reasoning_analysis.md.",
+                "agent_goal": "Use the project pollution process analysis skill to generate hypotheses, verify them with the evidence pack, optionally collect missing evidence, and write reasoning_analysis.md.",
                 "required_outputs": [
                     "observed_facts",
                     "hypothesis_ranking",
@@ -312,6 +369,11 @@ class PollutionEventMonitorService:
                     "counter_evidence",
                     "confidence",
                     "follow_up_actions",
+                ],
+                "llm_role_limits": [
+                    "Do not re-decide deterministic alert triggers.",
+                    "Do not assert a source without cited evidence.",
+                    "Downgrade conclusions when quality_gate limits confidence.",
                 ],
             },
         }
@@ -728,6 +790,16 @@ class PollutionEventMonitorService:
             "evidence_summary": [peak_info] if peak_info else [],
             "triggered_by": ["force_collect"],
             "next_data_needed": ["Use this as a routine baseline package; do not infer a pollution process without additional evidence."],
+            "event_lifecycle": {
+                "status": "routine",
+                "canonical_event_id": event_id,
+                "detection_event_id": event_id,
+                "state_time_range": {
+                    "start": self._format_api_time(start_time),
+                    "end": self._format_api_time(end_time),
+                    "duration_hours": self.config.hours,
+                },
+            },
         }
 
     def _summarize_event_data(
@@ -754,6 +826,148 @@ class PollutionEventMonitorService:
                 "weather_hour": len(weather_records),
             },
         }
+
+    def _build_quality_gate(
+        self,
+        quality_report: Dict[str, Any],
+        fetch_errors: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        status = quality_report.get("status")
+        issues = quality_report.get("issues", [])
+        high_issues = [issue for issue in issues if issue.get("severity") == "high"]
+        medium_issues = [issue for issue in issues if issue.get("severity") == "medium"]
+        missing_sources = [
+            error.get("source")
+            for error in fetch_errors
+            if error.get("severity", "warning") in {"warning", "high", "error"}
+        ]
+
+        if status == "poor" or high_issues:
+            gate_status = "fail"
+            max_confidence = "low"
+            source_reasoning_allowed = False
+        elif status == "usable_with_caution" or medium_issues or missing_sources:
+            gate_status = "caution"
+            max_confidence = "medium"
+            source_reasoning_allowed = True
+        else:
+            gate_status = "pass"
+            max_confidence = "high"
+            source_reasoning_allowed = True
+
+        interpretation_limits = []
+        for issue in issues:
+            message = issue.get("message") or issue.get("issue_type")
+            if message:
+                interpretation_limits.append({
+                    "severity": issue.get("severity"),
+                    "issue_type": issue.get("issue_type"),
+                    "pollutant": issue.get("pollutant"),
+                    "message": message,
+                    "impact": issue.get("impact"),
+                })
+        for error in fetch_errors:
+            interpretation_limits.append({
+                "severity": error.get("severity", "warning"),
+                "issue_type": "evidence_fetch_gap",
+                "source": error.get("source"),
+                "message": error.get("error"),
+                "impact": "Missing evidence should lower confidence for mechanisms that depend on this source.",
+            })
+
+        return {
+            "status": gate_status,
+            "source_reasoning_allowed": source_reasoning_allowed,
+            "max_confidence": max_confidence,
+            "quality_status": status,
+            "issue_count": len(issues),
+            "high_issue_count": len(high_issues),
+            "medium_issue_count": len(medium_issues),
+            "missing_sources": [source for source in missing_sources if source],
+            "interpretation_limits": interpretation_limits,
+        }
+
+    def _build_observed_signal_summary(
+        self,
+        event: Dict[str, Any],
+        event_summary: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return {
+            "main_pollutant": event.get("main_pollutant"),
+            "event_type": event.get("event_type"),
+            "severity": event.get("severity"),
+            "confidence": event.get("confidence"),
+            "triggered_by": event.get("triggered_by", []),
+            "time_range": event.get("time_range", {}),
+            "lifecycle": event.get("event_lifecycle", {}),
+            "city_peak": event_summary.get("city_peak"),
+            "top_station_peaks": event_summary.get("station_peaks", [])[:5],
+            "wind_summary": event_summary.get("wind_summary"),
+            "cochange": event_summary.get("cochange", [])[:5],
+            "record_counts": event_summary.get("record_counts", {}),
+        }
+
+    def _suggest_evidence_gaps(
+        self,
+        event: Dict[str, Any],
+        event_summary: Dict[str, Any],
+        fetch_errors: List[Dict[str, str]],
+        station_records: List[Dict[str, Any]],
+        weather_records: List[Dict[str, Any]],
+        component_results: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        gaps: List[Dict[str, Any]] = []
+        for item in event.get("next_data_needed", []):
+            gaps.append({
+                "priority": "medium",
+                "evidence": item,
+                "reason": "deterministic event detector requested this evidence for mechanism checks",
+            })
+
+        if not station_records:
+            gaps.append({
+                "priority": "high",
+                "evidence": "station_hour_monitoring",
+                "reason": "station synchrony and leading-site checks cannot be verified",
+            })
+        if not weather_records:
+            gaps.append({
+                "priority": "high",
+                "evidence": "weather_hourly",
+                "reason": "wind, dispersion, humidity, precipitation, and boundary-layer mechanisms cannot be verified",
+            })
+
+        main_pollutant = event.get("main_pollutant")
+        component_files = component_results.get("files", {})
+        if main_pollutant in {"PM2_5", "PM10"} and "pm25_components" not in component_files:
+            gaps.append({
+                "priority": "medium",
+                "evidence": "pm25_components",
+                "reason": "particle source hypotheses need ions, carbon, crustal, or PMF-related evidence when available",
+            })
+        if main_pollutant == "O3_8h" and "vocs_components" not in component_files:
+            gaps.append({
+                "priority": "medium",
+                "evidence": "vocs_components",
+                "reason": "ozone mechanism hypotheses need VOCs/NOx and photochemical precursor evidence when available",
+            })
+
+        for error in fetch_errors:
+            gaps.append({
+                "priority": "medium" if error.get("severity") == "warning" else "high",
+                "evidence": error.get("source"),
+                "reason": error.get("error"),
+            })
+
+        seen = set()
+        deduped = []
+        for gap in gaps:
+            key = (gap.get("priority"), gap.get("evidence"), gap.get("reason"))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(gap)
+        return deduped
 
     def _extract_weather_records(
         self,
@@ -1194,10 +1408,12 @@ class PollutionEventMonitorService:
             f"- 事件类型: {event['event_type']}\n"
             f"- 主污染物: {event['main_pollutant']}\n"
             f"- 时间范围: {event['time_range']['start']} 至 {event['time_range']['end']}\n"
+            f"- 事件状态: {event.get('event_lifecycle', {}).get('status', 'unknown')}\n"
+            f"- 质量门禁: {evidence_pack.get('quality_gate', {}).get('status', 'unknown')}\n"
             f"- 证据包: {evidence_pack['data_files']['event'].replace('event.json', 'evidence_pack.json')}\n"
-            f"- 技能文档: {evidence_pack['analysis_contract']['skill_file']}\n\n"
-            "请按技能文档执行：先读取 evidence_pack，再提出可检验假设，逐项核验证据和反证，"
-            "最后在同目录写入 reasoning_analysis.md。\n"
+            f"- 项目技能文档: {evidence_pack['analysis_contract']['skill_file']}\n\n"
+            "请使用项目污染过程自动分析技能执行：先读取 evidence_pack 并列出可引用事实，再提出可检验假设，"
+            "必要时主动补证，逐项核验证据和反证，最后在同目录写入 reasoning_analysis.md。\n"
         )
 
     def _build_run_summary(self, city_results: List[Dict[str, Any]], detected_count: int) -> str:
