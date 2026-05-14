@@ -41,6 +41,9 @@ ASSISTANT_TOOL_NAMES = {
 
     # 报告生成
     "generate_tracing_report",
+
+    # CLI会话管理
+    "cli_session", "terminal_session",
 }
 
 # ===== 专家模式工具 =====
@@ -84,7 +87,7 @@ QUERY_TOOL_NAMES = {
 
     # === 参数化查询工具 ===
     "complex_query_planner",
-    "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_city_day_new",
@@ -165,9 +168,6 @@ CHART_TOOL_NAMES = {
 
     # 任务管理
     "TodoWrite",
-
-    # 模式互调
-    "call_sub_agent",
 }
 
 # ===== 社交模式工具（移动端助理） =====
