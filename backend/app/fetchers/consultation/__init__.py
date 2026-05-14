@@ -342,7 +342,7 @@ SHEET_CONFIG = {
 # 额外sheet配置
 EXTRA_SHEET_CONFIG = {
     "X月全国排名": {
-        "data_rows": (3, 32),  # 从第3行开始填充数据（第1行标题，第2行表头）
+        "data_rows": (3, 33),  # 从第3行开始填充数据（第1行标题，第2行表头），31个省份需要到第33行
         "columns": [
             {"pollutant": "PM2.5", "name_col": "A", "value_col": "B", "rank_col": "C", "sort_ascending": True},
             {"pollutant": "PM10", "name_col": "D", "value_col": "E", "rank_col": "F", "sort_ascending": True},
