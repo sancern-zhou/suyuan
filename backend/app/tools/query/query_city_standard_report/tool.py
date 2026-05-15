@@ -22,23 +22,6 @@ from app.tools.query.report_data_package import save_report_data_package
 logger = structlog.get_logger()
 
 
-DEFAULT_POLLUTANT_CODES = [
-    "so2",
-    "no2",
-    "pm10",
-    "pm2_5",
-    "co",
-    "o3_8h",
-    "aqi",
-    "fineDays",
-    "fineRate",
-    "overDays",
-    "overRate",
-    "seriousDays",
-    "seriousRate",
-    "compositeIndex",
-]
-
 POLLUTANT_CODE_ALIASES = {
     "SO2": "so2",
     "NO2": "no2",
@@ -198,14 +181,13 @@ async def execute_query_city_standard_report(
 
     start = _normalize_datetime(start_time)
     end = _normalize_datetime(end_time, end_of_day=True)
-    effective_pollutants = _normalize_pollutant_codes(pollutant_codes) or DEFAULT_POLLUTANT_CODES
+    effective_pollutants = _normalize_pollutant_codes(pollutant_codes)
 
     payload: Dict[str, Any] = {
         "skipCount": skip_count,
         "maxResultCount": max_result_count,
         "TimeType": time_type,
         "AreaType": 2,
-        "PollutantCode": effective_pollutants,
         "TimePoint": [start, end],
         "planType": plan_type,
         "dataSource": data_source,
@@ -213,6 +195,8 @@ async def execute_query_city_standard_report(
         "ReviseType": revise_type,
         "nsType": ns_type,
     }
+    if effective_pollutants:
+        payload["PollutantCode"] = effective_pollutants
     if city_codes:
         payload["StationCode"] = city_codes
 
@@ -573,7 +557,7 @@ class QueryCityStandardReportTool(LLMTool):
                     "pollutant_codes": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "接口字段过滤列表，如 ['so2','compositeIndex']；不传则返回常用统计字段",
+                        "description": "接口字段过滤列表，如 ['so2','compositeIndex']；默认不传/为空，接口返回全部字段。仅当需要主动筛选字段时传入",
                     },
                     "plan_type": {"type": "integer", "description": "接口 planType，默认0", "default": 0},
                     "data_source": {

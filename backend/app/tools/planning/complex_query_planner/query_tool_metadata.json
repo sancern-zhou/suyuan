@@ -24,6 +24,7 @@
       "best_for": ["综合指数", "达标率", "超标天数", "有效天数", "首要污染物", "污染物统计", "新国标", "旧国标", "统计报表"],
       "required_params": ["start_time", "end_time"],
       "optional_params": ["cities", "ns_type", "time_type", "pollutant_codes", "data_source", "sand_type"],
+      "pollutant_codes_policy": "Leave pollutant_codes empty by default so the API returns all fields. Only set pollutant_codes when the user explicitly asks to filter to specific fields.",
       "result_paths": {
         "preview_records": "data.data",
         "full_records": "data.result",
@@ -39,6 +40,7 @@
       "best_for": ["同比", "环比", "双时段对比", "变化率", "改善", "恶化", "增幅", "排名变化", "新国标同比", "旧国标同比"],
       "required_params": ["time_point", "contrast_time"],
       "optional_params": ["cities", "ns_type", "time_type", "pollutant_codes", "data_source", "sand_type"],
+      "pollutant_codes_policy": "Leave pollutant_codes empty by default so the API returns all fields. Only set pollutant_codes when the user explicitly asks to filter to specific fields.",
       "result_paths": {
         "preview_records": "data.data",
         "full_records": "data.result",

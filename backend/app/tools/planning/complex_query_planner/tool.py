@@ -103,7 +103,7 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
                 "pollutant_codes": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "接口字段过滤列表，如 ['so2','compositeIndex']"
+                    "description": "接口字段过滤列表，如 ['so2','compositeIndex']；默认不传/为空，接口返回全部字段。仅当需要主动筛选字段时传入"
                 },
                 "data_source": {"type": "integer", "description": "0原始实况，1审核实况，2原始标况，3审核标况，默认1"},
                 "sand_type": {"type": "integer", "description": "0不扣沙，1扣沙，默认1"}
@@ -152,7 +152,7 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
                 "pollutant_codes": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "接口字段过滤列表，如 ['so2']；不传则返回接口默认字段"
+                    "description": "接口字段过滤列表，如 ['so2']；默认不传/为空，接口返回全部字段。仅当需要主动筛选字段时传入"
                 },
                 "data_source": {"type": "integer", "description": "0原始实况，1审核实况，2原始标况，3审核标况，默认1"},
                 "sand_type": {"type": "integer", "description": "0不扣沙，1扣沙，默认1"}
