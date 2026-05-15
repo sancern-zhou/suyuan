@@ -78,10 +78,10 @@ class CompareStationStandardReportsTool(LLMTool):
         function_schema = {
             "name": "compare_station_standard_reports",
             "description": (
-                "【第一优先级】站点级新标准双时段对比工具，基于HJ 633-2026。"
-                "支持城市展开站点或直接指定站点，返回统计指标差值和变化率；不要手算。"
+                "【第一优先级】站点级新/旧国标双时段对比工具，直接调用广东联网统计报表接口。"
+                "支持城市展开站点或直接指定站点，返回接口统计指标、对比值和增幅；不要手算。"
                 "result可直接用于报告；report_data_id可用read_data_registry按stations/aggregate/result视图读取。"
-                "本工具不保存日报明细；如需日数据，请调用站点日数据查询工具。aggregate=true时返回多站点汇总。"
+                "ns_type=2为新国标，ns_type=1为旧国标；本工具不保存日报明细。"
             ),
             "parameters": {
                 "type": "object",
@@ -95,6 +95,10 @@ class CompareStationStandardReportsTool(LLMTool):
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "站点名称列表"
+                    },
+                    "station_type": {
+                        "type": "string",
+                        "description": "站点类型，仅cities时生效，默认国控"
                     },
                     "query_period": {
                         "type": "object",
@@ -135,6 +139,24 @@ class CompareStationStandardReportsTool(LLMTool):
                         "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
                         "enum": [0, 1],
                         "default": 1
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "接口标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "time_type": {
+                        "type": "integer",
+                        "description": "报表类型：4=月报, 8=任意时间；默认8",
+                        "enum": [4, 8],
+                        "default": 8
+                    },
+                    "data_source": {
+                        "type": "integer",
+                        "description": "数据源：0原始实况，1审核实况，2原始标况，3审核标况；默认1",
+                        "enum": [0, 1, 2, 3],
+                        "default": 1
                     }
                 },
                 "required": ["query_period", "comparison_period"]
@@ -172,6 +194,21 @@ class CompareStationStandardReportsTool(LLMTool):
             comparison_period=comparison_period,
             aggregate=aggregate,
             sand_type=sand_type
+        )
+
+        from app.tools.query.query_station_standard_report.tool import execute_query_station_standard_yoy_report
+
+        return execute_query_station_standard_yoy_report(
+            cities=cities,
+            stations=stations,
+            time_point=[query_period["start_date"], query_period["end_date"]],
+            contrast_time=[comparison_period["start_date"], comparison_period["end_date"]],
+            station_type=kwargs.get("station_type", "国控"),
+            ns_type=int(kwargs.get("ns_type", 2)),
+            time_type=int(kwargs.get("time_type", 8)),
+            data_source=int(kwargs.get("data_source", 1)),
+            sand_type=sand_type,
+            context=context,
         )
 
         # 2. 查询两个时间段的数据（顺序执行）

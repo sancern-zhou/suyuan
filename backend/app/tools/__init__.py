@@ -227,11 +227,18 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_gd_suncere_report_compare", error=str(e))
 
     try:
-        from app.tools.query.query_gd_suncere.tool_wrapper import QueryStandardComparisonTool
-        registry.register(QueryStandardComparisonTool(), priority=39)
-        logger.info("tool_loaded", tool="query_standard_comparison")
+        from app.tools.query.query_city_standard_report.tool import QueryCityStandardReportTool
+        registry.register(QueryCityStandardReportTool(), priority=39)
+        logger.info("tool_loaded", tool="query_city_standard_report")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_standard_comparison", error=str(e))
+        logger.warning("tool_import_failed", tool="query_city_standard_report", error=str(e))
+
+    try:
+        from app.tools.query.query_city_standard_report.tool import QueryCityStandardYoyReportTool
+        registry.register(QueryCityStandardYoyReportTool(), priority=39)
+        logger.info("tool_loaded", tool="query_city_standard_yoy_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_city_standard_yoy_report", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayNewStandardTool
@@ -248,46 +255,18 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_old_standard", error=str(e))
 
     try:
-        from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-        registry.register(QueryNewStandardReportTool(), priority=41)
-        logger.info("tool_loaded", tool="query_new_standard_report")
+        from app.tools.query.query_station_standard_report.tool import QueryStationStandardReportTool
+        registry.register(QueryStationStandardReportTool(), priority=43)
+        logger.info("tool_loaded", tool="query_station_standard_report")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_new_standard_report", error=str(e))
+        logger.warning("tool_import_failed", tool="query_station_standard_report", error=str(e))
 
     try:
-        from app.tools.query.compare_standard_reports.tool import CompareStandardReportsTool
-        registry.register(CompareStandardReportsTool(), priority=42)
-        logger.info("tool_loaded", tool="compare_standard_reports")
+        from app.tools.query.query_station_standard_report.tool import QueryStationStandardYoyReportTool
+        registry.register(QueryStationStandardYoyReportTool(), priority=44)
+        logger.info("tool_loaded", tool="query_station_standard_yoy_report")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="compare_standard_reports", error=str(e))
-
-    try:
-        from app.tools.query.compare_old_standard_reports.tool import CompareOldStandardReportsTool
-        registry.register(CompareOldStandardReportsTool(), priority=43)  # 修复: 421->43
-        logger.info("tool_loaded", tool="compare_old_standard_reports")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="compare_old_standard_reports", error=str(e))
-
-    try:
-        from app.tools.query.query_station_new_standard_report.tool import QueryStationNewStandardReportTool
-        registry.register(QueryStationNewStandardReportTool(), priority=43)
-        logger.info("tool_loaded", tool="query_station_new_standard_report")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_station_new_standard_report", error=str(e))
-
-    try:
-        from app.tools.query.compare_station_standard_reports.tool import CompareStationStandardReportsTool
-        registry.register(CompareStationStandardReportsTool(), priority=44)
-        logger.info("tool_loaded", tool="compare_station_standard_reports")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="compare_station_standard_reports", error=str(e))
-
-    try:
-        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereOldStandardReportTool
-        registry.register(QueryGDSuncereOldStandardReportTool(), priority=45)
-        logger.info("tool_loaded", tool="query_old_standard_report")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_old_standard_report", error=str(e))
+        logger.warning("tool_import_failed", tool="query_station_standard_yoy_report", error=str(e))
 
     # 全国省份/城市空气质量查询工具（GDQFWS参考项目）
     try:
