@@ -168,6 +168,29 @@ class CompareStandardReportsTool(LLMTool):
             sand_type=sand_type
         )
 
+        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_yoy_report
+
+        result = await execute_query_city_standard_yoy_report(
+            cities=cities,
+            time_point=[query_period["start_date"], query_period["end_date"]],
+            contrast_time=[comparison_period["start_date"], comparison_period["end_date"]],
+            ns_type=2,
+            time_type=8,
+            sand_type=sand_type,
+            context=context,
+        )
+        if isinstance(result.get("metadata"), dict):
+            result["metadata"]["generator"] = "compare_standard_reports"
+            result["metadata"]["delegated_tool"] = "query_city_standard_yoy_report"
+        if result.get("success"):
+            result["summary"] = (
+                "新标准报表对比接口查询完成（"
+                f"{query_period['start_date']}至{query_period['end_date']} vs "
+                f"{comparison_period['start_date']}至{comparison_period['end_date']}） | "
+                "结果来自广东联网同比统计报表接口"
+            )
+        return result
+
         # 2. 并发查询两个时间段的数据（排除超标详情）
         current_task = execute_query_new_standard_report(
             cities=cities,
