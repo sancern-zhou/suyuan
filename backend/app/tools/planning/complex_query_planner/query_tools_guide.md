@@ -24,6 +24,7 @@
 - 旧国标统计：`query_city_standard_report(ns_type=1, ...)`
 - 新旧标准同周期对比：分别查询 `ns_type=2` 和 `ns_type=1` 的接口结果，只基于接口字段做差值说明，不本地重算空气质量统计指标。
 - 同比/环比：`query_city_standard_yoy_report(ns_type=2 或 1, time_point=[...], contrast_time=[...])`，直接使用接口返回的 Compare/Increase/Rank 字段。
+- `pollutant_codes` 默认不传/为空，让接口返回全部字段；只有用户明确要求筛选 SO2、综合指数等特定字段时才传入字段列表。
 - 站点新/旧国标统计：`query_station_standard_report(ns_type=2 或 1, ...)`
 - 站点同比/环比：`query_station_standard_yoy_report(ns_type=2 或 1, time_point=[...], contrast_time=[...])`
 
