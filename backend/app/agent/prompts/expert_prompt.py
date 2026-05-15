@@ -54,7 +54,7 @@ def build_expert_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "### 数据查询\n",
         "- 城市/站点空气质量小时或日数据：`query_gd_suncere_city_hour`, `query_gd_suncere_station_hour_new`, `query_gd_suncere_city_day_new`\n",
-        "- 统计报表和同比环比：`query_new_standard_report`, `query_old_standard_report`, `compare_standard_reports`, `compare_old_standard_reports`, `query_standard_comparison`\n",
+        "- 城市统计报表：`query_city_standard_report`；同比环比：`query_city_standard_yoy_report`（ns_type=2新国标，ns_type=1旧国标，直接使用联网接口结果）\n",
         "- 全国城市历史数据：`query_xcai_city_history`\n",
         "- VOCs和颗粒物组分：`get_vocs_data`, `get_pm25_ionic`, `get_pm25_carbon`, `get_pm25_crustal`\n",
         "- 气象预报或气象相关数据：`get_weather_forecast`\n",

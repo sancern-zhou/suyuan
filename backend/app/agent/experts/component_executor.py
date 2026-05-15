@@ -207,21 +207,18 @@ class ComponentExecutor(ExpertExecutor):
         # 旧的 iaqi_calculator 工具已删除
 
         # ========================================
-        # 新标准统计报表工具（HJ 633-2026）
+        # 城市新旧国标统计报表接口工具
         # ========================================
         try:
-            from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-            tools["query_new_standard_report"] = QueryNewStandardReportTool()
-            logger.info("新标准统计报表工具加载成功: query_new_standard_report（HJ 633-2026）")
+            from app.tools.query.query_city_standard_report.tool import (
+                QueryCityStandardReportTool,
+                QueryCityStandardYoyReportTool,
+            )
+            tools["query_city_standard_report"] = QueryCityStandardReportTool()
+            tools["query_city_standard_yoy_report"] = QueryCityStandardYoyReportTool()
+            logger.info("城市统计报表接口工具加载成功: query_city_standard_report（nsType支持新旧国标）")
         except ImportError as e:
-            logger.warning("新标准统计报表工具加载失败", tool="query_new_standard_report", error=str(e))
-
-        try:
-            from app.tools.query.compare_standard_reports.tool import CompareStandardReportsTool
-            tools["compare_standard_reports"] = CompareStandardReportsTool()
-            logger.info("新标准报表对比分析工具加载成功: compare_standard_reports（对比两个时间段的统计指标）")
-        except ImportError as e:
-            logger.warning("新标准报表对比分析工具加载失败", tool="compare_standard_reports", error=str(e))
+            logger.warning("城市统计报表接口工具加载失败", tool="query_city_standard_report", error=str(e))
 
         # ========================================
         # XcAiDb SQL Server 城市历史数据查询工具
