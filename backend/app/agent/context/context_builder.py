@@ -477,7 +477,11 @@ class SimplifiedContextBuilder:
 
         try:
             # 使用 LLM 压缩对话历史
-            compressed_messages = await self.compressor.compress(conversation_history)
+            compressed_messages = await self.compressor.compress(
+                conversation_history,
+                force=True,
+                force_reason="context_tokens_exceeded"
+            )
 
             # ✅ 关键修复：将压缩后的消息写回 session
             self.memory.session.update_messages(compressed_messages)

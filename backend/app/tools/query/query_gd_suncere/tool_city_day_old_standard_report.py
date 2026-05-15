@@ -16,16 +16,8 @@
 
 【返回数据说明】
 - result字段：统计汇总结果（综合指数、超标天数、首要污染物比例等）
-- data_id字段：完整日报数据（基于HJ 633-2013旧标准计算）
-
-**重要**：data_id中的日报数据已用旧标准计算结果覆盖原始字段，Agent可直接使用：
-- AQI：旧标准空气质量指数（覆盖原始值）
-- primary_pollutant：旧标准首要污染物（覆盖原始值）
-- IAQI_PM2_5、IAQI_PM10、IAQI_SO2、IAQI_NO2、IAQI_CO、IAQI_O3_8h：旧标准分指数（覆盖原始值）
-- single_index_PM2_5_old、single_index_PM10_old等：单项质量指数（新增字段）
-
-使用示例：
-- read_data_registry(data_id="xxx", fields=["timestamp", "AQI", "primary_pollutant", "IAQI_PM2_5"])
+- report_data_id字段：统计报表包，可通过 read_data_registry 按 cities/regions/province/result 视图读取
+- 本工具不保存日报明细；如需日数据，请调用城市日数据查询工具
 """
 
 import asyncio
@@ -49,6 +41,15 @@ from app.tools.query.query_gd_suncere.tool import (
     format_pollutant_value
 )
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
+from app.tools.query.report_data_package import (
+    attach_report_data_id,
+    save_report_data_package,
+    stats_dict_to_view_rows,
+)
+from app.tools.query.query_new_standard_report.tool import (
+    calculate_date_segments,
+    query_day_data_by_segment,
+)
 
 logger = structlog.get_logger()
 
@@ -209,65 +210,61 @@ async def execute_query_old_standard_report(
     )
 
     try:
-        # 步骤1: 并发查询所有城市的日数据（扣沙由接口 sandType 处理）
-        from app.tools.query.query_gd_suncere import execute_query_gd_suncere_city_day
+        # 步骤1: 直接查询接口日数据用于统计计算；不通过日数据工具保存/回读 data_id。
+        api_client = get_gd_suncere_api_client()
+        city_codes = []
+        for city in cities:
+            code = QueryGDSuncereDataTool.get_city_code(city)
+            if code:
+                city_codes.append(code)
+            else:
+                logger.warning("city_code_not_found", city=city)
 
-        async def query_single_city(city: str):
-            """查询单个城市的数据（包装同步函数为协程）"""
-            return execute_query_gd_suncere_city_day(
-                cities=[city],
-                start_date=start_date,
-                end_date=end_date,
-                context=context,
-                sand_type=sand_type
+        if not city_codes:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "schema_version": "v2.0",
+                    "tool_name": "query_old_standard_report",
+                    "error": "No valid city codes found"
+                },
+                "summary": "未找到有效的城市编码"
+            }
+
+        segments = calculate_date_segments(start_date, end_date)
+        query_tasks = [
+            query_day_data_by_segment(
+                api_client,
+                city_codes,
+                seg_start,
+                seg_end,
+                data_type,
+                sand_type=sand_type,
             )
+            for seg_start, seg_end, data_type in segments
+        ]
 
-        # 创建并发查询任务
-        query_tasks = [query_single_city(city) for city in cities]
-
-        # 并发执行查询
-        city_results = await asyncio.gather(*query_tasks, return_exceptions=True)
-
-        # 步骤2: 合并所有城市的日数据
-        all_city_data = {}
         all_daily_records = []
+        segment_results = await asyncio.gather(*query_tasks, return_exceptions=True)
 
-        for i, result in enumerate(city_results):
+        for i, result in enumerate(segment_results):
             if isinstance(result, Exception):
-                logger.warning(
-                    "city_query_failed",
-                    city=cities[i],
-                    error=str(result)
+                logger.error(
+                    "old_standard_segment_query_error",
+                    segment=segments[i],
+                    error=str(result),
                 )
                 continue
 
-            if not result.get("success"):
-                logger.warning(
-                    "city_query_no_data",
-                    city=cities[i],
-                    summary=result.get("summary", "Unknown error")
-                )
-                continue
+            all_daily_records.extend(result)
 
-            # 获取日数据
-            data_id_info = result.get("metadata", {}).get("data_id")
-            if data_id_info:
-                # data_id 可能是字符串或字典（包含 data_id 和 file_path）
-                if isinstance(data_id_info, dict):
-                    data_id_str = data_id_info.get("data_id")
-                else:
-                    data_id_str = data_id_info
-
-                if data_id_str:
-                    daily_data = context.data_manager.get_raw_data(data_id_str)
-                    if daily_data:
-                        all_city_data[cities[i]] = daily_data
-                        all_daily_records.extend(daily_data)
-                        logger.info(
-                            "city_daily_data_loaded",
-                            city=cities[i],
-                            record_count=len(daily_data)
-                        )
+        logger.info(
+            "old_standard_daily_data_collected",
+            segments_count=len(segments),
+            total_records=len(all_daily_records),
+        )
 
         if not all_daily_records:
             return {
@@ -425,20 +422,7 @@ async def execute_query_old_standard_report(
             regional_stats = calculate_regional_stats(city_stats)
             province_wide_stats = regional_stats.get("全省") if regional_stats else None
 
-        # 步骤7: 保存完整日报数据到数据注册表
-        # ⚠️ 已禁用：统计报表工具不返回 data_id，避免 LLM 尝试从 data_id 读取统计字段
-        saved_data = None
-        # data_id_str = None
-        # if context:
-        #     try:
-        #         data_id_str = context.save_data(
-        #             data=standardized_data,  # 保存清洗、标准化和旧标准计算后的数据
-        #             schema="air_quality_unified"
-        #         )
-        #         logger.info("old_standard_daily_data_saved", data_id=data_id_str)
-        #     except Exception as e:
-        #         logger.warning("failed_to_save_old_standard_daily_data", error=str(e))
-        data_id_str = None  # 统计报表工具不返回 data_id
+        # 步骤7: 统计报表工具只保存汇总报表包 report_data_id；如需日报明细，调用城市日数据工具。
 
         # 步骤8: 构建返回结果
         total_days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
@@ -446,14 +430,14 @@ async def execute_query_old_standard_report(
         # 综合指数算法说明
         composite_algorithm_desc = "新综合指数算法（PM2.5权重3，NO2权重2，O3权重2）" if use_new_composite_algorithm else "旧综合指数算法（所有权重均为1）"
 
-        # 统计结果放在 result 字段，原始日数据通过 data_id 引用
+        # 统计结果放在 result 字段；日报明细由专用日数据工具查询。
         if len(cities) == 1 and city_stats:
             city_name = list(city_stats.keys())[0]
             result_summary_data = city_stats[city_name]
-            result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已完整展示在 result 字段中"
         else:
             result_summary_data = city_stats
-            result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            result_summary = f"旧标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已完整展示在 result 字段中"
             # 合并全省和各区域汇总到结果（按顺序：粤东、粤西、粤北、珠三角、非珠三角、全省）
             if regional_stats:
                 result_summary_data["regional_stats"] = regional_stats
@@ -461,10 +445,6 @@ async def execute_query_old_standard_report(
                 if "regional_stats" not in result_summary_data:
                     result_summary_data["regional_stats"] = {}
                 result_summary_data["regional_stats"]["全省"] = province_wide_stats
-
-        # 添加数据存储信息到摘要
-        # if data_id_str:
-        #     result_summary += f" | 日报数据已保存 (data_id: {data_id_str})"
 
         metadata = {
             "tool_name": "query_old_standard_report",
@@ -478,10 +458,7 @@ async def execute_query_old_standard_report(
             "sand_type": sand_type
         }
 
-        if data_id_str:
-            metadata["data_id"] = data_id_str
-
-        return {
+        result = {
             "status": "success",
             "success": True,
             "data": None,
@@ -489,6 +466,31 @@ async def execute_query_old_standard_report(
             "summary": result_summary,
             "result": result_summary_data
         }
+
+        report_data_id = save_report_data_package(
+            context=context,
+            tool_name="query_old_standard_report",
+            query={
+                "cities": cities,
+                "requested_cities": requested_cities,
+                "start_date": start_date,
+                "end_date": end_date,
+                "sand_type": sand_type,
+                "use_new_composite_algorithm": use_new_composite_algorithm,
+            },
+            result=result,
+            metadata=metadata,
+            primary_view_name="cities",
+            primary_name_field="city",
+            primary_stats=city_stats,
+            extra_views={
+                "regions": stats_dict_to_view_rows(regional_stats or {}, "region"),
+                "province": province_wide_stats or {},
+            },
+            exclude_primary_keys={"regional_stats", "province_wide"},
+            package_kind="old_standard_report",
+        )
+        return attach_report_data_id(result, report_data_id, summary_label="旧标准统计报表")
 
     except Exception as e:
         logger.error(

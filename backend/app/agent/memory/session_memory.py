@@ -1118,7 +1118,7 @@ class SessionMemory:
                 elif "role" in msg and "content" in msg:
                     content = msg["content"]
                     role = msg["role"]
-                    msg_type = None
+                    msg_type = msg.get("type")
 
                     # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
                     if isinstance(content, list):
@@ -1290,16 +1290,35 @@ class SessionMemory:
             role = msg.get("role", "user")
             content = msg.get("content", "")
 
-            # Handle Anthropic content block format (list of blocks)
+            # Preserve Anthropic content block format. Fallback compression may
+            # return original tool_use/tool_result blocks; converting them to
+            # text would break provider pairing on the next request.
             if isinstance(content, list):
-                texts = []
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text" and "text" in block:
-                            texts.append(block["text"])
-                        elif "text" in block:
-                            texts.append(block["text"])
-                content = "\n".join(texts)
+                content_types = {
+                    block.get("type")
+                    for block in content
+                    if isinstance(block, dict)
+                }
+                if "tool_result" in content_types:
+                    role = "user"
+                    msg_type = "tool_result"
+                elif "tool_use" in content_types:
+                    role = "assistant"
+                    msg_type = "tool_use"
+                else:
+                    msg_type = msg.get("type")
+
+                self.conversation_history.append(
+                    ConversationTurn(
+                        role=role,
+                        content=content,
+                        timestamp=datetime.utcnow().isoformat(),
+                        type=msg_type,
+                        tool_use_id=msg.get("tool_use_id"),
+                        is_error=msg.get("is_error"),
+                    )
+                )
+                continue
             elif isinstance(content, dict):
                 content = content.get("text", "")
 
@@ -1343,6 +1362,7 @@ class SessionMemory:
                     role=role,
                     content=content,
                     timestamp=datetime.utcnow().isoformat(),
+                    type=msg.get("type"),
                     thought=thought,
                 )
             )

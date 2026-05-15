@@ -25,6 +25,7 @@ import structlog
 from app.tools.base import LLMTool, ToolCategory
 from app.agent.context.execution_context import ExecutionContext
 from app.tools.query.query_station_new_standard_report.tool import execute_query_station_new_standard_report
+from app.tools.query.report_data_package import attach_report_data_id, save_report_data_package
 
 logger = structlog.get_logger()
 
@@ -79,7 +80,8 @@ class CompareStationStandardReportsTool(LLMTool):
             "description": (
                 "【第一优先级】站点级新标准双时段对比工具，基于HJ 633-2026。"
                 "支持城市展开站点或直接指定站点，返回统计指标差值和变化率；不要手算。"
-                "result可直接用于报告；aggregate=true时返回多站点汇总。"
+                "result可直接用于报告；report_data_id可用read_data_registry按stations/aggregate/result视图读取。"
+                "本工具不保存日报明细；如需日数据，请调用站点日数据查询工具。aggregate=true时返回多站点汇总。"
             ),
             "parameters": {
                 "type": "object",
@@ -240,10 +242,35 @@ class CompareStationStandardReportsTool(LLMTool):
             }
         }
 
+        report_data_id = save_report_data_package(
+            context=context,
+            tool_name="compare_station_standard_reports",
+            query={
+                "cities": cities or [],
+                "stations": stations or [],
+                "query_period": query_period,
+                "comparison_period": comparison_period,
+                "aggregate": aggregate,
+                "sand_type": sand_type,
+            },
+            result=result,
+            metadata=result["metadata"],
+            primary_view_name="stations",
+            primary_name_field="station",
+            primary_stats=comparison_result_data,
+            extra_views={
+                "aggregate": comparison_result_data.get("station_aggregate") if isinstance(comparison_result_data, dict) else None,
+            },
+            exclude_primary_keys={"station_aggregate"},
+            package_kind="station_standard_report_comparison",
+        )
+        attach_report_data_id(result, report_data_id, summary_label="站点新标准对比报表")
+
         logger.info(
             "compare_station_standard_reports_completed",
             station_count=station_count,
-            aggregate_calculated=aggregate
+            aggregate_calculated=aggregate,
+            report_data_id=report_data_id
         )
 
         return result

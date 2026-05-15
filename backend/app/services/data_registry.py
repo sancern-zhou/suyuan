@@ -142,6 +142,86 @@ class DataRegistryService:
 
         return entry
 
+    def register_payload(
+        self,
+        schema: str,
+        version: str,
+        payload: Any,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+        sample: Optional[Any] = None,
+        data_id: Optional[str] = None,
+        record_count: Optional[int] = None,
+    ) -> DataRegistryEntry:
+        """Register an arbitrary JSON payload.
+
+        Use this for structured report packages that are naturally objects with
+        named views instead of flat record arrays.
+        """
+        if data_id is None:
+            data_id = f"{schema}:{version}:{uuid4().hex}"
+        else:
+            parts = data_id.split(":")
+            if len(parts) >= 3:
+                schema = parts[0]
+                version = parts[1]
+
+        safe_id = self._sanitize_identifier(data_id)
+        dataset_path = self.datasets_dir / f"{safe_id}.json"
+        sample_path = self.samples_dir / f"{safe_id}.json"
+
+        with dataset_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+        sample_payload = sample
+        if sample_payload is None:
+            sample_payload = self._make_payload_sample(payload)
+
+        with sample_path.open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "schema": schema,
+                    "version": version,
+                    "sample": sample_payload,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+
+        if record_count is None:
+            record_count = self._estimate_payload_record_count(payload)
+
+        entry = DataRegistryEntry(
+            data_id=data_id,
+            schema=schema,
+            version=version,
+            record_count=record_count,
+            dataset_path=dataset_path,
+            sample_path=sample_path,
+            quality_report=None,
+            field_stats=None,
+            metadata=metadata or {},
+            created_at=datetime.utcnow(),
+        )
+
+        with self._lock:
+            self._index[data_id] = entry
+            with self.metadata_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry.to_dict(), ensure_ascii=False, default=str))
+                f.write("\n")
+
+        logger.info(
+            "payload_registered",
+            data_id=data_id,
+            schema=schema,
+            version=version,
+            record_count=record_count,
+        )
+
+        return entry
+
     def get_metadata(self, data_id: str) -> Optional[DataRegistryEntry]:
         return self._index.get(data_id)
 
@@ -151,11 +231,13 @@ class DataRegistryService:
             payload = json.load(f)
         return payload.get("sample", [])
 
-    def load_dataset(self, data_id: str) -> Sequence[Dict[str, Any]]:
+    def load_dataset(self, data_id: str) -> Any:
         entry = self._require_entry(data_id)
         with entry.dataset_path.open("r", encoding="utf-8") as f:
             payload = json.load(f)
-        return payload.get("records", [])
+        if isinstance(payload, dict) and "records" in payload:
+            return payload.get("records", [])
+        return payload
 
     def _load_metadata(self) -> None:
         with self.metadata_path.open("r", encoding="utf-8") as f:
@@ -196,6 +278,43 @@ class DataRegistryService:
             else:
                 result.append(char)
         return "".join(result)
+
+    @staticmethod
+    def _estimate_payload_record_count(payload: Any) -> int:
+        if isinstance(payload, list):
+            return len(payload)
+        if isinstance(payload, dict):
+            views = payload.get("views")
+            if isinstance(views, dict):
+                total = 0
+                for value in views.values():
+                    if isinstance(value, list):
+                        total += len(value)
+                    elif value is not None:
+                        total += 1
+                return total or 1
+            return 1
+        return 1
+
+    @staticmethod
+    def _make_payload_sample(payload: Any) -> Any:
+        if isinstance(payload, list):
+            return payload[:20]
+        if isinstance(payload, dict):
+            sample = {}
+            for key, value in payload.items():
+                if key == "views" and isinstance(value, dict):
+                    sample_views = {}
+                    for view_name, view_value in value.items():
+                        if isinstance(view_value, list):
+                            sample_views[view_name] = view_value[:5]
+                        else:
+                            sample_views[view_name] = view_value
+                    sample[key] = sample_views
+                else:
+                    sample[key] = value
+            return sample
+        return payload
 
 
 data_registry = DataRegistryService()

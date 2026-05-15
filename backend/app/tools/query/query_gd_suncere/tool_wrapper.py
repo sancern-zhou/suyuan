@@ -1022,7 +1022,8 @@ class QueryStandardComparisonTool(LLMTool):
             "description": (
                 "【第一优先级】查询同一时间段的新旧空气质量标准统计对比。"
                 "返回新旧标准综合指数、超标天数、达标率和统计浓度差异；不要手算。"
-                "result可直接用于报告；data_id仅保存日报明细。"
+                "result可直接用于报告；report_data_id可用read_data_registry按cities/province/result视图读取。"
+                "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
             ),
             "parameters": {
                 "type": "object",
@@ -1358,7 +1359,8 @@ class QueryGDSuncereOldStandardReportTool(LLMTool):
             "description": (
                 "【第一优先级】查询HJ 633-2013旧标准空气质量统计报表。"
                 "用于综合指数、超标天数、达标率、六参数统计浓度、首要污染物等统计结果；不要手算。"
-                "result返回统计汇总，可直接用于分析和报告；data_id仅保存日报明细。"
+                "result返回统计汇总，可直接用于分析和报告；report_data_id可用read_data_registry按cities/regions/province/result视图读取。"
+                "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
                 "默认旧综合指数算法为所有污染物权重1，可选使用新综合指数算法。"
             ),
             "parameters": {

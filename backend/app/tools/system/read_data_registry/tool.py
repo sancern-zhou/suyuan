@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import subprocess
 import structlog
+from app.services.data_registry import data_registry
 
 logger = structlog.get_logger()
 
@@ -32,7 +33,8 @@ class ReadDataRegistryTool(LLMTool):
             name="read_data_registry",
             description=(
                 "读取DataRegistry中已保存的数据。"
-                "支持时间范围过滤、字段选择和jq聚合过滤。"
+                "支持数组型明细数据的时间范围过滤、字段选择和jq聚合过滤；"
+                "支持对象型报表数据包的视图列表和按view读取。"
                 f"明细数组最多返回{self.DEFAULT_MAX_RECORDS}条。"
             ),
             category=ToolCategory.QUERY,
@@ -53,7 +55,15 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "list_fields": {
                         "type": "boolean",
-                        "description": "只返回字段列表和时间范围；此时不需要time_range"
+                        "description": "数组型数据返回字段列表和时间范围；对象型报表包返回包结构和视图列表"
+                    },
+                    "list_views": {
+                        "type": "boolean",
+                        "description": "对象型报表包专用：只返回可用视图列表和每个视图的字段"
+                    },
+                    "view": {
+                        "type": "string",
+                        "description": "对象型报表包专用：读取指定视图，如 cities、regions、province、stations、aggregate、result"
                     },
                     "time_range": {
                         "type": "string",
@@ -74,7 +84,9 @@ class ReadDataRegistryTool(LLMTool):
                 },
                 "anyOf": [
                     {"required": ["data_id", "list_fields"]},  # list_fields 模式（不需要 time_range）
-                    {"required": ["data_id", "time_range"]}    # 数据读取模式（必须指定 time_range）
+                    {"required": ["data_id", "list_views"]},   # 对象型报表包视图列表
+                    {"required": ["data_id", "view"]},         # 对象型报表包指定视图
+                    {"required": ["data_id", "time_range"]}    # 数组型数据读取模式
                 ]
             }
         }
@@ -84,6 +96,8 @@ class ReadDataRegistryTool(LLMTool):
         context=None,
         data_id: str = None,
         list_fields: bool = False,
+        list_views: bool = False,
+        view: Optional[str] = None,
         time_range: Optional[str] = None,
         fields: Optional[List[str]] = None,
         jq_filter: Optional[str] = None,
@@ -94,8 +108,8 @@ class ReadDataRegistryTool(LLMTool):
         从 backend_data_registry/datasets/ 读取 DataRegistry 格式的数据。
         """
 
-        # 从 DataRegistry 加载数据
-        data_registry_path = Path("backend_data_registry/datasets") / f"{data_id.replace(':', '_')}.json"
+        # 从 DataRegistry 加载数据。优先使用 registry 元数据，兼容旧的路径推断。
+        data_registry_path = self._resolve_registry_path(data_id)
 
         if not data_registry_path.exists():
             return {
@@ -106,12 +120,30 @@ class ReadDataRegistryTool(LLMTool):
             }
 
         return await self._load_from_data_registry(
-            data_registry_path, data_id, list_fields, time_range, fields, jq_filter
+            data_registry_path, data_id, list_fields, list_views, view, time_range, fields, jq_filter
         )
+
+    def _resolve_registry_path(self, data_id: str) -> Path:
+        entry = data_registry.get_metadata(data_id)
+        if entry:
+            return Path(entry.dataset_path)
+
+        safe_id = data_id.replace(':', '_')
+        candidates = [
+            data_registry.datasets_dir / f"{safe_id}.json",
+            Path("backend_data_registry/datasets") / f"{safe_id}.json",
+            Path("../backend_data_registry/datasets") / f"{safe_id}.json",
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
 
     async def _load_from_data_registry(
         self, file_path: Path, data_id: str,
-        list_fields: bool, time_range: Optional[str], fields: Optional[List[str]], jq_filter: Optional[str]
+        list_fields: bool, list_views: bool, view: Optional[str],
+        time_range: Optional[str], fields: Optional[List[str]], jq_filter: Optional[str]
     ) -> Dict[str, Any]:
         """从 DataRegistry 格式加载数据"""
         try:
@@ -120,9 +152,14 @@ class ReadDataRegistryTool(LLMTool):
         except json.JSONDecodeError as e:
             return {"success": False, "error": f"JSON 解析失败: {str(e)}"}
 
+        if isinstance(data, dict):
+            return self._load_report_package(
+                data, file_path, data_id, list_fields, list_views, view, fields, jq_filter
+            )
+
         # DataRegistry 直接存储数据数组
         if not isinstance(data, list):
-            return {"success": False, "error": f"数据格式错误: 期望数组，得到 {type(data).__name__}"}
+            return {"success": False, "error": f"数据格式错误: 期望数组或对象型报表包，得到 {type(data).__name__}"}
 
         # 【新增】list_fields 功能：只返回字段列表和时间范围
         if list_fields:
@@ -267,6 +304,139 @@ class ReadDataRegistryTool(LLMTool):
             },
             "summary": self._generate_summary(data, filter_info)
         }
+
+    def _load_report_package(
+        self,
+        package: Dict[str, Any],
+        file_path: Path,
+        data_id: str,
+        list_fields: bool,
+        list_views: bool,
+        view: Optional[str],
+        fields: Optional[List[str]],
+        jq_filter: Optional[str],
+    ) -> Dict[str, Any]:
+        """读取对象型报表数据包。"""
+        views = package.get("views")
+        if not isinstance(views, dict):
+            return {
+                "success": False,
+                "error": "对象型数据不是有效报表包：缺少 views 字段",
+                "data": {
+                    "data_id": data_id,
+                    "available_top_level_fields": list(package.keys())
+                }
+            }
+
+        if list_fields or list_views or not view:
+            views_info = {}
+            for view_name, view_data in views.items():
+                views_info[view_name] = self._describe_view(view_data)
+
+            return {
+                "success": True,
+                "file_path": str(file_path),
+                "data": {
+                    "data_id": data_id,
+                    "package_kind": package.get("kind", "report_package"),
+                    "tool_name": package.get("tool_name"),
+                    "query": package.get("query"),
+                    "available_views": list(views.keys()),
+                    "views": views_info,
+                    "metadata": package.get("metadata", {}),
+                },
+                "metadata": {
+                    "data_type": "report_package",
+                    "source": "data_registry",
+                    "generator": "read_data_registry",
+                    "tool_name": "read_data_registry",
+                },
+                "summary": f"报表数据包 {data_id} 包含视图：{', '.join(views.keys())}"
+            }
+
+        if view not in views:
+            return {
+                "success": False,
+                "error": f"视图不存在: {view}",
+                "data": {
+                    "requested_view": view,
+                    "available_views": list(views.keys())
+                },
+                "summary": f"视图 {view} 不存在，可用视图：{', '.join(views.keys())}"
+            }
+
+        data = views[view]
+
+        if fields:
+            data = self._select_fields_for_any(data, fields)
+
+        if jq_filter:
+            try:
+                corrected_filter = self._auto_correct_jq_filter(jq_filter)
+                result = subprocess.run(
+                    ["jq", corrected_filter],
+                    input=json.dumps(data, ensure_ascii=False),
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8'
+                )
+                if result.returncode == 0:
+                    data = json.loads(result.stdout)
+                else:
+                    return {
+                        "success": False,
+                        "error": f"jq 过滤失败: {result.stderr}",
+                        "hint": self._get_jq_error_hint(result.stderr, jq_filter)
+                    }
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                return {"success": False, "error": f"jq 执行失败: {str(e)}"}
+
+        returned_count = len(data) if isinstance(data, (list, dict)) else 1
+        return {
+            "success": True,
+            "file_path": str(file_path),
+            "data": data,
+            "metadata": {
+                "data_type": "report_package_view",
+                "package_kind": package.get("kind", "report_package"),
+                "view": view,
+                "returned_records": returned_count,
+                "source": "data_registry",
+                "generator": "read_data_registry",
+                "tool_name": "read_data_registry",
+            },
+            "summary": f"已读取报表数据包 {data_id} 的 {view} 视图，返回 {returned_count} 项"
+        }
+
+    def _describe_view(self, view_data: Any) -> Dict[str, Any]:
+        if isinstance(view_data, list):
+            sample = view_data[0] if view_data else {}
+            return {
+                "type": "array",
+                "count": len(view_data),
+                "fields": self._extract_all_fields(sample) if isinstance(sample, dict) else [],
+                "sample": sample,
+            }
+        if isinstance(view_data, dict):
+            return {
+                "type": "object",
+                "fields": self._extract_all_fields(view_data),
+                "sample": view_data,
+            }
+        return {
+            "type": type(view_data).__name__,
+            "sample": view_data,
+        }
+
+    def _select_fields_for_any(self, data: Any, fields: List[str]) -> Any:
+        if isinstance(data, list):
+            selected, _ = self._select_fields(data, fields)
+            return selected
+        if isinstance(data, dict):
+            return self._select_fields_from_record(data, fields)
+        return data
 
     def _is_aggregation_operation(self, jq_filter: Optional[str], data_count: int) -> bool:
         """判断是否为聚合操作

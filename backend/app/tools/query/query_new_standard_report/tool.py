@@ -30,6 +30,10 @@ from app.tools.query.query_gd_suncere.tool_city_day_new import (
     update_to_new_standard,
 )
 from app.services.gd_suncere_api_client import get_gd_suncere_api_client
+from app.tools.query.report_data_package import (
+    save_report_data_package,
+    stats_dict_to_view_rows,
+)
 
 logger = structlog.get_logger()
 
@@ -87,6 +91,51 @@ def expand_region_city_names(cities: List[str]) -> List[str]:
                 expanded.append(city)
 
     return expanded
+
+
+def _stats_dict_to_view_rows(
+    stats: Dict[str, Dict[str, Any]],
+    name_field: str,
+    *,
+    exclude_keys: Optional[set[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Convert keyed statistics dicts to explicit rows for report-package views."""
+    return stats_dict_to_view_rows(
+        stats,
+        name_field,
+        exclude_keys=(exclude_keys or set()) | {"regional_stats"},
+    )
+
+
+def _save_standard_report_package(
+    *,
+    context: Optional[ExecutionContext],
+    tool_name: str,
+    query: Dict[str, Any],
+    result: Dict[str, Any],
+    city_stats: Dict[str, Dict[str, Any]],
+    regional_stats: Optional[Dict[str, Dict[str, Any]]],
+    province_wide_stats: Optional[Dict[str, Any]],
+    metadata: Dict[str, Any],
+    package_kind: str = "standard_report",
+) -> Optional[str]:
+    """Persist a structured report package and return its report_data_id."""
+    return save_report_data_package(
+        context=context,
+        tool_name=tool_name,
+        query=query,
+        result=result,
+        metadata=metadata,
+        primary_view_name="cities",
+        primary_name_field="city",
+        primary_stats=city_stats,
+        extra_views={
+            "regions": _stats_dict_to_view_rows(regional_stats or {}, "region"),
+            "province": province_wide_stats or {},
+        },
+        exclude_primary_keys={"province_wide", "regional_stats"},
+        package_kind=package_kind,
+    )
 
 
 # =============================================================================
@@ -1244,21 +1293,6 @@ async def execute_query_new_standard_report(
                     note2="exceed_details 中 PM2.5 作为最大 index 污染物的天数"
             )
 
-    # 可选：保存完整日报数据到数据注册表
-    # ⚠️ 已禁用：统计报表工具不返回 data_id，避免 LLM 尝试从 data_id 读取统计字段
-    # data_id_str = None
-    # if context:
-    #     try:
-    #         # context.save_data() 直接返回字符串ID
-    #         data_id_str = context.save_data(
-    #             data=standardized_data,  # 保存清洗和标准化后的数据
-    #             schema="air_quality_unified"
-    #         )
-    #         logger.info("daily_data_saved", data_id=data_id_str)
-    #     except Exception as e:
-    #         logger.warning("failed_to_save_daily_data", error=str(e))
-    data_id_str = None  # 统计报表工具不返回 data_id
-
     # 计算全省汇总统计（多城市查询时）
     province_wide_stats = None
     regional_stats = None
@@ -1269,7 +1303,7 @@ async def execute_query_new_standard_report(
 
     # 构建返回结果
     # 统计结果放在 result 字段，与 query_standard_comparison 保持一致
-    # 原始日数据通过 data_id 引用
+    # 统计结果放在 result 字段；日报明细由专用日数据工具查询。
 
     # 综合指数算法说明
     composite_algorithm_desc = "旧综合指数算法（所有权重均为1）" if use_old_composite_algorithm else "新综合指数算法（PM2.5权重3，NO2权重2，O3权重2）"
@@ -1277,10 +1311,10 @@ async def execute_query_new_standard_report(
     if len(cities) == 1 and city_stats:
         city_name = list(city_stats.keys())[0]
         result_summary_data = city_stats[city_name]
-        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已完整展示在 result 字段中"
     else:
         result_summary_data = city_stats
-        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已完整展示在 result 字段中"
         # 合并全省和各区域汇总到结果（按顺序：粤东、粤西、粤北、珠三角、非珠三角、全省）
         if regional_stats:
             result_summary_data["regional_stats"] = regional_stats
@@ -1289,10 +1323,6 @@ async def execute_query_new_standard_report(
             if "regional_stats" not in result_summary_data:
                 result_summary_data["regional_stats"] = {}
             result_summary_data["regional_stats"]["全省"] = province_wide_stats
-
-    # 添加数据存储信息到摘要
-    # if data_id_str:
-    #     result_summary += f" | 原始日数据已保存至 data_id: {data_id_str}，统计汇总指标已完整展示在 result 字段中"
 
     # 构建元数据
     metadata = {
@@ -1306,10 +1336,6 @@ async def execute_query_new_standard_report(
         "sand_type": sand_type
     }
 
-    # 添加 data_id 到元数据
-    if data_id_str:
-        metadata["data_id"] = data_id_str
-
     # 构建返回结果（UDF v2.0格式）
     # 统计结果在 result 字段，data 字段为 None（不返回详细记录）
     result = {
@@ -1321,6 +1347,29 @@ async def execute_query_new_standard_report(
         "result": result_summary_data  # 统计分析结果
     }
 
+    report_data_id = _save_standard_report_package(
+        context=context,
+        tool_name="query_new_standard_report",
+        query={
+            "cities": cities,
+            "requested_cities": requested_cities,
+            "start_date": start_date,
+            "end_date": end_date,
+            "sand_type": sand_type,
+            "exclude_exceed_details": exclude_exceed_details,
+            "use_old_composite_algorithm": use_old_composite_algorithm,
+        },
+        result=result,
+        city_stats=city_stats,
+        regional_stats=regional_stats,
+        province_wide_stats=province_wide_stats,
+        metadata=metadata,
+    )
+
+    if report_data_id:
+        metadata["report_data_id"] = report_data_id
+        result["report_data_id"] = report_data_id
+        result["summary"] += f" | 统计报表已保存为 report_data_id: {report_data_id}"
     return result
 
 
@@ -1772,7 +1821,8 @@ class QueryNewStandardReportTool(LLMTool):
                 "【第一优先级】查询HJ 633-2026新标准空气质量统计报表。"
                 "用于综合指数、超标天数、达标率、六参数统计浓度、首要污染物等统计结果；"
                 "不要用execute_python或手算替代。"
-                "result返回统计汇总，可直接用于分析和报告；data_id仅保存日报明细，不包含汇总指标。"
+                "result返回统计汇总，可直接用于分析和报告；report_data_id可用read_data_registry按cities/regions/province/result视图读取。"
+                "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
                 "默认新综合指数算法为PM2.5权重3、NO2权重2、O3权重2、其他权重1；"
                 "详细算法和返回字段需要时阅读源码。"
             ),
