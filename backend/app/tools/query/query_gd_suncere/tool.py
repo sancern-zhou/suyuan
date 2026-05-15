@@ -3925,7 +3925,8 @@ async def execute_query_standard_comparison(
             start_date=start_date,
             end_date=end_date,
             sand_type=sand_type,
-            context=context
+            context=context,
+            truncate_result=False,
         )
         old_standard_result = await execute_query_old_standard_report(
             cities=cities,

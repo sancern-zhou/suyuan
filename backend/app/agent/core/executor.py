@@ -1042,6 +1042,7 @@ class ToolExecutor:
                 "data": [...],
                 "visuals": [...],
                 "data_ids": [...],
+                "report_data_ids": [...],
                 "summary": str
             }
         """
@@ -1125,6 +1126,7 @@ class ToolExecutor:
         merged_data = []
         merged_visuals = []
         merged_data_ids = []
+        merged_report_data_ids = []
 
         for res in successful_results:
             result = res.get("result", {})
@@ -1143,13 +1145,16 @@ class ToolExecutor:
                 merged_visuals.extend(result["visuals"])
             if result.get("data_id"):
                 merged_data_ids.append(result["data_id"])
+            if result.get("report_data_id"):
+                merged_report_data_ids.append(result["report_data_id"])
 
         # ✅ 添加调试日志
         logger.info(
             "parallel_execution_visuals_merged",
             successful_tools_count=len(successful_results),
             merged_visuals_count=len(merged_visuals),
-            merged_data_ids_count=len(merged_data_ids)
+            merged_data_ids_count=len(merged_data_ids),
+            merged_report_data_ids_count=len(merged_report_data_ids)
         )
 
         # 判断执行状态
@@ -1175,6 +1180,7 @@ class ToolExecutor:
             "data": merged_data if merged_data else None,
             "visuals": merged_visuals if merged_visuals else None,
             "data_ids": merged_data_ids if merged_data_ids else None,
+            "report_data_ids": merged_report_data_ids if merged_report_data_ids else None,
 
             # 生成摘要
             "summary": self._generate_parallel_summary(

@@ -130,6 +130,7 @@ class ToolCoordinator:
         all_results: List[Dict[str, Any]] = []
         all_visuals: List[Any] = []
         all_data_ids: List[Any] = []
+        all_report_data_ids: List[Any] = []
         all_tool_results: List[Dict[str, Any]] = []
         tool_records: List[Dict[str, Any]] = []
 
@@ -168,6 +169,8 @@ class ToolCoordinator:
                     all_visuals.extend(result_data["visuals"])
                 if result_data.get("data_id"):
                     all_data_ids.append(result_data["data_id"])
+                if result_data.get("report_data_id"):
+                    all_report_data_ids.append(result_data["report_data_id"])
 
         if len(streaming_tool_executor._executions) == 1:
             execution = streaming_tool_executor._executions[0]
@@ -191,6 +194,7 @@ class ToolCoordinator:
             "data": [r.get("data") for r in all_results if isinstance(r, dict) and r.get("data")],
             "visuals": all_visuals,
             "data_ids": all_data_ids,
+            "report_data_ids": all_report_data_ids,
             "tool_results": all_tool_results,
             "summary": "; ".join(r.get("summary", "") for r in all_results if isinstance(r, dict) and r.get("summary")),
             "parallel": True,
@@ -251,6 +255,7 @@ class ToolCoordinator:
             "data": parallel_result.get("data", []),
             "visuals": parallel_result.get("visuals", []),
             "data_ids": parallel_result.get("data_ids", []),
+            "report_data_ids": parallel_result.get("report_data_ids", []),
             "tool_results": parallel_result.get("tool_results", []),
             "summary": parallel_result.get("summary", "并行执行完成"),
             "parallel": True,
