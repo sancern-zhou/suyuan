@@ -772,6 +772,21 @@ def execute_query_station_new_standard_report(
         sand_type=sand_type
     )
 
+    from app.tools.query.query_station_standard_report.tool import execute_query_station_standard_report
+
+    return execute_query_station_standard_report(
+        cities=cities,
+        stations=stations,
+        start_time=start_date,
+        end_time=end_date,
+        station_type=station_type,
+        ns_type=2,
+        time_type=8,
+        data_source=1,
+        sand_type=sand_type if sand_type is not None else 1,
+        context=context,
+    )
+
     try:
         # 1. 查询站点日报数据
         query_result = QueryGDSuncereDataTool.query_station_day_data(

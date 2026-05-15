@@ -53,9 +53,7 @@ EXPERT_TOOL_NAMES = {
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_city_day_new",
-    "query_new_standard_report", "query_old_standard_report",
-    "query_standard_comparison", "compare_standard_reports",
-    "compare_old_standard_reports", "read_data_registry",
+    "query_city_standard_report", "query_city_standard_yoy_report", "read_data_registry",
 
     # 分析工具
     "calculate_pm_pmf", "calculate_vocs_pmf",
@@ -91,10 +89,8 @@ QUERY_TOOL_NAMES = {
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_city_day_new",
-    "query_new_standard_report", "query_old_standard_report",
-    "query_standard_comparison", "compare_standard_reports",
-    "compare_old_standard_reports", "query_station_new_standard_report",
-    "compare_station_standard_reports",
+    "query_city_standard_report", "query_city_standard_yoy_report",
+    "query_station_standard_report", "query_station_standard_yoy_report",
 
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
@@ -234,8 +230,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = {
 DELIBERATION_MONITORING_TOOL_NAMES = {
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day_new",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
-    "query_new_standard_report", "query_old_standard_report",
-    "query_standard_comparison", "compare_standard_reports",
+    "query_city_standard_report", "query_city_standard_yoy_report",
     "read_data_registry", "execute_python", "TodoWrite",
 }
 
@@ -290,9 +285,7 @@ EXPERT_TOOL_ORDER = [
     "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
-    "query_new_standard_report", "query_old_standard_report",
-    "query_standard_comparison",
-    "compare_standard_reports", "compare_old_standard_reports",
+    "query_city_standard_report", "query_city_standard_yoy_report",
     "read_data_registry",
 
     # 分析工具
@@ -330,10 +323,8 @@ QUERY_TOOL_ORDER = [
     "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
-    "query_new_standard_report", "query_old_standard_report",
-    "query_standard_comparison",
-    "compare_standard_reports", "compare_old_standard_reports",
-    "query_station_new_standard_report", "compare_station_standard_reports",
+    "query_city_standard_report", "query_city_standard_yoy_report",
+    "query_station_standard_report", "query_station_standard_yoy_report",
 
     # 全国省份空气质量查询
     "query_national_province_air_quality", "query_national_city_air_quality",
