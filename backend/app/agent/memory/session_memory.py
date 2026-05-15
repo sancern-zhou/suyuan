@@ -122,8 +122,9 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
 
     keep_keys = {
         "success", "status", "summary", "error", "error_type", "data_id",
-        "data_ids", "file_path", "count", "total_count", "sample_count",
+        "data_ids", "report_data_id", "report_data_ids", "file_path", "count", "total_count", "sample_count",
         "original_count", "metadata", "has_chart", "chart_summary",
+        "source_data_ids", "source_report_data_ids",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
     if "summary" not in minimal:
@@ -400,8 +401,12 @@ class SessionMemory:
             success = observation.get('success', False)
             status = '[OK]' if success else '[FAIL]'
 
-            # 优先保留data_id信息 - 使用智能别名
-            data_id = observation.get('data_id') or observation.get('data_ref')
+            # 优先保留data_id/report_data_id信息 - 使用智能别名
+            data_id = (
+                observation.get('data_id')
+                or observation.get('data_ref')
+                or observation.get('report_data_id')
+            )
             if data_id:
                 id_alias = _create_id_alias(data_id)
                 data_id_str = f" (ID: {id_alias})"

@@ -107,22 +107,13 @@ class HybridMemoryManager:
         """
 
         data = observation.get("data")
-        if data is None:
-            # data为None的情况（如get_component_data成功场景），直接返回
+        refs = self._extract_observation_refs(observation)
+
+        if data is None and not refs["data_ids"] and not refs["report_data_ids"]:
+            # data为None且没有可引用结果的情况，直接返回
             return observation
 
-        # 优先使用已有的长格式ID（方案A：data_id可能在metadata中）
-        existing_data_id = observation.get("data_id")
-        if not existing_data_id:
-            # 方案A：从metadata中获取data_id
-            metadata = observation.get("metadata", {})
-            metadata_data_id = metadata.get("data_id")
-            # 处理字符串格式
-            if isinstance(metadata_data_id, str):
-                existing_data_id = metadata_data_id
-            # 处理字典格式 {"data_id": "...", "file_path": "..."}
-            elif isinstance(metadata_data_id, dict):
-                existing_data_id = metadata_data_id.get("data_id")
+        existing_data_id = refs["data_ids"][0] if refs["data_ids"] else None
 
         if existing_data_id and isinstance(existing_data_id, str) and ":" in existing_data_id:
             data_id = existing_data_id
@@ -165,14 +156,93 @@ class HybridMemoryManager:
                 # 返回原observation，让上层处理
                 return observation
         else:
-            # 没有data_id的情况（不应该发生，因为所有工具都返回data_id）
-            # 但为了安全起见，仍然返回原observation
+            if refs["report_data_ids"]:
+                logger.debug(
+                    "hybrid_memory_using_existing_report_data_id",
+                    report_data_ids=refs["report_data_ids"],
+                    source="observation"
+                )
+                return {
+                    "success": observation.get("success"),
+                    "summary": observation.get("summary"),
+                    "error": observation.get("error"),
+                    "report_data_id": refs["report_data_ids"][0],
+                    "report_data_ids": refs["report_data_ids"],
+                    "data_role": "statistical_report",
+                    "sampled_data": self._sample_data(data) if data is not None else None,
+                    "total_records": len(data) if isinstance(data, list) else None,
+                }
+
+            if refs["data_ids"]:
+                logger.debug(
+                    "hybrid_memory_using_existing_data_ids",
+                    data_ids=refs["data_ids"],
+                    source="observation"
+                )
+                return {
+                    "success": observation.get("success"),
+                    "summary": observation.get("summary"),
+                    "error": observation.get("error"),
+                    "data_id": refs["data_ids"][0],
+                    "data_ids": refs["data_ids"],
+                    "sampled_data": self._sample_data(data) if data is not None else None,
+                    "total_records": len(data) if isinstance(data, list) else None,
+                }
+
+            # 没有data_id/report_data_id的情况，为了安全起见返回原observation
             logger.warning(
                 "hybrid_memory_no_data_id_in_observation",
                 has_data=(data is not None),
                 observation_keys=list(observation.keys())
             )
             return observation
+
+    def _extract_observation_refs(self, observation: Dict[str, Any]) -> Dict[str, List[str]]:
+        """Extract data and report registry references from a tool observation."""
+
+        data_ids: List[str] = []
+        report_data_ids: List[str] = []
+
+        def add_unique(target: List[str], value: Any) -> None:
+            if isinstance(value, str) and value and value not in target:
+                target.append(value)
+            elif isinstance(value, dict):
+                nested = value.get("data_id")
+                if isinstance(nested, str) and nested and nested not in target:
+                    target.append(nested)
+
+        def scan_mapping(payload: Any) -> None:
+            if not isinstance(payload, dict):
+                return
+
+            add_unique(data_ids, payload.get("data_id"))
+            add_unique(report_data_ids, payload.get("report_data_id"))
+
+            for item in payload.get("data_ids") or []:
+                add_unique(data_ids, item)
+            for item in payload.get("report_data_ids") or []:
+                add_unique(report_data_ids, item)
+
+            metadata = payload.get("metadata")
+            if isinstance(metadata, dict):
+                add_unique(data_ids, metadata.get("data_id"))
+                add_unique(report_data_ids, metadata.get("report_data_id"))
+                for item in metadata.get("source_data_ids") or []:
+                    add_unique(data_ids, item)
+                for item in metadata.get("source_report_data_ids") or []:
+                    add_unique(report_data_ids, item)
+
+        scan_mapping(observation)
+        for tool_result in observation.get("tool_results") or []:
+            if not isinstance(tool_result, dict):
+                continue
+            scan_mapping(tool_result)
+            scan_mapping(tool_result.get("result"))
+
+        return {
+            "data_ids": data_ids,
+            "report_data_ids": report_data_ids,
+        }
 
     def get_iterations(self) -> List[Dict[str, Any]]:
         """Return a copy of recent iterations."""

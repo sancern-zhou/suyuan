@@ -340,6 +340,10 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         if data_id and "data_id" not in metadata:
             metadata["data_id"] = data_id
 
+        report_data_id = result.get("report_data_id")
+        if report_data_id and "report_data_id" not in metadata:
+            metadata["report_data_id"] = report_data_id
+
         # 确保metadata包含必要信息
         if "tool_name" not in metadata:
             metadata["tool_name"] = tool_name
@@ -364,6 +368,8 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         # 【修复】保留 data_id 到顶层（供 parameter_binder 使用）
         if data_id:
             standard_result["data_id"] = data_id
+        if report_data_id:
+            standard_result["report_data_id"] = report_data_id
 
         # 添加数据字段（优先使用visuals，如果不存在则使用data）
         if visuals is not None:

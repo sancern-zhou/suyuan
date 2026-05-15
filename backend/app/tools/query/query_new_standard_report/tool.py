@@ -138,6 +138,117 @@ def _save_standard_report_package(
     )
 
 
+REPORT_RESULT_PREVIEW_LIMIT = 5
+REPORT_PACKAGE_VIEWS = ["cities", "regions", "province", "result"]
+
+
+def _build_report_registry_usage(report_data_id: str, views: Optional[List[str]] = None) -> Dict[str, str]:
+    """Return copyable read_data_registry calls for a saved report package."""
+    available_views = views or REPORT_PACKAGE_VIEWS
+    usage = {
+        "list_views": f'read_data_registry(data_id="{report_data_id}", list_views=true)'
+    }
+    for view in available_views:
+        usage[view] = f'read_data_registry(data_id="{report_data_id}", view="{view}")'
+    return usage
+
+
+def _preview_keyed_report_result(
+    result_data: Any,
+    *,
+    limit: int = REPORT_RESULT_PREVIEW_LIMIT,
+    preserve_keys: Tuple[str, ...] = ("regional_stats", "province_wide"),
+) -> Tuple[Any, Dict[str, Any]]:
+    """Build a small keyed preview while preserving aggregate keys."""
+    if not isinstance(result_data, dict):
+        return result_data, {
+            "result_truncated": False,
+            "result_total_count": 0,
+            "result_returned_count": 0,
+        }
+
+    city_keys = [key for key in result_data.keys() if key not in preserve_keys]
+    total_count = len(city_keys)
+    preview_keys = city_keys[:limit]
+    truncated = total_count > len(preview_keys)
+
+    if not truncated:
+        return result_data, {
+            "result_truncated": False,
+            "result_total_count": total_count,
+            "result_returned_count": total_count,
+        }
+
+    preview = {key: result_data[key] for key in preview_keys}
+    for key in preserve_keys:
+        if key in result_data:
+            preview[key] = result_data[key]
+
+    return preview, {
+        "result_truncated": True,
+        "result_total_count": total_count,
+        "result_returned_count": len(preview_keys),
+        "result_preview_keys": preview_keys,
+        "result_omitted_count": total_count - len(preview_keys),
+    }
+
+
+def _apply_report_result_preview(
+    result: Dict[str, Any],
+    *,
+    report_data_id: Optional[str],
+    total_count: Optional[int] = None,
+    views: Optional[List[str]] = None,
+    summary_label: str = "完整统计报表",
+    limit: int = REPORT_RESULT_PREVIEW_LIMIT,
+    preserve_keys: Tuple[str, ...] = ("regional_stats", "province_wide"),
+) -> Dict[str, Any]:
+    """Keep tool responses lightweight; full report stays available in data registry."""
+    if not report_data_id:
+        return result
+
+    if total_count is not None and total_count <= limit:
+        preview_metadata = {
+            "result_truncated": False,
+            "result_total_count": total_count,
+            "result_returned_count": total_count,
+        }
+    else:
+        preview, preview_metadata = _preview_keyed_report_result(
+            result.get("result"),
+            limit=limit,
+            preserve_keys=preserve_keys,
+        )
+        result["result"] = preview
+
+    metadata = result.setdefault("metadata", {})
+    if total_count is not None:
+        preview_metadata["result_total_count"] = total_count
+        if not preview_metadata.get("result_truncated"):
+            preview_metadata["result_returned_count"] = total_count
+    metadata.update(preview_metadata)
+    metadata["available_report_views"] = views or REPORT_PACKAGE_VIEWS
+    metadata["read_data_registry_usage"] = _build_report_registry_usage(
+        report_data_id,
+        metadata["available_report_views"],
+    )
+
+    if preview_metadata.get("result_truncated"):
+        result["summary"] += (
+            f" | result仅返回前{preview_metadata['result_returned_count']}项预览；"
+            f"{summary_label}已保存为 report_data_id: {report_data_id}，"
+            "优先用 read_data_registry 按 cities/regions/province 等结构化视图按需读取，"
+            "仅在确需完整原始报表时读取 result 视图"
+        )
+    else:
+        result["summary"] += (
+            f" | {summary_label}已保存为 report_data_id: {report_data_id}，"
+            "优先用 read_data_registry 按 cities/regions/province 等结构化视图按需读取，"
+            "仅在确需完整原始报表时读取 result 视图"
+        )
+    return result
+
+
 # =============================================================================
 # 常量定义
 # =============================================================================
@@ -568,7 +679,8 @@ async def execute_query_new_standard_report(
     enable_sand_deduction: Optional[bool] = None,
     exclude_exceed_details: bool = False,
     use_old_composite_algorithm: bool = False,
-    context: Optional[ExecutionContext] = None
+    context: Optional[ExecutionContext] = None,
+    truncate_result: bool = True,
 ) -> Dict[str, Any]:
     """
     执行新标准统计报表查询
@@ -584,6 +696,7 @@ async def execute_query_new_standard_report(
             - False（默认）: PM2.5权重3，NO2权重2，O3权重2，其他权重1
             - True: 所有污染物权重均为1
         context: 执行上下文（可选）
+        truncate_result: 是否在返回给Agent前截断result；内部工具复用时可设为False
 
     Returns:
         新标准统计报表结果（UDF v2.0格式）
@@ -1311,10 +1424,10 @@ async def execute_query_new_standard_report(
     if len(cities) == 1 and city_stats:
         city_name = list(city_stats.keys())[0]
         result_summary_data = city_stats[city_name]
-        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），{city_name} {start_date} 至 {end_date}（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已生成"
     else:
         result_summary_data = city_stats
-        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已完整展示在 result 字段中"
+        result_summary = f"新标准统计报表查询完成（{composite_algorithm_desc}），共{len(city_stats)}个城市（数据为审核实况，最近的3天自动使用原始数据） | 统计汇总指标已生成"
         # 合并全省和各区域汇总到结果（按顺序：粤东、粤西、粤北、珠三角、非珠三角、全省）
         if regional_stats:
             result_summary_data["regional_stats"] = regional_stats
@@ -1369,7 +1482,16 @@ async def execute_query_new_standard_report(
     if report_data_id:
         metadata["report_data_id"] = report_data_id
         result["report_data_id"] = report_data_id
-        result["summary"] += f" | 统计报表已保存为 report_data_id: {report_data_id}"
+        if truncate_result:
+            _apply_report_result_preview(
+                result,
+                report_data_id=report_data_id,
+                total_count=len(city_stats),
+                views=REPORT_PACKAGE_VIEWS,
+                summary_label="完整统计报表",
+            )
+        else:
+            result["summary"] += f" | 统计报表已保存为 report_data_id: {report_data_id}"
     return result
 
 
@@ -1821,7 +1943,9 @@ class QueryNewStandardReportTool(LLMTool):
                 "【第一优先级】查询HJ 633-2026新标准空气质量统计报表。"
                 "用于综合指数、超标天数、达标率、六参数统计浓度、首要污染物等统计结果；"
                 "不要用execute_python或手算替代。"
-                "result返回统计汇总，可直接用于分析和报告；report_data_id可用read_data_registry按cities/regions/province/result视图读取。"
+                "result仅返回统计汇总预览；完整统计报表保存在report_data_id中。"
+                "读取完整数据时优先用read_data_registry按cities/regions/province等结构化视图按需读取，"
+                "仅在确需完整原始报表时读取result视图。"
                 "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
                 "默认新综合指数算法为PM2.5权重3、NO2权重2、O3权重2、其他权重1；"
                 "详细算法和返回字段需要时阅读源码。"

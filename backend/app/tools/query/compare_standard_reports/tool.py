@@ -28,6 +28,7 @@ from app.agent.context.execution_context import ExecutionContext
 from app.tools.query.query_new_standard_report.tool import (
     execute_query_new_standard_report,
     _save_standard_report_package,
+    _apply_report_result_preview,
 )
 
 logger = structlog.get_logger()
@@ -84,7 +85,9 @@ class CompareStandardReportsTool(LLMTool):
             "description": (
                 "【第一优先级】新标准同比/环比/双时段对比工具，基于HJ 633-2026。"
                 "返回综合指数、超标天数、达标率、六参数等统计指标的差值和变化率；不要手算。"
-                "result可直接用于报告；report_data_id可用read_data_registry按cities/province/result视图读取；"
+                "result仅返回对比统计预览；完整对比报表保存在report_data_id中。"
+                "读取完整数据时优先用read_data_registry按cities/province等结构化视图按需读取，"
+                "仅在确需完整原始对比报表时读取result视图；"
                 "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
             ),
             "parameters": {
@@ -172,7 +175,8 @@ class CompareStandardReportsTool(LLMTool):
             end_date=query_period["end_date"],
             sand_type=sand_type,
             exclude_exceed_details=True,  # 不返回超标详情
-            context=context
+            context=context,
+            truncate_result=False,
         )
 
         comparison_task = execute_query_new_standard_report(
@@ -181,7 +185,8 @@ class CompareStandardReportsTool(LLMTool):
             end_date=comparison_period["end_date"],
             sand_type=sand_type,
             exclude_exceed_details=True,  # 不返回超标详情
-            context=context
+            context=context,
+            truncate_result=False,
         )
 
         current_result, comparison_result = await asyncio.gather(
@@ -228,9 +233,9 @@ class CompareStandardReportsTool(LLMTool):
         # 6. 构建摘要
         if len(cities) == 1:
             city = cities[0]
-            summary_text = f"{city} 新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，数据为审核实况） | 对比统计指标已完整展示在 result 字段中"
+            summary_text = f"{city} 新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，数据为审核实况） | 对比统计指标已生成"
         else:
-            summary_text = f"多城市新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，共{len(cities)}个城市，数据为审核实况） | 对比统计指标已完整展示在 result 字段中"
+            summary_text = f"多城市新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，共{len(cities)}个城市，数据为审核实况） | 对比统计指标已生成"
 
         # 7. 返回结果
         result = {
@@ -274,7 +279,15 @@ class CompareStandardReportsTool(LLMTool):
         if report_data_id:
             result["metadata"]["report_data_id"] = report_data_id
             result["report_data_id"] = report_data_id
-            result["summary"] += f" | 对比报表已保存为 report_data_id: {report_data_id}"
+            _apply_report_result_preview(
+                result,
+                report_data_id=report_data_id,
+                total_count=len([key for key in comparison_result_data.keys() if key != "province_wide"])
+                if isinstance(comparison_result_data, dict) else None,
+                views=["cities", "province", "result"],
+                summary_label="完整对比报表",
+                preserve_keys=("province_wide",),
+            )
 
         logger.info(
             "compare_standard_reports_completed",

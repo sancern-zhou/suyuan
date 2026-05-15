@@ -107,6 +107,12 @@ class RuntimeEventBus:
         data_ids = self._extract_data_ids(result.get("data_ids") if isinstance(result, dict) else None)
         if data_ids:
             data["data_ids"] = data_ids
+        report_data_id = self._extract_data_id(result.get("report_data_id") if isinstance(result, dict) else None)
+        if report_data_id:
+            data["report_data_id"] = report_data_id
+        report_data_ids = self._extract_data_ids(result.get("report_data_ids") if isinstance(result, dict) else None)
+        if report_data_ids:
+            data["report_data_ids"] = report_data_ids
         return {
             "type": "tool_result",
             "stream": "tool",
