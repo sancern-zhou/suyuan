@@ -7,7 +7,7 @@
 - 并发查询两个时间段的统计数据
 - 自动对比全部统计指标（综合指数、超标天数、六参数等）
 - 返回差值、变化率、趋势判断
-- 合并存储原始数据，支持后续 aggregate_data 分析
+- 保存对比报表数据包，支持后续通过 read_data_registry 按视图读取
 
 【对比指标】
 - 综合指标：composite_index, exceed_days, exceed_rate, compliance_rate, total_days, valid_days
@@ -25,7 +25,10 @@ import structlog
 
 from app.tools.base import LLMTool, ToolCategory
 from app.agent.context.execution_context import ExecutionContext
-from app.tools.query.query_new_standard_report.tool import execute_query_new_standard_report
+from app.tools.query.query_new_standard_report.tool import (
+    execute_query_new_standard_report,
+    _save_standard_report_package,
+)
 
 logger = structlog.get_logger()
 
@@ -81,7 +84,8 @@ class CompareStandardReportsTool(LLMTool):
             "description": (
                 "【第一优先级】新标准同比/环比/双时段对比工具，基于HJ 633-2026。"
                 "返回综合指数、超标天数、达标率、六参数等统计指标的差值和变化率；不要手算。"
-                "result可直接用于报告；data_id仅用于读取原始明细或后续聚合。"
+                "result可直接用于报告；report_data_id可用read_data_registry按cities/province/result视图读取；"
+                "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
             ),
             "parameters": {
                 "type": "object",
@@ -201,45 +205,9 @@ class CompareStandardReportsTool(LLMTool):
         if comparison_result.get("status") == "failed":
             return self._error_response(f"对比时段失败: {comparison_result.get('summary', '未知错误')}")
 
-        # 4. 提取并合并原始数据
-        current_data_id = current_result.get("metadata", {}).get("data_id")
-        comparison_data_id = comparison_result.get("metadata", {}).get("data_id")
-
-        # ⚠️ 已禁用：统计报表工具不返回 data_id，不再保存合并数据
-        # merged_data_id = None
-        # if current_data_id and comparison_data_id:
-        #     try:
-        #         current_raw_data = context.get_raw_data(current_data_id)
-        #         comparison_raw_data = context.get_raw_data(comparison_data_id)
-        #
-        #         merged_data = self._merge_period_data(
-        #             current_raw_data if current_raw_data else [],
-        #             comparison_raw_data if comparison_raw_data else [],
-        #             query_period,
-        #             comparison_period
-        #         )
-        #
-        #         # 保存合并数据
-        #         save_result = context.save_data(
-        #             data=merged_data,
-        #             schema="air_quality_unified",
-        #             metadata={
-        #                 "source_data_ids": [current_data_id, comparison_data_id],
-        #                 "comparison_type": "period_comparison",
-        #                 "query_period": query_period,
-        #                 "comparison_period": comparison_period
-        #             }
-        #         )
-        #         merged_data_id = save_result["data_id"] if isinstance(save_result, dict) else save_result
-        #
-        #         logger.info(
-        #             "period_data_merged",
-        #             merged_data_id=merged_data_id,
-        #             merged_records=len(merged_data)
-        #         )
-        #     except Exception as e:
-        #         logger.warning("failed_to_merge_data", error=str(e))
-        merged_data_id = None  # 统计报表工具不返回 data_id
+        # 4. 提取上下游报表数据引用。统计报表只使用 report_data_id。
+        current_report_data_id = current_result.get("metadata", {}).get("report_data_id")
+        comparison_report_data_id = comparison_result.get("metadata", {}).get("report_data_id")
 
         # 5. 计算对比指标
         current_stats = current_result.get("result", {})
@@ -260,16 +228,15 @@ class CompareStandardReportsTool(LLMTool):
         # 6. 构建摘要
         if len(cities) == 1:
             city = cities[0]
-            summary_text = f"{city} 新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，数据为审核实况） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            summary_text = f"{city} 新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，数据为审核实况） | 对比统计指标已完整展示在 result 字段中"
         else:
-            summary_text = f"多城市新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，共{len(cities)}个城市，数据为审核实况） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
+            summary_text = f"多城市新标准报表对比分析完成（{query_period['start_date']}至{query_period['end_date']} vs {comparison_period['start_date']}至{comparison_period['end_date']}，共{len(cities)}个城市，数据为审核实况） | 对比统计指标已完整展示在 result 字段中"
 
         # 7. 返回结果
         result = {
             "status": "success",
             "success": True,
             "data": None,
-            # "data_id": merged_data_id,  # ⚠️ 已禁用：统计报表工具不返回 data_id
             "result": comparison_result_data,
             "summary": summary_text,
             "metadata": {
@@ -278,16 +245,41 @@ class CompareStandardReportsTool(LLMTool):
                 "generator_version": "1.0.0",
                 "query_period": query_period,
                 "comparison_period": comparison_period,
-                "source_data_ids": [current_data_id, comparison_data_id] if current_data_id and comparison_data_id else [],
+                "source_report_data_ids": [
+                    data_id for data_id in [current_report_data_id, comparison_report_data_id] if data_id
+                ],
                 "cities": cities,
                 "sand_type": sand_type
             }
         }
 
+        province_wide = comparison_result_data.get("province_wide") if isinstance(comparison_result_data, dict) else None
+        report_data_id = _save_standard_report_package(
+            context=context,
+            tool_name="compare_standard_reports",
+            query={
+                "cities": cities,
+                "query_period": query_period,
+                "comparison_period": comparison_period,
+                "sand_type": sand_type,
+            },
+            result=result,
+            city_stats=comparison_result_data,
+            regional_stats=None,
+            province_wide_stats=province_wide,
+            metadata=result["metadata"],
+            package_kind="standard_report_comparison",
+        )
+
+        if report_data_id:
+            result["metadata"]["report_data_id"] = report_data_id
+            result["report_data_id"] = report_data_id
+            result["summary"] += f" | 对比报表已保存为 report_data_id: {report_data_id}"
+
         logger.info(
             "compare_standard_reports_completed",
             cities_count=len(comparison_result_data),
-            merged_data_id=merged_data_id
+            report_data_id=report_data_id
         )
 
         return result
@@ -405,7 +397,7 @@ class CompareStandardReportsTool(LLMTool):
         comparison_result = {}
 
         for city in current_stats.keys():
-            if city == "province_wide":
+            if city in {"province_wide", "regional_stats"}:
                 continue  # 跳过，后面单独计算全省汇总对比
             current_city = current_stats[city]
             comparison_city = comparison_stats.get(city, {})
@@ -453,8 +445,14 @@ class CompareStandardReportsTool(LLMTool):
             from app.tools.query.query_new_standard_report.tool import calculate_province_wide_stats
 
             # 过滤掉 province_wide 键，避免重复计算（query_new_standard_report 已将其加入 result）
-            city_only_current = {k: v for k, v in current_stats.items() if k != "province_wide"}
-            city_only_comparison = {k: v for k, v in comparison_stats.items() if k != "province_wide"}
+            city_only_current = {
+                k: v for k, v in current_stats.items()
+                if k not in {"province_wide", "regional_stats"}
+            }
+            city_only_comparison = {
+                k: v for k, v in comparison_stats.items()
+                if k not in {"province_wide", "regional_stats"}
+            }
 
             # 计算查询时段全省汇总
             query_period_province_wide = calculate_province_wide_stats(city_only_current)

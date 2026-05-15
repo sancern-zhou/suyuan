@@ -115,7 +115,9 @@ class ContextCompressor:
     async def compress(
         self,
         messages: List[Dict[str, Any]],
-        model: str = None
+        model: str = None,
+        force: bool = False,
+        force_reason: str = ""
     ) -> List[Dict[str, Any]]:
         """
         使用渐进式策略压缩对话历史
@@ -132,6 +134,8 @@ class ContextCompressor:
         Args:
             messages: 需要压缩的消息列表
             model: 使用的模型（如果为 None，使用系统配置的模型）
+            force: 外层已判定上下文超阈值时强制压缩，避免被消息数阈值短路
+            force_reason: 强制压缩原因，用于日志排查
 
         Returns:
             压缩后的消息列表
@@ -142,13 +146,20 @@ class ContextCompressor:
         # 记录压缩前的状态
         original_count = len(messages)
         original_chars = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
-        logger.info(f"[ContextCompressor] 开始压缩，原始消息数: {original_count}，原始字符数: {original_chars}")
+        logger.info(
+            f"[ContextCompressor] 开始压缩，原始消息数: {original_count}，原始字符数: {original_chars}，"
+            f"force={force}，force_reason={force_reason or 'none'}"
+        )
 
         # 阶段一：工具输出预截断（在 LLM 压缩前，先截断过长的工具输出）
         messages = self._truncate_tool_outputs(messages)
 
         # 阶段二：保护段机制（保留最近 N 轮对话不压缩）
-        protected_messages, messages_to_compress = self._split_protected_and_compressible(messages)
+        if force:
+            # 外层 token 预算已经确认超限时，不再保护最近历史，否则少量大消息会被整体保护或跳过。
+            protected_messages, messages_to_compress = [], messages
+        else:
+            protected_messages, messages_to_compress = self._split_protected_and_compressible(messages)
 
         if protected_messages:
             logger.info(f"[ContextCompressor] 保护段: 保留最近 {len(protected_messages)} 条消息不压缩")
@@ -156,20 +167,26 @@ class ContextCompressor:
         # 阶段四：渐进式压缩策略
         compressible_count = len(messages_to_compress)
 
-        # 策略1：消息太少，不压缩
-        if compressible_count <= self.LIGHT_COMPRESS_THRESHOLD:
+        # 策略1：消息太少，不压缩。外层已判定超限时不能被该条件短路。
+        if compressible_count <= self.LIGHT_COMPRESS_THRESHOLD and not force:
             logger.info(f"[ContextCompressor] 消息数 {compressible_count} <= {self.LIGHT_COMPRESS_THRESHOLD}，跳过压缩")
             return messages_to_compress + protected_messages
 
         # 策略2：中等数量，使用 Snip Compact 轻量裁剪（阶段七）
-        if compressible_count <= self.FULL_COMPRESS_THRESHOLD:
+        if compressible_count <= self.FULL_COMPRESS_THRESHOLD and not force:
             logger.info(f"[ContextCompressor] 消息数 {compressible_count} <= {self.FULL_COMPRESS_THRESHOLD}，使用 Snip Compact 轻量裁剪")
             # 使用 Snip Compact 裁剪可压缩部分
             snipped_messages = self._snip_compact(messages_to_compress)
             return snipped_messages + protected_messages
 
         # 策略3：大量消息，使用 LLM 全量压缩
-        logger.info(f"[ContextCompressor] 消息数 {compressible_count} > {self.FULL_COMPRESS_THRESHOLD}，全量 LLM 压缩")
+        if force:
+            logger.info(
+                f"[ContextCompressor] 强制压缩：消息数 {compressible_count}，原因={force_reason or 'context_over_threshold'}，"
+                "进入全量 LLM 压缩"
+            )
+        else:
+            logger.info(f"[ContextCompressor] 消息数 {compressible_count} > {self.FULL_COMPRESS_THRESHOLD}，全量 LLM 压缩")
 
         # 预截断：LLM 无法处理超大输入，限制发送的消息量
         MAX_COMPRESS_CHARS = 300_000
@@ -181,7 +198,7 @@ class ContextCompressor:
             )
 
         # 如果可压缩的消息太少，直接返回
-        if len(messages_to_compress) <= 2:
+        if len(messages_to_compress) <= 2 and not force:
             logger.info("[ContextCompressor] 可压缩消息太少，跳过 LLM 压缩")
             return messages_to_compress + protected_messages
 
@@ -247,6 +264,19 @@ class ContextCompressor:
             logger.warning(f"[ContextCompressor] 使用降级策略，保留最近 {fallback_count} 条消息")
             return messages[-fallback_count:]
 
+    async def compress_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str = None,
+    ) -> List[Dict[str, Any]]:
+        """Compatibility wrapper used by reactive context-overflow recovery."""
+        return await self.compress(
+            messages,
+            model=model,
+            force=True,
+            force_reason="provider_context_overflow",
+        )
+
     def _create_compaction_boundary(
         self,
         original_count: int,
@@ -268,9 +298,9 @@ class ContextCompressor:
 
         return {
             "type": "system",
-            "role": "system",
+            "role": "user",
             "subtype": "compact_boundary",
-            "content": f"[上下文已压缩] 原始 {original_count} 条消息 → 压缩后 {compressed_count} 条消息",
+            "content": f"[系统提示] 上下文已压缩：原始 {original_count} 条消息 → 压缩后 {compressed_count} 条消息。",
             "metadata": {
                 "compact_boundary": True,
                 "compression_type": compression_type,
@@ -535,6 +565,57 @@ class ContextCompressor:
         """
         import re
 
+        def content_char_len(value: Any) -> int:
+            if isinstance(value, str):
+                return len(value)
+            return len(json.dumps(value, ensure_ascii=False, default=str))
+
+        def extract_data_ref(value: Any) -> str:
+            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+            match = re.search(r'(?:report_data_id|data_id)["\s:]+([^\s,}"]+)', text)
+            return f"，data_id: {match.group(1)}" if match else ""
+
+        def truncate_text(text: str, max_chars: int) -> str:
+            if len(text) <= max_chars:
+                return text
+            truncated = text[:max_chars]
+            last_period = max(truncated.rfind('。'), truncated.rfind('\n'), truncated.rfind('.'))
+            if last_period > max_chars // 2:
+                truncated = truncated[:last_period + 1]
+            return f"{truncated}... [已截断，原始长度: {len(text)} 字符]"
+
+        def truncate_tool_result_blocks(value: Any, max_chars: int) -> tuple[Any, bool]:
+            if isinstance(value, str):
+                if len(value) <= max_chars:
+                    return value, False
+                return truncate_text(value, max_chars), True
+
+            if isinstance(value, list):
+                changed = False
+                blocks = []
+                for block in value:
+                    if not isinstance(block, dict):
+                        blocks.append(block)
+                        continue
+
+                    block_copy = dict(block)
+                    block_content = block_copy.get("content")
+                    if content_char_len(block_content) > max_chars:
+                        content_text = (
+                            block_content
+                            if isinstance(block_content, str)
+                            else json.dumps(block_content, ensure_ascii=False, default=str)
+                        )
+                        block_copy["content"] = truncate_text(content_text, max_chars)
+                        changed = True
+                    blocks.append(block_copy)
+                return blocks, changed
+
+            value_text = json.dumps(value, ensure_ascii=False, default=str)
+            if len(value_text) <= max_chars:
+                return value, False
+            return truncate_text(value_text, max_chars), True
+
         truncated_count = 0
         result = []
 
@@ -545,24 +626,18 @@ class ContextCompressor:
 
             # 处理 observation/tool_result 类型
             if msg_type in ('observation', 'tool_result'):
-                if len(content) > self.MAX_OBSERVATION_CHARS:
-                    # 提取 data_id（如果有）
-                    data_id_match = re.search(r'data_id["\s:]+([^\s,}]+)', content)
-                    data_id_ref = f"，data_id: {data_id_match.group(1)}" if data_id_match else ""
-
-                    # 截断内容，保留开头摘要
-                    truncated = content[:self.MAX_OBSERVATION_CHARS]
-                    # 尝试在句号/换行处截断
-                    last_period = max(truncated.rfind('。'), truncated.rfind('\n'), truncated.rfind('.'))
-                    if last_period > self.MAX_OBSERVATION_CHARS // 2:
-                        truncated = truncated[:last_period + 1]
-
-                    msg_copy['content'] = f"{truncated}... [已截断，原始长度: {len(content)} 字符]{data_id_ref}"
-                    truncated_count += 1
+                max_chars = self.MAX_TOOL_RESULT_CHARS if msg_type == 'tool_result' else self.MAX_OBSERVATION_CHARS
+                if content_char_len(content) > max_chars:
+                    truncated_content, changed = truncate_tool_result_blocks(content, max_chars)
+                    if changed:
+                        if isinstance(truncated_content, str):
+                            truncated_content = f"{truncated_content}{extract_data_ref(content)}"
+                        msg_copy['content'] = truncated_content
+                        truncated_count += 1
 
             # 处理 action/tool_use 类型（可选：精简参数）
             elif msg_type in ('action', 'tool_use'):
-                if len(content) > 1000:
+                if content_char_len(content) > 1000 and isinstance(content, str):
                     # 保留工具名和前500字符参数
                     msg_copy['content'] = content[:1000] + "... [参数已精简]"
                     truncated_count += 1

@@ -23,6 +23,7 @@ import structlog
 
 from app.tools.base import LLMTool, ToolCategory
 from app.agent.context.execution_context import ExecutionContext
+from app.tools.query.report_data_package import attach_report_data_id, save_report_data_package
 from app.tools.query.query_gd_suncere.tool import QueryGDSuncereDataTool
 from app.tools.query.query_new_standard_report.tool import (
     calculate_iaqi,
@@ -780,7 +781,8 @@ def execute_query_station_new_standard_report(
             end_date=end_date,
             context=context,
             station_type=station_type,
-            sand_type=sand_type
+            sand_type=sand_type,
+            persist_data=False
         )
 
         if query_result.get("status") == "empty":
@@ -810,25 +812,12 @@ def execute_query_station_new_standard_report(
                 }
             }
 
-        # 2. 获取数据记录（优先从data_id获取完整数据）
-        data_id = query_result.get("data_id")
-
-        if data_id and context:
-            # 从data_id获取完整数据（未采样的完整数据集）
-            records = context.get_raw_data(data_id)
-            logger.info(
-                "loading_full_data_from_data_id",
-                data_id=data_id,
-                record_count=len(records) if records else 0
-            )
-        else:
-            # 降级：从data字段获取（可能已被采样）
-            records = query_result.get("data", [])
-            logger.warning(
-                "using_sampled_data_from_data_field",
-                record_count=len(records),
-                warning="统计数据可能不准确（采样数据）"
-            )
+        # 2. 获取数据记录。统计报表内部不保存/回读日报 data_id，直接使用完整接口结果。
+        records = query_result.get("data", [])
+        logger.info(
+            "using_station_day_records_for_report",
+            record_count=len(records),
+        )
 
         if not records:
             return {
@@ -901,10 +890,35 @@ def execute_query_station_new_standard_report(
             }
         }
 
+        aggregate_stats = station_results.get("station_aggregate") if isinstance(station_results, dict) else None
+        report_data_id = save_report_data_package(
+            context=context,
+            tool_name="query_station_new_standard_report",
+            query={
+                "cities": cities or [],
+                "stations": stations or [],
+                "start_date": start_date,
+                "end_date": end_date,
+                "aggregate": aggregate,
+                "station_type": station_type,
+                "sand_type": sand_type,
+            },
+            result=result,
+            metadata=result["metadata"],
+            primary_view_name="stations",
+            primary_name_field="station",
+            primary_stats=station_results,
+            extra_views={"aggregate": aggregate_stats},
+            exclude_primary_keys={"station_aggregate"},
+            package_kind="station_standard_report",
+        )
+        attach_report_data_id(result, report_data_id, summary_label="站点新标准统计报表")
+
         logger.info(
             "query_station_new_standard_report_completed",
             stations_count=len(station_results),
-            aggregate_calculated=aggregate
+            aggregate_calculated=aggregate,
+            report_data_id=report_data_id
         )
 
         return result
@@ -937,7 +951,8 @@ class QueryStationNewStandardReportTool(LLMTool):
             "description": (
                 "【第一优先级】站点级HJ 633-2026新标准统计报表。"
                 "用于站点综合指数、超标天数、达标率、六参数和首要污染物统计；不要手算。"
-                "result可直接用于报告；data_id仅用于明细读取或聚合。cities和stations至少提供一个。"
+                "result可直接用于报告；report_data_id可用read_data_registry按stations/aggregate/result视图读取。"
+                "本工具不保存日报明细；如需日数据，请调用站点日数据查询工具。cities和stations至少提供一个。"
             ),
             "parameters": {
                 "type": "object",

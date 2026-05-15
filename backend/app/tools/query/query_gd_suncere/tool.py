@@ -905,7 +905,8 @@ class QueryGDSuncereDataTool:
         context: ExecutionContext = None,
         data_type: Optional[int] = None,
         station_type: Optional[str] = None,
-        sand_type: Optional[int] = 1
+        sand_type: Optional[int] = 1,
+        persist_data: bool = True
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -919,6 +920,7 @@ class QueryGDSuncereDataTool:
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
             station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
             sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+            persist_data: 是否保存完整日数据到上下文；统计报表内部调用时设为 False
 
         Returns:
             查询结果
@@ -1163,20 +1165,22 @@ class QueryGDSuncereDataTool:
                 record_count=len(standardized_records)
             )
 
-            # 保存到数据上下文
-            data_id = context.save_data(
-                data=standardized_records,
-                schema="air_quality_unified",
-                metadata={
-                    "field_mapping_applied": True,
-                    "source": "gd_suncere_api",
-                    "query_type": "station_day"
-                }
-            )
+            data_id = None
+            if persist_data:
+                # 保存到数据上下文
+                data_id = context.save_data(
+                    data=standardized_records,
+                    schema="air_quality_unified",
+                    metadata={
+                        "field_mapping_applied": True,
+                        "source": "gd_suncere_api",
+                        "query_type": "station_day"
+                    }
+                )
 
             # 智能采样：如果记录数超过24条，进行采样
             preview_data = standardized_records
-            if len(standardized_records) > 24:
+            if persist_data and len(standardized_records) > 24:
                 preview_data = cls._smart_sample_data(standardized_records, max_records=24)
                 logger.info(
                     "station_day_data_sampled",
@@ -1209,7 +1213,10 @@ class QueryGDSuncereDataTool:
                     "schema_version": "v2.0",
                     "source": "gd_suncere_api"
                 },
-                "summary": f"成功获取 {', '.join(location_list)} 的站点日报数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": (
+                    f"成功获取 {', '.join(location_list)} 的站点日报数据共 {len(standardized_records)} 条"
+                    + (f"，已保存为 {data_id}" if data_id else "")
+                )
             }
 
         except Exception as e:
@@ -3908,10 +3915,19 @@ async def execute_query_standard_comparison(
     )
 
     try:
-        # 步骤1：调用 query_new_standard_report 获取新标准统计和日数据
+        # 步骤1：分别调用新标准和旧标准统计报表。统计报表工具不保存日报明细。
         from app.tools.query.query_new_standard_report.tool import execute_query_new_standard_report
+        from app.tools.query.query_gd_suncere.tool_city_day_old_standard_report import execute_query_old_standard_report
+        from app.tools.query.report_data_package import attach_report_data_id, save_report_data_package
 
         new_standard_result = await execute_query_new_standard_report(
+            cities=cities,
+            start_date=start_date,
+            end_date=end_date,
+            sand_type=sand_type,
+            context=context
+        )
+        old_standard_result = await execute_query_old_standard_report(
             cities=cities,
             start_date=start_date,
             end_date=end_date,
@@ -3929,68 +3945,36 @@ async def execute_query_standard_comparison(
                 "summary": f"新标准查询失败: {new_standard_result.get('summary', 'Unknown error')}"
             }
 
-        # 提取新标准结果和日数据data_id
+        if not old_standard_result.get("success"):
+            return {
+                "status": "failed",
+                "success": False,
+                "error": "旧标准查询失败",
+                "data": None,
+                "metadata": {},
+                "summary": f"旧标准查询失败: {old_standard_result.get('summary', 'Unknown error')}"
+            }
+
+        # 提取新旧标准统计结果
         new_standard_data = new_standard_result.get("result", {})
-        day_data_id = new_standard_result.get("metadata", {}).get("data_id")
+        old_standard_data = old_standard_result.get("result", {})
+        if isinstance(new_standard_data, dict) and len(cities) == 1:
+            new_standard_data = {cities[0]: new_standard_data}
+        if isinstance(old_standard_data, dict) and len(cities) == 1:
+            old_standard_data = {cities[0]: old_standard_data}
+        if isinstance(new_standard_data, dict):
+            new_standard_data = {k: v for k, v in new_standard_data.items() if k != "regional_stats"}
+        if isinstance(old_standard_data, dict):
+            old_standard_data = {k: v for k, v in old_standard_data.items() if k != "regional_stats"}
 
-        # 步骤2：获取日数据用于计算旧标准统计
-        if not day_data_id:
-            return {
-                "status": "failed",
-                "success": False,
-                "error": "未获取到日数据ID",
-                "data": None,
-                "metadata": {},
-                "summary": "新标准查询未返回日数据ID"
-            }
-
-        # 从上下文获取日数据（使用get_raw_data获取字典格式）
-        daily_data = context.data_manager.get_raw_data(day_data_id)
-
-        if not daily_data:
-            return {
-                "status": "failed",
-                "success": False,
-                "error": "无法加载日数据",
-                "data": None,
-                "metadata": {},
-                "summary": f"无法加载日数据: {day_data_id}"
-            }
-
-        # 步骤3：按城市分组并计算旧标准统计
-        from collections import defaultdict
-
-        daily_data_by_city = defaultdict(list)
-        for record in daily_data:
-            city_name = (
-                record.get("city", "") or
-                record.get("city_name", "") or
-                record.get("cityName", "") or
-                record.get("name", "")
-            )
-            if city_name:
-                daily_data_by_city[city_name].append(record)
-
-        # 容错：如果没有城市字段，使用查询参数
-        if not daily_data_by_city and len(cities) == 1:
-            daily_data_by_city[cities[0]] = daily_data
-
-        # 计算各城市的旧标准统计
+        # 步骤2：计算各城市新旧标准对比
         city_comparison = {}
 
-        for city, city_daily_records in daily_data_by_city.items():
-            logger.info("calculating_old_standard_for_city", city=city, day_count=len(city_daily_records))
-
-            # 计算旧标准统计
-            old_standard_stats = calculate_old_standard_stats_from_daily(city_daily_records, city)
-
-            # 获取新标准统计
-            if len(cities) == 1:
-                # 单城市查询，new_standard_data 直接是城市统计
-                new_standard_stats = new_standard_data
-            else:
-                # 多城市查询，new_standard_data 是城市字典
-                new_standard_stats = new_standard_data.get(city, {})
+        for city in new_standard_data.keys():
+            if city == "province_wide":
+                continue
+            new_standard_stats = new_standard_data.get(city, {})
+            old_standard_stats = old_standard_data.get(city, {})
 
             # 计算对比数据
             comparison = {}
@@ -4078,21 +4062,22 @@ async def execute_query_standard_comparison(
             "date_range": f"{start_date} to {end_date}",
             "schema_version": "v2.0",
             "total_days": total_days,
-            # "data_id": day_data_id  # ⚠️ 已禁用：统计报表工具不返回 data_id
+            "source_report_data_ids": [
+                data_id for data_id in [
+                    new_standard_result.get("metadata", {}).get("report_data_id"),
+                    old_standard_result.get("metadata", {}).get("report_data_id"),
+                ] if data_id
+            ],
         }
 
         # 构建摘要
         if len(cities) == 1:
             city = list(city_comparison.keys())[0] if city_comparison else cities[0]
-            summary_text = f"{city} 新旧标准对比查询完成（日数据底层自动使用近三天原始、三天外审核） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
-            # if day_data_id:
-            #     summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
+            summary_text = f"{city} 新旧标准对比查询完成 | 统计汇总指标已完整展示在 result 字段中"
         else:
-            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市（日数据底层自动使用近三天原始、三天外审核） | 无原始数据 data_id，统计汇总指标已完整展示在 result 字段中"
-            # if day_data_id:
-            #     summary_text += f" | 日报数据已保存 (data_id: {day_data_id})"
+            summary_text = f"多城市新旧标准对比查询完成，共查询 {len(city_comparison)} 个城市 | 统计汇总指标已完整展示在 result 字段中"
 
-        return {
+        result = {
             "status": "success",
             "success": True,
             "data": None,
@@ -4100,6 +4085,28 @@ async def execute_query_standard_comparison(
             "summary": summary_text,
             "result": result_summary
         }
+
+        report_data_id = save_report_data_package(
+            context=context,
+            tool_name="query_standard_comparison",
+            query={
+                "cities": cities,
+                "start_date": start_date,
+                "end_date": end_date,
+                "sand_type": sand_type,
+            },
+            result=result,
+            metadata=metadata,
+            primary_view_name="cities",
+            primary_name_field="city",
+            primary_stats=city_comparison,
+            extra_views={
+                "province": city_comparison.get("province_wide"),
+            },
+            exclude_primary_keys={"province_wide"},
+            package_kind="standard_comparison_report",
+        )
+        return attach_report_data_id(result, report_data_id, summary_label="新旧标准对比报表")
 
     except Exception as e:
         logger.error(
