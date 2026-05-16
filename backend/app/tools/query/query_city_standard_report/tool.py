@@ -48,6 +48,12 @@ GUANGDONG_REGIONS["粤东西北"] = GUANGDONG_REGIONS["非珠三角"]
 GUANGDONG_REGIONS["全省"] = GUANGDONG_REGIONS["珠三角"] + GUANGDONG_REGIONS["非珠三角"]
 GUANGDONG_REGIONS["广东省"] = GUANGDONG_REGIONS["全省"]
 
+# 区域别名列表（查询这些时不传StationCode，返回全部27条）
+REGION_ALIASES = ["全省", "广东省", "珠三角", "非珠三角", "粤东", "粤西", "粤北", "粤东西北"]
+
+# 全部21个城市
+ALL_CITIES = GUANGDONG_REGIONS["全省"]
+
 
 def expand_region_city_names(cities: List[str]) -> List[str]:
     expanded: List[str] = []
@@ -197,7 +203,17 @@ async def execute_query_city_standard_report(
     }
     if effective_pollutants:
         payload["PollutantCode"] = effective_pollutants
-    if city_codes:
+
+    # 判断是否需要传StationCode
+    # 1. 包含区域别名 → 不传StationCode（返回全部27条）
+    # 2. 包含全部21个城市 → 不传StationCode（返回全部27条）
+    # 3. 纯城市查询（非全部） → 传StationCode（只返回指定城市）
+    has_region_alias = any(city in REGION_ALIASES for city in requested_cities)
+    is_all_cities = set(expanded_cities) == set(ALL_CITIES)
+
+    should_send_station_code = city_codes and not has_region_alias and not is_all_cities
+
+    if should_send_station_code:
         payload["StationCode"] = city_codes
 
     logger.info(
@@ -205,6 +221,9 @@ async def execute_query_city_standard_report(
         requested_cities=requested_cities,
         cities=expanded_cities,
         city_codes=city_codes,
+        has_region_alias=has_region_alias,
+        is_all_cities=is_all_cities,
+        should_send_station_code=should_send_station_code,
         ns_type=ns_type,
         time_type=time_type,
         start_time=start,
@@ -389,7 +408,13 @@ async def execute_query_city_standard_yoy_report(
     }
     if effective_pollutants:
         payload["PollutantCode"] = effective_pollutants
-    if city_codes:
+
+    # 判断是否需要传StationCode
+    has_region_alias = any(city in REGION_ALIASES for city in requested_cities)
+    is_all_cities = set(expanded_cities) == set(ALL_CITIES)
+    should_send_station_code = city_codes and not has_region_alias and not is_all_cities
+
+    if should_send_station_code:
         payload["StationCode"] = city_codes
 
     logger.info(
@@ -397,6 +422,9 @@ async def execute_query_city_standard_yoy_report(
         requested_cities=requested_cities,
         cities=expanded_cities,
         city_codes=city_codes,
+        has_region_alias=has_region_alias,
+        is_all_cities=is_all_cities,
+        should_send_station_code=should_send_station_code,
         ns_type=ns_type,
         time_type=time_type,
         time_point=current_range,

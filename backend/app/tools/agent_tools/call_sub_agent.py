@@ -14,6 +14,7 @@ Session支持：
 from typing import Dict, Any, Literal, Optional, List
 import structlog
 from datetime import datetime
+import uuid
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.agent.session.session_manager import get_session_manager
@@ -317,15 +318,16 @@ class CallSubAgentTool(LLMTool):
             # ✅ 特殊处理：expert模式使用ExpertRouterV3而不是ReActAgent
             if target_mode == "expert":
                 from app.agent.experts.expert_router_v3 import ExpertRouterV3
-                from app.agent.memory.unified_memory_manager import UnifiedMemoryManager
+                from app.agent.memory.hybrid_manager import HybridMemoryManager
 
-                # 创建UnifiedMemoryManager（ExpertRouterV3需要）
-                memory_manager = UnifiedMemoryManager()
+                # 创建临时session_id和HybridMemoryManager（ExpertRouterV3需要）
+                temp_session_id = f"sub_agent_expert_{uuid.uuid4().hex[:8]}"
+                memory_manager = HybridMemoryManager(session_id=temp_session_id)
 
                 # 创建ExpertRouterV3实例
                 sub_agent = ExpertRouterV3(
                     event_callback=None,  # 工具模式不需要事件回调
-                    memory_manager=memory_manager  # ✅ 传递memory_manager
+                    memory_manager=memory_manager  # ✅ 传递HybridMemoryManager
                 )
 
                 # 执行专家路由器
