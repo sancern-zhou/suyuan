@@ -41,6 +41,23 @@ POLLUTANTS_CONFIG = {
     "AQI": {"unit": "", "normal_range": (80, 100), "is_rate": True}
 }
 
+GUANGDONG_CITIES = [
+    "广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆",
+    "汕头", "汕尾", "潮州", "揭阳",
+    "湛江", "茂名", "阳江",
+    "韶关", "河源", "梅州", "清远", "云浮"
+]
+
+CITY_STANDARD_FIELD_ALIASES = {
+    "PM2.5": ["PM2_5", "pm2_5", "PM25", "pm25"],
+    "PM10": ["PM10", "pm10"],
+    "NO2": ["NO2", "no2"],
+    "O3": ["O3_8h", "O3_8H", "o3_8h", "O3", "o3"],
+    "AQI": ["FineRate", "fineRate", "fine_rate", "compliance_rate", "AQIStandardRate", "aqiStandardRate"],
+    "SO2": ["SO2", "so2"],
+    "CO": ["CO_P95", "co_P95", "CO", "co"],
+}
+
 
 # Sheet 填充配置：定义每个sheet的数据区域、列映射和表头更新规则
 SHEET_CONFIG = {
@@ -413,6 +430,167 @@ class ConsultationFileFetcher(DataFetcher):
         # 模板目录
         self.template_dir = self.consultation_root / "模板"
         self.template_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _city_record_name(record: Dict[str, Any]) -> str:
+        """从城市统计报表记录中提取城市名。"""
+        for key in (
+            "cityName", "CityName", "districtName", "DistrictName",
+            "areaName", "AreaName", "name", "Name"
+        ):
+            value = record.get(key)
+            if value:
+                return str(value).strip()
+        return ""
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        if value is None or value == "":
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _get_city_standard_value(
+        self,
+        record: Dict[str, Any],
+        pollutant_or_field: str,
+        *,
+        suffix: str = ""
+    ) -> float:
+        """
+        兼容城市统计报表字段名变化。
+
+        pollutant_or_field 可传污染物名（PM2.5/AQI）或旧字段名（PM2_5/compliance_rate）。
+        suffix 用于同比接口字段，例如 _Compare。
+        """
+        aliases = CITY_STANDARD_FIELD_ALIASES.get(pollutant_or_field)
+        if aliases is None:
+            reverse_alias = {
+                "PM2_5": "PM2.5",
+                "O3_8h": "O3",
+                "compliance_rate": "AQI",
+                "AQIStandardRate": "AQI",
+                "CO_P95": "CO",
+            }
+            aliases = CITY_STANDARD_FIELD_ALIASES.get(reverse_alias.get(pollutant_or_field, ""), [pollutant_or_field])
+
+        for alias in aliases:
+            key = f"{alias}{suffix}" if suffix else alias
+            if key in record:
+                return self._to_float(record.get(key))
+
+        # 部分接口大小写不稳定，最后做一次大小写无关匹配。
+        lower_record = {str(key).lower(): value for key, value in record.items()}
+        for alias in aliases:
+            key = f"{alias}{suffix}" if suffix else alias
+            lower_key = key.lower()
+            if lower_key in lower_record:
+                return self._to_float(lower_record[lower_key])
+
+        logger.warning(
+            "city_standard_field_missing",
+            pollutant_or_field=pollutant_or_field,
+            suffix=suffix,
+            available_keys=list(record.keys())[:20],
+        )
+        return 0.0
+
+    def _records_by_city_name(self, records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        result = {}
+        for record in records:
+            city = self._city_record_name(record)
+            if city:
+                result[city] = record
+        return result
+
+    async def _query_city_standard_records(
+        self,
+        start_date: str,
+        end_date: str,
+        *,
+        cities: List[str] = None,
+        pollutant_codes: List[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """调用统一的城市统计报表工具。"""
+        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_report
+
+        query_result = await execute_query_city_standard_report(
+            cities=cities or GUANGDONG_CITIES,
+            start_time=start_date,
+            end_time=end_date,
+            ns_type=2,
+            time_type=8,
+            pollutant_codes=pollutant_codes,
+            data_source=1,
+            sand_type=1,
+            context=None,
+        )
+        if not query_result or not query_result.get("success"):
+            raise ValueError((query_result or {}).get("summary") or "query_city_standard_report returned empty result")
+        records = query_result.get("result") or []
+        if not isinstance(records, list):
+            raise ValueError("query_city_standard_report result is not a list")
+        return [record for record in records if isinstance(record, dict)]
+
+    async def _query_city_standard_yoy_records(
+        self,
+        current_start: str,
+        current_end: str,
+        last_year_start: str,
+        last_year_end: str,
+        *,
+        cities: List[str] = None,
+        pollutant_codes: List[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """调用统一的城市同比统计报表工具。"""
+        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_yoy_report
+
+        query_result = await execute_query_city_standard_yoy_report(
+            cities=cities or GUANGDONG_CITIES,
+            time_point=[current_start, current_end],
+            contrast_time=[last_year_start, last_year_end],
+            ns_type=2,
+            time_type=8,
+            pollutant_codes=pollutant_codes,
+            data_source=1,
+            sand_type=1,
+            context=None,
+        )
+        if not query_result or not query_result.get("success"):
+            raise ValueError((query_result or {}).get("summary") or "query_city_standard_yoy_report returned empty result")
+        records = query_result.get("result") or []
+        if not isinstance(records, list):
+            raise ValueError("query_city_standard_yoy_report result is not a list")
+        return [record for record in records if isinstance(record, dict)]
+
+    def _aggregate_city_standard_values(
+        self,
+        records: List[Dict[str, Any]],
+        pollutant_or_field: str,
+        *,
+        suffix: str = ""
+    ) -> float:
+        values = [
+            self._get_city_standard_value(record, pollutant_or_field, suffix=suffix)
+            for record in records
+        ]
+        values = [value for value in values if value is not None]
+        if not values:
+            return 0.0
+        return sum(values) / len(values)
+
+    def _aggregate_all_city_standard_values(
+        self,
+        records: List[Dict[str, Any]],
+        *,
+        suffix: str = ""
+    ) -> Dict[str, float]:
+        return {
+            pollutant: self._aggregate_city_standard_values(records, pollutant, suffix=suffix)
+            for pollutant in ("PM2.5", "PM10", "NO2", "O3", "AQI")
+        }
 
     async def fetch_and_store(self):
         """
@@ -1187,7 +1365,7 @@ class ConsultationFileFetcher(DataFetcher):
 
         功能：
         1. 查询今年和去年的全国数据（一次查询获取所有污染物）
-        2. 替换广东数据为审核数据（使用QueryNewStandardReportTool）
+        2. 替换广东数据为审核数据（使用 query_city_standard_yoy_report）
         3. 分别排序获得排名
         4. 使用字典方式填充，避免重复填充问题
         5. 对广东添加排名变化标记（↑X/↓X/-）
@@ -1370,40 +1548,19 @@ class ConsultationFileFetcher(DataFetcher):
 
         功能：
         1. 查询今年和去年同期的全省数据（如今年1-5月 vs 去年1-5月）
-        2. 使用QueryNewStandardReportTool（与历年对比一致）
-        3. 直接使用API返回的全省均值，不计算
+        2. 使用 query_city_standard_yoy_report
+        3. 从城市统计报表字段聚合全省均值
 
-        数据源：QueryNewStandardReportTool（审核数据）
+        数据源：query_city_standard_yoy_report（审核数据、扣沙）
 
         优化：
         - 原实现：5个污染物 × 2个时间段 = 10次查询
-        - 优化后：2次查询（1次今年 + 1次去年，返回所有污染物）
+        - 现实现：1次同比报表查询，返回当前期和对比期字段
         """
-        from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-
         ws = wb["全省同比"]
         config = EXTRA_SHEET_CONFIG["全省同比"]
         start_row, end_row = config["data_rows"]
         mapping = config["mapping"]
-
-        # 广东省21个地级市
-        guangdong_cities = [
-            "广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆",
-            "汕头", "汕尾", "潮州", "揭阳",
-            "湛江", "茂名", "阳江",
-            "韶关", "河源", "梅州", "清远", "云浮"
-        ]
-
-        query_tool = QueryNewStandardReportTool()
-
-        # 污染物字段映射（与 QueryNewStandardReportTool 返回字段一致）
-        field_map = {
-            "PM2.5": "PM2_5",
-            "PM10": "PM10",
-            "NO2": "NO2",
-            "O3": "O3_8h",  # O3日均值
-            "AQI": "compliance_rate"
-        }
 
         # 时间范围计算
         # 今年数据：本月1号 → 昨天
@@ -1444,42 +1601,16 @@ class ConsultationFileFetcher(DataFetcher):
             last_year_period=f"{last_year_start} → {last_year_end}"
         )
 
-        # 第一步：查询今年数据（一次查询获取所有城市数据）
-        current_result = await query_tool.execute(
-            context=None,
-            cities=guangdong_cities,
-            start_date=current_start,
-            end_date=current_end,
-            enable_sand_deduction=True  # 使用扣沙数据
+        records = await self._query_city_standard_yoy_records(
+            current_start,
+            current_end,
+            last_year_start,
+            last_year_end,
         )
-
-        # 第二步：查询去年数据（一次查询获取所有城市数据）
-        last_year_result = await query_tool.execute(
-            context=None,
-            cities=guangdong_cities,
-            start_date=last_year_start,
-            end_date=last_year_end,
-            enable_sand_deduction=True  # 使用扣沙数据
-        )
-
-        # 提取全省数据
-        current_province_data = None
-        last_year_province_data = None
-
-        if current_result and current_result.get("success"):
-            current_stats = current_result.get("result", {})
-            if isinstance(current_stats, dict):
-                current_province_data = current_stats.get("regional_stats", {}).get("全省", {})
-
-        if last_year_result and last_year_result.get("success"):
-            last_year_stats = last_year_result.get("result", {})
-            if isinstance(last_year_stats, dict):
-                last_year_province_data = last_year_stats.get("regional_stats", {}).get("全省", {})
 
         logger.info(
             "provincial_summary_data_extracted",
-            has_current=current_province_data is not None,
-            has_last_year=last_year_province_data is not None
+            records=len(records)
         )
 
         # 第三步：填充各污染物数据（从缓存中提取）
@@ -1487,22 +1618,10 @@ class ConsultationFileFetcher(DataFetcher):
             if row > end_row:
                 continue
 
-            field = field_map.get(pollutant)
-            if not field:
-                logger.warning("unknown_pollutant", pollutant=pollutant, row=row)
-                continue
-
             try:
-                # 从全省数据中提取污染物数值
-                current_value = current_province_data.get(field, 0) if current_province_data else 0
-                last_year_value = last_year_province_data.get(field, 0) if last_year_province_data else 0
+                current_value = self._aggregate_city_standard_values(records, pollutant)
+                last_year_value = self._aggregate_city_standard_values(records, pollutant, suffix="_Compare")
 
-                if current_value is None:
-                    current_value = 0
-                if last_year_value is None:
-                    last_year_value = 0
-
-                # 填充单元格（直接使用API返回的全省均值，不计算）
                 ws[f"{config['current_col']}{row}"] = round(current_value, 2)
                 ws[f"{config['last_year_col']}{row}"] = round(last_year_value, 2)
 
@@ -1542,7 +1661,7 @@ class ConsultationFileFetcher(DataFetcher):
 
         数据源：
         - scope="national": 使用 NationalAirQualityQueryTool 查询全国各省数据
-        - scope="provincial": 使用 QueryNewStandardReportTool 查询广东21个地级市数据
+        - scope="provincial": 使用 query_city_standard_report 查询广东21个地级市数据
 
         Args:
             scope: "national" 或 "provincial"
@@ -1641,122 +1760,50 @@ class ConsultationFileFetcher(DataFetcher):
                         result.append(0.0)
 
         elif scope == "provincial":
-            # 全省数据：使用 QueryNewStandardReportTool（审核数据）
-            from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-
-            # 广东省21个地级市
-            guangdong_cities = [
-                "广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆",
-                "汕头", "汕尾", "潮州", "揭阳",
-                "湛江", "茂名", "阳江",
-                "韶关", "河源", "梅州", "清远", "云浮"
-            ]
-
-            query_tool = QueryNewStandardReportTool()
-
-            # 污染物字段映射（与 QueryNewStandardReportTool 返回字段一致）
-            field_map = {
-                "PM2.5": "PM2_5",
-                "PM10": "PM10",
-                "NO2": "NO2",
-                "O3": "O3_8h",  # O3日均值
-                "AQI": "compliance_rate"
-            }
-            field = field_map.get(pollutant)
-            if not field:
+            if pollutant not in CITY_STANDARD_FIELD_ALIASES:
                 raise ValueError(f"Unknown pollutant: {pollutant}")
 
-            # 查询广东21个地级市数据（一次查询获取所有城市，避免并发调用）
-            query_result = await query_tool.execute(
-                context=None,
-                cities=guangdong_cities,
-                start_date=start_date,
-                end_date=end_date,
-                enable_sand_deduction=True  # 使用扣沙数据
-            )
+            records = await self._query_city_standard_records(start_date, end_date)
+            city_stats = self._records_by_city_name(records)
 
-            # 提取各城市数据（result直接就是city_stats字典）
-            if query_result and "result" in query_result:
-                city_stats = query_result["result"]
-                
-                if return_all_data:
-                    # 返回所有污染物的完整数据
-                    all_pollutants_data = {}
-                    field_map = {
-                        "PM2.5": "PM2_5",
-                        "PM10": "PM10",
-                        "NO2": "NO2",
-                        "O3": "O3_8h",  # O3日均值
-                        "AQI": "compliance_rate"
-                    }
-                    
-                    # 按照原始城市列表顺序提取数据
-                    for city in guangdong_cities:
-                        if city in city_stats:
-                            area_names.append(city)
-                            city_data = city_stats[city]
-                            
-                            # 提取所有污染物数据
-                            all_pollutants_data[city] = {}
-                            for pollutant_name, field in field_map.items():
-                                value = city_data.get(field, 0)
-                                if value is None:
-                                    value = 0
-                                try:
-                                    all_pollutants_data[city][pollutant_name] = float(value)
-                                except (ValueError, TypeError):
-                                    all_pollutants_data[city][pollutant_name] = 0.0
-                        else:
-                            # 城市数据缺失
-                            logger.warning("city_data_missing", city=city)
-                            area_names.append(city)
-                            for pollutant_name in field_map.keys():
-                                all_pollutants_data.setdefault(city, {})[pollutant_name] = 0.0
-                    
-                    logger.info(
-                        "query_with_date_range_success",
-                        scope=scope,
-                        pollutant="all",
-                        start_date=start_date,
-                        end_date=end_date,
-                        area_count=len(area_names),
-                        return_all_data=True
-                    )
-                    
-                    # 返回特殊格式：所有污染物数据
-                    return area_names, {
-                        "area_names": area_names,
-                        "all_data": all_pollutants_data
-                    }
-                else:
-                    # 原有逻辑：返回单个污染物数据
-                    if isinstance(city_stats, dict):
-                        # 按照原始城市列表顺序提取数据
-                        for city in guangdong_cities:
-                            if city in city_stats:
-                                city_data = city_stats[city]
-                                area_names.append(city)
+            if return_all_data:
+                all_pollutants_data = {}
+                for city in GUANGDONG_CITIES:
+                    area_names.append(city)
+                    city_data = city_stats.get(city)
+                    if not city_data:
+                        logger.warning("city_data_missing", city=city)
+                        all_pollutants_data[city] = {name: 0.0 for name in ("PM2.5", "PM10", "NO2", "O3", "AQI")}
+                        continue
 
-                                value = city_data.get(field, 0)
-                                if value is None:
-                                    value = 0
-                                try:
-                                    result.append(float(value))
-                                except (ValueError, TypeError):
-                                    logger.warning("invalid_city_value", pollutant=pollutant, city=city, field=field, value=value)
-                                    result.append(0.0)
-                            else:
-                                # 城市数据缺失
-                                logger.warning("city_data_missing", city=city)
-                                area_names.append(city)
-                                result.append(0.0)
-                    else:
-                        logger.error("provincial_query_no_city_stats", result_type=type(city_stats).__name__)
-                        raise ValueError("Provincial query result missing city_stats")
+                    all_pollutants_data[city] = {
+                        pollutant_name: self._get_city_standard_value(city_data, pollutant_name)
+                        for pollutant_name in ("PM2.5", "PM10", "NO2", "O3", "AQI")
+                    }
+
+                logger.info(
+                    "query_with_date_range_success",
+                    scope=scope,
+                    pollutant="all",
+                    start_date=start_date,
+                    end_date=end_date,
+                    area_count=len(area_names),
+                    return_all_data=True
+                )
+
+                return area_names, {
+                    "area_names": area_names,
+                    "all_data": all_pollutants_data
+                }
             else:
-                logger.error("provincial_query_failed", has_result=bool(query_result))
-                raise ValueError("Provincial query failed or returned empty result")
-                raise ValueError("Provincial query failed or returned empty result")
+                for city in GUANGDONG_CITIES:
+                    area_names.append(city)
+                    city_data = city_stats.get(city)
+                    if not city_data:
+                        logger.warning("city_data_missing", city=city)
+                        result.append(0.0)
+                        continue
+                    result.append(self._get_city_standard_value(city_data, pollutant))
         else:
             raise ValueError(f"Unknown scope: {scope}")
 
@@ -1783,8 +1830,8 @@ class ConsultationFileFetcher(DataFetcher):
         """
         获取广东省的全省数据（用于替换全国sheet中的广东数据）
 
-        使用 QueryNewStandardReportTool 查询广东省审核数据，
-        获取全省均值，确保数据准确性。
+        使用 query_city_standard_yoy_report 查询广东省审核数据，
+        聚合广东21个地市作为全省均值。
 
         Args:
             pollutant: 污染物名称（PM2.5、PM10、NO2、O3、AQI）
@@ -1798,83 +1845,30 @@ class ConsultationFileFetcher(DataFetcher):
             如果 return_all_data=False: {"current": 今年数值, "last_year": 去年数值}
             如果 return_all_data=True: {"current": {所有污染物今年值}, "last_year": {所有污染物去年值}}
         """
-        from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-
-        query_tool = QueryNewStandardReportTool()
-
-        # 广东省21个地级市
-        guangdong_cities = [
-            "广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆",
-            "汕头", "汕尾", "潮州", "揭阳",
-            "湛江", "茂名", "阳江",
-            "韶关", "河源", "梅州", "清远", "云浮"
-        ]
-
-        # 污染物字段映射（与 QueryNewStandardReportTool 返回字段一致）
-        field_map = {
-            "PM2.5": "PM2_5",
-            "PM10": "PM10",
-            "NO2": "NO2",
-            "O3": "O3_8h",  # O3日均值
-            "AQI": "compliance_rate"
-        }
-
         try:
-            # 查询今年广东省审核数据
-            logger.info("query_guangdong_current_start", pollutant=pollutant, start=current_start, end=current_end)
-            current_result = await query_tool.execute(
-                context=None,
-                cities=guangdong_cities,
-                start_date=current_start,
-                end_date=current_end,
-                enable_sand_deduction=True
+            logger.info(
+                "query_guangdong_yoy_start",
+                pollutant=pollutant,
+                current_start=current_start,
+                current_end=current_end,
+                last_year_start=last_year_start,
+                last_year_end=last_year_end,
             )
-
-            # 查询去年广东省审核数据
-            logger.info("query_guangdong_last_year_start", pollutant=pollutant, start=last_year_start, end=last_year_end)
-            last_year_result = await query_tool.execute(
-                context=None,
-                cities=guangdong_cities,
-                start_date=last_year_start,
-                end_date=last_year_end,
-                enable_sand_deduction=True
+            records = await self._query_city_standard_yoy_records(
+                current_start,
+                current_end,
+                last_year_start,
+                last_year_end,
             )
-
-            # 提取全省数据
-            current_province_data = None
-            last_year_province_data = None
-
-            if current_result and current_result.get("success"):
-                current_stats = current_result.get("result", {})
-                if isinstance(current_stats, dict) and "regional_stats" in current_stats:
-                    current_province_data = current_stats["regional_stats"].get("全省", {})
-
-            if last_year_result and last_year_result.get("success"):
-                last_year_stats = last_year_result.get("result", {})
-                if isinstance(last_year_stats, dict) and "regional_stats" in last_year_stats:
-                    last_year_province_data = last_year_stats["regional_stats"].get("全省", {})
 
             if return_all_data:
-                # 返回所有污染物数据
-                all_current = {}
-                all_last_year = {}
-
-                for pollutant_name, field in field_map.items():
-                    current_value = current_province_data.get(field, 0) if current_province_data else 0
-                    last_year_value = last_year_province_data.get(field, 0) if last_year_province_data else 0
-
-                    if current_value is None:
-                        current_value = 0
-                    if last_year_value is None:
-                        last_year_value = 0
-
-                    all_current[pollutant_name] = float(current_value)
-                    all_last_year[pollutant_name] = float(last_year_value)
+                all_current = self._aggregate_all_city_standard_values(records)
+                all_last_year = self._aggregate_all_city_standard_values(records, suffix="_Compare")
 
                 logger.info(
                     "guangdong_all_pollutants_retrieved",
-                    current_city_count=len(guangdong_cities),
-                    pollutants_count=len(field_map)
+                    current_city_count=len(records),
+                    pollutants_count=len(all_current)
                 )
 
                 return {
@@ -1882,24 +1876,16 @@ class ConsultationFileFetcher(DataFetcher):
                     "last_year": all_last_year
                 }
             else:
-                # 返回单个污染物数据
-                field = field_map.get(pollutant)
-                if not field:
+                if pollutant not in CITY_STANDARD_FIELD_ALIASES:
                     logger.warning("unknown_pollutant_for_guangdong", pollutant=pollutant)
                     return None
 
-                current_value = current_province_data.get(field, 0) if current_province_data else 0
-                last_year_value = last_year_province_data.get(field, 0) if last_year_province_data else 0
-
-                if current_value is None:
-                    current_value = 0
-                if last_year_value is None:
-                    last_year_value = 0
+                current_value = self._aggregate_city_standard_values(records, pollutant)
+                last_year_value = self._aggregate_city_standard_values(records, pollutant, suffix="_Compare")
 
                 logger.info(
                     "pollutant_value_calculated",
                     pollutant=pollutant,
-                    field=field,
                     current_value=current_value,
                     last_year_value=last_year_value
                 )
@@ -1920,7 +1906,7 @@ class ConsultationFileFetcher(DataFetcher):
         功能：
         1. 查询当年当月（1日-昨日）和去年当月的全省数据
         2. 填充7个指标：AQI达标率、PM2.5、PM10、NO2、O3、SO2、CO
-        3. 数据来源：广东省审核数据接口（query_new_standard_report）
+        3. 数据来源：广东省城市统计报表接口（query_city_standard_yoy_report）
 
         示例：
         - 当前为2025年5月13日，则查询：
@@ -1940,17 +1926,6 @@ class ConsultationFileFetcher(DataFetcher):
         # 当前年份和月份
         current_year = int(time_range["year"])
         current_month = int(time_range["month"])
-
-        # 广东省21个地级市
-        guangdong_cities = [
-            "广州", "深圳", "珠海", "佛山", "惠州", "东莞", "中山", "江门", "肇庆",
-            "汕头", "汕尾", "潮州", "揭阳",
-            "湛江", "茂名", "阳江",
-            "韶关", "河源", "梅州", "清远", "云浮"
-        ]
-
-        from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
-        query_tool = QueryNewStandardReportTool()
 
         # 时间范围计算
         # 当年数据：当月1日 → 昨日
@@ -1991,48 +1966,22 @@ class ConsultationFileFetcher(DataFetcher):
             last_year_period=f"{last_year_start} → {last_year_end}"
         )
 
-        # 第一步：查询当年当月数据（一次查询获取所有城市数据）
-        current_result = await query_tool.execute(
-            context=None,
-            cities=guangdong_cities,
-            start_date=current_start,
-            end_date=current_end,
-            enable_sand_deduction=True  # 使用扣沙数据
+        records = await self._query_city_standard_yoy_records(
+            current_start,
+            current_end,
+            last_year_start,
+            last_year_end,
         )
-
-        # 第二步：查询去年当月数据（一次查询获取所有城市数据）
-        last_year_result = await query_tool.execute(
-            context=None,
-            cities=guangdong_cities,
-            start_date=last_year_start,
-            end_date=last_year_end,
-            enable_sand_deduction=True  # 使用扣沙数据
-        )
-
-        # 提取全省数据
-        current_province_data = None
-        last_year_province_data = None
-
-        if current_result and current_result.get("success"):
-            current_stats = current_result.get("result", {})
-            if isinstance(current_stats, dict) and "regional_stats" in current_stats:
-                current_province_data = current_stats["regional_stats"].get("全省", {})
-
-        if last_year_result and last_year_result.get("success"):
-            last_year_stats = last_year_result.get("result", {})
-            if isinstance(last_year_stats, dict) and "regional_stats" in last_year_stats:
-                last_year_province_data = last_year_stats["regional_stats"].get("全省", {})
 
         logger.info(
             "historical_comparison_data_extracted",
-            has_current=current_province_data is not None,
-            has_last_year=last_year_province_data is not None
+            records=len(records)
         )
 
         # 第三步：填充当年和去年数据（2行）
-        for year_offset, (year, province_data) in enumerate([
-            (current_year - 1, last_year_province_data),  # 去年
-            (current_year, current_province_data)         # 当年
+        for year_offset, (year, suffix) in enumerate([
+            (current_year - 1, "_Compare"),  # 去年
+            (current_year, "")               # 当年
         ]):
             row = start_row + year_offset
 
@@ -2040,26 +1989,13 @@ class ConsultationFileFetcher(DataFetcher):
             ws[f"{year_col}{row}"] = year
 
             try:
-                if province_data:
-                    # 填充各列数据
-                    for col_config in config["columns"]:
-                        col = col_config["col"]
-                        field = col_config["field"]
-                        value = province_data.get(field, 0)
+                for col_config in config["columns"]:
+                    col = col_config["col"]
+                    field = col_config["field"]
+                    value = self._aggregate_city_standard_values(records, field, suffix=suffix)
+                    ws[f"{col}{row}"] = round(value, 2)
 
-                        if value is None:
-                            value = 0
-
-                        # 填充单元格
-                        ws[f"{col}{row}"] = round(value, 2)
-
-                    logger.info("historical_year_filled", year=year)
-                else:
-                    logger.warning("historical_year_no_province_data", year=year)
-                    # 填充0值
-                    for col_config in config["columns"]:
-                        col = col_config["col"]
-                        ws[f"{col}{row}"] = 0
+                logger.info("historical_year_filled", year=year)
 
             except Exception as e:
                 logger.error("historical_year_fill_failed", year=year, error=str(e), exc_info=True)

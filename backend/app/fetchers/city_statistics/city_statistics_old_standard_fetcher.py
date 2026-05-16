@@ -25,6 +25,7 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 from decimal import Decimal
 import asyncio
+import os
 import structlog
 import pyodbc
 
@@ -418,6 +419,12 @@ class CityStatisticsOldStandardFetcher(DataFetcher):
 
     def __init__(self):
         """初始化抓取器"""
+        if os.getenv("ALLOW_LOCAL_STATISTICS_FETCHERS") != "1":
+            raise RuntimeError(
+                "CityStatisticsOldStandardFetcher 已停用：城市新旧国标统计统一使用 "
+                "query_city_standard_report / query_city_standard_yoy_report，"
+                "不要再从日报本地重算统计指标。"
+            )
         super().__init__(
             name="city_168_statistics_old_standard_fetcher",
             description="168城市空气质量统计预计算（旧标准限值）",

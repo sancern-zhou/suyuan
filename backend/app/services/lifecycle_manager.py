@@ -11,7 +11,6 @@ from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
-from app.fetchers.city_statistics import CityStatisticsFetcher, CityStatisticsOldStandardFetcher, ProvinceStatisticsFetcher, ProvinceStatisticsOldStandardFetcher  # 168城市和省级统计（新旧标准）
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
 from app.fetchers.consultation import ConsultationFileFetcher  # 会商文件批量更新
@@ -45,18 +44,6 @@ def initialize_fetchers():
 
         # 注册Dust Fetchers
         fetcher_scheduler.register(CAMSDustFetcher())
-
-        # 注册168城市统计Fetcher（新标准）
-        fetcher_scheduler.register(CityStatisticsFetcher())
-
-        # 注册168城市统计Fetcher（旧标准）
-        fetcher_scheduler.register(CityStatisticsOldStandardFetcher())
-
-        # 注册省级统计Fetcher（新标准）
-        fetcher_scheduler.register(ProvinceStatisticsFetcher())
-
-        # 注册省级统计Fetcher（旧标准）
-        fetcher_scheduler.register(ProvinceStatisticsOldStandardFetcher())
 
         # 注册空气质量数据质量巡检Fetcher
         fetcher_scheduler.register(AirQualityDataQualityFetcher())
