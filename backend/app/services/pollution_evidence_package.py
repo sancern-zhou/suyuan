@@ -203,6 +203,10 @@ def extract_city_stats(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     for record in records:
         city = normalize_city(
             record.get("city")
+            or record.get("cityName")
+            or record.get("CityName")
+            or record.get("districtName")
+            or record.get("DistrictName")
             or record.get("city_name")
             or record.get("城市")
             or record.get("城市名称")
@@ -244,6 +248,18 @@ def infer_main_pollutant(record: dict[str, Any]) -> str | None:
             return "CO"
 
     values = {field: as_number(record.get(field)) for field in POLLUTANT_FIELDS}
+    for field, aliases in {
+        "PM2_5": ("PM2_5_Increase", "pm2_5_Increase", "PM2_5Increase"),
+        "PM10": ("PM10_Increase", "pm10_Increase", "PM10Increase"),
+        "O3_8h": ("O3_8h_Increase", "o3_8h_Increase", "O3_8hIncrease"),
+        "NO2": ("NO2_Increase", "no2_Increase", "NO2Increase"),
+        "SO2": ("SO2_Increase", "so2_Increase", "SO2Increase"),
+        "CO": ("CO_Increase", "co_Increase", "COIncrease"),
+    }.items():
+        values[field] = values.get(field) or next(
+            (as_number(record.get(alias)) for alias in aliases if as_number(record.get(alias)) is not None),
+            None,
+        )
     values = {k: v for k, v in values.items() if v is not None}
     return max(values, key=lambda k: values[k] or -1e9) if values else None
 
@@ -261,8 +277,19 @@ def rank_top_cities(compare_result: dict[str, Any], city_day_result: dict[str, A
         composite_change = None
         if isinstance(change_rates, dict):
             composite_change = as_number(change_rates.get("composite_index"))
-        composite_index = as_number(record.get("composite_index"))
-        aqi = as_number(record.get("AQI") or record.get("aqi"))
+        if composite_change is None:
+            composite_change = as_number(
+                record.get("CompositeIndex_Increase")
+                or record.get("compositeIndex_Increase")
+                or record.get("composite_index_Increase")
+                or record.get("CompositeIndexIncrease")
+            )
+        composite_index = as_number(
+            record.get("CompositeIndex")
+            or record.get("compositeIndex")
+            or record.get("composite_index")
+        )
+        aqi = as_number(record.get("AQI") or record.get("aqi") or record.get("FineRate") or record.get("fineRate"))
         score = (
             composite_change
             if composite_change is not None
@@ -530,7 +557,6 @@ class EvidencePackageBuilder:
         return last_result
 
     async def build(self) -> dict[str, Any]:
-        from app.tools.query.compare_standard_reports.tool import CompareStandardReportsTool
         from app.tools.query.get_pm25_carbon.tool import GetPM25CarbonTool
         from app.tools.query.get_pm25_crustal.tool import GetPM25CrustalTool
         from app.tools.query.get_pm25_ionic.tool import GetPM25IonicTool
@@ -538,11 +564,14 @@ class EvidencePackageBuilder:
         from app.tools.query.get_vocs_data import GetVOCsDataTool
         from app.tools.query.get_weather_forecast.tool import GetWeatherForecastTool
         from app.tools.query.get_weather_situation_map.tool import GetWeatherSituationMapTool
+        from app.tools.query.query_city_standard_report.tool import (
+            QueryCityStandardReportTool,
+            QueryCityStandardYoyReportTool,
+        )
         from app.tools.query.query_gd_suncere.tool_wrapper import (
             QueryGDSuncereStationDayTool,
             QueryGDSuncereStationHourTool,
         )
-        from app.tools.query.query_new_standard_report.tool import QueryNewStandardReportTool
 
         self.package_dir.mkdir(parents=True, exist_ok=True)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
@@ -555,24 +584,31 @@ class EvidencePackageBuilder:
             comparison_date = self.target_date - timedelta(days=365)
 
         city_report = await self.run_tool(
-            "city_day_new_standard",
-            "city_day_new_standard.json",
-            lambda: QueryNewStandardReportTool().execute(
+            "city_standard_report",
+            "city_standard_report.json",
+            lambda: QueryCityStandardReportTool().execute(
                 self.context,
                 cities=GUANGDONG_CITIES,
-                start_date=self.target_date.isoformat(),
-                end_date=self.target_date.isoformat(),
-                exclude_exceed_details=True,
+                start_time=self.target_date.isoformat(),
+                end_time=self.target_date.isoformat(),
+                ns_type=2,
+                time_type=8,
+                data_source=1,
+                sand_type=1,
             ),
         )
         city_compare = await self.run_tool(
             "city_yoy_compare",
             "city_yoy_compare.json",
-            lambda: CompareStandardReportsTool().execute(
+            lambda: QueryCityStandardYoyReportTool().execute(
                 self.context,
                 cities=GUANGDONG_CITIES,
-                query_period={"start_date": self.target_date.isoformat(), "end_date": self.target_date.isoformat()},
-                comparison_period={"start_date": comparison_date.isoformat(), "end_date": comparison_date.isoformat()},
+                time_point=[self.target_date.isoformat(), self.target_date.isoformat()],
+                contrast_time=[comparison_date.isoformat(), comparison_date.isoformat()],
+                ns_type=2,
+                time_type=8,
+                data_source=1,
+                sand_type=1,
             ),
         )
 

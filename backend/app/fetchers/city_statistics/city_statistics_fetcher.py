@@ -28,6 +28,7 @@
 日期：2026-04-18
 """
 
+import os
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -1015,6 +1016,12 @@ class CityStatisticsFetcher(DataFetcher):
     """168城市空气质量统计数据抓取器"""
 
     def __init__(self):
+        if os.getenv("ALLOW_LOCAL_STATISTICS_FETCHERS") != "1":
+            raise RuntimeError(
+                "CityStatisticsFetcher 已停用：城市统计报表统一使用 "
+                "query_city_standard_report / query_city_standard_yoy_report，"
+                "不要再从日报本地重算统计指标。"
+            )
         super().__init__(
             name="city_168_statistics_new_standard_fetcher",
             description="168城市空气质量统计预计算",

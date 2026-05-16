@@ -22,6 +22,14 @@ from calendar import monthrange
 
 logger = structlog.get_logger()
 
+CITY_STANDARD_FIELD_ALIASES = {
+    "PM2.5": ["PM2_5", "pm2_5", "PM25", "pm25"],
+    "PM10": ["PM10", "pm10"],
+    "NO2": ["NO2", "no2"],
+    "O3": ["O3_8h", "O3_8H", "o3_8h", "O3", "o3"],
+    "AQI": ["FineRate", "fineRate", "fine_rate", "compliance_rate", "AQIStandardRate", "aqiStandardRate"],
+}
+
 
 class ConsultationDataQuery:
     """
@@ -37,7 +45,7 @@ class ConsultationDataQuery:
         )
         self.query_tool = NationalAirQualityQueryTool()
 
-        # 污染物字段映射
+        # 污染物字段映射（全国接口）
         self.pollutant_field_map = {
             "PM2.5": "PM2_5",
             "PM10": "PM10",
@@ -173,14 +181,13 @@ class ConsultationDataQuery:
                     end_date=end_date,
                     ns_type="NS"
                 )
+                result = self._extract_pollutant_records(data, pollutant)
             else:
-                data = self.query_tool.query_city_data(
+                records = await self._query_city_standard_records(
                     start_date=start_date,
                     end_date=end_date,
-                    ns_type="NS"
                 )
-
-            result = self._extract_pollutant_records(data, pollutant)
+                result = self._extract_city_standard_records(records, pollutant)
 
             logger.info(
                 "query_named_success",
@@ -271,10 +278,94 @@ class ConsultationDataQuery:
 
         return result
 
+    async def _query_city_standard_records(
+        self,
+        start_date: str,
+        end_date: str
+    ) -> List[Dict[str, Any]]:
+        """查询广东省城市统计报表。"""
+        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_report
+
+        query_result = await execute_query_city_standard_report(
+            cities=["广东省"],
+            start_time=start_date,
+            end_time=end_date,
+            ns_type=2,
+            time_type=8,
+            data_source=1,
+            sand_type=1,
+            context=None,
+        )
+        if not query_result or not query_result.get("success"):
+            raise ValueError((query_result or {}).get("summary") or "query_city_standard_report returned empty result")
+        records = query_result.get("result") or []
+        if not isinstance(records, list):
+            raise ValueError("query_city_standard_report result is not a list")
+        return [record for record in records if isinstance(record, dict)]
+
+    def _extract_city_standard_records(
+        self,
+        data: List[Dict[str, Any]],
+        pollutant: str
+    ) -> List[Dict[str, Any]]:
+        """从城市统计报表中提取地区名称和污染物数值。"""
+        if pollutant not in CITY_STANDARD_FIELD_ALIASES:
+            raise ValueError(
+                f"Unknown pollutant: {pollutant}. "
+                f"Supported: {list(CITY_STANDARD_FIELD_ALIASES.keys())}"
+            )
+
+        result = []
+        for item in data:
+            name = self._extract_area_name(item)
+            if not name:
+                logger.warning(
+                    "missing_city_name",
+                    pollutant=pollutant,
+                    item_keys=list(item.keys())
+                )
+                continue
+
+            result.append({
+                "name": name,
+                "value": self._extract_city_standard_value(item, pollutant),
+                "raw": item
+            })
+
+        return result
+
+    @staticmethod
+    def _extract_city_standard_value(item: Dict[str, Any], pollutant: str) -> float:
+        aliases = CITY_STANDARD_FIELD_ALIASES[pollutant]
+        for alias in aliases:
+            if alias in item:
+                value = item.get(alias)
+                try:
+                    return float(value) if value is not None else 0.0
+                except (ValueError, TypeError):
+                    return 0.0
+
+        lower_item = {str(key).lower(): value for key, value in item.items()}
+        for alias in aliases:
+            value = lower_item.get(alias.lower())
+            if value is not None:
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return 0.0
+
+        logger.warning(
+            "city_standard_field_missing",
+            pollutant=pollutant,
+            available_keys=list(item.keys())[:20]
+        )
+        return 0.0
+
     @staticmethod
     def _extract_area_name(item: Dict[str, Any]) -> str:
         """兼容不同接口字段名，提取省份/城市名称。"""
         for key in (
+            "cityName", "CityName", "districtName", "DistrictName",
             "AreaName", "areaName", "Area", "area",
             "province_name", "ProvinceName", "city_name", "CityName", "name"
         ):
