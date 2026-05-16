@@ -107,37 +107,55 @@ QUERY_TOOL_NAMES = {
 
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = {
-    # 数据查询
-    "get_5min_data", "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new", "query_gd_suncere_city_day_new",
+    # === 数据查询 ===
+    # 5分钟数据
+    "get_5min_data",
+
+    # 广东省空气质量数据查询
+    "query_gd_suncere_city_hour",          # 城市小时数据
+    "query_gd_suncere_station_hour_new",   # 站点小时数据（新标准）
+    "query_gd_suncere_city_day",           # 城市日数据
+    "query_gd_suncere_city_day_new",       # 城市日数据（新标准HJ 633-2026）
 
     # SQL Server通用查询
     "execute_sql_query",
 
-    # 知识库检索
+    # === 广东省统计报表工具 ===
+    "query_gd_suncere_report",             # 综合统计报表
+    "query_gd_suncere_report_compare",     # 对比分析报表
+    "query_standard_comparison",           # 标准对比
+    "query_old_standard_report",           # 旧标准统计报表（HJ 633-2013）
+
+    # === 新标准统计报表工具（HJ 633-2026）===
+    "query_new_standard_report",           # 新标准统计报表（城市/站点）
+    "query_station_new_standard_report",   # 站点新标准统计报表
+    "compare_standard_reports",            # 新标准报表对比分析
+    "compare_station_standard_reports",    # 站点新标准报表对比
+
+    # === 旧标准统计报表工具（十三五/十四五）===
+    "compare_old_standard_reports",        # 旧标准报表对比分析
+
+    # === 知识库检索 ===
     "knowledge_qa_workflow", "knowledge_document_reader",
 
-    # 数据读取
+    # === 数据读取 ===
     "read_data_registry",
 
-    # 文件操作
+    # === 文件操作 ===
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
-    # 代码执行
+    # === 代码执行 ===
     "execute_python",
 
-    # 任务管理
+    # === 任务管理 ===
     "TodoWrite",
 
-    # 模式互调
+    # === 模式互调 ===
     "call_sub_agent",
 
-    # 规划工具
+    # === 规划工具 ===
     "complex_query_planner",
-
-    # 报告生成
-    "generate_tracing_report",
 }
 
 # ===== 图表模式工具 =====
