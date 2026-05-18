@@ -14,9 +14,9 @@
 
 ## result vs report_data_id
 
-- `result` 是接口返回的统计报表记录，报告生成、趋势分析和问答解释应优先读取它。
-- `report_data_id` 保存完整接口报表，可用 `read_data_registry` 读取 `cities`、`raw`、`result` 视图。
-- `data` 只是前 24 条预览，不代表完整结果。
+- `data` 是默认报告口径数据，已按信息公开口径处理 PM2.5 等展示字段；若返回 `metadata.data_is_complete_for_requested_scope=true`，必须直接使用 `data` 作答，不再读取 `read_data_registry`。
+- `report_data_id` 保存完整接口报表；直接调用 `read_data_registry(data_id=...)` 默认读取完整 `reporting` 报告口径视图。
+- `raw`/`result` 是原始接口字段视图，只在需要追溯接口字段、Compare/Increase 明细或排查问题时读取。
 
 ## 统计报表策略
 

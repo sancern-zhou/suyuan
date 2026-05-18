@@ -83,7 +83,6 @@ class ToolExecutor:
         if not tool_registry:
             self._register_builtin_tools()
         else:
-            # 注册特殊工具（FINISH_SUMMARY）
             self._register_special_tools()
 
         logger.info(
@@ -136,7 +135,6 @@ class ToolExecutor:
                 has_unpack_office="unpack_office" in registered_tools
             )
 
-            # 注册特殊工具：FINISH_SUMMARY 和 FINISH
             self._register_special_tools()
 
         except ImportError as e:
@@ -153,37 +151,8 @@ class ToolExecutor:
             )
 
     def _register_special_tools(self):
-        """注册特殊工具（仅 FINISH_SUMMARY）"""
-
-        async def finish_summary_tool(context=None, data_id: Optional[Union[str, List[str]]] = None) -> Dict[str, Any]:
-            """
-            FINISH_SUMMARY 特殊工具
-
-            功能：生成数据分析报告（基于指定的 data_id 加载数据）
-
-            Args:
-                context: 执行上下文（系统自动注入）
-                data_id: 数据ID或数据ID列表（用于加载要分析的数据）
-
-            Returns:
-                包含 action_type 和 data_id 的结果
-            """
-            # 接收 data_id 参数并返回给 loop.py 处理
-            # 实际的数据加载和报告生成在 loop.py 中完成
-            return {
-                "success": True,
-                "action_type": "FINISH_SUMMARY",
-                "data_id": data_id,
-                "summary": "FINISH_SUMMARY: 系统将基于指定数据生成详细分析报告"
-            }
-
-        # 注册特殊工具
-        self.tool_registry["FINISH_SUMMARY"] = finish_summary_tool
-
-        logger.info(
-            "special_tools_registered",
-            tools=["FINISH_SUMMARY"]
-        )
+        """保留扩展点；Anthropic 原生格式下不注册完成类伪工具。"""
+        logger.info("special_tools_registered", tools=[])
 
     def register_tool(self, name: str, func: Callable):
         """

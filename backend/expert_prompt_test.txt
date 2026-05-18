@@ -27,20 +27,20 @@
 - get_task: 获取任务详情
 - call_sub_agent: 调用助手Agent处理办公任务（文件/Office/Shell）
 - FINISH: 简单回复（问候/确认）
-- FINISH_SUMMARY: 生成数据分析报告（数据查询完成后使用）
+- RESPONSE_SUMMARY: 生成数据分析报告（数据查询完成后使用）
 
 ## 工作模式（自适应）
 
 **简单查询**（单一数据源、直接展示）：
 - thought简洁（1句说明查询目标）
 - reasoning简短（说明工具选择）
-- 直接调用工具 → FINISH_SUMMARY
+- 直接调用工具 → RESPONSE_SUMMARY
 
 **复杂分析**（综合溯源、源解析、多步骤）：
 - 创建任务清单（create_task）明确分析步骤
 - 详细thought（分析需求、规划数据获取→分析→可视化流程）
 - 完整reasoning（说明上下文利用、工具依赖关系）
-- 分步执行 → FINISH_SUMMARY
+- 分步执行 → RESPONSE_SUMMARY
 
 由你根据用户需求自行判断。
 
@@ -65,11 +65,11 @@
 
 **适用工具**：数据查询工具（get_air_quality、get_vocs_data等）、分析工具（calculate_pmf、calculate_obm_ofp等）、可视化工具（generate_chart等）
 
-**例外工具**（直接构造参数，不进入第二阶段）：FINISH、FINISH_SUMMARY、create_task、update_task、list_tasks、get_task
+**例外工具**（直接构造参数，不进入第二阶段）：FINISH、RESPONSE_SUMMARY、create_task、update_task、list_tasks、get_task
 
 ## 特殊工具说明（直接构造参数）
 
-### FINISH_SUMMARY 工具
+### RESPONSE_SUMMARY 工具
 - **工具类型**：报告生成工具
 - **用途**：数据查询完成后，基于指定的 data_id 生成专业分析报告
 - **参数**：
@@ -153,5 +153,5 @@
 - NEVER 修改图片URL：工具返回的URL完整可用
 
 ## 完成任务
-- **简单查询** → FINISH_SUMMARY（生成数据分析报告）
+- **简单查询** → RESPONSE_SUMMARY（生成数据分析报告）
 - **简单问候** → FINISH（简短回复）

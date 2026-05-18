@@ -14,7 +14,7 @@
       class="mode-button"
       :class="{ active: store.currentMode === 'expert', running: isModeRunning('expert') }"
       @click="selectMode('expert')"
-      title="专家模式 - 环境数据分析：空气质量、污染溯源、数据可视化"
+      title="专家模式 - 环境数据分析：空气质量、数据可视化"
     >
       <span v-if="isModeRunning('expert')" class="running-indicator">●</span>
       🔬 专家
@@ -46,16 +46,6 @@
       <span v-if="isModeRunning('chart')" class="running-indicator">●</span>
       📊 图表
     </button>
-    <button
-      class="mode-button"
-      :class="{ active: store.currentMode === 'tracing', running: isModeRunning('tracing') }"
-      @click="selectMode('tracing')"
-      title="溯源模式 - 多专家并行快速溯源：气象+组分+可视化+报告（旧架构稳定版）"
-    >
-      <span v-if="isModeRunning('tracing')" class="running-indicator">●</span>
-      🔍 溯源
-    </button>
-
     <!-- 后台运行提示 -->
     <div v-if="backgroundRunningModes.length > 0" class="background-hint">
       后台运行: {{ backgroundRunningModes.map(m => getModeLabel(m)).join('、') }}
@@ -71,7 +61,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'expert', 'query', 'report', 'chart', 'tracing'].includes(value)
+    validator: (value) => ['assistant', 'expert', 'query', 'report', 'chart'].includes(value)
   }
 })
 
@@ -96,8 +86,7 @@ const getModeLabel = (mode) => {
     'expert': '专家',
     'query': '问数',
     'report': '报告',
-    'chart': '图表',
-    'tracing': '溯源'
+    'chart': '图表'
   }
   return labelMap[mode] || mode
 }

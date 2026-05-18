@@ -91,11 +91,13 @@ export function useSessionManagement(store) {
     const knowledgeBaseIds = typeof payload === 'object' ? payload.knowledgeBaseIds || [] : []
     const agentMode = typeof payload === 'object' ? payload.agentMode || store.agentMode : store.agentMode
     const attachments = typeof payload === 'object' ? payload.attachments || null : null
+    const modelTier = typeof payload === 'object' ? payload.modelTier || 'auto' : 'auto'
 
     // 构建分析选项
     const options = {
       knowledgeBaseIds,
       agentMode,  // ✅ 传递agentMode参数
+      modelTier,
       attachments  // ✅ 传递附件信息
     }
 

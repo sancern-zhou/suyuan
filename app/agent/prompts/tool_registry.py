@@ -92,7 +92,7 @@ EXPERT_TOOLS = {
     "load_data_from_memory": "从存储加载完整数据（需要先有data_id，格式如vocs_unified:xxx或pmf_result:xxx）",
 
     # 完成工具
-    "FINISH_SUMMARY": "生成数据分析报告（数据查询完成后使用）",
+    "RESPONSE_SUMMARY": "生成数据分析报告（数据查询完成后使用）",
 }
 
 # ===== 会商专用模式工具（仅专家会商内部使用） =====
@@ -168,7 +168,7 @@ EXPERT_TOOL_ORDER = [
     "call_sub_agent",
 
     # 完成
-    "FINISH_SUMMARY"
+    "RESPONSE_SUMMARY"
 ]
 
 DELIBERATION_METEOROLOGY_TOOL_ORDER = [

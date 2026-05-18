@@ -40,6 +40,19 @@ class ReActAgent:
     - ❌ 无硬编码规则
     """
 
+    REPORT_FINAL_REVIEW_PROMPT = (
+        "请再进行一次复核：如果上一轮是报告生成任务，请确认报告内容与数据、用户要求一致；"
+        "如果上一轮是报告审核任务，请确认审核结论与报告内容、数据证据一致。特别检查边界情况，"
+        "例如排名并列、Top N截取规则、时间范围、统计口径、新旧标准、同比环比方向、"
+        "缺失值处理、单位和表文一致性等。新标准需要使用报告视图的 "
+        "pM2_5_Decimal、pM2_5_Decimal_Compare、o3_8h / O3_8h、AQI达标率字段。"
+        "如发现问题，请指出需要修正的地方；"
+        "如无明显问题，请简要说明复核通过。"
+        "这是自动复核轮，回复中不要输出 `<!-- report_final_complete -->` 标记，不要再次触发自动复核。"
+    )
+
+    REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
+
     def __init__(
         self,
         max_iterations: int = 60,  # ✅ 默认60次（适应复杂分析任务）
@@ -141,6 +154,7 @@ class ReActAgent:
         social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -378,37 +392,25 @@ class ReActAgent:
                 initial_messages=initial_messages,
                 manual_mode=manual_mode
             ):
-                # 捕获office_document事件并保存到会话存储（用于历史对话PDF预览恢复）
-                if event.get("type") == "office_document" and event.get("data"):
-                    office_doc_data = event["data"]
-                    # 确保session_store中有office_documents列表
-                    if actual_session_id not in self._session_store:
-                        self._session_store[actual_session_id] = {}
-                    if "office_documents" not in self._session_store[actual_session_id]:
-                        self._session_store[actual_session_id]["office_documents"] = []
+                self._capture_office_document(actual_session_id, event)
 
-                    # 提取关键字段并保存
-                    doc_entry = {
-                        "pdf_preview": office_doc_data.get("pdf_preview"),
-                        # "markdown_preview": office_doc_data.get("markdown_preview"),  # 暂时注释：历史会话恢复功能待实现
-                        "file_path": office_doc_data.get("file_path"),
-                        "generator": office_doc_data.get("generator"),
-                        "summary": office_doc_data.get("summary"),
-                        "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat())
-                    }
-
-                    # 检查是否已存在（避免重复）
-                    file_path = doc_entry["file_path"]
-                    existing = self._session_store[actual_session_id]["office_documents"]
-                    if not any(d.get("file_path") == file_path for d in existing):
-                        existing.append(doc_entry)
-                        logger.info(
-                            "office_document_saved_to_session",
-                            session_id=actual_session_id,
-                            file_path=file_path,
-                            generator=doc_entry["generator"],
-                            total_documents=len(existing)
-                        )
+                if self._should_run_report_auto_followup(
+                    manual_mode,
+                    event,
+                    user_query,
+                    skip_auto_followup=skip_auto_followup,
+                ):
+                    logger.info(
+                        "report_auto_followup_pending",
+                        session_id=actual_session_id,
+                        prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
+                    )
+                    event_data = event.setdefault("data", {})
+                    event_data["auto_followup_pending"] = True
+                    event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
+                    event_data["auto_followup_hook_name"] = "report_final_review"
+                    yield event
+                    return
 
                 yield event
 
@@ -554,6 +556,69 @@ class ReActAgent:
                     logger.warning("failed_to_clear_social_memory_context", error=str(e))
 
             await self._mark_session_used(actual_session_id)
+
+    def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
+        """Persist office document preview metadata emitted during a run."""
+        if event.get("type") != "office_document" or not event.get("data"):
+            return
+
+        office_doc_data = event["data"]
+        if session_id not in self._session_store:
+            self._session_store[session_id] = {}
+        if "office_documents" not in self._session_store[session_id]:
+            self._session_store[session_id]["office_documents"] = []
+
+        doc_entry = {
+            "pdf_preview": office_doc_data.get("pdf_preview"),
+            # "markdown_preview": office_doc_data.get("markdown_preview"),  # 暂时注释：历史会话恢复功能待实现
+            "file_path": office_doc_data.get("file_path"),
+            "generator": office_doc_data.get("generator"),
+            "summary": office_doc_data.get("summary"),
+            "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
+        }
+
+        file_path = doc_entry["file_path"]
+        existing = self._session_store[session_id]["office_documents"]
+        if not any(d.get("file_path") == file_path for d in existing):
+            existing.append(doc_entry)
+            logger.info(
+                "office_document_saved_to_session",
+                session_id=session_id,
+                file_path=file_path,
+                generator=doc_entry["generator"],
+                total_documents=len(existing),
+            )
+
+    def _should_run_report_auto_followup(
+        self,
+        manual_mode: Optional[str],
+        event: Dict[str, Any],
+        user_query: str = "",
+        skip_auto_followup: bool = False,
+    ) -> bool:
+        """Trigger the report-mode auto follow-up only when the final marker is present."""
+        if manual_mode != "report" or event.get("type") != "complete":
+            return False
+        if skip_auto_followup:
+            logger.info("report_auto_followup_skipped_by_request_flag")
+            return False
+        if str(user_query or "").strip() == self.REPORT_FINAL_REVIEW_PROMPT:
+            logger.info("report_auto_followup_skipped_auto_review_round")
+            return False
+
+        data = event.get("data") or {}
+        answer = str(data.get("answer") or data.get("response") or "").strip()
+        if self.REPORT_FINAL_REVIEW_PROMPT in answer:
+            logger.info("report_auto_followup_skipped_self_reference")
+            return False
+
+        should_trigger = self.REPORT_FINAL_COMPLETE_MARKER in answer
+        logger.info(
+            "report_auto_followup_marker_checked",
+            marker=self.REPORT_FINAL_COMPLETE_MARKER,
+            found=should_trigger,
+        )
+        return should_trigger
 
     def register_tool(self, name: str, func):
         """

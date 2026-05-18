@@ -149,8 +149,8 @@ class ReActPlanner:
                 action = action_input
             elif action_name in {"finish", "response"}:
                 action = {
-                    "type": "FINISH_SUMMARY",
-                    "tool": "FINISH_SUMMARY",
+                    "type": "RESPONSE_SUMMARY",
+                    "tool": "RESPONSE_SUMMARY",
                     "args": {"answer": action_input.get("answer", "")} if isinstance(action_input, dict) else {"answer": str(action_input)}
                 }
             else:
@@ -174,7 +174,7 @@ class ReActPlanner:
         # 只有 TOOL_CALL 类型且参数为空时才进入第二阶段
         # 排除特殊工具（提示词中已包含完整参数说明，不需要二次加载）
         special_tools = {
-            "FINISH_SUMMARY",  # 完成工具
+            "RESPONSE_SUMMARY",  # 完成工具
             "create_task", "update_task", "list_tasks", "get_task",  # 任务管理工具
         }
         needs_second_stage = (
@@ -207,8 +207,8 @@ class ReActPlanner:
                     "thought": thought,
                     "reasoning": reasoning,
                     "action": {
-                        "type": "FINISH_SUMMARY",
-                        "tool": "FINISH_SUMMARY",
+                        "type": "RESPONSE_SUMMARY",
+                        "tool": "RESPONSE_SUMMARY",
                         "args": {"answer": f"无法为工具 {tool_name} 构造参数。"}
                     }
                 }
@@ -282,10 +282,10 @@ class ReActPlanner:
                         if parsed.get("success") and parsed.get("data"):
                             data = parsed["data"]
 
-                            # 检查是否是 FINAL_ANSWER
+                            # 检查是否是 PLAIN_TEXT_REPLY
                             if "action" in data and isinstance(data["action"], dict):
                                 action = data["action"]
-                                if action.get("type") == "FINAL_ANSWER":
+                                if action.get("type") == "PLAIN_TEXT_REPLY":
                                     # 确认是最终回答，开始流式输出 answer 字段
                                     is_response_action = True
                                     # 提取 answer 字段（可能是部分构建的）
@@ -343,13 +343,13 @@ class ReActPlanner:
                         "thought": "解析错误",
                         "reasoning": "JSON解析失败",
                         "action": {
-                            "type": "FINAL_ANSWER",
+                            "type": "PLAIN_TEXT_REPLY",
                             "answer": response_buffer
                         }
                     }
                 }
         else:
-            # 非 FINAL_ANSWER，完整解析 JSON
+            # 非 PLAIN_TEXT_REPLY，完整解析 JSON
             parsed_result = parser.parse(buffer)
 
             if not parsed_result.get("success") or not parsed_result.get("data"):
@@ -389,7 +389,7 @@ class ReActPlanner:
                         action = action_input
                     elif action_name in {"finish", "response"}:
                         action = {
-                            "type": "FINAL_ANSWER",
+                            "type": "PLAIN_TEXT_REPLY",
                             "answer": action_input.get("answer", "") if isinstance(action_input, dict) else str(action_input)
                         }
                     else:
@@ -668,7 +668,7 @@ class ReActPlanner:
         # === 第二阶段: 参数构造 (如果需要) ===
         # 排除特殊工具（提示词中已包含完整参数说明，不需要二次加载）
         special_tools = {
-            "FINISH_SUMMARY",  # 完成工具
+            "RESPONSE_SUMMARY",  # 完成工具
             "create_task", "update_task", "list_tasks", "get_task",  # 任务管理工具
         }
         if (action_input is None or action_input == {} or action_input == "null") and action not in special_tools:
@@ -707,7 +707,7 @@ class ReActPlanner:
         """
         流式生成用户答案（异步生成器）
 
-        用于 FINISH_SUMMARY 阶段，生成最终的分析报告。
+        用于 RESPONSE_SUMMARY 阶段，生成最终的分析报告。
 
         Args:
             prompt: 生成答案的提示词

@@ -557,17 +557,6 @@ const welcomeContent = computed(() => {
       ],
       example: '请输入您的问题，例如："分析北京今天的气象条件"'
     },
-    'quick-tracing-expert': {
-      title: '快速溯源场景',
-      description: '整合气象、组分、可视化多维度数据，快速识别污染来源和传输路径：',
-      features: [
-        '多专家协同分析污染来源',
-        '快速响应污染事件溯源',
-        '识别主要污染传输路径',
-        '综合评估污染影响范围'
-      ],
-      example: '请输入您的问题，例如："分析广州天河区昨天O3超标的污染来源"'
-    },
     'data-visualization-expert': {
       title: '数据可视化场景',
       description: '根据数据特征智能推荐图表类型，支持灵活调整图表样式和布局：',
@@ -592,10 +581,9 @@ const welcomeContent = computed(() => {
     },
     'general-agent': {
       title: '大气环境智能分析与决策支持平台',
-      description: '专业的污染溯源分析助手，可以通过以下方式为您服务：',
+      description: '专业的环境数据分析助手，可以通过以下方式为您服务：',
       features: [
         '分析特定时间段的空气质量',
-        '查询污染源和扩散路径',
         '获取气象数据关联分析',
         '生成可视化图表和报告'
       ],
@@ -1642,7 +1630,7 @@ const getReportContent = async (expertData) => {
     }
   } else if (result.summary || result.title) {
     // 如果只有summary或title，构建简单的markdown内容
-    const markdownContent = `# ${result.title || '污染溯源分析报告'}\n\n${result.summary || ''}`
+    const markdownContent = `# ${result.title || '环境数据分析报告'}\n\n${result.summary || ''}`
     console.log('构建的Markdown内容:', markdownContent)
     const result2 = { markdown_content: markdownContent }
     reportContentCache.value.set(cacheKey, result2)

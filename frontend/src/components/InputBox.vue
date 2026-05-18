@@ -63,6 +63,17 @@
         />
 
         <div class="action-group">
+          <select
+            v-model="modelTier"
+            class="model-tier-select"
+            :disabled="disabled || isAnalyzing"
+            title="选择本次对话使用的模型"
+          >
+            <option value="auto">自动</option>
+            <option value="flash">Flash</option>
+            <option value="pro">Pro</option>
+          </select>
+
           <button
             class="kb-toggle-button"
             :class="{ 'kb-active': showKnowledgeBaseSelector }"
@@ -170,8 +181,12 @@ const showWorkflowTools = ref(false)
 const atSymbolIndex = ref(-1)  // 记录@符号的位置
 const highlightedTool = ref(null)  // 高亮的工具
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
+const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart']
 // ✅ 使用统一的模式键名，与 store.currentMode 保持一致
-const agentMode = ref(localStorage.getItem('current-mode') || 'assistant')
+const cachedMode = localStorage.getItem('current-mode') || 'assistant'
+const agentMode = ref(validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
+const cachedModelTier = localStorage.getItem('llm-model-tier') || 'auto'
+const modelTier = ref(['auto', 'flash', 'pro'].includes(cachedModelTier) ? cachedModelTier : 'auto')
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
@@ -185,9 +200,7 @@ const actionButtonDisabled = computed(() => {
 
 // 工作流工具列表
 const workflowTools = [
-  { id: 'quick_tracing_workflow', name: '快速溯源' },
   { id: 'standard_analysis_workflow', name: '标准分析' },
-  { id: 'deep_trace_workflow', name: '深度溯源' },
   { id: 'knowledge_qa_workflow', name: '知识问答' }
 ]
 
@@ -291,6 +304,10 @@ watch(localValue, async (newValue) => {
   autoResize()
 })
 
+watch(modelTier, (newTier) => {
+  localStorage.setItem('llm-model-tier', newTier)
+})
+
 const handleKeydown = (e) => {
   // 如果工作流工具列表显示，处理键盘导航
   if (showWorkflowTools.value) {
@@ -378,6 +395,7 @@ const handleSend = () => {
     query: localValue.value,
     knowledgeBaseIds: knowledgeBaseIds,
     agentMode: agentMode.value,
+    modelTier: modelTier.value,
     attachments: attachmentsData
   })
 
@@ -681,6 +699,23 @@ defineExpose({
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
+}
+
+.model-tier-select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  color: #35425f;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+
+  &:disabled {
+    color: #9aa5b8;
+    background: #f5f7fb;
+    cursor: not-allowed;
+  }
 }
 
 .upload-label {

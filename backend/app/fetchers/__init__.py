@@ -7,6 +7,7 @@ Data Fetching Backend
 from app.fetchers.base.scheduler import FetcherScheduler
 from app.fetchers.consultation import ConsultationFileFetcher
 from app.fetchers.consultation.monthly import MonthlyConsultationFileFetcher
+from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher
 
@@ -22,6 +23,7 @@ def create_scheduler() -> FetcherScheduler:
     # 注册所有Fetchers
     scheduler.register(ConsultationFileFetcher())  # 会商文件批量更新（当月累积）
     scheduler.register(MonthlyConsultationFileFetcher())  # 月度完整会商文件（上个月完整版，手动触发）
+    scheduler.register(AnnualYtdConsultationFileFetcher())  # 年度累计会商文件（每月4号生成截至上个月月末）
     scheduler.register(AirQualityDataQualityFetcher())  # 空气质量数据质量巡检
     scheduler.register(CityPollutionEventFetcher())  # 城市污染过程告警
 
