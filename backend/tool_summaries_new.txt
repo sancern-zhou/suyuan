@@ -68,7 +68,7 @@
     └─ 前置: 需要 data_id（来自分析工具或数据查询工具的返回结果，如PMF的data_id或VOCs的data_id）
 
 **特殊工具** (Special Tools):
-  • FINISH_SUMMARY: 生成数据分析报告（数据查询完成后使用，参数：data_id="数据ID" 或 data_id=["id1", "id2"]）
+  • RESPONSE_SUMMARY: 生成数据分析报告（数据查询完成后使用，参数：data_id="数据ID" 或 data_id=["id1", "id2"]）
   • FINISH: 简单完成（问候、确认类回复，参数：answer="回复内容"）
   • get_observed_weather: 获取实时天气观测数据
   • load_data_from_memory: 从存储加载完整数据（参数：data_id）

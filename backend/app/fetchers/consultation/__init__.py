@@ -49,13 +49,13 @@ GUANGDONG_CITIES = [
 ]
 
 CITY_STANDARD_FIELD_ALIASES = {
-    "PM2.5": ["PM2_5", "pm2_5", "PM25", "pm25"],
-    "PM10": ["PM10", "pm10"],
-    "NO2": ["NO2", "no2"],
-    "O3": ["O3_8h", "O3_8H", "o3_8h", "O3", "o3"],
-    "AQI": ["FineRate", "fineRate", "fine_rate", "compliance_rate", "AQIStandardRate", "aqiStandardRate"],
-    "SO2": ["SO2", "so2"],
-    "CO": ["CO_P95", "co_P95", "CO", "co"],
+    "PM2.5": ["pM2_5_Decimal"],
+    "PM10": ["pM10_Decimal"],
+    "NO2": ["nO2"],
+    "O3": ["o3_8h"],
+    "AQI": ["fineRate"],
+    "SO2": ["sO2"],
+    "CO": ["co"],
 }
 
 
@@ -388,7 +388,8 @@ EXTRA_SHEET_CONFIG = {
         }
     },
     "历年当月浓度": {
-        "data_rows": (2, 3),  # 去年、当年（2行数据）
+        "start_year": 2014,
+        "start_row": 2,
         "columns": [
             {"pollutant": "AQI", "col": "B", "field": "compliance_rate"},
             {"pollutant": "PM2.5", "col": "C", "field": "PM2_5"},
@@ -424,7 +425,7 @@ class ConsultationFileFetcher(DataFetcher):
         )
 
         # 会商文件根目录
-        self.consultation_root = Path("/tmp/会商文件")
+        self.consultation_root = Path("/tmp/A会商文件")
         self.consultation_root.mkdir(parents=True, exist_ok=True)
 
         # 模板目录
@@ -460,39 +461,45 @@ class ConsultationFileFetcher(DataFetcher):
         suffix: str = ""
     ) -> float:
         """
-        兼容城市统计报表字段名变化。
+        读取城市统计报表的唯一目标字段。
 
         pollutant_or_field 可传污染物名（PM2.5/AQI）或旧字段名（PM2_5/compliance_rate）。
         suffix 用于同比接口字段，例如 _Compare。
+
+        字段口径：
+        - PM2.5/PM10：阶段均值字段 pM2_5_Decimal / pM10_Decimal
+        - AQI达标率：fineRate
+        - SO2/NO2/O3/CO：修约均值字段 sO2 / nO2 / o3_8h / co
         """
         aliases = CITY_STANDARD_FIELD_ALIASES.get(pollutant_or_field)
         if aliases is None:
             reverse_alias = {
                 "PM2_5": "PM2.5",
+                "pM2_5_Decimal": "PM2.5",
+                "pM10_Decimal": "PM10",
                 "O3_8h": "O3",
+                "o3_8h_Decimal": "O3",
                 "compliance_rate": "AQI",
                 "AQIStandardRate": "AQI",
                 "CO_P95": "CO",
+                "cO_Decimal": "CO",
+                "cO": "CO",
             }
             aliases = CITY_STANDARD_FIELD_ALIASES.get(reverse_alias.get(pollutant_or_field, ""), [pollutant_or_field])
 
-        for alias in aliases:
-            key = f"{alias}{suffix}" if suffix else alias
-            if key in record:
-                return self._to_float(record.get(key))
-
-        # 部分接口大小写不稳定，最后做一次大小写无关匹配。
-        lower_record = {str(key).lower(): value for key, value in record.items()}
-        for alias in aliases:
-            key = f"{alias}{suffix}" if suffix else alias
-            lower_key = key.lower()
-            if lower_key in lower_record:
-                return self._to_float(lower_record[lower_key])
+        key = f"{aliases[0]}{suffix}" if suffix else aliases[0]
+        if key in record:
+            value = record.get(key)
+            if value is not None and value != "":
+                if "_Decimal" in key:
+                    logger.debug("city_standard_field_found_decimal", field=key, pollutant=pollutant_or_field)
+                return self._to_float(value)
 
         logger.warning(
             "city_standard_field_missing",
             pollutant_or_field=pollutant_or_field,
             suffix=suffix,
+            expected_field=key,
             available_keys=list(record.keys())[:20],
         )
         return 0.0
@@ -505,6 +512,49 @@ class ConsultationFileFetcher(DataFetcher):
                 result[city] = record
         return result
 
+    @staticmethod
+    def _extract_report_records(
+        query_result: Dict[str, Any],
+        *,
+        preferred_view: str = "raw",
+        result_name: str = "query_city_standard_report",
+    ) -> List[Dict[str, Any]]:
+        """Return original API records from report tools.
+
+        City standard report tools now expose reporting-view rows in data and
+        store original API fields in report_data_id views. Consultation Excel
+        filling still needs original fields such as cityName/pM2_5_Decimal.
+        """
+        records = query_result.get("result")
+        if isinstance(records, list):
+            return [record for record in records if isinstance(record, dict)]
+
+        report_data_id = query_result.get("report_data_id") or (query_result.get("metadata") or {}).get("report_data_id")
+        if report_data_id:
+            try:
+                from app.services.data_registry import data_registry
+
+                package = data_registry.load_dataset(report_data_id)
+                views = package.get("views") if isinstance(package, dict) else None
+                if isinstance(views, dict):
+                    for view_name in (preferred_view, "result", "raw"):
+                        view_records = views.get(view_name)
+                        if isinstance(view_records, list):
+                            return [record for record in view_records if isinstance(record, dict)]
+            except Exception as exc:
+                logger.warning(
+                    "consultation_report_view_load_failed",
+                    report_data_id=report_data_id,
+                    preferred_view=preferred_view,
+                    error=str(exc),
+                )
+
+        records = query_result.get("data") or []
+        if isinstance(records, list):
+            return [record for record in records if isinstance(record, dict)]
+
+        raise ValueError(f"{result_name} result is not a list")
+
     async def _query_city_standard_records(
         self,
         start_date: str,
@@ -512,6 +562,7 @@ class ConsultationFileFetcher(DataFetcher):
         *,
         cities: List[str] = None,
         pollutant_codes: List[str] = None,
+        ns_type: int = 2,
     ) -> List[Dict[str, Any]]:
         """调用统一的城市统计报表工具。"""
         from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_report
@@ -520,7 +571,7 @@ class ConsultationFileFetcher(DataFetcher):
             cities=cities or GUANGDONG_CITIES,
             start_time=start_date,
             end_time=end_date,
-            ns_type=2,
+            ns_type=ns_type,
             time_type=8,
             pollutant_codes=pollutant_codes,
             data_source=1,
@@ -529,10 +580,11 @@ class ConsultationFileFetcher(DataFetcher):
         )
         if not query_result or not query_result.get("success"):
             raise ValueError((query_result or {}).get("summary") or "query_city_standard_report returned empty result")
-        records = query_result.get("result") or []
-        if not isinstance(records, list):
-            raise ValueError("query_city_standard_report result is not a list")
-        return [record for record in records if isinstance(record, dict)]
+        return self._extract_report_records(
+            query_result,
+            preferred_view="raw",
+            result_name="query_city_standard_report",
+        )
 
     async def _query_city_standard_yoy_records(
         self,
@@ -543,27 +595,92 @@ class ConsultationFileFetcher(DataFetcher):
         *,
         cities: List[str] = None,
         pollutant_codes: List[str] = None,
+        ns_type: int = 2,
     ) -> List[Dict[str, Any]]:
-        """调用统一的城市同比统计报表工具。"""
-        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_yoy_report
+        """
+        获取城市标准同比数据（使用常规报表API以获取_Decimal字段）。
 
-        query_result = await execute_query_city_standard_yoy_report(
+        通过两次调用常规报表API（当年期+去年期），然后合并数据以获得完整的同比数据。
+        常规报表API返回_Decimal字段（阶段均值），而同比报表API不返回此字段。
+        """
+        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_report
+
+        # 查询当年期数据
+        current_result = await execute_query_city_standard_report(
             cities=cities or GUANGDONG_CITIES,
-            time_point=[current_start, current_end],
-            contrast_time=[last_year_start, last_year_end],
-            ns_type=2,
+            start_time=current_start,
+            end_time=current_end,
+            ns_type=ns_type,
             time_type=8,
             pollutant_codes=pollutant_codes,
             data_source=1,
             sand_type=1,
             context=None,
         )
-        if not query_result or not query_result.get("success"):
-            raise ValueError((query_result or {}).get("summary") or "query_city_standard_yoy_report returned empty result")
-        records = query_result.get("result") or []
-        if not isinstance(records, list):
-            raise ValueError("query_city_standard_yoy_report result is not a list")
-        return [record for record in records if isinstance(record, dict)]
+
+        if not current_result or not current_result.get("success"):
+            raise ValueError((current_result or {}).get("summary") or "current_period query returned empty result")
+
+        current_records = self._extract_report_records(
+            current_result,
+            preferred_view="raw",
+            result_name="current_period",
+        )
+
+        # 查询去年同期数据
+        last_year_result = await execute_query_city_standard_report(
+            cities=cities or GUANGDONG_CITIES,
+            start_time=last_year_start,
+            end_time=last_year_end,
+            ns_type=ns_type,
+            time_type=8,
+            pollutant_codes=pollutant_codes,
+            data_source=1,
+            sand_type=1,
+            context=None,
+        )
+
+        if not last_year_result or not last_year_result.get("success"):
+            raise ValueError((last_year_result or {}).get("summary") or "last_year_period query returned empty result")
+
+        last_year_records = self._extract_report_records(
+            last_year_result,
+            preferred_view="raw",
+            result_name="last_year_period",
+        )
+
+        # 合并两个时期的数据：将去年同期数据添加_Compare后缀
+        merged_records = []
+        for current_record in current_records:
+            if not isinstance(current_record, dict):
+                continue
+
+            city_name = current_record.get("cityName")
+            if not city_name:
+                continue
+
+            # 查找对应的去年同期记录
+            last_year_record = None
+            for record in last_year_records:
+                if record.get("cityName") == city_name:
+                    last_year_record = record
+                    break
+
+            if not last_year_record:
+                continue
+
+            # 合并记录：复制当年记录，并添加去年数据的_Compare字段
+            merged_record = dict(current_record)
+
+            # 添加去年同期数据的_Compare字段
+            for key, value in last_year_record.items():
+                if key not in ["cityName", "timePoint", "StationCode"]:
+                    # 添加_Compare后缀的去年同期数据
+                    merged_record[f"{key}_Compare"] = value
+
+            merged_records.append(merged_record)
+
+        return merged_records
 
     def _aggregate_city_standard_values(
         self,
@@ -592,12 +709,95 @@ class ConsultationFileFetcher(DataFetcher):
             for pollutant in ("PM2.5", "PM10", "NO2", "O3", "AQI")
         }
 
-    async def fetch_and_store(self):
+    @staticmethod
+    def _competition_rankings(sorted_pairs: List[Tuple[str, float]]) -> Dict[str, int]:
+        """按已排序列表计算并列排名：1, 2, 2, 4。"""
+        rankings: Dict[str, int] = {}
+        previous_value = None
+        previous_rank = 0
+
+        for index, (name, value) in enumerate(sorted_pairs, start=1):
+            if previous_value is None or value != previous_value:
+                previous_rank = index
+                previous_value = value
+            rankings[name] = previous_rank
+
+        return rankings
+
+    def _period_cache_key(
+        self,
+        time_range: Dict[str, str],
+        last_year_start: str,
+        last_year_end: str,
+    ) -> Tuple[str, str, str, str]:
+        return (
+            time_range["start_date"],
+            time_range["end_date"],
+            last_year_start,
+            last_year_end,
+        )
+
+    async def _replace_guangdong_in_national_cache(
+        self,
+        current_data: Dict[str, Any],
+        last_year_data: Dict[str, Any],
+        time_range: Dict[str, str],
+        last_year_start: str,
+        last_year_end: str,
+    ) -> None:
+        """用广东审核后的全省数据替换全国数据中的广东。"""
+        if "广东" not in current_data.get("area_names", []):
+            return
+
+        try:
+            logger.info("guangdong_data_replace_start_national")
+            guangdong_data = await self._get_guangdong_province_data(
+                pollutant="PM2.5",
+                current_start=time_range["start_date"],
+                current_end=time_range["end_date"],
+                last_year_start=last_year_start,
+                last_year_end=last_year_end,
+                return_all_data=True,
+            )
+
+            if not guangdong_data:
+                logger.warning("guangdong_national_data_empty")
+                return
+
+            area_names = current_data.get("area_names", [])
+            guangdong_index = area_names.index("广东")
+            all_current = current_data.get("all_data", {})
+            all_last_year = last_year_data.get("all_data", {})
+
+            if "广东" not in all_current or "广东" not in all_last_year:
+                logger.warning("guangdong_not_in_national_data")
+                return
+
+            logger.info(
+                "guangdong_national_data_replacing",
+                index=guangdong_index,
+                old_current=all_current["广东"],
+                new_current=guangdong_data["current"],
+            )
+
+            all_current["广东"] = guangdong_data["current"]
+            all_last_year["广东"] = guangdong_data["last_year"]
+        except Exception as e:
+            logger.error("guangdong_national_replace_failed", error=str(e), exc_info=True)
+
+    async def fetch_and_store(self, full_month: bool = False):
         """
         获取并存储会商数据
 
+        Args:
+            full_month: 是否查询完整月份数据（1号-月末），False表示截至昨天
+
+        智能模式：
+        - 如果今天是4号，自动生成上个月完整月报（full_month=True）
+        - 其他日期使用实时更新模式（full_month=False）
+
         流程：
-        1. 计算时间范围（本月1号 → 昨天）
+        1. 计算时间范围（本月1号 → 昨天 或 完整月份）
         2. 创建当月子目录
         3. 复制模板到输出目录
         4. 查询全国/全省空气质量数据
@@ -605,10 +805,22 @@ class ConsultationFileFetcher(DataFetcher):
         6. 保存文件
         """
         try:
-            logger.info("consultation_file_fetch_start")
+            # 智能判断：如果今天是4号，自动生成上个月完整月报
+            today = datetime.now()
+            auto_full_month = (today.day == 4)
+
+            if auto_full_month and not full_month:
+                logger.info(
+                    "consultation_auto_full_month",
+                    message="今天是4号，自动生成上个月完整月报",
+                    date=today.strftime("%Y-%m-%d")
+                )
+                full_month = True
+
+            logger.info("consultation_file_fetch_start", full_month=full_month)
 
             # 计算时间范围
-            time_range = self._calculate_month_to_yesterday()
+            time_range = self._calculate_month_to_yesterday(full_month=full_month)
             logger.info(
                 "consultation_file_time_range",
                 start_date=time_range["start_date"],
@@ -635,12 +847,13 @@ class ConsultationFileFetcher(DataFetcher):
             # 打开工作簿并填充数据
             import openpyxl
             wb = openpyxl.load_workbook(str(output_path))
+            self._consultation_period_cache = {}
 
             # 填充10个污染物sheet
-            await self._fill_pollutant_sheets(wb, time_range)
+            await self._fill_pollutant_sheets(wb, time_range, full_month=full_month)
 
             # 填充额外sheet
-            await self._fill_extra_sheets(wb, time_range)
+            await self._fill_extra_sheets(wb, time_range, full_month=full_month)
 
             # 保存
             wb.save(str(output_path))
@@ -693,55 +906,101 @@ class ConsultationFileFetcher(DataFetcher):
         today_str = datetime.now().strftime("%Y%m%d")
         return month_dir / f"月度会商模板（{year}年{month}月）{today_str}.xlsx"
 
-    def _calculate_month_to_yesterday(self) -> Dict[str, str]:
+    def _calculate_month_to_yesterday(self, full_month: bool = False) -> Dict[str, str]:
         """
-        计算本月1号到昨天的时间范围
+        计算时间范围
+
+        Args:
+            full_month: 是否查询完整月份数据（1号-月末），False表示截至昨天
 
         Returns:
+            如果 full_month=False（实时更新模式）:
             {
-                "start_date": "2026-01-01",
-                "end_date": "2026-01-15",
-                "period_description": "2026年1月份累计（截至1月15日）",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-15",  # 昨天
+                "period_description": "2026年5月份累计（截至5月15日）",
                 "year": "2026",
-                "month": "1",
+                "month": "05",
                 "last_year": "2025"
             }
+
+            如果 full_month=True（完整月份模式）:
+            - 今天是4号：查询上个月完整数据
+              {
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-30",
+                "period_description": "2026年4月份",
+                "year": "2026",
+                "month": "04",
+                "last_year": "2025"
+              }
+            - 其他日期：查询本月完整数据
+              {
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-31",
+                "period_description": "2026年5月份",
+                "year": "2026",
+                "month": "05",
+                "last_year": "2025"
+              }
         """
         today = datetime.now()
-        yesterday = today - timedelta(days=1)
 
-        # 本月1号
-        first_day_of_month = today.replace(day=1)
+        if full_month:
+            # 完整月份模式
+            year = today.year
+            month = today.month
 
-        # 昨天（如果今天是1号，则昨天是上个月最后一天）
-        if today.day == 1:
-            last_month = today.replace(day=1) - timedelta(days=1)
-            first_day_of_month = last_month.replace(day=1)
-            yesterday = last_month
-            year = str(last_month.year)
-            month = str(last_month.month)
+            # 如果今天是4号，查询上个月完整数据（确保数据审核完成）
+            if today.day == 4:
+                last_month = today.replace(day=1) - timedelta(days=1)
+                year = last_month.year
+                month = last_month.month
+
+            # 获取该月最后一天
+            from calendar import monthrange
+            last_day = monthrange(year, month)[1]
+
+            first_day_of_month = datetime(year, month, 1)
+            last_day_of_month = datetime(year, month, last_day)
+
+            start_date = first_day_of_month.strftime("%Y-%m-%d")
+            end_date = last_day_of_month.strftime("%Y-%m-%d")
+            period_description = f"{year}年{int(month):02d}月份"
         else:
-            year = str(today.year)
-            month = str(today.month)
+            # 实时更新模式：查询1号到昨天
+            yesterday = today - timedelta(days=1)
+            first_day_of_month = today.replace(day=1)
 
-        start_date = first_day_of_month.strftime("%Y-%m-%d")
-        end_date = yesterday.strftime("%Y-%m-%d")
-
-        # 生成时间段描述
-        if first_day_of_month.month == yesterday.month:
-            if yesterday.day == first_day_of_month.day:
-                period_description = f"{year}年{month}月份累计（截至{month}月1日）"
+            # 如果今天是1号，则昨天是上个月最后一天
+            if today.day == 1:
+                last_month = today.replace(day=1) - timedelta(days=1)
+                first_day_of_month = last_month.replace(day=1)
+                yesterday = last_month
+                year = str(last_month.year)
+                month = str(last_month.month)
             else:
-                period_description = f"{year}年{month}月份累计（截至{month}月{yesterday.day}日）"
-        else:
-            period_description = f"{year}年{month}月份"
+                year = str(today.year)
+                month = str(today.month)
+
+            start_date = first_day_of_month.strftime("%Y-%m-%d")
+            end_date = yesterday.strftime("%Y-%m-%d")
+
+            # 生成时间段描述
+            if first_day_of_month.month == yesterday.month:
+                if yesterday.day == first_day_of_month.day:
+                    period_description = f"{year}年{month}月份累计（截至{month}月1日）"
+                else:
+                    period_description = f"{year}年{month}月份累计（截至{month}月{yesterday.day}日）"
+            else:
+                period_description = f"{year}年{month}月份"
 
         return {
             "start_date": start_date,
             "end_date": end_date,
             "period_description": period_description,
-            "year": year,
-            "month": month,
+            "year": str(year),
+            "month": f"{int(month):02d}",
             "last_year": str(int(year) - 1),
         }
 
@@ -764,46 +1023,79 @@ class ConsultationFileFetcher(DataFetcher):
         last_day = monthrange(year, month)[1]
         return f"{year}-{month:02d}-{last_day:02d}"
 
-    def _get_last_year_same_day(self, time_range: Dict[str, str]) -> str:
-        """
-        计算去年同日的日期
+    def _get_last_year_start_date(self, time_range: Dict[str, str]) -> str:
+        """按当前查询起点计算去年同期起点。"""
+        current_start = datetime.strptime(time_range["start_date"], "%Y-%m-%d")
+        last_year = int(time_range["last_year"])
+        try:
+            last_year_start = current_start.replace(year=last_year)
+        except ValueError:
+            last_year_start = current_start.replace(year=last_year, day=28)
+        return last_year_start.strftime("%Y-%m-%d")
 
-        用于查询去年同期累积数据（截至去年同日）。
+    def _format_period_sheet_prefix(self, time_range: Dict[str, str]) -> str:
+        """生成额外 sheet 的月份前缀，例如 4月 或 1-4月。"""
+        start = datetime.strptime(time_range["start_date"], "%Y-%m-%d")
+        end = datetime.strptime(time_range["end_date"], "%Y-%m-%d")
+        if start.month == end.month:
+            return f"{end.month}月"
+        return f"{start.month}-{end.month}月"
+
+    def _get_last_year_same_day(self, time_range: Dict[str, str], full_month: bool = False) -> str:
+        """
+        计算去年对应的日期
 
         Args:
             time_range: 时间范围字典，包含 year、month 等字段
+            full_month: 是否为完整月份模式
 
         Returns:
-            去年同日的日期字符串（格式：YYYY-MM-DD）
+            日期字符串（格式：YYYY-MM-DD）
 
         Examples:
-            今天是2026-05-13 → 返回 "2025-05-12"
-            今天是2026-03-01 → 返回 "2025-02-28"（上月最后一天）
+            full_month=False (默认):
+                今天是2026-05-13 → 返回 "2025-05-12"（去年同日）
+                今天是2026-03-01 → 返回 "2025-02-28"（上月最后一天）
+
+            full_month=True:
+                查询2026年4月完整数据 → 返回 "2025-04-30"（去年同月最后一天）
         """
-        current_date = datetime.now()
+        if full_month:
+            # 完整月份模式：返回去年同月的最后一天
+            year = int(time_range["last_year"])
+            month = int(time_range["month"])
 
-        if current_date.day == 1:
-            # 如果今天是1号，则昨天是上个月最后一天
-            yesterday = current_date.replace(day=1) - timedelta(days=1)
-            last_year_date = datetime(
-                int(time_range["last_year"]),
-                yesterday.month,
-                yesterday.day
-            )
+            # 获取去年该月的最后一天
+            from calendar import monthrange
+            last_day = monthrange(year, month)[1]
+
+            return f"{year}-{month:02d}-{last_day:02d}"
         else:
-            # 正常情况：去年同月同日（昨天对应去年的日期）
-            last_year_date = datetime(
-                int(time_range["last_year"]),
-                int(time_range["month"]),
-                current_date.day - 1  # 昨天对应去年的日期
-            )
+            # 实时更新模式：返回去年同日
+            current_date = datetime.now()
 
-        # 处理闰年2月29日的情况（如果去年不是闰年，则取2月28日）
-        if last_year_date.month == 2 and last_year_date.day == 29:
-            if not self._is_leap_year(last_year_date.year):
-                last_year_date = last_year_date.replace(day=28)
+            if current_date.day == 1:
+                # 如果今天是1号，则昨天是上个月最后一天
+                yesterday = current_date.replace(day=1) - timedelta(days=1)
+                last_year_date = datetime(
+                    int(time_range["last_year"]),
+                    yesterday.month,
+                    yesterday.day
+                )
+            else:
+                # 正常情况：去年同月同日（昨天对应去年的日期）
+                last_year_date = datetime(
+                    int(time_range["last_year"]),
+                    int(time_range["month"]),
+                    current_date.day - 1  # 昨天对应去年的日期
+                )
 
-        return last_year_date.strftime("%Y-%m-%d")
+            # 处理闰年2月29日的情况（如果去年不是闰年，则取2月28日）
+            if last_year_date.month == 2 and last_year_date.day == 29:
+                if not self._is_leap_year(last_year_date.year):
+                    last_year_date = last_year_date.replace(day=28)
+
+            return last_year_date.strftime("%Y-%m-%d")
 
     def _resave_with_libreoffice(self, file_path: Path) -> bool:
         """
@@ -881,8 +1173,14 @@ class ConsultationFileFetcher(DataFetcher):
             logger.warning("libreoffice_resave_error", file=str(file_path), error=str(e))
             return False
 
-    async def _fill_pollutant_sheets(self, wb, time_range: Dict[str, str]):
-        """填充10个污染物sheet（优化：全省和全国数据都只查询一次）"""
+    async def _fill_pollutant_sheets(self, wb, time_range: Dict[str, str], full_month: bool = False):
+        """填充10个污染物sheet（优化：全省和全国数据都只查询一次）
+
+        Args:
+            wb: 工作簿对象
+            time_range: 时间范围字典
+            full_month: 是否查询完整月份数据
+        """
 
         # 第一步：识别全省和全国sheet并预查询数据（避免重复查询）
         provincial_sheets = []
@@ -916,8 +1214,8 @@ class ConsultationFileFetcher(DataFetcher):
                 provincial_cache["current"] = current_data
 
                 # 查询去年全省数据
-                last_year_start = f"{time_range['last_year']}-{time_range['month']}-01"
-                last_year_end = self._get_last_year_same_day(time_range)
+                last_year_start = self._get_last_year_start_date(time_range)
+                last_year_end = self._get_last_year_same_day(time_range, full_month=full_month)
                 _, last_year_data = await self._query_with_date_range(
                     scope="provincial",
                     pollutant="PM2.5",
@@ -949,8 +1247,8 @@ class ConsultationFileFetcher(DataFetcher):
                 national_cache["current"] = current_data
 
                 # 查询去年全国数据
-                last_year_start = f"{time_range['last_year']}-{time_range['month']}-01"
-                last_year_end = self._get_last_year_same_day(time_range)
+                last_year_start = self._get_last_year_start_date(time_range)
+                last_year_end = self._get_last_year_same_day(time_range, full_month=full_month)
                 _, last_year_data = await self._query_with_date_range(
                     scope="national",
                     pollutant="PM2.5",
@@ -959,6 +1257,20 @@ class ConsultationFileFetcher(DataFetcher):
                     return_all_data=True
                 )
                 national_cache["last_year"] = last_year_data
+
+                await self._replace_guangdong_in_national_cache(
+                    current_data,
+                    last_year_data,
+                    time_range,
+                    last_year_start,
+                    last_year_end,
+                )
+
+                self._consultation_period_cache["national"] = {
+                    "key": self._period_cache_key(time_range, last_year_start, last_year_end),
+                    "current": current_data,
+                    "last_year": last_year_data,
+                }
 
                 logger.info("national_data_cached",
                            current_provinces=len(current_data.get("area_names", [])),
@@ -1001,9 +1313,18 @@ class ConsultationFileFetcher(DataFetcher):
         wb,
         sheet_name: str,
         config: Dict[str, Any],
-        time_range: Dict[str, str]
+        time_range: Dict[str, str],
+        full_month: bool = False
     ):
-        """填充单个sheet"""
+        """填充单个sheet
+
+        Args:
+            wb: 工作簿对象
+            sheet_name: sheet名称
+            config: sheet配置
+            time_range: 时间范围字典
+            full_month: 是否查询完整月份数据
+        """
         ws = wb[sheet_name]
         scope = config["scope"]
         pollutant = config["pollutant"]
@@ -1017,9 +1338,9 @@ class ConsultationFileFetcher(DataFetcher):
             end_date=time_range["end_date"]
         )
 
-        # 查询去年数据（去年同期累积：去年同月1号 → 去年同日）
-        last_year_start = f"{time_range['last_year']}-{time_range['month']}-01"
-        last_year_end = self._get_last_year_same_day(time_range)
+        # 查询去年数据（去年同期累积：去年同月1号 → 去年同日/月末）
+        last_year_start = self._get_last_year_start_date(time_range)
+        last_year_end = self._get_last_year_same_day(time_range, full_month=full_month)
         _, last_year_data = await self._query_with_date_range(
             scope=scope,
             pollutant=pollutant,
@@ -1090,9 +1411,9 @@ class ConsultationFileFetcher(DataFetcher):
             if name_col:
                 ws[f"{name_col}{row}"] = area_names[i]
             if current_col:
-                ws[f"{current_col}{row}"] = round(current_data[i], 2)
+                ws[f"{current_col}{row}"] = current_data[i]
             if last_year_col:
-                ws[f"{last_year_col}{row}"] = round(last_year_data[i], 2)
+                ws[f"{last_year_col}{row}"] = last_year_data[i]
 
         # 构建名称到数据的映射（用于排序副本的额外列填充）
         name_to_current = dict(zip(area_names, current_data))
@@ -1138,7 +1459,7 @@ class ConsultationFileFetcher(DataFetcher):
                 row = start_row + i
                 ws[f"{target_name_col}{row}"] = name
                 if target_value_col:
-                    ws[f"{target_value_col}{row}"] = round(value, 2)
+                    ws[f"{target_value_col}{row}"] = value
                 # 填充额外列
                 for extra in copy_config.get("extra_targets", []):
                     extra_col = extra["col"]
@@ -1146,11 +1467,11 @@ class ConsultationFileFetcher(DataFetcher):
                     if data_source == "diff_pct":
                         if name in name_to_current and name in name_to_last_year:
                             diff = name_to_current[name] - name_to_last_year[name]
-                            ws[f"{extra_col}{row}"] = round(diff, 2)
+                            ws[f"{extra_col}{row}"] = diff
                     else:
                         source_map = name_to_current if data_source == "current" else name_to_last_year
                         if name in source_map:
-                            ws[f"{extra_col}{row}"] = round(source_map[name], 2)
+                            ws[f"{extra_col}{row}"] = source_map[name]
 
         # 更新表头
         for cell_ref, template in config.get("headers", {}).items():
@@ -1240,9 +1561,9 @@ class ConsultationFileFetcher(DataFetcher):
             if name_col:
                 ws[f"{name_col}{row}"] = area_names[i]
             if current_col:
-                ws[f"{current_col}{row}"] = round(current_data[i], 2)
+                ws[f"{current_col}{row}"] = current_data[i]
             if last_year_col:
-                ws[f"{last_year_col}{row}"] = round(last_year_data[i], 2)
+                ws[f"{last_year_col}{row}"] = last_year_data[i]
         
         # 构建名称到数据的映射（用于排序副本的额外列填充）
         name_to_current = dict(zip(area_names, current_data))
@@ -1288,7 +1609,7 @@ class ConsultationFileFetcher(DataFetcher):
                 row = start_row + i
                 ws[f"{target_name_col}{row}"] = name
                 if target_value_col:
-                    ws[f"{target_value_col}{row}"] = round(value, 2)
+                    ws[f"{target_value_col}{row}"] = value
                 # 填充额外列
                 for extra in copy_config.get("extra_targets", []):
                     extra_col = extra["col"]
@@ -1296,11 +1617,11 @@ class ConsultationFileFetcher(DataFetcher):
                     if data_source == "diff_pct":
                         if name in name_to_current and name in name_to_last_year:
                             diff = name_to_current[name] - name_to_last_year[name]
-                            ws[f"{extra_col}{row}"] = round(diff, 2)
+                            ws[f"{extra_col}{row}"] = diff
                     else:
                         source_map = name_to_current if data_source == "current" else name_to_last_year
                         if name in source_map:
-                            ws[f"{extra_col}{row}"] = round(source_map[name], 2)
+                            ws[f"{extra_col}{row}"] = source_map[name]
         
         # 更新表头
         for cell_ref, template in config.get("headers", {}).items():
@@ -1311,9 +1632,15 @@ class ConsultationFileFetcher(DataFetcher):
             )
             ws[cell_ref] = header_value
 
-    async def _fill_extra_sheets(self, wb, time_range: Dict[str, str]):
-        """填充额外sheet（X月全国排名、全省同比、历年当月浓度）"""
-        month = int(time_range["month"])
+    async def _fill_extra_sheets(self, wb, time_range: Dict[str, str], full_month: bool = False):
+        """填充额外sheet（X月全国排名、全省同比、历年当月浓度）
+
+        Args:
+            wb: 工作簿对象
+            time_range: 时间范围字典
+            full_month: 是否查询完整月份数据
+        """
+        period_prefix = self._format_period_sheet_prefix(time_range)
 
         # 查找并填充全国排名sheet（处理可能的名称变体：末尾空格、月份前缀等）
         ranking_sheet = None
@@ -1321,14 +1648,14 @@ class ConsultationFileFetcher(DataFetcher):
             if "全国排名" in sheet_name:
                 ranking_sheet = wb[sheet_name]
                 # 重命名为标准格式
-                new_name = f"{month}月全国排名"
+                new_name = f"{period_prefix}全国排名"
                 if sheet_name != new_name:
                     ranking_sheet.title = new_name
                 break
 
         if ranking_sheet:
             try:
-                await self._fill_national_ranking_sheet(wb, time_range, ranking_sheet.title)
+                await self._fill_national_ranking_sheet(wb, time_range, ranking_sheet.title, full_month=full_month)
                 logger.info("sheet_filled", sheet=ranking_sheet.title)
             except Exception as e:
                 logger.error("sheet_fill_failed", sheet=ranking_sheet.title, error=str(e))
@@ -1336,7 +1663,7 @@ class ConsultationFileFetcher(DataFetcher):
         # 填充全省同比
         if "全省同比" in wb.sheetnames and "全省同比" in EXTRA_SHEET_CONFIG:
             try:
-                await self._fill_provincial_summary_sheet(wb, time_range)
+                await self._fill_provincial_summary_sheet(wb, time_range, full_month=full_month)
                 logger.info("sheet_filled", sheet="全省同比")
             except Exception as e:
                 logger.error("sheet_fill_failed", sheet="全省同比", error=str(e))
@@ -1346,20 +1673,19 @@ class ConsultationFileFetcher(DataFetcher):
         for sheet_name in wb.sheetnames:
             if "历年" in sheet_name and "浓度" in sheet_name:
                 historical_sheet = wb[sheet_name]
-                # 重命名为标准格式（x月浓度，不是1-x月）
-                new_name = f"{month}月浓度"
+                new_name = f"{period_prefix}浓度"
                 if sheet_name != new_name:
                     historical_sheet.title = new_name
                 break
 
         if historical_sheet:
             try:
-                await self._fill_historical_comparison_sheet(wb, time_range, historical_sheet.title)
+                await self._fill_historical_comparison_sheet(wb, time_range, historical_sheet.title, full_month=full_month)
                 logger.info("sheet_filled", sheet=historical_sheet.title)
             except Exception as e:
                 logger.error("sheet_fill_failed", sheet=historical_sheet.title, error=str(e))
 
-    async def _fill_national_ranking_sheet(self, wb, time_range: Dict[str, str], sheet_name: str):
+    async def _fill_national_ranking_sheet(self, wb, time_range: Dict[str, str], sheet_name: str, full_month: bool = False):
         """
         填充X月全国排名sheet（优化：2次查询 + 广东数据替换）
 
@@ -1379,30 +1705,9 @@ class ConsultationFileFetcher(DataFetcher):
         start_row, end_row = config["data_rows"]
 
         # 计算去年同月的时间范围
-        last_year_start = f"{time_range['last_year']}-{time_range['month']}-01"
+        last_year_start = self._get_last_year_start_date(time_range)
 
-        # 计算去年同日（处理闰年等情况）
-        current_date = datetime.now()
-        if current_date.day == 1:
-            yesterday = current_date.replace(day=1) - timedelta(days=1)
-            last_year_date = datetime(
-                int(time_range["last_year"]),
-                yesterday.month,
-                yesterday.day
-            )
-        else:
-            last_year_date = datetime(
-                int(time_range["last_year"]),
-                int(time_range["month"]),
-                current_date.day - 1
-            )
-
-        # 处理闰年2月29日
-        if last_year_date.month == 2 and last_year_date.day == 29:
-            if not self._is_leap_year(last_year_date.year):
-                last_year_date = last_year_date.replace(day=28)
-
-        last_year_end = last_year_date.strftime("%Y-%m-%d")
+        last_year_end = self._get_last_year_same_day(time_range, full_month=full_month)
 
         logger.info(
             "national_ranking_pre_query",
@@ -1410,62 +1715,42 @@ class ConsultationFileFetcher(DataFetcher):
             last_year_period=f"{last_year_start} → {last_year_end}"
         )
 
-        # 第一步：预查询全国数据（一次查询获取所有污染物）
-        _, current_data = await self._query_with_date_range(
-            scope="national",
-            pollutant="PM2.5",  # 污染物参数不重要
-            start_date=time_range["start_date"],
-            end_date=time_range["end_date"],
-            return_all_data=True
-        )
+        cache_key = self._period_cache_key(time_range, last_year_start, last_year_end)
+        cached_national = getattr(self, "_consultation_period_cache", {}).get("national")
+        if cached_national and cached_national.get("key") == cache_key:
+            current_data = cached_national["current"]
+            last_year_data = cached_national["last_year"]
+            logger.info("national_ranking_using_cached_data", sheet=sheet_name)
+        else:
+            # 第一步：预查询全国数据（一次查询获取所有污染物）
+            _, current_data = await self._query_with_date_range(
+                scope="national",
+                pollutant="PM2.5",  # 污染物参数不重要
+                start_date=time_range["start_date"],
+                end_date=time_range["end_date"],
+                return_all_data=True
+            )
 
-        _, last_year_data = await self._query_with_date_range(
-            scope="national",
-            pollutant="PM2.5",
-            start_date=last_year_start,
-            end_date=last_year_end,
-            return_all_data=True
-        )
+            _, last_year_data = await self._query_with_date_range(
+                scope="national",
+                pollutant="PM2.5",
+                start_date=last_year_start,
+                end_date=last_year_end,
+                return_all_data=True
+            )
 
-        # 第二步：替换广东数据（使用审核数据）
-        if "广东" in current_data.get("area_names", []):
-            try:
-                logger.info("guangdong_data_replace_start_national")
-
-                guangdong_data = await self._get_guangdong_province_data(
-                    pollutant="PM2.5",  # 会返回所有污染物
-                    current_start=time_range["start_date"],
-                    current_end=time_range["end_date"],
-                    last_year_start=last_year_start,
-                    last_year_end=last_year_end,
-                    return_all_data=True  # 返回所有污染物数据
-                )
-
-                if guangdong_data:
-                    # 找到广东在列表中的索引
-                    area_names = current_data.get("area_names", [])
-                    guangdong_index = area_names.index("广东")
-
-                    # 替换所有污染物的广东数据
-                    all_current = current_data.get("all_data", {})
-                    all_last_year = last_year_data.get("all_data", {})
-
-                    if "广东" in all_current and "广东" in all_last_year:
-                        logger.info(
-                            "guangdong_national_data_replacing",
-                            index=guangdong_index,
-                            old_current=all_current["广东"],
-                            new_current=guangdong_data["current"]
-                        )
-
-                        # guangdong_data["current"] 是 {"PM2.5": value1, "PM10": value2, ...}
-                        all_current["广东"] = guangdong_data["current"]
-                        all_last_year["广东"] = guangdong_data["last_year"]
-                    else:
-                        logger.warning("guangdong_not_in_national_data")
-
-            except Exception as e:
-                logger.error("guangdong_national_replace_failed", error=str(e), exc_info=True)
+            await self._replace_guangdong_in_national_cache(
+                current_data,
+                last_year_data,
+                time_range,
+                last_year_start,
+                last_year_end,
+            )
+            self._consultation_period_cache["national"] = {
+                "key": cache_key,
+                "current": current_data,
+                "last_year": last_year_data,
+            }
 
         # 第三步：填充各污染物列
         for col_config in config["columns"]:
@@ -1487,12 +1772,12 @@ class ConsultationFileFetcher(DataFetcher):
             # 今年排序获得排名
             current_paired = list(zip(area_names, current_values))
             current_paired.sort(key=lambda x: x[1], reverse=not sort_ascending)
-            current_ranking = {name: i + 1 for i, (name, _) in enumerate(current_paired)}
+            current_ranking = self._competition_rankings(current_paired)
 
             # 去年排序获得排名
             last_paired = list(zip(area_names, last_year_values))
             last_paired.sort(key=lambda x: x[1], reverse=not sort_ascending)
-            last_ranking = {name: i + 1 for i, (name, _) in enumerate(last_paired)}
+            last_ranking = self._competition_rankings(last_paired)
 
             # 先清空数据区域（避免重复填充）
             for row in range(start_row, end_row + 1):
@@ -1520,9 +1805,10 @@ class ConsultationFileFetcher(DataFetcher):
                 ws[f"{value_col}{row}"] = display_value
 
                 # 填充排名（如果是广东，添加变化标记）
-                rank_display = str(current_rank)
+                rank_display = str(current_ranking.get(province_name, current_rank))
 
                 if province_name == "广东" and province_name in last_ranking:
+                    current_rank = current_ranking.get(province_name, current_rank)
                     last_rank = last_ranking[province_name]
                     rank_change = last_rank - current_rank
 
@@ -1542,7 +1828,7 @@ class ConsultationFileFetcher(DataFetcher):
             data_range=f"{start_row}-{end_row}"
         )
 
-    async def _fill_provincial_summary_sheet(self, wb, time_range: Dict[str, str]):
+    async def _fill_provincial_summary_sheet(self, wb, time_range: Dict[str, str], full_month: bool = False):
         """
         填充全省同比sheet（优化：一次查询获取所有污染物）
 
@@ -1563,37 +1849,46 @@ class ConsultationFileFetcher(DataFetcher):
         mapping = config["mapping"]
 
         # 时间范围计算
-        # 今年数据：本月1号 → 昨天
+        # 今年数据：本月1号 → 昨天/月末
         current_start = time_range["start_date"]
         current_end = time_range["end_date"]
 
-        # 去年数据：去年同期时段（去年同月1号 → 去年同日）
-        last_year_start = f"{time_range['last_year']}-{time_range['month']}-01"
+        # 去年数据：去年同期时段
+        last_year_start = self._get_last_year_start_date(time_range)
 
-        # 计算去年同日（处理闰年等情况）
-        current_date = datetime.now()
-        if current_date.day == 1:
-            # 如果今天是1号，则昨天是上个月最后一天
-            yesterday = current_date.replace(day=1) - timedelta(days=1)
-            last_year_date = datetime(
-                int(time_range["last_year"]),
-                yesterday.month,
-                yesterday.day
-            )
+        # 计算去年结束日期
+        if full_month:
+            # 完整月份模式：返回去年同月的最后一天
+            from calendar import monthrange
+            year = int(time_range["last_year"])
+            month = int(time_range["month"])
+            last_day = monthrange(year, month)[1]
+            last_year_end = f"{year}-{month:02d}-{last_day:02d}"
         else:
-            # 正常情况：去年同月同日
-            last_year_date = datetime(
-                int(time_range["last_year"]),
-                int(time_range["month"]),
-                current_date.day - 1  # 昨天对应去年的日期
-            )
+            # 实时更新模式：返回去年同日
+            current_date = datetime.now()
+            if current_date.day == 1:
+                # 如果今天是1号，则昨天是上个月最后一天
+                yesterday = current_date.replace(day=1) - timedelta(days=1)
+                last_year_date = datetime(
+                    int(time_range["last_year"]),
+                    yesterday.month,
+                    yesterday.day
+                )
+            else:
+                # 正常情况：去年同月同日
+                last_year_date = datetime(
+                    int(time_range["last_year"]),
+                    int(time_range["month"]),
+                    current_date.day - 1  # 昨天对应去年的日期
+                )
 
-        # 处理闰年2月29日的情况（如果去年不是闰年，则取2月28日）
-        if last_year_date.month == 2 and last_year_date.day == 29:
-            if not self._is_leap_year(last_year_date.year):
-                last_year_date = last_year_date.replace(day=28)
+            # 处理闰年2月29日的情况（如果去年不是闰年，则取2月28日）
+            if last_year_date.month == 2 and last_year_date.day == 29:
+                if not self._is_leap_year(last_year_date.year):
+                    last_year_date = last_year_date.replace(day=28)
 
-        last_year_end = last_year_date.strftime("%Y-%m-%d")
+            last_year_end = last_year_date.strftime("%Y-%m-%d")
 
         logger.info(
             "provincial_summary_pre_query",
@@ -1606,29 +1901,95 @@ class ConsultationFileFetcher(DataFetcher):
             current_end,
             last_year_start,
             last_year_end,
+            ns_type=2,
         )
 
         logger.info(
             "provincial_summary_data_extracted",
-            records=len(records)
+            records=len(records),
+            ns_type=2,
         )
 
-        # 第三步：填充各污染物数据（从缓存中提取）
+        old_standard_records = await self._query_city_standard_yoy_records(
+            current_start,
+            current_end,
+            last_year_start,
+            last_year_end,
+            ns_type=1,
+        )
+
+        logger.info(
+            "provincial_summary_old_standard_data_extracted",
+            records=len(old_standard_records),
+            ns_type=1,
+        )
+
+        # 筛选出"全省"记录
+        province_records = [r for r in records if r.get("cityName") == "全省"]
+        old_standard_province_records = [
+            r for r in old_standard_records if r.get("cityName") == "全省"
+        ]
+
+        if not province_records:
+            logger.error(
+                "province_record_not_found_in_summary",
+                message="全省同比sheet：API返回数据中未找到'全省'记录",
+                total_records=len(records),
+                city_names=[r.get("cityName") for r in records[:10]]
+            )
+            raise ValueError(
+                f"全省同比sheet：API返回数据中未找到'全省'记录。"
+                f"返回记录数: {len(records)}，"
+                f"城市名称: {[r.get('cityName') for r in records[:10]]}"
+            )
+        if not old_standard_province_records:
+            logger.error(
+                "province_old_standard_record_not_found_in_summary",
+                message="全省同比sheet：旧标准API返回数据中未找到'全省'记录",
+                total_records=len(old_standard_records),
+                city_names=[r.get("cityName") for r in old_standard_records[:10]]
+            )
+            raise ValueError(
+                f"全省同比sheet：旧标准API返回数据中未找到'全省'记录。"
+                f"返回记录数: {len(old_standard_records)}，"
+                f"城市名称: {[r.get('cityName') for r in old_standard_records[:10]]}"
+            )
+
+        province_record = province_records[0]
+        old_standard_province_record = old_standard_province_records[0]
+        logger.info(
+            "province_record_found_in_summary",
+            city_name=province_record.get("cityName"),
+            time_point=province_record.get("timePoint"),
+            ns_type=2,
+        )
+        logger.info(
+            "province_old_standard_record_found_in_summary",
+            city_name=old_standard_province_record.get("cityName"),
+            time_point=old_standard_province_record.get("timePoint"),
+            ns_type=1,
+        )
+
+        # 第三步：填充各污染物数据。A7为老标准AQI达标率，其余使用新标准/过渡期数据。
         for row, pollutant in mapping.items():
             if row > end_row:
                 continue
 
             try:
-                current_value = self._aggregate_city_standard_values(records, pollutant)
-                last_year_value = self._aggregate_city_standard_values(records, pollutant, suffix="_Compare")
+                source_record = old_standard_province_record if row == 7 and pollutant == "AQI" else province_record
+                source_ns_type = 1 if source_record is old_standard_province_record else 2
 
-                ws[f"{config['current_col']}{row}"] = round(current_value, 2)
-                ws[f"{config['last_year_col']}{row}"] = round(last_year_value, 2)
+                current_value = self._get_city_standard_value(source_record, pollutant)
+                last_year_value = self._get_city_standard_value(source_record, pollutant, suffix="_Compare")
+
+                ws[f"{config['current_col']}{row}"] = current_value
+                ws[f"{config['last_year_col']}{row}"] = last_year_value
 
                 logger.info(
                     "provincial_comparison_filled",
                     pollutant=pollutant,
                     row=row,
+                    ns_type=source_ns_type,
                     current_value=current_value,
                     last_year_value=last_year_value
                 )
@@ -1831,7 +2192,7 @@ class ConsultationFileFetcher(DataFetcher):
         获取广东省的全省数据（用于替换全国sheet中的广东数据）
 
         使用 query_city_standard_yoy_report 查询广东省审核数据，
-        聚合广东21个地市作为全省均值。
+        直接使用API返回的"全省"记录（不进行聚合计算）。
 
         Args:
             pollutant: 污染物名称（PM2.5、PM10、NO2、O3、AQI）
@@ -1861,13 +2222,50 @@ class ConsultationFileFetcher(DataFetcher):
                 last_year_end,
             )
 
+            # 筛选出"全省"记录
+            province_records = [r for r in records if r.get("cityName") == "全省"]
+
+            if not province_records:
+                logger.error(
+                    "province_record_not_found",
+                    message="API返回数据中未找到'全省'记录",
+                    total_records=len(records),
+                    city_names=[r.get("cityName") for r in records[:10]]
+                )
+                raise ValueError(
+                    f"API返回数据中未找到'全省'记录。"
+                    f"返回记录数: {len(records)}，"
+                    f"城市名称: {[r.get('cityName') for r in records[:10]]}"
+                )
+
+            province_record = province_records[0]
+            logger.info(
+                "province_record_found",
+                city_name=province_record.get("cityName"),
+                time_point=province_record.get("timePoint")
+            )
+
             if return_all_data:
-                all_current = self._aggregate_all_city_standard_values(records)
-                all_last_year = self._aggregate_all_city_standard_values(records, suffix="_Compare")
+                # 直接使用"全省"记录的所有污染物数据
+                all_current = {
+                    "PM2.5": self._get_city_standard_value(province_record, "PM2.5"),
+                    "PM10": self._get_city_standard_value(province_record, "PM10"),
+                    "NO2": self._get_city_standard_value(province_record, "NO2"),
+                    "O3": self._get_city_standard_value(province_record, "O3"),
+                    "AQI": self._get_city_standard_value(province_record, "AQI"),
+                }
+                all_last_year = {
+                    "PM2.5": self._get_city_standard_value(province_record, "PM2.5", suffix="_Compare"),
+                    "PM10": self._get_city_standard_value(province_record, "PM10", suffix="_Compare"),
+                    "NO2": self._get_city_standard_value(province_record, "NO2", suffix="_Compare"),
+                    "O3": self._get_city_standard_value(province_record, "O3", suffix="_Compare"),
+                    "AQI": self._get_city_standard_value(province_record, "AQI", suffix="_Compare"),
+                }
 
                 logger.info(
                     "guangdong_all_pollutants_retrieved",
-                    current_city_count=len(records),
+                    source="province_record",
+                    current_city_count=1,
                     pollutants_count=len(all_current)
                 )
 
@@ -1880,11 +2278,11 @@ class ConsultationFileFetcher(DataFetcher):
                     logger.warning("unknown_pollutant_for_guangdong", pollutant=pollutant)
                     return None
 
-                current_value = self._aggregate_city_standard_values(records, pollutant)
-                last_year_value = self._aggregate_city_standard_values(records, pollutant, suffix="_Compare")
+                current_value = self._get_city_standard_value(province_record, pollutant)
+                last_year_value = self._get_city_standard_value(province_record, pollutant, suffix="_Compare")
 
                 logger.info(
-                    "pollutant_value_calculated",
+                    "pollutant_value_from_province_record",
                     pollutant=pollutant,
                     current_value=current_value,
                     last_year_value=last_year_value
@@ -1899,19 +2297,20 @@ class ConsultationFileFetcher(DataFetcher):
             logger.error("guangdong_data_query_failed", pollutant=pollutant, error=str(e), exc_info=True)
             return None
 
-    async def _fill_historical_comparison_sheet(self, wb, time_range: Dict[str, str], sheet_name: str):
+    async def _fill_historical_comparison_sheet(self, wb, time_range: Dict[str, str], sheet_name: str, full_month: bool = False):
         """
-        填充历年当月浓度sheet（与其他sheet统一：查询当月数据和去年当月数据）
+        填充历年当月浓度sheet（2014年至当前年，每年目标月份一行）
 
         功能：
-        1. 查询当年当月（1日-昨日）和去年当月的全省数据
+        1. 从2014年开始，逐年查询目标月份的全省数据
         2. 填充7个指标：AQI达标率、PM2.5、PM10、NO2、O3、SO2、CO
-        3. 数据来源：广东省城市统计报表接口（query_city_standard_yoy_report）
+        3. 数据来源：广东省城市统计报表接口（query_city_standard_report）
 
         示例：
-        - 当前为2025年5月13日，则查询：
-          - 当年：2025年5月1日-5月13日
-          - 去年：2024年5月1日-5月13日
+        - 当前为2026年4月完整月报，则查询：
+          - 2014年4月1日-4月30日
+          - ...
+          - 2026年4月1日-4月30日
 
         Args:
             wb: 工作簿对象
@@ -1920,96 +2319,119 @@ class ConsultationFileFetcher(DataFetcher):
         """
         ws = wb[sheet_name]
         config = EXTRA_SHEET_CONFIG["历年当月浓度"]
-        start_row, end_row = config["data_rows"]
+        start_year = config["start_year"]
+        start_row = config["start_row"]
         year_col = config["year_col"]
 
         # 当前年份和月份
         current_year = int(time_range["year"])
+        start_month = int(str(time_range["start_date"]).split("-")[1])
+        start_day = int(str(time_range["start_date"]).split("-")[2])
         current_month = int(time_range["month"])
+        target_end_day = int(str(time_range["end_date"]).split("-")[-1])
 
-        # 时间范围计算
-        # 当年数据：当月1日 → 昨日
-        current_start = time_range["start_date"]
-        current_end = time_range["end_date"]
-
-        # 去年数据：去年当月1日 → 去年同日
-        last_year_start = f"{current_year - 1}-{current_month:02d}-01"
-
-        # 计算去年同日（处理闰年等情况）
-        current_date = datetime.now()
-        if current_date.day == 1:
-            # 如果今天是1号，则昨天是上个月最后一天
-            yesterday = current_date.replace(day=1) - timedelta(days=1)
-            last_year_date = datetime(
-                current_year - 1,
-                yesterday.month,
-                yesterday.day
-            )
-        else:
-            # 正常情况：去年同月同日
-            last_year_date = datetime(
-                current_year - 1,
-                current_month,
-                current_date.day - 1  # 昨天对应去年的日期
-            )
-
-        # 处理闰年2月29日的情况（如果去年不是闰年，则取2月28日）
-        if last_year_date.month == 2 and last_year_date.day == 29:
-            if not self._is_leap_year(last_year_date.year):
-                last_year_date = last_year_date.replace(day=28)
-
-        last_year_end = last_year_date.strftime("%Y-%m-%d")
+        historical_years = list(range(start_year, current_year + 1))
+        required_rows = start_row + len(historical_years) - 1
+        if ws.max_row < required_rows:
+            for _ in range(required_rows - ws.max_row):
+                ws.append([None] * ws.max_column)
 
         logger.info(
             "historical_comparison_pre_query",
-            current_period=f"{current_start} → {current_end}",
-            last_year_period=f"{last_year_start} → {last_year_end}"
+            start_year=start_year,
+            current_year=current_year,
+            month=current_month,
+            years_count=len(historical_years),
+            full_month=full_month,
         )
 
-        records = await self._query_city_standard_yoy_records(
-            current_start,
-            current_end,
-            last_year_start,
-            last_year_end,
-        )
+        from calendar import monthrange
 
-        logger.info(
-            "historical_comparison_data_extracted",
-            records=len(records)
-        )
+        def build_year_range(year: int) -> Tuple[str, str]:
+            """构造某一年目标月份的查询区间。"""
+            if year == current_year:
+                return time_range["start_date"], time_range["end_date"]
 
-        # 第三步：填充当年和去年数据（2行）
-        for year_offset, (year, suffix) in enumerate([
-            (current_year - 1, "_Compare"),  # 去年
-            (current_year, "")               # 当年
-        ]):
-            row = start_row + year_offset
+            month_last_day = monthrange(year, current_month)[1]
+            if full_month:
+                end_day = month_last_day
+            else:
+                end_day = min(target_end_day, month_last_day)
 
-            # 填充年份
+            return (
+                f"{year}-{start_month:02d}-{start_day:02d}",
+                f"{year}-{current_month:02d}-{end_day:02d}",
+            )
+
+        # 清理并重写年份区域，避免模板旧数据残留或目标年份变化造成错位。
+        for row in range(start_row, required_rows + 1):
+            ws[f"{year_col}{row}"] = None
+            for col_config in config["columns"]:
+                ws[f"{col_config['col']}{row}"] = None
+
+        for year in historical_years:
+            row = start_row + (year - start_year)
+            query_start, query_end = build_year_range(year)
             ws[f"{year_col}{row}"] = year
 
             try:
+                records = await self._query_city_standard_records(
+                    query_start,
+                    query_end,
+                    ns_type=2,
+                )
+
+                province_records = [r for r in records if r.get("cityName") == "全省"]
+                if not province_records:
+                    logger.error(
+                        "province_record_not_found_in_historical",
+                        message="历年当月浓度sheet：API返回数据中未找到'全省'记录",
+                        year=year,
+                        start_date=query_start,
+                        end_date=query_end,
+                        total_records=len(records),
+                        city_names=[r.get("cityName") for r in records[:10]],
+                    )
+                    raise ValueError(
+                        f"历年当月浓度sheet：{year}年API返回数据中未找到'全省'记录。"
+                        f"返回记录数: {len(records)}，"
+                        f"城市名称: {[r.get('cityName') for r in records[:10]]}"
+                    )
+
+                province_record = province_records[0]
                 for col_config in config["columns"]:
                     col = col_config["col"]
                     field = col_config["field"]
-                    value = self._aggregate_city_standard_values(records, field, suffix=suffix)
-                    ws[f"{col}{row}"] = round(value, 2)
+                    ws[f"{col}{row}"] = self._get_city_standard_value(province_record, field)
 
-                logger.info("historical_year_filled", year=year)
+                logger.info(
+                    "historical_year_filled",
+                    year=year,
+                    row=row,
+                    start_date=query_start,
+                    end_date=query_end,
+                )
 
             except Exception as e:
-                logger.error("historical_year_fill_failed", year=year, error=str(e), exc_info=True)
-                # 填充0值
+                logger.error(
+                    "historical_year_fill_failed",
+                    year=year,
+                    row=row,
+                    start_date=query_start,
+                    end_date=query_end,
+                    error=str(e),
+                    exc_info=True,
+                )
                 for col_config in config["columns"]:
-                    col = col_config["col"]
-                    ws[f"{col}{row}"] = 0
+                    ws[f"{col_config['col']}{row}"] = 0
 
         logger.info(
             "historical_comparison_filled",
+            start_year=start_year,
             current_year=current_year,
-            last_year=current_year - 1,
             month=current_month,
-            period=f"{current_month}月"
+            years_count=len(historical_years),
+            period=f"{current_month}月",
         )
 
     def _is_leap_year(self, year: int) -> bool:
@@ -2031,4 +2453,7 @@ class ConsultationFileFetcher(DataFetcher):
 
 
 # 导出
-__all__ = ["ConsultationFileFetcher"]
+__all__ = ["ConsultationFileFetcher", "MonthlyConsultationFileFetcher"]
+
+# 导入月度完整会商文件Fetcher
+from app.fetchers.consultation.monthly import MonthlyConsultationFileFetcher

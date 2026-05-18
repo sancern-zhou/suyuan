@@ -13,7 +13,8 @@ from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
-from app.fetchers.consultation import ConsultationFileFetcher  # 会商文件批量更新
+from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultationFileFetcher  # 会商文件批量更新、月度完整会商文件
+from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
 # 导入单一工具注册源
 from app.tools import global_tool_registry
 
@@ -53,6 +54,12 @@ def initialize_fetchers():
 
         # 注册会商文件批量更新Fetcher
         fetcher_scheduler.register(ConsultationFileFetcher())
+
+        # 注册月度完整会商文件Fetcher（每月4号早上7点10分）
+        fetcher_scheduler.register(MonthlyConsultationFileFetcher())
+
+        # 注册年度累计会商文件Fetcher（每月4号早上7点20分）
+        fetcher_scheduler.register(AnnualYtdConsultationFileFetcher())
 
         logger.info(
             "fetchers_registered",

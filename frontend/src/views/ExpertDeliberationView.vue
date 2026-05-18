@@ -116,7 +116,7 @@
         </label>
 
         <label class="field">
-          <span>上个月污染特征与溯源分析报告成果</span>
+          <span>上个月污染特征分析报告成果</span>
           <textarea v-model="form.monthlyReportText" spellcheck="false" />
         </label>
 

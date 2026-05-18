@@ -67,6 +67,15 @@ class DataFetcher(ABC):
 
     async def run(self):
         """运行Fetcher（由调度器调用）"""
+        # 自动恢复机制：如果状态是 ERROR，重置为 IDLE 再执行
+        if self.status == FetcherStatus.ERROR and self.enabled:
+            logger.info(
+                "fetcher_auto_recovering",
+                fetcher=self.name,
+                previous_status="error"
+            )
+            self.status = FetcherStatus.IDLE
+
         if not self.is_available():
             logger.warning(
                 "fetcher_not_available",

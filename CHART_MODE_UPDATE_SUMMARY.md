@@ -64,7 +64,7 @@
 
 Agent: 
 1. read_data_registry(list_fields=true) - 分析数据
-2. FINAL_ANSWER - 展示设计方案并等待确认
+2. PLAIN_TEXT_REPLY - 展示设计方案并等待确认
 3. 用户确认后 read_data_registry - 加载完整数据
 4. execute_python - 生成并执行Matplotlib代码
 ```
@@ -75,7 +75,7 @@ Agent:
 
 Agent:
 1. query_gd_suncere_city_day_new - 查询数据
-2. FINAL_ANSWER - 展示设计方案并等待确认
+2. PLAIN_TEXT_REPLY - 展示设计方案并等待确认
 3. 用户确认后 execute_python - 生成并执行Matplotlib代码
 ```
 

@@ -9,7 +9,6 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
 
-from ..prompts.react_prompts import format_finish_summary_prompt
 from .assistant_stream_buffer import AssistantStreamBuffer
 from .conversation_writer import ConversationWriter
 from .event_bus import RuntimeEventBus
@@ -163,23 +162,14 @@ class AgentRuntime:
                 yield event
             return
 
-        if action_type == "PLAIN_TEXT_REPLY":
-            action = {"type": "FINAL_ANSWER", "answer": action.get("answer", "")}
-            action_type = "FINAL_ANSWER"
-
-        if action_type == "FINAL_ANSWER" and planner_result.streamed_assistant_text:
+        if action_type == "PLAIN_TEXT_REPLY" and planner_result.streamed_assistant_text:
             state.response_streamed = True
 
         for event in planner_result.pop_events:
             yield event
 
-        if action_type == "FINAL_ANSWER":
+        if action_type == "PLAIN_TEXT_REPLY":
             async for event in self._complete_response(state, planner_result, action.get("answer", "")):
-                yield event
-            return
-
-        if action_type == "FINISH_SUMMARY":
-            async for event in self._finish_summary(state, planner_result):
                 yield event
             return
 
@@ -389,11 +379,6 @@ class AgentRuntime:
         self.writer.add_tool_exchange(records, planner_result)
         self.writer.add_iteration(planner_result.thought, action, observation)
 
-        if isinstance(observation, dict) and observation.get("action_type") == "FINISH_SUMMARY":
-            async for event in self._finish_summary(state, planner_result):
-                yield event
-            return
-
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
 
@@ -412,7 +397,7 @@ class AgentRuntime:
                 "summary": f"有 {guard_result['incomplete_count']} 个任务尚未完成，不能结束任务。请先完成所有任务。",
                 "guard_warning": guard_result["warning_message"],
             }
-            action = {"type": "FINAL_ANSWER", "answer": answer}
+            action = {"type": "PLAIN_TEXT_REPLY", "answer": answer}
             self._ensure_user_message_written(state)
             self.writer.add_iteration(planner_result.thought, action, observation)
             yield self.events.tool_result(state, "task_guard", observation, True, "task_guard")
@@ -422,65 +407,12 @@ class AgentRuntime:
         self._ensure_user_message_written(state)
         self.writer.add_iteration(
             planner_result.thought,
-            {"type": "FINAL_ANSWER", "answer": answer},
+            {"type": "PLAIN_TEXT_REPLY", "answer": answer},
             {"success": True, "summary": "任务完成"},
         )
         async for event in self.finalizer.complete(
             state,
             answer,
-            planner_result=planner_result,
-            thought=planner_result.thought,
-        ):
-            yield event
-
-    async def _finish_summary(
-        self,
-        state: RunState,
-        planner_result: PlannerResult,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        guard_result = await self.config.task_completion_guard.check(state.session_id)
-        if guard_result.get("has_incomplete"):
-            observation = {
-                "success": False,
-                "warning": True,
-                "incomplete_tasks": guard_result["incomplete_tasks"],
-                "summary": f"有 {guard_result['incomplete_count']} 个任务尚未完成，不能生成最终答案。请先完成所有任务。",
-                "guard_warning": guard_result["warning_message"],
-            }
-            self._ensure_user_message_written(state)
-            self.writer.add_iteration(planner_result.thought, {"type": "FINISH_SUMMARY"}, observation)
-            yield self.events.tool_result(state, "task_guard", observation, True, "task_guard")
-            return
-
-        prompt = format_finish_summary_prompt(
-            user_query=state.user_query,
-            tool_results=self.memory.session.get_compressed_summary() or "无工具调用数据",
-            final_thought=planner_result.thought,
-        )
-        response_text = ""
-        async for chunk in self.planner.stream_user_answer(prompt):
-            self._raise_if_cancelled()
-            response_text += chunk
-            yield self.events.assistant_delta(state, chunk, is_complete=False)
-        yield self.events.assistant_delta(state, "", is_complete=True)
-        state.response_streamed = True
-
-        self._ensure_user_message_written(state)
-        self.writer.add_iteration(
-            planner_result.thought,
-            {"type": "FINISH_SUMMARY"},
-            {"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"},
-        )
-        yield self.events.tool_result(
-            state,
-            "finish_summary",
-            {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
-            False,
-            "finish_summary",
-        )
-        async for event in self.finalizer.complete(
-            state,
-            response_text,
             planner_result=planner_result,
             thought=planner_result.thought,
         ):

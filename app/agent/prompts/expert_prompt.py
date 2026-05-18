@@ -59,7 +59,7 @@ def build_expert_prompt(available_tools: List[str]) -> str:
         '  "thought": "简洁的思考过程（1-2句话）",\n',
         '  "reasoning": "详细的推理过程",\n',
         '  "action": {{\n',
-        '    "type": "FINAL_ANSWER",\n',
+        '    "type": "PLAIN_TEXT_REPLY",\n',
         '    "answer": "完整的分析报告内容（面向用户）"\n',
         "  }}\n",
         "}}\n",
