@@ -149,10 +149,6 @@ app.include_router(session_router)
 from app.routers.knowledge_qa import router as knowledge_qa_router
 app.include_router(knowledge_qa_router)
 
-# Include Quick Trace Alert routes (污染高值告警快速溯源)
-from app.api.quick_trace_routes import router as quick_trace_router
-app.include_router(quick_trace_router)
-
 # Include Scheduled Tasks routes (定时任务系统)
 from app.api.scheduled_task_routes import router as scheduled_task_router
 app.include_router(scheduled_task_router)
@@ -279,26 +275,20 @@ async def startup_event():
             from app.routers.agent import (
                 multi_expert_agent_instance,
                 meteorology_expert_agent_instance,
-                quick_tracing_agent_instance,
-                data_viz_agent_instance,
-                deep_tracing_agent_instance
+                data_viz_agent_instance
             )
 
             logger.info("refreshing_global_agent_tools")
 
             multi_expert_agent_instance.refresh_tools()
             meteorology_expert_agent_instance.refresh_tools()
-            quick_tracing_agent_instance.refresh_tools()
             data_viz_agent_instance.refresh_tools()
-            deep_tracing_agent_instance.refresh_tools()
 
             logger.info(
                 "global_agents_refreshed",
                 multi_expert_tools=len(multi_expert_agent_instance.get_available_tools()),
                 meteorology_tools=len(meteorology_expert_agent_instance.get_available_tools()),
-                quick_tracing_tools=len(quick_tracing_agent_instance.get_available_tools()),
-                data_viz_tools=len(data_viz_agent_instance.get_available_tools()),
-                deep_tracing_tools=len(deep_tracing_agent_instance.get_available_tools())
+                data_viz_tools=len(data_viz_agent_instance.get_available_tools())
             )
         except Exception as e:
             logger.warning("agent_refresh_failed", error=str(e))
@@ -598,9 +588,6 @@ async def root():
             "react_agent_health": "GET /api/agent/health - ReAct Agent健康检查",
             "knowledge_qa_stream": "POST /api/knowledge-qa/stream - 知识问答流式接口",
             "knowledge_qa": "POST /api/knowledge-qa - 知识问答非流式接口",
-            "quick_trace_alert": "POST /api/quick-trace/alert - 污染高值告警快速溯源",
-            "quick_trace_health": "GET /api/quick-trace/health - 快速溯源健康检查",
-            "quick_trace_cities": "GET /api/quick-trace/supported-cities - 支持的城市列表",
         },
     }
 

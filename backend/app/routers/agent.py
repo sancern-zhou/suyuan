@@ -4,9 +4,9 @@ ReAct Agent API Routes
 ReAct Agent 的 REST API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import asyncio
@@ -16,8 +16,8 @@ import structlog
 from app.agent import create_react_agent
 from app.agent.session import Session, get_session_manager
 from app.agent.runtime.cancellation import cancellation_registry
+from app.services.llm_service import llm_service
 
-from app.agent.experts.expert_router_v3 import ExpertRouterV3, PipelineResult  # ✅ 旧架构多专家路由器
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -44,7 +44,6 @@ class AgentAnalyzeRequest(BaseModel):
         None,
         description="""助手模式（旧版，已弃用，建议使用mode参数）：
         'meteorology-expert' - 气象专家单专家模式
-        'quick-tracing-expert' - 快速溯源专家多专家模式
         'data-visualization-expert' - 数据可视化专家单专家模式
         'report-generation-expert' - 报告生成专家（预留）
         'template-report-expert' - 模板报告生成专家（方案B，推荐使用 /api/report/generate-from-template-agent）
@@ -65,6 +64,16 @@ class AgentAnalyzeRequest(BaseModel):
     attachments: Optional[List[dict]] = Field(
         None,
         description="附件列表，包含用户上传的文件信息 [{file_id, name, type, url}]"
+    )
+    model_tier: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("model_tier", "modelTier"),
+        description="模型档位：flash 使用 LLM_FLASH_MODELS 优先级；pro 使用 LLM_PRO_MODELS 优先级"
+    )
+    skip_auto_followup: bool = Field(
+        False,
+        validation_alias=AliasChoices("skip_auto_followup", "skipAutoFollowup"),
+        description="是否跳过报告模式自动复核钩子，用于自动复核轮防止递归触发"
     )
 
     class Config:
@@ -91,7 +100,6 @@ class AgentQueryRequest(BaseModel):
         None,
         description="""助手模式：
         'meteorology-expert' - 气象专家单专家模式
-        'quick-tracing-expert' - 快速溯源专家多专家模式
         'data-visualization-expert' - 数据可视化专家单专家模式
         'report-generation-expert' - 报告生成专家（预留，暂未实现）
         'general-agent' 或 None - 通用Agent多专家模式"""
@@ -153,13 +161,6 @@ meteorology_expert_agent_instance = create_react_agent(
     max_working_memory=25
 )
 
-# 快速溯源专家模式全局实例（快速响应，减少迭代）
-quick_tracing_agent_instance = create_react_agent(
-    with_test_tools=False,
-    max_iterations=8,  # ⚠️ 特殊配置：快速溯源只需8次
-    max_working_memory=20
-)
-
 # 数据可视化专家模式全局实例（专注图表，减少迭代）
 data_viz_agent_instance = create_react_agent(
     with_test_tools=False,
@@ -167,19 +168,10 @@ data_viz_agent_instance = create_react_agent(
     max_working_memory=15
 )
 
-# 深度溯源专家模式全局实例（深度分析，中等迭代）
-deep_tracing_agent_instance = create_react_agent(
-    with_test_tools=False,
-    max_iterations=15,  # ⚠️ 特殊配置：深度溯源15次
-    max_working_memory=30
-)
-
 logger.info(
     "agent_instances_created",
     multi_expert_tools=len(multi_expert_agent_instance.get_available_tools()),
     meteorology_expert_tools=len(meteorology_expert_agent_instance.get_available_tools()),
-    quick_tracing_tools=len(quick_tracing_agent_instance.get_available_tools()),
-    deep_tracing_tools=len(deep_tracing_agent_instance.get_available_tools()),
     data_viz_tools=len(data_viz_agent_instance.get_available_tools())
 )
 
@@ -189,7 +181,7 @@ logger.info(
 # ========================================
 
 @router.post("/analyze")
-async def analyze_stream(request: AgentAnalyzeRequest):
+async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
     """
     流式分析接口（Server-Sent Events）
 
@@ -226,6 +218,18 @@ async def analyze_stream(request: AgentAnalyzeRequest):
     - `error`: 迭代错误
     - `fatal_error`: 致命错误
     """
+    raw_body = await raw_request.json()
+    if request.model_tier is None and isinstance(raw_body, dict):
+        raw_model_tier = raw_body.get("model_tier") or raw_body.get("modelTier")
+        if raw_model_tier:
+            request.model_tier = str(raw_model_tier)
+        else:
+            logger.warning(
+                "agent_analyze_model_tier_missing",
+                body_keys=sorted(raw_body.keys()),
+                session_id=request.session_id,
+            )
+
     # 针对报告生成专家模式：在进入 ReAct 之前，显式告知 LLM 这是基于已有模板报告的连续对话，
     # 避免其误判为“首次对话、无历史上下文”。
     original_query = request.query
@@ -250,6 +254,7 @@ async def analyze_stream(request: AgentAnalyzeRequest):
         assistant_mode=request.assistant_mode,
         knowledge_base_ids=request.knowledge_base_ids,
         is_interruption=request.is_interruption,
+        model_tier=request.model_tier,
         mode=request.mode
     )
 
@@ -262,14 +267,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                 session_id=request.session_id,
                 agent_id=id(agent)
             )
-        elif request.assistant_mode == 'quick-tracing-expert':
-            agent = quick_tracing_agent_instance
-            logger.info(
-                "使用快速溯源专家模式",
-                session_id=request.session_id,
-                agent_id=id(agent),
-                max_iterations=8
-            )
         elif request.assistant_mode == 'data-visualization-expert':
             agent = data_viz_agent_instance
             logger.info(
@@ -277,15 +274,6 @@ async def analyze_stream(request: AgentAnalyzeRequest):
                 session_id=request.session_id,
                 agent_id=id(agent),
                 max_iterations=8
-            )
-        elif request.assistant_mode == 'deep-tracing-expert':
-            agent = deep_tracing_agent_instance
-            logger.info(
-                "使用深度溯源专家模式",
-                session_id=request.session_id,
-                agent_id=id(agent),
-                max_iterations=15,
-                features=["analyze_trajectory_sources"]
             )
         elif request.assistant_mode == 'report-generation-expert':
             agent = multi_expert_agent_instance
@@ -319,7 +307,8 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             "is_interruption": request.is_interruption,
             "manual_mode": request.mode,
             "attachments": request.attachments,  # ✅ 传递附件信息
-            "user_identifier": request.user_id  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
+            "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
+            "skip_auto_followup": request.skip_auto_followup
         }
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
@@ -388,200 +377,218 @@ async def analyze_stream(request: AgentAnalyzeRequest):
             logger.debug("user_message_added", query_preview=request.query[:100])
 
             try:
-                async for event in agent.analyze(**analyze_kwargs):
-                    event_count += 1
-                    event_type = event.get("type")
+                with llm_service.use_model_tier(request.model_tier):
+                    async for event in agent.analyze(**analyze_kwargs):
+                        event_count += 1
+                        event_type = event.get("type")
 
-                    # ✅ 关闭流式文本事件的所有日志
-                    if event_type != "streaming_text":
-                        # ✅ 非流式事件：正常记录
-                        logger.debug("received_event", event_type=event_type, has_data="data" in event)
-                    else:
-                        # ✅ 流式事件：静默处理，只统计不输出
-                        streaming_chunk_count += 1
+                        # ✅ 关闭流式文本事件的所有日志
+                        if event_type != "streaming_text":
+                            # ✅ 非流式事件：正常记录
+                            logger.debug("received_event", event_type=event_type, has_data="data" in event)
+                        else:
+                            # ✅ 流式事件：静默处理，只统计不输出
+                            streaming_chunk_count += 1
 
-                    # 收集对话历史（转换为前端格式，添加 content 字段）
-                    if event["type"] in ["thought", "tool_use", "tool_result"]:
-                        # 创建前端格式的消息
-                        event_data = event.get("data", {})
+                        # 收集对话历史（转换为前端格式，添加 content 字段）
+                        if event["type"] in ["thought", "tool_use", "tool_result"]:
+                            # 创建前端格式的消息
+                            event_data = event.get("data", {})
 
-                        # 【验证】检查 tool_result 事件的 data 字段
-                        if event["type"] == "tool_result":
-                            result = event_data.get("result") or {}
-                            logger.info("[tool_result_debug] 验证 event.data 结构",
-                                has_data="data" in event,
-                                data_keys=list(event_data.keys()) if isinstance(event_data, dict) else "not_dict",
-                                has_result="result" in event_data,
-                                result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
-                                has_visuals="visuals" in result,
-                                visuals_count=len(result.get("visuals") or [])
-                            )
+                            # 【验证】检查 tool_result 事件的 data 字段
+                            if event["type"] == "tool_result":
+                                result = event_data.get("result") or {}
+                                logger.info("[tool_result_debug] 验证 event.data 结构",
+                                    has_data="data" in event,
+                                    data_keys=list(event_data.keys()) if isinstance(event_data, dict) else "not_dict",
+                                    has_result="result" in event_data,
+                                    result_keys=list(result.keys()) if isinstance(result, dict) else "not_dict",
+                                    has_visuals="visuals" in result,
+                                    visuals_count=len(result.get("visuals") or [])
+                                )
 
-                        frontend_message = {
-                            "type": event["type"],
-                            "data": event_data,
-                            "timestamp": event_data.get("timestamp") if "timestamp" in event_data else None
-                        }
-
-                        # 提取 content 字段（前端显示用）
-                        if event["type"] == "thought":
-                            frontend_message["content"] = event_data.get("thought", "思考中...")
-                        elif event["type"] == "tool_use":
-                            tool_name = event_data.get("tool_name", "")
-                            frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
-                        elif event["type"] == "tool_result":
-                            result_data = event_data.get("result", {})
-                            frontend_message["content"] = result_data.get("summary", "获得结果") if isinstance(result_data, dict) else str(result_data)
-
-                        conversation_history.append(frontend_message)
-                        # 防御性代码：确保 content 不为 None
-                        content = frontend_message.get("content", "")
-                        content_preview = content[:50] if content else "empty"
-                        logger.debug("conversation_history_appended",
-                                    event_type=event["type"],
-                                    history_length=len(conversation_history),
-                                    content_preview=content_preview)
-
-                    # ✅ streaming_text 事件：流式输出但不保存到历史（由 complete 事件统一保存）
-                    elif event["type"] == "streaming_text":
-                        # 流式文本直接转发，不保存到对话历史
-                        # 等待 complete 事件时再保存完整的最终答案
-                        pass
-
-                    # 收集数据ID
-                    if event["type"] == "tool_result" and "data" in event:
-                        data = event.get("data", {})
-                        if "data_id" in data:
-                            collected_data_ids.append(data["data_id"])
-                        if "data_ids" in data:
-                            collected_data_ids.extend(data["data_ids"])
-
-                    # 收集可视化（基于ID去重）
-                    if "visuals" in event.get("data", {}):
-                        visuals = event["data"]["visuals"]
-                        if isinstance(visuals, list):
-                            for visual in visuals:
-                                visual_id = visual.get("id")
-                                visual_title = visual.get("title", "")
-                                if visual_id and visual_id not in seen_visual_ids:
-                                    logger.info(
-                                        "visual_collected",
-                                        visual_id=visual_id,
-                                        visual_title=visual_title[:50] if visual_title else "",
-                                        seen_count=len(seen_visual_ids)
-                                    )
-                                    collected_visuals.append(visual)
-                                    seen_visual_ids.add(visual_id)
-                                elif visual_id and visual_id in seen_visual_ids:
-                                    logger.warning(
-                                        "visual_duplicate_skipped",
-                                        visual_id=visual_id,
-                                        visual_title=visual_title[:50] if visual_title else ""
-                                    )
-                                elif not visual_id:
-                                    # 如果没有ID，也添加（向后兼容）
-                                    collected_visuals.append(visual)
-
-                    # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
-                    if event["type"] == "complete":
-                        # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
-                        # office_document 实时事件后无法打开预览面板。
-                        office_documents = multi_expert_agent_instance._session_store.get(
-                            actual_session_id, {}
-                        ).get("office_documents", [])
-                        if office_documents:
-                            event.setdefault("data", {})["office_documents"] = office_documents
-                            event["data"]["last_office_document"] = office_documents[-1]
-
-                        # ✅ 添加最终答案消息
-                        event_data = event.get("data") or {}
-                        if event_data.get("answer"):
-                            final_message = {
-                                "type": "final",
-                                "content": event_data["answer"],
+                            frontend_message = {
+                                "type": event["type"],
                                 "data": event_data,
-                                "timestamp": event_data.get("timestamp", datetime.now().isoformat())
+                                "timestamp": event_data.get("timestamp") if "timestamp" in event_data else None
                             }
 
-                            # ✅ 将visuals提取到消息顶层，确保能被正确存储和恢复
-                            if "visuals" in event_data and isinstance(event_data["visuals"], list):
-                                final_message["visuals"] = event_data["visuals"]
+                            # 提取 content 字段（前端显示用）
+                            if event["type"] == "thought":
+                                frontend_message["content"] = event_data.get("thought", "思考中...")
+                            elif event["type"] == "tool_use":
+                                tool_name = event_data.get("tool_name", "")
+                                frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
+                            elif event["type"] == "tool_result":
+                                result_data = event_data.get("result", {})
+                                frontend_message["content"] = result_data.get("summary", "获得结果") if isinstance(result_data, dict) else str(result_data)
 
-                            conversation_history.append(final_message)
-                            logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])
+                            conversation_history.append(frontend_message)
+                            # 防御性代码：确保 content 不为 None
+                            content = frontend_message.get("content", "")
+                            content_preview = content[:50] if content else "empty"
+                            logger.debug("conversation_history_appended",
+                                        event_type=event["type"],
+                                        history_length=len(conversation_history),
+                                        content_preview=content_preview)
 
-                        # ✅ 关闭流式统计日志
-                        # if streaming_chunk_count > 0:
-                        #     logger.info(
-                        #         "streaming_statistics",
-                        #         session_id=actual_session_id,
-                        #         total_events=event_count,
-                        #         streaming_chunks=streaming_chunk_count
-                        #     )
+                        # ✅ streaming_text 事件：流式输出但不保存到历史（由 complete 事件统一保存）
+                        elif event["type"] == "streaming_text":
+                            # 流式文本直接转发，不保存到对话历史
+                            # 等待 complete 事件时再保存完整的最终答案
+                            pass
 
-                        logger.info("saving_session_on_complete",
-                                   session_id=actual_session_id,
-                                   conversation_history_length=len(conversation_history),
-                                   collected_data_ids_count=len(collected_data_ids),
-                                   collected_visuals_count=len(collected_visuals))
-
-                        # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                        if actual_session_id not in multi_expert_agent_instance._session_store:
-                            multi_expert_agent_instance._session_store[actual_session_id] = {}
-
-                        multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
-                        multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
-                        logger.info(
-                            "collected_data_stored",
-                            session_id=actual_session_id,
-                            data_ids_count=len(collected_data_ids),
-                            visuals_count=len(collected_visuals)
-                        )
-                    elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
-                        # ✅ 优化：压缩中间过程，只保留必要信息
-                        compressed_history = []
-                        for msg in conversation_history:
-                            if msg.get("type") in ["user", "final"]:
-                                compressed_history.append(msg)
-                            elif msg.get("type") in ["thought", "tool_use", "tool_result"]:
-                                compressed_history.append({
-                                    "type": msg.get("type"),
-                                    "content": msg.get("content", "")[:200],
-                                    "timestamp": msg.get("timestamp")
-                                })
-                        session.conversation_history = compressed_history
-                        session.data_ids = list(set(collected_data_ids))
-                        session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-
-                        # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                        if actual_session_id not in multi_expert_agent_instance._session_store:
-                            multi_expert_agent_instance._session_store[actual_session_id] = {}
-
-                        multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
-                        multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
-                        multi_expert_agent_instance._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
-                        multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
-                        multi_expert_agent_instance._session_store[actual_session_id]["error_type"] = event["type"]
-                        if "data" in event and "error" in event["data"]:
-                            multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
-                        if event["type"] == "interrupted":
+                        elif event["type"] == "synthetic_user_message":
                             event_data = event.get("data") or {}
-                            compressed_history.append({
-                                "type": "interrupted",
-                                "content": event_data.get("reason", "用户已暂停本轮分析"),
-                                "timestamp": datetime.now().isoformat()
-                            })
-                        await session_manager.save_session(session)
+                            synthetic_message = {
+                                "type": "user",
+                                "content": event_data.get("content", ""),
+                                "timestamp": event_data.get("timestamp", datetime.now().isoformat()),
+                                "source": event_data.get("source", "auto_hook"),
+                                "hook_name": event_data.get("hook_name")
+                            }
+                            conversation_history.append(synthetic_message)
+                            logger.info(
+                                "synthetic_user_message_added",
+                                session_id=actual_session_id,
+                                hook_name=event_data.get("hook_name"),
+                                content_preview=synthetic_message["content"][:100]
+                            )
 
-                        logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
+                        # 收集数据ID
+                        if event["type"] == "tool_result" and "data" in event:
+                            data = event.get("data", {})
+                            if "data_id" in data:
+                                collected_data_ids.append(data["data_id"])
+                            if "data_ids" in data:
+                                collected_data_ids.extend(data["data_ids"])
 
-                    # 将事件序列化为 SSE 格式
-                    event_data = json.dumps(event, ensure_ascii=False, default=str)
-                    yield f"data: {event_data}\n\n"
+                        # 收集可视化（基于ID去重）
+                        if "visuals" in event.get("data", {}):
+                            visuals = event["data"]["visuals"]
+                            if isinstance(visuals, list):
+                                for visual in visuals:
+                                    visual_id = visual.get("id")
+                                    visual_title = visual.get("title", "")
+                                    if visual_id and visual_id not in seen_visual_ids:
+                                        logger.info(
+                                            "visual_collected",
+                                            visual_id=visual_id,
+                                            visual_title=visual_title[:50] if visual_title else "",
+                                            seen_count=len(seen_visual_ids)
+                                        )
+                                        collected_visuals.append(visual)
+                                        seen_visual_ids.add(visual_id)
+                                    elif visual_id and visual_id in seen_visual_ids:
+                                        logger.warning(
+                                            "visual_duplicate_skipped",
+                                            visual_id=visual_id,
+                                            visual_title=visual_title[:50] if visual_title else ""
+                                        )
+                                    elif not visual_id:
+                                        # 如果没有ID，也添加（向后兼容）
+                                        collected_visuals.append(visual)
 
-                    # 如果是完成或致命错误，结束循环
-                    if event["type"] in ["complete", "incomplete", "fatal_error", "interrupted"]:
-                        break
+                        # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
+                        if event["type"] == "complete":
+                            # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
+                            # office_document 实时事件后无法打开预览面板。
+                            office_documents = multi_expert_agent_instance._session_store.get(
+                                actual_session_id, {}
+                            ).get("office_documents", [])
+                            if office_documents:
+                                event.setdefault("data", {})["office_documents"] = office_documents
+                                event["data"]["last_office_document"] = office_documents[-1]
+
+                            # ✅ 添加最终答案消息
+                            event_data = event.get("data") or {}
+                            if event_data.get("answer"):
+                                final_message = {
+                                    "type": "final",
+                                    "content": event_data["answer"],
+                                    "data": event_data,
+                                    "timestamp": event_data.get("timestamp", datetime.now().isoformat())
+                                }
+
+                                # ✅ 将visuals提取到消息顶层，确保能被正确存储和恢复
+                                if "visuals" in event_data and isinstance(event_data["visuals"], list):
+                                    final_message["visuals"] = event_data["visuals"]
+
+                                conversation_history.append(final_message)
+                                logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])
+
+                            # ✅ 关闭流式统计日志
+                            # if streaming_chunk_count > 0:
+                            #     logger.info(
+                            #         "streaming_statistics",
+                            #         session_id=actual_session_id,
+                            #         total_events=event_count,
+                            #         streaming_chunks=streaming_chunk_count
+                            #     )
+
+                            logger.info("saving_session_on_complete",
+                                       session_id=actual_session_id,
+                                       conversation_history_length=len(conversation_history),
+                                       collected_data_ids_count=len(collected_data_ids),
+                                       collected_visuals_count=len(collected_visuals))
+
+                            # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
+                            if actual_session_id not in multi_expert_agent_instance._session_store:
+                                multi_expert_agent_instance._session_store[actual_session_id] = {}
+
+                            multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                            multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                            logger.info(
+                                "collected_data_stored",
+                                session_id=actual_session_id,
+                                data_ids_count=len(collected_data_ids),
+                                visuals_count=len(collected_visuals)
+                            )
+                        elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
+                            # ✅ 优化：压缩中间过程，只保留必要信息
+                            compressed_history = []
+                            for msg in conversation_history:
+                                if msg.get("type") in ["user", "final"]:
+                                    compressed_history.append(msg)
+                                elif msg.get("type") in ["thought", "tool_use", "tool_result"]:
+                                    compressed_history.append({
+                                        "type": msg.get("type"),
+                                        "content": msg.get("content", "")[:200],
+                                        "timestamp": msg.get("timestamp")
+                                    })
+                            session.conversation_history = compressed_history
+                            session.data_ids = list(set(collected_data_ids))
+                            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+
+                            # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
+                            if actual_session_id not in multi_expert_agent_instance._session_store:
+                                multi_expert_agent_instance._session_store[actual_session_id] = {}
+
+                            multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                            multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                            multi_expert_agent_instance._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
+                            multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
+                            multi_expert_agent_instance._session_store[actual_session_id]["error_type"] = event["type"]
+                            if "data" in event and "error" in event["data"]:
+                                multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
+                            if event["type"] == "interrupted":
+                                event_data = event.get("data") or {}
+                                compressed_history.append({
+                                    "type": "interrupted",
+                                    "content": event_data.get("reason", "用户已暂停本轮分析"),
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                            await session_manager.save_session(session)
+
+                            logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
+
+                        # 将事件序列化为 SSE 格式
+                        event_data = json.dumps(event, ensure_ascii=False, default=str)
+                        yield f"data: {event_data}\n\n"
+
+                        # 如果是完成或致命错误，结束循环
+                        if event["type"] in ["complete", "incomplete", "fatal_error", "interrupted"]:
+                            break
 
             except asyncio.CancelledError:
                 if actual_session_id:
@@ -684,14 +691,6 @@ async def simple_query(request: AgentQueryRequest):
                 logger.info(
                     "使用气象专家模式",
                     agent_id=id(agent)
-                )
-            elif request.assistant_mode == 'quick-tracing-expert':
-                agent = quick_tracing_agent_instance
-                assistant_mode = 'quick-tracing-expert'
-                logger.info(
-                    "使用快速溯源专家模式",
-                    agent_id=id(agent),
-                    max_iterations=8
                 )
             elif request.assistant_mode == 'data-visualization-expert':
                 agent = data_viz_agent_instance
@@ -931,20 +930,10 @@ async def agent_health():
                 "max_iterations": meteorology_expert_agent_instance.max_iterations,
                 "description": "气象专家模式"
             },
-            "quick_tracing_expert": {
-                "tools_count": len(quick_tracing_agent_instance.get_available_tools()),
-                "max_iterations": quick_tracing_agent_instance.max_iterations,
-                "description": "快速溯源专家模式"
-            },
             "data_visualization_expert": {
                 "tools_count": len(data_viz_agent_instance.get_available_tools()),
                 "max_iterations": data_viz_agent_instance.max_iterations,
                 "description": "数据可视化专家模式"
-            },
-            "deep_tracing_expert": {
-                "tools_count": len(deep_tracing_agent_instance.get_available_tools()),
-                "max_iterations": deep_tracing_agent_instance.max_iterations,
-                "description": "深度溯源专家模式（HYSPLIT轨迹+源清单+RACM2化学机理）"
             },
             "report_generation_expert": {
                 "tools_count": 0,
@@ -968,146 +957,3 @@ async def agent_health():
 # async def delete_session(session_id: str):
 #     """删除会话"""
 #     pass
-
-
-# ========================================
-# 旧架构多专家并行快速溯源接口（ExpertRouterV3）
-# ========================================
-
-# 全局ExpertRouterV3实例
-expert_router_v3_instance = None
-
-def get_expert_router_v3():
-    """获取ExpertRouterV3实例（延迟初始化）"""
-    global expert_router_v3_instance
-    if expert_router_v3_instance is None:
-        try:
-            # 创建默认的 memory_manager（使用临时session_id）
-            from app.agent.memory.hybrid_manager import HybridMemoryManager
-            default_memory_manager = HybridMemoryManager(
-                session_id="global_router_session",
-                max_working_iterations=20
-            )
-
-            expert_router_v3_instance = ExpertRouterV3(
-                memory_manager=default_memory_manager
-            )
-            logger.info("expert_router_v3_initialized", has_memory_manager=True)
-        except Exception as e:
-            logger.error("failed_to_initialize_expert_router_v3", error=str(e), exc_info=True)
-            raise
-    return expert_router_v3_instance
-
-
-class ExpertV3AnalyzeRequest(BaseModel):
-    """ExpertRouterV3 分析请求"""
-    query: str = Field(..., description="用户自然语言查询")
-    session_id: Optional[str] = Field(None, description="会话ID（可选）")
-    precision: str = Field("standard", description="精度模式: fast/standard/full")
-    enable_checkpoint: bool = Field(False, description="是否启用检查点（失败后可恢复）")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "分析广州天河站2026-03-28的PM2.5污染",
-                "precision": "standard",
-                "enable_checkpoint": False
-            }
-        }
-
-
-@router.post("/analyze-v3")
-async def analyze_with_expert_router_v3(request: ExpertV3AnalyzeRequest):
-    """
-    多专家并行快速溯源（旧架构 ExpertRouterV3）
-
-    **功能**:
-    - 气象专家：天气条件、后向轨迹、上风向企业分析
-    - 组分专家：PMF/OBP源解析、组分重构
-    - 可视化专家：自动生成图表
-    - 报告专家：综合分析报告
-
-    **特点**:
-    - 并行执行无依赖的专家任务
-    - 自动任务调度和依赖管理
-    - 支持检查点恢复
-
-    **事件类型**（SSE流式）:
-    - `pipeline_started`: 流水线开始
-    - `expert_selected`: 专家选择完成
-    - `expert_started`: 专家开始执行
-    - `expert_completed`: 专家执行完成
-    - `expert_failed`: 专家执行失败
-    - `pipeline_completed`: 流水线完成
-    - `pipeline_failed`: 流水线失败
-    """
-    logger.info(
-        "expert_v3_analyze_request",
-        query=request.query[:100],
-        precision=request.precision,
-        session_id=request.session_id
-    )
-
-    try:
-        router = get_expert_router_v3()
-
-        async def event_generator():
-            """SSE事件生成器"""
-            try:
-                result = await router.execute_pipeline(
-                    user_query=request.query,
-                    session_id=request.session_id,
-                    precision=request.precision
-                )
-
-                # 将PipelineResult序列化为SSE格式
-                event_data = json.dumps({
-                    "type": "pipeline_completed",
-                    "data": {
-                        "query": request.query,
-                        "response": result.response,
-                        "conclusions": result.conclusions,
-                        "recommendations": result.recommendations,
-                        "data_ids": result.data_ids,
-                        "visuals": result.visuals,
-                        "confidence": result.confidence,
-                        "session_id": result.session_id or request.session_id
-                    }
-                }, ensure_ascii=False, default=str)
-                yield f"data: {event_data}\n\n"
-
-            except Exception as e:
-                logger.error(
-                    "expert_v3_stream_generation_error",
-                    error=str(e),
-                    exc_info=True
-                )
-                error_event = {
-                    "type": "pipeline_failed",
-                    "data": {
-                        "error": str(e),
-                        "query": request.query
-                    }
-                }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
-
-    except Exception as e:
-        logger.error(
-            "expert_v3_analyze_failed",
-            error=str(e),
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"多专家分析失败: {str(e)}"
-        )

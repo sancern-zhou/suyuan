@@ -30,6 +30,7 @@ from app.agent.context.data_context_manager import DataContextManager
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.services.pollution_event_state_store import PollutionEventStateStore
+from app.external_apis.openmeteo_client import OpenMeteoClient
 
 logger = structlog.get_logger()
 
@@ -152,7 +153,7 @@ class PollutionEventMonitorService:
         run_dir = self.output_root / city_slug / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        city_fetch = self._fetch_city_hour_data(city, start_time, end_time)
+        city_fetch = await self._fetch_city_hour_data(city, start_time, end_time)
         city_records = city_fetch.get("records", [])
         quality_report = self._quality_report(city, city_records, start_time, end_time)
         raw_events = self._detect_events(city, city_records, quality_report)
@@ -235,7 +236,7 @@ class PollutionEventMonitorService:
             "manifest_file": str(run_dir / "run_manifest.json"),
         }
 
-    def _fetch_city_hour_data(self, city: str, start_time: datetime, end_time: datetime) -> Dict[str, Any]:
+    async def _fetch_city_hour_data(self, city: str, start_time: datetime, end_time: datetime) -> Dict[str, Any]:
         from app.tools.query.query_gd_suncere import execute_query_gd_suncere_station_hour
 
         result = execute_query_gd_suncere_station_hour(
@@ -247,6 +248,29 @@ class PollutionEventMonitorService:
         )
         data_id = self._extract_data_id(result)
         records = self._load_data_records(data_id, result)
+
+        # === 修复1: 计算 O3_8h（从 O3 小时浓度计算 8 小时滑动平均）===
+        records = self._calculate_o3_8h_for_records(records)
+
+        # === 修复2: 补充气象数据（从 Open-Meteo API 获取）===
+        weather_data = await self._fetch_openmeteo_weather_for_city(city, start_time, end_time)
+        if weather_data:
+            for record in records:
+                record_time = self._record_time(record)
+                if record_time and record_time in weather_data:
+                    measurements = record.get("measurements", {})
+                    if isinstance(measurements, dict):
+                        # 合并气象数据（只填充缺失的字段）
+                        for key, value in weather_data[record_time].items():
+                            if value is not None and (key not in measurements or measurements.get(key) is None):
+                                measurements[key] = value
+
+            logger.info(
+                "weather_data_supplemented",
+                city=city,
+                supplemented_fields=len(weather_data)
+            )
+
         return {
             "data_id": data_id,
             "records": records,
@@ -1533,6 +1557,169 @@ class PollutionEventMonitorService:
             if values[i] - neighbor_avg >= max(spec.step_threshold * 1.8, 1.4826 * mad * 4):
                 count += 1
         return count
+
+    def _calculate_o3_8h_for_records(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        为记录计算 O3_8h（8小时滑动平均）
+
+        O3_8h 是当前小时及前7小时的 O3 平均值，用于臭氧污染评价。
+        如果 API 返回的 O3_8h 全为 0 或缺失，则从 O3 小时浓度重新计算。
+        """
+        if not records:
+            return records
+
+        # 按时间排序记录
+        sorted_records = sorted(
+            records,
+            key=lambda r: self._record_time(r) or datetime.min,
+        )
+
+        # 提取 O3 小时浓度值
+        o3_values = []
+        for record in sorted_records:
+            o3 = self._get_measurement(record, ["O3", "o3", "O3_1h"])
+            if o3 is not None and o3 > 0:
+                o3_values.append(o3)
+            else:
+                o3_values.append(None)
+
+        # 计算 8 小时滑动平均
+        o3_8h_values = []
+        for i in range(len(o3_values)):
+            # 取当前小时及前7小时（共8小时）
+            window = o3_values[max(0, i - 7):i + 1]
+            # 过滤掉 None 值
+            valid_values = [v for v in window if v is not None]
+            # 至少需要6个有效值才计算平均值
+            if len(valid_values) >= 6:
+                o3_8h_values.append(sum(valid_values) / len(valid_values))
+            else:
+                o3_8h_values.append(None)
+
+        # 更新记录中的 O3_8h 值
+        updated_records = []
+        for record, o3_8h in zip(sorted_records, o3_8h_values):
+            updated_record = dict(record)
+            measurements = updated_record.get("measurements", {})
+            if isinstance(measurements, dict):
+                # 只有当原值缺失或为0时才覆盖
+                current_o3_8h = measurements.get("O3_8h")
+                if current_o3_8h is None or current_o3_8h == 0:
+                    measurements["O3_8h"] = round(o3_8h) if o3_8h is not None else None
+            updated_records.append(updated_record)
+
+        logger.info(
+            "o3_8h_calculated",
+            record_count=len(records),
+            calculated_count=sum(1 for v in o3_8h_values if v is not None)
+        )
+
+        return updated_records
+
+    async def _fetch_openmeteo_weather_for_city(
+        self,
+        city: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> Dict[datetime, Dict[str, Any]]:
+        """
+        从 Open-Meteo API 获取城市气象数据
+
+        用于补充缺失的气象字段（风速、风向、温度、湿度等）。
+        """
+        # 城市坐标映射（主要城市）
+        CITY_COORDS = {
+            "广州": {"lat": 23.1291, "lon": 113.2644},
+            "深圳": {"lat": 22.5431, "lon": 114.0579},
+            "佛山": {"lat": 23.0219, "lon": 113.1214},
+            "东莞": {"lat": 23.0205, "lon": 113.7518},
+            "珠海": {"lat": 22.2769, "lon": 113.5678},
+            "中山": {"lat": 22.5171, "lon": 113.3926},
+            "江门": {"lat": 22.5790, "lon": 113.0815},
+            "惠州": {"lat": 23.1115, "lon": 114.4152},
+            "肇庆": {"lat": 23.0469, "lon": 112.4654},
+        }
+
+        coords = CITY_COORDS.get(city)
+        if not coords:
+            logger.warning("openmeteo_city_coords_not_found", city=city)
+            return {}
+
+        try:
+            client = OpenMeteoClient()
+
+            # 格式化时间参数（ERA5 要求 end_date 是包含的日期）
+            start_str = start_time.strftime("%Y-%m-%d")
+            end_str = end_time.strftime("%Y-%m-%d")
+
+            # 调用 ERA5 API 获取历史气象数据（异步方法）
+            response = await client.fetch_era5_data(
+                lat=coords["lat"],
+                lon=coords["lon"],
+                start_date=start_str,
+                end_date=end_str,
+            )
+
+            if not response or not response.get("hourly"):
+                logger.warning("openmeteo_no_data", city=city, start=start_str, end=end_str)
+                return {}
+
+            hourly_data = response["hourly"]
+            weather_by_time = {}
+
+            # 构建时间到气象数据的映射
+            for i, time_str in enumerate(hourly_data.get("time", [])):
+                try:
+                    # Open-Meteo 返回的时间格式：2026-05-14T09:00
+                    dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+                    # 转换为上海时区
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+                    dt = dt.astimezone(TZ_SHANGHAI)
+
+                    # 提取气象数据（尝试多种可能的字段名）
+                    weather_data = {
+                        "wind_speed_10m": self._safe_get(hourly_data, "windspeed_10m", i) or self._safe_get(hourly_data, "wind_speed_10m", i),
+                        "wind_direction_10m": self._safe_get(hourly_data, "winddirection_10m", i) or self._safe_get(hourly_data, "wind_direction_10m", i),
+                        "temperature_2m": self._safe_get(hourly_data, "temperature_2m", i),
+                        "relative_humidity_2m": self._safe_get(hourly_data, "relativehumidity_2m", i) or self._safe_get(hourly_data, "relative_humidity_2m", i),
+                        "surface_pressure": self._safe_get(hourly_data, "surface_pressure", i),
+                        "wind_gusts_10m": self._safe_get(hourly_data, "windgusts_10m", i) or self._safe_get(hourly_data, "wind_gusts_10m", i),
+                        "precipitation": self._safe_get(hourly_data, "precipitation", i),
+                        "cloud_cover": self._safe_get(hourly_data, "cloudcover", i) or self._safe_get(hourly_data, "cloud_cover", i),
+                        "visibility": self._safe_get(hourly_data, "visibility", i),
+                        "boundary_layer_height": self._safe_get(hourly_data, "boundary_layer_height", i),
+                    }
+                    weather_by_time[dt] = weather_data
+                except Exception as e:
+                    logger.debug("openmeteo_time_parse_failed", time_str=time_str, error=str(e))
+                    continue
+
+            logger.info(
+                "openmeteo_weather_fetched",
+                city=city,
+                data_points=len(weather_by_time)
+            )
+
+            return weather_by_time
+
+        except Exception as e:
+            logger.error("openmeteo_fetch_failed", city=city, error=str(e))
+            return {}
+
+    def _safe_get(self, data: Dict[str, List], key: str, index: int, default: Any = None) -> Any:
+        """安全获取列表数据"""
+        try:
+            values = data.get(key, [])
+            if index < len(values):
+                value = values[index]
+                # 过滤无效值
+                if value is None or value == -999 or value == -99:
+                    return default
+                return value
+            return default
+        except (IndexError, TypeError):
+            return default
 
 
 async def run_pollution_event_monitor(config: MonitorConfig, context: Optional[ExecutionContext] = None) -> Dict[str, Any]:

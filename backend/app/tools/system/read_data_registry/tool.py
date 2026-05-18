@@ -34,7 +34,8 @@ class ReadDataRegistryTool(LLMTool):
             description=(
                 "读取DataRegistry中已保存的数据。"
                 "支持数组型明细数据的时间范围过滤、字段选择和jq聚合过滤；"
-                "支持对象型报表数据包的视图列表和按view读取。"
+                "支持对象型报表数据包的视图列表和按view读取。读取 report_data_id 且不指定 view 时，"
+                "默认返回 reporting 报告口径视图；只有确需原始接口字段时才显式读取 raw/result。"
                 f"明细数组最多返回{self.DEFAULT_MAX_RECORDS}条。"
             ),
             category=ToolCategory.QUERY,
@@ -59,11 +60,11 @@ class ReadDataRegistryTool(LLMTool):
                     },
                     "list_views": {
                         "type": "boolean",
-                        "description": "对象型报表包专用：只返回可用视图列表和每个视图的字段"
+                        "description": "对象型报表包专用：只返回可用视图列表和每个视图的字段；需要了解结构时使用"
                     },
                     "view": {
                         "type": "string",
-                        "description": "对象型报表包专用：读取指定视图，如 cities、regions、province、stations、aggregate、result"
+                        "description": "对象型报表包专用：读取指定视图，如 reporting、cities、regions、province、stations、aggregate、raw、result。不传时默认 reporting；raw/result 是原始接口字段"
                     },
                     "time_range": {
                         "type": "string",
@@ -75,14 +76,15 @@ class ReadDataRegistryTool(LLMTool):
                     "fields": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "选择特定字段；建议先用list_fields确认字段名"
+                        "description": "选择特定字段；建议先用 list_fields 或 list_views 确认字段名。读取 raw/result 时应尽量提供 fields"
                     },
                     "jq_filter": {
                         "type": "string",
-                        "description": "jq过滤表达式（支持聚合统计）"
+                        "description": "jq过滤表达式（支持聚合统计）。读取大视图时优先用 jq_filter 做筛选或聚合，避免返回完整明细"
                     }
                 },
                 "anyOf": [
+                    {"required": ["data_id"]},                # 报表包默认读取 reporting；数组型数据仍建议带 time_range
                     {"required": ["data_id", "list_fields"]},  # list_fields 模式（不需要 time_range）
                     {"required": ["data_id", "list_views"]},   # 对象型报表包视图列表
                     {"required": ["data_id", "view"]},         # 对象型报表包指定视图
@@ -327,6 +329,9 @@ class ReadDataRegistryTool(LLMTool):
                     "available_top_level_fields": list(package.keys())
                 }
             }
+
+        if not list_fields and not list_views and not view and "reporting" in views:
+            view = "reporting"
 
         if list_fields or list_views or not view:
             views_info = {}

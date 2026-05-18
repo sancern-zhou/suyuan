@@ -1628,9 +1628,11 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
     } if num_cities > 0 else {p: 0 for p in single_indexes_sums.keys()}
 
     # ========== 计算类指标 ==========
-    # 超标率和达标率
-    exceed_rate = safe_round(total_exceed_days / total_valid_days * 100, 1) if total_valid_days > 0 else 0
-    compliance_rate = safe_round((total_valid_days - total_exceed_days) / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+    # 超标率和达标率：使用各城市已修约后的达标率/超标率的均值
+    city_compliance_rates = [s.get("compliance_rate", 0) for s in valid_cities.values()]
+    city_exceed_rates = [s.get("exceed_rate", 0) for s in valid_cities.values()]
+    compliance_rate = safe_round(sum(city_compliance_rates) / num_cities, 1) if num_cities > 0 else 0
+    exceed_rate = safe_round(sum(city_exceed_rates) / num_cities, 1) if num_cities > 0 else 0
 
     # 各污染物超标率
     exceed_rate_by_pollutant = {}
@@ -1688,8 +1690,8 @@ def calculate_province_wide_stats(city_stats: Dict[str, Dict]) -> Dict[str, Any]
             "CO_P95": "平均值", "O3_8h": "平均值", "O3_8h_P90": "平均值",
             "single_indexes": "平均值（各城市单项质量指数的平均）",
             "total_days": "累计值（各城市总天数累加）",
-            "exceed_rate": "计算值（基于累计值计算）",
-            "compliance_rate": "计算值（基于累计值计算）",
+            "exceed_rate": "平均值（各城市超标率的平均）",
+            "compliance_rate": "平均值（各城市达标率的平均）",
             "exceed_rate_by_pollutant": "计算值（基于累计值计算）",
             "primary_pollutant_ratio": "计算值（基于累计值计算）",
             # 累计类指标（各城市累加）
@@ -1854,9 +1856,11 @@ def calculate_regional_stats(city_stats: Dict[str, Dict]) -> Dict[str, Dict]:
         } if num_cities > 0 else {p: 0 for p in single_indexes_sums.keys()}
 
         # ========== 计算类指标 ==========
-        # 超标率和达标率
-        exceed_rate = safe_round(total_exceed_days / total_valid_days * 100, 1) if total_valid_days > 0 else 0
-        compliance_rate = safe_round((total_valid_days - total_exceed_days) / total_valid_days * 100, 1) if total_valid_days > 0 else 0
+        # 超标率和达标率：使用区域内各城市已修约后的达标率/超标率的均值
+        city_compliance_rates = [s.get("compliance_rate", 0) for s in region_city_stats.values()]
+        city_exceed_rates = [s.get("exceed_rate", 0) for s in region_city_stats.values()]
+        compliance_rate = safe_round(sum(city_compliance_rates) / num_cities, 1) if num_cities > 0 else 0
+        exceed_rate = safe_round(sum(city_exceed_rates) / num_cities, 1) if num_cities > 0 else 0
 
         # 各污染物超标率
         exceed_rate_by_pollutant = {}

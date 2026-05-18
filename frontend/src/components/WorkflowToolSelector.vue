@@ -56,25 +56,11 @@ const emit = defineEmits(['select', 'close'])
 
 const workflowTools = [
   {
-    id: 'quick_tracing_workflow',
-    name: '快速溯源',
-    description: '多专家快速溯源分析（支持自然语言）',
-    icon: 'icon-zippy',
-    params: ['查询文本']
-  },
-  {
     id: 'standard_analysis_workflow',
     name: '标准分析',
-    description: '完整的污染溯源分析（多专家协作）',
+    description: '完整的环境数据分析（多专家协作）',
     icon: 'icon-analysis',
     params: ['查询文本', '精度模式']
-  },
-  {
-    id: 'deep_trace_workflow',
-    name: '深度溯源',
-    description: 'PMF源解析+OBM/OBP深度分析',
-    icon: 'icon-search',
-    params: ['城市', '污染物', '时间范围']
   },
   {
     id: 'knowledge_qa_workflow',

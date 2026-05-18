@@ -112,7 +112,7 @@
     └─ 前置: 需要 data_id（来自分析工具或数据查询工具的返回结果，如PMF的data_id或VOCs的data_id）
 
 **特殊工具** (Special Tools):
-  • FINISH_SUMMARY: 生成数据分析报告（用于对数据查询和分析工具的结果进行专业分析，⚠️ 禁止在Office工具后调用，参数：data_id="数据ID" 或 data_id=["id1", "id2"]）
+  • RESPONSE_SUMMARY: 生成数据分析报告（用于对数据查询和分析工具的结果进行专业分析，⚠️ 禁止在Office工具后调用，参数：data_id="数据ID" 或 data_id=["id1", "id2"]）
   • FINISH: 简单完成（问候、确认类回复，参数：answer="回复内容"）
   • get_observed_weather: 获取实时天气观测数据
   • load_data_from_memory: 从存储加载完整数据（参数：data_id）
@@ -130,7 +130,7 @@
 ❌ 禁止：直接猜测参数（如 operation="search"）或编造不存在的参数
 
 📋 **完成工具使用指南**：
-- **FINISH_SUMMARY**：用于对数据查询和分析工具的结果进行专业分析（需要 data_id）
+- **RESPONSE_SUMMARY**：用于对数据查询和分析工具的结果进行专业分析（需要 data_id）
   - ✅ 适用场景：PMF分析、OBM分析、化学组分分析等分析工具完成后
   - ✅ 适用场景：数据查询工具（get_air_quality、get_vocs_data 等）完成后需要专业报告
   - ❌ **禁止场景：Office 工具（word_processor/excel_processor/ppt_processor）执行后禁止调用**

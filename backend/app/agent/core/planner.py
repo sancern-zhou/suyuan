@@ -688,7 +688,7 @@ class ReActPlanner:
     async def stream_user_answer(self, prompt: str) -> AsyncGenerator[str, None]:
         """流式生成用户答案
 
-        用于 FINISH_SUMMARY 阶段，生成最终的分析报告。
+        用于根据已有上下文流式生成面向用户的回答。
         优先使用 Anthropic 流式 API，如果不可用则降级到 SSE。
 
         Args:

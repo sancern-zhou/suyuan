@@ -235,7 +235,7 @@ class GenerateAQICalendarTool(LLMTool):
                     f"数据覆盖率{statistics['coverage_rate']}%，"
                     f"平均值{statistics.get('avg_value', 'N/A')}，"
                     f"范围{statistics.get('min_value', 'N/A')}-{statistics.get('max_value', 'N/A')}。"
-                    f"**图片链接**（请在FINAL_ANSWER中使用）：{markdown_image}"
+                    f"**图片链接**：{markdown_image}"
                 )
             }
 
