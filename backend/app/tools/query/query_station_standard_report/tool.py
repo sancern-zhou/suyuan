@@ -19,6 +19,8 @@ from app.tools.query.query_city_standard_report.tool import (
     _extract_report_records,
     _normalize_datetime,
     _normalize_pollutant_codes,
+    build_station_reporting_records,
+    get_standard_report_field_descriptions,
 )
 from app.tools.query.query_gd_suncere.tool import QueryGDSuncereDataTool
 from app.tools.query.report_data_package import save_report_data_package
@@ -252,6 +254,7 @@ def execute_query_station_standard_report(
             "revise_type": revise_type,
             "pollutant_codes": effective_pollutants,
             "total_records": len(records),
+            "field_descriptions": get_standard_report_field_descriptions("station"),
             "request_payload": payload,
         }
         result: Dict[str, Any] = {
@@ -264,6 +267,7 @@ def execute_query_station_standard_report(
         }
 
         grouped = _records_by_station(records)
+        reporting_records = build_station_reporting_records(records, _station_name_from_record)
         report_data_id = save_report_data_package(
             context=context,
             tool_name=tool_name,
@@ -287,14 +291,22 @@ def execute_query_station_standard_report(
             primary_view_name="stations",
             primary_name_field="station",
             primary_stats=grouped,
-            extra_views={"raw": records, "result": records},
+            extra_views={"reporting": reporting_records, "raw": records, "result": records},
             package_kind="station_standard_report_api",
         )
         if report_data_id:
             metadata["report_data_id"] = report_data_id
+            metadata["result_externalized"] = True
+            metadata["default_view"] = "reporting"
+            preview = reporting_records[:5]
+            metadata["preview_records"] = len(preview)
             result["report_data_id"] = report_data_id
+            result["data"] = preview
+            result.pop("result", None)
             result["summary"] += f" | 完整接口报表已保存为 report_data_id: {report_data_id}"
             result["registry_usage"] = {
+                "default": f'read_data_registry(data_id="{report_data_id}")',
+                "reporting": f'read_data_registry(data_id="{report_data_id}")',
                 "stations": f'read_data_registry(data_id="{report_data_id}", view="stations")',
                 "raw": f'read_data_registry(data_id="{report_data_id}", view="raw")',
                 "result": f'read_data_registry(data_id="{report_data_id}", view="result")',
@@ -431,6 +443,7 @@ def execute_query_station_standard_yoy_report(
             "revise_type": revise_type,
             "pollutant_codes": effective_pollutants,
             "total_records": len(records),
+            "field_descriptions": get_standard_report_field_descriptions("station", comparative=True),
             "request_payload": payload,
         }
         result: Dict[str, Any] = {
@@ -447,6 +460,7 @@ def execute_query_station_standard_yoy_report(
         }
 
         grouped = _records_by_station(records)
+        reporting_records = build_station_reporting_records(records, _station_name_from_record)
         report_data_id = save_report_data_package(
             context=context,
             tool_name=tool_name,
@@ -470,14 +484,22 @@ def execute_query_station_standard_yoy_report(
             primary_view_name="stations",
             primary_name_field="station",
             primary_stats=grouped,
-            extra_views={"raw": records, "result": records},
+            extra_views={"reporting": reporting_records, "raw": records, "result": records},
             package_kind="station_standard_yoy_report_api",
         )
         if report_data_id:
             metadata["report_data_id"] = report_data_id
+            metadata["result_externalized"] = True
+            metadata["default_view"] = "reporting"
+            preview = reporting_records[:5]
+            metadata["preview_records"] = len(preview)
             result["report_data_id"] = report_data_id
+            result["data"] = preview
+            result.pop("result", None)
             result["summary"] += f" | 完整接口报表已保存为 report_data_id: {report_data_id}"
             result["registry_usage"] = {
+                "default": f'read_data_registry(data_id="{report_data_id}")',
+                "reporting": f'read_data_registry(data_id="{report_data_id}")',
                 "stations": f'read_data_registry(data_id="{report_data_id}", view="stations")',
                 "raw": f'read_data_registry(data_id="{report_data_id}", view="raw")',
                 "result": f'read_data_registry(data_id="{report_data_id}", view="result")',
@@ -504,28 +526,22 @@ class QueryStationStandardReportTool(LLMTool):
             "description": (
                 "【第一优先级】查询广东省站点统计报表接口，直接使用联网接口返回的新/旧国标统计结果，"
                 "不进行本地日报重算。用于站点综合指数、达标/超标天数、污染物统计浓度、首要污染物、排名等统计报表。"
-                "standard_type='new' 或 ns_type=2 表示新国标；standard_type='old' 或 ns_type=1 表示旧国标。"
-                "cities 会按 station_type 展开站点，默认国控；也可直接传 stations 或站点编码。"
+                "ns_type=2 表示新国标；ns_type=1 表示旧国标。"
+                "cities 支持城市名或带“市”后缀的城市名，会按 station_type 自动映射为下辖站点编码，默认国控；"
+                "stations 支持站点名称或站点编码。工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
+                "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
+                "只有需要追溯原始接口字段时才读取 raw/result 视图。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，可自动展开站点"},
-                    "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表"},
-                    "station_type": {"type": "string", "description": "站点类型，仅 cities 时生效，默认国控"},
+                    "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州'] 或 ['广州市']；工具会自动映射为该城市下辖站点编码"},
+                    "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表，如 ['麓湖'] 或 ['1001A']"},
+                    "station_type": {"type": "string", "description": "站点类型，仅 cities 时生效，用于筛选下辖站点；默认国控，常用值：国控、省控、市控"},
                     "start_time": {"type": "string", "description": "开始时间，支持 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
                     "end_time": {"type": "string", "description": "结束时间，支持 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
-                    "start_date": {"type": "string", "description": "兼容字段，等同 start_time"},
-                    "end_date": {"type": "string", "description": "兼容字段，等同 end_time"},
-                    "standard_type": {"type": "string", "description": "new=新国标，old=旧国标", "enum": ["new", "old"]},
                     "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]},
-                    "time_type": {"type": "integer", "description": "3=周报, 4=月报, 5=季报, 7=年报, 8=任意时间；默认8", "enum": [3, 4, 5, 7, 8]},
-                    "pollutant_codes": {"type": "array", "items": {"type": "string"}, "description": "接口字段过滤列表，不传则返回常用统计字段"},
-                    "plan_type": {"type": "integer", "description": "接口 planType，默认0"},
                     "data_source": {"type": "integer", "description": "0原始实况，1审核实况，2原始标况，3审核标况；默认1", "enum": [0, 1, 2, 3]},
-                    "sand_type": {"type": "integer", "description": "0不扣沙，1扣沙；默认1", "enum": [0, 1]},
-                    "revise_type": {"type": "integer", "description": "接口 ReviseType，默认0"},
-                    "skip_count": {"type": "integer", "description": "分页 skipCount，默认0"},
                     "max_result_count": {"type": "integer", "description": "分页 maxResultCount，默认200"},
                 },
                 "required": [],
@@ -601,28 +617,23 @@ class QueryStationStandardYoyReportTool(LLMTool):
             "name": "query_station_standard_yoy_report",
             "description": (
                 "【第一优先级】查询广东省站点同比/环比统计报表接口，直接调用联网接口返回当前值、对比值、增幅和排名等字段。"
-                "不再本地计算站点新/旧国标双时段统计报表。standard_type='new' 或 ns_type=2 表示新国标；"
-                "standard_type='old' 或 ns_type=1 表示旧国标。适用于站点同比、环比、变化率、改善/恶化分析。"
+                "不再本地计算站点新/旧国标双时段统计报表。ns_type=2 表示新国标；"
+                "ns_type=1 表示旧国标。cities 支持城市名或带“市”后缀的城市名，会按 station_type 自动映射为下辖站点编码，默认国控；"
+                "stations 支持站点名称或站点编码。适用于站点同比、环比、变化率、改善/恶化分析。"
+                "工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
+                "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
+                "只有需要追溯原始接口字段时才读取 raw/result 视图。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，可自动展开站点"},
-                    "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表"},
-                    "station_type": {"type": "string", "description": "站点类型，仅 cities 时生效，默认国控"},
+                    "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州'] 或 ['广州市']；工具会自动映射为该城市下辖站点编码"},
+                    "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表，如 ['麓湖'] 或 ['1001A']"},
+                    "station_type": {"type": "string", "description": "站点类型，仅 cities 时生效，用于筛选下辖站点；默认国控，常用值：国控、省控、市控"},
                     "time_point": {"type": "array", "items": {"type": "string"}, "description": "当前时间范围，如 ['2026-05-08 00:00:00','2026-05-14 00:00:00']"},
                     "contrast_time": {"type": "array", "items": {"type": "string"}, "description": "对比时间范围，如 ['2025-05-08 00:00:00','2025-05-14 00:00:00']"},
-                    "query_period": {"type": "object", "description": "兼容字段，当前时段对象，包含 start_date/end_date"},
-                    "comparison_period": {"type": "object", "description": "兼容字段，对比时段对象，包含 start_date/end_date"},
-                    "standard_type": {"type": "string", "description": "new=新国标，old=旧国标", "enum": ["new", "old"]},
                     "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]},
-                    "time_type": {"type": "integer", "description": "4=月报, 8=任意时间；默认8", "enum": [4, 8]},
-                    "pollutant_codes": {"type": "array", "items": {"type": "string"}, "description": "接口字段过滤列表，不传返回接口默认字段"},
-                    "plan_type": {"type": "integer", "description": "接口 planType，默认0"},
                     "data_source": {"type": "integer", "description": "0原始实况，1审核实况，2原始标况，3审核标况；默认1", "enum": [0, 1, 2, 3]},
-                    "sand_type": {"type": "integer", "description": "0不扣沙，1扣沙；默认1", "enum": [0, 1]},
-                    "revise_type": {"type": "integer", "description": "接口 ReviseType，默认0"},
-                    "skip_count": {"type": "integer", "description": "分页 skipCount，默认0"},
                     "max_result_count": {"type": "integer", "description": "分页 maxResultCount，默认200"},
                 },
                 "required": [],

@@ -28,9 +28,11 @@ class ReactAgentAPI {
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
+      modelTier = 'auto',
       attachments = null,  // ✅ 附件列表
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
+      skipAutoFollowup = false,
       requestKey = sessionId,
       onEvent
     } = options
@@ -46,29 +48,12 @@ class ReactAgentAPI {
       assistant_mode: assistantMode,  // 传递助手模式
       mode: agentMode,  // ✅ 双模式架构
       knowledge_base_ids: knowledgeBaseIds,  // ✅ 传递知识库ID列表
+      model_tier: modelTier,
+      modelTier,
       attachments: attachments,  // ✅ 传递附件列表
-      is_interruption: isInterruption
-    }
-
-    return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)
-  }
-
-  // ✅ 新增：ExpertRouterV3 多专家并行快速溯源（旧架构）
-  async analyzeV3(query, options = {}) {
-    const {
-      sessionId = null,
-      precision = 'standard',  // fast/standard/full
-      enableCheckpoint = false,
-      requestKey = sessionId,
-      onEvent
-    } = options
-
-    const url = `${API_BASE_URL}/agent/analyze-v3`
-    const body = {
-      query,
-      session_id: sessionId,
-      precision: precision,
-      enable_checkpoint: enableCheckpoint
+      is_interruption: isInterruption,
+      skip_auto_followup: skipAutoFollowup,
+      skipAutoFollowup
     }
 
     return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)

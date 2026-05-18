@@ -60,9 +60,13 @@ def get_global_llm_semaphore() -> asyncio.Semaphore:
     return _global_semaphore
 
 
-def parse_fallback_candidates(primary_provider: str, primary_model: str) -> list[LLMCandidate]:
+def parse_fallback_candidates(
+    primary_provider: str,
+    primary_model: str,
+    raw_fallbacks: Optional[str] = None,
+) -> list[LLMCandidate]:
     """Build the configured candidate chain, preserving order and removing duplicates."""
-    raw = getattr(settings, "llm_fallbacks", "") or ""
+    raw = raw_fallbacks if raw_fallbacks is not None else (getattr(settings, "llm_fallbacks", "") or "")
     candidates = [LLMCandidate(primary_provider.lower(), primary_model)]
     seen = {(primary_provider.lower(), primary_model)}
 

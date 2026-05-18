@@ -107,11 +107,11 @@ class DataStandardizer:
             "station_code": "station_code",
             "stationCode": "station_code",
             "StationCode": "station_code",
-            "code": "station_code",
+            "code": "code",
             "city_code": "city_code",
             "cityCode": "city_code",
             "CityCode": "city_code",
-            "Code": "station_code",  # VOCs API 返回的站点编码字段
+            "Code": "Code",  # 通用标准化不推断 Code 的业务含义
         }
 
         self.coordinate_field_mapping = {
@@ -138,7 +138,7 @@ class DataStandardizer:
             "pm2_5": "PM2_5",
             "pm2.5": "PM2_5",
             "pM2_5": "PM2_5",
-            "PM2_5_24h": "PM2_5",
+            "PM2_5_24h": "PM2_5_24h",
             "细颗粒物": "PM2_5",  # 新增：中文
             "细颗粒物(PM2.5)": "PM2_5",  # 新增：中文带括号
             "PM2.5浓度": "PM2_5",  # 新增：带浓度字样
@@ -165,12 +165,13 @@ class DataStandardizer:
             # O3_8H - 8小时臭氧平均值（单独指标）
             "O3_8h": "O3_8h",
             "O3_8H": "O3_8h",
+            "o3_8h": "O3_8h",
             "o3_8H": "O3_8h",  # 新增：API返回的小写o版本
             "O38H": "O3_8h",
             "O38h": "O3_8h",
             "臭氧8小时": "O3_8h",  # 新增：中文
             "臭氧(O₃) - 8小时平均": "O3_8h",  # 新增：完整中文
-            "O3_8h_24h": "O3_8h",  # XcAiDb日数据字段
+            "O3_8h_24h": "O3_8h_24h",  # XcAiDb日数据字段
 
             # NO2
             "NO2": "NO2",
@@ -212,9 +213,9 @@ class DataStandardizer:
             "AQI": "AQI",
             "aqi": "AQI",
             "空气质量指数": "AQI",
-            "compositeindex": "AQI",
-            "compositeIndex": "AQI",
-            "综合指数": "AQI",
+            "compositeindex": "compositeIndex",
+            "compositeIndex": "compositeIndex",
+            "综合指数": "compositeIndex",
 
             # 首要污染物
             "primary_pollutant": "primary_pollutant",
@@ -562,14 +563,14 @@ class DataStandardizer:
 
             # 元素碳
             "EC": "EC",
-            "EC1": "EC",
-            "EC2": "EC",
+            "EC1": "EC1",
+            "EC2": "EC2",
             "Elemental Carbon": "EC",
             "elemental_carbon": "EC",
             "EC（TOT）": "EC",  # 全角括号格式
             "OC": "OC",
-            "OC1": "OC",
-            "OC2": "OC",
+            "OC1": "OC1",
+            "OC2": "OC2",
             "Organic Carbon": "OC",
             "organic_carbon": "OC",
             "OC（TOT）": "OC",  # 全角括号格式
@@ -670,8 +671,8 @@ class DataStandardizer:
             "temperature_2M": "temperature_2m",
             "temp_2m": "temperature_2m",
             "temp2m": "temperature_2m",
-            "气温": "temperature_2m",
-            "温度": "temperature_2m",
+            "气温": "temperature",
+            "温度": "temperature",
 
             # 露点温度
             "dew_point_2m": "dew_point_2m",
@@ -704,19 +705,19 @@ class DataStandardizer:
             "relativeHumidity_2m": "relative_humidity_2m",
             "rh_2m": "relative_humidity_2m",
             "humidity_2m": "relative_humidity_2m",
-            "相对湿度": "relative_humidity_2m",
-            "湿度": "relative_humidity_2m",
+            "相对湿度": "relative_humidity",
+            "湿度": "humidity",
 
             # === 风速相关 ===
             # 10米风速
             "wind_speed_10m": "wind_speed_10m",
             "windSpeed_10m": "wind_speed_10m",
             "ws_10m": "wind_speed_10m",
-            "wind_speed": "wind_speed_10m",  # 兼容无高度标记
-            "windSpeed": "wind_speed_10m",
-            "ws": "wind_speed_10m",
-            "WS": "wind_speed_10m",
-            "风速": "wind_speed_10m",
+            "wind_speed": "wind_speed",
+            "windSpeed": "wind_speed",
+            "ws": "wind_speed",
+            "WS": "wind_speed",
+            "风速": "wind_speed",
 
             # 10米阵风
             "wind_gusts_10m": "wind_gusts_10m",
@@ -741,20 +742,20 @@ class DataStandardizer:
             "wind_direction_10m": "wind_direction_10m",
             "windDirection_10m": "wind_direction_10m",
             "wd_10m": "wind_direction_10m",
-            "wind_direction": "wind_direction_10m",  # 兼容无高度标记
-            "windDirect": "wind_direction_10m",
-            "wd": "wind_direction_10m",
-            "WD": "wind_direction_10m",
-            "风向": "wind_direction_10m",
+            "wind_direction": "wind_direction",
+            "windDirect": "wind_direction",
+            "wd": "wind_direction",
+            "WD": "wind_direction",
+            "风向": "wind_direction",
 
             # === 气压相关 ===
             # 地表气压
             "surface_pressure": "surface_pressure",
             "surfacePressure": "surface_pressure",
-            "pressure": "surface_pressure",  # 兼容无高度标记
-            "press": "surface_pressure",
-            "p": "surface_pressure",
-            "气压": "surface_pressure",
+            "pressure": "pressure",
+            "press": "pressure",
+            "p": "p",
+            "气压": "pressure",
 
             # === 降水相关 ===
             # 降水量
@@ -827,25 +828,25 @@ class DataStandardizer:
 
             # === 兼容旧字段 ===
             # 温度（泛化）
-            "temperature": "temperature_2m",
-            "temp": "temperature_2m",
+            "temperature": "temperature",
+            "temp": "temperature",
 
             # 湿度（泛化）
-            "humidity": "relative_humidity_2m",
-            "rh": "relative_humidity_2m",
+            "humidity": "humidity",
+            "rh": "relative_humidity",
 
             # 风速（泛化）
-            "wind_speed": "wind_speed_10m",
-            "windSpeed": "wind_speed_10m",
+            "wind_speed": "wind_speed",
+            "windSpeed": "wind_speed",
 
             # 风向（泛化）
-            "wind_direction": "wind_direction_10m",
-            "windDirect": "wind_direction_10m",
+            "wind_direction": "wind_direction",
+            "windDirect": "wind_direction",
 
             # 气压（泛化）
-            "pressure": "surface_pressure",
-            "press": "surface_pressure",
-            "p": "surface_pressure"
+            "pressure": "pressure",
+            "press": "pressure",
+            "p": "p"
         }
 
         # === 9. 元数据字段映射 ===
@@ -861,7 +862,7 @@ class DataStandardizer:
             # 质量评分
             "quality_score": "quality_score",
             "qualityScore": "quality_score",
-            "quality": "quality_score",
+            "quality": "quality",
 
             # 记录ID
             "id": "record_id",
@@ -941,9 +942,9 @@ class DataStandardizer:
             "AQI": "AQI",
             "aqi": "AQI",
             "空气质量指数": "AQI",
-            "compositeindex": "AQI",
-            "compositeIndex": "AQI",
-            "综合指数": "AQI"
+            "compositeindex": "compositeIndex",
+            "compositeIndex": "compositeIndex",
+            "综合指数": "compositeIndex"
         }
 
         # === 12. 通用字段映射（距离、地址等）===
@@ -1190,6 +1191,15 @@ class DataStandardizer:
         nested_structures = {}
         vocs_species = {}  # 收集VOCs物种数据
         pm_components = {}  # 收集颗粒物组分数据
+        record_keys = set(record.keys())
+        vocs_keys = set(self.vocs_field_mapping.keys())
+        vocs_standard_names = set(self.vocs_field_mapping.values())
+        has_vocs_context = bool(record_keys & (vocs_keys | vocs_standard_names))
+        report_stat_fields = {
+            "cityName", "cityCode", "compositeIndex", "overDays", "fineDays",
+            "overRate", "fineRate", "validDays", "totalDays"
+        }
+        has_report_context = bool(record_keys & report_stat_fields)
 
         for field_name, field_value in record.items():
             # 跳过None值
@@ -1257,8 +1267,6 @@ class DataStandardizer:
             # VOCs物种字段（乙烷、丙烷、苯、甲苯等）需要聚合到species字典
             # vocs_field_mapping 的 key 是中文或英文名，value 是标准英文名
             # 需要同时检查 key（原始格式）和 value（标准化后格式）
-            vocs_keys = set(self.vocs_field_mapping.keys())
-            vocs_standard_names = set(self.vocs_field_mapping.values())
             if field_name in vocs_keys or field_name in vocs_standard_names:
                 # 获取标准化后的字段名（优先使用映射的 value）
                 if field_name in self.vocs_field_mapping:
@@ -1320,6 +1328,14 @@ class DataStandardizer:
                             standardized_record["timestamp"] = str(normalized_value)
                     continue
 
+                # 编码/ID 是标识符，不应按数值字段转换，否则 "440100" 会变成 440100.0
+                if standard_field_name in {
+                    "station_code", "city_code", "code", "Code",
+                    "record_id", "data_id"
+                }:
+                    standardized_record[standard_field_name] = field_value
+                    continue
+
                 # 规范化值
                 normalized_value = self._normalize_value(field_value)
                 if normalized_value is not None:
@@ -1362,9 +1378,17 @@ class DataStandardizer:
 
                 # 检查是否是VOCs物种字段（值可以转换为数字）
                 normalized_value = self._normalize_value(field_value)
-                if normalized_value is not None and isinstance(normalized_value, (int, float)):
+                if (
+                    has_vocs_context
+                    and not has_report_context
+                    and normalized_value is not None
+                    and isinstance(normalized_value, (int, float))
+                ):
                     # 认为是VOCs物种，保留原字段名（中文）
                     vocs_species[field_name] = normalized_value
+                    continue
+                if normalized_value is not None:
+                    standardized_record[field_name] = normalized_value
                     continue
 
         # 添加嵌套结构
@@ -1379,7 +1403,7 @@ class DataStandardizer:
                 species_count=len(vocs_species),
                 species_names=list(vocs_species.keys())[:5]  # 只记录前5个
             )
-        else:
+        elif has_vocs_context:
             # 【调试】如果没有收集到VOCs物种，减少重复警告
             # 通过实例变量控制，只打印前3条警告，然后打印汇总
             if not hasattr(self, '_vocs_warning_count'):
@@ -1530,6 +1554,7 @@ class DataStandardizer:
             'station_type', 'district', 'province', 'country',
             # API原始字段（直接保留，不做映射）
             'name', 'cityName', 'districtName',
+            'code', 'Code', 'compositeIndex', 'quality',
             # 扣沙相关字段（必须保留在顶层）
             'is_sand_deduction_day', 'primary_pollutant_from_sand',
             'PM2_5_original', 'PM10_original'
@@ -1540,11 +1565,12 @@ class DataStandardizer:
         POLLUTANT_FIELDS = {
             # 常规污染物（标准字段名）
             'PM2_5', 'PM10', 'O3', 'NO2', 'SO2', 'CO', 'NO', 'NOx', 'O3_8h',
+            'PM2_5_24h', 'PM10_24h', 'O3_8h_24h', 'NO2_24h', 'SO2_24h', 'CO_24h',
             # AQI和IAQI
             'AQI', 'IAQI', 'PM2_5_IAQI', 'PM10_IAQI', 'O3_IAQI',
             'SO2_IAQI', 'NO2_IAQI', 'CO_IAQI', 'O3_8h_IAQI',
             # 气象要素（也放入measurements）
-            'temperature', 'temperature_2m', 'humidity', 'relative_humidity_2m',
+            'temperature', 'temperature_2m', 'humidity', 'relative_humidity', 'relative_humidity_2m',
             'wind_speed', 'wind_speed_10m', 'wind_direction', 'wind_direction_10m',
             'pressure', 'surface_pressure', 'dew_point', 'dew_point_2m'
         }

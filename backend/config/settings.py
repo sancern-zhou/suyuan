@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="openai",
-        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, qwen"
+        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, qwen, glm"
     )
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: str = Field(
@@ -122,6 +122,8 @@ class Settings(BaseSettings):
     )
 
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
+    anthropic_auth_token: Optional[str] = Field(default=None, description="Anthropic-compatible auth token")
+    anthropic_base_url: Optional[str] = Field(default=None, description="Anthropic-compatible API base URL")
     anthropic_model: str = Field(
         default="claude-3-opus-20240229",
         description="Anthropic model name"
@@ -145,6 +147,20 @@ class Settings(BaseSettings):
     mimo_model: str = Field(
         default="mimo-v2-pro",
         description="Xiaomi Mimo model name"
+    )
+
+    glm_api_key: Optional[str] = Field(default=None, description="GLM API key")
+    glm_base_url: str = Field(
+        default="https://open.bigmodel.cn/api/coding/paas/v4",
+        description="GLM OpenAI-compatible API base URL"
+    )
+    glm_anthropic_base_url: Optional[str] = Field(
+        default=None,
+        description="GLM Anthropic-compatible API base URL"
+    )
+    glm_model: str = Field(
+        default="glm-4.7",
+        description="GLM model name"
     )
 
     # 报告模式配置
@@ -176,6 +192,14 @@ class Settings(BaseSettings):
     llm_fallbacks: str = Field(
         default="",
         description="Comma-separated fallback models, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2-pro"
+    )
+    llm_flash_models: str = Field(
+        default="",
+        description="Comma-separated Flash model priority chain, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2-flash"
+    )
+    llm_pro_models: str = Field(
+        default="",
+        description="Comma-separated Pro model priority chain, e.g. mimo/mimo-v2.5-pro,deepseek/deepseek-v4-pro"
     )
     llm_failover_cooldown_seconds: int = Field(
         default=60,
@@ -381,6 +405,14 @@ class Settings(BaseSettings):
                 "api_key": self.qwen_api_key,
                 "base_url": self.qwen_base_url,
                 "model": self.qwen_model,
+            }
+        elif self.llm_provider == "glm":
+            return {
+                "provider": "glm",
+                "api_key": self.glm_api_key,
+                "base_url": self.glm_base_url,
+                "anthropic_base_url": self.glm_anthropic_base_url,
+                "model": self.glm_model,
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")

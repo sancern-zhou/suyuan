@@ -1,0 +1,300 @@
+{
+  "game_id": "battle_20260510_131023_ctjk",
+  "player1_name": "你",
+  "player2_name": "菲菲",
+  "created_at": "2026-05-10T13:10:23.010005",
+  "board": [
+    [
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "forest",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      }
+    ],
+    [
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      }
+    ],
+    [
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "rock",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "forest",
+        "item": null
+      }
+    ],
+    [
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "rock",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      }
+    ],
+    [
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      },
+      {
+        "terrain": "forest",
+        "item": null
+      },
+      {
+        "terrain": "empty",
+        "item": null
+      }
+    ]
+  ],
+  "players": {
+    "player1": {
+      "name": "你",
+      "position": [
+        1,
+        3
+      ],
+      "attack": 3,
+      "defense": 2,
+      "base": [
+        0,
+        4
+      ]
+    },
+    "player2": {
+      "name": "菲菲",
+      "position": [
+        1,
+        4
+      ],
+      "attack": 4,
+      "defense": 0,
+      "base": [
+        4,
+        0
+      ]
+    }
+  },
+  "current_turn": "player1",
+  "turn_count": 7,
+  "status": "finished",
+  "winner": "player1",
+  "finish_reason": "battle",
+  "move_history": [
+    {
+      "turn": 1,
+      "player": "player1",
+      "from": [
+        0,
+        0
+      ],
+      "to": [
+        1,
+        0
+      ],
+      "direction": "right"
+    },
+    {
+      "turn": 1,
+      "player": "player2",
+      "from": [
+        4,
+        4
+      ],
+      "to": [
+        3,
+        4
+      ],
+      "direction": "left"
+    },
+    {
+      "turn": 2,
+      "player": "player1",
+      "from": [
+        1,
+        0
+      ],
+      "to": [
+        1,
+        1
+      ],
+      "direction": "down"
+    },
+    {
+      "turn": 3,
+      "player": "player1",
+      "from": [
+        1,
+        1
+      ],
+      "to": [
+        1,
+        2
+      ],
+      "direction": "down"
+    },
+    {
+      "turn": 3,
+      "player": "player2",
+      "from": [
+        3,
+        4
+      ],
+      "to": [
+        2,
+        4
+      ],
+      "direction": "left"
+    },
+    {
+      "turn": 4,
+      "player": "player1",
+      "from": [
+        1,
+        2
+      ],
+      "to": [
+        0,
+        2
+      ],
+      "direction": "left"
+    },
+    {
+      "turn": 4,
+      "player": "player2",
+      "from": [
+        2,
+        4
+      ],
+      "to": [
+        2,
+        3
+      ],
+      "direction": "up"
+    },
+    {
+      "turn": 5,
+      "player": "player1",
+      "from": [
+        0,
+        2
+      ],
+      "to": [
+        0,
+        3
+      ],
+      "direction": "down"
+    },
+    {
+      "turn": 5,
+      "player": "player2",
+      "from": [
+        2,
+        3
+      ],
+      "to": [
+        2,
+        4
+      ],
+      "direction": "down"
+    },
+    {
+      "turn": 6,
+      "player": "player1",
+      "from": [
+        0,
+        3
+      ],
+      "to": [
+        1,
+        3
+      ],
+      "direction": "right"
+    },
+    {
+      "turn": 6,
+      "player": "player2",
+      "from": [
+        2,
+        4
+      ],
+      "to": [
+        1,
+        4
+      ],
+      "direction": "left"
+    }
+  ],
+  "forest_slow": {
+    "player1": 0,
+    "player2": 0
+  }
+}

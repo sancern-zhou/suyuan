@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 import base64
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import structlog
@@ -71,6 +72,9 @@ class ExecutePythonTool(LLMTool):
             description=f"""执行 Python 代码（用于生成文档、数据处理、可视化）
 
 重要说明：
+- 每次调用都是独立执行环境；上一次 execute_python 中定义的变量、函数、DataFrame 不会保留
+- 需要跨多次工具调用复用的中间结果，必须显式调用 `save_data(...)` 保存为 data_id，后续用 `get_raw_data(data_id)` 读取
+- 不要在后续 execute_python 调用中直接引用前一次脚本里的变量名（如 city_map、df、report_data）
 - 当前工作目录：{self.PERMANENT_DIR}
 - 图表保存目录：{self.CHARTS_DIR}
 - 生成文件时请使用相对路径（如：'report.docx'），不要使用绝对路径（如：/root/xxx.docx）
@@ -85,8 +89,9 @@ class ExecutePythonTool(LLMTool):
 - 示例代码见下方
 
 📊 数据访问功能（自动注入）：
-当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 函数：
+当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 和 `save_data(data, ...)` 函数：
 - `get_raw_data(data_id)`: 根据 data_id 获取原始数据（字典列表格式）
+- `save_data(data, schema='python_result', metadata=None)`: 将中间结果保存到数据注册表并返回 data_id
 
 使用示例：
 ```python
@@ -97,6 +102,14 @@ print(f"数据点数: {{len(data)}}")
 # 提取字段进行分析
 wind_dirs = [float(record['wind_direction_10m']) for record in data]
 concentrations = [float(record['PM2_5']) for record in data]
+
+# 保存后续还要复用的中间结果
+result_id = save_data(
+    [{{'city': '广州', 'pm25': 25.8}}],
+    schema='python_result',
+    metadata={{'purpose': 'report_check_intermediate'}}
+)
+print(f"后续读取: get_raw_data('{{result_id}}')")
 ```
 
 📈 Excel 处理最佳实践：
@@ -392,6 +405,19 @@ doc.save('/root/report.docx')
 
             # ✅ 检测图表输出（CHART_SAVED:xxx.png 或 CHART_SAVED:data:image/png;base64,...）
             chart_data = self._extract_chart_paths(result["data"].get("output", ""))
+
+            # ✅ 检测 Python 中通过 save_data() 保存的 data_id
+            python_data_refs = self._extract_python_data_refs(result["data"].get("output", ""))
+            if python_data_refs:
+                result["data"]["data_ids"] = python_data_refs
+                result["data_ids"] = python_data_refs
+                result.setdefault("metadata", {})
+                result["metadata"]["data_ids"] = python_data_refs
+                if result.get("success", False):
+                    result["summary"] = (
+                        f"{result.get('summary', '✅ 工具已执行完成')} | "
+                        f"已保存中间结果 data_id: {', '.join(python_data_refs)}"
+                    )
 
             # ✅ 新增：检测 ECharts 标准格式 JSON 输出
             echarts_data = self._extract_echarts_format(result["data"].get("output", ""))
@@ -894,6 +920,16 @@ doc.save('/root/report.docx')
 
         return result
 
+    def _extract_python_data_refs(self, output: str) -> List[str]:
+        """Extract data_ids printed by the injected save_data() helper."""
+        if not output:
+            return []
+        refs: List[str] = []
+        for match in re.findall(r"PYTHON_DATA_SAVED:([A-Za-z0-9_:\-\.]+)", output):
+            if match and match not in refs:
+                refs.append(match)
+        return refs
+
     def _extract_echarts_format(self, output: str) -> dict:
         """
         从 Python 代码输出中提取 ECharts 标准格式 JSON 数据
@@ -983,9 +1019,12 @@ doc.save('/root/report.docx')
 
         注入内容：
         - get_raw_data(data_id): 获取原始数据（字典列表格式）
+        - save_data(data, schema="python_result", metadata=None): 保存中间结果并返回 data_id
 
         ⚠️ 重要：
+        - 每次 execute_python 都是独立执行环境，不保留上次调用的变量
         - LLM 应该在代码中直接使用 data_id
+        - 跨工具调用复用的数据必须先 save_data，再在后续调用中 get_raw_data(data_id)
         - 不需要从 AVAILABLE_DATA_IDS 列表中选择
         - 系统会根据 data_id 自动定位文件
         """
@@ -1001,6 +1040,10 @@ doc.save('/root/report.docx')
 
         # 构建注入的代码
         context_injection_code = '''# ===== 数据访问上下文（自动注入） =====
+# 重要：每次 execute_python 都是独立执行环境，不保留上次调用的变量。
+# 如果中间结果后续还要复用，请调用 save_data(...) 保存为 data_id；
+# 后续 execute_python 调用中再用 get_raw_data(data_id) 显式读取。
+
 # 获取原始数据（字典列表格式）
 def get_raw_data(data_id: str):
     """根据 data_id 获取原始数据（字典列表格式）
@@ -1011,48 +1054,103 @@ def get_raw_data(data_id: str):
     Returns:
         数据列表（字典列表）
     """
+    try:
+        from app.services.data_registry import data_registry
+        return data_registry.load_dataset(data_id)
+    except Exception:
+        import json
+        import os
+        import sys
+        
+        # 获取项目根目录（兼容 ipython 环境）
+        backend_root = None
+        for path in sys.path:
+            if 'backend' in path and os.path.isdir(path):
+                test_dir = os.path.join(path, 'backend_data_registry', 'datasets')
+                if os.path.isdir(test_dir):
+                    backend_root = path
+                    break
+        
+        if backend_root is None:
+            backend_root = '/home/xckj/suyuan/backend'
+        
+        datasets_dir = os.path.join(backend_root, 'backend_data_registry', 'datasets')
+        filename = data_id.replace(':', '_') + '.json'
+        file_path = os.path.join(datasets_dir, filename)
+        
+        if not os.path.exists(file_path):
+            try:
+                available_files = [f for f in os.listdir(datasets_dir) if f.endswith('.json')][:5]
+                raise FileNotFoundError(
+                    f"数据文件不存在: {file_path}\\n"
+                    f"可用的数据文件: {available_files}"
+                )
+            except FileNotFoundError as e:
+                raise e
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_data(data, schema: str = 'python_result', metadata=None, version: str = 'v1'):
+    """保存 Python 中间结果到数据注册表并返回 data_id。
+
+    适用于跨多次 execute_python 调用复用的变量、DataFrame 转换结果、核验表等。
+    data 可以是 list[dict]、dict、pandas DataFrame 或其他可 JSON 序列化对象。
+    """
     import json
-    import os
-    import sys
-    
-    # 获取项目根目录（兼容 ipython 环境）
-    # 从 sys.path 中查找包含 'backend' 的路径
-    backend_root = None
-    for path in sys.path:
-        if 'backend' in path and os.path.isdir(path):
-            # 检查是否是 backend 目录
-            test_dir = os.path.join(path, 'backend_data_registry', 'datasets')
-            if os.path.isdir(test_dir):
-                backend_root = path
-                break
-    
-    # 如果没找到，使用默认路径
-    if backend_root is None:
-        backend_root = '/home/xckj/suyuan/backend'
-    
-    datasets_dir = os.path.join(backend_root, 'backend_data_registry', 'datasets')
-    
-    # 转换 data_id 为文件名
-    # 输入: "air_quality_5min:v1:3a61cec54f9a43a2a02e1eebf6cb9b91"
-    # 输出: "air_quality_5min_v1_3a61cec54f9a43a2a02e1eebf6cb9b91.json"
-    filename = data_id.replace(':', '_') + '.json'
-    file_path = os.path.join(datasets_dir, filename)
-    
-    if not os.path.exists(file_path):
-        # 列出可用文件供调试
-        try:
-            available_files = [f for f in os.listdir(datasets_dir) if f.endswith('.json')][:5]
-            raise FileNotFoundError(
-                f"数据文件不存在: {file_path}\\n"
-                f"可用的数据文件: {available_files}"
-            )
-        except FileNotFoundError as e:
-            raise e
-    
-    with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    return data
+    from datetime import datetime
+    from app.services.data_registry import data_registry
+
+    if metadata is None:
+        metadata = {}
+    metadata = dict(metadata)
+    metadata.setdefault('generator', 'execute_python')
+    metadata.setdefault('created_by', 'save_data_helper')
+    metadata.setdefault('created_at', datetime.utcnow().isoformat())
+
+    try:
+        import pandas as pd
+        if isinstance(data, pd.DataFrame):
+            payload = data.to_dict(orient='records')
+        else:
+            payload = data
+    except Exception:
+        payload = data
+
+    def _json_default(value):
+        if hasattr(value, 'isoformat'):
+            return value.isoformat()
+        if hasattr(value, 'item'):
+            return value.item()
+        return str(value)
+
+    payload = json.loads(json.dumps(payload, ensure_ascii=False, default=_json_default))
+
+    if isinstance(payload, list):
+        records = []
+        for item in payload:
+            if isinstance(item, dict):
+                records.append(item)
+            else:
+                records.append({'value': item})
+        if not records:
+            records = [{'value': None}]
+        entry = data_registry.register_dataset(
+            schema=schema,
+            version=version,
+            records=records,
+            metadata=metadata,
+        )
+    else:
+        entry = data_registry.register_payload(
+            schema=schema,
+            version=version,
+            payload=payload,
+            metadata=metadata,
+        )
+
+    print(f"PYTHON_DATA_SAVED:{entry.data_id}")
+    return entry.data_id
 
 # ===== 数据访问上下文注入完成 =====
 

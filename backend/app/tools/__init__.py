@@ -877,17 +877,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="knowledge_document_reader", error=str(e))
 
     # ========================================
-    # Reporting Tools（报告工具）
-    # ========================================
-
-    try:
-        from app.tools.reporting.generate_tracing_report import register_tool
-        register_tool(registry)
-        logger.info("tool_loaded", tool="generate_tracing_report")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="generate_tracing_report", error=str(e))
-
-    # ========================================
     # Planning Tools（规划工具）
     # ========================================
 

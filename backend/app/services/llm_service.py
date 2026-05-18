@@ -2,12 +2,14 @@
 LLM Service
 
 提供LLM调用服务，支持JSON格式响应解析。
-支持多种LLM provider: deepseek, minimax, openai, qwen
+支持多种LLM provider: deepseek, minimax, openai, qwen, glm
 """
 import asyncio
 import json
 import html
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Dict, Any, Optional, Tuple, AsyncGenerator, List
 import structlog
 from config.settings import settings
@@ -26,9 +28,159 @@ from app.services.llm_failover import (
 
 logger = structlog.get_logger()
 
+_llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "llm_request_state",
+    default=None,
+)
+
 
 class LLMService:
     """LLM服务类 - 支持多provider配置"""
+
+    @property
+    def provider(self) -> str:
+        state = _llm_request_state.get()
+        if state is not None and "provider" in state:
+            return state["provider"]
+        return getattr(self, "_provider", "")
+
+    @provider.setter
+    def provider(self, value: str) -> None:
+        state = _llm_request_state.get()
+        if state is not None:
+            state["provider"] = value
+        else:
+            self._provider = value
+
+    @property
+    def base_url(self) -> str:
+        state = _llm_request_state.get()
+        if state is not None and "base_url" in state:
+            return state["base_url"]
+        return getattr(self, "_base_url", "")
+
+    @base_url.setter
+    def base_url(self, value: str) -> None:
+        state = _llm_request_state.get()
+        if state is not None:
+            state["base_url"] = value
+        else:
+            self._base_url = value
+
+    @property
+    def api_key(self) -> str:
+        state = _llm_request_state.get()
+        if state is not None and "api_key" in state:
+            return state["api_key"]
+        return getattr(self, "_api_key", "")
+
+    @api_key.setter
+    def api_key(self, value: str) -> None:
+        state = _llm_request_state.get()
+        if state is not None:
+            state["api_key"] = value
+        else:
+            self._api_key = value
+
+    @property
+    def model(self) -> str:
+        state = _llm_request_state.get()
+        if state is not None and "model" in state:
+            return state["model"]
+        return getattr(self, "_model", "")
+
+    @model.setter
+    def model(self, value: str) -> None:
+        state = _llm_request_state.get()
+        if state is not None:
+            state["model"] = value
+        else:
+            self._model = value
+
+    @property
+    def anthropic_client(self):
+        state = _llm_request_state.get()
+        if state is not None and "anthropic_client" in state:
+            return state["anthropic_client"]
+        return getattr(self, "_anthropic_client", None)
+
+    @anthropic_client.setter
+    def anthropic_client(self, value) -> None:
+        state = _llm_request_state.get()
+        if state is not None:
+            state["anthropic_client"] = value
+        else:
+            self._anthropic_client = value
+
+    @property
+    def request_fallbacks(self) -> Optional[str]:
+        state = _llm_request_state.get()
+        if state is not None:
+            return state.get("fallbacks")
+        return None
+
+    @request_fallbacks.setter
+    def request_fallbacks(self, value: Optional[str]) -> None:
+        state = _llm_request_state.get()
+        if state is not None:
+            state["fallbacks"] = value
+
+    @contextmanager
+    def use_model_tier(self, model_tier: Optional[str]):
+        """Temporarily select the primary model for the current async request."""
+        tier = (model_tier or "").strip().lower()
+        if not tier or tier == "auto":
+            yield
+            return
+
+        tier_config = {
+            "flash": getattr(settings, "llm_flash_models", "") or "",
+            "pro": getattr(settings, "llm_pro_models", "") or "",
+        }.get(tier)
+        if tier_config is None:
+            raise ValueError(f"Unsupported model tier: {model_tier}")
+
+        from app.services.llm_failover import parse_fallback_candidates
+
+        token = _llm_request_state.set({})
+        try:
+            if tier_config.strip():
+                candidates = parse_fallback_candidates("", "", tier_config)
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.provider and candidate.provider.lower() != "glm"
+                ]
+                if not candidates:
+                    raise ValueError(
+                        f"No non-GLM candidates configured for model tier: {tier}. "
+                        "Flash/Pro tiers must use providers such as mimo or deepseek."
+                    )
+                primary = candidates[0]
+                self.provider = primary.provider
+                self._load_provider_config()
+                if primary.model:
+                    self.model = primary.model
+                fallback_items = [
+                    f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
+                    for candidate in candidates[1:]
+                ]
+                self.request_fallbacks = ",".join(fallback_items)
+            else:
+                self.provider = settings.llm_provider.lower()
+                self._load_provider_config()
+                self.request_fallbacks = None
+            logger.info(
+                "llm_request_model_tier_selected",
+                tier=tier,
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+                fallbacks=self.request_fallbacks,
+            )
+            yield
+        finally:
+            _llm_request_state.reset(token)
 
     @staticmethod
     def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -727,6 +879,14 @@ class LLMService:
             "model_env": "QWEN_MODEL",
             "model_default": "/qwen/Qwen3-30B-A3B-Instruct-2507-AWQ/",
         },
+        # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
+        "glm": {
+            "url_env": "GLM_BASE_URL",
+            "url_default": "https://open.bigmodel.cn/api/coding/paas/v4",
+            "key_env": "GLM_API_KEY",
+            "model_env": "GLM_MODEL",
+            "model_default": "glm-4.7",
+        },
     }
 
     def __init__(self):
@@ -805,7 +965,11 @@ class LLMService:
         """Run an Anthropic-compatible request with configured model fallback."""
         async with self._provider_state_lock:
             original_state = self._snapshot_provider_state()
-            candidates = parse_fallback_candidates(original_state["provider"], original_state["model"])
+            candidates = parse_fallback_candidates(
+                original_state["provider"],
+                original_state["model"],
+                self.request_fallbacks,
+            )
             attempts = []
 
             try:
@@ -968,6 +1132,27 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_mimo_model_fallback_to_env", model=self.model)
 
+        elif self.provider == "glm":
+            self.base_url = (
+                settings.glm_base_url
+                or os.getenv(config["url_env"])
+                or os.getenv("OPENAI_BASE_URL")
+                or config["url_default"]
+            )
+            self.api_key = (
+                settings.glm_api_key
+                or os.getenv(config["key_env"])
+                or settings.anthropic_auth_token
+                or os.getenv("ANTHROPIC_AUTH_TOKEN")
+                or settings.anthropic_api_key
+                or os.getenv("ANTHROPIC_API_KEY")
+                or ""
+            )
+            self.model = settings.glm_model
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_glm_model_fallback_to_env", model=self.model)
+
         else:
             # 回退到环境变量
             self.base_url = os.getenv(config["url_env"], config["url_default"])
@@ -1023,7 +1208,7 @@ class LLMService:
 
         # Anthropic Native Client (always initialized for V3 architecture)
         self.anthropic_client = None
-        if self.provider in ["deepseek", "mimo"]:  # 支持 Anthropic 格式的提供商
+        if self.provider in ["deepseek", "mimo", "glm"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
@@ -1033,6 +1218,13 @@ class LLMService:
                 elif self.provider == "deepseek":
                     # DeepSeek 的 Anthropic 格式端点
                     anthropic_base_url = settings.deepseek_base_url.replace("/v1", "/anthropic")
+                elif self.provider == "glm":
+                    anthropic_base_url = (
+                        settings.glm_anthropic_base_url
+                        or settings.anthropic_base_url
+                        or os.getenv("ANTHROPIC_BASE_URL")
+                        or "https://open.bigmodel.cn/api/anthropic"
+                    )
                 else:
                     logger.error(
                         "llm_anthropic_unsupported_provider",
@@ -1045,7 +1237,13 @@ class LLMService:
                 anthropic_base_url = anthropic_base_url.rstrip('/')
                 logger.info("llm_anthropic_base_url_cleaned",
                     provider=self.provider,
-                    original_url=settings.mimo_base_url if self.provider == "mimo" else settings.deepseek_base_url,
+                    original_url=(
+                        settings.mimo_base_url
+                        if self.provider == "mimo"
+                        else settings.deepseek_base_url
+                        if self.provider == "deepseek"
+                        else settings.glm_anthropic_base_url
+                    ),
                     cleaned_url=anthropic_base_url
                 )
 
@@ -1066,6 +1264,15 @@ class LLMService:
                         auth_token=None,  # 禁用 Authorization 头
                         base_url=anthropic_base_url,
                         default_headers={"api-key": self.api_key},
+                        timeout=request_timeout,
+                        max_retries=2
+                    )
+                elif self.provider == "glm":
+                    # GLM Anthropic 兼容端点使用 ANTHROPIC_AUTH_TOKEN/Bearer 认证。
+                    self.anthropic_client = AsyncAnthropic(
+                        api_key=None,
+                        auth_token=self.api_key,
+                        base_url=anthropic_base_url,
                         timeout=request_timeout,
                         max_retries=2
                     )
@@ -1629,7 +1836,7 @@ class LLMService:
                                 attempt=attempt + 1
                             )
                             return extracted
-                    
+
                     # 尝试直接解析JSON
                     try:
                         result = json.loads(content)
@@ -1649,7 +1856,7 @@ class LLMService:
                                 attempt=attempt + 1
                             )
                             return extracted
-                        
+
                         # 如果提取也失败，记录警告
                         logger.warning(
                             "llm_json_parse_failed",
@@ -2393,7 +2600,11 @@ class LLMService:
 
         await self._provider_state_lock.acquire()
         original_state = self._snapshot_provider_state()
-        candidates = parse_fallback_candidates(original_state["provider"], original_state["model"])
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
         attempts = []
 
         try:

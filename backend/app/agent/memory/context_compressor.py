@@ -112,6 +112,62 @@ class ContextCompressor:
         """
         self.llm_client = llm_client
 
+    def _message_kind(self, msg: Dict[str, Any]) -> str:
+        """Return a stable message kind for both app turns and raw LLM messages."""
+        msg_type = msg.get("type")
+        if msg_type:
+            return msg_type
+
+        content = msg.get("content")
+        if isinstance(content, list):
+            block_types = {
+                block.get("type")
+                for block in content
+                if isinstance(block, dict)
+            }
+            if "tool_result" in block_types:
+                return "tool_result"
+            if "tool_use" in block_types:
+                return "tool_use"
+
+        role = msg.get("role")
+        if role == "user":
+            return "user"
+        if role == "assistant":
+            return "assistant"
+        return ""
+
+    def _extract_user_anchor(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Preserve the first substantive user request as an anchor for compaction."""
+        for msg in messages:
+            if self._message_kind(msg) != "user":
+                continue
+
+            content = msg.get("content", "")
+            if not isinstance(content, str):
+                continue
+
+            text = content.strip()
+            if not text or text.startswith("[系统提示]"):
+                continue
+
+            return [{
+                "type": "user",
+                "role": "user",
+                "content": f"[压缩保留的原始任务锚点]\n{text[:4000]}"
+            }]
+
+        return []
+
+    def _contains_anchor_equivalent(self, messages: List[Dict[str, Any]], anchor: Dict[str, Any]) -> bool:
+        anchor_content = str(anchor.get("content", ""))
+        anchor_text = anchor_content.replace("[压缩保留的原始任务锚点]\n", "").strip()
+        if not anchor_text:
+            return True
+
+        needle = anchor_text[:200]
+        return any(needle in str(msg.get("content", "")) for msg in messages)
+
     async def compress(
         self,
         messages: List[Dict[str, Any]],
@@ -154,18 +210,20 @@ class ContextCompressor:
         # 阶段一：工具输出预截断（在 LLM 压缩前，先截断过长的工具输出）
         messages = self._truncate_tool_outputs(messages)
 
+        anchor_messages = self._extract_user_anchor(messages)
+
         # 阶段二：保护段机制（保留最近 N 轮对话不压缩）
-        if force:
-            # 外层 token 预算已经确认超限时，不再保护最近历史，否则少量大消息会被整体保护或跳过。
-            protected_messages, messages_to_compress = [], messages
-        else:
-            protected_messages, messages_to_compress = self._split_protected_and_compressible(messages)
+        protected_messages, messages_to_compress = self._split_protected_and_compressible(messages)
 
         if protected_messages:
             logger.info(f"[ContextCompressor] 保护段: 保留最近 {len(protected_messages)} 条消息不压缩")
 
         # 阶段四：渐进式压缩策略
         compressible_count = len(messages_to_compress)
+
+        if compressible_count == 0:
+            logger.info("[ContextCompressor] 所有消息均在保护段内，跳过 LLM 压缩")
+            return protected_messages
 
         # 策略1：消息太少，不压缩。外层已判定超限时不能被该条件短路。
         if compressible_count <= self.LIGHT_COMPRESS_THRESHOLD and not force:
@@ -229,6 +287,19 @@ class ContextCompressor:
 
             # 解析压缩结果
             compressed = self._parse_compression_result(response)
+
+            if force and anchor_messages and not self._contains_anchor_equivalent(compressed, anchor_messages[0]):
+                compressed = anchor_messages + compressed
+
+            if force and original_count >= 10 and len(compressed) + len(protected_messages) < 4:
+                logger.warning(
+                    "[ContextCompressor] LLM 压缩结果过短，补充任务锚点",
+                    original_count=original_count,
+                    compressed_count=len(compressed),
+                    protected_count=len(protected_messages),
+                )
+                if anchor_messages and not self._contains_anchor_equivalent(compressed, anchor_messages[0]):
+                    compressed = anchor_messages + compressed
 
             # 阶段三：添加压缩边界标记
             boundary_msg = self._create_compaction_boundary(
@@ -346,7 +417,7 @@ class ContextCompressor:
         turns_found = 0
 
         for msg in reversed(messages[self.SNIP_HEAD_COUNT:]):
-            msg_type = msg.get('type', '')
+            msg_type = self._message_kind(msg)
 
             # 保留 user、final、assistant 类型的消息
             if msg_type in ('user', 'final', 'assistant'):
@@ -424,7 +495,7 @@ class ContextCompressor:
         turns_found = 0
 
         for msg in reversed(messages):
-            msg_type = msg.get('type', '')
+            msg_type = self._message_kind(msg)
 
             # 保护 user、final、assistant 类型的消息
             if msg_type in ('user', 'final', 'assistant'):
@@ -621,7 +692,7 @@ class ContextCompressor:
 
         for msg in messages:
             msg_copy = dict(msg)
-            msg_type = msg_copy.get('type', '')
+            msg_type = self._message_kind(msg_copy)
             content = msg_copy.get('content', '')
 
             # 处理 observation/tool_result 类型

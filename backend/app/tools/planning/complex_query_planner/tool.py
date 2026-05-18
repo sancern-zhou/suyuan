@@ -84,9 +84,9 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
 - 首要污染物天数/比例、排名等接口报表字段
 
 【返回数据】
-- data：前24条接口记录预览
-- result：接口返回的完整统计记录
-- report_data_id：完整接口报表，可用 read_data_registry 读取 cities/raw/result 视图
+- data：默认报告口径数据，已按信息公开口径处理 PM2.5 等展示字段；若 metadata.data_is_complete_for_requested_scope=true，直接用 data 作答，不再读取 read_data_registry
+- report_data_id：完整接口报表；read_data_registry(data_id) 默认读取 reporting 报告口径视图
+- raw/result：原始接口字段视图，仅用于追溯接口字段
         """.strip(),
         "parameters": {
             "type": "object",
@@ -797,34 +797,32 @@ SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）�
     },
     "query_station_standard_report": {
         "name": "query_station_standard_report",
-        "description": "查询广东省站点新/旧国标统计报表，直接调用联网接口，不本地重算。ns_type=2新国标，ns_type=1旧国标；cities会按station_type展开站点，也可直接传stations或站点编码。",
+        "description": "查询广东省站点新/旧国标统计报表，直接调用联网接口，不本地重算。ns_type=2新国标，ns_type=1旧国标；cities会按station_type展开站点，也可直接传stations或站点编码。data和read_data_registry(data_id)默认使用reporting报告口径视图。",
         "parameters": {
             "type": "object",
             "properties": {
-                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，可自动展开站点"},
-                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表"},
-                "station_type": {"type": "string", "description": "站点类型，仅cities时生效，默认国控"},
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如['广州']或['广州市']；自动映射为该城市下辖站点编码"},
+                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表，如['麓湖']或['1001A']"},
+                "station_type": {"type": "string", "description": "站点类型，仅cities时生效，用于筛选下辖站点；默认国控，常用值：国控、省控、市控"},
                 "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD或YYYY-MM-DD HH:MM:SS"},
                 "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD或YYYY-MM-DD HH:MM:SS"},
-                "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]},
-                "time_type": {"type": "integer", "description": "3周报、4月报、5季报、7年报、8任意时间，默认8"}
+                "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]}
             },
             "required": ["start_time", "end_time"]
         }
     },
     "query_station_standard_yoy_report": {
         "name": "query_station_standard_yoy_report",
-        "description": "查询广东省站点新/旧国标同比、环比或双时段对比统计报表，直接调用联网接口，不本地计算变化率。",
+        "description": "查询广东省站点新/旧国标同比、环比或双时段对比统计报表，直接调用联网接口，不本地计算变化率。data和read_data_registry(data_id)默认使用reporting报告口径视图。",
         "parameters": {
             "type": "object",
             "properties": {
-                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，可自动展开站点"},
-                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表"},
-                "station_type": {"type": "string", "description": "站点类型，仅cities时生效，默认国控"},
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如['广州']或['广州市']；自动映射为该城市下辖站点编码"},
+                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点名称或站点编码列表，如['麓湖']或['1001A']"},
+                "station_type": {"type": "string", "description": "站点类型，仅cities时生效，用于筛选下辖站点；默认国控，常用值：国控、省控、市控"},
                 "time_point": {"type": "array", "items": {"type": "string"}, "description": "当前时间范围"},
                 "contrast_time": {"type": "array", "items": {"type": "string"}, "description": "对比时间范围"},
-                "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]},
-                "time_type": {"type": "integer", "description": "4月报、8任意时间，默认8"}
+                "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]}
             },
             "required": ["time_point", "contrast_time"]
         }

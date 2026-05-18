@@ -2,14 +2,14 @@
 ReAct Agent Prompts
 
 注意：系统提示词已由 expert_prompt.py / assistant_prompt.py 替代。
-本文件仅保留 FINISH_SUMMARY 提示词及其格式化函数。
+本文件仅保留 RESPONSE_SUMMARY 提示词及其格式化函数。
 """
 
 # ========================================
-# FINISH_SUMMARY 提示词
+# RESPONSE_SUMMARY 提示词
 # ========================================
 
-FINISH_SUMMARY_PROMPT = """# 任务
+RESPONSE_SUMMARY_PROMPT = """# 任务
 你是一个专业的大气环境专家。请根据以下信息，生成面向用户的最终回答。
 
 ## 用户原始需求
@@ -48,8 +48,8 @@ def format_finish_summary_prompt(
     tool_results: str,
     final_thought: str
 ) -> str:
-    """格式化 FINISH_SUMMARY 提示词"""
-    result = FINISH_SUMMARY_PROMPT
+    """格式化 RESPONSE_SUMMARY 提示词"""
+    result = RESPONSE_SUMMARY_PROMPT
     result = result.replace('{user_query}', user_query)
     result = result.replace('{tool_results}', tool_results)
     result = result.replace('{final_thought}', final_thought)

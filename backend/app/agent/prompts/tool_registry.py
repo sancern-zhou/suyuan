@@ -39,9 +39,6 @@ ASSISTANT_TOOL_NAMES = {
     # 其他工具
     "create_scheduled_task", "analyze_image", "browser", "call_sub_agent",
 
-    # 报告生成
-    "generate_tracing_report",
-
     # CLI会话管理
     "cli_session", "terminal_session",
 }
@@ -71,8 +68,6 @@ EXPERT_TOOL_NAMES = {
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
-    # 完成
-    "FINISH_SUMMARY"
 }
 
 # ===== 问数模式工具 =====
@@ -121,14 +116,18 @@ REPORT_TOOL_NAMES = {
     "execute_sql_query",
 
     # === 广东省统计报表工具 ===
-    "query_gd_suncere_report",             # 综合统计报表
-    "query_gd_suncere_report_compare",     # 对比分析报表
+    # 城市正式统计报表统一使用 query_city_standard_report / query_city_standard_yoy_report；
+    # 旧通用综合报表工具 query_gd_suncere_report* 保留在底层注册中作兼容，不再暴露给报告 Agent 选择。
+    "query_city_standard_report",          # 城市新/旧国标统计报表接口直查
+    "query_city_standard_yoy_report",      # 城市新/旧国标同比/环比统计报表
     "query_standard_comparison",           # 标准对比
     "query_old_standard_report",           # 旧标准统计报表（HJ 633-2013）
 
     # === 新标准统计报表工具（HJ 633-2026）===
     "query_new_standard_report",           # 新标准统计报表（城市/站点）
     "query_station_new_standard_report",   # 站点新标准统计报表
+    "query_station_standard_report",       # 站点新/旧国标统计报表
+    "query_station_standard_yoy_report",   # 站点新/旧国标同比/环比统计报表
     "compare_standard_reports",            # 新标准报表对比分析
     "compare_station_standard_reports",    # 站点新标准报表对比
 
@@ -163,6 +162,8 @@ CHART_TOOL_NAMES = {
     # 数据查询工具
     "get_5min_data", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_city_day_new",
+    "query_city_standard_report", "query_city_standard_yoy_report",
+    "query_station_standard_report", "query_station_standard_yoy_report",
 
     # SQL Server通用查询
     "execute_sql_query",
@@ -226,8 +227,6 @@ SOCIAL_TOOL_NAMES = {
     # === 历史会话搜索 ===
     "session_search",
 
-    # === 报告生成 ===
-    "generate_tracing_report",
 }
 
 # ===== 记忆整合器工具（后台专用） =====
@@ -288,9 +287,6 @@ ASSISTANT_TOOL_ORDER = [
     # 任务管理
     "TodoWrite", "create_scheduled_task", "list_skills",
 
-    # 报告生成
-    "generate_tracing_report",
-
     # 模式互调
     "call_sub_agent"
 ]
@@ -321,8 +317,6 @@ EXPERT_TOOL_ORDER = [
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
-    # 完成
-    "FINISH_SUMMARY"
 ]
 
 QUERY_TOOL_ORDER = [

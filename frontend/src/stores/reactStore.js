@@ -5,6 +5,8 @@ import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 import { autoSaveSession } from '@/api/session'
 
+const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart']
+
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
   if (content === null || content === undefined) {
@@ -114,10 +116,14 @@ export const useReactStore = defineStore('react', {
   state: () => {
     // 从localStorage恢复currentMode
     const savedMode = localStorage.getItem('current-mode') || 'assistant'
+    const initialMode = VALID_MODES.includes(savedMode) ? savedMode : 'assistant'
+    if (initialMode !== savedMode) {
+      localStorage.setItem('current-mode', initialMode)
+    }
 
     return {
       // 当前激活的模式
-      currentMode: savedMode,
+      currentMode: initialMode,
 
       // 用户标识（跨会话持久化，用于记忆共享）
       // 默认为 null，使用模式内共享记忆（不跨模式共享）
@@ -129,8 +135,7 @@ export const useReactStore = defineStore('react', {
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
         report: createEmptyModeState(),
-        chart: createEmptyModeState(),
-        tracing: createEmptyModeState()
+        chart: createEmptyModeState()
       },
 
       // 同一模式下的多会话状态，key 为完整 sessionId
@@ -351,7 +356,7 @@ export const useReactStore = defineStore('react', {
      * - 恢复目标模式状态
      */
     switchMode(newMode) {
-      if (!['assistant', 'expert', 'query', 'report', 'chart', 'tracing'].includes(newMode)) {
+      if (!VALID_MODES.includes(newMode)) {
         console.warn('[switchMode] Invalid mode:', newMode)
         return
       }
@@ -576,7 +581,8 @@ export const useReactStore = defineStore('react', {
         return null
       }
       const match = sessionId.match(/^([a-z]+)_session_/)
-      return match ? match[1] : null
+      const mode = match ? match[1] : null
+      return VALID_MODES.includes(mode) ? mode : null
     },
 
     /**
@@ -1323,6 +1329,30 @@ export const useReactStore = defineStore('react', {
           break
         }
 
+        case 'synthetic_user_message': {
+          const content = data?.content || ''
+          if (targetState.streamingAnswerMessageId) {
+            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
+            if (msg) {
+              msg.streaming = false
+              msg.renderVersion = (msg.renderVersion || 0) + 1
+            }
+            targetState.streamingAnswerMessageId = null
+          }
+
+          if (content) {
+            targetState.isAnalyzing = true
+            targetState.isComplete = false
+            addMessage('user', content, {
+              timestamp: data?.timestamp,
+              session_id: data?.session_id,
+              source: data?.source || 'auto_hook',
+              hook_name: data?.hook_name || null
+            }, null, { synthetic: true })
+          }
+          break
+        }
+
         case 'answer_delta': {
           // ✅ 知识问答流式输出（兼容独立路由）
           const delta = data?.delta || ''
@@ -1462,51 +1492,11 @@ export const useReactStore = defineStore('react', {
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          if (data?.auto_followup_pending && data?.auto_followup_prompt) {
+            targetState._pendingAutoFollowupPrompt = data.auto_followup_prompt
+            targetState._pendingAutoFollowupHookName = data.auto_followup_hook_name || 'report_final_review'
+          }
           this._persistModeState(targetMode)
-          break
-        }
-
-        case 'pipeline_completed': {
-          // ✅ ExpertRouterV3 旧架构多专家并行完成事件
-          console.log('[event:pipeline_completed] ========== 收到 ExpertRouterV3 完成事件 ==========')
-          console.log('[event:pipeline_completed] 数据:', JSON.stringify(data, null, 2))
-
-          // 【修复】使用targetState而不是currentState，确保状态更新到正确的模式
-          targetState.isAnalyzing = false
-          targetState.isComplete = true
-          targetState.finalAnswer = data?.response || ''
-          targetState.hasResults = true
-
-          // 记录最终答案
-          targetState.finalAnswers.push({
-            run: targetState.sessionRound,
-            content: data?.response || '溯源分析完成',
-            timestamp: new Date().toISOString()
-          })
-
-          // 添加最终答案消息到UI
-          addMessage('final', data?.response || '溯源分析完成', {
-            session_id: data?.session_id,
-            timestamp: new Date().toISOString(),
-            conclusions: data?.conclusions || null,
-            recommendations: data?.recommendations || null,
-            confidence: data?.confidence || null,
-            data_ids: data?.data_ids || null
-          })
-
-          targetState.streamingAnswerMessageId = null
-          break
-        }
-
-        case 'pipeline_failed': {
-          // ✅ ExpertRouterV3 旧架构多专家并行失败事件
-          console.log('[event:pipeline_failed] ========== 收到 ExpertRouterV3 失败事件 ==========')
-          console.log('[event:pipeline_failed] 数据:', JSON.stringify(data, null, 2))
-
-          targetState.isAnalyzing = false
-          targetState.error = data?.error || '溯源分析失败'
-          addMessage('error', `溯源分析失败: ${targetState.error}`, data)
-          targetState.streamingAnswerMessageId = null
           break
         }
 
@@ -1887,7 +1877,11 @@ export const useReactStore = defineStore('react', {
         gridResolution = 21,  // 网格分辨率选项
         agentMode = this.agentMode,  // ✅ 双模式架构：assistant | expert
         knowledgeBaseIds = null,  // ✅ 知识库ID列表
-        attachments = null  // ✅ 附件列表
+        modelTier = 'auto',
+        attachments = null,  // ✅ 附件列表
+        skipAutoFollowup = false,
+        synthetic = false,
+        syntheticMeta = null
       } = options
 
       if (!query.trim() && (!attachments || attachments.length === 0)) {
@@ -1917,7 +1911,14 @@ export const useReactStore = defineStore('react', {
       }
 
       // 重置状态
-      this._addMessageToState(sessionState, 'user', query, null, attachments)
+      this._addMessageToState(
+        sessionState,
+        'user',
+        query,
+        syntheticMeta,
+        attachments,
+        synthetic ? { synthetic: true } : {}
+      )
       sessionState.currentMessage = ''
       sessionState.isAnalyzing = true
       sessionState.isComplete = false
@@ -1944,39 +1945,47 @@ export const useReactStore = defineStore('react', {
       }
 
       try {
-        // ✅ 特殊处理：tracing 模式使用旧架构 ExpertRouterV3
-        if (actualMode === 'tracing') {
-          console.log('[startAnalysis] 使用 ExpertRouterV3 旧架构（多专家并行）')
-          await agentAPI.analyzeV3(query, {
-            sessionId: sessionState.sessionId,
-            requestKey: sessionState.sessionId,
-            precision: 'standard',  // fast/standard/full
-            enableCheckpoint: false,
-            onEvent: (event) => {
-              if (!event.data) event.data = {}
-              if (!event.data.session_id) event.data.session_id = sessionState.sessionId
-              this.handleEvent(event)
-            }
-          })
-        } else {
-          // 调用新架构 ReAct Agent
-          await agentAPI.analyze(query, {
-            sessionId: sessionState.sessionId,
-            requestKey: sessionState.sessionId,
-            userIdentifier: this.userIdentifier,  // ✅ 传递用户标识（跨会话持久化）
-            enhanceWithHistory: true,
-            maxIterations: this.maxIterations,
-            assistantMode: assistantMode,  // 传递助手模式
-            useFullChemistry: useFullChemistry,  // RACM2完整化学机理分析选项
-            gridResolution: gridResolution,  // 网格分辨率选项
-            isInterruption: isInterruption,  // ✅ 传递中断标志
-            agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
-            knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
-            attachments: attachments,  // ✅ 传递附件列表
-            onEvent: (event) => {
-              if (!event.data) event.data = {}
-              if (!event.data.session_id) event.data.session_id = sessionState.sessionId
-              this.handleEvent(event)
+        // 调用新架构 ReAct Agent
+        await agentAPI.analyze(query, {
+          sessionId: sessionState.sessionId,
+          requestKey: sessionState.sessionId,
+          userIdentifier: this.userIdentifier,  // ✅ 传递用户标识（跨会话持久化）
+          enhanceWithHistory: true,
+          maxIterations: this.maxIterations,
+          assistantMode: assistantMode,  // 传递助手模式
+          useFullChemistry: useFullChemistry,  // RACM2完整化学机理分析选项
+          gridResolution: gridResolution,  // 网格分辨率选项
+          isInterruption: isInterruption,  // ✅ 传递中断标志
+          agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
+          knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
+          modelTier,
+          attachments: attachments,  // ✅ 传递附件列表
+          skipAutoFollowup,
+          onEvent: (event) => {
+            if (!event.data) event.data = {}
+            if (!event.data.session_id) event.data.session_id = sessionState.sessionId
+            this.handleEvent(event)
+          }
+        })
+
+        const pendingPrompt = sessionState._pendingAutoFollowupPrompt
+        const pendingHookName = sessionState._pendingAutoFollowupHookName
+        if (pendingPrompt) {
+          sessionState._pendingAutoFollowupPrompt = null
+          sessionState._pendingAutoFollowupHookName = null
+          await this.startAnalysis(pendingPrompt, {
+            assistantMode,
+            useFullChemistry,
+            gridResolution,
+            agentMode: actualMode,
+            knowledgeBaseIds,
+            modelTier,
+            attachments: null,
+            skipAutoFollowup: true,
+            synthetic: true,
+            syntheticMeta: {
+              source: 'auto_hook',
+              hook_name: pendingHookName || 'report_final_review'
             }
           })
         }

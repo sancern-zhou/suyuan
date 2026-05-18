@@ -331,9 +331,9 @@ class ReActLoop:
                                 }
 
                             if is_complete:
-                                # 流式完成，创建 FINAL_ANSWER action
+                                # 流式完成，创建 PLAIN_TEXT_REPLY action
                                 action = {
-                                    "type": "FINAL_ANSWER",
+                                    "type": "PLAIN_TEXT_REPLY",
                                     "answer": streaming_buffer.strip()
                                 }
                                 # ✅ 关闭流式完成日志
@@ -348,9 +348,9 @@ class ReActLoop:
                             # ✅ 保存 think_action_result 供后续使用
                             think_action_result = event["data"]
 
-                            # Yield thought事件（FINAL_ANSWER 除外）
+                            # Yield thought事件（PLAIN_TEXT_REPLY 除外）
                             action_type = action.get("type", "TOOL_CALL")
-                            if action_type != "FINAL_ANSWER":
+                            if action_type != "PLAIN_TEXT_REPLY":
                                 yield {
                                     "type": "thought",
                                     "data": {
@@ -387,8 +387,8 @@ class ReActLoop:
 
                     logger.info("action_decided", action_type=action_type, iteration=iteration_count)
 
-                    # FINAL_ANSWER: 直接展示 LLM 的最终回答
-                    if action_type == "FINAL_ANSWER":
+                    # PLAIN_TEXT_REPLY: 直接展示 LLM 的最终回答
+                    if action_type == "PLAIN_TEXT_REPLY":
                         # ✅ 任务状态守卫：在完成任务前检查是否有未完成任务
                         guard_result = await self._guard_task_completion(self.memory.session_id)
 
@@ -453,8 +453,8 @@ class ReActLoop:
                         logger.info("task_completed_response_text", iterations=iteration_count)
                         break
 
-                    # FINISH_SUMMARY: 结束并生成最终答案
-                    if action_type == "FINISH_SUMMARY":
+                    # RESPONSE_SUMMARY: 结束并生成最终答案
+                    if action_type == "RESPONSE_SUMMARY":
                         # ✅ 任务状态守卫：在完成任务前检查是否有未完成任务
                         guard_result = await self._guard_task_completion(self.memory.session_id)
 
@@ -519,8 +519,8 @@ class ReActLoop:
 
                         self.memory.add_iteration(
                             thought=thought,
-                            action={"type": "FINISH_SUMMARY"},
-                            observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
+                            action={"type": "RESPONSE_SUMMARY"},
+                            observation={"success": True, "summary": "RESPONSE_SUMMARY: 生成最终答案"}
                         )
 
                         if response_text:
@@ -534,7 +534,7 @@ class ReActLoop:
                             "type": "observation",
                             "data": {
                                 "iteration": iteration_count,
-                                "observation": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                "observation": {"success": True, "summary": "RESPONSE_SUMMARY: 已生成最终答案"},
                                 "timestamp": datetime.now().isoformat()
                             }
                         }
@@ -607,8 +607,8 @@ class ReActLoop:
                             iteration=iteration_count
                         )
 
-                        # 检查是否是特殊工具（FINISH_SUMMARY）
-                        if observation.get("action_type") == "FINISH_SUMMARY":
+                        # 检查是否是特殊工具（RESPONSE_SUMMARY）
+                        if observation.get("action_type") == "RESPONSE_SUMMARY":
                             # 特殊工具：转换为对应的 action_type
                             special_action_type = observation["action_type"]
                             logger.info(
@@ -620,8 +620,8 @@ class ReActLoop:
                             # 使用特殊工具的 action_type
                             action_type = special_action_type
 
-                            # 复用现有的 FINISH_SUMMARY 处理逻辑
-                            if action_type == "FINISH_SUMMARY":
+                            # 复用现有的 RESPONSE_SUMMARY 处理逻辑
+                            if action_type == "RESPONSE_SUMMARY":
                                 task_completed = True
 
                                 # 从 observation 中获取 data_id（Agent 传递的数据ID）
@@ -715,9 +715,9 @@ class ReActLoop:
                                     final_thought=thought
                                 )
 
-                                # ========== DEBUG: 打印 FINISH_SUMMARY 提示词 ==========
+                                # ========== DEBUG: 打印 RESPONSE_SUMMARY 提示词 ==========
                                 logger.info("=" * 80)
-                                logger.info("[DEBUG] ========== FINISH_SUMMARY PROMPT ==========")
+                                logger.info("[DEBUG] ========== RESPONSE_SUMMARY PROMPT ==========")
                                 logger.info("[DEBUG] User Query:")
                                 logger.info(user_query)
                                 logger.info("[DEBUG] Final Thought:")
@@ -728,7 +728,7 @@ class ReActLoop:
                                 logger.info("[DEBUG] Full Prompt (first 3000 chars):")
                                 logger.info(prompt[:3000])
                                 logger.info("[DEBUG] Full Prompt length: %d chars", len(prompt))
-                                logger.info("[DEBUG] ========== END FINISH_SUMMARY PROMPT ==========")
+                                logger.info("[DEBUG] ========== END RESPONSE_SUMMARY PROMPT ==========")
                                 logger.info("=" * 80)
                                 # ========== END DEBUG ==========
 
@@ -739,8 +739,8 @@ class ReActLoop:
 
                                 self.memory.add_iteration(
                                     thought=thought,
-                                    action={"type": "FINISH_SUMMARY"},
-                                    observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
+                                    action={"type": "RESPONSE_SUMMARY"},
+                                    observation={"success": True, "summary": "RESPONSE_SUMMARY: 生成最终答案"}
                                 )
 
                                 if response_text:
@@ -754,7 +754,7 @@ class ReActLoop:
                                     "type": "observation",
                                     "data": {
                                         "iteration": iteration_count,
-                                        "observation": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                        "observation": {"success": True, "summary": "RESPONSE_SUMMARY: 已生成最终答案"},
                                         "timestamp": datetime.now().isoformat()
                                     }
                                 }
@@ -1023,7 +1023,7 @@ class ReActLoop:
             )
             # 返回一个默认的完成行动作为降级策略
             return {
-                "type": "FINISH_SUMMARY",
+                "type": "RESPONSE_SUMMARY",
                 "answer": "抱歉，Agent 在决策过程中遇到技术问题，未能完成分析。",
                 "reasoning": "行动决策缺少必要字段"
             }
@@ -1134,7 +1134,7 @@ class ReActLoop:
             }
         """
         try:
-            # 获取任务列表（FINAL_ANSWER 模式下，使用最小化的 ExecutionContext）
+            # 获取任务列表（PLAIN_TEXT_REPLY 模式下，使用最小化的 ExecutionContext）
             from app.agent.context.execution_context import ExecutionContext
             from app.agent.context.data_context_manager import DataContextManager
 
@@ -1498,10 +1498,10 @@ class ReActLoop:
                     reasoning = think_action_result.get("reasoning")
 
                     # Phase 2: 执行 Action
-                    action_type = action.get("type", "FINAL_ANSWER")
+                    action_type = action.get("type", "PLAIN_TEXT_REPLY")
 
-                    # Yield thought 事件（FINAL_ANSWER 除外）
-                    if action_type != "FINAL_ANSWER":
+                    # Yield thought 事件（PLAIN_TEXT_REPLY 除外）
+                    if action_type != "PLAIN_TEXT_REPLY":
                         yield {
                             "type": "thought",
                             "data": {
@@ -1518,8 +1518,8 @@ class ReActLoop:
                         iteration=iteration_count
                     )
 
-                    # FINAL_ANSWER: 直接展示 LLM 的最终回答
-                    if action_type == "FINAL_ANSWER":
+                    # PLAIN_TEXT_REPLY: 直接展示 LLM 的最终回答
+                    if action_type == "PLAIN_TEXT_REPLY":
                         task_completed = True
                         response_text = action.get("answer", "")
 
@@ -1538,8 +1538,8 @@ class ReActLoop:
                         logger.info("task_completed_response_text", iterations=iteration_count)
                         break
 
-                    # FINISH_SUMMARY: 结束并生成最终答案
-                    if action_type == "FINISH_SUMMARY":
+                    # RESPONSE_SUMMARY: 结束并生成最终答案
+                    if action_type == "RESPONSE_SUMMARY":
                         # ✅ 任务状态守卫：在完成任务前检查是否有未完成任务
                         guard_result = await self._guard_task_completion(self.memory.session_id)
 
@@ -1606,7 +1606,7 @@ class ReActLoop:
                         self.memory.add_iteration(
                             thought=thought,
                             action=action,
-                            observation={"success": True, "summary": "FINISH_SUMMARY: 生成最终答案"}
+                            observation={"success": True, "summary": "RESPONSE_SUMMARY: 生成最终答案"}
                         )
 
                         if response_text:
@@ -1620,7 +1620,7 @@ class ReActLoop:
                             "type": "observation",
                             "data": {
                                 "iteration": iteration_count,
-                                "observation": {"success": True, "summary": "FINISH_SUMMARY: 已生成最终答案"},
+                                "observation": {"success": True, "summary": "RESPONSE_SUMMARY: 已生成最终答案"},
                                 "timestamp": datetime.now().isoformat()
                             }
                         }

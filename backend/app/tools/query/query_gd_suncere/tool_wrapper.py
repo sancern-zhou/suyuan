@@ -704,6 +704,7 @@ class QueryGDSuncereReportTool(LLMTool):
     """
     广东省综合统计报表查询工具
 
+    兼容保留工具。城市正式统计报表应优先使用 query_city_standard_report。
     用于查询广东省综合统计报表数据（周报、月报、季报、年报、任意时间）
     """
 
@@ -711,6 +712,12 @@ class QueryGDSuncereReportTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_report",
             "description": """
+【兼容保留】查询广东省综合统计报表数据。
+
+城市正式统计报表、空气质量通报核数、全省/珠三角/粤东西北区域汇总等场景，
+请优先使用 query_city_standard_report；同比/环比请使用 query_city_standard_yoy_report。
+本工具仅保留给站点/区县通用综合报表或历史兼容调用使用。
+
 查询广东省综合统计报表数据。
 
 【核心功能】
@@ -791,7 +798,10 @@ time_type=8  # 任意时间报表
 
         super().__init__(
             name="query_gd_suncere_report",
-            description="Query Guangdong comprehensive statistical report data - Suncere API",
+            description=(
+                "Deprecated compatibility tool for Guangdong comprehensive statistical "
+                "reports. Prefer query_city_standard_report for city official reports."
+            ),
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
@@ -858,6 +868,7 @@ class QueryGDSuncereReportCompareTool(LLMTool):
     """
     广东省对比分析报表查询工具
 
+    兼容保留工具。城市正式同比/环比报表应优先使用 query_city_standard_yoy_report。
     用于查询广东省对比分析报表数据（月报、任意时间对比）
     """
 
@@ -865,6 +876,12 @@ class QueryGDSuncereReportCompareTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_report_compare",
             "description": """
+【兼容保留】查询广东省对比分析报表数据。
+
+城市正式同比/环比、空气质量通报核数、全省/珠三角/粤东西北区域对比等场景，
+请优先使用 query_city_standard_yoy_report。本工具仅保留给站点/区县通用对比报表
+或历史兼容调用使用。
+
 查询广东省对比分析报表数据。
 
 【核心功能】
@@ -946,7 +963,10 @@ contrast_time=["2025-02-01 00:00:00", "2025-02-28 23:59:59"]
 
         super().__init__(
             name="query_gd_suncere_report_compare",
-            description="Query Guangdong comparative analysis report data - Suncere API",
+            description=(
+                "Deprecated compatibility tool for Guangdong comparative report data. "
+                "Prefer query_city_standard_yoy_report for city official comparisons."
+            ),
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",

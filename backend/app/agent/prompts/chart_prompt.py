@@ -115,6 +115,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "   - ❌ **禁止**：硬编码文件路径，如 `data = open('/home/.../data.json')`\n",
         "   - ✅ **正确**：`data = get_raw_data('air_quality_5min:v1:...')`\n",
         "   - 💡 **来源**：从之前的工具调用结果中复制 data_id\n",
+        "   - ⚠️ **Python无状态**：每次 `execute_python` 都是独立环境，不保留上次脚本变量；跨调用复用中间结果必须先 `save_data(...)`，后续再 `get_raw_data(data_id)`\n",
         "2. 按照 ECharts 标准格式转换数据（xAxis/yAxis/series结构）\n",
         "3. 使用 print(json.dumps(result, ensure_ascii=False)) 输出结果\n",
         "4. 禁止硬编码数据\n",
