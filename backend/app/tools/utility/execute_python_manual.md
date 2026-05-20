@@ -6,15 +6,16 @@
 
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 图表生成：`matplotlib`，保存图片到 `backend_data_registry`。
+- 图表生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。
 - 文档生成：`python-docx`。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
 
 ## 文件路径
 
-- 生成文件必须保存到项目可访问目录，优先使用 `/home/xckj/suyuan/backend_data_registry/`。
+- 生成文件必须保存到项目可访问目录，优先使用 `/home/xckj/suyuan/backend/backend_data_registry/`。
+- 禁止保存到 `/home/xckj/suyuan/backend_data_registry/`，该目录在仓库根目录下，前端下载和后端文件管理不会以它作为标准输出目录。
 - 代码中打印保存路径，便于前端和后续工具定位。
-- 工具会检测 `backend_data_registry` 中新增文件。
+- 工具会检测 `/home/xckj/suyuan/backend/backend_data_registry/` 中新增文件。
 
 ## matplotlib 中文和化学式
 
@@ -60,7 +61,7 @@ ax.set_ylabel(r"PM$_{2.5}$ ($\mu$g/m$^3$)", fontproperties=chinese_font)
 ```python
 from docx import Document
 
-out = "/home/xckj/suyuan/backend_data_registry/report.docx"
+out = "/home/xckj/suyuan/backend/backend_data_registry/report.docx"
 doc = Document()
 doc.add_heading("报告", 0)
 doc.save(out)

@@ -754,7 +754,7 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     获取工具的Schema定义（支持按模式过滤）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social" | "chart")
+        mode: Agent模式 ("assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops")
               如果为None，返回所有工具的schema
 
     Returns:
@@ -859,4 +859,3 @@ def get_tool_metadata() -> Dict[str, Any]:
             }
 
     return metadata
-

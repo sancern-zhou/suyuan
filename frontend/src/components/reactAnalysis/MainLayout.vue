@@ -18,6 +18,7 @@
         :is-analyzing="isAnalyzing"
         :input-disabled="inputDisabled"
         :current-message="currentMessage"
+        :session-id="sessionId"
         :drag-over="chatAreaDragOver"
         :selected-message-id="selectedMessageId"
         :show-reflexion="showReflexion"

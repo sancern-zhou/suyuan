@@ -3,14 +3,27 @@ Fetcher Scheduler
 
 管理所有数据获取后台的调度器
 """
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler import events as apscheduler_events
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher, FetcherStatus
 
 logger = structlog.get_logger()
+
+
+def _format_job_next_run_time(job: Any) -> Optional[str]:
+    """
+    Safely format an APScheduler job's next run time.
+
+    APScheduler keeps jobs added before scheduler.start() as pending jobs. In
+    that state Job.next_run_time can raise AttributeError, so startup logging
+    must treat it as unknown instead of failing fetcher initialization.
+    """
+    next_run_time = getattr(job, "next_run_time", None)
+    return str(next_run_time) if next_run_time else None
 
 
 class FetcherScheduler:
@@ -25,9 +38,23 @@ class FetcherScheduler:
     """
 
     def __init__(self):
-        self.scheduler = AsyncIOScheduler()
+        # 配置调度器
+        self.scheduler = AsyncIOScheduler(
+            timezone='Asia/Shanghai',  # 使用中国时区
+            job_defaults={
+                'coalesce': True,  # 合并错过的运行
+                'max_instances': 1,  # 同一时间最多一个实例
+                'misfire_grace_time': 300,  # 错过运行后5分钟内仍会执行
+            }
+        )
         self.fetchers: Dict[str, DataFetcher] = {}
         self._running = False
+
+        # 添加作业事件监听器（用于调试）
+        self.scheduler.add_listener(
+            self._job_executed_event,
+            mask=apscheduler_events.EVENT_JOB_EXECUTED | apscheduler_events.EVENT_JOB_ERROR
+        )
 
     def register(self, fetcher: DataFetcher):
         """
@@ -46,7 +73,7 @@ class FetcherScheduler:
         self.fetchers[fetcher.name] = fetcher
 
         # 添加到调度器
-        self.scheduler.add_job(
+        job = self.scheduler.add_job(
             fetcher.run,
             CronTrigger.from_crontab(fetcher.schedule),
             id=fetcher.name,
@@ -58,7 +85,8 @@ class FetcherScheduler:
             "fetcher_registered",
             fetcher=fetcher.name,
             schedule=fetcher.schedule,
-            description=fetcher.description
+            description=fetcher.description,
+            next_run_time=_format_job_next_run_time(job)
         )
 
     def unregister(self, fetcher_name: str):
@@ -151,10 +179,12 @@ class FetcherScheduler:
         }
 
         for name, fetcher in self.fetchers.items():
+            job = self.scheduler.get_job(name)
             status["fetchers"][name] = {
                 "name": name,
                 "description": fetcher.description,
                 "schedule": fetcher.schedule,
+                "next_run_time": _format_job_next_run_time(job) if job else None,
                 "enabled": fetcher.enabled,
                 "status": fetcher.status.value,
                 "version": fetcher.version
@@ -216,3 +246,25 @@ class FetcherScheduler:
             bool: 是否运行中
         """
         return self._running
+
+    def _job_executed_event(self, event):
+        """
+        作业执行事件监听器（用于调试）
+
+        Args:
+            event: APScheduler 事件对象
+        """
+        if event.exception:
+            logger.error(
+                "job_execution_failed",
+                job_id=event.job_id,
+                exception=str(event.exception),
+                traceback=event.traceback
+            )
+        else:
+            logger.info(
+                "job_executed",
+                job_id=event.job_id,
+                scheduled_run_time=str(event.scheduled_run_time) if event.scheduled_run_time else None,
+                retval=str(event.retval) if event.retval else None
+            )

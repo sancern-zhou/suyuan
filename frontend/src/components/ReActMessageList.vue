@@ -4,9 +4,16 @@
     <div v-if="messages.length === 0" class="welcome-message">
       <h2>{{ welcomeContent.title }}</h2>
       <p>{{ welcomeContent.description }}</p>
-      <ul>
-        <li v-for="(feature, index) in welcomeContent.features" :key="index">{{ feature }}</li>
-      </ul>
+      <div class="welcome-capabilities">
+        <button
+          v-for="(feature, index) in welcomeContent.features"
+          :key="index"
+          class="welcome-capability"
+          type="button"
+        >
+          {{ feature }}
+        </button>
+      </div>
       <p class="hint">{{ welcomeContent.example }}</p>
     </div>
 
@@ -43,30 +50,57 @@
               v-if="attachment.type === 'image'"
               :src="attachment.url"
               :alt="attachment.name"
+              :title="attachment.name"
               class="attachment-image"
-              @click="previewAttachment(attachment)"
+              @click.stop="previewAttachment(attachment)"
             />
             <!-- 文档附件 -->
-            <div v-else class="attachment-file">
+            <div v-else class="attachment-file" :title="attachment.name">
               <svg viewBox="0 0 24 24" class="attachment-file-icon">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke="currentColor" stroke-width="2"/>
-                <polyline points="14 2 14 8 20 8" fill="none" stroke="currentColor" stroke-width="2"/>
+                <path d="M6 3.5h8l4 4v13H6v-17Z" />
+                <path d="M14 3.5v4h4" />
+                <path d="M9 12h6" />
+                <path d="M9 15.5h5" />
               </svg>
               <span class="attachment-file-name">{{ attachment.name }}</span>
             </div>
           </div>
         </div>
 
-        <div class="message-content" v-if="useMarkdown && message.content">
-          <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
-          <!-- 当 streaming 从 true 变为 false 时，key 变化，组件会重新创建 -->
-          <MarkdownRenderer
-            :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="contentToString(message.content)"
-            :streaming="message.streaming === true"
-          />
+        <div class="message-content user-message-content" v-if="message.content">
+          <div
+            class="user-message-text"
+            :class="{ collapsed: isUserMessageCollapsed(message) }"
+          >
+            {{ getUserMessageDisplayText(message) }}
+          </div>
+          <button
+            v-if="isUserMessageLong(message.content)"
+            class="user-message-expand"
+            type="button"
+            @click.stop="toggleUserMessageExpanded(message.id)"
+          >
+            {{ isUserMessageCollapsed(message) ? '展开' : '收起' }}
+          </button>
         </div>
-        <div class="message-content" v-else-if="message.content">{{ contentToString(message.content) }}</div>
+
+        <div class="user-message-tools">
+          <button
+            class="user-message-tool-button"
+            :class="{ copied: copiedUserMessageId === message.id }"
+            type="button"
+            :title="copiedUserMessageId === message.id ? '已复制' : '复制'"
+            @click.stop="copyUserMessage(message)"
+          >
+            <svg v-if="copiedUserMessageId === message.id" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m5 12 4 4 10-10" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+        </div>
 
         <!-- Reflexion状态提示 -->
         <div v-if="showReflexion && reflexionCount > 0" class="reflexion-badge">
@@ -206,6 +240,19 @@
         </div>
       </div>
     </div></details>
+
+    <button
+      v-if="showScrollToBottom"
+      class="scroll-bottom-button"
+      type="button"
+      title="回到底部"
+      @click="scrollToBottomFromButton"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14" />
+        <path d="m6 13 6 6 6-6" />
+      </svg>
+    </button>
 
     <!-- 图片预览模态框 -->
     <div v-if="previewedImage" class="image-preview-modal" @click="closeImagePreview">
@@ -548,46 +595,49 @@ const welcomeContent = computed(() => {
   const contentMap = {
     'meteorology-expert': {
       title: '气象分析场景',
-      description: '专注气象数据分析，自动生成专业图表和传输路径分析：',
+      description: '面向大气环境业务的气象数据分析与过程诊断：',
       features: [
-        '分析ERA5历史气象数据',
-        '查询气象轨迹传输路径',
-        '获取气象条件关联分析',
-        '生成专业气象图表和可视化'
+        '补采、读取并分析 ERA5 等历史气象数据',
+        '开展气象条件、边界层、风场与污染过程关联分析',
+        '生成轨迹、时序、风玫瑰等专业图表',
+        '输出可复用的分析结论和图表说明'
       ],
-      example: '请输入您的问题，例如："分析北京今天的气象条件"'
+      example: '例如："分析广州天河站 2025-11-01 前后的气象扩散条件"'
     },
     'data-visualization-expert': {
       title: '数据可视化场景',
-      description: '根据数据特征智能推荐图表类型，支持灵活调整图表样式和布局：',
+      description: '根据数据结构和业务目标生成可解释的专业图表：',
       features: [
-        '智能推荐最佳图表类型',
-        '支持多种专业图表绑制',
-        '自定义图表样式和配色',
-        '一键导出高清图表'
+        '识别数据字段并推荐合适的图表类型',
+        '绘制空气质量、气象、组分和对比分析图表',
+        '支持图表样式、配色、标题和布局调整',
+        '将图表沉淀到右侧面板，便于查看和复用'
       ],
-      example: '请输入您的问题，例如："绑制广州11月PM2.5浓度变化趋势图"'
+      example: '例如："绘制广州 11 月 PM2.5 与 O3 的日变化对比图"'
     },
     'report-generation-expert': {
       title: '报告生成场景',
-      description: '整合文字、图表与结论，生成周报、专项报告模板：',
+      description: '面向业务汇报和专项分析的报告生成与编辑：',
       features: [
-        '模版化段落输出',
-        '自动整合分析图表',
-        '生成专业分析结论',
-        '支持多格式报告导出'
+        '按模板组织背景、数据、图表、结论和建议',
+        '整合对话中的分析结果与可视化图表',
+        '支持 Word、Excel、PPT 等办公文件处理',
+        '生成可继续编辑的阶段性报告内容'
       ],
-      example: '功能正在开发中，敬请期待...'
+      example: '例如："根据本轮分析结果生成一份污染过程溯源简报"'
     },
     'general-agent': {
       title: '大气环境智能分析与决策支持平台',
-      description: '专业的环境数据分析助手，可以通过以下方式为您服务：',
+      description: '集数据查询、专家分析、图表生成、报告撰写和办公处理于一体的智能工作台：',
       features: [
-        '分析特定时间段的空气质量',
-        '获取气象数据关联分析',
-        '生成可视化图表和报告'
+        '助手：处理文件、表格、文档、PPT 和通用办公任务',
+        '专家：开展空气质量、气象、组分、污染过程和溯源分析',
+        '问数：查询本地业务数据，生成 SQL、汇总统计和结果解释',
+        '报告：整合分析结论、图表和模板，生成可编辑报告内容',
+        '图表：基于已有数据生成趋势、对比、分布、地图和专题图表',
+        '支持知识库检索、文件上传、历史会话恢复和多轮追问'
       ],
-      example: '请输入您的问题，例如："分析广州天河站2025-11-01的O3污染情况"'
+      example: '例如："查询广州天河站 2025-11-01 的 O3 过程，分析气象影响并生成图表和简报"'
     }
   }
   return contentMap[props.assistantMode] || contentMap['general-agent']
@@ -638,6 +688,12 @@ const expandedProcessIds = ref(new Set())
 // 【新增】实时分析过程展开状态（默认折叠）
 const isLiveProcessExpanded = ref(false)
 
+const expandedUserMessageIds = ref(new Set())
+const copiedUserMessageId = ref(null)
+const USER_MESSAGE_PREVIEW_LENGTH = 320
+const USER_MESSAGE_PREVIEW_LINES = 6
+let copiedUserMessageTimer = null
+
 // 【新增】全局初始加载标志，用于强制所有 details 在初次加载时折叠
 const isInitialLoad = ref(true)
 
@@ -667,6 +723,82 @@ const isProcessExpanded = (messageId) => {
   } else {
     return undefined  // 返回 undefined 确保 details 折叠
   }
+}
+
+const getUserMessageText = (content) => contentToString(content).trim()
+
+const isUserMessageLong = (content) => {
+  const text = getUserMessageText(content)
+  if (text.length > USER_MESSAGE_PREVIEW_LENGTH) return true
+  return text.split(/\r?\n/).length > USER_MESSAGE_PREVIEW_LINES
+}
+
+const isUserMessageCollapsed = (message) => {
+  if (!message?.id || !isUserMessageLong(message.content)) return false
+  return !expandedUserMessageIds.value.has(message.id)
+}
+
+const getUserMessageDisplayText = (message) => {
+  const text = getUserMessageText(message.content)
+  if (!isUserMessageCollapsed(message)) return text
+
+  const lines = text.split(/\r?\n/)
+  const byLines = lines.length > USER_MESSAGE_PREVIEW_LINES
+    ? lines.slice(0, USER_MESSAGE_PREVIEW_LINES).join('\n')
+    : text
+
+  if (byLines.length <= USER_MESSAGE_PREVIEW_LENGTH) {
+    return `${byLines.trimEnd()}...`
+  }
+  return `${byLines.slice(0, USER_MESSAGE_PREVIEW_LENGTH).trimEnd()}...`
+}
+
+const toggleUserMessageExpanded = (messageId) => {
+  if (!messageId) return
+  const next = new Set(expandedUserMessageIds.value)
+  if (next.has(messageId)) {
+    next.delete(messageId)
+  } else {
+    next.add(messageId)
+  }
+  expandedUserMessageIds.value = next
+}
+
+const markUserMessageCopied = (messageId) => {
+  copiedUserMessageId.value = messageId || null
+  if (copiedUserMessageTimer) {
+    clearTimeout(copiedUserMessageTimer)
+  }
+  copiedUserMessageTimer = setTimeout(() => {
+    copiedUserMessageId.value = null
+    copiedUserMessageTimer = null
+  }, 1400)
+}
+
+const copyUserMessage = async (message) => {
+  const text = getUserMessageText(message?.content)
+  if (!text) return
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      markUserMessageCopied(message?.id)
+      return
+    }
+  } catch (error) {
+    console.warn('Clipboard copy failed, falling back:', error)
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+  markUserMessageCopied(message?.id)
 }
 
 // 【新增】处理details的toggle事件
@@ -945,6 +1077,7 @@ const isAtBottom = () => {
 
 // 【新增】用户滚动状态追踪
 const userHasScrolled = ref(false)
+const showScrollToBottom = ref(false)
 const scrollTimeout = ref(null)
 
 // 检测用户是否手动滚动
@@ -953,6 +1086,7 @@ const handleUserScroll = () => {
   if (messagesContainer.value) {
     const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
     const distanceToBottom = scrollHeight - scrollTop - clientHeight
+    showScrollToBottom.value = distanceToBottom > 120
 
     // 只有距离底部超过50px时才认为用户在查看历史消息
     if (distanceToBottom > 50) {
@@ -977,6 +1111,12 @@ const handleUserScroll = () => {
       emit('load-more')
     }
   }
+}
+
+const scrollToBottomFromButton = () => {
+  userHasScrolled.value = false
+  showScrollToBottom.value = false
+  scrollToBottom()
 }
 
 // 只在"首次加载"或"用户发送消息"时强制滚动到底部
@@ -1047,6 +1187,9 @@ onBeforeUnmount(() => {
   }
   if (scrollTimeout.value) {
     clearTimeout(scrollTimeout.value)
+  }
+  if (copiedUserMessageTimer) {
+    clearTimeout(copiedUserMessageTimer)
   }
   document.removeEventListener('keydown', handleEscKey)
 })
@@ -1752,25 +1895,87 @@ const closeImagePreview = () => {
 
 .welcome-message {
   text-align: center;
-  padding: 40px 20px;
-  color: #666;
+  width: min(760px, 100%);
+  margin: auto;
+  padding: 36px 20px;
+  color: #526173;
 
   h2 {
-    color: #1976D2;
-    margin-bottom: 20px;
+    color: #24324a;
+    margin: 0 0 12px;
+    font-size: 24px;
+    line-height: 1.25;
   }
 
-  ul {
+  p {
+    margin: 0 auto;
+    max-width: 680px;
+    line-height: 1.7;
+  }
+
+  .welcome-capabilities {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 8px;
+    margin: 22px auto 0;
     text-align: left;
-    max-width: 500px;
-    margin: 20px auto;
-    line-height: 1.8;
+  }
+
+  .welcome-capability {
+    min-height: 42px;
+    padding: 9px 12px;
+    border: 1px solid #d8deea;
+    border-radius: 8px;
+    background: #fff;
+    color: #35425f;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: left;
+    cursor: default;
   }
 
   .hint {
-    margin-top: 30px;
-    font-style: italic;
-    color: #999;
+    margin-top: 18px;
+    color: #6f7f97;
+    font-size: 13px;
+    font-style: normal;
+  }
+}
+
+.scroll-bottom-button {
+  position: sticky;
+  bottom: 14px;
+  z-index: 20;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-top: -34px;
+  border: 1px solid #d8deea;
+  border-radius: 999px;
+  color: #526173;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 18px rgba(31, 45, 68, 0.14);
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #1976D2;
+    border-color: #90CAF9;
+    transform: translateY(-1px);
   }
 }
 
@@ -1827,6 +2032,7 @@ const closeImagePreview = () => {
 }
 
 .user-message {
+  position: relative;
   padding: 10px 16px;
   background: #f5f5f5;
   border-radius: 18px;
@@ -1838,13 +2044,97 @@ const closeImagePreview = () => {
   font-size: 14px;
   line-height: 1.6;
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
   justify-content: flex-start;
   width: auto;
   max-width: 70%;
   box-sizing: border-box;
+  min-width: 0;
 
   .message-content {
     text-align: left;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .user-message-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+
+    &.collapsed {
+      color: #3f4756;
+    }
+  }
+
+  .user-message-expand {
+    margin-top: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #1976D2;
+    font-size: 12px;
+    line-height: 1.4;
+    cursor: pointer;
+
+    &:hover {
+      color: #0D47A1;
+      text-decoration: underline;
+    }
+  }
+
+  .user-message-tools {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.16s ease;
+  }
+
+  &:hover .user-message-tools,
+  &:focus-within .user-message-tools {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .user-message-tool-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid #d8deea;
+    border-radius: 6px;
+    color: #627089;
+    background: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+
+    svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    &:hover {
+      color: #1976D2;
+      border-color: #90CAF9;
+      background: #fff;
+    }
+
+    &.copied {
+      color: #2e7d32;
+      border-color: #a5d6a7;
+      background: #f1f8f4;
+    }
   }
 
   .reflexion-badge {
@@ -2232,25 +2522,27 @@ const closeImagePreview = () => {
 
 .live-process-details {
   margin: 6px 0 10px 0;
-  border-radius: 6px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  background: #fff;
   font-size: 14px;
-  color: #000;
+  color: #35425f;
 
   summary {
     cursor: pointer;
-    color: #000;
-    font-weight: 600;
+    color: #35425f;
+    font-weight: 500;
     font-size: 13px;
     user-select: none;
-    padding: 10px 14px;
-    border-radius: 6px;
+    padding: 9px 12px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     gap: 8px;
-    background: #f5f5f5;
+    background: #fff;
 
     &:hover {
-      background: #e8e8e8;
+      background: #f8fbff;
     }
 
     &::marker {
@@ -2274,16 +2566,15 @@ const closeImagePreview = () => {
 }
 
 .live-process-content {
-  padding: 10px 14px;
-  border-radius: 0 0 6px 6px;
-  border: 1px solid #e0e0e0;
-  border-top: none;
-  background: #fafafa;
+  padding: 4px 12px 10px;
+  border-top: 1px solid #f2f4f8;
+  background: #fff;
 }
 
 .live-process-item {
-  padding: 8px 0;
-  border-top: 1px solid #e0e0e0;
+  padding: 8px 0 8px 14px;
+  border-top: 1px solid #f2f4f8;
+  border-left: 2px solid #d8deea;
 
   &:first-of-type {
     border-top: none;
@@ -2298,7 +2589,7 @@ const closeImagePreview = () => {
   .event-icon {
     font-size: 12px;
     font-weight: 600;
-    color: #000;
+    color: #6f7f97;
     flex-shrink: 0;
     margin-top: 2px;
     min-width: 36px;
@@ -2307,7 +2598,7 @@ const closeImagePreview = () => {
   .event-text {
     flex: 1;
     line-height: 1.6;
-    color: #000;
+    color: #35425f;
 
     .tool-use-main {
       display: flex;
@@ -2315,7 +2606,7 @@ const closeImagePreview = () => {
       gap: 8px;
       flex-wrap: wrap;
       font-weight: 500;
-      color: #000;
+      color: #35425f;
     }
 
     .tool-use-details {
@@ -2324,7 +2615,7 @@ const closeImagePreview = () => {
       details {
         summary {
           cursor: pointer;
-          color: #000;
+          color: #526173;
           font-size: 12px;
           user-select: none;
           padding: 4px 8px;
@@ -2336,6 +2627,8 @@ const closeImagePreview = () => {
         pre {
           margin-top: 8px;
           padding: 8px;
+          background: #f8fafc;
+          border: 1px solid #edf1f7;
           border-radius: 4px;
           font-size: 12px;
           overflow-x: auto;
@@ -2346,9 +2639,10 @@ const closeImagePreview = () => {
     .tool-result-summary {
       margin-top: 8px;
       padding: 8px;
+      background: #f8fafc;
       border-radius: 4px;
       font-size: 13px;
-      color: #000;
+      color: #526173;
     }
 
   }
@@ -2391,30 +2685,40 @@ const closeImagePreview = () => {
 
 // 处理过程折叠区域样式
 .process-collapse {
-  margin-top: 12px;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  margin: 10px 0 8px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
   overflow: hidden;
-  color: #000;
+  color: #35425f;
+  background: #fff;
 
   > summary {
     padding: 8px 12px;
     cursor: pointer;
-    font-size: 14px;
-    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
     display: block;
     user-select: none;
-    color: #000;
+    color: #526173;
+    background: #fff;
+
+    &:hover {
+      background: #f8fbff;
+      color: #1976D2;
+    }
   }
 
   .process-content {
-    padding: 8px 12px;
+    padding: 4px 12px 10px;
     max-height: 400px;
     overflow-y: auto;
+    border-top: 1px solid #f2f4f8;
 
     .process-item {
-      padding: 6px 0;
-      border-bottom: 1px solid #f0f0f0;
+      padding: 8px 0 8px 14px;
+      border-bottom: 1px solid #f2f4f8;
+      border-left: 2px solid #d8deea;
 
       &:last-child {
         border-bottom: none;
@@ -2430,14 +2734,14 @@ const closeImagePreview = () => {
       .process-label {
         font-size: 11px;
         font-weight: 600;
-        color: #000;
+        color: #6f7f97;
         white-space: nowrap;
-        min-width: 60px;
+        min-width: 36px;
       }
 
       .process-text {
         font-size: 12px;
-        color: #000;
+        color: #526173;
         line-height: 1.5;
         word-break: break-word;
       }
@@ -2456,7 +2760,7 @@ const closeImagePreview = () => {
     }
 
     .process-tool-name {
-      color: #000;
+      color: #35425f;
       font-size: 12px;
       font-weight: 500;
     }
@@ -2470,7 +2774,8 @@ const closeImagePreview = () => {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
-  color: #000;
+  color: #526173;
+  background: #f2f6fb;
 }
 
 .process-details {
@@ -2479,7 +2784,7 @@ const closeImagePreview = () => {
 
   > summary {
     cursor: pointer;
-    color: #000;
+    color: #526173;
     font-size: 12px;
     user-select: none;
   }
@@ -2489,6 +2794,8 @@ const closeImagePreview = () => {
     overflow: auto;
     margin: 6px 0 0;
     padding: 8px;
+    background: #f8fafc;
+    border: 1px solid #edf1f7;
     border-radius: 4px;
     font-size: 12px;
     line-height: 1.5;
@@ -2501,51 +2808,96 @@ const closeImagePreview = () => {
 .message-attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 6px;
+  max-width: 100%;
 }
 
 .message-attachment {
+  display: inline-flex;
+  align-items: center;
   position: relative;
+  min-width: 0;
 }
 
 .attachment-image {
-  max-width: 200px;
-  max-height: 200px;
-  border-radius: 8px;
+  width: 72px;
+  height: 54px;
+  border-radius: 7px;
+  border: 1px solid #d8deea;
+  background: #fff;
   cursor: pointer;
   object-fit: cover;
-  transition: opacity 0.2s;
+  transition: opacity 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 
   &:hover {
     opacity: 0.85;
+    border-color: #90CAF9;
+    transform: translateY(-1px);
   }
 }
 
 .attachment-file {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #f5f5f5;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  gap: 6px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 9px;
+  background: #ffffff;
+  border-radius: 999px;
+  border: 1px solid #d8deea;
+  max-width: 100%;
+  color: #5f6f89;
 }
 
 .attachment-file-icon {
-  width: 20px;
-  height: 20px;
-  color: #7c8db5;
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .attachment-file-name {
-  font-size: 13px;
-  color: #6b7a99;
-  max-width: 150px;
+  min-width: 0;
+  max-width: 136px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  color: #526173;
+}
+
+@media (max-width: 768px) {
+  .react-message-list {
+    padding: 14px 12px;
+  }
+
+  .user-message {
+    max-width: 88%;
+  }
+
+  .user-message .user-message-tools {
+    position: static;
+    margin-top: 6px;
+    opacity: 1;
+    pointer-events: auto;
+    align-self: flex-end;
+  }
+
+  .attachment-image {
+    width: 64px;
+    height: 48px;
+  }
+
+  .attachment-file-name {
+    max-width: 112px;
+  }
 }
 
 // 图片预览模态框

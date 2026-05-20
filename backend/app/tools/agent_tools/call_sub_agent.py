@@ -25,8 +25,8 @@ logger = structlog.get_logger()
 # 获取全局session管理器
 session_manager = get_session_manager()
 
-# ⚠️ 支持6种模式：assistant, query, report, social, chart, expert
-AgentMode = Literal["assistant", "query", "report", "social", "chart", "expert"]
+# ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
+AgentMode = Literal["assistant", "query", "report", "social", "chart", "expert", "ops"]
 
 
 class CallSubAgentTool(LLMTool):
@@ -58,8 +58,8 @@ class CallSubAgentTool(LLMTool):
                 "properties": {
                     "target_mode": {
                         "type": "string",
-                        "enum": ["assistant", "query", "report", "social", "chart", "expert"],
-                        "description": "目标Agent模式（expert模式用于深度溯源分析）"
+                    "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops"],
+                    "description": "目标Agent模式（ops模式用于运维工单、审核和异常分析）"
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
                     "goal": {
@@ -142,7 +142,7 @@ class CallSubAgentTool(LLMTool):
 
         Args:
             context: ExecutionContext（包含memory_manager等依赖）
-            target_mode: 目标Agent模式（"assistant" | "query" | "report" | "social" | "chart"）
+            target_mode: 目标Agent模式（"assistant" | "query" | "report" | "social" | "chart" | "expert" | "ops"）
             goal: ⚠️ 任务目标（推荐）：必须完整保留所有参数（文件路径、时间范围等）
             task_description: ⚠️ [向后兼容] 等同于goal
             context_str: 补充上下文（推荐）：技能名称、操作步骤等
@@ -460,6 +460,7 @@ class CallSubAgentTool(LLMTool):
             "social": "\n专注完成上述社交平台任务。\n",
             "query": "\n专注完成上述数据查询任务，请解析用户的自然语言描述，选择合适的工具和参数。\n",
             "report": "\n专注完成上述报告生成任务。\n",
+            "ops": "\n专注完成上述运维管理任务，围绕工单查询、审核判断、异常分析和闭环建议给出结构化结果。\n",
             "code": "\n专注完成上述编程任务。\n",
         }
 
@@ -527,6 +528,7 @@ class CallSubAgentTool(LLMTool):
             "social": "社交Agent",
             "query": "问数Agent",
             "report": "报告Agent",
+            "ops": "运维管理Agent",
             "code": "编程Agent",
         }
         return mode_names.get(mode, mode)

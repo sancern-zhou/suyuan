@@ -7,7 +7,7 @@ import { restoreSession, getSessionMessages } from '@/api/session'
 
 export function useSessionRecovery(store, options = {}) {
   const {
-    initialMessageLimit = 5, // 初始加载消息数
+    initialMessageLimit = 30, // 初始加载消息数
     onProgress = null, // 进度回调
     onComplete = null, // 完成回调
     onError = null // 错误回调
@@ -40,23 +40,14 @@ export function useSessionRecovery(store, options = {}) {
     try {
       console.log(`[会话恢复] 开始恢复会话 ${sessionId.substring(0, 12)}...`)
 
-      // 1. 调用恢复API
-      const restoreResult = await restoreSession(sessionId)
-      if (!restoreResult.success) {
-        throw new Error(restoreResult.message || '恢复失败')
+      // 1. 调用恢复API，后端只返回最新 messageLimit 条
+      const restoreResult = await restoreSession(sessionId, { messageLimit })
+      if (!restoreResult) {
+        throw new Error('恢复失败：API返回为空')
       }
 
-      // 2. 获取会话消息
-      const messagesResult = await getSessionMessages(sessionId, {
-        limit: messageLimit,
-        offset: 0
-      })
-
-      if (!messagesResult.success) {
-        throw new Error(messagesResult.message || '获取消息失败')
-      }
-
-      const messages = messagesResult.data.messages || []
+      const sessionData = restoreResult.session || restoreResult
+      const messages = sessionData.conversation_history || []
       messageCount.value = messages.length
 
       // 3. 提取可视化内容
@@ -67,7 +58,12 @@ export function useSessionRecovery(store, options = {}) {
       const officeDocs = restoreOfficeDocs ? extractOfficeDocuments(messages) : []
 
       // 5. 更新store
-      updateStoreState(sessionId, messages, visuals, officeDocs)
+      updateStoreState(sessionId, messages, visuals, officeDocs, {
+        hasMoreMessages: sessionData.has_more_messages || false,
+        totalMessageCount: sessionData.total_message_count || messages.length,
+        oldestSequence: sessionData.oldest_sequence ?? null,
+        loadingMore: false
+      })
 
       const result = {
         success: true,
@@ -153,13 +149,18 @@ export function useSessionRecovery(store, options = {}) {
    * @param {Array} messages - 消息列表
    * @param {Array} visuals - 可视化列表
    * @param {Array} officeDocs - Office文档列表
+   * @param {object} pagination - 分页状态
    */
-  const updateStoreState = (sessionId, messages, visuals, officeDocs) => {
+  const updateStoreState = (sessionId, messages, visuals, officeDocs, pagination = null) => {
     // 更新会话ID
     store.setSessionId(sessionId)
 
     // 更新消息
     store.setMessages(messages)
+
+    if (pagination && typeof store.setPagination === 'function') {
+      store.setPagination(pagination)
+    }
 
     // 更新可视化历史
     if (visuals.length > 0) {
@@ -175,11 +176,11 @@ export function useSessionRecovery(store, options = {}) {
 
   /**
    * 加载更多消息
-   * @param {number} offset - 偏移量
+   * @param {number} beforeSequence - 游标，加载 sequence_number < before 的消息
    * @param {number} limit - 限制数量
    * @returns {Promise<object>} 加载结果
    */
-  const loadMoreMessages = async (offset = null, limit = 20) => {
+  const loadMoreMessages = async (beforeSequence = null, limit = 30) => {
     if (!currentSessionId.value || loadingMore.value) {
       return { success: false, error: '没有活动会话或正在加载' }
     }
@@ -187,27 +188,29 @@ export function useSessionRecovery(store, options = {}) {
     loadingMore.value = true
 
     try {
-      const actualOffset = offset ?? messageCount.value
-
-      const result = await getSessionMessages(currentSessionId.value, {
-        limit,
-        offset: actualOffset
-      })
-
-      if (!result.success) {
-        throw new Error(result.message || '加载消息失败')
-      }
-
-      const newMessages = result.data.messages || []
+      const actualBefore = beforeSequence ?? store.currentState?.pagination?.oldestSequence ?? null
+      const result = await getSessionMessages(currentSessionId.value, actualBefore, limit)
+      const newMessages = result.messages || []
       messageCount.value += newMessages.length
 
-      // 追加消息到store
-      store.appendMessages(newMessages)
+      // 更早的历史消息插入当前消息前面
+      if (typeof store.prependMessages === 'function') {
+        store.prependMessages(newMessages)
+      }
+
+      if (typeof store.setPagination === 'function') {
+        store.setPagination({
+          hasMoreMessages: result.has_more || false,
+          totalMessageCount: result.total_count || store.currentState?.pagination?.totalMessageCount || messageCount.value,
+          oldestSequence: result.oldest_sequence ?? store.currentState?.pagination?.oldestSequence ?? null,
+          loadingMore: false
+        })
+      }
 
       return {
         success: true,
         messageCount: newMessages.length,
-        hasMore: result.data.hasMore || false
+        hasMore: result.has_more || false
       }
     } catch (error) {
       console.error('[加载更多消息] 加载失败:', error)

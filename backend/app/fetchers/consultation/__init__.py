@@ -49,13 +49,13 @@ GUANGDONG_CITIES = [
 ]
 
 CITY_STANDARD_FIELD_ALIASES = {
-    "PM2.5": ["pM2_5_Decimal"],
-    "PM10": ["pM10_Decimal"],
-    "NO2": ["nO2"],
-    "O3": ["o3_8h"],
-    "AQI": ["fineRate"],
-    "SO2": ["sO2"],
-    "CO": ["co"],
+    "PM2.5": ["pM2_5_Decimal", "PM2_5_Decimal", "pM2_5", "PM2_5"],
+    "PM10": ["pM10_Decimal", "PM10_Decimal", "pM10", "PM10"],
+    "NO2": ["nO2", "NO2"],
+    "O3": ["o3_8h", "O3_8h"],
+    "AQI": ["fineRate", "FineRate", "AQIStandardRate"],
+    "SO2": ["sO2", "SO2"],
+    "CO": ["co", "cO", "CO"],
 }
 
 
@@ -487,8 +487,10 @@ class ConsultationFileFetcher(DataFetcher):
             }
             aliases = CITY_STANDARD_FIELD_ALIASES.get(reverse_alias.get(pollutant_or_field, ""), [pollutant_or_field])
 
-        key = f"{aliases[0]}{suffix}" if suffix else aliases[0]
-        if key in record:
+        expected_keys = [f"{alias}{suffix}" if suffix else alias for alias in aliases]
+        for key in expected_keys:
+            if key not in record:
+                continue
             value = record.get(key)
             if value is not None and value != "":
                 if "_Decimal" in key:
@@ -499,7 +501,7 @@ class ConsultationFileFetcher(DataFetcher):
             "city_standard_field_missing",
             pollutant_or_field=pollutant_or_field,
             suffix=suffix,
-            expected_field=key,
+            expected_fields=expected_keys,
             available_keys=list(record.keys())[:20],
         )
         return 0.0
@@ -541,6 +543,9 @@ class ConsultationFileFetcher(DataFetcher):
                         view_records = views.get(view_name)
                         if isinstance(view_records, list):
                             return [record for record in view_records if isinstance(record, dict)]
+                    raise ValueError(
+                        f"{result_name} report_data_id={report_data_id} has no usable raw/result view"
+                    )
             except Exception as exc:
                 logger.warning(
                     "consultation_report_view_load_failed",
@@ -548,6 +553,9 @@ class ConsultationFileFetcher(DataFetcher):
                     preferred_view=preferred_view,
                     error=str(exc),
                 )
+                raise ValueError(
+                    f"{result_name} raw records could not be loaded from report_data_id={report_data_id}"
+                ) from exc
 
         records = query_result.get("data") or []
         if isinstance(records, list):
@@ -598,18 +606,17 @@ class ConsultationFileFetcher(DataFetcher):
         ns_type: int = 2,
     ) -> List[Dict[str, Any]]:
         """
-        获取城市标准同比数据（使用常规报表API以获取_Decimal字段）。
+        获取城市标准同比数据。
 
-        通过两次调用常规报表API（当年期+去年期），然后合并数据以获得完整的同比数据。
-        常规报表API返回_Decimal字段（阶段均值），而同比报表API不返回此字段。
+        使用新版 query_city_standard_yoy_report；完整接口字段从 report_data_id 的 raw
+        视图读取，避免使用默认 reporting 视图时丢失 cityName/pM2_5_Decimal 等填表字段。
         """
-        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_report
+        from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_yoy_report
 
-        # 查询当年期数据
-        current_result = await execute_query_city_standard_report(
+        query_result = await execute_query_city_standard_yoy_report(
             cities=cities or GUANGDONG_CITIES,
-            start_time=current_start,
-            end_time=current_end,
+            time_point=[current_start, current_end],
+            contrast_time=[last_year_start, last_year_end],
             ns_type=ns_type,
             time_type=8,
             pollutant_codes=pollutant_codes,
@@ -618,69 +625,14 @@ class ConsultationFileFetcher(DataFetcher):
             context=None,
         )
 
-        if not current_result or not current_result.get("success"):
-            raise ValueError((current_result or {}).get("summary") or "current_period query returned empty result")
+        if not query_result or not query_result.get("success"):
+            raise ValueError((query_result or {}).get("summary") or "query_city_standard_yoy_report returned empty result")
 
-        current_records = self._extract_report_records(
-            current_result,
+        return self._extract_report_records(
+            query_result,
             preferred_view="raw",
-            result_name="current_period",
+            result_name="query_city_standard_yoy_report",
         )
-
-        # 查询去年同期数据
-        last_year_result = await execute_query_city_standard_report(
-            cities=cities or GUANGDONG_CITIES,
-            start_time=last_year_start,
-            end_time=last_year_end,
-            ns_type=ns_type,
-            time_type=8,
-            pollutant_codes=pollutant_codes,
-            data_source=1,
-            sand_type=1,
-            context=None,
-        )
-
-        if not last_year_result or not last_year_result.get("success"):
-            raise ValueError((last_year_result or {}).get("summary") or "last_year_period query returned empty result")
-
-        last_year_records = self._extract_report_records(
-            last_year_result,
-            preferred_view="raw",
-            result_name="last_year_period",
-        )
-
-        # 合并两个时期的数据：将去年同期数据添加_Compare后缀
-        merged_records = []
-        for current_record in current_records:
-            if not isinstance(current_record, dict):
-                continue
-
-            city_name = current_record.get("cityName")
-            if not city_name:
-                continue
-
-            # 查找对应的去年同期记录
-            last_year_record = None
-            for record in last_year_records:
-                if record.get("cityName") == city_name:
-                    last_year_record = record
-                    break
-
-            if not last_year_record:
-                continue
-
-            # 合并记录：复制当年记录，并添加去年数据的_Compare字段
-            merged_record = dict(current_record)
-
-            # 添加去年同期数据的_Compare字段
-            for key, value in last_year_record.items():
-                if key not in ["cityName", "timePoint", "StationCode"]:
-                    # 添加_Compare后缀的去年同期数据
-                    merged_record[f"{key}_Compare"] = value
-
-            merged_records.append(merged_record)
-
-        return merged_records
 
     def _aggregate_city_standard_values(
         self,
@@ -792,10 +744,6 @@ class ConsultationFileFetcher(DataFetcher):
         Args:
             full_month: 是否查询完整月份数据（1号-月末），False表示截至昨天
 
-        智能模式：
-        - 如果今天是4号，自动生成上个月完整月报（full_month=True）
-        - 其他日期使用实时更新模式（full_month=False）
-
         流程：
         1. 计算时间范围（本月1号 → 昨天 或 完整月份）
         2. 创建当月子目录
@@ -805,18 +753,6 @@ class ConsultationFileFetcher(DataFetcher):
         6. 保存文件
         """
         try:
-            # 智能判断：如果今天是4号，自动生成上个月完整月报
-            today = datetime.now()
-            auto_full_month = (today.day == 4)
-
-            if auto_full_month and not full_month:
-                logger.info(
-                    "consultation_auto_full_month",
-                    message="今天是4号，自动生成上个月完整月报",
-                    date=today.strftime("%Y-%m-%d")
-                )
-                full_month = True
-
             logger.info("consultation_file_fetch_start", full_month=full_month)
 
             # 计算时间范围
@@ -1190,7 +1126,7 @@ class ConsultationFileFetcher(DataFetcher):
 
         for sheet_name, config in SHEET_CONFIG.items():
             if sheet_name not in wb.sheetnames:
-                logger.warning("sheet_not_found", sheet=sheet)
+                logger.warning("sheet_not_found", sheet=sheet_name)
                 continue
 
             scope = config.get("scope")
@@ -1282,7 +1218,7 @@ class ConsultationFileFetcher(DataFetcher):
         # 第四步：填充所有sheet
         for sheet_name, config in SHEET_CONFIG.items():
             if sheet_name not in wb.sheetnames:
-                logger.warning("sheet_not_found", sheet=sheet)
+                logger.warning("sheet_not_found", sheet=sheet_name)
                 continue
 
             try:
@@ -1301,7 +1237,13 @@ class ConsultationFileFetcher(DataFetcher):
                     )
                 else:
                     # 其他情况正常查询
-                    await self._fill_single_sheet(wb, sheet_name, config, time_range)
+                    await self._fill_single_sheet(
+                        wb,
+                        sheet_name,
+                        config,
+                        time_range,
+                        full_month=full_month,
+                    )
 
                 logger.info("sheet_filled", sheet=sheet_name)
             except Exception as e:

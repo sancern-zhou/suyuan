@@ -18,6 +18,7 @@ import structlog
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import tempfile
+from app.utils.path_config import get_social_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -55,7 +56,7 @@ class HeartbeatService:
             user_id: 用户ID（用于多用户隔离），默认为 "global"
         """
         self.interval_s = interval_s
-        self.workspace = workspace or Path("backend_data_registry/social/heartbeat")
+        self.workspace = workspace or (get_social_dir() / "heartbeat")
         self.workspace.mkdir(parents=True, exist_ok=True)
 
         self.on_execute = on_execute

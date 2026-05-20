@@ -12,6 +12,7 @@ from datetime import datetime
 import subprocess
 import structlog
 from app.services.data_registry import data_registry
+from app.utils.path_config import get_datasets_dir
 
 logger = structlog.get_logger()
 
@@ -133,8 +134,7 @@ class ReadDataRegistryTool(LLMTool):
         safe_id = data_id.replace(':', '_')
         candidates = [
             data_registry.datasets_dir / f"{safe_id}.json",
-            Path("backend_data_registry/datasets") / f"{safe_id}.json",
-            Path("../backend_data_registry/datasets") / f"{safe_id}.json",
+            get_datasets_dir() / f"{safe_id}.json",
         ]
 
         for candidate in candidates:

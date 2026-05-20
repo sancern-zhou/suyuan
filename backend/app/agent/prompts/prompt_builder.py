@@ -1,7 +1,7 @@
 """
-ReAct系统提示词构建器（七模式架构）
+ReAct系统提示词构建器（多模式架构）
 
-⚠️ 注意：保留现有的query模式（WEB端问数模式），新增social模式（移动端呼吸式Agent）和chart模式（图表生成模式）
+⚠️ 注意：保留现有的query模式（WEB端问数模式），支持social、chart、ops等独立场景模式。
 """
 
 from typing import Literal, List, Optional
@@ -11,6 +11,7 @@ from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .chart_prompt import build_chart_prompt
+from .ops_prompt import build_ops_prompt
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -29,6 +30,7 @@ AgentMode = Literal[
     "report",
     "social",
     "chart",
+    "ops",
     "deliberation_meteorology",
     "deliberation_monitoring",
     "deliberation_chemistry",
@@ -49,10 +51,10 @@ def build_react_system_prompt(
     user_context: Optional[str] = None  # ✅ 新增：用户上下文内容（USER.md）
 ) -> str:
     """
-    构建ReAct系统提示词（七模式架构）
+    构建ReAct系统提示词（多模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social" | "chart")
+        mode: Agent模式 ("assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
         user_preferences: 用户偏好配置（仅social模式使用）
         memory_file_path: 用户记忆文件路径（仅social模式使用）
@@ -105,6 +107,8 @@ def build_react_system_prompt(
         return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, heartbeat_file_path, memory_context, soul_context, user_context)
     elif mode == "chart":
         return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "ops":
+        return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_meteorology":
         return build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_monitoring":

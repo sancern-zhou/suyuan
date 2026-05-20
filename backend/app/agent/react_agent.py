@@ -189,6 +189,7 @@ class ReActAgent:
         memory_store = None
         memory_context = ""
         unified_user_id = None
+        memory_tool_mode = manual_mode or "expert"
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
@@ -208,15 +209,10 @@ class ReActAgent:
             unified_user_id = None  # 社交模式不走通用记忆整合
 
         elif self.enable_memory and manual_mode:
-            if user_identifier and manual_mode != "social":
-                # 有user_identifier且非社交模式：跨模式共享记忆（同一用户在所有模式下共享同一个记忆文件）
-                unified_user_id = f"{user_identifier}:shared"
-                memory_mode = "shared"  # ✅ 使用特殊的 shared 模式，实现跨模式共享
-            else:
-                # 无user_identifier：模式内共享记忆（每个模式独立记忆，模式之间隔离）
-                # ✅ 修复：直接使用 "global" 作为 user_id，让 memory_store 创建模式专属记忆
-                unified_user_id = "global"
-                memory_mode = manual_mode or "expert"  # ✅ 使用当前模式，实现模式内共享
+            # 非社交模式不按用户隔离；统一使用模式级共享记忆。
+            unified_user_id = "global"
+            memory_mode = manual_mode or "expert"
+            memory_tool_mode = memory_mode
 
             # ✅ 加载记忆上下文（用于系统提示词注入，不修改user_query）
             memory_context = None
@@ -385,6 +381,25 @@ class ReActAgent:
                     has_user_context=social_user_context is not None,  # ✅ 新增日志
                     social_user_id=social_user_id
                 )
+            elif manual_mode:
+                # 非社交模式也可能直接暴露 remember_fact/replace_memory/remove_memory。
+                # 设置模式上下文，避免工具降级写入默认 social 记忆目录。
+                try:
+                    from app.tools.social.remember_fact.tool import RememberFactTool
+                    from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+                    from app.tools.social.remove_memory.tool import RemoveMemoryTool
+
+                    RememberFactTool.set_memory_context(memory_tool_mode, "global")
+                    ReplaceMemoryTool.set_memory_context(memory_tool_mode, "global")
+                    RemoveMemoryTool.set_memory_context(memory_tool_mode, "global")
+                    logger.debug(
+                        "mode_memory_tool_context_set",
+                        mode=manual_mode,
+                        memory_tool_mode=memory_tool_mode,
+                        user_identifier="global"
+                    )
+                except Exception as e:
+                    logger.warning("failed_to_set_mode_memory_tool_context", mode=manual_mode, memory_tool_mode=memory_tool_mode, error=str(e))
 
             async for event in react_loop.run(
                 user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
@@ -543,8 +558,8 @@ class ReActAgent:
                 except Exception as e:
                     logger.warning("failed_to_cleanup_snapshot", error=str(e))
 
-            # ✅ 清理记忆工具的用户上下文（社交模式）
-            if manual_mode == "social":
+            # ✅ 清理记忆工具上下文，避免后续模式复用类变量
+            if manual_mode:
                 try:
                     from app.tools.social.remember_fact.tool import RememberFactTool
                     from app.tools.social.replace_memory.tool import ReplaceMemoryTool
@@ -553,7 +568,7 @@ class ReActAgent:
                     ReplaceMemoryTool.clear_memory_context()
                     RemoveMemoryTool.clear_memory_context()
                 except Exception as e:
-                    logger.warning("failed_to_clear_social_memory_context", error=str(e))
+                    logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
             await self._mark_session_used(actual_session_id)
 
