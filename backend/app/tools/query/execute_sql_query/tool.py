@@ -5,7 +5,7 @@
 复用SQLValidator进行安全验证。
 """
 
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING, List
 import pyodbc
 import structlog
 
@@ -19,7 +19,94 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-class ExecuteSQLQueryTool(LLMTool):
+MONITORING_SQL_TABLES = [
+    'era5_reanalysis_data',
+    'observed_weather_data',
+    'weather_stations',
+    'weather_data_cache',
+    'fire_hotspots',
+    'dust_forecasts',
+    'dust_events',
+    'air_quality_forecast',
+    'city_aqi_publish_history',
+    'CityDayAQIPublishHistory',
+    'CityAQIPublishHistory',
+    'CurrentAirQuality',
+    'dat_station_day',
+    'dat_station_hour',
+    'dat_weather_hour',
+    'WeatherForecast7Day',
+    'city_168_statistics_new_standard',
+    'city_168_statistics_old_standard',
+    'province_statistics_new_standard',
+    'province_statistics_old_standard',
+    'noise_city_compliance_monthly',
+    'noise_city_compliance_daily',
+    'qc_history',
+    'quality_control_records',
+    'analysis_history',
+    'BSD_STATION',
+    'information_schema.columns',
+    'information_schema.tables',
+]
+
+
+OPS_SQL_TABLES = [
+    # 运维工单与站点设备基础信息
+    'working_orders',
+    'working_order_details',
+    'base_station',
+    'base_station_sup',
+    'base_device',
+    'base_user_station',
+    'base_department_station',
+    'base_contract_station',
+    'BSD_STATION',
+    # 周检表
+    'RF_W_GASEOUSCHECK_CO',
+    'RF_W_GASEOUSCHECK_NOX',
+    'RF_W_GASEOUSCHECK_O3',
+    'RF_W_GASEOUSCHECK_SO2',
+    'RF_W_OTHERDEVICECHECK',
+    # 双周表
+    'RF_TW_CleanCuttingHead',
+    'RF_TW_PmFlowCalibrate',
+    'RF_TW_PmFlowCheck',
+    # 月检表
+    'RF_M_GASEOUSCALICHECK',
+    'RF_M_GASEOUSCALIDEVICECHECK',
+    'RF_M_GASEOUSFLOWCHECK',
+    'RF_M_MANUALCOMPARISON',
+    'RF_M_PMDEVICEMAINTAIN',
+    'RF_M_STATIONDEVICEMAINTAIN',
+    'RF_M_StationMaintainCheck',
+    # 季检表
+    'RF_Q_GASEOUSMULTIPOINT_CO',
+    'RF_Q_GASEOUSMULTIPOINT_NO2',
+    'RF_Q_GASEOUSMULTIPOINT_O3',
+    'RF_Q_GASEOUSMULTIPOINT_SO2',
+    'RF_Q_GASEOUSPRECISION_CO',
+    'RF_Q_GASEOUSPRECISION_NO2',
+    'RF_Q_GASEOUSPRECISION_O3',
+    'RF_Q_GASEOUSPRECISION_SO2',
+    'RF_Q_GaseousFlowCheck',
+    'RF_Q_LONGOPTICALPATH_NO2',
+    'RF_Q_LONGOPTICALPATH_O3',
+    'RF_Q_LONGOPTICALPATH_SO2',
+    'RF_Q_PM25RUNSTATUSCHECK',
+    'RF_Q_PMPRESSURE',
+    'RF_Q_STATIONDEVICECLEAN',
+    'RF_Q_StationMaintainCheck',
+    # 其他现场表
+    'RF_SEC_INSPECTION',
+    'RF_SEC_INSTRUMENTRECORD',
+    'RF_SEC_MONITORINGCHECK',
+    'information_schema.columns',
+    'information_schema.tables',
+]
+
+
+class BaseSQLQueryTool(LLMTool):
     """
     通用SQL执行工具
 
@@ -38,37 +125,24 @@ class ExecuteSQLQueryTool(LLMTool):
     # 默认返回记录数限制
     DEFAULT_LIMIT = 50
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        tool_description: str,
+        schema_description: str,
+        allowed_tables: List[str],
+        default_database: str = "XcAiDb",
+    ):
         """初始化工具"""
 
-        # 初始化SQL验证器，扩展表名白名单
-        self.sql_validator = SQLValidator(max_limit=200)
-        # 注意：qc_history 和 working_orders 已在 SQLValidator 类的白名单中，无需重复添加
-        # 添加业务表到白名单
-        self.sql_validator.ALLOWED_TABLES.extend([
-            'city_168_statistics_new_standard',  # 168城市空气质量统计预计算表（新标准限值）
-            'city_168_statistics_old_standard',  # 168城市空气质量统计预计算表（旧标准限值）
-            'province_statistics_new_standard',  # 省级空气质量统计预计算表（新标准限值）
-            'province_statistics_old_standard',  # 省级空气质量统计预计算表（旧标准限值）
-            'noise_city_compliance_monthly',  # 城市噪声昼夜达标率月汇总表
-            'noise_city_compliance_daily',  # 城市噪声昼夜达标率逐日明细表
-        ])
+        self.tool_name = tool_name
+        self.default_database = default_database
+        self.sql_validator = SQLValidator(max_limit=200, allowed_tables=allowed_tables)
 
         function_schema = {
-            "name": "execute_sql_query",
-            "description": (
-                "通用SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
-                "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的表清单。"
-                "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
-                "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
-                "database默认为XcAiDb；质控/工单/站点基础信息通常用AirPollutionAnalysis。"
-                "\n\n常用表说明："
-                "\n- WeatherForecast7Day（XcAiDb）：7天空气质量预报数据，全国319个城市，包含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint等字段"
-                "\n- CityDayAQIPublishHistory（XcAiDb）：城市日空气质量历史数据"
-                "\n- CityAQIPublishHistory（XcAiDb）：城市小时空气质量历史数据"
-                "\n- city_168_statistics_new_standard（XcAiDb）：168城市空气质量统计表（新标准）"
-                "\n- qc_history（AirPollutionAnalysis）：自动质控历史数据"
-            ),
+            "name": tool_name,
+            "description": schema_description,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -82,7 +156,7 @@ class ExecuteSQLQueryTool(LLMTool):
                     },
                     "database": {
                         "type": "string",
-                        "description": "数据库名称，默认XcAiDb",
+                        "description": f"数据库名称，默认{default_database}",
                         "enum": ["XcAiDb", "AirPollutionAnalysis"]
                     },
                     "limit": {
@@ -95,8 +169,8 @@ class ExecuteSQLQueryTool(LLMTool):
         }
 
         super().__init__(
-            name="execute_sql_query",
-            description="Execute SQL queries on SQL Server database or get table structure",
+            name=tool_name,
+            description=tool_description,
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="2.3.0",
@@ -143,7 +217,7 @@ class ExecuteSQLQueryTool(LLMTool):
 
         # 设置默认数据库
         if database is None:
-            database = "XcAiDb"
+            database = self.default_database
 
         # 验证数据库名称
         if database not in ["XcAiDb", "AirPollutionAnalysis"]:
@@ -230,7 +304,7 @@ class ExecuteSQLQueryTool(LLMTool):
                     WHERE TABLE_TYPE = 'BASE TABLE'
                     ORDER BY TABLE_SCHEMA, TABLE_NAME
                 """
-                all_tables = self._execute_query(all_tables_sql)
+                all_tables = self._execute_query(all_tables_sql, database)
 
                 # 查找可能相似的表名
                 similar_tables = [t['TABLE_NAME'] for t in all_tables
@@ -295,7 +369,7 @@ class ExecuteSQLQueryTool(LLMTool):
 {fields_text}
 
 字段总数: {len(columns)}
-{sample_text}提示：使用 execute_sql_query(sql='SELECT TOP 200 * FROM {full_table_name}', database='{database}') 查看更多数据"""
+{sample_text}提示：使用 {self.tool_name}(sql='SELECT TOP 200 * FROM {full_table_name}', database='{database}') 查看更多数据"""
             }
 
             logger.info(
@@ -356,7 +430,7 @@ class ExecuteSQLQueryTool(LLMTool):
                 return {
                     "success": False,
                     "data": [],
-                    "summary": f"SQL验证失败: {error_msg}。请使用 execute_sql_query(describe_table='表名', database='{database}') 查看正确的表结构信息。"
+                    "summary": f"SQL验证失败: {error_msg}。请使用 {self.tool_name}(describe_table='表名', database='{database}') 查看正确的表结构信息。"
                 }
 
             # 2. 添加TOP子句（SQL Server使用TOP而非LIMIT）
@@ -422,7 +496,8 @@ class ExecuteSQLQueryTool(LLMTool):
                         "metadata": {
                             "database": database,
                             "columns": columns,
-                            "externalized": True
+                            "externalized": True,
+                            "hint": "如果结果中包含英文代码值（如Fault、Check等），请转换为中文向用户展示"
                         }
                     }
                 except Exception as save_error:
@@ -436,7 +511,10 @@ class ExecuteSQLQueryTool(LLMTool):
                 "data": results,
                 "data_id": data_id,
                 "count": len(results),
-                "summary": f"查询到{len(results)}条记录"
+                "summary": f"查询到{len(results)}条记录",
+                "metadata": {
+                    "hint": "如果结果中包含英文代码值（如Fault、Check等），请转换为中文向用户展示"
+                }
             }
 
         except pyodbc.ProgrammingError as e:
@@ -452,7 +530,7 @@ class ExecuteSQLQueryTool(LLMTool):
             table_name = self._extract_table_name(sql)
             hint = ""
             if table_name:
-                hint = f" 请使用 execute_sql_query(describe_table='{table_name}', database='{database}') 查看正确的字段名。"
+                hint = f" 请使用 {self.tool_name}(describe_table='{table_name}', database='{database}') 查看正确的字段名。"
 
             return {
                 "success": False,
@@ -470,7 +548,7 @@ class ExecuteSQLQueryTool(LLMTool):
             return {
                 "success": False,
                 "data": [],
-                "summary": f"查询失败: {str(e)}。请使用 execute_sql_query(describe_table='表名', database='{database}') 查看正确的表结构信息。"
+                "summary": f"查询失败: {str(e)}。请使用 {self.tool_name}(describe_table='表名', database='{database}') 查看正确的表结构信息。"
             }
 
     def _sanitize_limit_for_sqlserver(self, sql: str, limit: int) -> str:
@@ -614,3 +692,99 @@ class ExecuteSQLQueryTool(LLMTool):
         finally:
             cursor.close()
             conn.close()
+
+
+class ExecuteSQLQueryTool(BaseSQLQueryTool):
+    """问数/监测数据专用SQL查询工具。"""
+
+    def __init__(self):
+        schema_description = (
+            "监测数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
+            "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的表清单。"
+            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
+            "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
+            "database默认为XcAiDb；质控/站点基础信息通常用AirPollutionAnalysis。"
+            "\n\n常用表说明（按数据库分类）："
+            "\n【XcAiDb数据库-空气质量】"
+            "\n- WeatherForecast7Day：7天空气质量预报（全国319城，含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint）"
+            "\n- CityDayAQIPublishHistory：城市日空气质量历史数据（24小时均值）"
+            "\n- CityAQIPublishHistory：城市小时空气质量历史数据"
+            "\n- CurrentAirQuality：当前空气质量"
+            "\n- dat_station_hour/dat_station_day：站点小时/日数据"
+            "\n【统计预计算表】"
+            "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市空气质量统计"
+            "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
+            "\n- noise_city_compliance_monthly/noise_city_compliance_daily：噪声达标率统计"
+            "\n【AirPollutionAnalysis数据库-质控与站点】"
+            "\n- qc_history：自动质控历史数据"
+            "\n- quality_control_records：质控例行检查记录"
+            "\n- BSD_STATION：站点信息表（含站点ID/名称/代码/区域/经纬度/地址）"
+            "\n- analysis_history：分析历史记录"
+            "\n\n提示：使用describe_table可查看白名单表的完整字段结构。运维表单请使用execute_ops_sql_query。"
+        )
+        super().__init__(
+            tool_name="execute_sql_query",
+            tool_description="Execute monitoring SQL queries on SQL Server database or get table structure",
+            schema_description=schema_description,
+            allowed_tables=MONITORING_SQL_TABLES,
+            default_database="XcAiDb",
+        )
+
+
+class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
+    """运维模式专用SQL查询工具。"""
+
+    def __init__(self):
+        schema_description = (
+            "运维表单SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
+            "用于运维模式查询工单、站点设备、周检、双周、月检、季检、现场巡检等运维表单。"
+            "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的字段名。"
+            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
+            "SQL Server语法：中文字符串必须加N前缀，如 N'完成'；分页/限制用TOP，不支持LIMIT。"
+            "database默认为AirPollutionAnalysis。"
+            "\n\n常用表说明："
+            "\n【工单与站点设备】"
+            "\n- working_orders/working_order_details：运维工单及详情"
+            "\n- BSD_STATION/base_station/base_station_sup：站点基础信息"
+            "\n- base_device：设备基础信息"
+            "\n- base_user_station/base_department_station/base_contract_station：用户/部门/合同-站点关联"
+            "\n【周检表】"
+            "\n- RF_W_GASEOUSCHECK_CO：周检-CO检查"
+            "\n- RF_W_GASEOUSCHECK_NOX：周检-NOX检查"
+            "\n- RF_W_GASEOUSCHECK_O3：周检-O3检查"
+            "\n- RF_W_GASEOUSCHECK_SO2：周检-SO2检查"
+            "\n- RF_W_OTHERDEVICECHECK：周检-其他设备"
+            "\n【双周表】"
+            "\n- RF_TW_CleanCuttingHead：双周-切割头清洗"
+            "\n- RF_TW_PmFlowCalibrate：双周-PM流量校准"
+            "\n- RF_TW_PmFlowCheck：双周-PM流量检查"
+            "\n【月检表】"
+            "\n- RF_M_GASEOUSCALICHECK：月检-气态校准检查"
+            "\n- RF_M_GASEOUSCALIDEVICECHECK：月检-气态校准设备检查"
+            "\n- RF_M_GASEOUSFLOWCHECK：月检-气态流量检查"
+            "\n- RF_M_MANUALCOMPARISON：月检-手工比对"
+            "\n- RF_M_PMDEVICEMAINTAIN：月检-PM设备维护"
+            "\n- RF_M_STATIONDEVICEMAINTAIN：月检-站点设备维护"
+            "\n- RF_M_StationMaintainCheck：月检-站点维护检查"
+            "\n【季检表】"
+            "\n- RF_Q_GASEOUSMULTIPOINT_CO/NO2/O3/SO2：季检-气态多点校准"
+            "\n- RF_Q_GASEOUSPRECISION_CO/NO2/O3/SO2：季检-气态精密度"
+            "\n- RF_Q_GaseousFlowCheck：季检-气态流量检查"
+            "\n- RF_Q_LONGOPTICALPATH_NO2/O3/SO2：长光路校准"
+            "\n- RF_Q_PM25RUNSTATUSCHECK：PM2.5运行状态检查"
+            "\n- RF_Q_PMPRESSURE：PM压力/流量"
+            "\n- RF_Q_STATIONDEVICECLEAN：季检-站点设备清洁"
+            "\n- RF_Q_StationMaintainCheck：季检-站点维护检查"
+            "\n【现场表】"
+            "\n- RF_SEC_INSPECTION：现场巡检"
+            "\n- RF_SEC_INSTRUMENTRECORD：仪器记录"
+            "\n- RF_SEC_MONITORINGCHECK：监测检查"
+            "\n\n提示：使用describe_table可查看白名单表的完整字段结构。空气质量监测统计请使用execute_sql_query。"
+        )
+        super().__init__(
+            tool_name="execute_ops_sql_query",
+            tool_description="Execute operations SQL queries on SQL Server database or get table structure",
+            schema_description=schema_description,
+            allowed_tables=OPS_SQL_TABLES,
+            default_database="AirPollutionAnalysis",
+        )

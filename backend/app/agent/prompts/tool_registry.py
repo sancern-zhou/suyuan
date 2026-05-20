@@ -1,7 +1,7 @@
 """
 工具注册表
 
-定义六种Agent模式的工具列表和排序
+定义多种Agent模式的工具列表和排序
 
 ⚠️ 重要说明：
 - 工具参数和描述由原生 tool schema 提供（function_schema）
@@ -185,6 +185,26 @@ CHART_TOOL_NAMES = {
     "TodoWrite",
 }
 
+# ===== 运维管理模式工具 =====
+OPS_TOOL_NAMES = {
+    # 运维工单与通用SQL查询
+    "get_working_orders",
+    "execute_ops_sql_query",
+
+    # 站点小时/日数据核对
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
+
+    # 数据读取
+    "read_data_registry",
+
+    # 文件操作
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+
+    # 任务管理
+    "TodoWrite",
+}
+
 # ===== 社交模式工具（移动端助理） =====
 SOCIAL_TOOL_NAMES = {
     # === 系统操作 ===
@@ -352,6 +372,25 @@ QUERY_TOOL_ORDER = [
 
 ]
 
+OPS_TOOL_ORDER = [
+    # 工单查询
+    "get_working_orders",
+    "execute_ops_sql_query",
+
+    # 站点小时/日数据核对
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
+
+    # 数据读取和任务管理
+    "read_data_registry",
+
+    # 文件操作
+    "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
+
+    # 任务管理
+    "TodoWrite",
+]
+
 # ========================================
 # 工具字典生成（向后兼容）
 # ========================================
@@ -374,6 +413,7 @@ EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
+OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
@@ -387,7 +427,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具列表
 
     Args:
-        mode: "assistant" | "expert" | "code" | "query" | "report" | "social" | "chart" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}
@@ -399,6 +439,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "chart": CHART_TOOLS,
+        "ops": OPS_TOOLS,
         "memory_consolidator": MEMORY_CONSOLIDATOR_TOOLS,
         "deliberation_meteorology": DELIBERATION_METEOROLOGY_TOOLS,
         "deliberation_monitoring": DELIBERATION_MONITORING_TOOLS,
@@ -426,6 +467,7 @@ def get_tool_order(mode: str) -> List[str]:
         "assistant": ASSISTANT_TOOL_ORDER,
         "expert": EXPERT_TOOL_ORDER,
         "query": QUERY_TOOL_ORDER,
+        "ops": OPS_TOOL_ORDER,
     }
 
     return order_mapping.get(mode, [])
