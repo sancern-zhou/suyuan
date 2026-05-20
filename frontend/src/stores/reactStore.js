@@ -1214,6 +1214,7 @@ export const useReactStore = defineStore('react', {
               markdown_preview: resultData.markdown_preview,
               html_preview: resultData.html_preview,
               file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
+              file_type: resultData.file_type || resultData.html_preview?.file_type,
               generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
               summary: result.summary,
               timestamp: toolResultData.timestamp

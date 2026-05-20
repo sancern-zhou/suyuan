@@ -13,6 +13,11 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.oxml.ns import qn
 import structlog
 
+from app.services.report.government_docx_style import (
+    apply_government_report_style,
+    format_government_table,
+)
+
 logger = structlog.get_logger()
 
 
@@ -51,6 +56,7 @@ class ReportDocxBuilder:
             self.logger.info("loaded_template", path=template_path)
         else:
             self.doc = Document()
+            apply_government_report_style(self.doc)
             if title:
                 self._add_title(title)
 
@@ -151,6 +157,8 @@ class ReportDocxBuilder:
                     for para in cell.paragraphs:
                         for run in para.runs:
                             run.bold = True
+
+        format_government_table(table)
 
         self.logger.info(
             "table_added",

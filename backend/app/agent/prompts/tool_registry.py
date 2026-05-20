@@ -188,7 +188,6 @@ CHART_TOOL_NAMES = {
 # ===== 运维管理模式工具 =====
 OPS_TOOL_NAMES = {
     # 运维工单与通用SQL查询
-    "get_working_orders",
     "execute_ops_sql_query",
 
     # 站点小时/日数据核对
@@ -374,7 +373,6 @@ QUERY_TOOL_ORDER = [
 
 OPS_TOOL_ORDER = [
     # 工单查询
-    "get_working_orders",
     "execute_ops_sql_query",
 
     # 站点小时/日数据核对

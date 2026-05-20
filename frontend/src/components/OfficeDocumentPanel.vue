@@ -286,12 +286,13 @@ watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
       existingDoc.html_url = doc.html_preview.html_url
       existingDoc.html_id = doc.html_preview.html_id
       existingDoc.file_path = filePath
+      existingDoc.doc_type = getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type)
       existingDoc.loading = false
     }
   } else {
     // 添加新文档
     const newDoc = {
-      doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath),
+      doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
       file_name: fileName,
       file_path: filePath,
       pdf_url: doc.pdf_preview?.pdf_url,
@@ -622,7 +623,15 @@ async function submitEdit(doc) {
   }
 }
 
-function getDocType(generator, markdownPreview, htmlPreview, filePath) {
+function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType) {
+  const explicitType = fileType || htmlPreview?.file_type
+  if (['report', 'html_report', 'quarto_report'].includes(explicitType)) {
+    return 'report'
+  }
+  if (explicitType === 'notebook') {
+    return 'notebook'
+  }
+
   // 先根据 generator 判断
   if (generator === 'quarto_report' || filePath?.endsWith('report.qmd')) {
     return 'report'
@@ -630,7 +639,7 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath) {
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
     return 'ppt'
-  } else if (htmlPreview || filePath?.endsWith('.ipynb')) {
+  } else if (filePath?.endsWith('.ipynb')) {
     return 'notebook'
   } else if (markdownPreview) {
     return 'markdown'
@@ -709,7 +718,7 @@ function loadDocuments(documents) {
       // 添加新文档（不触发动画，因为这是历史数据）
       console.log('[OfficeDocumentPanel] 加载历史文档:', index + 1, fileName)
       officeDocuments.value.push({
-        doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath),
+        doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
         file_name: fileName,
         file_path: filePath,
         pdf_url: doc.pdf_preview?.pdf_url,

@@ -298,14 +298,6 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))
 
-    # 运维工单查询工具
-    try:
-        from app.tools.query.get_working_orders.tool import GetWorkingOrdersTool
-        registry.register(GetWorkingOrdersTool(), priority=46)
-        logger.info("tool_loaded", tool="get_working_orders")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_working_orders", error=str(e))
-
     # 通用SQL执行工具
     try:
         from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool
