@@ -34,7 +34,7 @@ from typing import Dict, Any, Optional, List
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir
+from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir
 
 # 尝试导入 IPython
 try:
@@ -61,10 +61,12 @@ class ExecutePythonTool(LLMTool):
 
         # ✅ 图表文件存储目录
         self.CHARTS_DIR = str(get_charts_dir())
+        self.REPORTS_DIR = str(get_reports_dir())
 
         # 确保永久目录和图表目录存在
         os.makedirs(self.PERMANENT_DIR, exist_ok=True)
         os.makedirs(self.CHARTS_DIR, exist_ok=True)
+        os.makedirs(self.REPORTS_DIR, exist_ok=True)
 
         super().__init__(
             name="execute_python",
@@ -77,17 +79,31 @@ class ExecutePythonTool(LLMTool):
 - 统一数据目录：{get_data_registry()}
 - 当前工作目录：{self.PERMANENT_DIR}
 - 图表保存目录：{self.CHARTS_DIR}
+- HTML报告保存目录：{self.REPORTS_DIR}
 - 生成报告、图表、Office 文件必须保存到上述统一数据目录下；不要使用 `/home/xckj/suyuan/backend_data_registry/...`
 - 推荐使用相对路径（如：'report.docx'）或统一目录绝对路径（如：'{self.CHARTS_DIR}/report.docx'）
 - 工具会自动将生成的文件保存到永久目录，并返回完整路径
 - 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
 - 超时时间：30秒（可调整）
 
+📄 DOCX政府报告默认格式：
+- 生成正式 Word 报告时，默认导入并使用 `app.services.report.government_docx_style`
+- 推荐流程：`doc = Document()` 后立即 `apply_government_report_style(doc)`
+- 标题、正文、标题层级、表格优先使用 `add_government_title/add_government_heading/add_government_paragraph/add_government_table`
+- 默认规范：标题小标宋/宋体fallback二号居中；正文仿宋三号、首行缩进2字符、固定28磅行距；一级标题黑体三号、二级标题楷体三号；表格居中单线边框
+- 用户明确指定其他字体、字号、行距、页边距时，在默认样式基础上局部覆盖
+
 📊 图表保存与前端渲染：
 - 系统自动注入 save_chart() 辅助函数
 - 使用 save_chart(fig, 'chart.png') 保存图表，自动生成 /api/image/{{image_id}} URL
 - 也可以直接使用 plt.savefig()，系统会智能识别路径并缓存
 - 示例代码见下方
+
+📄 HTML报告保存与预览：
+- 系统自动注入 save_html_report(report_id, html_content, assets_dir=None)
+- HTML报告统一保存为 backend_data_registry/reports/{{report_id}}/report.html
+- 工具会返回 html_preview.html_url = /api/reports/{{report_id}}/html
+- 不要直接写 backend_data_registry/reports/{{report_id}}.html
 
 📊 数据访问功能（自动注入）：
 当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 和 `save_data(data, ...)` 函数：
@@ -274,6 +290,9 @@ doc.save('/root/report.docx')
                 # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
                 code = self._inject_excel_helpers(code)
 
+                # ✅ 注入标准报告保存辅助函数
+                code = self._inject_report_helpers(code)
+
                 logger.info(
                     "code_injection_completed",
                     original_code_length=len(original_code),
@@ -302,6 +321,9 @@ doc.save('/root/report.docx')
 
                 # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
                 code = self._inject_excel_helpers(code)
+
+                # ✅ 注入标准报告保存辅助函数
+                code = self._inject_report_helpers(code)
 
                 logger.info(
                     "code_injection_completed",
@@ -335,6 +357,7 @@ doc.save('/root/report.docx')
 
             result["data"]["files"] = final_files
             result["data"]["engine"] = "ipython" if self.use_ipython else "subprocess"
+            result["data"]["artifact_schema"] = self._artifact_schema()
 
             # ✅ 处理办公文件：生成 PDF 预览（与 Office 工具统一格式）
             office_extensions = {'.docx', '.xlsx', '.pptx', '.pdf', '.doc', '.xls', '.ppt'}
@@ -403,6 +426,27 @@ doc.save('/root/report.docx')
                 # ✅ 只在执行成功时覆盖 summary
                 if result.get("success", False):
                     result["summary"] = "✅ 工具已执行完成，计算任务已完成"
+
+            # ✅ 处理普通 HTML 报告：统一归档到 reports/{report_id}/report.html 并返回 html_preview
+            html_files = [f for f in final_files if Path(f).suffix.lower() in {'.html', '.htm'}]
+            if html_files and "html_preview" not in result["data"] and "file_path" not in result["data"]:
+                html_report = self._standardize_html_report(html_files[0], backend_dir)
+                if html_report:
+                    report_path = html_report["file_path"]
+                    result["data"]["html_preview"] = html_report["html_preview"]
+                    result["data"]["file_path"] = report_path
+                    result["data"]["file_type"] = "html_report"
+                    if report_path not in result["data"]["files"]:
+                        result["data"]["files"].append(report_path)
+                    if result.get("success", False):
+                        result["summary"] = f"✅ 工具已执行完成，生成HTML报告：{Path(report_path).name}"
+                    logger.info(
+                        "execute_python_html_report_standardized",
+                        source_file=html_files[0],
+                        report_id=html_report["report_id"],
+                        report_path=report_path,
+                        html_url=html_report["html_preview"]["html_url"],
+                    )
 
             # ✅ 检测图表输出（CHART_SAVED:xxx.png 或 CHART_SAVED:data:image/png;base64,...）
             chart_data = self._extract_chart_paths(result["data"].get("output", ""))
@@ -865,6 +909,93 @@ doc.save('/root/report.docx')
 
         return final_files
 
+    def _artifact_schema(self) -> Dict[str, Any]:
+        """Return a compact schema note for generated artifacts."""
+        return {
+            "version": "execute_python.artifacts.v1",
+            "files": "All generated local files as absolute paths.",
+            "file_path": "Primary generated file for preview/download.",
+            "pdf_preview": "Office/PDF preview metadata for docx/xlsx/pptx/pdf artifacts.",
+            "html_preview": "HTML preview metadata. Notebook uses /api/notebook/html/{html_id}; reports use /api/reports/{report_id}/html.",
+            "visuals": "Image/ECharts blocks for frontend rendering. Matplotlib images are cached under /api/image/{image_id}.",
+            "html_report_layout": "HTML reports must live at backend_data_registry/reports/{report_id}/report.html.",
+        }
+
+    def _safe_report_id(self, raw_id: str) -> str:
+        """Normalize a report id for the /api/reports/{report_id}/html route."""
+        report_id = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_id.strip())
+        report_id = report_id.strip("_")
+        return report_id or f"html_report_{int(time.time())}"
+
+    def _standardize_html_report(self, html_file: str, backend_dir: str) -> Optional[Dict[str, Any]]:
+        """
+        Move/copy a generated standalone HTML file into the standard report package.
+
+        This is a compatibility fallback for older execute_python snippets that wrote
+        backend_data_registry/reports/{report_id}.html directly instead of using the
+        injected save_html_report() helper.
+        """
+        source = Path(html_file).resolve()
+        if not source.exists() or not source.is_file():
+            return None
+
+        reports_root = Path(self.REPORTS_DIR).resolve()
+        if source.name.lower() in {"report.html", "report.htm"} and source.parent.parent.resolve() == reports_root:
+            report_id = self._safe_report_id(source.parent.name)
+        else:
+            report_id = self._safe_report_id(source.stem)
+        report_dir = reports_root / report_id
+        target = report_dir / "report.html"
+
+        # Already standardized.
+        if source == target.resolve():
+            return {
+                "report_id": report_id,
+                "file_path": str(target),
+                "html_preview": {
+                    "html_id": report_id,
+                    "html_url": f"/api/reports/{report_id}/html",
+                    "file_type": "report",
+                    "schema_version": "execute_python.artifacts.v1",
+                },
+            }
+
+        report_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+        # Common legacy layout: reports/foo.html references assets/... from reports/.
+        # Copy reports/assets into reports/foo/assets so relative HTML references work.
+        legacy_assets = reports_root / "assets"
+        target_assets = report_dir / "assets"
+        if legacy_assets.exists() and legacy_assets.is_dir() and not target_assets.exists():
+            shutil.copytree(legacy_assets, target_assets)
+
+        # Also preserve sibling asset directories if the HTML was generated elsewhere.
+        for sibling_name in ("assets", "images", "report_files"):
+            sibling = source.parent / sibling_name
+            destination = report_dir / sibling_name
+            if sibling.exists() and sibling.is_dir() and not destination.exists():
+                try:
+                    shutil.copytree(sibling, destination)
+                except Exception as exc:
+                    logger.warning(
+                        "execute_python_html_asset_copy_failed",
+                        source=str(sibling),
+                        destination=str(destination),
+                        error=str(exc),
+                    )
+
+        return {
+            "report_id": report_id,
+            "file_path": str(target),
+            "html_preview": {
+                "html_id": report_id,
+                "html_url": f"/api/reports/{report_id}/html",
+                "file_type": "report",
+                "schema_version": "execute_python.artifacts.v1",
+            },
+        }
+
     def _extract_chart_paths(self, output: str) -> dict:
         """
         从 Python 代码输出中提取图表路径和base64数据
@@ -1168,6 +1299,87 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 
         return injected_code
 
+    def _inject_report_helpers(self, code: str) -> str:
+        """Inject helpers for standardized report artifact output."""
+        reports_dir = self.REPORTS_DIR.replace("\\", "\\\\").replace("'", "\\'")
+        helper_code = f'''# ===== 报告输出辅助函数（自动注入） =====
+# HTML报告统一保存为 backend_data_registry/reports/{{report_id}}/report.html
+def save_html_report(report_id: str, html_content: str, assets_dir=None, extra_assets=None):
+    """保存 HTML 报告并打印标准预览标记。
+
+    Args:
+        report_id: URL中的报告ID，只允许字母、数字、下划线和连字符；其他字符会转为下划线。
+        html_content: 完整 HTML 字符串。
+        assets_dir: 可选，包含 assets/images 等资源的目录；会复制到报告目录下。
+        extra_assets: 可选，文件或目录路径列表；目录按原名复制，文件复制到 assets/。
+
+    Returns:
+        dict: {{success, report_id, file_path, html_preview}}
+    """
+    import json
+    import re
+    import shutil
+    from pathlib import Path
+
+    reports_root = Path('{reports_dir}')
+    safe_id = re.sub(r'[^A-Za-z0-9_-]+', '_', str(report_id).strip()).strip('_')
+    if not safe_id:
+        raise ValueError('report_id 不能为空')
+
+    report_dir = reports_root / safe_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / 'report.html'
+    report_path.write_text(html_content, encoding='utf-8')
+
+    def _copy_dir(src, dst):
+        src = Path(src)
+        dst = Path(dst)
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+
+    if assets_dir:
+        src = Path(assets_dir)
+        if src.exists() and src.is_dir():
+            if src.name == 'assets':
+                _copy_dir(src, report_dir / 'assets')
+            else:
+                assets_target = report_dir / 'assets'
+                assets_target.mkdir(parents=True, exist_ok=True)
+                _copy_dir(src, assets_target / src.name)
+
+    for asset in (extra_assets or []):
+        src = Path(asset)
+        if not src.exists():
+            continue
+        if src.is_dir():
+            _copy_dir(src, report_dir / src.name)
+        else:
+            assets_target = report_dir / 'assets'
+            assets_target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, assets_target / src.name)
+
+    html_preview = {{
+        'html_id': safe_id,
+        'html_url': f'/api/reports/{{safe_id}}/html',
+        'file_type': 'report',
+        'schema_version': 'execute_python.artifacts.v1',
+    }}
+    result = {{
+        'success': True,
+        'report_id': safe_id,
+        'file_path': str(report_path),
+        'html_preview': html_preview,
+    }}
+    print('HTML_REPORT_SAVED:' + str(report_path))
+    print('HTML_PREVIEW:' + json.dumps(html_preview, ensure_ascii=False))
+    return result
+
+# ===== 报告输出辅助函数注入完成 =====
+
+'''
+        return helper_code + code
+
     def _convert_unicode_subscript_to_latex(self, code: str) -> str:
         """
         自动转换Python代码字符串中的Unicode下标/上标字符为LaTeX格式
@@ -1347,6 +1559,26 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         images_dir_literal = repr(str(get_images_dir()))
         font_registration_code = """# ===== 自动注入中文字体支持 =====
 import os
+from pathlib import Path
+
+# ===== Matplotlib 图片保存兜底（自动注入） =====
+_SUYUAN_CHART_PATHS_EMITTED = set()
+
+def _suyuan_emit_chart_saved(path):
+    '''输出标准图片保存标记，供 execute_python 后处理缓存到 /api/image/{image_id}。'''
+    try:
+        if path is None:
+            return
+        if isinstance(path, (str, os.PathLike)):
+            chart_path = os.path.abspath(os.fspath(path))
+        else:
+            # BytesIO 等文件对象无法直接作为前端图片缓存路径处理。
+            return
+        if chart_path not in _SUYUAN_CHART_PATHS_EMITTED:
+            _SUYUAN_CHART_PATHS_EMITTED.add(chart_path)
+            print(f'CHART_SAVED:{chart_path}')
+    except Exception:
+        pass
 
 # ===== 图表保存辅助函数（自动注入） =====
 def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
@@ -1369,8 +1601,6 @@ def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
         >>> ax.plot([1, 2, 3], [1, 4, 9])
         >>> save_chart(fig, 'my_chart.png')  # 自动生成 /api/image/xxx URL
     '''
-    import matplotlib.pyplot as plt
-
     # 确保图表目录存在
     charts_dir = __SUYUAN_IMAGES_DIR__
     try:
@@ -1384,18 +1614,32 @@ def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
     # 构建完整路径
     filepath = os.path.join(charts_dir, filename)
 
-    # 保存图表
-    fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
+    # 保存图表。优先使用原始 savefig，避免自动拦截层重复输出标记。
+    savefig_func = globals().get('_suyuan_original_figure_savefig')
+    if savefig_func:
+        savefig_func(fig, filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
+    else:
+        fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
 
-    # 关键：打印标准格式标记，触发ImageCache缓存
-    print(f'CHART_SAVED:{filepath}')
+    # 关键：输出标准格式标记，触发 ImageCache 缓存
+    _suyuan_emit_chart_saved(filepath)
 
     return filepath
 
 # ===== 字体注册 =====
 from matplotlib import font_manager
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
-from pathlib import Path
+
+_suyuan_original_figure_savefig = Figure.savefig
+
+def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
+    result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
+    _suyuan_emit_chart_saved(fname)
+    return result
+
+if getattr(Figure.savefig, '__name__', '') != '_suyuan_patched_figure_savefig':
+    Figure.savefig = _suyuan_patched_figure_savefig
 
 # 字体优先级（与 calendar_renderer.py 一致）
 _font_configs = [
@@ -1877,12 +2121,12 @@ def merge_excel_with_charts(file_paths, output_path):
 
         # 常见的文件保存模式（支持中文路径）
         patterns = [
-            # EXCEL_SAVED:/path/to/文件名.xlsx
-            r'EXCEL_SAVED[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
+            # WORD_SAVED:/path/to/file.docx, EXCEL_SAVED:/path/to/file.xlsx, HTML_REPORT_SAVED:/path/to/report.html
+            r'(?:WORD_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED|HTML_REPORT_SAVED)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
             # 报告已生成：/path/to/文件名.docx
-            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
+            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
             # 文件名.xlsx（带中文的后缀）
-            r'(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
+            r'(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))\s*[已]*[保存生成]*',
         ]
 
         for pattern in patterns:
@@ -2128,8 +2372,17 @@ def merge_excel_with_charts(file_paths, output_path):
                 "执行 Python 代码，用于数据处理、数值计算、可视化、Excel/Word文件生成。"
                 "助手Agent和社交Agent在处理复杂 Python、Excel、图表或文件生成前，"
                 "必须先阅读 backend/app/tools/utility/execute_python_manual.md。"
+                "生成正式DOCX政府报告时，默认使用 "
+                "app.services.report.government_docx_style 中的 "
+                "apply_government_report_style、add_government_title、"
+                "add_government_heading、add_government_paragraph、add_government_table；"
+                "只有用户明确提出其他排版时才局部覆盖默认样式。"
                 "优先使用专用统计/查询工具；只有专用工具无法满足自定义计算时再使用本工具。"
                 "生成文件保存到 backend_data_registry，并打印输出路径。默认超时30秒。"
+                "输出artifact schema：files为生成文件列表，file_path为主文件；"
+                "Office/PDF返回pdf_preview，Notebook返回html_preview，"
+                "HTML报告应使用save_html_report()并返回/api/reports/{report_id}/html，"
+                "图片/ECharts返回visuals。"
             ),
             "parameters": {
                 "type": "object",

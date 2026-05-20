@@ -55,6 +55,7 @@ OPS_SQL_TABLES = [
     # 运维工单与站点设备基础信息
     'working_orders',
     'working_order_details',
+    'wo_commonfile_links',
     'base_station',
     'base_station_sup',
     'base_device',
@@ -101,8 +102,6 @@ OPS_SQL_TABLES = [
     'RF_SEC_INSPECTION',
     'RF_SEC_INSTRUMENTRECORD',
     'RF_SEC_MONITORINGCHECK',
-    'information_schema.columns',
-    'information_schema.tables',
 ]
 
 
@@ -133,11 +132,13 @@ class BaseSQLQueryTool(LLMTool):
         schema_description: str,
         allowed_tables: List[str],
         default_database: str = "XcAiDb",
+        allow_information_schema_sql: bool = True,
     ):
         """初始化工具"""
 
         self.tool_name = tool_name
         self.default_database = default_database
+        self.allow_information_schema_sql = allow_information_schema_sql
         self.sql_validator = SQLValidator(max_limit=200, allowed_tables=allowed_tables)
 
         function_schema = {
@@ -419,6 +420,28 @@ class BaseSQLQueryTool(LLMTool):
         )
 
         try:
+            # 运维模式不允许通过 information_schema 做表名发现式查询。
+            # 查看单表字段请走 describe_table，表名必须来自工具说明中的白名单。
+            if not self.allow_information_schema_sql:
+                referenced_tables = self.sql_validator.extract_tables(sql)
+                information_schema_tables = [
+                    table for table in referenced_tables
+                    if table.lower().startswith("information_schema.")
+                ]
+                if information_schema_tables:
+                    return {
+                        "success": False,
+                        "data": [],
+                        "summary": (
+                            "运维模式不允许表名发现式查询，不能直接查询 "
+                            f"{', '.join(information_schema_tables)}。"
+                            "请只使用 execute_ops_sql_query 工具说明中列出的白名单表单；"
+                            "如果字段不确定，请调用 "
+                            "execute_ops_sql_query(describe_table='白名单表名', database='AirPollutionAnalysis') "
+                            "查看该表字段和样例。"
+                        ),
+                    }
+
             # 1. SQL安全验证
             is_valid, error_msg = self.sql_validator.validate(sql)
             if not is_valid:
@@ -739,12 +762,15 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "运维表单SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
             "用于运维模式查询工单、站点设备、周检、双周、月检、季检、现场巡检等运维表单。"
             "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的字段名。"
+            "只能查询下方列出的运维白名单表单；禁止通过information_schema.tables、information_schema.columns等元数据表做表名发现式查询。"
+            "如果不知道中文业务表单对应哪个白名单表名，不要猜表名或模糊搜索系统表，应说明映射不明确。"
             "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'完成'；分页/限制用TOP，不支持LIMIT。"
             "database默认为AirPollutionAnalysis。"
             "\n\n常用表说明："
             "\n【工单与站点设备】"
             "\n- working_orders/working_order_details：运维工单及详情"
+            "\n- wo_commonfile_links：工单/运维表单通用附件关联"
             "\n- BSD_STATION/base_station/base_station_sup：站点基础信息"
             "\n- base_device：设备基础信息"
             "\n- base_user_station/base_department_station/base_contract_station：用户/部门/合同-站点关联"
@@ -787,4 +813,5 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             schema_description=schema_description,
             allowed_tables=OPS_SQL_TABLES,
             default_database="AirPollutionAnalysis",
+            allow_information_schema_sql=False,
         )

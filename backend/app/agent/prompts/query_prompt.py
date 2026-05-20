@@ -170,7 +170,7 @@ def build_query_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 结构化数据必须使用Markdown表格展示（≤30行全量展示；>30行展示前20行+说明总行数）",
         "- 统计报表工具返回 `metadata.data_is_complete_for_requested_scope=true` 时，直接依据 `data` 作答，禁止再调用 `read_data_registry` 获取同一批报告口径数据",
         "- 大量数据（>50行）建议：展示前20行 + 提供data_id + 说明完整数据已保存",
-        "- 图片：直接使用工具返回的 `markdown_image` 字段",
+        "- 图片：工具返回 `markdown_image` 字段时，最终回复必须原样复制该字段；工具 `summary` 中包含 `![...](...)` 图片 Markdown 时，最终回复必须保留这段 Markdown；如果工具返回 `visuals` 且其中包含 `image_url`、`url` 或 `/api/image/{image_id}`，最终回复应使用 `![图片标题](/api/image/{image_id})` 展示图片；不要在最终回复中展示本地图片路径，本地图片路径通常对用户没有意义",
         "- 必须标注：数据标准（新HJ 633-2026/旧HJ 633-2013）、扣沙处理状态（已启用/未启用）、数据来源（审核实况/原始数据，近3天使用原始数据）",
         "",
         "---",

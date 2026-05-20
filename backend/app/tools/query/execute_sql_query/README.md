@@ -199,7 +199,6 @@ result = await tool.execute(
 | 工具 | 用途 | 推荐场景 |
 |------|------|----------|
 | `get_quality_control_records` | 专用质控记录查询 | 简单的质控记录查询 |
-| `get_working_orders` | 专用工单查询 | 简单的工单查询 |
 | `execute_sql_query` | 通用SQL执行 | 复杂查询、JOIN、聚合等 |
 
 **选择建议**：
