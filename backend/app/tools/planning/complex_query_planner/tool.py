@@ -415,6 +415,13 @@ SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）�
 - province_statistics_old_standard: 省级空气质量统计（旧标准 HJ 633-2013，⚠️ 查询省级旧标准排名专用表。表中直接包含预计算的排名字段，无需使用窗口函数。stat_type: monthly/annual_ytd/current_month，数据周期2024-01至今，省份名不带'省'后缀）
 - qc_history: 自动质控历史数据表（包含 StationCode、StationName 等字段）
 - working_orders: 运维工单记录表
+- working_order_details: 运维工单详情表（18802条，可通过 WORKINGORDERCODE 与 working_orders 关联）
+- base_station: 站点基础信息（331条，可与 qc_history/working_orders 按站点字段关联）
+- base_station_sup: 上级站点基础信息（100条）
+- base_device: 设备基础信息（2606条，可与 working_orders 的 DEVICEID 相关字段关联）
+- base_user_station: 用户-站点关联（3632条）
+- base_department_station: 部门-站点关联（511条）
+- base_contract_station: 合同-站点关联（1175条）
 
 【⚠️ 重要：168城市排名查询规范】
 - 168城市排名已拆分为两个表：新标准查询 city_168_statistics_new_standard，旧标准查询 city_168_statistics_old_standard
@@ -470,7 +477,7 @@ SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）�
             "properties": {
                 "describe_table": {
                     "type": "string",
-                    "description": "查看表结构（与sql参数二选一）。输入目标表名，如 'city_168_statistics_new_standard'、'city_168_statistics_old_standard'、'qc_history' 或 'working_orders'。工具会动态从数据库获取该表的结构信息，包括字段名、数据类型、长度、是否可空等。"
+                    "description": "查看表结构（与sql参数二选一）。输入目标表名，如 'city_168_statistics_new_standard'、'city_168_statistics_old_standard'、'qc_history'、'working_orders'、'working_order_details'、'base_station' 或 'base_device'。工具会动态从数据库获取该表的结构信息，包括字段名、数据类型、长度、是否可空等。"
                 },
                 "sql": {
                     "type": "string",
@@ -478,7 +485,7 @@ SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）�
                 },
                 "database": {
                     "type": "string",
-                    "description": "数据库名称（可选）。默认为'XcAiDb'，查询质控数据时使用'AirPollutionAnalysis'。",
+                    "description": "数据库名称（可选）。默认为'XcAiDb'，查询质控、工单、base_* 基础表时使用'AirPollutionAnalysis'。",
                     "enum": ["XcAiDb", "AirPollutionAnalysis"]
                 },
                 "limit": {

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 import structlog
+from app.utils.path_config import get_social_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -31,7 +32,8 @@ class UserPreferences:
             data_dir: 数据目录
         """
         self.user_id = user_id
-        self.data_dir = data_dir or Path("backend_data_registry/social/preferences")
+        social_dir = get_social_dir()
+        self.data_dir = data_dir or (social_dir / "preferences")
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         # 用户ID转换（避免特殊字符）
@@ -51,7 +53,7 @@ class UserPreferences:
         self._load()
 
         # ✅ 新增：记忆文件路径（用于soul.md和USER.md）
-        self.memory_dir = Path("backend_data_registry/social/memory")
+        self.memory_dir = social_dir / "memory"
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         safe_user_id_for_memory = user_id.replace(":", "_")
         self.user_memory_path = self.memory_dir / safe_user_id_for_memory
@@ -61,7 +63,7 @@ class UserPreferences:
         self.user_file = self.user_memory_path / "USER.md"
 
         # ✅ 新增：定时任务文件路径（HEARTBEAT.md）
-        self.heartbeat_dir = Path("backend_data_registry/social/heartbeat")
+        self.heartbeat_dir = social_dir / "heartbeat"
         self.heartbeat_dir.mkdir(parents=True, exist_ok=True)
         safe_user_id_for_heartbeat = user_id.replace(":", "_")
         self.heartbeat_path = self.heartbeat_dir / safe_user_id_for_heartbeat

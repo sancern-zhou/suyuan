@@ -113,7 +113,7 @@ class SubagentManager:
             origin_sender_id: Origin sender ID
             label: Optional task label
             timeout: Task timeout in seconds (60-86400)
-            manual_mode: Background agent mode (assistant/expert/query/code)
+            manual_mode: Background agent mode (assistant/expert/query/ops)
 
         Returns:
             Result dict with task_id and label
@@ -122,7 +122,7 @@ class SubagentManager:
         if not (60 <= timeout <= 86400):
             timeout = self.DEFAULT_TIMEOUT
 
-        allowed_modes = {"assistant", "expert", "query"}
+        allowed_modes = {"assistant", "expert", "query", "ops"}
         if manual_mode not in allowed_modes:
             manual_mode = "assistant"
 
@@ -309,7 +309,7 @@ class SubagentManager:
         Returns:
             Final answer from subagent
         """
-        allowed_modes = {"assistant", "expert", "query"}
+        allowed_modes = {"assistant", "expert", "query", "ops"}
         if manual_mode not in allowed_modes:
             manual_mode = "assistant"
 

@@ -19,7 +19,7 @@ from app.services.llm_failover import (
     LLMFailoverError,
     classify_llm_failure,
     get_cooldown_failure,
-    get_global_llm_semaphore,
+    get_llm_pool_semaphore,
     mark_provider_cooldown,
     parse_fallback_candidates,
     should_fallback,
@@ -893,7 +893,6 @@ class LLMService:
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
         self.temperature = settings.llm_temperature
-        self._provider_state_lock = asyncio.Lock()
 
         # 调试信息：检查配置是否正确
         logger.debug(
@@ -945,16 +944,16 @@ class LLMService:
         )
 
     async def _run_llm_request_with_global_limit(self, operation: str, call):
-        semaphore = get_global_llm_semaphore()
+        semaphore = get_llm_pool_semaphore(self.provider, self.model)
         logger.debug(
-            "llm_global_concurrency_waiting",
+            "llm_pool_concurrency_waiting",
             provider=self.provider,
             model=self.model,
             operation=operation,
         )
         async with semaphore:
             logger.debug(
-                "llm_global_concurrency_acquired",
+                "llm_pool_concurrency_acquired",
                 provider=self.provider,
                 model=self.model,
                 operation=operation,
@@ -963,84 +962,83 @@ class LLMService:
 
     async def _run_anthropic_with_fallback(self, operation: str, call):
         """Run an Anthropic-compatible request with configured model fallback."""
-        async with self._provider_state_lock:
-            original_state = self._snapshot_provider_state()
-            candidates = parse_fallback_candidates(
-                original_state["provider"],
-                original_state["model"],
-                self.request_fallbacks,
-            )
-            attempts = []
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
 
-            try:
-                for index, candidate in enumerate(candidates, start=1):
-                    if not (
-                        candidate.provider == original_state["provider"].lower()
-                        and (candidate.model or original_state["model"]) == original_state["model"]
-                    ):
-                        self._switch_provider_for_attempt(candidate.provider, candidate.model)
-                    cooldown_failure = get_cooldown_failure(self.provider)
-                    if cooldown_failure and index < len(candidates):
-                        attempts.append({
-                            "provider": self.provider,
-                            "model": self.model,
-                            "reason": cooldown_failure.reason,
-                            "status": cooldown_failure.status,
-                            "code": cooldown_failure.code,
-                            "error": "provider is in cooldown",
-                        })
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(operation, call)
+                    if attempts:
                         logger.warning(
-                            "llm_fallback_candidate_skipped_cooldown",
+                            "llm_fallback_candidate_succeeded",
                             provider=self.provider,
                             model=self.model,
-                            reason=cooldown_failure.reason,
+                            attempts=summarize_attempts(attempts),
                         )
-                        continue
-
-                    try:
-                        result = await self._run_llm_request_with_global_limit(operation, call)
-                        if attempts:
-                            logger.warning(
-                                "llm_fallback_candidate_succeeded",
-                                provider=self.provider,
-                                model=self.model,
-                                attempts=summarize_attempts(attempts),
-                            )
-                        return result
-                    except Exception as exc:
-                        failure = classify_llm_failure(exc)
-                        attempts.append({
-                            "provider": self.provider,
-                            "model": self.model,
-                            "reason": failure.reason,
-                            "status": failure.status,
-                            "code": failure.code,
-                            "error": failure.message,
-                        })
-                        if failure.reason == "context_overflow":
-                            raise
-                        if should_fallback(failure):
-                            mark_provider_cooldown(self.provider, failure)
-                        has_next = index < len(candidates)
-                        logger.warning(
-                            "llm_fallback_candidate_failed",
-                            provider=self.provider,
-                            model=self.model,
-                            reason=failure.reason,
-                            status=failure.status,
-                            code=failure.code,
-                            has_next=has_next,
-                            error=failure.message[:300],
-                        )
-                        if not has_next or not should_fallback(failure):
-                            raise
-                raise LLMFailoverError(summarize_attempts(attempts))
-            except Exception:
-                if attempts:
-                    logger.error("llm_fallback_failed", attempts=summarize_attempts(attempts))
-                raise
-            finally:
-                self._restore_provider_state(original_state)
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
 
     def _load_provider_config(self):
         """根据provider加载对应配置"""
@@ -2598,7 +2596,6 @@ class LLMService:
         import time
         start_time = time.time()
 
-        await self._provider_state_lock.acquire()
         original_state = self._snapshot_provider_state()
         candidates = parse_fallback_candidates(
             original_state["provider"],
@@ -2653,7 +2650,7 @@ class LLMService:
                         messages_count=len(api_params.get("messages", [])),
                         has_tools=bool(api_params.get("tools")),
                     )
-                    semaphore = get_global_llm_semaphore()
+                    semaphore = get_llm_pool_semaphore(self.provider, self.model)
                     async with semaphore:
                         async with self.anthropic_client.messages.stream(**api_params) as stream:
                             async for event in stream:
@@ -2805,7 +2802,6 @@ class LLMService:
             raise LLMFailoverError(summarize_attempts(attempts))
         finally:
             self._restore_provider_state(original_state)
-            self._provider_state_lock.release()
 
 
 # 全局LLM服务实例

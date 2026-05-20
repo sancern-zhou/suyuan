@@ -323,20 +323,20 @@ df.to_excel('new_file.xlsx', index=False)
 ```python
 # 读取Excel（用于数据分析）
 import pandas as pd
-df = pd.read_excel('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+df = pd.read_excel('/home/xckj/suyuan/backend/backend_data_registry/data.xlsx')
 
 # 分析数据
 df_filtered = df[df['AQI'] > 100]
 
 # ⚠️ 如果是修改原文件：用 openpyxl
 import openpyxl
-wb = openpyxl.load_workbook('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+wb = openpyxl.load_workbook('/home/xckj/suyuan/backend/backend_data_registry/data.xlsx')
 ws = wb.active
 ws["A1"] = "更新后的值"
-wb.save('/home/xckj/suyuan/backend_data_registry/data.xlsx')
+wb.save('/home/xckj/suyuan/backend/backend_data_registry/data.xlsx')
 
 # ✅ 如果是保存新文件：可以用 pandas
-df_filtered.to_excel('/home/xckj/suyuan/backend_data_registry/output.xlsx', index=False)
+df_filtered.to_excel('/home/xckj/suyuan/backend/backend_data_registry/output.xlsx', index=False)
 ```
 
 ---
@@ -567,14 +567,14 @@ title_slide = prs.slides.add_slide(prs.slide_layouts[0])
 title = title_slide.shapes.title
 title.text = "演示标题"
 
-prs.save('/home/xckj/suyuan/backend_data_registry/presentation.pptx')
+prs.save('/home/xckj/suyuan/backend/backend_data_registry/presentation.pptx')
 ```
 
 ```python
 # 读取和编辑PPT
 from pptx import Presentation
 
-prs = Presentation('/home/xckj/suyuan/backend_data_registry/presentation.pptx')
+prs = Presentation('/home/xckj/suyuan/backend/backend_data_registry/presentation.pptx')
 
 # 访问第一张幻灯片
 slide = prs.slides[0]
@@ -586,7 +586,7 @@ text_frame = textbox.text_frame
 text_frame.text = "新文本内容"
 
 # 保存
-prs.save('/home/xckj/suyuan/backend_data_registry/presentation.pptx')
+prs.save('/home/xckj/suyuan/backend/backend_data_registry/presentation.pptx')
 ```
 
 ```python
@@ -599,12 +599,12 @@ slide = prs.slides.add_slide(prs.slide_layouts[0])
 
 # 添加图片
 pic = slide.shapes.add_picture(
-    '/home/xckj/suyuan/backend_data_registry/image.png',
+    '/home/xckj/suyuan/backend/backend_data_registry/image.png',
     Inches(1), Inches(1),
     width=Inches(6)
 )
 
-prs.save('/home/xckj/suyuan/backend_data_registry/presentation_with_image.pptx')
+prs.save('/home/xckj/suyuan/backend/backend_data_registry/presentation_with_image.pptx')
 ```
 
 ---

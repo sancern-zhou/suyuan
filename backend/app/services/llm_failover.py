@@ -44,20 +44,31 @@ class LLMFailoverError(Exception):
         super().__init__(f"All LLM fallback candidates failed: {summary}")
 
 
-_global_semaphore: Optional[asyncio.Semaphore] = None
-_global_semaphore_limit: Optional[int] = None
+_pool_semaphores: dict[str, asyncio.Semaphore] = {}
+_pool_semaphore_limits: dict[str, int] = {}
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}
 
 
-def get_global_llm_semaphore() -> asyncio.Semaphore:
-    """Return a process-wide semaphore shared by all provider calls."""
-    global _global_semaphore, _global_semaphore_limit
+def _pool_key(provider: Optional[str] = None, model: Optional[str] = None) -> str:
+    provider_key = (provider or "global").strip().lower() or "global"
+    model_key = (model or "").strip().lower()
+    return f"{provider_key}:{model_key}" if model_key else provider_key
+
+
+def get_llm_pool_semaphore(provider: Optional[str] = None, model: Optional[str] = None) -> asyncio.Semaphore:
+    """Return a semaphore scoped to a provider/model pool."""
+    key = _pool_key(provider, model)
     limit = max(1, int(getattr(settings, "llm_global_max_concurrency", 2) or 2))
-    if _global_semaphore is None or _global_semaphore_limit != limit:
-        _global_semaphore = asyncio.Semaphore(limit)
-        _global_semaphore_limit = limit
-        logger.info("llm_global_concurrency_configured", limit=limit)
-    return _global_semaphore
+    if key not in _pool_semaphores or _pool_semaphore_limits.get(key) != limit:
+        _pool_semaphores[key] = asyncio.Semaphore(limit)
+        _pool_semaphore_limits[key] = limit
+        logger.info("llm_pool_concurrency_configured", pool_key=key, limit=limit)
+    return _pool_semaphores[key]
+
+
+def get_global_llm_semaphore() -> asyncio.Semaphore:
+    """Backward-compatible alias for the default pool."""
+    return get_llm_pool_semaphore()
 
 
 def parse_fallback_candidates(

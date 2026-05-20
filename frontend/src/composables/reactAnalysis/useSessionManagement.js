@@ -145,7 +145,7 @@ export function useSessionManagement(store) {
    */
   const doRestoreSession = async (sessionId, options = {}) => {
     const {
-      messageLimit = 200,
+      messageLimit = 30,
       restoreOfficeDocs = true
     } = options
 
@@ -416,7 +416,7 @@ export function useSessionManagement(store) {
    * @param {string} sessionId - 会话ID
    */
   const handleSessionRestore = async (sessionId) => {
-    const result = await doRestoreSession(sessionId, { messageLimit: 200, restoreOfficeDocs: true })
+    const result = await doRestoreSession(sessionId, { messageLimit: 30, restoreOfficeDocs: true })
 
     if (result.success) {
       return true
@@ -432,7 +432,7 @@ export function useSessionManagement(store) {
    */
   const handleLoadSession = async (sessionId) => {
     const result = await doRestoreSession(sessionId, {
-      messageLimit: 100,
+      messageLimit: 30,
       restoreOfficeDocs: true
     })
 

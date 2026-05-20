@@ -44,6 +44,7 @@
       v-show="!showManagementPanel"
       ref="inputBoxRef"
       v-model="inputValue"
+      :session-id="sessionId"
       :disabled="inputDisabled"
       :is-analyzing="isAnalyzing"
       :placeholder="inputPlaceholder"
@@ -94,6 +95,10 @@ const props = defineProps({
   useReranker: {
     type: Boolean,
     default: false
+  },
+  sessionId: {
+    type: String,
+    default: ''
   },
   hasMoreMessages: {
     type: Boolean,

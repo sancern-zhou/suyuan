@@ -40,9 +40,9 @@ def get_api_base_url(request: Request) -> str:
     return f"{scheme}://{host}"
 
 # 配置
-# 使用项目根目录的绝对路径（确保工具可以访问）
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # 从 backend/app/api/upload_routes.py 回到项目根目录
-UPLOAD_STORAGE_DIR = os.getenv("UPLOAD_STORAGE_DIR", str(_PROJECT_ROOT / "backend_data_registry" / "uploads"))
+# 统一使用 backend/backend_data_registry/uploads，避免附件路径诱导 Agent 写到仓库根目录。
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+UPLOAD_STORAGE_DIR = os.getenv("UPLOAD_STORAGE_DIR", str(_PROJECT_ROOT / "backend" / "backend_data_registry" / "uploads"))
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
 MAX_DOCUMENT_SIZE = 50 * 1024 * 1024  # 50MB
 

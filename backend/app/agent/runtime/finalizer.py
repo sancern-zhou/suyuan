@@ -52,13 +52,7 @@ class Finalizer:
             yield text[index:index + size]
 
     async def timeout(self, state: RunState) -> AsyncGenerator[dict, None]:
-        state.response_text = (
-            "分析任务较复杂，已尝试多种方法但未能在规定步骤内完成。\n\n"
-            "💡 建议：\n"
-            "• 将复杂问题拆分成几个简单问题\n"
-            "• 提供更具体的背景信息\n"
-            "• 直接询问某个特定方面"
-        )
+        state.response_text = "分析任务较复杂，在限定步骤内未完成，是否继续？"
         state.task_completed = False
         if not state.assistant_message_written:
             self.writer.session.add_assistant_response(state.response_text)

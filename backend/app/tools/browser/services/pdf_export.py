@@ -7,6 +7,7 @@ import structlog
 from typing import Optional, Dict, List
 from datetime import datetime
 from playwright.sync_api import Page
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -18,13 +19,13 @@ class PDFExporter:
     Only supports Chromium browser.
     """
 
-    def __init__(self, output_dir: str = "backend_data_registry/pdfs"):
+    def __init__(self, output_dir: str = None):
         """Initialize PDF exporter
 
         Args:
             output_dir: Directory for PDF output
         """
-        self.output_dir = output_dir
+        self.output_dir = output_dir or str(get_data_registry() / "pdfs")
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info("[PDF_EXPORTER] Initialized", output_dir=output_dir)
 

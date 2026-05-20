@@ -8,13 +8,14 @@ from typing import List, Optional
 from datetime import datetime
 
 from ..models.task import ScheduledTask
+from app.utils.path_config import get_data_registry
 
 
 class TaskStorage:
     """任务存储"""
 
-    def __init__(self, storage_dir: str = "backend_data_registry/scheduled_tasks"):
-        self.storage_dir = Path(storage_dir)
+    def __init__(self, storage_dir: str = None):
+        self.storage_dir = Path(storage_dir) if storage_dir else get_data_registry() / "scheduled_tasks"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.tasks_file = self.storage_dir / "tasks.json"
 

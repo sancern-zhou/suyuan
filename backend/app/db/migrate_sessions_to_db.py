@@ -11,12 +11,13 @@ from datetime import datetime
 import structlog
 
 from app.db.session_repository import get_session_repository
+from app.utils.path_config import get_sessions_dir
 
 logger = structlog.get_logger()
 
 
 async def migrate_sessions_to_db(
-    storage_path: str = "backend_data_registry/sessions",
+    storage_path: str = None,
     pattern: str = "*.json"
 ):
     """
@@ -27,10 +28,10 @@ async def migrate_sessions_to_db(
         pattern: 文件匹配模式
     """
     repository = get_session_repository()
-    storage_dir = Path(storage_path)
+    storage_dir = Path(storage_path) if storage_path else get_sessions_dir()
 
     if not storage_dir.exists():
-        logger.warning("storage_path_not_found", path=storage_path)
+        logger.warning("storage_path_not_found", path=str(storage_dir))
         return
 
     # 查找所有会话文件

@@ -54,6 +54,11 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+# 配置 APScheduler 日志级别（调试调度问题）
+logging.getLogger("apscheduler").setLevel(logging.INFO)
+logging.getLogger("apscheduler.scheduler").setLevel(logging.INFO)
+logging.getLogger("apscheduler.executors").setLevel(logging.INFO)
+
 # Configure structured logging
 # 优化: 使用易读的控制台输出，同时避免截断，支持大型LLM输出
 # 根据环境变量决定输出格式：开发环境使用彩色易读格式，生产环境使用JSON

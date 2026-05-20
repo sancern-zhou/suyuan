@@ -37,8 +37,8 @@ class Tool:
         "properties": {
             "mode": {
                 "type": "string",
-                "description": "模式标识（social/assistant/expert/query/code/report/chart）",
-                "enum": ["social", "assistant", "expert", "query", "code", "report", "chart"],
+                "description": "模式标识（social/assistant/expert/query/code/report/chart/ops）",
+                "enum": ["social", "assistant", "expert", "query", "code", "report", "chart", "ops"],
                 "default": "query"
             },
             "action": {

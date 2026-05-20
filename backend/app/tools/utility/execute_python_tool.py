@@ -34,6 +34,7 @@ from typing import Dict, Any, Optional, List
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir
 
 # 尝试导入 IPython
 try:
@@ -55,13 +56,11 @@ class ExecutePythonTool(LLMTool):
     """
 
     def __init__(self):
-        # 永久文件存储目录（使用项目目录）
-        self.PERMANENT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "backend_data_registry", "python_generated_files")
-        self.PERMANENT_DIR = os.path.abspath(self.PERMANENT_DIR)
+        # 永久文件存储目录（统一使用 backend/backend_data_registry）
+        self.PERMANENT_DIR = str(get_data_registry() / "python_generated_files")
 
         # ✅ 图表文件存储目录
-        self.CHARTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "backend_data_registry", "charts")
-        self.CHARTS_DIR = os.path.abspath(self.CHARTS_DIR)
+        self.CHARTS_DIR = str(get_charts_dir())
 
         # 确保永久目录和图表目录存在
         os.makedirs(self.PERMANENT_DIR, exist_ok=True)
@@ -75,9 +74,11 @@ class ExecutePythonTool(LLMTool):
 - 每次调用都是独立执行环境；上一次 execute_python 中定义的变量、函数、DataFrame 不会保留
 - 需要跨多次工具调用复用的中间结果，必须显式调用 `save_data(...)` 保存为 data_id，后续用 `get_raw_data(data_id)` 读取
 - 不要在后续 execute_python 调用中直接引用前一次脚本里的变量名（如 city_map、df、report_data）
+- 统一数据目录：{get_data_registry()}
 - 当前工作目录：{self.PERMANENT_DIR}
 - 图表保存目录：{self.CHARTS_DIR}
-- 生成文件时请使用相对路径（如：'report.docx'），不要使用绝对路径（如：/root/xxx.docx）
+- 生成报告、图表、Office 文件必须保存到上述统一数据目录下；不要使用 `/home/xckj/suyuan/backend_data_registry/...`
+- 推荐使用相对路径（如：'report.docx'）或统一目录绝对路径（如：'{self.CHARTS_DIR}/report.docx'）
 - 工具会自动将生成的文件保存到永久目录，并返回完整路径
 - 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
 - 超时时间：30秒（可调整）
@@ -1343,6 +1344,7 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 
         # 步骤1：在代码开头注册字体文件并设置为默认字体
         # 使用与 calendar_renderer.py 相同的字体优先级
+        images_dir_literal = repr(str(get_images_dir()))
         font_registration_code = """# ===== 自动注入中文字体支持 =====
 import os
 
@@ -1370,7 +1372,7 @@ def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
     import matplotlib.pyplot as plt
 
     # 确保图表目录存在
-    charts_dir = '/home/xckj/suyuan/backend_data_registry/images'
+    charts_dir = __SUYUAN_IMAGES_DIR__
     try:
         os.makedirs(charts_dir, exist_ok=True)
     except PermissionError:
@@ -1448,7 +1450,7 @@ if not _font_registered:
 
 # ===== 字体注册完成 =====
 
-"""
+""".replace("__SUYUAN_IMAGES_DIR__", images_dir_literal)
 
         lines = code.split('\n')
         modified_lines = [font_registration_code]

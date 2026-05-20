@@ -17,7 +17,8 @@ import structlog
 logger = structlog.get_logger()
 
 # 图片存储目录（相对于backend）
-IMAGE_CACHE_DIR = "backend_data_registry/images"
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+IMAGE_CACHE_DIR = os.path.join(_PROJECT_ROOT, "backend", "backend_data_registry", "images")
 
 
 class ImageCache:
@@ -32,8 +33,7 @@ class ImageCache:
         if cache_dir:
             self.cache_dir = cache_dir
         else:
-            # 相对于当前工作目录
-            self.cache_dir = os.path.join(os.getcwd(), IMAGE_CACHE_DIR)
+            self.cache_dir = IMAGE_CACHE_DIR
 
         os.makedirs(self.cache_dir, exist_ok=True)
         logger.info("image_cache_initialized", cache_dir=self.cache_dir)

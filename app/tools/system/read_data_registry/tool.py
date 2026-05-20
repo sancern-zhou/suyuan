@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import subprocess
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+DATA_REGISTRY_DIR = PROJECT_ROOT / "backend" / "backend_data_registry"
+
 
 class ReadDataRegistryTool(BaseTool):
     """读取数据注册表中的文件"""
@@ -68,7 +71,7 @@ class ReadDataRegistryTool(BaseTool):
         """执行数据读取"""
 
         # 1. 构造文件路径
-        base_path = Path("backend_data_registry") / data_id
+        base_path = DATA_REGISTRY_DIR / data_id
 
         if not base_path.exists():
             return {

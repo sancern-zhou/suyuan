@@ -1,7 +1,7 @@
 """
 通用分层记忆系统
 
-从 app/social/memory_store.py 迁移，支持所有7种模式（社交、助手、专家、问数、编程、报告、图表）
+从 app/social/memory_store.py 迁移，支持多种模式（社交、助手、专家、问数、编程、报告、图表、运维）
 
 核心功能：
 - MEMORY.md：根级长期记忆（用户偏好、领域知识、历史结论）
@@ -45,7 +45,7 @@ class MemoryStore:
     def __init__(
         self,
         user_id: Optional[str] = None,
-        mode: str = "expert",  # ✅ 新增：模式标识（social/assistant/expert/query/code/report/chart）
+        mode: str = "expert",  # ✅ 新增：模式标识（social/assistant/expert/query/code/report/chart/ops）
         workspace: Optional[Path] = None,
         max_memory_size: int = 10000,  # 最大记忆字符数
         max_history_size: int = 50000  # daily note 单文件最大字符数（保留参数名兼容旧调用）
@@ -55,7 +55,7 @@ class MemoryStore:
 
         Args:
             user_id: 用户ID（格式：{mode}:{user_identifier}:{shared|unique}）
-            mode: 模式标识（social/assistant/expert/query/code/report/chart）
+            mode: 模式标识（social/assistant/expert/query/code/report/chart/ops）
             workspace: 工作空间目录，默认 backend_data_registry/memory
             max_memory_size: MEMORY.md 最大字符数
             max_history_size: daily note 单文件最大字符数

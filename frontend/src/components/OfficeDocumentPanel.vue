@@ -21,7 +21,11 @@
                 class="action-btn edit-btn"
                 title="编辑模式"
               >
-                ✏️ 编辑
+                <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" />
+                  <path d="m13.5 8.5 2 2" />
+                </svg>
+                <span>编辑</span>
               </button>
               <button
                 v-if="doc.doc_type === 'report'"
@@ -30,20 +34,33 @@
                 title="生成分享链接"
                 :disabled="doc.sharing"
               >
-                {{ doc.sharing ? '生成中...' : '📤 分享' }}
+                <span v-if="doc.sharing">生成中...</span>
+                <template v-else>
+                  <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 16V4" />
+                    <path d="m7 9 5-5 5 5" />
+                    <path d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16" />
+                  </svg>
+                  <span>分享</span>
+                </template>
               </button>
 
               <!-- Download dropdown menu -->
               <div class="download-dropdown">
                 <button @click="toggleDownloadMenu" class="action-btn download-btn" title="下载文档">
-                  ⬇️ 下载
+                  <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 4v12" />
+                    <path d="m7 11 5 5 5-5" />
+                    <path d="M5 20h14" />
+                  </svg>
+                  <span>下载</span>
                 </button>
                 <div v-if="showDownloadMenu" class="download-menu">
-                  <button v-if="doc.doc_type === 'markdown'" @click="downloadMarkdown(doc)" class="download-item">
-                    📄 下载Markdown文件
+                  <button v-if="doc.doc_type === 'markdown' || (doc.doc_type === 'report' && doc.markdown_content)" @click="downloadMarkdown(doc)" class="download-item">
+                    下载 Markdown 文件
                   </button>
                   <button v-if="doc.pdf_url" @click="downloadPDF(doc)" class="download-item">
-                    📄 下载PDF文件
+                    下载 PDF 文件
                   </button>
                   <button
                     v-if="doc.doc_type === 'word'"
@@ -51,7 +68,7 @@
                     class="download-item"
                     :disabled="!doc.file_path || doc.file_path === ''"
                   >
-                    📝 下载Word文档
+                    下载 Word 文档
                   </button>
                   <button
                     v-if="doc.doc_type === 'ppt'"
@@ -59,7 +76,7 @@
                     class="download-item"
                     :disabled="!doc.file_path || doc.file_path === ''"
                   >
-                    📊 下载PPT文件
+                    下载 PPT 文件
                   </button>
                   <button
                     v-if="doc.doc_type === 'excel'"
@@ -67,7 +84,7 @@
                     class="download-item"
                     :disabled="!doc.file_path || doc.file_path === ''"
                   >
-                    📊 下载Excel文件
+                    下载 Excel 文件
                   </button>
                 </div>
               </div>
@@ -108,7 +125,7 @@
                   :disabled="doc.sharing"
                 >
                   <span v-if="doc.sharing">生成中...</span>
-                  <span v-else>📤 分享报告</span>
+                  <span v-else>分享报告</span>
                 </button>
               </div>
               <div class="notebook-placeholder">
@@ -118,7 +135,7 @@
             </div>
 
             <!-- Markdown preview -->
-            <div v-else-if="doc.markdown_content && doc.doc_type === 'markdown'" class="markdown-wrapper">
+            <div v-else-if="doc.markdown_content && ['markdown', 'report'].includes(doc.doc_type)" class="markdown-wrapper">
               <MarkdownRenderer :content="doc.markdown_content" :streaming="false" />
             </div>
 
@@ -876,21 +893,38 @@ defineExpose({
 }
 
 .action-btn {
-  padding: 6px 16px;
-  border: 1px solid #1976d2;
-  background: #1976d2;
-  color: white;
-  border-radius: 6px;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid #d8deea;
+  background: rgba(255, 255, 255, 0.94);
+  color: #526173;
+  border-radius: 8px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 12px rgba(31, 45, 68, 0.12);
   white-space: nowrap;
 
   &:hover {
-    background: #1565c0;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    color: #1976d2;
+    border-color: #90caf9;
+    background: #fff;
+    box-shadow: 0 6px 16px rgba(31, 45, 68, 0.16);
   }
+}
+
+.btn-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: 0 0 auto;
 }
 
 .download-dropdown {
@@ -903,17 +937,17 @@ defineExpose({
   right: 0;
   margin-top: 4px;
   background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  min-width: 160px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(31, 45, 68, 0.16);
+  min-width: 168px;
   z-index: 100;
   overflow: hidden;
 }
 
 .download-item {
   width: 100%;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border: none;
   background: white;
   text-align: left;
@@ -923,10 +957,11 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: #526173;
 
   &:hover:not(:disabled) {
-    background: #f5f5f5;
+    background: #f8fbff;
+    color: #1976d2;
   }
 
   &:disabled {
@@ -1178,19 +1213,17 @@ defineExpose({
 .history-time { color: #999; font-size: 11px; }
 
 .empty-state {
-  gap: 6px;
-}
-
-.empty-state {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
+  gap: 8px;
+  color: #8a96a8;
   padding: 40px 20px;
+  text-align: center;
 }
 
-.empty-title { font-size: 16px; font-weight: 500; color: #666; margin: 0 0 8px 0; }
-.empty-tip { font-size: 13px; margin: 0; }
+.empty-title { font-size: 15px; font-weight: 500; color: #526173; margin: 0; }
+.empty-tip { font-size: 13px; margin: 0; line-height: 1.6; color: #8a96a8; }
 </style>

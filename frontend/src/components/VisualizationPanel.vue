@@ -94,13 +94,13 @@
 
     <!-- 空状态 -->
     <div v-if="visualizations.length === 0" class="empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M3 9h18" />
         <path d="M9 3v18" />
       </svg>
       <p class="empty-title">暂无内容</p>
-      <p class="empty-tip">当生成可视化图表或检索到知识文档时，将在此处显示</p>
+      <p class="empty-tip">生成图表、地图、表格或图片后会显示在这里</p>
     </div>
   </div>
 </template>
@@ -1211,27 +1211,35 @@ const debugUnknownViz = (viz) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #8a96a8;
   text-align: center;
+  gap: 8px;
   padding: 40px 20px;
 }
 
 .empty-state svg {
-  margin-bottom: 16px;
-  color: #e0e0e0;
+  width: 46px;
+  height: 46px;
+  color: currentColor;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .empty-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
-  color: #666;
-  margin: 0 0 8px 0;
+  color: #526173;
+  margin: 0;
 }
 
 .empty-tip {
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
   margin: 0;
+  color: #8a96a8;
 }
 
 // 多专家分组样式
@@ -1532,26 +1540,34 @@ const debugUnknownViz = (viz) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #8a96a8;
   text-align: center;
+  gap: 8px;
   padding: 40px 20px;
 }
 
 .empty-state svg {
-  margin-bottom: 16px;
-  color: #e0e0e0;
+  width: 46px;
+  height: 46px;
+  color: currentColor;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .empty-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
-  color: #666;
-  margin: 0 0 8px 0;
+  color: #526173;
+  margin: 0;
 }
 
 .empty-tip {
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
   margin: 0;
+  color: #8a96a8;
 }
 </style>
