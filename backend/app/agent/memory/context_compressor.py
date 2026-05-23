@@ -655,8 +655,133 @@ class ContextCompressor:
                 truncated = truncated[:last_period + 1]
             return f"{truncated}... [已截断，原始长度: {len(text)} 字符]"
 
+        def todo_counts(items: Any) -> Dict[str, int]:
+            if not isinstance(items, list):
+                return {
+                    "total_count": 0,
+                    "completed_count": 0,
+                    "in_progress_count": 0,
+                    "pending_count": 0,
+                }
+            counts = {
+                "total_count": len(items),
+                "completed_count": 0,
+                "in_progress_count": 0,
+                "pending_count": 0,
+            }
+            for item in items:
+                status = item.get("status") if isinstance(item, dict) else None
+                if status == "completed":
+                    counts["completed_count"] += 1
+                elif status == "in_progress":
+                    counts["in_progress_count"] += 1
+                elif status == "pending":
+                    counts["pending_count"] += 1
+            return counts
+
+        def compact_todo_items(items: Any, max_items: int = 8) -> List[Dict[str, Any]]:
+            if not isinstance(items, list):
+                return []
+            compacted = []
+            for item in items[:max_items]:
+                if not isinstance(item, dict):
+                    continue
+                content = str(item.get("content", ""))
+                compacted.append({
+                    "content": content[:180] + ("..." if len(content) > 180 else ""),
+                    "status": item.get("status"),
+                })
+            if len(items) > max_items:
+                compacted.append({
+                    "_truncated": True,
+                    "original_count": len(items),
+                    "sampled_count": len(compacted),
+                })
+            return compacted
+
+        def compact_todowrite_payload(payload: Dict[str, Any]) -> Dict[str, Any] | None:
+            metadata = payload.get("metadata")
+            if not (
+                payload.get("tool_name") == "TodoWrite"
+                or payload.get("tool") == "TodoWrite"
+                or (isinstance(metadata, dict) and metadata.get("generator") == "TodoWrite")
+            ):
+                return None
+
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+            active_items = data.get("active_items") or payload.get("active_items") or []
+            submitted_items = data.get("new_items") or data.get("items") or payload.get("items")
+            counts = {
+                "total_count": payload.get("total_count"),
+                "completed_count": payload.get("completed_count"),
+                "in_progress_count": payload.get("in_progress_count"),
+                "pending_count": payload.get("pending_count"),
+            }
+            if not all(isinstance(value, int) for value in counts.values()):
+                counts = todo_counts(submitted_items)
+
+            return {
+                "status": payload.get("status", "success"),
+                "success": bool(payload.get("success", True)),
+                "tool_name": "TodoWrite",
+                "housekeeping": True,
+                "no_op": bool(payload.get("no_op") or data.get("no_op")),
+                "all_completed": bool(payload.get("all_completed") or data.get("all_completed")),
+                **counts,
+                "active_items": compact_todo_items(active_items),
+                "summary": payload.get("summary", "TodoWrite housekeeping result compacted."),
+                "metadata": {
+                    "generator": "TodoWrite",
+                    "history_compacted": True,
+                    "omitted_fields": ["rendered", "items", "old_items", "new_items"],
+                },
+            }
+
+        def compact_todowrite_content(value: Any) -> tuple[Any, bool]:
+            if not isinstance(value, str):
+                return value, False
+            try:
+                payload = json.loads(value)
+            except Exception:
+                return value, False
+            if not isinstance(payload, dict):
+                return value, False
+            compacted = compact_todowrite_payload(payload)
+            if compacted is None:
+                return value, False
+            return json.dumps(compacted, ensure_ascii=False, default=str), True
+
+        def compact_todowrite_tool_use_blocks(value: Any) -> tuple[Any, bool]:
+            if not isinstance(value, list):
+                return value, False
+            changed = False
+            blocks = []
+            for block in value:
+                if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") != "TodoWrite":
+                    blocks.append(block)
+                    continue
+                block_copy = dict(block)
+                tool_input = block_copy.get("input") if isinstance(block_copy.get("input"), dict) else {}
+                items = tool_input.get("items")
+                if isinstance(items, str):
+                    try:
+                        parsed_items = json.loads(items)
+                        items = parsed_items if isinstance(parsed_items, list) else []
+                    except Exception:
+                        items = []
+                # ✅ 修复：保留 items 参数（符合TodoWriteTool.execute()签名），只压缩其内容
+                block_copy["input"] = {
+                    "items": compact_todo_items(items),  # 保留 items 字段，压缩内容
+                }
+                blocks.append(block_copy)
+                changed = True
+            return blocks, changed
+
         def truncate_tool_result_blocks(value: Any, max_chars: int) -> tuple[Any, bool]:
             if isinstance(value, str):
+                compacted_content, compacted = compact_todowrite_content(value)
+                if compacted:
+                    return compacted_content, True
                 if len(value) <= max_chars:
                     return value, False
                 return truncate_text(value, max_chars), True
@@ -671,6 +796,12 @@ class ContextCompressor:
 
                     block_copy = dict(block)
                     block_content = block_copy.get("content")
+                    compacted_content, compacted = compact_todowrite_content(block_content)
+                    if compacted:
+                        block_copy["content"] = compacted_content
+                        changed = True
+                        blocks.append(block_copy)
+                        continue
                     if content_char_len(block_content) > max_chars:
                         content_text = (
                             block_content
@@ -698,16 +829,21 @@ class ContextCompressor:
             # 处理 observation/tool_result 类型
             if msg_type in ('observation', 'tool_result'):
                 max_chars = self.MAX_TOOL_RESULT_CHARS if msg_type == 'tool_result' else self.MAX_OBSERVATION_CHARS
-                if content_char_len(content) > max_chars:
-                    truncated_content, changed = truncate_tool_result_blocks(content, max_chars)
-                    if changed:
-                        if isinstance(truncated_content, str):
-                            truncated_content = f"{truncated_content}{extract_data_ref(content)}"
-                        msg_copy['content'] = truncated_content
-                        truncated_count += 1
+                truncated_content, changed = truncate_tool_result_blocks(content, max_chars)
+                if changed:
+                    if isinstance(truncated_content, str) and content_char_len(content) > max_chars:
+                        truncated_content = f"{truncated_content}{extract_data_ref(content)}"
+                    msg_copy['content'] = truncated_content
+                    truncated_count += 1
 
             # 处理 action/tool_use 类型（可选：精简参数）
             elif msg_type in ('action', 'tool_use'):
+                compacted_content, changed = compact_todowrite_tool_use_blocks(content)
+                if changed:
+                    msg_copy['content'] = compacted_content
+                    truncated_count += 1
+                    result.append(msg_copy)
+                    continue
                 if content_char_len(content) > 1000 and isinstance(content, str):
                     # 保留工具名和前500字符参数
                     msg_copy['content'] = content[:1000] + "... [参数已精简]"

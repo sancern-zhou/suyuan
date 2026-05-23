@@ -16,20 +16,17 @@
 """
 from app.tools.query.query_gd_suncere.tool import (
     execute_query_gd_suncere_city_day,
+    execute_query_gd_suncere_district_day,
     execute_query_gd_suncere_station_day,
     execute_query_gd_suncere_station_hour,
     execute_query_gd_suncere_station_hour_real,
     execute_query_gd_suncere_regional_comparison,
     execute_query_gd_suncere_report,
+    execute_query_gd_suncere_district_report,
     execute_query_gd_suncere_report_compare,
     execute_query_standard_comparison,
     QueryGDSuncereDataTool,
     GeoMappingResolver
-)
-
-# 新标准城市日数据查询
-from app.tools.query.query_gd_suncere.tool_city_day_new import (
-    execute_query_city_day_new_standard
 )
 
 # 旧标准城市日数据查询（十三五/十四五）
@@ -44,23 +41,25 @@ from app.tools.query.query_gd_suncere.tool_wrapper import (
     QueryGDSuncereStationDayTool,
     QueryGDSuncereRegionalComparisonTool,
     QueryGDSuncereCityDayTool,
+    QueryGDSuncereDistrictDayTool,
     QueryGDSuncereReportTool,
+    QueryGDSuncereDistrictReportTool,
     QueryGDSuncereReportCompareTool,
     QueryStandardComparisonTool,
-    QueryGDSuncereCityDayNewStandardTool,
     QueryGDSuncereCityDayOldStandardTool
 )
 
 __all__ = [
     "execute_query_gd_suncere_city_day",
+    "execute_query_gd_suncere_district_day",
     "execute_query_gd_suncere_station_day",
     "execute_query_gd_suncere_station_hour",
     "execute_query_gd_suncere_station_hour_real",
     "execute_query_gd_suncere_regional_comparison",
     "execute_query_gd_suncere_report",
+    "execute_query_gd_suncere_district_report",
     "execute_query_gd_suncere_report_compare",
     "execute_query_standard_comparison",
-    "execute_query_city_day_new_standard",
     "execute_query_city_day_old_standard",
     "QueryGDSuncereDataTool",
     "GeoMappingResolver",
@@ -69,9 +68,10 @@ __all__ = [
     "QueryGDSuncereStationDayTool",
     "QueryGDSuncereRegionalComparisonTool",
     "QueryGDSuncereCityDayTool",
+    "QueryGDSuncereDistrictDayTool",
     "QueryGDSuncereReportTool",
+    "QueryGDSuncereDistrictReportTool",
     "QueryGDSuncereReportCompareTool",
     "QueryStandardComparisonTool",
-    "QueryGDSuncereCityDayNewStandardTool",
     "QueryGDSuncereCityDayOldStandardTool"
 ]

@@ -10,10 +10,10 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
 
 import structlog
 
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
@@ -192,10 +192,6 @@ class CreatePptxTool(LLMTool):
                     "summary": "创建PPT失败：输出文件为空",
                 }
 
-            from config.settings import settings
-
-            api_base = settings.backend_host.rstrip("/")
-            encoded_path = quote(str(output_path))
             result_data: Dict[str, Any] = {
                 "file_path": str(output_path),
                 "output_file": str(output_path),
@@ -206,8 +202,6 @@ class CreatePptxTool(LLMTool):
                 "slide_plan": slide_plan,
                 "density_report": density_report,
                 "size": output_path.stat().st_size,
-                "doc_url": f"{api_base}/api/utility/file/{encoded_path}",
-                "doc_download_filename": output_path.name,
             }
 
             if enable_preview:
@@ -240,6 +234,16 @@ class CreatePptxTool(LLMTool):
                 except Exception as validation_error:
                     logger.warning("create_pptx_validation_failed", error=str(validation_error))
                     result_data["validation_error"] = str(validation_error)
+
+            attach_document_artifact(
+                result_data,
+                output_path,
+                kind="office",
+                format="pptx",
+                title=title,
+                preview_key="pdf_preview",
+                generator=self.name,
+            )
 
             quality_gate = result_data.get("quality_gate")
             summary_suffix = ""
@@ -690,7 +694,7 @@ class CreatePptxTool(LLMTool):
                 "description": (
                     "用PptxGenJS生成可编辑PPTX。slides支持type: title/section/bullets/text/"
                 "two_column/table/image/image_text/chart/quote/toc/summary/comparison/timeline/"
-                "process/metrics。返回file_path、doc_url和可选pdf_preview。"
+                "process/metrics。返回file_path和可选pdf_preview。"
             ),
             "parameters": {
                 "type": "object",

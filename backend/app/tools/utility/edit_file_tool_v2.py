@@ -31,6 +31,7 @@ import re
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+from app.services.document_preview_refresh import refresh_preview_for_managed_document_path
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
 from app.utils.path_config import BACKEND_ROOT
@@ -497,17 +498,34 @@ class EditFileToolV2(LLMTool):
                 encoding=actual_encoding
             )
 
+            result_data = {
+                "path": str(resolved_path),
+                "file_path": str(resolved_path),
+                "changes": changes,
+                "old_string_preview": actual_old_string[:80] + ("..." if len(actual_old_string) > 80 else ""),
+                "new_string_preview": actual_new_string[:80] + ("..." if len(actual_new_string) > 80 else ""),
+                "replace_all": replace_all,
+                "encoding": actual_encoding
+            }
+            summary = f"编辑成功：{resolved_path.name}，替换了 {changes} 处"
+
+            preview_refresh = refresh_preview_for_managed_document_path(resolved_path)
+            if preview_refresh:
+                result_data.update(preview_refresh)
+                refresh_state = (
+                    preview_refresh.get("report_preview_refresh")
+                    or preview_refresh.get("html_artifact_preview_refresh")
+                    or {}
+                )
+                if refresh_state.get("success"):
+                    summary += "，右侧预览已刷新"
+                else:
+                    summary += "，但右侧预览刷新失败"
+
             return {
                 "success": True,
-                "data": {
-                    "path": str(resolved_path),
-                    "changes": changes,
-                    "old_string_preview": actual_old_string[:80] + ("..." if len(actual_old_string) > 80 else ""),
-                    "new_string_preview": actual_new_string[:80] + ("..." if len(actual_new_string) > 80 else ""),
-                    "replace_all": replace_all,
-                    "encoding": actual_encoding
-                },
-                "summary": f"编辑成功：{resolved_path.name}，替换了 {changes} 处"
+                "data": result_data,
+                "summary": summary
             }
 
         except Exception as e:
@@ -760,6 +778,7 @@ class EditFileToolV2(LLMTool):
                 "精确替换代码、配置、文本文件内容；必须先read_file。"
                 "不用于docx或Word XML；多行old_string/new_string在JSON中用\\n转义。"
                 "会检查文件是否被修改，并支持引号规范化容错匹配。"
+                "如果编辑的是标准报告包 reports/{report_id}/report.qmd 或 HTML展示页 html_artifacts/{artifact_id}/index.html，后端会自动刷新右侧预览并返回html_preview。"
             ),
             "parameters": {
                 "type": "object",

@@ -29,6 +29,118 @@ MAX_TOOL_RESULT_STRING_CHARS = 8_000
 MAX_TOOL_RESULT_JSON_CHARS = 200_000  # 支持完整的21城市统计对比结果
 
 
+def _todo_status_counts(items: Any) -> Dict[str, int]:
+    if not isinstance(items, list):
+        return {
+            "total_count": 0,
+            "completed_count": 0,
+            "in_progress_count": 0,
+            "pending_count": 0,
+        }
+
+    counts = {
+        "total_count": len(items),
+        "completed_count": 0,
+        "in_progress_count": 0,
+        "pending_count": 0,
+    }
+    for item in items:
+        status = item.get("status") if isinstance(item, dict) else None
+        if status == "completed":
+            counts["completed_count"] += 1
+        elif status == "in_progress":
+            counts["in_progress_count"] += 1
+        elif status == "pending":
+            counts["pending_count"] += 1
+    return counts
+
+
+def _compact_todo_items(items: Any, max_items: int = 8) -> List[Dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+
+    compacted: List[Dict[str, Any]] = []
+    for item in items[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        compacted.append({
+            "content": _truncate_string(str(item.get("content", "")), 180),
+            "status": item.get("status"),
+        })
+    if len(items) > max_items:
+        compacted.append({
+            "_truncated": True,
+            "original_count": len(items),
+            "sampled_count": len(compacted),
+        })
+    return compacted
+
+
+def _is_todowrite_result(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    metadata = result.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("generator") == "TodoWrite"
+
+
+def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    active_items = data.get("active_items") if isinstance(data, dict) else []
+    submitted_items = data.get("new_items") or data.get("items")
+
+    counts = {
+        "total_count": result.get("total_count"),
+        "completed_count": result.get("completed_count"),
+        "in_progress_count": result.get("in_progress_count"),
+        "pending_count": result.get("pending_count"),
+    }
+    if not all(isinstance(value, int) for value in counts.values()):
+        counts = _todo_status_counts(submitted_items)
+
+    all_completed = bool(result.get("all_completed") or data.get("all_completed"))
+    no_op = bool(result.get("no_op") or data.get("no_op"))
+    changed = bool(data.get("changed", not no_op))
+
+    active_summary = _compact_todo_items(active_items)
+    summary = result.get("summary")
+    if not summary:
+        if all_completed:
+            summary = "TodoWrite completed; active todo list cleared. Continue with final answer, not TodoWrite."
+        elif no_op:
+            summary = "TodoWrite no-op; continue business work, not TodoWrite."
+        else:
+            summary = "TodoWrite updated active todo list."
+
+    return {
+        "status": result.get("status", "success"),
+        "success": bool(result.get("success", True)),
+        "tool_name": "TodoWrite",
+        "housekeeping": True,
+        "no_op": no_op,
+        "all_completed": all_completed,
+        "changed": changed,
+        **counts,
+        "active_items": active_summary,
+        "summary": summary,
+        "metadata": {
+            "generator": "TodoWrite",
+            "history_compacted": True,
+            "omitted_fields": ["rendered", "items", "old_items", "new_items"],
+        },
+    }
+
+
+def _prepare_tool_input_for_history(tool_name: str, tool_input: Any) -> Any:
+    """Return a compact assistant tool_use input for LLM-facing history.
+
+    ⚠️ 不再压缩 tool_input，保持与工具 schema 定义一致。
+    压缩只在 tool_result 层面进行（_prepare_tool_result_for_history），
+    避免 LLM 从历史记录中学习到错误的参数格式。
+    """
+    # 直接返回原始 tool_input，不做任何压缩
+    return tool_input
+
+
 def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
     """Return a bounded text preview for arbitrary persisted message content."""
     if isinstance(value, str):
@@ -135,6 +247,17 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
 
 
 def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
+    if _is_todowrite_result(result):
+        compacted_todo = _compact_todowrite_result_for_history(result)
+        logger.info(
+            "todowrite_tool_result_compacted_for_history",
+            no_op=compacted_todo.get("no_op"),
+            all_completed=compacted_todo.get("all_completed"),
+            active_count=len(compacted_todo.get("active_items", [])),
+            total_count=compacted_todo.get("total_count"),
+        )
+        return compacted_todo
+
     compacted = _compact_tool_result_value(result)
     try:
         serialized = json.dumps(compacted, ensure_ascii=False, indent=2, default=str)
@@ -924,7 +1047,7 @@ class SessionMemory:
                 "type": "tool_use",
                 "id": te["tool_use_id"],
                 "name": te["tool_name"],
-                "input": te["tool_input"],
+                "input": _prepare_tool_input_for_history(te["tool_name"], te["tool_input"]),
             })
 
         self.conversation_history.append(

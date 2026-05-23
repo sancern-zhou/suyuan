@@ -2522,9 +2522,9 @@ const closeImagePreview = () => {
 
 .live-process-details {
   margin: 6px 0 10px 0;
-  border: 1px solid #d8deea;
-  border-radius: 8px;
-  background: #fff;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   font-size: 14px;
   color: #35425f;
 
@@ -2539,10 +2539,10 @@ const closeImagePreview = () => {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: #fff;
+    background: transparent;
 
     &:hover {
-      background: #f8fbff;
+      background: transparent;
     }
 
     &::marker {
@@ -2567,14 +2567,14 @@ const closeImagePreview = () => {
 
 .live-process-content {
   padding: 4px 12px 10px;
-  border-top: 1px solid #f2f4f8;
-  background: #fff;
+  border-top: none;
+  background: transparent;
 }
 
 .live-process-item {
   padding: 8px 0 8px 14px;
-  border-top: 1px solid #f2f4f8;
-  border-left: 2px solid #d8deea;
+  border-top: none;
+  border-left: none;
 
   &:first-of-type {
     border-top: none;
@@ -2686,11 +2686,11 @@ const closeImagePreview = () => {
 // 处理过程折叠区域样式
 .process-collapse {
   margin: 10px 0 8px;
-  border: 1px solid #d8deea;
-  border-radius: 8px;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
   color: #35425f;
-  background: #fff;
+  background: transparent;
 
   > summary {
     padding: 8px 12px;
@@ -2701,10 +2701,10 @@ const closeImagePreview = () => {
     display: block;
     user-select: none;
     color: #526173;
-    background: #fff;
+    background: transparent;
 
     &:hover {
-      background: #f8fbff;
+      background: transparent;
       color: #1976D2;
     }
   }
@@ -2713,12 +2713,12 @@ const closeImagePreview = () => {
     padding: 4px 12px 10px;
     max-height: 400px;
     overflow-y: auto;
-    border-top: 1px solid #f2f4f8;
+    border-top: none;
 
     .process-item {
       padding: 8px 0 8px 14px;
-      border-bottom: 1px solid #f2f4f8;
-      border-left: 2px solid #d8deea;
+      border-bottom: none;
+      border-left: none;
 
       &:last-child {
         border-bottom: none;

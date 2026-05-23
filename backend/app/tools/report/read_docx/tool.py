@@ -11,17 +11,10 @@ from docx.table import Table
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 import structlog
-import os
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
-
-
-def get_api_base_url():
-    """获取API基础URL（用于返回下载链接）"""
-    from config.settings import settings
-    return settings.backend_host.rstrip("/")
 
 
 # PDF转换器导入（懒加载避免循环依赖）
@@ -243,13 +236,6 @@ class ReadDocxTool(LLMTool):
                 "total_tables": len(doc.tables)
             }
 
-            # 添加Word文档下载链接
-            from urllib.parse import quote
-            api_base = get_api_base_url()
-            encoded_path = quote(str(file_path))
-            result_data["doc_url"] = f"{api_base}/api/utility/file/{encoded_path}"
-            result_data["doc_download_filename"] = file_path.name
-
             # 如果有图片，添加图片路径列表
             if image_paths:
                 result_data["image_paths"] = image_paths
@@ -416,13 +402,6 @@ class ReadDocxTool(LLMTool):
                     "warning": "文档XML格式不规范，使用回退方案提取"
                 }
 
-                # 添加Word文档下载链接
-                from urllib.parse import quote
-                api_base = get_api_base_url()
-                encoded_path = quote(str(file_path))
-                result_data["doc_url"] = f"{api_base}/api/utility/file/{encoded_path}"
-                result_data["doc_download_filename"] = file_path.name
-
                 if image_paths:
                     result_data["image_paths"] = image_paths
                     result_data["image_note"] = f"文档包含 {len(image_paths)} 张图片。"
@@ -486,13 +465,6 @@ class ReadDocxTool(LLMTool):
                     "extraction_method": "fallback_regex",
                     "warning": "文档严重损坏，使用正则表达式提取（可能丢失格式）"
                 }
-
-                # 添加Word文档下载链接
-                from urllib.parse import quote
-                api_base = get_api_base_url()
-                encoded_path = quote(str(file_path))
-                result_data["doc_url"] = f"{api_base}/api/utility/file/{encoded_path}"
-                result_data["doc_download_filename"] = file_path.name
 
                 if image_paths:
                     result_data["image_paths"] = image_paths

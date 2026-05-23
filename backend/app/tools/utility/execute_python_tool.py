@@ -2,7 +2,7 @@
 """
 Execute Python Code Tool
 
-执行 Python 代码工具（用于文档生成、数据处理、可视化）
+执行 Python 代码工具（用于数据处理、可视化、中间资源生成）
 
 特性：
 - 在隔离的临时目录中执行代码
@@ -29,12 +29,15 @@ import threading
 import time
 import base64
 import re
+import ast
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir
+from app.tools.system.data_registry_read_state import get_data_registry_read_state
 
 # 尝试导入 IPython
 try:
@@ -70,28 +73,29 @@ class ExecutePythonTool(LLMTool):
 
         super().__init__(
             name="execute_python",
-            description=f"""执行 Python 代码（用于生成文档、数据处理、可视化）
+            description=f"""执行 Python 代码（用于数据处理、可视化、中间资源生成）
 
-重要说明：
-- 每次调用都是独立执行环境；上一次 execute_python 中定义的变量、函数、DataFrame 不会保留
-- 需要跨多次工具调用复用的中间结果，必须显式调用 `save_data(...)` 保存为 data_id，后续用 `get_raw_data(data_id)` 读取
+    重要说明：
+    - 每次调用都是独立执行环境；上一次 execute_python 中定义的变量、函数、DataFrame 不会保留
+    - 使用工具返回的 data_id/report_data_id 计算前，必须先调用 read_data_registry 读取所需视图/字段；execute_python 的 get_raw_data 只返回已读取的数据快照
+    - 需要跨多次工具调用复用的中间结果，必须显式调用 `save_data(...)` 保存为 data_id，后续先用 read_data_registry 读取再计算
 - 不要在后续 execute_python 调用中直接引用前一次脚本里的变量名（如 city_map、df、report_data）
 - 统一数据目录：{get_data_registry()}
 - 当前工作目录：{self.PERMANENT_DIR}
 - 图表保存目录：{self.CHARTS_DIR}
-- HTML报告保存目录：{self.REPORTS_DIR}
-- 生成报告、图表、Office 文件必须保存到上述统一数据目录下；不要使用 `/home/xckj/suyuan/backend_data_registry/...`
+- 报告资源保存目录：{self.REPORTS_DIR}
+- 生成图表、表格、临时文件、Office 文件必须保存到上述统一数据目录下；不要使用 `/home/xckj/suyuan/backend_data_registry/...`
 - 推荐使用相对路径（如：'report.docx'）或统一目录绝对路径（如：'{self.CHARTS_DIR}/report.docx'）
 - 工具会自动将生成的文件保存到永久目录，并返回完整路径
 - 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
 - 超时时间：30秒（可调整）
 
-📄 DOCX政府报告默认格式：
-- 生成正式 Word 报告时，默认导入并使用 `app.services.report.government_docx_style`
-- 推荐流程：`doc = Document()` 后立即 `apply_government_report_style(doc)`
-- 标题、正文、标题层级、表格优先使用 `add_government_title/add_government_heading/add_government_paragraph/add_government_table`
-- 默认规范：标题小标宋/宋体fallback二号居中；正文仿宋三号、首行缩进2字符、固定28磅行距；一级标题黑体三号、二级标题楷体三号；表格居中单线边框
-- 用户明确指定其他字体、字号、行距、页边距时，在默认样式基础上局部覆盖
+📄 正式报告工具边界：
+- 正式报告默认使用 `create_report_package` 保存 `reports/{{report_id}}/report.qmd` 并触发右侧面板预览。
+- execute_python 主要用于计算、制图、整理表格、生成报告包所需的本地相对路径资源，不作为正式报告最终交付工具。
+- 不要在 Python 脚本里手写正式报告的 HTML/Word/PPT 转换流程；下载 HTML/Word/PPT/QMD 和分享 HTML 链接由右侧面板按钮触发固定后端报告 API。
+- 只有用户明确要求“一次性 Word/Office 文件”且不需要 qmd/HTML/PPT 同源报告包时，才直接用 python-docx/openpyxl/python-pptx 生成 Office 文件。
+- 用户明确要求演讲材料、展示页、数据大屏、交互网页或可视化叙事时，先用本工具准备图表/数据/资源，再用 create_html_artifact 收口为 HTML 展示产物。
 
 📊 图表保存与前端渲染：
 - 系统自动注入 save_chart() 辅助函数
@@ -99,34 +103,35 @@ class ExecutePythonTool(LLMTool):
 - 也可以直接使用 plt.savefig()，系统会智能识别路径并缓存
 - 示例代码见下方
 
-📄 HTML报告保存与预览：
-- 系统自动注入 save_html_report(report_id, html_content, assets_dir=None)
-- HTML报告统一保存为 backend_data_registry/reports/{{report_id}}/report.html
-- 工具会返回 html_preview.html_url = /api/reports/{{report_id}}/html
-- 不要直接写 backend_data_registry/reports/{{report_id}}.html
+📄 HTML输出兼容说明：
+- 系统仍兼容 save_html_report(report_id, html_content, assets_dir=None)，用于轻量 HTML 或旧流程。
+- 正式报告不要优先使用 save_html_report 交付；应生成 qmd 内容和相对路径资源后调用 create_report_package。
+- qmd 图片最终必须使用报告包内相对路径，如 `assets/charts/chart_01.png`，不要使用 `/api/image/...`。
+  生成报告包时不要自行根据 `/api/image/{{image_id}}` 或缓存 id 推断该路径；应把真实图片文件路径作为
+  `create_report_package.assets[].path` 传入，并用可选 `name` 指定稳定文件名，由 create_report_package 复制和规范化引用。
 
-📊 数据访问功能（自动注入）：
-当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 和 `save_data(data, ...)` 函数：
-- `get_raw_data(data_id)`: 根据 data_id 获取原始数据（字典列表格式）
-- `save_data(data, schema='python_result', metadata=None)`: 将中间结果保存到数据注册表并返回 data_id
+    📊 数据访问功能（自动注入）：
+    当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 和 `save_data(data, ...)` 函数：
+    - `get_raw_data(data_id)`: 返回 read_data_registry 已读取的数据快照；未先读取会报错。
+    - `save_data(data, schema='python_result', metadata=None)`: 将中间结果保存到数据注册表并返回 data_id
 
-使用示例：
-```python
-# 直接使用刚才查询返回的 data_id
-data = get_raw_data("air_quality_5min:v1:bbf34146...")
-print(f"数据点数: {{len(data)}}")
+    使用示例：
+    ```python
+    # 先用 read_data_registry 读取数据，再把已返回的小规模数据用于计算
+    data = [
+        {{'city': '广州', 'o3_primary_days': 120, 'valid_days': 365}},
+        {{'city': '深圳', 'o3_primary_days': 110, 'valid_days': 365}},
+    ]
+    ratio = sum(row['o3_primary_days'] for row in data) / sum(row['valid_days'] for row in data)
+    print(f"臭氧首要污染物占比: {{ratio:.2%}}")
 
-# 提取字段进行分析
-wind_dirs = [float(record['wind_direction_10m']) for record in data]
-concentrations = [float(record['PM2_5']) for record in data]
-
-# 保存后续还要复用的中间结果
-result_id = save_data(
-    [{{'city': '广州', 'pm25': 25.8}}],
-    schema='python_result',
-    metadata={{'purpose': 'report_check_intermediate'}}
-)
-print(f"后续读取: get_raw_data('{{result_id}}')")
+    # 保存后续还要复用的中间结果
+    result_id = save_data(
+        [{{'metric': 'o3_primary_ratio', 'value': ratio}}],
+        schema='python_result',
+        metadata={{'purpose': 'report_check_intermediate'}}
+    )
+    print(f"中间结果 data_id: {{result_id}}")
 ```
 
 📈 Excel 处理最佳实践：
@@ -222,6 +227,167 @@ doc.save('/root/report.docx')
             timeout=self.default_timeout
         )
 
+    def _validate_data_registry_pre_read(self, code: str) -> Optional[Dict[str, Any]]:
+        """Require read_data_registry before Python reads a DataRegistry id.
+
+        This is intentionally tool-level and mode-independent, mirroring the
+        read_file/edit_file read-before-edit contract. Pure calculations over
+        literal data are unaffected.
+        """
+        result = self._find_data_registry_accesses(code)
+        if result["direct_registry_access"]:
+            return self._data_registry_pre_read_error(
+                reason=result["direct_registry_access"][0],
+                data_id=None,
+                details="execute_python 不允许直接导入或调用 DataRegistry 底层读取接口；请先使用 read_data_registry。"
+            )
+
+        state = get_data_registry_read_state()
+        for data_id in result["get_raw_data_ids"]:
+            record = state.get(data_id)
+            if not record:
+                return self._data_registry_pre_read_error(
+                    reason="data_id_not_read",
+                    data_id=data_id,
+                    details=f"data_id {data_id} 尚未通过 read_data_registry 读取。"
+                )
+            if not record.is_data_snapshot:
+                return self._data_registry_pre_read_error(
+                    reason="metadata_only_read",
+                    data_id=data_id,
+                    details=(
+                        f"data_id {data_id} 只读取了字段/视图结构，尚未读取可用于计算的数据视图。"
+                    )
+                )
+
+        if result["unknown_get_raw_data"]:
+            return self._data_registry_pre_read_error(
+                reason="dynamic_data_id",
+                data_id=None,
+                details="get_raw_data 的 data_id 必须是字符串字面量，或赋值为字符串字面量的变量，以便校验是否已读取。"
+            )
+
+        return None
+
+    def _find_data_registry_accesses(self, code: str) -> Dict[str, Any]:
+        get_raw_data_ids: List[str] = []
+        unknown_get_raw_data = False
+        direct_registry_access: List[str] = []
+        assigned_strings: Dict[str, str] = {}
+
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            # Let the Python executor surface syntax errors. Only catch obvious
+            # pre-read bypasses in unparsable snippets.
+            direct_registry_access.extend(
+                token for token in ("app.services.data_registry", "backend_data_registry")
+                if token in code
+            )
+            if re.search(r"\bget_raw_data\s*\(", code):
+                unknown_get_raw_data = True
+            return {
+                "get_raw_data_ids": get_raw_data_ids,
+                "unknown_get_raw_data": unknown_get_raw_data,
+                "direct_registry_access": direct_registry_access,
+            }
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assigned_strings[target.id] = node.value.value
+
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module in {"app.services.data_registry", "backend_data_registry"}:
+                    direct_registry_access.append(f"import from {module}")
+
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "backend_data_registry":
+                        direct_registry_access.append("import backend_data_registry")
+
+            if isinstance(node, ast.Call):
+                func_name = self._call_name(node.func)
+                if func_name == "get_raw_data":
+                    if not node.args:
+                        unknown_get_raw_data = True
+                    else:
+                        data_id = self._literal_or_assigned_string(node.args[0], assigned_strings)
+                        if data_id:
+                            get_raw_data_ids.append(data_id)
+                        else:
+                            unknown_get_raw_data = True
+
+                if func_name.endswith(".load_dataset") or func_name.endswith(".load_payload"):
+                    direct_registry_access.append(func_name)
+
+        return {
+            "get_raw_data_ids": list(dict.fromkeys(get_raw_data_ids)),
+            "unknown_get_raw_data": unknown_get_raw_data,
+            "direct_registry_access": direct_registry_access,
+        }
+
+    def _call_name(self, node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            parent = self._call_name(node.value)
+            return f"{parent}.{node.attr}" if parent else node.attr
+        return ""
+
+    def _literal_or_assigned_string(self, node: ast.AST, assigned_strings: Dict[str, str]) -> Optional[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            return assigned_strings.get(node.id)
+        return None
+
+    def _data_registry_pre_read_error(
+        self,
+        *,
+        reason: str,
+        data_id: Optional[str],
+        details: str,
+    ) -> Dict[str, Any]:
+        logger.warning(
+            "execute_python_data_registry_pre_read_required",
+            reason=reason,
+            data_id=data_id,
+        )
+        return {
+            "status": "failed",
+            "success": False,
+            "error": (
+                "使用 DataRegistry 数据计算前必须先调用 read_data_registry 读取数据。"
+                f"{details}"
+            ),
+            "data": None,
+            "metadata": {
+                "tool_name": "execute_python",
+                "blocked_by": "data_registry_read_before_compute",
+                "reason": reason,
+                "data_id": data_id,
+            },
+            "summary": "执行失败：请先使用 read_data_registry 读取 data_id/report_data_id 后再计算。",
+        }
+
+    def _build_read_snapshot_payload(self, code: str) -> str:
+        """Serialize read_data_registry snapshots referenced by get_raw_data."""
+        try:
+            accesses = self._find_data_registry_accesses(code)
+            state = get_data_registry_read_state()
+            snapshots = {}
+            for data_id in accesses.get("get_raw_data_ids", []):
+                record = state.get(data_id)
+                if record and record.is_data_snapshot:
+                    snapshots[data_id] = record.data
+            return json.dumps(snapshots, ensure_ascii=False, default=str)
+        except Exception as exc:
+            logger.warning("data_registry_snapshot_payload_build_failed", error=str(exc))
+            return "{}"
+
     async def execute(
         self,
         context=None,
@@ -259,6 +425,10 @@ doc.save('/root/report.docx')
                 },
                 "summary": "缺少代码参数"
             }
+
+        pre_read_error = self._validate_data_registry_pre_read(code)
+        if pre_read_error:
+            return pre_read_error
 
         # ✅ 确保图表目录存在（每次执行时都检查）
         os.makedirs(self.CHARTS_DIR, exist_ok=True)
@@ -359,6 +529,48 @@ doc.save('/root/report.docx')
             result["data"]["engine"] = "ipython" if self.use_ipython else "subprocess"
             result["data"]["artifact_schema"] = self._artifact_schema()
 
+            # ✅ DOCX 后处理：优先用同目录 report.html 作为源重建正式 Word；
+            # 若没有 HTML 源，再兜底替换图片占位符。
+            docx_postprocess = []
+            for generated_file in final_files:
+                if Path(generated_file).suffix.lower() != ".docx":
+                    continue
+                try:
+                    from app.services.report.government_docx_style import (
+                        convert_html_report_to_government_docx,
+                        infer_report_html_path_for_docx,
+                        replace_image_placeholders_in_docx,
+                    )
+
+                    html_path = infer_report_html_path_for_docx(generated_file)
+                    if html_path:
+                        cleanup = convert_html_report_to_government_docx(html_path, generated_file)
+                        logger.info(
+                            "execute_python_docx_rebuilt_from_html_report",
+                            file=generated_file,
+                            html_path=str(html_path),
+                            embedded_images=cleanup.get("embedded_images"),
+                            missing_images=cleanup.get("missing_images", [])
+                        )
+                    else:
+                        cleanup = replace_image_placeholders_in_docx(generated_file)
+                        if cleanup.get("replaced", 0):
+                            logger.info(
+                                "execute_python_docx_images_embedded",
+                                file=generated_file,
+                                replaced=cleanup.get("replaced"),
+                                missing=cleanup.get("missing", [])
+                            )
+                    docx_postprocess.append(cleanup)
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "execute_python_docx_postprocess_failed",
+                        file=generated_file,
+                        error=str(cleanup_error)
+                    )
+            if docx_postprocess:
+                result["data"]["docx_postprocess"] = docx_postprocess
+
             # ✅ 处理办公文件：生成 PDF 预览（与 Office 工具统一格式）
             office_extensions = {'.docx', '.xlsx', '.pptx', '.pdf', '.doc', '.xls', '.ppt'}
             office_files = [f for f in final_files if Path(f).suffix.lower() in office_extensions]
@@ -427,7 +639,7 @@ doc.save('/root/report.docx')
                 if result.get("success", False):
                     result["summary"] = "✅ 工具已执行完成，计算任务已完成"
 
-            # ✅ 处理普通 HTML 报告：统一归档到 reports/{report_id}/report.html 并返回 html_preview
+            # ✅ 处理展示型 HTML：统一归档到 html_artifacts/{artifact_id}/index.html 并返回 html_preview
             html_files = [f for f in final_files if Path(f).suffix.lower() in {'.html', '.htm'}]
             if html_files and "html_preview" not in result["data"] and "file_path" not in result["data"]:
                 html_report = self._standardize_html_report(html_files[0], backend_dir)
@@ -435,15 +647,15 @@ doc.save('/root/report.docx')
                     report_path = html_report["file_path"]
                     result["data"]["html_preview"] = html_report["html_preview"]
                     result["data"]["file_path"] = report_path
-                    result["data"]["file_type"] = "html_report"
+                    result["data"]["file_type"] = "html_artifact"
                     if report_path not in result["data"]["files"]:
                         result["data"]["files"].append(report_path)
                     if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成HTML报告：{Path(report_path).name}"
+                        result["summary"] = f"✅ 工具已执行完成，生成HTML展示页：{Path(report_path).name}"
                     logger.info(
-                        "execute_python_html_report_standardized",
+                        "execute_python_html_artifact_standardized",
                         source_file=html_files[0],
-                        report_id=html_report["report_id"],
+                        artifact_id=html_report.get("artifact_id"),
                         report_path=report_path,
                         html_url=html_report["html_preview"]["html_url"],
                     )
@@ -537,13 +749,20 @@ doc.save('/root/report.docx')
                                 "type": "image",
                                 "title": f"图表 {Path(chart_path).stem}",
                                 "data": {
-                                    "url": image_info["url"],
-                                    "image_id": image_info["image_id"]
+                                    "url": image_info["url"],  # /api/image/{image_id}（前端用）
+                                    "image_id": image_info["image_id"],
+                                    "local_path": image_info["local_path"],  # 图片缓存真实本地路径
+                                    "source_file_path": abs_chart_path,  # execute_python 生成的真实图片路径
                                 },
                                 "meta": {
                                     "generator": "execute_python",
                                     "schema_version": "3.1",
-                                    "file_path": abs_chart_path
+                                    "file_path": abs_chart_path,
+                                    "report_asset_hint": {
+                                        "path": abs_chart_path,
+                                        "type": "image",
+                                        "name": Path(chart_path).name,
+                                    },
                                 }
                             })
 
@@ -611,13 +830,20 @@ doc.save('/root/report.docx')
                                 "type": "image",
                                 "title": f"图表 {chart_id}",
                                 "data": {
-                                    "url": image_info["url"],
-                                    "image_id": image_info["image_id"]
+                                    "url": image_info["url"],  # /api/image/{image_id}（前端用）
+                                    "image_id": image_info["image_id"],
+                                    "local_path": image_info["local_path"],  # 图片缓存真实本地路径
+                                    "source_file_path": image_info["local_path"],
                                 },
                                 "meta": {
                                     "generator": "execute_python",
                                     "schema_version": "3.1",
-                                    "source": "base64_output"
+                                    "source": "base64_output",
+                                    "report_asset_hint": {
+                                        "path": image_info["local_path"],
+                                        "type": "image",
+                                        "name": f"{chart_id}.png",
+                                    },
                                 }
                             })
 
@@ -916,84 +1142,54 @@ doc.save('/root/report.docx')
             "files": "All generated local files as absolute paths.",
             "file_path": "Primary generated file for preview/download.",
             "pdf_preview": "Office/PDF preview metadata for docx/xlsx/pptx/pdf artifacts.",
-            "html_preview": "HTML preview metadata. Notebook uses /api/notebook/html/{html_id}; reports use /api/reports/{report_id}/html.",
+            "html_preview": "HTML preview metadata. Notebook uses /api/notebook/html/{html_id}; HTML artifacts use /api/html-artifacts/{artifact_id}/html; reports use /api/reports/{report_id}/html.",
             "visuals": "Image/ECharts blocks for frontend rendering. Matplotlib images are cached under /api/image/{image_id}.",
-            "html_report_layout": "HTML reports must live at backend_data_registry/reports/{report_id}/report.html.",
+            "html_artifact_layout": "Presentation HTML artifacts live at backend_data_registry/html_artifacts/{artifact_id}/index.html.",
         }
 
     def _safe_report_id(self, raw_id: str) -> str:
-        """Normalize a report id for the /api/reports/{report_id}/html route."""
+        """Normalize an HTML artifact id."""
         report_id = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_id.strip())
         report_id = report_id.strip("_")
         return report_id or f"html_report_{int(time.time())}"
 
     def _standardize_html_report(self, html_file: str, backend_dir: str) -> Optional[Dict[str, Any]]:
         """
-        Move/copy a generated standalone HTML file into the standard report package.
+        Move/copy a generated standalone HTML file into the HTML artifact store.
 
         This is a compatibility fallback for older execute_python snippets that wrote
-        backend_data_registry/reports/{report_id}.html directly instead of using the
-        injected save_html_report() helper.
+        a bare .html file instead of using create_html_artifact.
         """
         source = Path(html_file).resolve()
         if not source.exists() or not source.is_file():
             return None
 
-        reports_root = Path(self.REPORTS_DIR).resolve()
-        if source.name.lower() in {"report.html", "report.htm"} and source.parent.parent.resolve() == reports_root:
-            report_id = self._safe_report_id(source.parent.name)
-        else:
-            report_id = self._safe_report_id(source.stem)
-        report_dir = reports_root / report_id
-        target = report_dir / "report.html"
-
-        # Already standardized.
-        if source == target.resolve():
-            return {
-                "report_id": report_id,
-                "file_path": str(target),
-                "html_preview": {
-                    "html_id": report_id,
-                    "html_url": f"/api/reports/{report_id}/html",
-                    "file_type": "report",
-                    "schema_version": "execute_python.artifacts.v1",
-                },
-            }
-
-        report_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-
-        # Common legacy layout: reports/foo.html references assets/... from reports/.
-        # Copy reports/assets into reports/foo/assets so relative HTML references work.
-        legacy_assets = reports_root / "assets"
-        target_assets = report_dir / "assets"
-        if legacy_assets.exists() and legacy_assets.is_dir() and not target_assets.exists():
-            shutil.copytree(legacy_assets, target_assets)
-
-        # Also preserve sibling asset directories if the HTML was generated elsewhere.
+        artifact_id = self._safe_report_id(source.stem)
+        assets = []
         for sibling_name in ("assets", "images", "report_files"):
             sibling = source.parent / sibling_name
-            destination = report_dir / sibling_name
-            if sibling.exists() and sibling.is_dir() and not destination.exists():
-                try:
-                    shutil.copytree(sibling, destination)
-                except Exception as exc:
-                    logger.warning(
-                        "execute_python_html_asset_copy_failed",
-                        source=str(sibling),
-                        destination=str(destination),
-                        error=str(exc),
-                    )
+            if sibling.exists() and sibling.is_dir():
+                assets.append({"path": str(sibling), "name": sibling.name})
+
+        try:
+            from app.services.html_artifact_service import html_artifact_service
+
+            data = html_artifact_service.create_artifact(
+                artifact_id,
+                source.read_text(encoding="utf-8", errors="replace"),
+                title=source.stem,
+                assets=assets,
+                metadata={"source": "execute_python_html_file"},
+            )
+        except Exception as exc:
+            logger.warning("execute_python_html_artifact_standardize_failed", source_file=str(source), error=str(exc))
+            return None
 
         return {
-            "report_id": report_id,
-            "file_path": str(target),
-            "html_preview": {
-                "html_id": report_id,
-                "html_url": f"/api/reports/{report_id}/html",
-                "file_type": "report",
-                "schema_version": "execute_python.artifacts.v1",
-            },
+            "report_id": data["artifact_id"],
+            "artifact_id": data["artifact_id"],
+            "file_path": data["file_path"],
+            "html_preview": data["html_preview"],
         }
 
     def _extract_chart_paths(self, output: str) -> dict:
@@ -1170,58 +1366,42 @@ doc.save('/root/report.docx')
             has_data_manager=context.data_manager is not None
         )
 
+        snapshot_payload = self._build_read_snapshot_payload(code)
+
         # 构建注入的代码
         context_injection_code = '''# ===== 数据访问上下文（自动注入） =====
 # 重要：每次 execute_python 都是独立执行环境，不保留上次调用的变量。
 # 如果中间结果后续还要复用，请调用 save_data(...) 保存为 data_id；
 # 后续 execute_python 调用中再用 get_raw_data(data_id) 显式读取。
 
+__READ_DATA_REGISTRY_SNAPSHOTS__ = __SNAPSHOT_PAYLOAD__
+
 # 获取原始数据（字典列表格式）
 def get_raw_data(data_id: str):
-    """根据 data_id 获取原始数据（字典列表格式）
+    """获取 read_data_registry 已读取的数据快照。
     
     Args:
-        data_id: 数据ID，格式为 "dataset_name:v1:uuid" 或 "dataset_name_v1_uuid"
+        data_id: 已通过 read_data_registry 读取过的数据ID
     
     Returns:
-        数据列表（字典列表）
+        read_data_registry 最近一次读取该 data_id 返回的 data
     """
-    try:
-        from app.services.data_registry import data_registry
-        return data_registry.load_dataset(data_id)
-    except Exception:
-        import json
-        import os
-        import sys
-        
-        # 获取项目根目录（兼容 ipython 环境）
-        backend_root = None
-        for path in sys.path:
-            if 'backend' in path and os.path.isdir(path):
-                test_dir = os.path.join(path, 'backend_data_registry', 'datasets')
-                if os.path.isdir(test_dir):
-                    backend_root = path
-                    break
-        
-        if backend_root is None:
-            backend_root = '/home/xckj/suyuan/backend'
-        
-        datasets_dir = os.path.join(backend_root, 'backend_data_registry', 'datasets')
-        filename = data_id.replace(':', '_') + '.json'
-        file_path = os.path.join(datasets_dir, filename)
-        
-        if not os.path.exists(file_path):
-            try:
-                available_files = [f for f in os.listdir(datasets_dir) if f.endswith('.json')][:5]
-                raise FileNotFoundError(
-                    f"数据文件不存在: {file_path}\\n"
-                    f"可用的数据文件: {available_files}"
-                )
-            except FileNotFoundError as e:
-                raise e
-        
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    if data_id in __READ_DATA_REGISTRY_SNAPSHOTS__:
+        return __READ_DATA_REGISTRY_SNAPSHOTS__[data_id]
+
+    from app.tools.system.data_registry_read_state import get_data_registry_read_state
+
+    record = get_data_registry_read_state().get(data_id)
+    if record is None:
+        raise RuntimeError(
+            f"DataRegistry 数据 {data_id} 尚未读取。请先调用 read_data_registry(data_id=...)。"
+        )
+    if not record.is_data_snapshot:
+        raise RuntimeError(
+            f"DataRegistry 数据 {data_id} 当前只有结构信息，没有可计算数据。"
+            "请先调用 read_data_registry 读取具体 view/fields。"
+        )
+    return record.data
 
 def save_data(data, schema: str = 'python_result', metadata=None, version: str = 'v1'):
     """保存 Python 中间结果到数据注册表并返回 data_id。
@@ -1287,6 +1467,7 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 # ===== 数据访问上下文注入完成 =====
 
 '''
+        context_injection_code = context_injection_code.replace("__SNAPSHOT_PAYLOAD__", snapshot_payload)
 
         # 在代码开头插入上下文代码
         injected_code = context_injection_code + code
@@ -1301,35 +1482,29 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 
     def _inject_report_helpers(self, code: str) -> str:
         """Inject helpers for standardized report artifact output."""
-        reports_dir = self.REPORTS_DIR.replace("\\", "\\\\").replace("'", "\\'")
+        html_artifacts_dir = str(get_data_registry() / "html_artifacts").replace("\\", "\\\\").replace("'", "\\'")
         helper_code = f'''# ===== 报告输出辅助函数（自动注入） =====
-# HTML报告统一保存为 backend_data_registry/reports/{{report_id}}/report.html
-def save_html_report(report_id: str, html_content: str, assets_dir=None, extra_assets=None):
-    """保存 HTML 报告并打印标准预览标记。
+# 展示型HTML统一保存为 backend_data_registry/html_artifacts/{{artifact_id}}/index.html
+def save_html_artifact(artifact_id: str, html_content: str, assets_dir=None, extra_assets=None):
+    """保存展示型 HTML 并打印标准预览标记。
 
-    Args:
-        report_id: URL中的报告ID，只允许字母、数字、下划线和连字符；其他字符会转为下划线。
-        html_content: 完整 HTML 字符串。
-        assets_dir: 可选，包含 assets/images 等资源的目录；会复制到报告目录下。
-        extra_assets: 可选，文件或目录路径列表；目录按原名复制，文件复制到 assets/。
-
-    Returns:
-        dict: {{success, report_id, file_path, html_preview}}
+    适用于演讲材料、数据大屏、交互说明页、可视化叙事等。
+    正式报告请使用 create_report_package，不要用本函数交付。
     """
     import json
     import re
     import shutil
     from pathlib import Path
 
-    reports_root = Path('{reports_dir}')
-    safe_id = re.sub(r'[^A-Za-z0-9_-]+', '_', str(report_id).strip()).strip('_')
+    artifacts_root = Path('{html_artifacts_dir}')
+    safe_id = re.sub(r'[^A-Za-z0-9_-]+', '_', str(artifact_id).strip()).strip('_')
     if not safe_id:
-        raise ValueError('report_id 不能为空')
+        raise ValueError('artifact_id 不能为空')
 
-    report_dir = reports_root / safe_id
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / 'report.html'
-    report_path.write_text(html_content, encoding='utf-8')
+    artifact_dir = artifacts_root / safe_id
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / 'index.html'
+    artifact_path.write_text(html_content, encoding='utf-8')
 
     def _copy_dir(src, dst):
         src = Path(src)
@@ -1341,39 +1516,45 @@ def save_html_report(report_id: str, html_content: str, assets_dir=None, extra_a
     if assets_dir:
         src = Path(assets_dir)
         if src.exists() and src.is_dir():
+            assets_target = artifact_dir / 'assets'
+            assets_target.mkdir(parents=True, exist_ok=True)
             if src.name == 'assets':
-                _copy_dir(src, report_dir / 'assets')
+                _copy_dir(src, assets_target)
             else:
-                assets_target = report_dir / 'assets'
-                assets_target.mkdir(parents=True, exist_ok=True)
                 _copy_dir(src, assets_target / src.name)
 
     for asset in (extra_assets or []):
         src = Path(asset)
         if not src.exists():
             continue
+        assets_target = artifact_dir / 'assets'
+        assets_target.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
-            _copy_dir(src, report_dir / src.name)
+            _copy_dir(src, assets_target / src.name)
         else:
-            assets_target = report_dir / 'assets'
-            assets_target.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, assets_target / src.name)
 
     html_preview = {{
         'html_id': safe_id,
-        'html_url': f'/api/reports/{{safe_id}}/html',
-        'file_type': 'report',
-        'schema_version': 'execute_python.artifacts.v1',
+        'html_url': f'/api/html-artifacts/{{safe_id}}/html',
+        'file_type': 'html_artifact',
+        'schema_version': 'html_artifact.v1',
+        'preview_version': str(int(artifact_path.stat().st_mtime)),
     }}
     result = {{
         'success': True,
-        'report_id': safe_id,
-        'file_path': str(report_path),
+        'artifact_id': safe_id,
+        'file_path': str(artifact_path),
+        'file_type': 'html_artifact',
         'html_preview': html_preview,
     }}
-    print('HTML_REPORT_SAVED:' + str(report_path))
+    print('HTML_ARTIFACT_SAVED:' + str(artifact_path))
     print('HTML_PREVIEW:' + json.dumps(html_preview, ensure_ascii=False))
     return result
+
+# 兼容旧名称：轻量HTML/展示页走 html_artifact；正式报告仍应使用 create_report_package。
+def save_html_report(report_id: str, html_content: str, assets_dir=None, extra_assets=None):
+    return save_html_artifact(report_id, html_content, assets_dir=assets_dir, extra_assets=extra_assets)
 
 # ===== 报告输出辅助函数注入完成 =====
 
@@ -1702,9 +1883,10 @@ if not _font_registered:
         # 步骤2：处理每一行，删除错误的字体设置
         for line in lines:
             # 检测并删除错误的字体设置（已在注册代码中统一配置）
-            # 同时检测 plt.rcParams 和 matplotlib.rcParams，以及 font.sans-serif 和 axes.unicode_minus
+            # 同时检测 plt.rcParams 和 matplotlib.rcParams，以及可能覆盖中文字体的字体设置。
             has_font_setting = (
-                "font.sans-serif" in line and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
+                ("font.sans-serif" in line or "font.family" in line)
+                and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
             ) or (
                 "axes.unicode_minus" in line and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
             )
@@ -2121,8 +2303,8 @@ def merge_excel_with_charts(file_paths, output_path):
 
         # 常见的文件保存模式（支持中文路径）
         patterns = [
-            # WORD_SAVED:/path/to/file.docx, EXCEL_SAVED:/path/to/file.xlsx, HTML_REPORT_SAVED:/path/to/report.html
-            r'(?:WORD_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED|HTML_REPORT_SAVED)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
+            # WORD_SAVED:/path/to/file.docx, WORD_REPORT_SAVED:/path/to/file.docx, EXCEL_SAVED:/path/to/file.xlsx
+            r'(?:WORD_SAVED|WORD_REPORT_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED|HTML_REPORT_SAVED)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
             # 报告已生成：/path/to/文件名.docx
             r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
             # 文件名.xlsx（带中文的后缀）
@@ -2369,19 +2551,24 @@ def merge_excel_with_charts(file_paths, output_path):
         return {
             "name": "execute_python",
             "description": (
-                "执行 Python 代码，用于数据处理、数值计算、可视化、Excel/Word文件生成。"
+                "执行 Python 代码，用于数据处理、数值计算、可视化、Excel处理和中间资源生成。"
                 "助手Agent和社交Agent在处理复杂 Python、Excel、图表或文件生成前，"
                 "必须先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "生成正式DOCX政府报告时，默认使用 "
-                "app.services.report.government_docx_style 中的 "
-                "apply_government_report_style、add_government_title、"
-                "add_government_heading、add_government_paragraph、add_government_table；"
-                "只有用户明确提出其他排版时才局部覆盖默认样式。"
+                "正式报告最终交付必须优先使用 create_report_package："
+                "先准备 report.qmd 内容和真实资源路径，再由 create_report_package 复制资源、规范化报告包内相对路径并触发右侧面板预览；"
+                "HTML/Word/PPT/QMD下载和HTML分享链接由前端右侧面板调用固定后端报告API处理。"
+                "不要把 execute_python 作为正式报告最终交付工具，也不要在 Python 脚本里手写正式报告格式转换。"
+                "演讲材料、展示页、数据大屏、交互网页或可视化叙事等非正式报告，应使用 create_html_artifact 收口，"
+                "右侧面板仅提供HTML预览、下载HTML和分享链接。"
+                "只有用户明确要求一次性 Word/Office 文件且不需要 qmd/HTML/PPT 同源报告包时，才直接生成 Office 文件。"
                 "优先使用专用统计/查询工具；只有专用工具无法满足自定义计算时再使用本工具。"
-                "生成文件保存到 backend_data_registry，并打印输出路径。默认超时30秒。"
+                "使用工具返回的 data_id/report_data_id 计算前必须先调用 read_data_registry 读取数据；"
+                "execute_python 的 get_raw_data 只返回 read_data_registry 已读取的数据快照，未读取会报错；"
+                "不要在代码中绕过 read_data_registry 直接导入 data_registry 或 backend_data_registry。"
+                "生成中间文件保存到 backend_data_registry，并打印输出路径供后续工具使用。默认超时30秒。"
                 "输出artifact schema：files为生成文件列表，file_path为主文件；"
                 "Office/PDF返回pdf_preview，Notebook返回html_preview，"
-                "HTML报告应使用save_html_report()并返回/api/reports/{report_id}/html，"
+                "轻量HTML兼容流程可使用save_html_report()，正式报告不要优先使用该流程，"
                 "图片/ECharts返回visuals。"
             ),
             "parameters": {

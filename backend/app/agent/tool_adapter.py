@@ -850,7 +850,6 @@ def get_tool_metadata() -> Dict[str, Any]:
                 "version": tool_data.get("version"),
                 "category": tool_data.get("category"),
                 "requires_context": tool_data.get("requires_context"),
-                "input_adapter_rules": tool_data.get("input_adapter_rules", {}),
                 "return_schema": tool_data.get("return_schema", {}),
                 "metadata": tool_data.get("metadata", {}),
                 "test_samples": tool_data.get("test_samples", []),

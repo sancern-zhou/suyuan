@@ -16,7 +16,7 @@
             <!-- Action buttons in top-right corner -->
             <div class="action-buttons">
               <button
-                v-if="!['notebook', 'report'].includes(doc.doc_type)"
+                v-if="!['notebook', 'report', 'html_artifact'].includes(doc.doc_type)"
                 @click="toggleEditMode"
                 class="action-btn edit-btn"
                 title="编辑模式"
@@ -28,8 +28,8 @@
                 <span>编辑</span>
               </button>
               <button
-                v-if="doc.doc_type === 'report'"
-                @click="handleReportShare(doc)"
+                v-if="['report', 'html_artifact'].includes(doc.doc_type)"
+                @click="doc.doc_type === 'html_artifact' ? handleHtmlArtifactShare(doc) : handleReportShare(doc)"
                 class="action-btn share-btn"
                 title="生成分享链接"
                 :disabled="doc.sharing"
@@ -56,7 +56,16 @@
                   <span>下载</span>
                 </button>
                 <div v-if="showDownloadMenu" class="download-menu">
-                  <button v-if="doc.doc_type === 'markdown' || (doc.doc_type === 'report' && doc.markdown_content)" @click="downloadMarkdown(doc)" class="download-item">
+                  <button v-if="doc.doc_type === 'report'" @click="downloadReportFormat(doc, 'qmd')" class="download-item">
+                    下载 QMD 源文件
+                  </button>
+                  <button v-if="doc.doc_type === 'report'" @click="downloadReportFormat(doc, 'docx')" class="download-item">
+                    下载 Word 文档
+                  </button>
+                  <button v-if="doc.doc_type === 'html_artifact'" @click="downloadHtmlArtifact(doc)" class="download-item">
+                    下载 HTML 文件
+                  </button>
+                  <button v-if="doc.doc_type === 'markdown'" @click="downloadMarkdown(doc)" class="download-item">
                     下载 Markdown 文件
                   </button>
                   <button v-if="doc.pdf_url" @click="downloadPDF(doc)" class="download-item">
@@ -106,10 +115,11 @@
               ></iframe>
             </div>
 
-            <!-- HTML preview (Notebook/Quarto报告使用iframe显示) -->
-            <div v-else-if="['notebook', 'report'].includes(doc.doc_type) && doc.html_url" class="notebook-wrapper">
+            <!-- HTML preview (Notebook/Quarto报告/HTML展示页使用iframe显示) -->
+            <div v-else-if="['notebook', 'report', 'html_artifact'].includes(doc.doc_type) && doc.html_url" class="notebook-wrapper">
               <iframe
                 :src="doc.html_url"
+                :key="doc.html_url"
                 class="notebook-iframe"
                 type="text/html"
                 @load="onPdfLoaded(doc)"
@@ -246,6 +256,18 @@ const hasOfficeDocuments = computed(() => {
   return officeDocuments.value.length > 0
 })
 
+function withPreviewVersion(url, version) {
+  if (!url || !version) {
+    return url
+  }
+  try {
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}v=${encodeURIComponent(version)}`
+  } catch (error) {
+    return url
+  }
+}
+
 // 监听 store.lastOfficeDocument，直接更新文档列表
 watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
   if (!doc?.pdf_preview && !doc?.markdown_preview && !doc?.html_preview) {
@@ -283,8 +305,9 @@ watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
     }
     // 更新 Notebook HTML预览
     if (doc.html_preview) {
-      existingDoc.html_url = doc.html_preview.html_url
+      existingDoc.html_url = withPreviewVersion(doc.html_preview.html_url, doc.html_preview.preview_version)
       existingDoc.html_id = doc.html_preview.html_id
+      existingDoc.preview_version = doc.html_preview.preview_version
       existingDoc.file_path = filePath
       existingDoc.doc_type = getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type)
       existingDoc.loading = false
@@ -297,8 +320,9 @@ watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
       file_path: filePath,
       pdf_url: doc.pdf_preview?.pdf_url,
       pdf_id: doc.pdf_preview?.pdf_id,
-      html_url: doc.html_preview?.html_url,
+      html_url: withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
       html_id: doc.html_preview?.html_id,
+      preview_version: doc.html_preview?.preview_version,
       markdown_content: doc.markdown_preview?.content,
       loading: false,
       sharing: false,
@@ -521,6 +545,136 @@ async function downloadPPT(doc) {
   }
 }
 
+function getReportId(doc) {
+  if (doc.html_id) {
+    return doc.html_id
+  }
+  if (doc.html_url) {
+    const match = doc.html_url.match(/\/api\/reports\/([^/]+)\/html/)
+    if (match?.[1]) {
+      return decodeURIComponent(match[1])
+    }
+  }
+  if (doc.file_path) {
+    const normalized = doc.file_path.replace(/\\/g, '/')
+    const match = normalized.match(/\/reports\/([^/]+)\/report\.qmd$/)
+    if (match?.[1]) {
+      return match[1]
+    }
+  }
+  return null
+}
+
+function getHtmlArtifactId(doc) {
+  if (doc.html_id) {
+    return doc.html_id
+  }
+  if (doc.html_url) {
+    const match = doc.html_url.match(/\/api\/html-artifacts\/([^/?#]+)\/html/)
+    if (match?.[1]) {
+      return decodeURIComponent(match[1])
+    }
+  }
+  if (doc.file_path) {
+    const normalized = doc.file_path.replace(/\\/g, '/')
+    const match = normalized.match(/\/html_artifacts\/([^/]+)\/index\.html$/)
+    if (match?.[1]) {
+      return match[1]
+    }
+  }
+  return null
+}
+
+async function ensureReportFormat(reportId, format) {
+  if (format !== 'docx') {
+    return
+  }
+
+  const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/render/${format}`, {
+    method: 'POST'
+  })
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const payload = await response.json()
+      detail = payload.detail || payload.message || ''
+    } catch (error) {
+      detail = await response.text()
+    }
+    throw new Error(detail || `生成 ${format.toUpperCase()} 失败`)
+  }
+}
+
+async function downloadReportFormat(doc, format) {
+  const reportId = getReportId(doc)
+  if (!reportId) {
+    console.error('[OfficeDocumentPanel] Report ID not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    await ensureReportFormat(reportId, format)
+
+    const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/download/${format}`)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const fallbackNames = {
+      qmd: 'report.qmd',
+      docx: 'report.docx'
+    }
+    const fileName = getResponseFilename(response, fallbackNames[format] || `report.${format}`)
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    console.log('[OfficeDocumentPanel] Report download started:', reportId, format)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Report download failed:', error)
+    alert(`下载报告失败：${error.message}`)
+  }
+}
+
+async function downloadHtmlArtifact(doc) {
+  const artifactId = getHtmlArtifactId(doc)
+  if (!artifactId) {
+    console.error('[OfficeDocumentPanel] HTML artifact ID not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    const response = await fetch(`/api/html-artifacts/${encodeURIComponent(artifactId)}/download/html`)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const fileName = getResponseFilename(response, 'index.html')
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] HTML artifact download failed:', error)
+    alert(`下载HTML展示页失败：${error.message}`)
+  }
+}
+
 // Download Markdown file
 function downloadMarkdown(doc) {
   if (!doc.file_path || doc.file_path === '') {
@@ -625,6 +779,9 @@ async function submitEdit(doc) {
 
 function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType) {
   const explicitType = fileType || htmlPreview?.file_type
+  if (explicitType === 'html_artifact') {
+    return 'html_artifact'
+  }
   if (['report', 'html_report', 'quarto_report'].includes(explicitType)) {
     return 'report'
   }
@@ -635,6 +792,8 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
   // 先根据 generator 判断
   if (generator === 'quarto_report' || filePath?.endsWith('report.qmd')) {
     return 'report'
+  } else if (generator === 'create_html_artifact' || filePath?.includes('/html_artifacts/')) {
+    return 'html_artifact'
   } else if (['word_edit', 'find_replace_word', 'accept_word_changes'].includes(generator)) {
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
@@ -723,8 +882,9 @@ function loadDocuments(documents) {
         file_path: filePath,
         pdf_url: doc.pdf_preview?.pdf_url,
         pdf_id: doc.pdf_preview?.pdf_id,
-        html_url: doc.html_preview?.html_url,
+        html_url: withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
         html_id: doc.html_preview?.html_id,
+        preview_version: doc.html_preview?.preview_version,
         markdown_content: doc.markdown_preview?.content,
         loading: false,
         sharing: false,
@@ -764,7 +924,7 @@ async function copyTextToClipboard(text) {
 
 // 处理Quarto报告分享
 async function handleReportShare(doc) {
-  const reportId = doc.html_id
+  const reportId = getReportId(doc)
   if (!reportId) {
     alert('无法分享：缺少报告ID')
     return
@@ -787,6 +947,37 @@ async function handleReportShare(doc) {
     alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
   } catch (error) {
     console.error('[OfficeDocumentPanel] 生成报告分享链接失败:', error)
+    alert('❌ 生成分享链接失败：' + error.message)
+  } finally {
+    doc.sharing = false
+  }
+}
+
+// 处理HTML展示页分享
+async function handleHtmlArtifactShare(doc) {
+  const artifactId = getHtmlArtifactId(doc)
+  if (!artifactId) {
+    alert('无法分享：缺少HTML展示页ID')
+    return
+  }
+
+  doc.sharing = true
+
+  try {
+    const response = await fetch(`/api/html-artifacts/${encodeURIComponent(artifactId)}/share`, {
+      method: 'POST'
+    })
+    const result = await response.json()
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.detail || '生成分享链接失败')
+    }
+
+    const shareLink = `${window.location.origin}${result.share_url}`
+    await copyTextToClipboard(shareLink)
+    alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] 生成HTML展示页分享链接失败:', error)
     alert('❌ 生成分享链接失败：' + error.message)
   } finally {
     doc.sharing = false

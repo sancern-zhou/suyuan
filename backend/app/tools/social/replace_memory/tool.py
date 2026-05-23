@@ -34,6 +34,7 @@ class ReplaceMemoryTool(LLMTool):
             name="replace_memory",
             description="替换MEMORY.md中的现有条目",
             category=ToolCategory.TASK_MANAGEMENT,
+            function_schema=self._build_schema(),  # ✅ 传递 schema
             version="1.0.0",
             requires_context=False
         )
@@ -53,23 +54,27 @@ class ReplaceMemoryTool(LLMTool):
     def _build_schema(self) -> Dict[str, Any]:
         """构建工具schema"""
         return {
-            "type": "object",
-            "properties": {
-                "old_text": {
-                    "type": "string",
-                    "description": "要替换的旧内容（子串匹配）"
+            "name": "replace_memory",
+            "description": "替换MEMORY.md中的现有条目",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_text": {
+                        "type": "string",
+                        "description": "要替换的旧内容（子串匹配）"
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "新的内容"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
+                        "description": "事实类别（可选，用于精确匹配）"
+                    }
                 },
-                "new_text": {
-                    "type": "string",
-                    "description": "新的内容"
-                },
-                "category": {
-                    "type": "string",
-                    "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
-                    "description": "事实类别（可选，用于精确匹配）"
-                }
-            },
-            "required": ["old_text", "new_text"]
+                "required": ["old_text", "new_text"]
+            }
         }
 
     async def execute(self, old_text: str, new_text: str, category: str = None, **kwargs) -> Dict[str, Any]:

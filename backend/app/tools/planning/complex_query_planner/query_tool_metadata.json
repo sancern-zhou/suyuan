@@ -1,7 +1,7 @@
 {
   "version": "1.1",
   "global_rules": {
-    "default_standard": "Use new national standard by default: query_city_standard_report with ns_type=2. Use ns_type=1 only when the user explicitly asks for old standard.",
+    "default_standard": "For query_city_standard_report, omit ns_type when the user does not specify a standard. The tool defaults by query range: periods before 2025-01-01 use ns_type=1 old national standard; periods on or after 2025-01-01 use ns_type=2 new national standard; ranges crossing 2025-01-01 are automatically split into old-standard and new-standard API queries and returned as segmented combined results. Data before 2025-01-01 exists only under the old standard; explicitly querying ns_type=2 for pre-2025 periods usually returns no data.",
     "city_name_format": "Use short Chinese city names without the 市 suffix, for example 广州 not 广州市",
     "date_format": "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
     "result_vs_report_data_id": {

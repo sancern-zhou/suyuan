@@ -30,6 +30,7 @@ import platform
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+from app.services.document_preview_refresh import refresh_preview_for_managed_document_path
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
 from app.utils.path_config import BACKEND_ROOT
@@ -182,9 +183,39 @@ class WriteFileTool(LLMTool):
 - 临时目录：/tmp 及其子目录（用于临时文件）
 
 示例：
-- write_file(path="/tmp/reports/jining_202603_pollution_report/report.qmd", content="---\ntitle: 报告\n---")
 - write_file(path="backend/output.txt", content="output data")
 - write_file(path="config.json", content='{"port": 8000}')
+
+📋 Quarto 报告（.qmd）边界：
+- 正式报告不要用 write_file 直接写入 `backend_data_registry/reports/` 根目录或手工拼装交付路径。
+- 正式报告应调用 `create_report_package`，由工具保存为 `reports/{report_id}/report.qmd` 并触发右侧面板预览。
+- write_file 只适合创建草稿片段、临时说明文件，或在明确需要时维护非正式文本文件。
+- 需要修改已存在的 `report.qmd` 时，先用 read_file 读取，再按需使用 edit_file/write_file，随后应通过报告包/报告接口刷新预览并用 validate_report_package 校验。
+
+如果创建 Quarto 草稿或报告包内 qmd 内容，必须遵守以下格式规范：
+
+YAML 配置要求：
+---
+title: "报告标题"
+subtitle: "副标题（可选）"
+author: "作者名称"
+date: "报告日期"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    embed-resources: false  # ⚠️ 必须设置为false
+    theme: cosmo
+---
+
+图片引用规范：
+- ⚠️ 必须使用报告包内本地相对路径：![图片标题](assets/charts/chart.png)
+- 创建正式报告包时，不要在 write_file 中手工猜测图片路径；应调用 `create_report_package`，
+  将真实图片文件路径传入 assets，由报告包工具复制并规范化为 `assets/charts/{filename}`。
+- ❌ 禁止使用绝对URL路径：/api/image/{image_id}
+- ❌ 禁止使用data URL：data:image/png;base64,...
+
+原因：embed-resources: false 确保图片保持为独立文件，不编码为base64，使得HTML预览和Word/PPT导出都能正确显示图片。
 
 参数说明：
 - path: 文件路径（必填，绝对路径或相对路径）
@@ -406,6 +437,8 @@ class WriteFileTool(LLMTool):
             result_data = {
                 "type": "create" if is_new_file else "update",
                 "filePath": str(resolved_path),
+                "file_path": str(resolved_path),
+                "path": str(resolved_path),
                 "content": normalized_content,
                 "lines": line_count,
                 "size": file_size,
@@ -433,13 +466,27 @@ class WriteFileTool(LLMTool):
                 result_data["structuredPatch"] = ""
                 result_data["originalFile"] = None
 
+            summary = (
+                f"{'创建' if is_new_file else '覆写'}成功：{resolved_path.name}，"
+                f"{line_count} 行，{file_size} 字节"
+            )
+            preview_refresh = refresh_preview_for_managed_document_path(resolved_path)
+            if preview_refresh:
+                result_data.update(preview_refresh)
+                refresh_state = (
+                    preview_refresh.get("report_preview_refresh")
+                    or preview_refresh.get("html_artifact_preview_refresh")
+                    or {}
+                )
+                if refresh_state.get("success"):
+                    summary += "，右侧预览已刷新"
+                else:
+                    summary += "，但右侧预览刷新失败"
+
             return {
                 "success": True,
                 "data": result_data,
-                "summary": (
-                    f"{'创建' if is_new_file else '覆写'}成功：{resolved_path.name}，"
-                    f"{line_count} 行，{file_size} 字节"
-                )
+                "summary": summary
             }
 
         except Exception as e:
@@ -546,6 +593,12 @@ class WriteFileTool(LLMTool):
             "description": (
                 "创建或完整覆写文件。已存在文件必须先read_file；局部修改用edit_file。"
                 "会做修改时间检查并返回diff，避免覆盖并发修改。"
+                "正式报告不要用 write_file 直接写入 backend_data_registry/reports 根目录或手工拼装交付路径；"
+                "应调用 create_report_package 保存为 reports/{report_id}/report.qmd 并触发右侧面板预览。"
+                "write_file 只适合创建草稿片段、临时说明文件或非正式文本文件；"
+                "如维护已有标准报告包 report.qmd 或 HTML展示页 index.html，后端会自动刷新右侧预览并返回html_preview；报告包随后可用 validate_report_package 校验。"
+                "qmd 图片最终必须使用报告包内相对路径，不要使用 /api/image/... 或 data URL；"
+                "正式报告应把真实图片路径交给 create_report_package.assets，由报告包工具复制并规范化引用。"
             ),
             "parameters": {
                 "type": "object",

@@ -68,6 +68,7 @@ OPS_SQL_TABLES = [
     'RF_W_GASEOUSCHECK_NOX',
     'RF_W_GASEOUSCHECK_O3',
     'RF_W_GASEOUSCHECK_SO2',
+    'RF_W_INSPECTIONSUMMARY',
     'RF_W_OTHERDEVICECHECK',
     # 双周表
     'RF_TW_CleanCuttingHead',
@@ -78,6 +79,8 @@ OPS_SQL_TABLES = [
     'RF_M_GASEOUSCALIDEVICECHECK',
     'RF_M_GASEOUSFLOWCHECK',
     'RF_M_MANUALCOMPARISON',
+    'RF_M_MANUALCOMPARISONDETAIL',
+    'RF_M_MEMBRANEWEIGHING',
     'RF_M_PMDEVICEMAINTAIN',
     'RF_M_STATIONDEVICEMAINTAIN',
     'RF_M_StationMaintainCheck',
@@ -94,6 +97,7 @@ OPS_SQL_TABLES = [
     'RF_Q_LONGOPTICALPATH_NO2',
     'RF_Q_LONGOPTICALPATH_O3',
     'RF_Q_LONGOPTICALPATH_SO2',
+    'RF_Q_PM10RUNSTATUSCHECK',
     'RF_Q_PM25RUNSTATUSCHECK',
     'RF_Q_PMPRESSURE',
     'RF_Q_STATIONDEVICECLEAN',
@@ -779,6 +783,7 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "\n- RF_W_GASEOUSCHECK_NOX：周检-NOX检查"
             "\n- RF_W_GASEOUSCHECK_O3：周检-O3检查"
             "\n- RF_W_GASEOUSCHECK_SO2：周检-SO2检查"
+            "\n- RF_W_INSPECTIONSUMMARY：周检-巡检汇总"
             "\n- RF_W_OTHERDEVICECHECK：周检-其他设备"
             "\n【双周表】"
             "\n- RF_TW_CleanCuttingHead：双周-切割头清洗"
@@ -789,6 +794,8 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "\n- RF_M_GASEOUSCALIDEVICECHECK：月检-气态校准设备检查"
             "\n- RF_M_GASEOUSFLOWCHECK：月检-气态流量检查"
             "\n- RF_M_MANUALCOMPARISON：月检-手工比对"
+            "\n- RF_M_MANUALCOMPARISONDETAIL：月检-手工比对明细"
+            "\n- RF_M_MEMBRANEWEIGHING：月检-滤膜称重"
             "\n- RF_M_PMDEVICEMAINTAIN：月检-PM设备维护"
             "\n- RF_M_STATIONDEVICEMAINTAIN：月检-站点设备维护"
             "\n- RF_M_StationMaintainCheck：月检-站点维护检查"
@@ -797,6 +804,7 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "\n- RF_Q_GASEOUSPRECISION_CO/NO2/O3/SO2：季检-气态精密度"
             "\n- RF_Q_GaseousFlowCheck：季检-气态流量检查"
             "\n- RF_Q_LONGOPTICALPATH_NO2/O3/SO2：长光路校准"
+            "\n- RF_Q_PM10RUNSTATUSCHECK：PM10运行状态检查"
             "\n- RF_Q_PM25RUNSTATUSCHECK：PM2.5运行状态检查"
             "\n- RF_Q_PMPRESSURE：PM压力/流量"
             "\n- RF_Q_STATIONDEVICECLEAN：季检-站点设备清洁"

@@ -391,18 +391,27 @@ export function useSessionManagement(store) {
         const resultData = result.data
         if (!resultData) continue
 
-        // 提取 pdf_preview 或 markdown_preview
+        // 提取 pdf_preview、markdown_preview 或 html_preview
         if (resultData.pdf_preview) {
           docs.push({
             pdf_preview: resultData.pdf_preview,
             file_path: resultData.file_path || resultData.pdf_preview.pdf_path,
+            file_type: resultData.file_type,
             generator: resultData.generator || 'word_processor'
           })
         } else if (resultData.markdown_preview) {
           docs.push({
             markdown_preview: resultData.markdown_preview,
             file_path: resultData.file_path,
+            file_type: resultData.file_type,
             generator: resultData.generator || 'read_file'
+          })
+        } else if (resultData.html_preview) {
+          docs.push({
+            html_preview: resultData.html_preview,
+            file_path: resultData.file_path,
+            file_type: resultData.file_type || resultData.html_preview?.file_type,
+            generator: resultData.generator || result?.metadata?.generator || 'quarto_report'
           })
         }
       }
