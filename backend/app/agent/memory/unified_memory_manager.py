@@ -1,7 +1,7 @@
 """
 统一记忆管理器
 
-管理所有7种模式（社交、助手、专家、问数、编程、报告、图表）的记忆存储。
+管理多种模式（社交、助手、专家、问数、编程、报告、图表、运维）的记忆存储。
 
 核心功能：
 - 模式隔离：每个模式独立的记忆空间
@@ -16,6 +16,7 @@ import asyncio
 import structlog
 
 from app.agent.memory.memory_store import MemoryStore, ImprovedMemoryStore
+from app.utils.path_config import get_memory_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -29,7 +30,7 @@ class UnifiedMemoryManager:
 
     def __init__(
         self,
-        base_workspace: str = "backend_data_registry/memory",
+        base_workspace: str = None,
         max_cache_size: int = 100
     ):
         """
@@ -40,7 +41,7 @@ class UnifiedMemoryManager:
             max_cache_size: 最大缓存用户数
         """
         # 解析相对路径为绝对路径（避免工作目录问题）
-        workspace_path = Path(base_workspace)
+        workspace_path = Path(base_workspace) if base_workspace else get_memory_dir()
         if not workspace_path.is_absolute():
             # 如果是相对路径，相对于当前文件所在目录的父目录（backend）
             current_file = Path(__file__).resolve()
@@ -76,7 +77,7 @@ class UnifiedMemoryManager:
 
         Args:
             user_id: 用户ID（格式：{mode}:{user_identifier}:{shared|unique}）
-            mode: 模式标识（social/assistant/expert/query/code/report/chart）
+            mode: 模式标识（social/assistant/expert/query/code/report/chart/ops）
 
         Returns:
             用户专属 MemoryStore

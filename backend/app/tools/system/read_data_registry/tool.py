@@ -12,6 +12,8 @@ from datetime import datetime
 import subprocess
 import structlog
 from app.services.data_registry import data_registry
+from app.utils.path_config import get_datasets_dir
+from app.tools.system.data_registry_read_state import get_data_registry_read_state
 
 logger = structlog.get_logger()
 
@@ -33,7 +35,7 @@ class ReadDataRegistryTool(LLMTool):
             name="read_data_registry",
             description=(
                 "读取DataRegistry中已保存的数据。"
-                "支持数组型明细数据的时间范围过滤、字段选择和jq聚合过滤；"
+                "支持数组型明细数据的时间范围过滤、结构化where筛选、select取列/别名和jq聚合过滤；"
                 "支持对象型报表数据包的视图列表和按view读取。读取 report_data_id 且不指定 view 时，"
                 "默认返回 reporting 报告口径视图；只有确需原始接口字段时才显式读取 raw/result。"
                 f"明细数组最多返回{self.DEFAULT_MAX_RECORDS}条。"
@@ -73,14 +75,52 @@ class ReadDataRegistryTool(LLMTool):
                             f"过滤后明细超过{self.DEFAULT_MAX_RECORDS}条时不会直接返回完整data。"
                         )
                     },
+                    "where": {
+                        "description": (
+                            "结构化行筛选，优先用于简单筛选，避免写jq。"
+                            "支持对象等值筛选，如 {\"cityName\":\"珠三角\"}；"
+                            "也支持条件数组，如 [{\"field\":\"cityName\",\"op\":\"=\",\"value\":\"珠三角\"}]。"
+                            "op支持 =、!=、in、not_in、contains、>、>=、<、<=。"
+                        ),
+                        "oneOf": [
+                            {"type": "object"},
+                            {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "field": {"type": "string"},
+                                        "op": {"type": "string"},
+                                        "value": {}
+                                    },
+                                    "required": ["field", "value"]
+                                }
+                            }
+                        ]
+                    },
+                    "select": {
+                        "description": (
+                            "结构化取列和别名映射，优先用于简单取字段，避免写jq对象。"
+                            "对象格式为 {\"输出列名\":\"源字段名\"}，如 {\"年份\":\"timePoint\",\"臭氧\":\"o3_8h\"}；"
+                            "数组格式等价于 fields，如 [\"timePoint\", \"o3_8h\"]。"
+                        ),
+                        "oneOf": [
+                            {"type": "object", "additionalProperties": {"type": "string"}},
+                            {"type": "array", "items": {"type": "string"}}
+                        ]
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": f"限制返回明细条数，默认不额外截断；明细数组仍受{self.DEFAULT_MAX_RECORDS}条上限保护"
+                    },
                     "fields": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "选择特定字段；建议先用 list_fields 或 list_views 确认字段名。读取 raw/result 时应尽量提供 fields"
+                        "description": "选择特定字段；简单取列优先使用 select。建议先用 list_fields 或 list_views 确认字段名"
                     },
                     "jq_filter": {
                         "type": "string",
-                        "description": "jq过滤表达式（支持聚合统计）。读取大视图时优先用 jq_filter 做筛选或聚合，避免返回完整明细"
+                        "description": "高级jq过滤表达式。简单筛选/取列优先使用 where/select；只有结构化参数无法表达时才使用 jq_filter"
                     }
                 },
                 "anyOf": [
@@ -102,6 +142,9 @@ class ReadDataRegistryTool(LLMTool):
         view: Optional[str] = None,
         time_range: Optional[str] = None,
         fields: Optional[List[str]] = None,
+        where: Optional[Any] = None,
+        select: Optional[Any] = None,
+        limit: Optional[int] = None,
         jq_filter: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
@@ -121,9 +164,65 @@ class ReadDataRegistryTool(LLMTool):
                 "searched_path": f"backend_data_registry/datasets/{data_id.replace(':', '_')}.json"
             }
 
-        return await self._load_from_data_registry(
-            data_registry_path, data_id, list_fields, list_views, view, time_range, fields, jq_filter
+        result = await self._load_from_data_registry(
+            data_registry_path, data_id, list_fields, list_views, view, time_range, fields,
+            where, select, limit, jq_filter
         )
+        self._record_read_state(
+            result,
+            data_id=data_id,
+            view=view,
+            fields=fields,
+            time_range=time_range,
+            jq_filter=jq_filter,
+            list_fields=list_fields,
+            list_views=list_views,
+        )
+        return result
+
+    def _record_read_state(
+        self,
+        result: Dict[str, Any],
+        *,
+        data_id: str,
+        view: Optional[str],
+        fields: Optional[List[str]],
+        time_range: Optional[str],
+        jq_filter: Optional[str],
+        list_fields: bool,
+        list_views: bool,
+    ) -> None:
+        if not isinstance(result, dict) or not result.get("success"):
+            return
+
+        try:
+            get_data_registry_read_state().set(
+                data_id,
+                view=view,
+                fields=fields,
+                time_range=time_range,
+                jq_filter=jq_filter,
+                list_fields=list_fields,
+                list_views=list_views,
+                data=result.get("data"),
+                metadata=result.get("metadata"),
+                summary=result.get("summary"),
+            )
+            logger.info(
+                "data_registry_read_state_recorded",
+                data_id=data_id,
+                view=view,
+                list_fields=list_fields,
+                list_views=list_views,
+                has_fields=bool(fields),
+                has_jq_filter=bool(jq_filter),
+            )
+        except Exception as exc:
+            logger.warning(
+                "data_registry_read_state_record_failed",
+                data_id=data_id,
+                error=str(exc),
+            )
 
     def _resolve_registry_path(self, data_id: str) -> Path:
         entry = data_registry.get_metadata(data_id)
@@ -133,8 +232,7 @@ class ReadDataRegistryTool(LLMTool):
         safe_id = data_id.replace(':', '_')
         candidates = [
             data_registry.datasets_dir / f"{safe_id}.json",
-            Path("backend_data_registry/datasets") / f"{safe_id}.json",
-            Path("../backend_data_registry/datasets") / f"{safe_id}.json",
+            get_datasets_dir() / f"{safe_id}.json",
         ]
 
         for candidate in candidates:
@@ -145,7 +243,8 @@ class ReadDataRegistryTool(LLMTool):
     async def _load_from_data_registry(
         self, file_path: Path, data_id: str,
         list_fields: bool, list_views: bool, view: Optional[str],
-        time_range: Optional[str], fields: Optional[List[str]], jq_filter: Optional[str]
+        time_range: Optional[str], fields: Optional[List[str]], where: Optional[Any],
+        select: Optional[Any], limit: Optional[int], jq_filter: Optional[str]
     ) -> Dict[str, Any]:
         """从 DataRegistry 格式加载数据"""
         try:
@@ -156,7 +255,8 @@ class ReadDataRegistryTool(LLMTool):
 
         if isinstance(data, dict):
             return self._load_report_package(
-                data, file_path, data_id, list_fields, list_views, view, fields, jq_filter
+                data, file_path, data_id, list_fields, list_views, view, fields,
+                where, select, limit, jq_filter
             )
 
         # DataRegistry 直接存储数据数组
@@ -200,7 +300,7 @@ class ReadDataRegistryTool(LLMTool):
 
         # 应用过滤
         filter_info = {}
-        data, filter_info = self._apply_filters(data, time_range, fields)
+        data, filter_info = self._apply_filters(data, time_range, fields, where, select, limit)
 
         # 【容错处理】检测字段不匹配，返回可用字段信息
         if fields and filter_info.get("field_match_info", {}).get("matched") is False:
@@ -227,6 +327,10 @@ class ReadDataRegistryTool(LLMTool):
                 },
                 "summary": f"字段名称不匹配。请求的字段 {mismatched_fields} 不存在，共有 {len(available_fields)} 个可用字段。请查看 data 字段获取完整字段列表。"
             }
+
+        mismatch_result = self._build_structured_filter_mismatch_result(data_id, filter_info)
+        if mismatch_result:
+            return mismatch_result
 
         # 智能判断：区分聚合操作和明细查询
         is_aggregation = self._is_aggregation_operation(jq_filter, len(data))
@@ -316,6 +420,9 @@ class ReadDataRegistryTool(LLMTool):
         list_views: bool,
         view: Optional[str],
         fields: Optional[List[str]],
+        where: Optional[Any],
+        select: Optional[Any],
+        limit: Optional[int],
         jq_filter: Optional[str],
     ) -> Dict[str, Any]:
         """读取对象型报表数据包。"""
@@ -372,8 +479,16 @@ class ReadDataRegistryTool(LLMTool):
 
         data = views[view]
 
-        if fields:
-            data = self._select_fields_for_any(data, fields)
+        filter_info: Dict[str, Any] = {}
+
+        if isinstance(data, list):
+            data, filter_info = self._apply_filters(data, None, fields, where, select, limit)
+            mismatch_result = self._build_structured_filter_mismatch_result(data_id, filter_info)
+            if mismatch_result:
+                return mismatch_result
+        else:
+            if fields:
+                data = self._select_fields_for_any(data, fields)
 
         if jq_filter:
             try:
@@ -408,6 +523,7 @@ class ReadDataRegistryTool(LLMTool):
                 "package_kind": package.get("kind", "report_package"),
                 "view": view,
                 "returned_records": returned_count,
+                "filter_details": filter_info,
                 "source": "data_registry",
                 "generator": "read_data_registry",
                 "tool_name": "read_data_registry",
@@ -498,11 +614,54 @@ class ReadDataRegistryTool(LLMTool):
             "summary": f"数据量过大：{returned_count}条 > {self.DEFAULT_MAX_RECORDS}条"
         }
 
+    def _build_structured_filter_mismatch_result(
+        self,
+        data_id: str,
+        filter_info: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Return a standard-ish failure when structured filters reference missing fields."""
+        for info_key, error_type, requested_key in [
+            ("where_match_info", "where_field_mismatch", "requested_where_fields"),
+            ("select_match_info", "select_field_mismatch", "requested_select_fields"),
+        ]:
+            match_info = filter_info.get(info_key)
+            if not isinstance(match_info, dict) or match_info.get("matched", True):
+                continue
+
+            available_fields = match_info.get("available_fields", [])
+            mismatched_fields = match_info.get("mismatched_fields", [])
+            return {
+                "status": "failed",
+                "success": False,
+                "data": {
+                    "error_type": error_type,
+                    requested_key: match_info.get("requested_fields", []),
+                    "mismatched_fields": mismatched_fields,
+                    "available_fields": available_fields,
+                    "total_available": len(available_fields),
+                    "suggestion": (
+                        f"字段 {mismatched_fields} 不存在。请先用 list_views/list_fields 确认字段名，"
+                        f"或从可用字段中选择：{', '.join(available_fields[:20])}"
+                        f"{'...' if len(available_fields) > 20 else ''}"
+                    )
+                },
+                "metadata": {
+                    "tool_name": "read_data_registry",
+                    "error": "结构化筛选字段名称不匹配"
+                },
+                "summary": f"结构化筛选字段名称不匹配：{mismatched_fields}"
+            }
+
+        return None
+
     def _apply_filters(
         self,
         data: List[Dict],
         time_range: Optional[str],
-        fields: Optional[List[str]]
+        fields: Optional[List[str]],
+        where: Optional[Any] = None,
+        select: Optional[Any] = None,
+        limit: Optional[int] = None,
     ) -> tuple[List[Dict], Dict[str, Any]]:
         """应用时间范围和字段过滤"""
         filter_info = {}
@@ -515,16 +674,196 @@ class ReadDataRegistryTool(LLMTool):
             if time_info:
                 filter_info.update(time_info)
 
-        # 2. 字段选择
-        if fields:
+        # 2. 结构化行筛选
+        if where:
+            result, where_info = self._filter_by_where(result, where)
+            filter_info["where_filter"] = where
+            filter_info["where_match_info"] = where_info
+
+        # 3. select取列/别名映射优先于旧版fields
+        if select:
+            result, select_info = self._select_with_aliases(result, select)
+            filter_info["select"] = select
+            filter_info["select_match_info"] = select_info
+        elif fields:
             result, field_info = self._select_fields(result, fields)
             filter_info["fields_selected"] = fields
             filter_info["field_match_info"] = field_info
+
+        # 4. 明细数量限制
+        if isinstance(limit, int) and limit >= 0:
+            result = result[:limit]
+            filter_info["limit"] = limit
 
         filter_info["original_count"] = original_count
         filter_info["filtered_count"] = len(result)
 
         return result, filter_info
+
+    def _filter_by_where(self, data: List[Dict], where: Any) -> tuple[List[Dict], Dict[str, Any]]:
+        """Apply structured row filters to list records."""
+        conditions = self._normalize_where_conditions(where)
+        available_fields = self._available_fields_for_records(data)
+        mismatched_fields = [
+            condition["field"]
+            for condition in conditions
+            if available_fields and condition["field"] not in available_fields
+        ]
+        match_info = {
+            "matched": len(mismatched_fields) == 0,
+            "requested_fields": [condition["field"] for condition in conditions],
+            "mismatched_fields": sorted(set(mismatched_fields)),
+            "available_fields": sorted(available_fields),
+        }
+
+        if mismatched_fields:
+            return data, match_info
+
+        filtered = []
+        for record in data:
+            if not isinstance(record, dict):
+                continue
+            if all(self._matches_condition(record, condition) for condition in conditions):
+                filtered.append(record)
+
+        match_info["where_count"] = len(filtered)
+        return filtered, match_info
+
+    def _normalize_where_conditions(self, where: Any) -> List[Dict[str, Any]]:
+        if isinstance(where, dict):
+            return [
+                {"field": field, "op": "=", "value": value}
+                for field, value in where.items()
+            ]
+
+        if isinstance(where, list):
+            conditions = []
+            for item in where:
+                if not isinstance(item, dict) or "field" not in item:
+                    continue
+                conditions.append({
+                    "field": item.get("field"),
+                    "op": item.get("op", "="),
+                    "value": item.get("value"),
+                })
+            return conditions
+
+        return []
+
+    def _matches_condition(self, record: Dict, condition: Dict[str, Any]) -> bool:
+        field = condition.get("field")
+        op = str(condition.get("op", "=")).lower()
+        expected = condition.get("value")
+        actual = self._get_nested_value(record, field)
+
+        if op in {"=", "==", "eq"}:
+            return self._values_equal(actual, expected)
+        if op in {"!=", "<>", "ne"}:
+            return not self._values_equal(actual, expected)
+        if op == "in":
+            values = expected if isinstance(expected, list) else [expected]
+            return any(self._values_equal(actual, value) for value in values)
+        if op == "not_in":
+            values = expected if isinstance(expected, list) else [expected]
+            return not any(self._values_equal(actual, value) for value in values)
+        if op == "contains":
+            if actual is None:
+                return False
+            return str(expected) in str(actual)
+        if op in {">", ">=", "<", "<="}:
+            return self._compare_values(actual, expected, op)
+
+        return self._values_equal(actual, expected)
+
+    def _values_equal(self, actual: Any, expected: Any) -> bool:
+        if actual == expected:
+            return True
+        if actual is None or expected is None:
+            return False
+        return str(actual) == str(expected)
+
+    def _compare_values(self, actual: Any, expected: Any, op: str) -> bool:
+        try:
+            actual_num = float(actual)
+            expected_num = float(expected)
+        except (TypeError, ValueError):
+            actual_num = str(actual)
+            expected_num = str(expected)
+
+        if op == ">":
+            return actual_num > expected_num
+        if op == ">=":
+            return actual_num >= expected_num
+        if op == "<":
+            return actual_num < expected_num
+        if op == "<=":
+            return actual_num <= expected_num
+        return False
+
+    def _select_with_aliases(self, data: List[Dict], select: Any) -> tuple[List[Dict], Dict[str, Any]]:
+        """Select fields, optionally renaming output keys."""
+        if not data:
+            return [], {"matched": True, "available_fields": []}
+
+        if isinstance(select, list):
+            selected, field_info = self._select_fields(data, select)
+            field_info["requested_fields"] = list(select)
+            return selected, field_info
+
+        if not isinstance(select, dict):
+            return data, {
+                "matched": False,
+                "requested_fields": [],
+                "mismatched_fields": [],
+                "available_fields": sorted(self._available_fields_for_records(data)),
+                "error": "select 必须是对象或字段数组"
+            }
+
+        available_fields = self._available_fields_for_records(data)
+        requested_fields = list(select.values())
+        mismatched_fields = [
+            field for field in requested_fields
+            if available_fields and field not in available_fields
+        ]
+
+        field_info = {
+            "matched": len(mismatched_fields) == 0,
+            "requested_fields": requested_fields,
+            "mismatched_fields": sorted(set(mismatched_fields)),
+            "available_fields": sorted(available_fields),
+            "aliases": select,
+        }
+        if mismatched_fields:
+            return data, field_info
+
+        selected = []
+        for record in data:
+            if not isinstance(record, dict):
+                selected.append(record)
+                continue
+            selected_record = {}
+            for output_name, source_field in select.items():
+                selected_record[output_name] = self._get_nested_value(record, source_field)
+            selected.append(selected_record)
+
+        return selected, field_info
+
+    def _available_fields_for_records(self, data: List[Dict]) -> List[str]:
+        if not data:
+            return []
+        first_record = data[0] if isinstance(data[0], dict) else {}
+        return self._extract_all_fields(first_record) if isinstance(first_record, dict) else []
+
+    def _get_nested_value(self, record: Dict, field_path: str) -> Any:
+        if not isinstance(record, dict) or not field_path:
+            return None
+        current: Any = record
+        for part in str(field_path).split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None
+        return current
 
     def _filter_by_time_range(self, data: List[Dict], time_range: str) -> tuple[List[Dict], Dict[str, Any]]:
         """按时间范围过滤数据"""

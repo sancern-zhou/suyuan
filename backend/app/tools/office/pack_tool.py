@@ -17,6 +17,7 @@ import zipfile
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 import structlog
 
@@ -167,10 +168,6 @@ class PackOfficeTool(LLMTool):
                 size=output_file.stat().st_size
             )
 
-            # 获取API基础URL（从配置读取）
-            from config.settings import settings
-            api_base = settings.backend_host.rstrip("/")
-
             result_data = {
                 "file_path": str(output_file),  # 统一使用 file_path 字段名（前端期望）
                 "output_file": str(output_file),  # 保留向后兼容
@@ -181,12 +178,6 @@ class PackOfficeTool(LLMTool):
 
             if backup_file:
                 result_data["backup_file"] = str(backup_file)
-
-            # 添加Word/Excel/PowerPoint文档下载链接
-            from urllib.parse import quote
-            encoded_path = quote(str(output_file))
-            result_data["doc_url"] = f"{api_base}/api/utility/file/{encoded_path}"
-            result_data["doc_download_filename"] = output_file.name
 
             # 生成PDF预览（仅支持Word和PowerPoint）
             try:
@@ -201,6 +192,15 @@ class PackOfficeTool(LLMTool):
                     )
             except Exception as pdf_error:
                 logger.warning("pack_office_pdf_conversion_failed", error=str(pdf_error))
+
+            attach_document_artifact(
+                result_data,
+                output_file,
+                kind="office",
+                format=output_file.suffix.lstrip("."),
+                preview_key="pdf_preview",
+                generator=self.name,
+            )
 
             return {
                 "success": True,

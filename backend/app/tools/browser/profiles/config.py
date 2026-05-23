@@ -5,6 +5,7 @@ Defines profile settings and defaults.
 import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
+from app.utils.path_config import get_data_registry
 
 
 @dataclass
@@ -55,7 +56,7 @@ class ProfileConfig:
         max_profiles: Maximum number of profiles
         profile_colors: Color mapping for profiles
     """
-    profiles_dir: str = "backend_data_registry/browser_profiles"
+    profiles_dir: str = field(default_factory=lambda: str(get_data_registry() / "browser_profiles"))
     default_profiles: List[str] = field(default_factory=lambda: ["default", "clawd", "chrome"])
     max_profiles: int = 20
 

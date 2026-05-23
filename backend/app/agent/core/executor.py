@@ -251,9 +251,8 @@ class ToolExecutor:
             has_context_manager=self.data_context_manager is not None
         )
 
-        # Step 0: 准备Input Adapter和 Execution Context
+        # Step 0: 准备 Execution Context。工具参数直接采用 Anthropic tool_use input。
         execution_context = self._create_execution_context(iteration)
-        adapter_context = self._create_adapter_context(execution_context)
 
         # Step 1: 验证工具存在
         if tool_name not in self.tool_registry:
@@ -274,67 +273,7 @@ class ToolExecutor:
                 "available_tools": available_tools
             }
 
-        # Step 2: 按需输入适配。
-        # Anthropic tool_use schema 是主参数契约；这里只保留少数历史兼容/上下文推断工具的兜底适配。
-        try:
-            from app.agent.input_adapter import InputAdapterEngine, InputValidationError, TOOL_RULES
-
-            if tool_name in TOOL_RULES:
-                adapter = InputAdapterEngine()
-                normalized_args, adapter_report = adapter.normalize(
-                    tool_name=tool_name,
-                    raw_args=tool_args,
-                    context=adapter_context
-                )
-
-                logger.info(
-                    "input_adapter_success",
-                    tool_name=tool_name,
-                    corrections=len(adapter_report.get("corrections", [])),
-                    inferences=len(adapter_report.get("inferences", []))
-                )
-
-                # 使用规范化后的参数替换原始参数
-                tool_args = normalized_args
-            else:
-                logger.debug(
-                    "input_adapter_skipped",
-                    tool_name=tool_name,
-                    reason="no_explicit_adapter_rules"
-                )
-
-        except InputValidationError as e:
-            # ✅ 返回结构化错误（供 Reflexion 使用）
-            logger.error(
-                "input_validation_failed",
-                tool_name=tool_name,
-                error=str(e),
-                missing_fields=e.missing_fields
-            )
-
-            return {
-                "success": False,
-                "error_type": "INPUT_VALIDATION_FAILED",
-                "error": str(e),
-                "tool_name": tool_name,
-                "missing_fields": e.missing_fields,
-                "invalid_fields": e.invalid_fields,
-                "expected_schema": e.expected_schema,
-                "suggested_call": e.suggested_call,
-                "summary": f"❌ 工具 {tool_name} 参数验证失败: {', '.join(e.missing_fields)}"
-            }
-
-        except Exception as e:
-            # 其他适配错误，记录但不中断流程
-            logger.warning(
-                "input_adapter_error",
-                tool_name=tool_name,
-                error=str(e),
-                message="Continuing with raw args"
-            )
-            # 继续使用原始参数
-
-        # Step 3: 执行工具
+        # Step 2: 执行工具
         try:
             tool_func = self.tool_registry[tool_name]
 
@@ -956,25 +895,6 @@ class ToolExecutor:
         except Exception as exc:
             logger.warning(
                 "execution_context_creation_failed",
-                error=str(exc)
-            )
-            return None
-
-    def _create_adapter_context(self, execution_context):
-        """为 InputAdapter 构造上下文代理"""
-        if not self.memory_manager:
-            return None
-
-        try:
-            from app.agent.context.input_adapter_context import InputAdapterContext
-
-            return InputAdapterContext(
-                memory_manager=self.memory_manager,
-                execution_context=execution_context
-            )
-        except Exception as exc:
-            logger.warning(
-                "input_adapter_context_creation_failed",
                 error=str(exc)
             )
             return None

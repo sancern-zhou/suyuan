@@ -16,6 +16,7 @@ from .finalizer import Finalizer
 from .observation_processor import ObservationProcessor
 from .session_queue import SessionRunQueue
 from .tool_coordinator import ToolCoordinator
+from .tool_classification import all_housekeeping_tools
 from .transcript_repairer import TranscriptRepairer
 from .types import PlannerResult, RunState, ToolCall
 from .cancellation import AgentRunCancelled, cancellation_registry
@@ -176,6 +177,7 @@ class AgentRuntime:
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
             observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
+            self._apply_housekeeping_policy(state, action, observation)
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
             self.writer.add_iteration(planner_result.thought, action, observation)
@@ -222,6 +224,20 @@ class AgentRuntime:
 
         # 按模式过滤工具 schema（节省 token）
         tool_schemas = get_tool_schemas(mode=state.mode)
+        suppressed_tool_names = self._tool_names_to_suppress(state)
+        if suppressed_tool_names:
+            original_count = len(tool_schemas)
+            tool_schemas = [
+                tool for tool in tool_schemas
+                if (tool.get("name") or tool.get("function", {}).get("name")) not in suppressed_tool_names
+            ]
+            logger.info(
+                "tool_schemas_suppressed_by_runtime_policy",
+                iteration=state.iteration,
+                suppressed_tools=sorted(suppressed_tool_names),
+                original_tool_count=original_count,
+                filtered_tool_count=len(tool_schemas),
+            )
         tool_schema_chars = len(json.dumps(tool_schemas, ensure_ascii=False, default=str))
         tool_schema_tokens_est = int(tool_schema_chars / 1.5)
         context_tokens = context_result.get("tokens", {})
@@ -248,6 +264,7 @@ class AgentRuntime:
         streaming_tool_executor = StreamingToolExecutor(
             tool_executor=self.executor,
             tool_registry=self.executor.tool_registry if hasattr(self.executor, "tool_registry") else {},
+            loop_guard=self.tool_coordinator.loop_guard,
         )
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
         buffer = AssistantStreamBuffer()
@@ -337,6 +354,61 @@ class AgentRuntime:
             "streaming_tool_executor": streaming_tool_executor,
         }
 
+    def _tool_names_to_suppress(self, state: RunState) -> set[str]:
+        """Hide housekeeping tools after terminal/no-progress state updates."""
+        # ✅ 修复：删除 TodoWrite 抑制策略
+        # 原因：抑制会导致 LLM 无法正常调用 TodoWrite，反而输出文本格式的伪调用
+        suppressed = set(state.suppress_tool_names_next_turn)
+        state.suppress_tool_names_next_turn.clear()
+        return suppressed
+
+    def _apply_housekeeping_policy(
+        self,
+        state: RunState,
+        action: Dict[str, Any],
+        observation: Dict[str, Any],
+    ) -> None:
+        """Classify housekeeping-only turns and suppress repeated state updates."""
+        if action.get("type") == "TOOL_CALLS":
+            tool_names = [
+                tool.get("tool", "")
+                for tool in action.get("tools", [])
+                if isinstance(tool, dict)
+            ]
+        elif action.get("type") == "TOOL_CALL":
+            tool_names = [action.get("tool", "")]
+        else:
+            tool_names = []
+
+        housekeeping_only = all_housekeeping_tools(tool_names)
+        state.last_tool_turn_housekeeping_only = housekeeping_only
+        if not housekeeping_only:
+            return
+
+        should_suppress_todo = False
+        if action.get("type") == "TOOL_CALL" and action.get("tool") == "TodoWrite":
+            should_suppress_todo = bool(
+                isinstance(observation, dict)
+                and (observation.get("no_op") or observation.get("all_completed"))
+            )
+        elif action.get("type") == "TOOL_CALLS" and isinstance(observation, dict):
+            for item in observation.get("tool_results", []):
+                if item.get("tool_name") != "TodoWrite":
+                    continue
+                result = item.get("result", {})
+                if isinstance(result, dict) and (result.get("no_op") or result.get("all_completed")):
+                    should_suppress_todo = True
+                    break
+
+        if should_suppress_todo:
+            state.suppress_tool_names_next_turn.add("TodoWrite")
+            logger.info(
+                "housekeeping_tool_suppressed_next_turn",
+                tool_name="TodoWrite",
+                iteration=state.iteration,
+                reason="no_op_or_all_completed",
+            )
+
     async def _fallback_non_streaming(
         self,
         state: RunState,
@@ -375,6 +447,7 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
+        self._apply_housekeeping_policy(state, action, observation)
         self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)
         self.writer.add_iteration(planner_result.thought, action, observation)

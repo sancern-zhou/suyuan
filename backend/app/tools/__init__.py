@@ -30,11 +30,8 @@ LLM Tools
      * 特征：直接传入数据（data）、模板库+LLM生成
    - generate_map - 生成高德地图配置
 
-4. Task Management Tools - 任务管理工具（动态任务清单管理）
-   - create_task - 创建新任务到任务清单
-   - update_task - 更新任务状态（pending/in_progress/completed/failed）
-   - list_tasks - 查看当前会话的所有任务
-   - get_task - 获取特定任务的详细信息
+4. Task Management Tools - 任务管理工具（housekeeping状态管理）
+   - TodoWrite - 完整替换当前会话任务清单，仅用于复杂任务的计划可视化
 
 **工具选择决策：**
 - 有data_id → smart_chart_generator
@@ -213,11 +210,18 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="query_gd_suncere_city_day", error=str(e))
 
     try:
-        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportTool
-        registry.register(QueryGDSuncereReportTool(), priority=37)
-        logger.info("tool_loaded", tool="query_gd_suncere_report")
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereDistrictDayTool
+        registry.register(QueryGDSuncereDistrictDayTool(), priority=36)
+        logger.info("tool_loaded", tool="query_gd_suncere_district_day")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_gd_suncere_report", error=str(e))
+        logger.warning("tool_import_failed", tool="query_gd_suncere_district_day", error=str(e))
+
+    try:
+        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereDistrictReportTool
+        registry.register(QueryGDSuncereDistrictReportTool(), priority=37)
+        logger.info("tool_loaded", tool="query_gd_suncere_district_report")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="query_gd_suncere_district_report", error=str(e))
 
     try:
         from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereReportCompareTool
@@ -239,20 +243,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="query_city_standard_yoy_report")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_city_standard_yoy_report", error=str(e))
-
-    try:
-        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayNewStandardTool
-        registry.register(QueryGDSuncereCityDayNewStandardTool(), priority=40)
-        logger.info("tool_loaded", tool="query_gd_suncere_city_day_new")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_new", error=str(e))
-
-    try:
-        from app.tools.query.query_gd_suncere.tool_wrapper import QueryGDSuncereCityDayOldStandardTool
-        registry.register(QueryGDSuncereCityDayOldStandardTool(), priority=40)
-        logger.info("tool_loaded", tool="query_gd_suncere_city_day_old_standard")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="query_gd_suncere_city_day_old_standard", error=str(e))
 
     try:
         from app.tools.query.query_station_standard_report.tool import QueryStationStandardReportTool
@@ -298,19 +288,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_xcai_city_history", error=str(e))
 
-    # 运维工单查询工具
-    try:
-        from app.tools.query.get_working_orders.tool import GetWorkingOrdersTool
-        registry.register(GetWorkingOrdersTool(), priority=46)
-        logger.info("tool_loaded", tool="get_working_orders")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_working_orders", error=str(e))
-
     # 通用SQL执行工具
     try:
-        from app.tools.query.execute_sql_query.tool import ExecuteSQLQueryTool
+        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool
         registry.register(ExecuteSQLQueryTool(), priority=47)
         logger.info("tool_loaded", tool="execute_sql_query")
+        registry.register(ExecuteOpsSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_ops_sql_query")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 
@@ -614,6 +598,13 @@ def create_global_tool_registry() -> ToolRegistry:
 
     # Phase 2: Word 高级编辑（跨平台）
     try:
+        from app.tools.office.edit_word_document_tool import EditWordDocumentTool
+        registry.register(EditWordDocumentTool(), priority=342)  # Agent-facing Word wrapper
+        logger.info("tool_loaded", tool="edit_word_document")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="edit_word_document", error=str(e))
+
+    try:
         from app.tools.office.word_edit_tool import WordEditTool
         registry.register(WordEditTool(), priority=342)  # 修复: 593->342
         logger.info("tool_loaded", tool="word_edit")
@@ -861,6 +852,24 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="read_docx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="read_docx", error=str(e))
+
+    try:
+        from app.tools.report.report_package.tool import (
+            CreateReportPackageTool,
+            ValidateReportPackageTool,
+        )
+        registry.register(CreateReportPackageTool(), priority=388)
+        registry.register(ValidateReportPackageTool(), priority=390)
+        logger.info("tool_loaded", tool="report_package_tools")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="report_package_tools", error=str(e))
+
+    try:
+        from app.tools.html_artifact import CreateHtmlArtifactTool
+        registry.register(CreateHtmlArtifactTool(), priority=389)
+        logger.info("tool_loaded", tool="create_html_artifact")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_html_artifact", error=str(e))
 
     try:
         from app.tools.workflow.knowledge_qa_workflow import KnowledgeQAWorkflow

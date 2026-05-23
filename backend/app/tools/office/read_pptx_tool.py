@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
@@ -145,6 +146,15 @@ class ReadPptxTool(LLMTool):
                         result_data["pdf_preview"] = await converter.convert_to_pdf(str(file_path))
                 except Exception as preview_error:
                     logger.warning("read_pptx_preview_failed", error=str(preview_error))
+
+            attach_document_artifact(
+                result_data,
+                file_path,
+                kind="office",
+                format="pptx",
+                preview_key="pdf_preview",
+                generator=self.name,
+            )
 
             return {
                 "success": True,

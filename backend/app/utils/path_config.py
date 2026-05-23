@@ -52,6 +52,16 @@ def get_images_dir() -> Path:
     return get_data_registry() / "images"
 
 
+def get_uploads_dir() -> Path:
+    """获取上传文件目录"""
+    return get_data_registry() / "uploads"
+
+
+def get_charts_dir() -> Path:
+    """获取图表和可下载报告输出目录"""
+    return get_data_registry() / "charts"
+
+
 def get_memory_dir() -> Path:
     """获取记忆目录"""
     return get_data_registry() / "memory"
@@ -90,6 +100,8 @@ def ensure_directories():
         get_datasets_dir(),
         get_reports_dir(),
         get_images_dir(),
+        get_uploads_dir(),
+        get_charts_dir(),
         get_memory_dir(),
         get_sessions_dir(),
         get_social_dir(),

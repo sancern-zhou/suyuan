@@ -8,6 +8,7 @@ The share HTML embeds resources into a standalone file.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import uuid
@@ -17,9 +18,15 @@ from typing import Any, Dict
 
 import structlog
 
-from app.utils.path_config import get_reports_dir
+from app.services.report.government_docx_style import (
+    ensure_government_reference_docx,
+    normalize_docx_image_paragraphs,
+)
+from app.utils.path_config import get_images_dir, get_reports_dir
 
 logger = structlog.get_logger()
+
+MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\((?P<src>[^)]+)\)")
 
 
 # ✅ 使用统一路径配置（避免路径混乱）
@@ -28,6 +35,112 @@ REPORT_ROOT = get_reports_dir()
 
 class ReportRenderError(RuntimeError):
     """Raised when Quarto rendering fails."""
+
+
+def _process_api_image_refs_in_qmd(
+    qmd_path: Path,
+    report_dir: Path,
+) -> Dict[str, Any]:
+    """
+    处理 qmd 文件中的 /api/image/ 引用，将图片复制到报告包内并更新引用。
+
+    这是为了确保 Quarto 渲染 DOCX 时能够找到图片文件。
+    Quarto/Pandoc 不会通过 HTTP 请求获取图片，必须使用本地相对路径。
+    """
+    try:
+        qmd_content = qmd_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        qmd_content = qmd_path.read_text(errors="ignore")
+
+    api_image_refs = []
+    for match in MARKDOWN_IMAGE_PATTERN.finditer(qmd_content):
+        src = match.group("src").strip()
+        if src.startswith("/api/image/"):
+            image_id = src[len("/api/image/"):].split("?")[0].split("#")[0]
+            api_image_refs.append({
+                "original_ref": src,
+                "image_id": image_id,
+                "markdown_match": match.group(0)
+            })
+
+    if not api_image_refs:
+        return {"processed": 0, "copied": [], "qmd_modified": False}
+
+    logger.info(
+        "quarto_docx_processing_api_image_refs",
+        count=len(api_image_refs),
+        refs=[ref["original_ref"] for ref in api_image_refs]
+    )
+
+    image_cache_dir = get_images_dir()
+    charts_dir = report_dir / "assets" / "charts"
+    charts_dir.mkdir(parents=True, exist_ok=True)
+
+    copied_assets = []
+    rewritten_qmd = qmd_content
+
+    for ref_info in api_image_refs:
+        image_id = ref_info["image_id"]
+        original_ref = ref_info["original_ref"]
+
+        # 查找图片文件（支持多种扩展名）
+        image_file = None
+        for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]:
+            candidate = image_cache_dir / f"{image_id}{ext}"
+            if candidate.exists():
+                image_file = candidate
+                break
+
+        if not image_file:
+            logger.warning(
+                "quarto_docx_api_image_not_found",
+                image_id=image_id,
+                searched_dir=str(image_cache_dir)
+            )
+            continue
+
+        target_name = f"{image_id}{image_file.suffix}"
+        target_path = charts_dir / target_name
+        relative_path = f"assets/charts/{target_name}"
+
+        try:
+            shutil.copy2(image_file, target_path)
+            rewritten_qmd = rewritten_qmd.replace(
+                ref_info["markdown_match"],
+                ref_info["markdown_match"].replace(original_ref, relative_path)
+            )
+            copied_assets.append({
+                "source": str(image_file),
+                "target": str(target_path),
+                "relative_path": relative_path,
+                "original_api_ref": original_ref
+            })
+            logger.info(
+                "quarto_docx_api_image_copied",
+                image_id=image_id,
+                original_ref=original_ref,
+                new_ref=relative_path
+            )
+        except Exception as exc:
+            logger.error(
+                "quarto_docx_api_image_copy_failed",
+                image_id=image_id,
+                error=str(exc)
+            )
+
+    if copied_assets:
+        qmd_path.write_text(rewritten_qmd, encoding="utf-8")
+        logger.info(
+            "quarto_docx_qmd_updated_with_local_refs",
+            report_dir=str(report_dir),
+            updated_count=len(copied_assets)
+        )
+
+    return {
+        "processed": len(api_image_refs),
+        "copied": copied_assets,
+        "qmd_modified": len(copied_assets) > 0
+    }
 
 
 class QuartoReportRenderer:
@@ -62,39 +175,91 @@ class QuartoReportRenderer:
 
     def render_docx(self, report_id: str) -> Path:
         report_dir = self.get_report_dir(report_id)
-        self.get_qmd_path(report_id)
-        self._run_quarto(
-            report_dir,
-            ["render", "report.qmd", "--to", "docx", "--output", "report.docx"],
-        )
-        return report_dir / "report.docx"
+        qmd_path = self.get_qmd_path(report_id)
+        self._normalize_project_config_for_docx(report_dir)
 
-    def render_pptx(self, report_id: str) -> Path:
-        report_dir = self.get_report_dir(report_id)
-        self.get_qmd_path(report_id)
-        self._run_quarto(
-            report_dir,
-            ["render", "report.qmd", "--to", "pptx", "--output", "report.pptx"],
+        # 自动处理 /api/image/ 引用，确保 Quarto 能找到图片
+        image_process_result = _process_api_image_refs_in_qmd(qmd_path, report_dir)
+        if image_process_result.get("copied"):
+            logger.info(
+                "quarto_docx_auto_processed_images",
+                report_id=report_id,
+                copied_count=len(image_process_result["copied"])
+            )
+
+        qmd_for_render = self._prepare_docx_qmd(report_dir, qmd_path)
+        args = ["render", qmd_for_render.name, "--to", "docx", "--output", "report.docx"]
+        if not self._qmd_has_usable_reference_doc(qmd_path):
+            reference_docx = ensure_government_reference_docx()
+            args.extend(["-M", f"reference-doc:{reference_docx}"])
+
+        try:
+            self._run_quarto(report_dir, args)
+            docx_path = report_dir / "report.docx"
+            image_cleanup = normalize_docx_image_paragraphs(docx_path)
+            logger.info("quarto_docx_image_paragraphs_normalized", **image_cleanup)
+
+            # Check if images were actually embedded
+            from zipfile import ZipFile
+            with ZipFile(docx_path) as zf:
+                media_files = [n for n in zf.namelist() if 'media/' in n]
+                if not media_files:
+                    logger.warning("quarto_docx_no_images_embedded",
+                                 docx_path=str(docx_path),
+                                 fallback="using_html_conversion")
+                    # Fallback: convert from HTML if images are missing
+                    return self._render_docx_from_html_fallback(report_dir)
+
+            return docx_path
+        except Exception as exc:
+            logger.error("quarto_docx_render_failed", error=str(exc), fallback="using_html_conversion")
+            return self._render_docx_from_html_fallback(report_dir)
+        finally:
+            if qmd_for_render != qmd_path:
+                qmd_for_render.unlink(missing_ok=True)
+
+    def _render_docx_from_html_fallback(self, report_dir: Path) -> Path:
+        """Fallback method: convert HTML to DOCX when Quarto fails to embed images."""
+        from app.services.report.government_docx_style import convert_html_report_to_government_docx
+
+        html_path = report_dir / "report.html"
+        if not html_path.exists():
+            raise FileNotFoundError(f"HTML report not found for fallback conversion: {html_path}")
+
+        docx_path = report_dir / "report.docx"
+        result = convert_html_report_to_government_docx(
+            html_path=html_path,
+            output_path=docx_path,
         )
-        return report_dir / "report.pptx"
+        logger.info("docx_html_fallback_complete", **result)
+        return docx_path
 
     def render_share_html(self, report_id: str) -> Dict[str, Any]:
         """Render standalone HTML and persist a share token in meta.json."""
         report_dir = self.get_report_dir(report_id)
-        self.get_qmd_path(report_id)
-        self._run_quarto(
-            report_dir,
-            [
-                "render",
-                "report.qmd",
-                "--to",
-                "html",
-                "--output",
-                "report_standalone.html",
-                "-M",
-                "embed-resources:true",
-            ],
-        )
+        try:
+            self.get_qmd_path(report_id)
+            self._run_quarto(
+                report_dir,
+                [
+                    "render",
+                    "report.qmd",
+                    "--to",
+                    "html",
+                    "--output",
+                    "report_standalone.html",
+                    "-M",
+                    "embed-resources:true",
+                ],
+            )
+        except FileNotFoundError:
+            preview_html = report_dir / "report.html"
+            if not preview_html.exists():
+                raise
+            standalone_html = report_dir / "report_standalone.html"
+            html = preview_html.read_text(encoding="utf-8")
+            html = self._inject_base_href(html, f"/api/reports/{report_id}/")
+            standalone_html.write_text(html, encoding="utf-8")
 
         token = uuid.uuid4().hex
         meta = self._read_meta(report_dir)
@@ -132,6 +297,97 @@ class QuartoReportRenderer:
                         return None
                     return html_path if html_path.exists() else None
         return None
+
+    def _inject_base_href(self, html: str, href: str) -> str:
+        """Ensure copied HTML reports resolve relative assets through report routes."""
+        base_tag = f'<base href="{href}">'
+        lower_html = html.lower()
+        if "<base " in lower_html:
+            return html
+        head_index = lower_html.find("<head>")
+        if head_index >= 0:
+            insert_at = head_index + len("<head>")
+            return html[:insert_at] + "\n" + base_tag + html[insert_at:]
+        return base_tag + "\n" + html
+
+    def _read_qmd_front_matter(self, qmd_path: Path) -> str:
+        try:
+            text = qmd_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = qmd_path.read_text(errors="ignore")
+        if not text.startswith("---"):
+            return ""
+        end_index = text.find("\n---", 3)
+        if end_index < 0:
+            return ""
+        return text[3:end_index]
+
+    def _qmd_reference_doc_values(self, qmd_path: Path) -> list[str]:
+        """Return reference-doc values from qmd YAML front matter."""
+        yaml_header = self._read_qmd_front_matter(qmd_path)
+        if not yaml_header:
+            return []
+        values = []
+        pattern = re.compile(r"^\s*reference[-_]doc\s*:\s*(?P<value>.*?)\s*$", re.IGNORECASE | re.MULTILINE)
+        for match in pattern.finditer(yaml_header):
+            value = match.group("value").split("#", 1)[0].strip().strip("\"'")
+            values.append(value)
+        return values
+
+    def _qmd_has_usable_reference_doc(self, qmd_path: Path) -> bool:
+        """Detect a concrete DOCX reference template in qmd YAML front matter."""
+        values = self._qmd_reference_doc_values(qmd_path)
+        if not values:
+            return False
+        placeholders = {"", "default", "none", "null", "~"}
+        return any(value.lower() not in placeholders for value in values)
+
+    def _prepare_docx_qmd(self, report_dir: Path, qmd_path: Path) -> Path:
+        """Create a temporary qmd without placeholder reference-doc values."""
+        values = self._qmd_reference_doc_values(qmd_path)
+        placeholders = {"default", "none", "null", "~"}
+        if not any(value.lower() in placeholders for value in values):
+            return qmd_path
+
+        try:
+            text = qmd_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = qmd_path.read_text(errors="ignore")
+
+        pattern = re.compile(
+            r"^\s*reference[-_]doc\s*:\s*['\"]?(?:default|none|null|~)['\"]?\s*(?:#.*)?$\n?",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        sanitized = pattern.sub("", text)
+        sanitized = re.sub(
+            r"(?m)^(\s*)docx:\s*\n(?=(?:\1\S|\S|---))",
+            "",
+            sanitized,
+        )
+        temp_qmd = report_dir / "report_docx_render.qmd"
+        temp_qmd.write_text(sanitized, encoding="utf-8")
+        return temp_qmd
+
+    def _normalize_project_config_for_docx(self, report_dir: Path) -> None:
+        """Remove placeholder reference-doc values from project-level config."""
+        quarto_yml = report_dir / "_quarto.yml"
+        if not quarto_yml.exists():
+            return
+        try:
+            text = quarto_yml.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = quarto_yml.read_text(errors="ignore")
+        pattern = re.compile(
+            r"^\s*reference[-_]doc\s*:\s*['\"]?(?:default|none|null|~)['\"]?\s*(?:#.*)?$\n?",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        normalized = pattern.sub("", text)
+        if normalized != text:
+            quarto_yml.write_text(normalized, encoding="utf-8")
+            logger.info(
+                "quarto_project_config_reference_doc_normalized",
+                path=str(quarto_yml),
+            )
 
     def _run_quarto(self, cwd: Path, args: list[str]) -> None:
         quarto = shutil.which("quarto") or "quarto"

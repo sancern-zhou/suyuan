@@ -44,6 +44,7 @@
       v-show="!showManagementPanel"
       ref="inputBoxRef"
       v-model="inputValue"
+      :session-id="sessionId"
       :disabled="inputDisabled"
       :is-analyzing="isAnalyzing"
       :placeholder="inputPlaceholder"
@@ -94,6 +95,10 @@ const props = defineProps({
   useReranker: {
     type: Boolean,
     default: false
+  },
+  sessionId: {
+    type: String,
+    default: ''
   },
   hasMoreMessages: {
     type: Boolean,
@@ -253,12 +258,8 @@ defineExpose({
 }
 
 .viz-toggle-btn:not(.expanded) {
-  right: -18px;
+  right: 0;
   border-radius: 0 4px 4px 0;
-}
-
-.viz-toggle-btn:not(.expanded):hover {
-  right: -5px;
 }
 
 .toggle-icon {

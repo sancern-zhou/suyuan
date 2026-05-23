@@ -19,7 +19,7 @@ from app.services.llm_failover import (
     LLMFailoverError,
     classify_llm_failure,
     get_cooldown_failure,
-    get_global_llm_semaphore,
+    get_llm_pool_semaphore,
     mark_provider_cooldown,
     parse_fallback_candidates,
     should_fallback,
@@ -893,7 +893,6 @@ class LLMService:
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
         self.temperature = settings.llm_temperature
-        self._provider_state_lock = asyncio.Lock()
 
         # 调试信息：检查配置是否正确
         logger.debug(
@@ -945,16 +944,16 @@ class LLMService:
         )
 
     async def _run_llm_request_with_global_limit(self, operation: str, call):
-        semaphore = get_global_llm_semaphore()
+        semaphore = get_llm_pool_semaphore(self.provider, self.model)
         logger.debug(
-            "llm_global_concurrency_waiting",
+            "llm_pool_concurrency_waiting",
             provider=self.provider,
             model=self.model,
             operation=operation,
         )
         async with semaphore:
             logger.debug(
-                "llm_global_concurrency_acquired",
+                "llm_pool_concurrency_acquired",
                 provider=self.provider,
                 model=self.model,
                 operation=operation,
@@ -963,84 +962,83 @@ class LLMService:
 
     async def _run_anthropic_with_fallback(self, operation: str, call):
         """Run an Anthropic-compatible request with configured model fallback."""
-        async with self._provider_state_lock:
-            original_state = self._snapshot_provider_state()
-            candidates = parse_fallback_candidates(
-                original_state["provider"],
-                original_state["model"],
-                self.request_fallbacks,
-            )
-            attempts = []
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
 
-            try:
-                for index, candidate in enumerate(candidates, start=1):
-                    if not (
-                        candidate.provider == original_state["provider"].lower()
-                        and (candidate.model or original_state["model"]) == original_state["model"]
-                    ):
-                        self._switch_provider_for_attempt(candidate.provider, candidate.model)
-                    cooldown_failure = get_cooldown_failure(self.provider)
-                    if cooldown_failure and index < len(candidates):
-                        attempts.append({
-                            "provider": self.provider,
-                            "model": self.model,
-                            "reason": cooldown_failure.reason,
-                            "status": cooldown_failure.status,
-                            "code": cooldown_failure.code,
-                            "error": "provider is in cooldown",
-                        })
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(operation, call)
+                    if attempts:
                         logger.warning(
-                            "llm_fallback_candidate_skipped_cooldown",
+                            "llm_fallback_candidate_succeeded",
                             provider=self.provider,
                             model=self.model,
-                            reason=cooldown_failure.reason,
+                            attempts=summarize_attempts(attempts),
                         )
-                        continue
-
-                    try:
-                        result = await self._run_llm_request_with_global_limit(operation, call)
-                        if attempts:
-                            logger.warning(
-                                "llm_fallback_candidate_succeeded",
-                                provider=self.provider,
-                                model=self.model,
-                                attempts=summarize_attempts(attempts),
-                            )
-                        return result
-                    except Exception as exc:
-                        failure = classify_llm_failure(exc)
-                        attempts.append({
-                            "provider": self.provider,
-                            "model": self.model,
-                            "reason": failure.reason,
-                            "status": failure.status,
-                            "code": failure.code,
-                            "error": failure.message,
-                        })
-                        if failure.reason == "context_overflow":
-                            raise
-                        if should_fallback(failure):
-                            mark_provider_cooldown(self.provider, failure)
-                        has_next = index < len(candidates)
-                        logger.warning(
-                            "llm_fallback_candidate_failed",
-                            provider=self.provider,
-                            model=self.model,
-                            reason=failure.reason,
-                            status=failure.status,
-                            code=failure.code,
-                            has_next=has_next,
-                            error=failure.message[:300],
-                        )
-                        if not has_next or not should_fallback(failure):
-                            raise
-                raise LLMFailoverError(summarize_attempts(attempts))
-            except Exception:
-                if attempts:
-                    logger.error("llm_fallback_failed", attempts=summarize_attempts(attempts))
-                raise
-            finally:
-                self._restore_provider_state(original_state)
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
 
     def _load_provider_config(self):
         """根据provider加载对应配置"""
@@ -1777,8 +1775,6 @@ class LLMService:
         """
         import httpx
 
-        url, headers = self._get_request_config()
-
         # 调试日志：打印 JSON 调用的 prompt 长度与部分内容
         try:
             logger.info(
@@ -1789,6 +1785,11 @@ class LLMService:
             )
         except Exception as e:
             logger.warning("llm_json_request_debug_failed", error=str(e))
+
+        if self.anthropic_client and "/anthropic" in (self.base_url or ""):
+            return await self._call_anthropic_with_json_response(prompt, max_retries=max_retries)
+
+        url, headers = self._get_request_config()
 
         payload = {
             "model": self.model,
@@ -1916,6 +1917,83 @@ class LLMService:
                     raise
 
         raise Exception(f"LLM调用失败，已重试{max_retries}次")
+
+    async def _call_anthropic_with_json_response(
+        self,
+        prompt: str,
+        max_retries: int = 2,
+    ) -> Dict[str, Any]:
+        """Call an Anthropic-compatible endpoint and parse a JSON object response."""
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries):
+            try:
+                response = await self.chat_anthropic(
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=self.temperature,
+                )
+                content = self._extract_text_from_anthropic_content(response.get("content", []))
+                result = self._parse_json_response_content(content)
+                logger.info(
+                    "llm_response_parsed",
+                    provider=self.provider,
+                    model=self.model,
+                    attempt=attempt + 1,
+                    api_format="anthropic",
+                )
+                return result
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    "llm_json_parse_failed",
+                    attempt=attempt + 1,
+                    error=str(e),
+                    provider=self.provider,
+                    api_format="anthropic",
+                )
+                if attempt == max_retries - 1:
+                    raise
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    "llm_request_failed",
+                    attempt=attempt + 1,
+                    error=str(e),
+                    provider=self.provider,
+                    api_format="anthropic",
+                )
+                if attempt == max_retries - 1:
+                    raise
+
+        raise Exception(f"LLM调用失败，已重试{max_retries}次") from last_error
+
+    def _extract_text_from_anthropic_content(self, content_blocks: Any) -> str:
+        """Extract text from Anthropic SDK content blocks."""
+        texts: List[str] = []
+        for block in content_blocks or []:
+            block_type = getattr(block, "type", None)
+            if block_type == "text" and hasattr(block, "text"):
+                texts.append(block.text)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                texts.append(str(block.get("text", "")))
+        return "\n".join(text for text in texts if text)
+
+    def _parse_json_response_content(self, content: str) -> Dict[str, Any]:
+        if not content or not isinstance(content, str):
+            raise json.JSONDecodeError("empty LLM response", content or "", 0)
+
+        if "```json" in content or "```" in content:
+            extracted = self._extract_json_from_text(content)
+            if extracted is not None:
+                return extracted
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            extracted = self._extract_json_from_text(content)
+            if extracted is not None:
+                return extracted
+            raise
 
     def _extract_json_from_text(self, content: str) -> Optional[Dict[str, Any]]:
         """
@@ -2302,72 +2380,6 @@ class LLMService:
                 f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
             )
 
-        # 调试日志 - 完整上下文
-        logger.info(
-            "========== LLM调用开始 ==========",
-            provider=self.provider,
-            model=self.model,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-
-        # 打印系统提示词（如果存在）
-        if system:
-            system_preview = system[:500] + "..." if len(system) > 500 else system
-            logger.info(
-                "【系统提示词】",
-                length=len(system),
-                preview=system_preview
-            )
-        else:
-            logger.info("【系统提示词】无")
-
-        # 打印消息列表
-        logger.info(f"【消息列表】共 {len(messages)} 条")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-
-            # 处理不同类型的内容
-            if isinstance(content, list):
-                # 统计content blocks类型
-                block_types = []
-                text_preview = ""
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "unknown")
-                        block_types.append(block_type)
-
-                        # 提取文本预览
-                        if block_type == "text" and "text" in block:
-                            text_preview = block["text"][:200] + "..." if len(block["text"]) > 200 else block["text"]
-                        elif block_type == "tool_use":
-                            text_preview = f"[工具调用: {block.get('name', 'unknown')}]"
-
-                logger.info(
-                    f"  消息 {i+1}: role={role}, blocks={block_types}",
-                    preview=text_preview if text_preview else "[无文本内容]"
-                )
-            else:
-                # 字符串内容
-                content_preview = content[:200] + "..." if len(str(content)) > 200 else str(content)
-                logger.info(
-                    f"  消息 {i+1}: role={role}",
-                    preview=content_preview
-                )
-
-        # 打印工具列表
-        if tools:
-            tool_names = [tool.get("name", "unknown") for tool in tools]
-            logger.info(
-                f"【工具列表】共 {len(tools)} 个",
-                tools=tool_names
-            )
-        else:
-            logger.info("【工具列表】无")
-
-        logger.info("========== LLM调用上下文结束 ==========")
-
         try:
             async def create_message():
                 if not self.anthropic_client:
@@ -2527,78 +2539,11 @@ class LLMService:
                 f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
             )
 
-        # 调试日志 - 完整上下文（流式）
-        logger.info(
-            "========== LLM流式调用开始 ==========",
-            provider=self.provider,
-            model=self.model,
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
-
-        # 打印系统提示词（如果存在）
-        if system:
-            system_preview = system[:500] + "..." if len(system) > 500 else system
-            logger.info(
-                "【系统提示词】",
-                length=len(system),
-                preview=system_preview
-            )
-        else:
-            logger.info("【系统提示词】无")
-
-        # 打印消息列表
-        logger.info(f"【消息列表】共 {len(messages)} 条")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-
-            # 处理不同类型的内容
-            if isinstance(content, list):
-                # 统计content blocks类型
-                block_types = []
-                text_preview = ""
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "unknown")
-                        block_types.append(block_type)
-
-                        # 提取文本预览
-                        if block_type == "text" and "text" in block:
-                            text_preview = block["text"][:200] + "..." if len(block["text"]) > 200 else block["text"]
-                        elif block_type == "tool_use":
-                            text_preview = f"[工具调用: {block.get('name', 'unknown')}]"
-
-                logger.info(
-                    f"  消息 {i+1}: role={role}, blocks={block_types}",
-                    preview=text_preview if text_preview else "[无文本内容]"
-                )
-            else:
-                # 字符串内容
-                content_preview = content[:200] + "..." if len(str(content)) > 200 else str(content)
-                logger.info(
-                    f"  消息 {i+1}: role={role}",
-                    preview=content_preview
-                )
-
-        # 打印工具列表
-        if tools:
-            tool_names = [tool.get("name", "unknown") for tool in tools]
-            logger.info(
-                f"【工具列表】共 {len(tools)} 个",
-                tools=tool_names
-            )
-        else:
-            logger.info("【工具列表】无")
-
-        logger.info("========== LLM流式调用上下文结束 ==========")
-
         # 追踪首token时间（TTFT - Time to First Token）
         first_token_received = False
         import time
         start_time = time.time()
 
-        await self._provider_state_lock.acquire()
         original_state = self._snapshot_provider_state()
         candidates = parse_fallback_candidates(
             original_state["provider"],
@@ -2653,7 +2598,7 @@ class LLMService:
                         messages_count=len(api_params.get("messages", [])),
                         has_tools=bool(api_params.get("tools")),
                     )
-                    semaphore = get_global_llm_semaphore()
+                    semaphore = get_llm_pool_semaphore(self.provider, self.model)
                     async with semaphore:
                         async with self.anthropic_client.messages.stream(**api_params) as stream:
                             async for event in stream:
@@ -2805,7 +2750,6 @@ class LLMService:
             raise LLMFailoverError(summarize_attempts(attempts))
         finally:
             self._restore_provider_state(original_state)
-            self._provider_state_lock.release()
 
 
 # 全局LLM服务实例

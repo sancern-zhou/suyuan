@@ -34,6 +34,7 @@ class RemoveMemoryTool(LLMTool):
             name="remove_memory",
             description="从MEMORY.md中删除条目",
             category=ToolCategory.TASK_MANAGEMENT,
+            function_schema=self._build_schema(),  # ✅ 传递 schema
             version="1.0.0",
             requires_context=False
         )
@@ -53,27 +54,31 @@ class RemoveMemoryTool(LLMTool):
     def _build_schema(self) -> Dict[str, Any]:
         """构建工具schema"""
         return {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "要删除的内容（子串匹配）"
+            "name": "remove_memory",
+            "description": "从MEMORY.md中删除条目",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_text": {
+                        "type": "string",
+                        "description": "要删除的内容（子串匹配）"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
+                        "description": "事实类别（可选，用于精确匹配）"
+                    }
                 },
-                "category": {
-                    "type": "string",
-                    "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
-                    "description": "事实类别（可选，用于精确匹配）"
-                }
-            },
-            "required": ["text"]
+                "required": ["old_text"]
+            }
         }
 
-    async def execute(self, text: str, category: str = None, **kwargs) -> Dict[str, Any]:
+    async def execute(self, old_text: str, category: str = None, **kwargs) -> Dict[str, Any]:
         """
         执行记忆删除
 
         Args:
-            text: 要删除的内容
+            old_text: 要删除的内容（参数名改为 old_text，与 replace_memory 保持一致）
             category: 事实类别（可选）
 
         Returns:
@@ -103,24 +108,24 @@ class RemoveMemoryTool(LLMTool):
             content = memory_file.read_text(encoding="utf-8")
 
             # 执行删除
-            success = self._remove_fact(memory_file, content, text, category)
+            success = self._remove_fact(memory_file, content, old_text, category)
 
             if success:
                 logger.info(
                     "memory_fact_removed",
                     category=category,
-                    text_length=len(text),
+                    text_length=len(old_text),
                     memory_path=str(memory_file)
                 )
 
                 return {
                     "success": True,
-                    "summary": f"已删除记忆：{text[:50]}{'...' if len(text) > 50 else ''}"
+                    "summary": f"已删除记忆：{old_text[:50]}{'...' if len(old_text) > 50 else ''}"
                 }
             else:
                 return {
                     "success": False,
-                    "error": f"未找到要删除的内容：{text[:50]}",
+                    "error": f"未找到要删除的内容：{old_text[:50]}",
                     "summary": "记忆删除失败：未找到匹配内容"
                 }
 
@@ -187,7 +192,7 @@ class RemoveMemoryTool(LLMTool):
         self,
         memory_file: Path,
         content: str,
-        text: str,
+        old_text: str,
         category: str = None
     ) -> bool:
         """
@@ -196,7 +201,7 @@ class RemoveMemoryTool(LLMTool):
         Args:
             memory_file: 记忆文件路径
             content: 当前文件内容
-            text: 要删除的内容
+            old_text: 要删除的内容（参数名改为 old_text）
             category: 事实类别（可选）
 
         Returns:
@@ -217,8 +222,8 @@ class RemoveMemoryTool(LLMTool):
                 elif line.startswith("## ") and in_section:
                     in_section = False
                     filtered_lines.append(line)
-                elif in_section and text in line:
-                    # 跳过包含text的行
+                elif in_section and old_text in line:
+                    # 跳过包含old_text的行
                     logger.debug(
                         "removing_memory_line",
                         line=line[:50]
@@ -228,7 +233,7 @@ class RemoveMemoryTool(LLMTool):
                     filtered_lines.append(line)
         else:
             # 全文删除
-            filtered_lines = [line for line in lines if text not in line]
+            filtered_lines = [line for line in lines if old_text not in line]
 
         # 检查是否有变化
         if len(filtered_lines) == len(lines):

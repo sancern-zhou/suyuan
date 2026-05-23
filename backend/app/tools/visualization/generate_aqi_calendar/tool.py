@@ -139,6 +139,7 @@ class GenerateAQICalendarTool(LLMTool):
             from .calendar_renderer import AQICalendarRenderer, calculate_iaqi
             import json
             from pathlib import Path
+            from app.utils.path_config import get_datasets_dir
 
             # 读取数据（直接读取文件，避免data_registry.load_dataset的bug）
             try:
@@ -149,7 +150,7 @@ class GenerateAQICalendarTool(LLMTool):
 
                 # 构建文件路径
                 safe_id = f"{parts[0]}_v1_{parts[2]}"
-                data_file = Path("backend_data_registry/datasets") / f"{safe_id}.json"
+                data_file = get_datasets_dir() / f"{safe_id}.json"
 
                 if not data_file.exists():
                     # 尝试使用相对路径

@@ -194,6 +194,69 @@ class GeoMappingResolver:
     STATION_CODE_MAP: Dict[str, str] = {}
     CODE_STATION_MAP: Dict[str, str] = {}
     CITY_STATIONS_MAP: Dict[str, List[str]] = {}
+    _geo_mappings_loaded = False
+    _district_code_map_from_geo: Dict[str, str] = {}
+    _city_districts_map_from_geo: Dict[str, List[str]] = {}
+    _district_name_by_code_from_geo: Dict[str, str] = {}
+
+    @classmethod
+    def _get_geo_mappings_path(cls) -> Optional[Path]:
+        """获取统一维护的 geo_mappings.json 路径。"""
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            for candidate in (
+                parent / "config" / "geo_mappings.json",
+                parent / "backend" / "config" / "geo_mappings.json",
+            ):
+                if candidate.exists():
+                    return candidate
+        return None
+
+    @classmethod
+    def _load_geo_mappings(cls):
+        """从统一 geo_mappings.json 加载城市/区县编码映射。"""
+        if cls._geo_mappings_loaded:
+            return
+
+        try:
+            geo_file = cls._get_geo_mappings_path()
+            if not geo_file:
+                logger.warning("geo_mappings_json_not_found")
+                cls._geo_mappings_loaded = True
+                return
+
+            with open(geo_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            districts = data.get("districts", {})
+            cls._district_code_map_from_geo = {
+                str(name).strip(): str(code).strip()
+                for name, code in districts.items()
+                if str(name).strip() and str(code).strip()
+            }
+            cls._district_name_by_code_from_geo = {
+                code: name for name, code in cls._district_code_map_from_geo.items()
+            }
+
+            cls._city_districts_map_from_geo = {}
+            for district_name, district_code in cls._district_code_map_from_geo.items():
+                city_code = district_code[:6]
+                for city_name, mapped_city_code in cls.CITY_CODE_MAP.items():
+                    if mapped_city_code == city_code:
+                        cls._city_districts_map_from_geo.setdefault(city_name, [])
+                        if district_code not in cls._city_districts_map_from_geo[city_name]:
+                            cls._city_districts_map_from_geo[city_name].append(district_code)
+
+            cls._geo_mappings_loaded = True
+            logger.info(
+                "geo_mappings_loaded_for_districts",
+                districts=len(cls._district_code_map_from_geo),
+                city_keys=len(cls._city_districts_map_from_geo),
+                source=str(geo_file),
+            )
+        except Exception as e:
+            logger.error("geo_mappings_load_failed_for_districts", error=str(e), exc_info=True)
+            cls._geo_mappings_loaded = True
 
     @classmethod
     def _get_full_station_code_map(cls) -> Dict[str, str]:
@@ -225,6 +288,12 @@ class GeoMappingResolver:
 
     # 城市→站点代码列表映射（从 geo_mappings.json 动态加载）
     CITY_STATIONS_MAP = {}
+
+    @classmethod
+    def get_district_name(cls, district_code: str) -> str:
+        """区县编码→区县名称，找不到返回原编码。"""
+        cls._load_geo_mappings()
+        return cls._district_name_by_code_from_geo.get(str(district_code), str(district_code))
 
     @classmethod
     def resolve_city_codes(cls, city_names: List[str]) -> List[str]:
@@ -271,6 +340,95 @@ class GeoMappingResolver:
         )
 
         return city_codes
+
+    @classmethod
+    def resolve_district_codes(cls, district_names: List[str]) -> List[str]:
+        """
+        将区县名称或9位区县编码转换为区县编码列表。
+
+        Args:
+            district_names: 区县名称/区县编码列表，如 ["清城区", "清新区"] 或 ["441800005"]
+
+        Returns:
+            区县编码列表（去重，保持输入顺序）
+        """
+        cls._load_geo_mappings()
+        district_codes: List[str] = []
+        seen = set()
+
+        for district_name in district_names or []:
+            raw = str(district_name).strip()
+            if not raw:
+                continue
+
+            code = None
+            if raw.isdigit() and len(raw) == 9:
+                code = raw
+            elif raw in cls._district_code_map_from_geo:
+                code = cls._district_code_map_from_geo[raw]
+            else:
+                district_short = raw.rstrip("区县市镇街道")
+                for mapped_name, mapped_code in cls._district_code_map_from_geo.items():
+                    mapped_short = mapped_name.rstrip("区县市镇街道")
+                    if raw in mapped_name or mapped_name in raw or district_short == mapped_short:
+                        code = mapped_code
+                        break
+
+            if code and code not in seen:
+                district_codes.append(code)
+                seen.add(code)
+            elif not code:
+                logger.warning(
+                    "district_code_not_found",
+                    district_name=raw,
+                    available_districts=list(cls._district_code_map_from_geo.keys())[:20],
+                )
+
+        logger.info(
+            "district_names_resolved_to_codes",
+            input_names=district_names,
+            output_codes=district_codes,
+        )
+        return district_codes
+
+    @classmethod
+    def resolve_district_codes_by_city(cls, city_names: List[str]) -> List[str]:
+        """将城市名称/6位城市编码展开为该城市下辖所有区县编码。"""
+        cls._load_geo_mappings()
+        district_codes: List[str] = []
+        seen = set()
+
+        for city_name in city_names or []:
+            raw = str(city_name).strip()
+            if not raw:
+                continue
+
+            city_codes = cls.resolve_city_codes([raw])
+            if not city_codes:
+                logger.warning(
+                    "city_code_not_found_for_districts",
+                    city_name=raw,
+                    available_cities=list(cls.CITY_CODE_MAP.keys())[:20],
+                )
+                continue
+
+            for city_code in city_codes:
+                for district_code in cls._city_districts_map_from_geo.get(raw, []):
+                    if district_code not in seen:
+                        district_codes.append(district_code)
+                        seen.add(district_code)
+                for district_code in cls._district_name_by_code_from_geo:
+                    if district_code.startswith(city_code) and district_code not in seen:
+                        district_codes.append(district_code)
+                        seen.add(district_code)
+
+        logger.info(
+            "city_names_resolved_to_district_codes",
+            input_names=city_names,
+            output_codes=district_codes,
+            district_count=len(district_codes),
+        )
+        return district_codes
 
     @classmethod
     def resolve_station_codes(cls, station_names: List[str]) -> List[str]:
@@ -725,6 +883,10 @@ class QueryGDSuncereDataTool:
         context: ExecutionContext,
         data_type: Optional[int] = None,
         sand_type: Optional[int] = 1,
+        ns_type: int = 2,
+        cal_area_type: int = 0,
+        skip_count: int = 0,
+        max_result_count: int = 1000,
         enable_sand_deduction: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
@@ -737,6 +899,10 @@ class QueryGDSuncereDataTool:
             context: 执行上下文
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
             sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+            ns_type: 标准类型（2新国标，1旧国标）；默认2
+            cal_area_type: 统计类型（0总站，2省站，3国控，4国控+省控，5国控+省控(除区域)）；默认0
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
             enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
         Returns:
@@ -748,7 +914,11 @@ class QueryGDSuncereDataTool:
             start_date=start_date,
             end_date=end_date,
             data_type=data_type,
-            sand_type=sand_type
+            sand_type=sand_type,
+            ns_type=ns_type,
+            cal_area_type=cal_area_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
         try:
@@ -857,6 +1027,9 @@ class QueryGDSuncereDataTool:
                     "query_type": "city_day",
                     "cities": cities,
                     "date_range": f"{start_date} to {end_date}",
+                    "ns_type": ns_type,
+                    "cal_area_type": cal_area_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "field_mapping_applied": True,
                     "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {},
@@ -870,21 +1043,31 @@ class QueryGDSuncereDataTool:
                 record_count=len(standardized_records)
             )
 
+            # 计算返回样本数量
+            total_count = len(standardized_records)
+            sample_count = min(24, total_count)
+            is_externalized = total_count > 24
+
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:24],  # 返回前24条供预览
+                "data": standardized_records[:sample_count],  # 返回前24条供预览
+                "data_id": data_id,
                 "metadata": {
                     "tool_name": "query_gd_suncere_city_day",
-                    "data_id": data_id,
-                    "total_records": len(standardized_records),
-                    "returned_records": min(24, len(standardized_records)),
+                    "total_records": total_count,
+                    "returned_records": sample_count,
+                    "externalized": is_externalized,  # 明确标记是否已外部化
+                    "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                     "cities": cities,
                     "date_range": f"{start_date} to {end_date}",
+                    "ns_type": ns_type,
+                    "cal_area_type": cal_area_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "source": "gd_suncere_api"
                 },
-                "summary": f"成功获取 {', '.join(cities)} 的日报数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": f"成功获取 {', '.join(cities)} 的日报数据共 {total_count} 条，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
             }
 
         except Exception as e:
@@ -892,6 +1075,202 @@ class QueryGDSuncereDataTool:
                 "query_gd_suncere_city_day_failed",
                 error=str(e),
                 error_type=type(e).__name__
+            )
+            return cls._create_error_response(str(e))
+
+    @classmethod
+    def query_district_day_data(
+        cls,
+        start_time: str,
+        end_time: str,
+        context: ExecutionContext,
+        districts: Optional[List[str]] = None,
+        cities: Optional[List[str]] = None,
+        district_codes: Optional[List[str]] = None,
+        data_type: int = 1,
+        sand_type: Optional[int] = 1,
+        ns_type: int = 2,
+        cal_area_type: int = 0,
+        skip_count: int = 0,
+        max_result_count: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        查询区县日数据。
+
+        使用 DATDistrictDay/GetDATDistrictDayDisplayPagedListAsync，codes 参数传9位区县编码。
+        支持：
+        - districts: 区县名称或9位区县编码
+        - district_codes: 9位区县编码
+        - cities: 城市名称或6位城市编码，自动展开为该城市下辖所有区县
+        """
+        logger.info(
+            "query_gd_suncere_district_day_start",
+            districts=districts,
+            cities=cities,
+            district_codes=district_codes,
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type,
+            sand_type=sand_type,
+            ns_type=ns_type,
+            cal_area_type=cal_area_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count,
+        )
+
+        try:
+            resolved_codes: List[str] = []
+            seen = set()
+
+            def add_codes(codes: List[str]) -> None:
+                for code in codes:
+                    code = str(code).strip()
+                    if code and code not in seen:
+                        resolved_codes.append(code)
+                        seen.add(code)
+
+            add_codes(cls.geo_resolver.resolve_district_codes(districts or []))
+            add_codes(cls.geo_resolver.resolve_district_codes(district_codes or []))
+            add_codes(cls.geo_resolver.resolve_district_codes_by_city(cities or []))
+
+            if not resolved_codes:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "data": [],
+                    "metadata": {
+                        "tool_name": "query_gd_suncere_district_day",
+                        "districts": districts or [],
+                        "cities": cities or [],
+                        "district_codes": district_codes or [],
+                        "error": "No valid district codes found",
+                    },
+                    "summary": "未找到有效区县编码，请检查区县名称、区县编码或城市名称",
+                }
+
+            api_client = get_gd_suncere_api_client()
+            endpoint = "/api/airprovinceproduct/airdata/DATDistrictDay/GetDATDistrictDayDisplayPagedListAsync"
+            params = {
+                "codes": resolved_codes,
+                "timePoint": [start_time, end_time],
+                "calAreaType": cal_area_type,
+                "dataType": data_type,
+                "nsType": ns_type,
+                "skipCount": skip_count,
+                "maxResultCount": max_result_count,
+            }
+            if sand_type is not None:
+                params["sandType"] = sand_type
+
+            response = api_client._make_request(
+                endpoint,
+                api_client._to_indexed_query_params(params),
+                method="GET",
+                timeout=60,
+            )
+
+            if not response.get("success"):
+                error_msg = response.get("msg", "Unknown error")
+                raise Exception(f"API 查询失败: {error_msg}")
+
+            result_payload = response.get("result", [])
+            api_total_count = None
+            if isinstance(result_payload, dict):
+                api_total_count = result_payload.get("totalCount")
+                raw_records = result_payload.get("items", [])
+            elif isinstance(result_payload, list):
+                raw_records = result_payload
+                api_total_count = len(raw_records)
+            else:
+                raw_records = []
+            if not raw_records:
+                return {
+                    "status": "empty",
+                    "success": True,
+                    "data": [],
+                    "metadata": {
+                        "tool_name": "query_gd_suncere_district_day",
+                        "districts": districts or [],
+                        "cities": cities or [],
+                        "district_codes": resolved_codes,
+                        "time_range": f"{start_time} to {end_time}",
+                        "request_params": params,
+                        "api_total_count": api_total_count,
+                        "message": "查询成功但无数据返回",
+                    },
+                    "summary": "指定区县在该时间范围内无日报数据",
+                }
+
+            standardizer = get_data_standardizer()
+            standardized_records = standardizer.standardize(raw_records)
+            district_names = [
+                cls.geo_resolver.get_district_name(code) for code in resolved_codes
+            ]
+
+            data_id = context.data_manager.save_data(
+                data=standardized_records,
+                schema="air_quality_unified",
+                metadata={
+                    "source": "gd_suncere_api",
+                    "query_type": "district_day",
+                    "districts": districts or [],
+                    "cities": cities or [],
+                    "district_codes": resolved_codes,
+                    "district_names": district_names,
+                    "time_range": f"{start_time} to {end_time}",
+                    "api_total_count": api_total_count,
+                    "data_type": data_type,
+                    "sand_type": sand_type,
+                    "ns_type": ns_type,
+                    "cal_area_type": cal_area_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
+                    "schema_version": "v2.0",
+                    "field_mapping_applied": True,
+                    "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {},
+                    "request_params": params,
+                },
+            )
+
+            # 计算返回样本数量
+            total_count = len(standardized_records)
+            sample_count = min(24, total_count)
+            is_externalized = total_count > 24
+
+            return {
+                "status": "success",
+                "success": True,
+                "data": standardized_records[:sample_count],
+                "data_id": data_id,
+                "metadata": {
+                    "tool_name": "query_gd_suncere_district_day",
+                    "total_records": total_count,
+                    "returned_records": sample_count,
+                    "externalized": is_externalized,  # 明确标记是否已外部化
+                    "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
+                    "districts": districts or [],
+                    "cities": cities or [],
+                    "district_codes": resolved_codes,
+                    "district_names": district_names,
+                    "time_range": f"{start_time} to {end_time}",
+                    "api_total_count": api_total_count,
+                    "data_type": data_type,
+                    "sand_type": sand_type,
+                    "ns_type": ns_type,
+                    "cal_area_type": cal_area_type,
+                    "request_params": params,
+                    "source": "gd_suncere_api",
+                },
+                "summary": (
+                    f"成功获取区县日报数据共 {total_count} 条，"
+                    f"区县数量 {len(resolved_codes)}，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
+                ),
+            }
+
+        except Exception as e:
+            logger.error(
+                "query_gd_suncere_district_day_failed",
+                error=str(e),
+                error_type=type(e).__name__,
             )
             return cls._create_error_response(str(e))
 
@@ -906,6 +1285,9 @@ class QueryGDSuncereDataTool:
         data_type: Optional[int] = None,
         station_type: Optional[str] = None,
         sand_type: Optional[int] = 1,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000,
         persist_data: bool = True
     ) -> Dict[str, Any]:
         """
@@ -920,6 +1302,9 @@ class QueryGDSuncereDataTool:
             data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
             station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
             sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+            ns_type: 标准类型（2新国标，1旧国标）；默认2
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
             persist_data: 是否保存完整日数据到上下文；统计报表内部调用时设为 False
 
         Returns:
@@ -1003,7 +1388,10 @@ class QueryGDSuncereDataTool:
                 start_date=start_date,
                 end_date=end_date,
                 data_type=data_type,
-                sand_type=sand_type
+                sand_type=sand_type,
+                ns_type=ns_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
             if not response.get("success"):
@@ -1102,68 +1490,63 @@ class QueryGDSuncereDataTool:
                 measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')
                 measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
 
-            # 按新标准重算 IAQI、AQI 和首要污染物
-            import math
-            for record in standardized_records:
-                measurements = record.get("measurements", {})
+            # 新标准查询时重算 IAQI、AQI 和首要污染物；旧标准查询保留接口返回口径。
+            if ns_type == 2:
+                import math
+                for record in standardized_records:
+                    measurements = record.get("measurements", {})
 
-                # 获取修约后的浓度值
-                pm25 = safe_float(measurements.get("PM2_5"))
-                pm10 = safe_float(measurements.get("PM10"))
-                so2 = safe_float(measurements.get("SO2"))
-                no2 = safe_float(measurements.get("NO2"))
-                co = safe_float(measurements.get("CO"))
-                o3_8h = safe_float(measurements.get("O3_8h"))
+                    pm25 = safe_float(measurements.get("PM2_5"))
+                    pm10 = safe_float(measurements.get("PM10"))
+                    so2 = safe_float(measurements.get("SO2"))
+                    no2 = safe_float(measurements.get("NO2"))
+                    co = safe_float(measurements.get("CO"))
+                    o3_8h = safe_float(measurements.get("O3_8h"))
 
-                # 使用新标准计算 IAQI（向上进位取整数）
-                pm25_iaqi = math.ceil(calculate_iaqi(pm25, 'PM2_5', 'new'))
-                pm10_iaqi = math.ceil(calculate_iaqi(pm10, 'PM10', 'new'))
-                so2_iaqi = math.ceil(calculate_iaqi(so2, 'SO2', 'new'))
-                no2_iaqi = math.ceil(calculate_iaqi(no2, 'NO2', 'new'))
-                co_iaqi = math.ceil(calculate_iaqi(co, 'CO', 'new'))
-                o3_8h_iaqi = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'new'))
+                    pm25_iaqi = math.ceil(calculate_iaqi(pm25, 'PM2_5', 'new'))
+                    pm10_iaqi = math.ceil(calculate_iaqi(pm10, 'PM10', 'new'))
+                    so2_iaqi = math.ceil(calculate_iaqi(so2, 'SO2', 'new'))
+                    no2_iaqi = math.ceil(calculate_iaqi(no2, 'NO2', 'new'))
+                    co_iaqi = math.ceil(calculate_iaqi(co, 'CO', 'new'))
+                    o3_8h_iaqi = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'new'))
 
-                # 保存新标准 IAQI
-                measurements['PM2_5_IAQI'] = pm25_iaqi
-                measurements['PM10_IAQI'] = pm10_iaqi
-                measurements['SO2_IAQI'] = so2_iaqi
-                measurements['NO2_IAQI'] = no2_iaqi
-                measurements['CO_IAQI'] = co_iaqi
-                measurements['O3_8h_IAQI'] = o3_8h_iaqi
+                    measurements['PM2_5_IAQI'] = pm25_iaqi
+                    measurements['PM10_IAQI'] = pm10_iaqi
+                    measurements['SO2_IAQI'] = so2_iaqi
+                    measurements['NO2_IAQI'] = no2_iaqi
+                    measurements['CO_IAQI'] = co_iaqi
+                    measurements['O3_8h_IAQI'] = o3_8h_iaqi
 
-                # 计算 AQI（取最大 IAQI）
-                aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
-                measurements['AQI'] = aqi
+                    aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+                    measurements['AQI'] = aqi
 
-                # 确定首要污染物（AQI > 50 时才有首要污染物）
-                if aqi > 50:
-                    pollutants_with_iaqi = {
-                        'PM2_5': pm25_iaqi,
-                        'PM10': pm10_iaqi,
-                        'SO2': so2_iaqi,
-                        'NO2': no2_iaqi,
-                        'CO': co_iaqi,
-                        'O3_8h': o3_8h_iaqi
-                    }
-                    primary_pollutants = [p for p, iaqi in pollutants_with_iaqi.items() if iaqi == aqi]
-                    # 将首要污染物列表转换为中文
-                    primary_pollutant_map = {
-                        'PM2_5': 'PM2.5',
-                        'PM10': 'PM10',
-                        'SO2': 'SO2',
-                        'NO2': 'NO2',
-                        'CO': 'CO',
-                        'O3_8h': 'O3'
-                    }
-                    primary_pollutants_zh = [primary_pollutant_map.get(p, p) for p in primary_pollutants]
-                    record['primary_pollutant'] = ', '.join(primary_pollutants_zh) if primary_pollutants_zh else '-'
-                else:
-                    record['primary_pollutant'] = '-'
+                    if aqi > 50:
+                        pollutants_with_iaqi = {
+                            'PM2_5': pm25_iaqi,
+                            'PM10': pm10_iaqi,
+                            'SO2': so2_iaqi,
+                            'NO2': no2_iaqi,
+                            'CO': co_iaqi,
+                            'O3_8h': o3_8h_iaqi
+                        }
+                        primary_pollutants = [p for p, iaqi in pollutants_with_iaqi.items() if iaqi == aqi]
+                        primary_pollutant_map = {
+                            'PM2_5': 'PM2.5',
+                            'PM10': 'PM10',
+                            'SO2': 'SO2',
+                            'NO2': 'NO2',
+                            'CO': 'CO',
+                            'O3_8h': 'O3'
+                        }
+                        primary_pollutants_zh = [primary_pollutant_map.get(p, p) for p in primary_pollutants]
+                        record['primary_pollutant'] = ', '.join(primary_pollutants_zh) if primary_pollutants_zh else '-'
+                    else:
+                        record['primary_pollutant'] = '-'
 
-            logger.info(
-                "station_day_new_standard_indices_calculated",
-                record_count=len(standardized_records)
-            )
+                logger.info(
+                    "station_day_new_standard_indices_calculated",
+                    record_count=len(standardized_records)
+                )
 
             data_id = None
             if persist_data:
@@ -1174,7 +1557,9 @@ class QueryGDSuncereDataTool:
                     metadata={
                         "field_mapping_applied": True,
                         "source": "gd_suncere_api",
-                        "query_type": "station_day"
+                        "query_type": "station_day",
+                        "ns_type": ns_type,
+                        "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013"
                     }
                 )
 
@@ -1210,6 +1595,8 @@ class QueryGDSuncereDataTool:
                     "stations": stations or [],
                     "station_codes": station_codes,
                     "date_range": f"{start_date} to {end_date}",
+                    "ns_type": ns_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",
                     "source": "gd_suncere_api"
                 },
@@ -1234,7 +1621,10 @@ class QueryGDSuncereDataTool:
         start_time: str,
         end_time: str,
         context: ExecutionContext,
-        include_weather: bool = True
+        include_weather: bool = True,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000
     ) -> Dict[str, Any]:
         """
         查询城市小时数据（用于区域对比分析）
@@ -1248,6 +1638,9 @@ class QueryGDSuncereDataTool:
             end_time: 结束时间 (YYYY-MM-DD HH:MM:SS)
             context: 执行上下文
             include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
+            ns_type: 标准类型（2新国标，1旧国标）；默认2
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
 
         Returns:
             查询结果
@@ -1327,7 +1720,10 @@ class QueryGDSuncereDataTool:
                 city_codes=city_codes,
                 start_time=start_time,
                 end_time=end_time,
-                data_type=data_type  # 根据时间自动判断
+                data_type=data_type,  # 根据时间自动判断
+                ns_type=ns_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
             if not response.get("success"):
@@ -1438,6 +1834,8 @@ class QueryGDSuncereDataTool:
                     "query_type": "city_hour",
                     "cities": cities,
                     "time_range": f"{start_time} - {end_time}",
+                    "ns_type": ns_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "field_mapping_applied": True,
                     "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
@@ -1450,21 +1848,30 @@ class QueryGDSuncereDataTool:
                 record_count=len(standardized_records)
             )
 
+            # 计算返回样本数量
+            total_count = len(standardized_records)
+            sample_count = min(24, total_count)
+            is_externalized = total_count > 24
+
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:24],  # 返回前24条供预览
+                "data": standardized_records[:sample_count],  # 返回前24条供预览
+                "data_id": data_id,
                 "metadata": {
                     "tool_name": "query_gd_suncere_city_hour",
-                    "data_id": data_id,
-                    "total_records": len(standardized_records),
-                    "returned_records": min(24, len(standardized_records)),
+                    "total_records": total_count,
+                    "returned_records": sample_count,
+                    "externalized": is_externalized,  # 明确标记是否已外部化
+                    "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                     "cities": cities,
                     "time_range": f"{start_time} - {end_time}",
+                    "ns_type": ns_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "source": "gd_suncere_api"
                 },
-                "summary": f"成功获取 {', '.join(cities)} 的小时数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": f"成功获取 {', '.join(cities)} 的小时数据共 {total_count} 条，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
             }
 
         except Exception as e:
@@ -1482,7 +1889,11 @@ class QueryGDSuncereDataTool:
         start_time: str,
         end_time: str,
         context: ExecutionContext,
-        include_weather: bool = True
+        include_weather: bool = True,
+        data_type: Optional[int] = None,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000
     ) -> Dict[str, Any]:
         """
         查询站点小时数据（用于精细化分析）
@@ -1496,6 +1907,10 @@ class QueryGDSuncereDataTool:
             end_time: 结束时间 (YYYY-MM-DD HH:MM:SS)
             context: 执行上下文
             include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
+            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时自动判断
+            ns_type: 标准类型（2新国标，1旧国标）；默认2
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
 
         Returns:
             查询结果
@@ -1563,13 +1978,13 @@ class QueryGDSuncereDataTool:
             )
 
             # 智能计算 DataSource 参数（根据结束时间判断）
-            data_type = cls.calculate_data_source(end_time)
+            resolved_data_type = data_type if data_type is not None else cls.calculate_data_source(end_time)
 
             logger.info(
                 "query_station_hour_data_type_calculated",
                 end_time=end_time,
-                data_type=data_type,
-                data_type_name="原始实况" if data_type == 0 else "审核实况"
+                data_type=resolved_data_type,
+                data_type_name="原始实况" if resolved_data_type == 0 else "审核实况"
             )
 
             # 调用 API 查询站点小时数据
@@ -1577,7 +1992,10 @@ class QueryGDSuncereDataTool:
                 station_codes=station_codes,
                 start_time=start_time,
                 end_time=end_time,
-                data_type=data_type
+                data_type=resolved_data_type,
+                ns_type=ns_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
             if not response.get("success"):
@@ -1688,6 +2106,8 @@ class QueryGDSuncereDataTool:
                     "query_type": "station_hour",
                     "stations": stations,
                     "time_range": f"{start_time} - {end_time}",
+                    "ns_type": ns_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "field_mapping_applied": True,
                     "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
@@ -1700,21 +2120,30 @@ class QueryGDSuncereDataTool:
                 record_count=len(standardized_records)
             )
 
+            # 计算返回样本数量
+            total_count = len(standardized_records)
+            sample_count = min(24, total_count)
+            is_externalized = total_count > 24
+
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:24],  # 返回前24条供预览
+                "data": standardized_records[:sample_count],  # 返回前24条供预览
+                "data_id": data_id,
                 "metadata": {
                     "tool_name": "query_gd_suncere_station_hour",
-                    "data_id": data_id,
-                    "total_records": len(standardized_records),
-                    "returned_records": min(24, len(standardized_records)),
+                    "total_records": total_count,
+                    "returned_records": sample_count,
+                    "externalized": is_externalized,  # 明确标记是否已外部化
+                    "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                     "stations": stations,
                     "time_range": f"{start_time} - {end_time}",
+                    "ns_type": ns_type,
+                    "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                     "schema_version": "v2.0",  # UDF v2.0 标记
                     "source": "gd_suncere_api"
                 },
-                "summary": f"成功获取 {', '.join(stations)} 的小时数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": f"成功获取 {', '.join(stations)} 的小时数据共 {total_count} 条，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
             }
 
         except Exception as e:
@@ -1858,6 +2287,10 @@ def execute_query_gd_suncere_city_day(
     context: ExecutionContext,
     data_type: Optional[int] = None,
     sand_type: Optional[int] = 1,
+    ns_type: int = 2,
+    cal_area_type: int = 0,
+    skip_count: int = 0,
+    max_result_count: int = 1000,
     enable_sand_deduction: Optional[bool] = None
 ) -> Dict[str, Any]:
     """
@@ -1870,6 +2303,10 @@ def execute_query_gd_suncere_city_day(
         context: 执行上下文
         data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
         sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+        ns_type: 标准类型（2新国标，1旧国标）；默认2
+        cal_area_type: 统计类型（0总站，2省站，3国控，4国控+省控，5国控+省控(除区域)）；默认0
+        skip_count: 分页跳过数
+        max_result_count: 每页结果数
         enable_sand_deduction: 已废弃；扣沙由接口 sand_type 参数处理
 
     Returns:
@@ -1881,7 +2318,61 @@ def execute_query_gd_suncere_city_day(
         end_date=end_date,
         context=context,
         data_type=data_type,
-        sand_type=sand_type
+        sand_type=sand_type,
+        ns_type=ns_type,
+        cal_area_type=cal_area_type,
+        skip_count=skip_count,
+        max_result_count=max_result_count
+    )
+
+
+def execute_query_gd_suncere_district_day(
+    start_time: str,
+    end_time: str,
+    context: ExecutionContext,
+    districts: Optional[List[str]] = None,
+    cities: Optional[List[str]] = None,
+    district_codes: Optional[List[str]] = None,
+    data_type: int = 1,
+    sand_type: Optional[int] = 1,
+    ns_type: int = 2,
+    cal_area_type: int = 0,
+    skip_count: int = 0,
+    max_result_count: int = 20,
+) -> Dict[str, Any]:
+    """
+    执行区县日报数据查询。
+
+    Args:
+        start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
+        end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
+        context: 执行上下文
+        districts: 区县名称或9位区县编码列表
+        cities: 城市名称或6位城市编码列表，自动展开为下辖区县
+        district_codes: 9位区县编码列表
+        data_type: 数据类型：0原始实况，1审核实况，2原始标况，3审核标况；默认1
+        sand_type: 扣沙类型：0不扣沙，1扣沙；默认1
+        ns_type: 标准类型：2新国标，1旧国标
+        cal_area_type: 统计类型：0国控+省控，1省控，2国控；默认0
+        skip_count: 分页跳过数
+        max_result_count: 每页结果数
+
+    Returns:
+        查询结果字典
+    """
+    return QueryGDSuncereDataTool.query_district_day_data(
+        start_time=start_time,
+        end_time=end_time,
+        context=context,
+        districts=districts,
+        cities=cities,
+        district_codes=district_codes,
+        data_type=data_type,
+        sand_type=sand_type,
+        ns_type=ns_type,
+        cal_area_type=cal_area_type,
+        skip_count=skip_count,
+        max_result_count=max_result_count,
     )
 
 
@@ -1890,7 +2381,10 @@ def execute_query_gd_suncere_station_hour(
     start_time: str,
     end_time: str,
     context: ExecutionContext,
-    include_weather: bool = True
+    include_weather: bool = True,
+    ns_type: int = 2,
+    skip_count: int = 0,
+    max_result_count: int = 1000
 ) -> Dict[str, Any]:
     """
     执行站点小时数据查询（实际使用城市小时数据 API）
@@ -1906,6 +2400,9 @@ def execute_query_gd_suncere_station_hour(
         end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
         context: 执行上下文
         include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
+        ns_type: 标准类型（2新国标，1旧国标）；默认2
+        skip_count: 分页跳过数
+        max_result_count: 每页结果数
 
     Returns:
         查询结果字典
@@ -1927,7 +2424,10 @@ def execute_query_gd_suncere_station_hour(
         start_time=start_time,
         end_time=end_time,
         context=context,
-        include_weather=include_weather
+        include_weather=include_weather,
+        ns_type=ns_type,
+        skip_count=skip_count,
+        max_result_count=max_result_count
     )
 
 
@@ -1938,7 +2438,11 @@ def execute_query_gd_suncere_station_hour_real(
     cities: Optional[List[str]] = None,
     stations: Optional[List[str]] = None,
     station_type: Optional[str] = None,
-    include_weather: bool = True
+    include_weather: bool = True,
+    data_type: Optional[int] = None,
+    ns_type: int = 2,
+    skip_count: int = 0,
+    max_result_count: int = 1000
 ) -> Dict[str, Any]:
     """
     执行站点级别小时数据查询（真实站点数据）
@@ -1958,6 +2462,10 @@ def execute_query_gd_suncere_station_hour_real(
         stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接转编码
         station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
         include_weather: 是否包含气象字段（风速、风向、温度、湿度、气压等），默认 True
+        data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时自动判断
+        ns_type: 标准类型（2新国标，1旧国标）；默认2
+        skip_count: 分页跳过数
+        max_result_count: 每页结果数
 
     Returns:
         UDF v2.0 格式的查询结果
@@ -2050,14 +2558,17 @@ def execute_query_gd_suncere_station_hour_real(
         )
 
         # 智能计算 DataSource 参数
-        data_type = QueryGDSuncereDataTool.calculate_data_source(end_time)
+        resolved_data_type = data_type if data_type is not None else QueryGDSuncereDataTool.calculate_data_source(end_time)
 
         # 调用站点小时数据 API
         response = api_client.query_station_hour_data(
             station_codes=station_codes,
             start_time=start_time,
             end_time=end_time,
-            data_type=data_type
+            data_type=resolved_data_type,
+            ns_type=ns_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
         if not response.get("success"):
@@ -2178,68 +2689,63 @@ def execute_query_gd_suncere_station_hour_real(
             measurements['CO'] = apply_rounding(co_raw, 'CO', 'raw_data')
             measurements['O3_8h'] = int(apply_rounding(o3_8h_raw, 'O3_8h', 'raw_data'))
 
-        # 按新标准重算 IAQI、AQI 和首要污染物
-        import math
-        for record in standardized_records:
-            measurements = record.get("measurements", {})
+        # 新标准查询时重算 IAQI、AQI 和首要污染物；旧标准查询保留接口返回口径。
+        if ns_type == 2:
+            import math
+            for record in standardized_records:
+                measurements = record.get("measurements", {})
 
-            # 获取修约后的浓度值
-            pm25 = safe_float(measurements.get("PM2_5"))
-            pm10 = safe_float(measurements.get("PM10"))
-            so2 = safe_float(measurements.get("SO2"))
-            no2 = safe_float(measurements.get("NO2"))
-            co = safe_float(measurements.get("CO"))
-            o3_8h = safe_float(measurements.get("O3_8h"))
+                pm25 = safe_float(measurements.get("PM2_5"))
+                pm10 = safe_float(measurements.get("PM10"))
+                so2 = safe_float(measurements.get("SO2"))
+                no2 = safe_float(measurements.get("NO2"))
+                co = safe_float(measurements.get("CO"))
+                o3_8h = safe_float(measurements.get("O3_8h"))
 
-            # 使用新标准计算 IAQI（向上进位取整数）
-            pm25_iaqi = math.ceil(calculate_iaqi(pm25, 'PM2_5', 'new'))
-            pm10_iaqi = math.ceil(calculate_iaqi(pm10, 'PM10', 'new'))
-            so2_iaqi = math.ceil(calculate_iaqi(so2, 'SO2', 'new'))
-            no2_iaqi = math.ceil(calculate_iaqi(no2, 'NO2', 'new'))
-            co_iaqi = math.ceil(calculate_iaqi(co, 'CO', 'new'))
-            o3_8h_iaqi = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'new'))
+                pm25_iaqi = math.ceil(calculate_iaqi(pm25, 'PM2_5', 'new'))
+                pm10_iaqi = math.ceil(calculate_iaqi(pm10, 'PM10', 'new'))
+                so2_iaqi = math.ceil(calculate_iaqi(so2, 'SO2', 'new'))
+                no2_iaqi = math.ceil(calculate_iaqi(no2, 'NO2', 'new'))
+                co_iaqi = math.ceil(calculate_iaqi(co, 'CO', 'new'))
+                o3_8h_iaqi = math.ceil(calculate_iaqi(o3_8h, 'O3_8h', 'new'))
 
-            # 保存新标准 IAQI
-            measurements['PM2_5_IAQI'] = pm25_iaqi
-            measurements['PM10_IAQI'] = pm10_iaqi
-            measurements['SO2_IAQI'] = so2_iaqi
-            measurements['NO2_IAQI'] = no2_iaqi
-            measurements['CO_IAQI'] = co_iaqi
-            measurements['O3_8h_IAQI'] = o3_8h_iaqi
+                measurements['PM2_5_IAQI'] = pm25_iaqi
+                measurements['PM10_IAQI'] = pm10_iaqi
+                measurements['SO2_IAQI'] = so2_iaqi
+                measurements['NO2_IAQI'] = no2_iaqi
+                measurements['CO_IAQI'] = co_iaqi
+                measurements['O3_8h_IAQI'] = o3_8h_iaqi
 
-            # 计算 AQI（取最大 IAQI）
-            aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
-            measurements['AQI'] = aqi
+                aqi = max(pm25_iaqi, pm10_iaqi, so2_iaqi, no2_iaqi, co_iaqi, o3_8h_iaqi)
+                measurements['AQI'] = aqi
 
-            # 确定首要污染物（AQI > 50 时才有首要污染物）
-            if aqi > 50:
-                pollutants_with_iaqi = {
-                    'PM2_5': pm25_iaqi,
-                    'PM10': pm10_iaqi,
-                    'SO2': so2_iaqi,
-                    'NO2': no2_iaqi,
-                    'CO': co_iaqi,
-                    'O3_8h': o3_8h_iaqi
-                }
-                primary_pollutants = [p for p, iaqi in pollutants_with_iaqi.items() if iaqi == aqi]
-                # 将首要污染物列表转换为中文
-                primary_pollutant_map = {
-                    'PM2_5': 'PM2.5',
-                    'PM10': 'PM10',
-                    'SO2': 'SO2',
-                    'NO2': 'NO2',
-                    'CO': 'CO',
-                    'O3_8h': 'O3'
-                }
-                primary_pollutants_zh = [primary_pollutant_map.get(p, p) for p in primary_pollutants]
-                record['primary_pollutant'] = ', '.join(primary_pollutants_zh) if primary_pollutants_zh else '-'
-            else:
-                record['primary_pollutant'] = '-'
+                if aqi > 50:
+                    pollutants_with_iaqi = {
+                        'PM2_5': pm25_iaqi,
+                        'PM10': pm10_iaqi,
+                        'SO2': so2_iaqi,
+                        'NO2': no2_iaqi,
+                        'CO': co_iaqi,
+                        'O3_8h': o3_8h_iaqi
+                    }
+                    primary_pollutants = [p for p, iaqi in pollutants_with_iaqi.items() if iaqi == aqi]
+                    primary_pollutant_map = {
+                        'PM2_5': 'PM2.5',
+                        'PM10': 'PM10',
+                        'SO2': 'SO2',
+                        'NO2': 'NO2',
+                        'CO': 'CO',
+                        'O3_8h': 'O3'
+                    }
+                    primary_pollutants_zh = [primary_pollutant_map.get(p, p) for p in primary_pollutants]
+                    record['primary_pollutant'] = ', '.join(primary_pollutants_zh) if primary_pollutants_zh else '-'
+                else:
+                    record['primary_pollutant'] = '-'
 
-        logger.info(
-            "station_hour_new_standard_indices_calculated",
-            record_count=len(standardized_records)
-        )
+            logger.info(
+                "station_hour_new_standard_indices_calculated",
+                record_count=len(standardized_records)
+            )
 
         # 保存到上下文
         data_id = context.data_manager.save_data(
@@ -2252,6 +2758,8 @@ def execute_query_gd_suncere_station_hour_real(
                 "stations": stations,
                 "station_codes": station_codes,
                 "time_range": f"{start_time} - {end_time}",
+                "ns_type": ns_type,
+                "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                 "schema_version": "v2.0",
                 "field_mapping_applied": True,
                 "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {}
@@ -2264,23 +2772,32 @@ def execute_query_gd_suncere_station_hour_real(
             record_count=len(standardized_records)
         )
 
+        # 计算返回样本数量
+        total_count = len(standardized_records)
+        sample_count = min(24, total_count)
+        is_externalized = total_count > 24
+
         return {
             "status": "success",
             "success": True,
-            "data": standardized_records[:24],
+            "data": standardized_records[:sample_count],
+            "data_id": data_id,
             "metadata": {
                 "tool_name": "query_gd_suncere_station_hour",
-                "data_id": data_id,
-                "total_records": len(standardized_records),
-                "returned_records": min(24, len(standardized_records)),
+                "total_records": total_count,
+                "returned_records": sample_count,
+                "externalized": is_externalized,  # 明确标记是否已外部化
+                "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                 "cities": cities,
                 "stations": stations,
                 "station_codes": station_codes,
                 "time_range": f"{start_time} - {end_time}",
+                "ns_type": ns_type,
+                "standard": "HJ 633-2026" if ns_type == 2 else "HJ 633-2013",
                 "schema_version": "v2.0",
                 "source": "gd_suncere_api"
             },
-            "summary": f"成功获取站点级别小时数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+            "summary": f"成功获取站点级别小时数据共 {total_count} 条，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
         }
 
     except Exception as e:
@@ -2513,15 +3030,22 @@ def execute_query_gd_suncere_report(
                 record_count=len(standardized_records)
             )
 
+            # 计算返回样本数量
+            total_count = len(standardized_records)
+            sample_count = min(24, total_count)
+            is_externalized = total_count > 24
+
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:24],  # 返回前24条供预览
+                "data": standardized_records[:sample_count],  # 返回前24条供预览
+                "data_id": data_id,
                 "metadata": {
                     "tool_name": "query_gd_suncere_report",
-                    "data_id": data_id,
-                    "total_records": len(standardized_records),
-                    "returned_records": min(24, len(standardized_records)),
+                    "total_records": total_count,
+                    "returned_records": sample_count,
+                    "externalized": is_externalized,  # 明确标记是否已外部化
+                    "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                     "cities": cities,
                     "time_range": f"{start_time} to {end_time}",
                     "time_type": time_type,
@@ -2529,7 +3053,7 @@ def execute_query_gd_suncere_report(
                     "schema_version": "v2.0",
                     "source": "gd_suncere_api"
                 },
-                "summary": f"成功获取 {', '.join(cities)} 的综合报表数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": f"成功获取 {', '.join(cities)} 的综合报表数据共 {total_count} 条，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
             }
 
         # 没有 context 时直接返回数据
@@ -2555,6 +3079,201 @@ def execute_query_gd_suncere_report(
             "query_gd_suncere_report_failed",
             error=str(e),
             error_type=type(e).__name__
+        )
+        return QueryGDSuncereDataTool._create_error_response(str(e))
+
+
+def execute_query_gd_suncere_district_report(
+    start_time: str,
+    end_time: str,
+    context: Optional[ExecutionContext] = None,
+    districts: Optional[List[str]] = None,
+    cities: Optional[List[str]] = None,
+    district_codes: Optional[List[str]] = None,
+    time_type: int = 8,
+    area_type: int = 1,
+    cal_area_type: int = 0,
+    data_source: int = 1,
+    ns_type: int = 2,
+    sand_type: int = 1,
+    skip_count: int = 0,
+    max_result_count: int = 20,
+) -> Dict[str, Any]:
+    """
+    执行区县统计报表查询。
+
+    支持月度(time_type=4)、年度(time_type=7)和任意时段(time_type=8，默认)。
+    """
+    logger.info(
+        "query_gd_suncere_district_report_start",
+        districts=districts,
+        cities=cities,
+        district_codes=district_codes,
+        start_time=start_time,
+        end_time=end_time,
+        time_type=time_type,
+        area_type=area_type,
+        cal_area_type=cal_area_type,
+        data_source=data_source,
+        ns_type=ns_type,
+        sand_type=sand_type,
+    )
+
+    try:
+        resolved_codes: List[str] = []
+        seen = set()
+
+        def add_codes(codes: List[str]) -> None:
+            for code in codes:
+                code = str(code).strip()
+                if code and code not in seen:
+                    resolved_codes.append(code)
+                    seen.add(code)
+
+        add_codes(QueryGDSuncereDataTool.geo_resolver.resolve_district_codes(districts or []))
+        add_codes(QueryGDSuncereDataTool.geo_resolver.resolve_district_codes(district_codes or []))
+        add_codes(QueryGDSuncereDataTool.geo_resolver.resolve_district_codes_by_city(cities or []))
+
+        if not resolved_codes:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "metadata": {
+                    "tool_name": "query_gd_suncere_district_report",
+                    "districts": districts or [],
+                    "cities": cities or [],
+                    "district_codes": district_codes or [],
+                    "error": "No valid district codes found",
+                },
+                "summary": "未找到有效区县编码，请检查区县名称、区县编码或城市名称",
+            }
+
+        api_client = get_gd_suncere_api_client()
+        endpoint = "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync"
+        payload = {
+            "skipCount": skip_count,
+            "maxResultCount": max_result_count,
+            "areaType": area_type,
+            "timeType": time_type,
+            "stationCode": resolved_codes,
+            "timePoint": [start_time, end_time],
+            "calAreaType": cal_area_type,
+            "dataSource": data_source,
+            "nsType": ns_type,
+            "sandType": sand_type,
+        }
+
+        logger.info(
+            "query_district_report_calling_api",
+            endpoint=endpoint,
+            payload=payload,
+        )
+
+        response_data = api_client._make_request(endpoint, payload, method="POST", timeout=60)
+        if not response_data.get("success"):
+            error_msg = response_data.get("msg", "Unknown error")
+            raise Exception(f"API 查询失败: {error_msg}")
+
+        result_payload = response_data.get("result", [])
+        api_total_count = None
+        if isinstance(result_payload, dict):
+            api_total_count = result_payload.get("totalCount")
+            raw_records = result_payload.get("items", [])
+        elif isinstance(result_payload, list):
+            raw_records = result_payload
+            api_total_count = len(raw_records)
+        else:
+            raw_records = []
+
+        district_names = [
+            QueryGDSuncereDataTool.geo_resolver.get_district_name(code)
+            for code in resolved_codes
+        ]
+
+        if not raw_records:
+            return {
+                "status": "empty",
+                "success": True,
+                "data": [],
+                "metadata": {
+                    "tool_name": "query_gd_suncere_district_report",
+                    "district_codes": resolved_codes,
+                    "district_names": district_names,
+                    "time_range": f"{start_time} to {end_time}",
+                    "time_type": time_type,
+                    "area_type": area_type,
+                    "cal_area_type": cal_area_type,
+                    "data_source": data_source,
+                    "ns_type": ns_type,
+                    "sand_type": sand_type,
+                    "api_total_count": api_total_count,
+                    "message": "查询成功但无数据返回",
+                },
+                "summary": f"未找到 {', '.join(district_names)} 在指定时间段的区县统计报表数据",
+            }
+
+        standardized_records = raw_records
+        data_id = None
+        if context:
+            standardizer = get_data_standardizer()
+            standardized_records = standardizer.standardize(raw_records)
+            data_id = context.data_manager.save_data(
+                data=standardized_records,
+                schema="air_quality_unified",
+                metadata={
+                    "source": "gd_suncere_api",
+                    "query_type": "district_report",
+                    "district_codes": resolved_codes,
+                    "district_names": district_names,
+                    "time_range": f"{start_time} to {end_time}",
+                    "time_type": time_type,
+                    "area_type": area_type,
+                    "cal_area_type": cal_area_type,
+                    "data_source": data_source,
+                    "ns_type": ns_type,
+                    "sand_type": sand_type,
+                    "schema_version": "v2.0",
+                    "field_mapping_applied": True,
+                    "field_mapping_info": standardizer.get_field_mapping_info() if standardizer else {},
+                },
+            )
+
+        total_count = len(standardized_records)
+        sample_count = min(24, total_count)
+        is_externalized = total_count > 24
+
+        return {
+            "status": "success",
+            "success": True,
+            "data": standardized_records[:sample_count],
+            "data_id": data_id,
+            "metadata": {
+                "tool_name": "query_gd_suncere_district_report",
+                "total_records": total_count,
+                "returned_records": sample_count,
+                "externalized": is_externalized,
+                "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
+                "api_total_count": api_total_count,
+                "district_codes": resolved_codes,
+                "district_names": district_names,
+                "time_range": f"{start_time} to {end_time}",
+                "time_type": time_type,
+                "area_type": area_type,
+                "cal_area_type": cal_area_type,
+                "data_source": data_source,
+                "ns_type": ns_type,
+                "sand_type": sand_type,
+                "source": "gd_suncere_api",
+            },
+            "summary": f"成功获取区县统计报表数据共 {total_count} 条，区县数量 {len(resolved_codes)}，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}",
+        }
+
+    except Exception as e:
+        logger.error(
+            "query_gd_suncere_district_report_failed",
+            error=str(e),
+            error_type=type(e).__name__,
         )
         return QueryGDSuncereDataTool._create_error_response(str(e))
 
@@ -2737,15 +3456,22 @@ def execute_query_gd_suncere_report_compare(
                 record_count=len(standardized_records)
             )
 
+            # 计算返回样本数量
+            total_count = len(standardized_records)
+            sample_count = min(24, total_count)
+            is_externalized = total_count > 24
+
             return {
                 "status": "success",
                 "success": True,
-                "data": standardized_records[:24],  # 返回前24条供预览
+                "data": standardized_records[:sample_count],  # 返回前24条供预览
+                "data_id": data_id,
                 "metadata": {
                     "tool_name": "query_gd_suncere_report_compare",
-                    "data_id": data_id,
-                    "total_records": len(standardized_records),
-                    "returned_records": min(24, len(standardized_records)),
+                    "total_records": total_count,
+                    "returned_records": sample_count,
+                    "externalized": is_externalized,  # 明确标记是否已外部化
+                    "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                     "cities": cities,
                     "time_point": time_point,
                     "contrast_time": contrast_time,
@@ -2754,7 +3480,7 @@ def execute_query_gd_suncere_report_compare(
                     "schema_version": "v2.0",
                     "source": "gd_suncere_api"
                 },
-                "summary": f"成功获取 {', '.join(cities)} 的对比报表数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": f"成功获取 {', '.join(cities)} 的对比报表数据共 {total_count} 条，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}"
             }
 
         # 没有 context 时直接返回数据
@@ -2792,7 +3518,11 @@ def execute_query_gd_suncere_station_day(
     end_date: str = None,
     context: Optional[ExecutionContext] = None,
     data_type: Optional[int] = None,
-    station_type: Optional[str] = None
+    station_type: Optional[str] = None,
+    sand_type: Optional[int] = 1,
+    ns_type: int = 2,
+    skip_count: int = 0,
+    max_result_count: int = 1000
 ) -> Dict[str, Any]:
     """
     执行站点日报数据查询
@@ -2808,6 +3538,10 @@ def execute_query_gd_suncere_station_day(
         context: 执行上下文
         data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；None时底层自动近三天原始、三天外审核
         station_type: 站点类型（如"国控"/"省控"/"市控"或"1.0"/"2.0"/"3.0"）
+        sand_type: 接口扣沙类型（0不扣沙，1扣沙；默认1扣沙）
+        ns_type: 标准类型（2新国标，1旧国标）；默认2
+        skip_count: 分页跳过数
+        max_result_count: 每页结果数
 
     Returns:
         查询结果字典
@@ -2829,7 +3563,11 @@ def execute_query_gd_suncere_station_day(
         end_date=end_date,
         context=context,
         data_type=data_type,
-        station_type=station_type
+        station_type=station_type,
+        sand_type=sand_type,
+        ns_type=ns_type,
+        skip_count=skip_count,
+        max_result_count=max_result_count
     )
 
 

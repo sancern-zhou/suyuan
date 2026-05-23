@@ -727,10 +727,10 @@ def generate_calendar_from_data_id(
         # 构建文件路径
         safe_id = f"{parts[0]}_v1_{parts[2]}"
 
-        # 尝试多个可能的路径
+        from app.utils.path_config import get_datasets_dir
+
         possible_paths = [
-            Path("backend_data_registry/datasets") / f"{safe_id}.json",
-            Path("/home/xckj/suyuan/backend/backend_data_registry/datasets") / f"{safe_id}.json"
+            get_datasets_dir() / f"{safe_id}.json",
         ]
 
         data_file = None

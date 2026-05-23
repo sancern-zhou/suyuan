@@ -59,13 +59,22 @@ class SessionManagerDB:
             enable_cache=enable_cache
         )
 
-    async def save_session(self, session: Session, update_timestamp: bool = True) -> bool:
+    async def save_session(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+        save_messages: bool = True,
+        force_full_history_rewrite: bool = False
+    ) -> bool:
         """
         保存会话到数据库
 
         Args:
             session: 会话对象
             update_timestamp: 是否更新时间戳（默认True）
+            save_messages: 是否同步 conversation_history
+            force_full_history_rewrite: 是否显式全量重写消息历史。默认使用增量追加，
+                避免每轮对话都 DELETE + INSERT 整个 session_messages 分区。
 
         Returns:
             是否保存成功
@@ -108,22 +117,30 @@ class SessionManagerDB:
                     office_documents=session.office_documents
                 )
 
-            # 保存对话历史
-            if session.conversation_history:
+            # 保存对话历史：默认走增量追加，避免全量 DELETE + INSERT 阻塞 SSE 首包。
+            if save_messages and session.conversation_history:
                 logger.debug(
                     "saving_conversation_history",
                     session_id=session.session_id,
-                    message_count=len(session.conversation_history)
+                    message_count=len(session.conversation_history),
+                    force_full_history_rewrite=force_full_history_rewrite
                 )
-                await self.repository.save_conversation_history(
-                    session.session_id,
-                    session.conversation_history
-                )
+                if force_full_history_rewrite:
+                    await self.repository.save_conversation_history(
+                        session.session_id,
+                        session.conversation_history
+                    )
+                else:
+                    await self.repository.sync_conversation_history_incremental(
+                        session.session_id,
+                        session.conversation_history
+                    )
 
             logger.info(
                 "session_saved_to_db",
                 session_id=session.session_id,
-                message_count=len(session.conversation_history)
+                message_count=len(session.conversation_history),
+                save_messages=save_messages
             )
 
             return True

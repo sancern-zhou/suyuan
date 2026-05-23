@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, Any
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.office.soffice import get_soffice_env
 import structlog
@@ -230,6 +231,15 @@ class AcceptChangesTool(LLMTool):
 
             if pdf_preview:
                 result_data["pdf_preview"] = pdf_preview
+
+            attach_document_artifact(
+                result_data,
+                output_path,
+                kind="office",
+                format="docx",
+                preview_key="pdf_preview",
+                generator=self.name,
+            )
 
             return {
                 "success": True,

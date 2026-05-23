@@ -176,7 +176,7 @@ class GDSuncereAPIClient:
     def _make_request(
         self,
         endpoint: str,
-        payload: Dict[str, Any],
+        payload: Any,
         method: str = "POST",
         timeout: int = 30
     ) -> Dict[str, Any]:
@@ -275,13 +275,28 @@ class GDSuncereAPIClient:
             )
             raise
 
+    @staticmethod
+    def _to_indexed_query_params(params: Dict[str, Any]) -> List[tuple]:
+        """Convert list values to query keys like codes[0], timePoint[0]."""
+        indexed_params: List[tuple] = []
+        for key, value in params.items():
+            if isinstance(value, list):
+                indexed_params.extend((f"{key}[{index}]", item) for index, item in enumerate(value))
+            else:
+                indexed_params.append((key, value))
+        return indexed_params
+
     def query_city_day_data(
         self,
         city_codes: List[str],
         start_date: str,
         end_date: str,
         data_type: Optional[int] = None,
-        sand_type: Optional[int] = 1
+        sand_type: Optional[int] = 1,
+        ns_type: int = 2,
+        cal_area_type: int = 0,
+        skip_count: int = 0,
+        max_result_count: int = 1000
     ) -> Dict[str, Any]:
         """
         查询城市日报数据
@@ -292,6 +307,8 @@ class GDSuncereAPIClient:
           - codes: 城市代码数组（可重复传多个）
           - timePoint: 时间数组，格式 ["YYYY-MM-DD 00:00:00", "YYYY-MM-DD 23:59:59"]
           - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+          - nsType: 标准类型（2新国标，1旧国标）
+          - calAreaType: 统计类型（0总站，2省站，3国控，4国控+省控，5国控+省控(除区域)）
           - sandType: 扣沙类型（0不扣沙，1扣沙；如接口支持则透传）
 
         Args:
@@ -300,6 +317,10 @@ class GDSuncereAPIClient:
             end_date: 结束日期 (YYYY-MM-DD)
             data_type: 数据类型；None时自动使用近三天原始、三天外审核
             sand_type: 扣沙类型，0不扣沙，1扣沙；默认1扣沙
+            ns_type: 标准类型，2新国标，1旧国标；默认2
+            cal_area_type: 统计类型，0总站，2省站，3国控，4国控+省控，5国控+省控(除区域)；默认0
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
 
         Returns:
             城市日报数据
@@ -312,7 +333,11 @@ class GDSuncereAPIClient:
                 endpoint=endpoint,
                 city_codes=city_codes,
                 segments=date_segments,
-                sand_type=sand_type
+                sand_type=sand_type,
+                ns_type=ns_type,
+                cal_area_type=cal_area_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
         seg_start, seg_end, plan_type, resolved_data_type = date_segments[0]
@@ -325,7 +350,11 @@ class GDSuncereAPIClient:
                 f"{seg_end} 23:59:59"
             ],
             "dataType": resolved_data_type,
-            "planType": plan_type
+            "planType": plan_type,
+            "calAreaType": cal_area_type,
+            "nsType": ns_type,
+            "skipCount": skip_count,
+            "maxResultCount": max_result_count
         }
         if sand_type is not None:
             params["sandType"] = sand_type
@@ -337,17 +366,25 @@ class GDSuncereAPIClient:
             end_date=seg_end,
             data_type=resolved_data_type,
             sand_type=sand_type,
-            plan_type=plan_type
+            plan_type=plan_type,
+            ns_type=ns_type,
+            cal_area_type=cal_area_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
-        return self._make_request(endpoint, params, method="GET")
+        return self._make_request(endpoint, self._to_indexed_query_params(params), method="GET")
 
     def _query_city_day_data_segments(
         self,
         endpoint: str,
         city_codes: List[str],
         segments: List[tuple],
-        sand_type: Optional[int]
+        sand_type: Optional[int],
+        ns_type: int,
+        cal_area_type: int,
+        skip_count: int,
+        max_result_count: int
     ) -> Dict[str, Any]:
         """按站点属性 planType 分段查询城市日报并合并结果。"""
         merged_result = []
@@ -361,7 +398,11 @@ class GDSuncereAPIClient:
                     f"{seg_end} 23:59:59"
                 ],
                 "dataType": resolved_data_type,
-                "planType": plan_type
+                "planType": plan_type,
+                "calAreaType": cal_area_type,
+                "nsType": ns_type,
+                "skipCount": skip_count,
+                "maxResultCount": max_result_count
             }
             if sand_type is not None:
                 params["sandType"] = sand_type
@@ -373,10 +414,14 @@ class GDSuncereAPIClient:
                 end_date=seg_end,
                 data_type=resolved_data_type,
                 sand_type=sand_type,
-                plan_type=plan_type
+                plan_type=plan_type,
+                ns_type=ns_type,
+                cal_area_type=cal_area_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
-            response = self._make_request(endpoint, params, method="GET")
+            response = self._make_request(endpoint, self._to_indexed_query_params(params), method="GET")
             if base_response is None:
                 base_response = response
 
@@ -399,7 +444,10 @@ class GDSuncereAPIClient:
         city_codes: List[str],
         start_time: str,
         end_time: str,
-        data_type: int = 0
+        data_type: int = 0,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000
     ) -> Dict[str, Any]:
         """
         查询城市小时数据
@@ -412,12 +460,16 @@ class GDSuncereAPIClient:
           - codes: 城市代码数组（可重复）
           - timePoint: 时间数组，格式 ["YYYY-MM-DD HH:MM:SS", "YYYY-MM-DD HH:MM:SS"]
           - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+          - nsType: 标准类型（2新国标，1旧国标）
 
         Args:
             city_codes: 城市代码列表（如 ["440100", "440300"] 表示广州、深圳）
             start_time: 开始时间 (YYYY-MM-DD HH:MM:SS)
             end_time: 结束时间 (YYYY-MM-DD HH:MM:SS)
             data_type: 数据类型，默认 0（原始实况）
+            ns_type: 标准类型，2新国标，1旧国标；默认2
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
 
         Returns:
             城市小时数据
@@ -431,7 +483,10 @@ class GDSuncereAPIClient:
                 start_time,
                 end_time
             ],
-            "dataType": data_type
+            "dataType": data_type,
+            "nsType": ns_type,
+            "skipCount": skip_count,
+            "maxResultCount": max_result_count
         }
 
         logger.info(
@@ -439,17 +494,23 @@ class GDSuncereAPIClient:
             city_codes=city_codes,
             start_time=start_time,
             end_time=end_time,
-            data_type=data_type
+            data_type=data_type,
+            ns_type=ns_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
-        return self._make_request(endpoint, params, method="GET")
+        return self._make_request(endpoint, self._to_indexed_query_params(params), method="GET")
 
     def query_station_hour_data(
         self,
         station_codes: List[str],
         start_time: str,
         end_time: str,
-        data_type: int = 0
+        data_type: int = 0,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000
     ) -> Dict[str, Any]:
         """
         查询站点小时数据
@@ -462,12 +523,16 @@ class GDSuncereAPIClient:
           - codes: 站点代码数组，如 ["1001A", "1002A"]
           - timePoint: 时间数组，格式 ["YYYY-MM-DD HH:MM:SS", "YYYY-MM-DD HH:MM:SS"]
           - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+          - nsType: 标准类型（2新国标，1旧国标）
 
         Args:
             station_codes: 站点代码列表（如 ["1001A", "1002A"]）
             start_time: 开始时间 (YYYY-MM-DD HH:MM:SS)
             end_time: 结束时间 (YYYY-MM-DD HH:MM:SS)
             data_type: 数据类型，默认 0（原始实况）
+            ns_type: 标准类型，2新国标，1旧国标；默认2
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
 
         Returns:
             站点小时数据
@@ -481,7 +546,10 @@ class GDSuncereAPIClient:
                 start_time,
                 end_time
             ],
-            "dataType": data_type
+            "dataType": data_type,
+            "nsType": ns_type,
+            "skipCount": skip_count,
+            "maxResultCount": max_result_count
         }
 
         logger.info(
@@ -489,7 +557,10 @@ class GDSuncereAPIClient:
             station_codes=station_codes,
             start_time=start_time,
             end_time=end_time,
-            data_type=data_type
+            data_type=data_type,
+            ns_type=ns_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
         return self._make_request(endpoint, payload, method="POST")
@@ -500,7 +571,10 @@ class GDSuncereAPIClient:
         start_date: str,
         end_date: str,
         data_type: Optional[int] = None,
-        sand_type: Optional[int] = 1
+        sand_type: Optional[int] = 1,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000
     ) -> Dict[str, Any]:
         """
         查询站点日报数据
@@ -513,6 +587,7 @@ class GDSuncereAPIClient:
           - codes: 站点代码数组，如 ["1001A", "1002A"]
           - timePoint: 时间数组，格式 ["YYYY-MM-DD 00:00:00", "YYYY-MM-DD 23:59:59"]
           - dataType: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）
+          - nsType: 标准类型（2新国标，1旧国标）
           - sandType: 扣沙类型（0不扣沙，1扣沙；如接口支持则透传）
 
         Args:
@@ -521,6 +596,9 @@ class GDSuncereAPIClient:
             end_date: 结束日期 (YYYY-MM-DD)
             data_type: 数据类型；None时自动使用近三天原始、三天外审核
             sand_type: 扣沙类型，0不扣沙，1扣沙；默认1扣沙
+            ns_type: 标准类型，2新国标，1旧国标；默认2
+            skip_count: 分页跳过数
+            max_result_count: 每页结果数
 
         Returns:
             站点日报数据
@@ -533,7 +611,10 @@ class GDSuncereAPIClient:
                 endpoint=endpoint,
                 station_codes=station_codes,
                 segments=date_segments,
-                sand_type=sand_type
+                sand_type=sand_type,
+                ns_type=ns_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
         seg_start, seg_end, plan_type, resolved_data_type = date_segments[0]
@@ -546,7 +627,10 @@ class GDSuncereAPIClient:
                 f"{seg_end} 23:59:59"
             ],
             "dataType": resolved_data_type,
-            "planType": plan_type
+            "planType": plan_type,
+            "nsType": ns_type,
+            "skipCount": skip_count,
+            "maxResultCount": max_result_count
         }
         if sand_type is not None:
             payload["sandType"] = sand_type
@@ -558,7 +642,10 @@ class GDSuncereAPIClient:
             end_date=seg_end,
             data_type=resolved_data_type,
             sand_type=sand_type,
-            plan_type=plan_type
+            plan_type=plan_type,
+            ns_type=ns_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
         return self._make_request(endpoint, payload, method="POST")
@@ -568,7 +655,10 @@ class GDSuncereAPIClient:
         endpoint: str,
         station_codes: List[str],
         segments: List[tuple],
-        sand_type: Optional[int]
+        sand_type: Optional[int],
+        ns_type: int,
+        skip_count: int,
+        max_result_count: int
     ) -> Dict[str, Any]:
         """按站点属性 planType 分段查询站点日报并合并结果。"""
         merged_result = []
@@ -582,7 +672,10 @@ class GDSuncereAPIClient:
                     f"{seg_end} 23:59:59"
                 ],
                 "dataType": resolved_data_type,
-                "planType": plan_type
+                "planType": plan_type,
+                "nsType": ns_type,
+                "skipCount": skip_count,
+                "maxResultCount": max_result_count
             }
             if sand_type is not None:
                 payload["sandType"] = sand_type
@@ -594,7 +687,10 @@ class GDSuncereAPIClient:
                 end_date=seg_end,
                 data_type=resolved_data_type,
                 sand_type=sand_type,
-                plan_type=plan_type
+                plan_type=plan_type,
+                ns_type=ns_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count
             )
 
             response = self._make_request(endpoint, payload, method="POST")

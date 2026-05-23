@@ -14,13 +14,15 @@ logger = structlog.get_logger()
 class TaskCompletionGuard:
     """任务完成守卫"""
 
-    def __init__(self, memory_manager):
+    def __init__(self, memory_manager, task_list=None):
         """初始化守卫
 
         Args:
             memory_manager: 混合记忆管理器
+            task_list: 当前 ReAct runtime 共享的 TodoList/TaskList 实例
         """
         self.memory = memory_manager
+        self.task_list = task_list
 
     async def check(self, session_id: str) -> Dict[str, Any]:
         """
@@ -39,20 +41,7 @@ class TaskCompletionGuard:
             }
         """
         try:
-            # 获取任务列表
-            from app.agent.context.execution_context import ExecutionContext
-            from app.agent.context.data_context_manager import DataContextManager
-
-            # 创建临时的 DataContextManager（用于访问 TaskList）
-            data_manager = DataContextManager(memory_manager=self.memory)
-
-            # 创建 ExecutionContext（iteration 参数在此场景下不使用，传入 0）
-            context = ExecutionContext(
-                session_id=session_id,
-                iteration=0,
-                data_manager=data_manager
-            )
-            task_list = context.get_task_list()
+            task_list = self.task_list
 
             if not task_list:
                 return {
@@ -62,16 +51,26 @@ class TaskCompletionGuard:
                     "warning_message": ""
                 }
 
-            # 检查未完成任务
             incomplete_tasks = []
-            for task in task_list.get_tasks().values():
-                if task.status.value in ["pending", "in_progress"]:
-                    incomplete_tasks.append({
-                        "id": task.id,
-                        "subject": task.subject,
-                        "status": task.status.value,
-                        "progress": task.progress
-                    })
+            if hasattr(task_list, "to_dict_list"):
+                for idx, item in enumerate(task_list.to_dict_list()):
+                    status = item.get("status")
+                    if status in ["pending", "in_progress"]:
+                        incomplete_tasks.append({
+                            "id": str(idx + 1),
+                            "subject": item.get("content", ""),
+                            "status": status,
+                            "progress": None,
+                        })
+            elif hasattr(task_list, "get_tasks"):
+                for task in task_list.get_tasks().values():
+                    if task.status.value in ["pending", "in_progress"]:
+                        incomplete_tasks.append({
+                            "id": task.id,
+                            "subject": task.subject,
+                            "status": task.status.value,
+                            "progress": task.progress
+                        })
 
             # 按状态排序（in_progress 优先）
             incomplete_tasks.sort(key=lambda t: 0 if t["status"] == "in_progress" else 1)
@@ -94,21 +93,14 @@ class TaskCompletionGuard:
 
 ## 必须执行的操作
 
-根据任务清单管理规范，你必须：
+根据任务清单管理规范，你必须先完成实际业务动作。只有任务真实完成后，才能调用 TodoWrite
+用完整 items 列表把对应任务标记为 completed。
 
-1. **标记任务完成**：对每个 in_progress 任务调用
-   ```json
-   {{"tool": "update_task", "args": {{"task_id": "任务ID", "status": "completed"}}}}
-   ```
-
-2. **确认所有任务**：调用 list_tasks 查看任务状态
-   ```json
-   {{"tool": "list_tasks", "args": {{}}}}
-   ```
-
-3. **然后才能结束**：所有任务完成后才能调用 FINISH
-
-禁止创建任务后就不再管理状态！
+注意：
+- TodoWrite 是状态管理工具，不是业务进展工具。
+- 不要为了消除警告而重复提交相同 items。
+- 如果仍有 pending/in_progress 任务，应优先继续执行对应业务工具。
+- 如果所有任务已经真实完成，更新一次 TodoWrite 后直接给出最终回答。
 """
                 logger.warning(
                     "task_guard_incomplete_found",

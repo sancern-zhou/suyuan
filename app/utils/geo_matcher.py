@@ -15,6 +15,19 @@ from typing import List, Dict, Any, Optional, Tuple
 logger = structlog.get_logger()
 
 
+def _get_geo_mappings_path() -> Path:
+    """Return the single maintained geo mappings file path."""
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / "backend" / "config" / "geo_mappings.json"
+        if candidate.exists():
+            return candidate
+        candidate = parent / "config" / "geo_mappings.json"
+        if candidate.exists():
+            return candidate
+    return current.parents[2] / "backend" / "config" / "geo_mappings.json"
+
+
 class GeoMatcher:
     """
     Lightweight geographic information matcher using layered matching strategy.
@@ -171,7 +184,7 @@ class GeoMatcher:
 
     def _load_geo_mappings(self):
         """Load station/city/district code mappings from geo_mappings.json."""
-        config_file = Path(__file__).parent.parent.parent / "config" / "geo_mappings.json"
+        config_file = _get_geo_mappings_path()
 
         try:
             with open(config_file, 'r', encoding='utf-8') as f:

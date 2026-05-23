@@ -10,8 +10,8 @@ from typing import Any, Dict, List
 
 @dataclass
 class ToolLoopGuard:
-    warning_threshold: int = 3
-    critical_threshold: int = 5
+    warning_threshold: int = 2  # 降低到2次
+    critical_threshold: int = 3  # 降低到3次
     history: List[Dict[str, str]] = field(default_factory=list)
 
     def before_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -21,14 +21,15 @@ class ToolLoopGuard:
             return {
                 "success": False,
                 "error": "tool_loop_detected",
-                "summary": f"CRITICAL: 工具 {tool_name} 使用相同参数重复调用 {repeated} 次，已阻止继续调用以避免无进展循环。",
+                "summary": f"ERROR: 工具 {tool_name} 已重复调用 {repeated} 次，系统已阻止。必须更换工具或修改参数。",
                 "loop_guard": True,
             }
         if repeated >= self.warning_threshold:
+            # 警告级别也返回失败，强制LLM改变策略
             return {
                 "success": False,
-                "warning": True,
-                "summary": f"WARNING: 工具 {tool_name} 使用相同参数重复调用 {repeated} 次。如果没有进展，请停止重试并报告失败。",
+                "error": "tool_loop_warning",
+                "summary": f"WARNING: 工具 {tool_name} 重复调用 {repeated} 次，已被阻止。请使用其他工具或修改参数。",
                 "loop_guard": True,
             }
         self.history.append({"tool": tool_name, "args": args_hash})

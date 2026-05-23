@@ -6,6 +6,7 @@
 """
 from pathlib import Path
 import structlog
+from app.utils.path_config import get_social_memory_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -19,7 +20,7 @@ def migrate_user_md_files():
     - 包含用户基本信息、上下文、偏好等
     - Agent 使用 edit_file/read_file 工具管理
     """
-    memory_dir = Path("backend_data_registry/social/memory")
+    memory_dir = get_social_memory_dir()
 
     if not memory_dir.exists():
         logger.info("memory_dir_not_found", path=str(memory_dir))

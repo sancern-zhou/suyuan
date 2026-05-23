@@ -387,6 +387,102 @@ class SessionRepository:
             )
             return False
 
+    async def sync_conversation_history_incremental(
+        self,
+        session_id: str,
+        conversation_history: List[Dict[str, Any]]
+    ) -> bool:
+        """
+        增量同步会话消息。
+
+        只追加数据库中尚不存在的尾部消息，避免每轮对话都执行
+        DELETE FROM session_messages WHERE session_id = ... 导致锁等待和
+        statement timeout。
+
+        约定：
+        - 当前会话历史是 append-only 时走增量路径。
+        - 如果传入历史短于数据库已有消息，说明调用方可能做了压缩/截断，
+          此方法不删除旧消息，交由显式全量重写接口处理。
+        """
+        if not conversation_history:
+            return True
+
+        try:
+            async with AsyncSession(self.engine) as session:
+                stmt = (
+                    select(func.max(SessionMessageDB.sequence_number))
+                    .where(SessionMessageDB.session_id == session_id)
+                )
+                result = await session.execute(stmt)
+                max_seq = result.scalar()
+                existing_count = (max_seq + 1) if max_seq is not None else 0
+
+                if existing_count >= len(conversation_history):
+                    logger.debug(
+                        "conversation_history_incremental_noop",
+                        session_id=session_id,
+                        existing_count=existing_count,
+                        incoming_count=len(conversation_history)
+                    )
+                    return True
+
+                new_messages = conversation_history[existing_count:]
+
+                rows = []
+                for offset, msg in enumerate(new_messages, start=existing_count):
+                    role, msg_type = self._resolve_role_and_type(msg)
+                    timestamp = self._normalize_db_timestamp(
+                        msg.get("timestamp"),
+                        session_id=session_id,
+                    )
+
+                    known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning", "id"}
+                    msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
+
+                    msg_data = self._convert_decimal_to_float(msg.get("data"))
+                    if msg_data and isinstance(msg_data, dict):
+                        if "tool_use_id" in msg and "tool_use_id" not in msg_data:
+                            msg_data["tool_use_id"] = msg["tool_use_id"]
+                        if "tool_name" in msg and "tool_name" not in msg_data:
+                            msg_data["tool_name"] = msg["tool_name"]
+                        if "is_error" in msg and "is_error" not in msg_data:
+                            msg_data["is_error"] = msg["is_error"]
+
+                    rows.append(
+                        {
+                            "session_id": session_id,
+                            "role": role,
+                            "msg_type": msg_type,
+                            "content": self._serialize_content(msg.get("content")),
+                            "data": msg_data,
+                            "timestamp": timestamp,
+                            "metadata": self._convert_decimal_to_float(msg_metadata),
+                            "sequence_number": offset,
+                        }
+                    )
+
+                await session.execute(SessionMessageDB.__table__.insert(), rows)
+
+                await session.commit()
+
+                logger.info(
+                    "conversation_history_incremental_saved",
+                    session_id=session_id,
+                    existing_count=existing_count,
+                    appended_count=len(new_messages),
+                    incoming_count=len(conversation_history)
+                )
+                return True
+
+        except Exception as e:
+            logger.error(
+                "failed_to_sync_conversation_history_incremental",
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            return False
+
     async def add_message(
         self,
         session_id: str,

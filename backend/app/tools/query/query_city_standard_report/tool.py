@@ -21,6 +21,9 @@ from app.tools.query.report_data_package import save_report_data_package
 
 logger = structlog.get_logger()
 
+DEFAULT_NEW_STANDARD_START = datetime(2025, 1, 1)
+DEFAULT_OLD_STANDARD_END = datetime(2024, 12, 31, 23, 59, 59)
+
 
 POLLUTANT_CODE_ALIASES = {
     "SO2": "so2",
@@ -59,7 +62,58 @@ PUBLIC_REPORT_CITY_ORDER = [
     "广州", "深圳", "珠海", "汕头", "佛山", "韶关", "河源", "梅州", "惠州", "汕尾",
     "东莞", "中山", "江门", "阳江", "湛江", "茂名", "肇庆", "清远", "潮州", "揭阳", "云浮",
 ]
-PUBLIC_REPORT_REGION_ORDER = ["粤东", "粤西", "粤北", "珠三角", "非珠三角", "全省"]
+PUBLIC_REPORT_REGION_ORDER = ["粤东", "粤西", "粤北", "珠三角", "非珠三角", "粤东西北", "全省"]
+PUBLIC_REPORT_REGION_ALIASES = {"广东省": "全省", "粤东西北": "非珠三角"}
+
+
+def _parse_report_datetime(value: str, *, end_of_day: bool = False) -> datetime:
+    return datetime.strptime(_normalize_datetime(value, end_of_day=end_of_day), "%Y-%m-%d %H:%M:%S")
+
+
+def _default_ns_type_for_range(start_time: str, end_time: str) -> Optional[int]:
+    start_dt = _parse_report_datetime(start_time)
+    end_dt = _parse_report_datetime(end_time, end_of_day=True)
+    if end_dt < DEFAULT_NEW_STANDARD_START:
+        return 1
+    if start_dt >= DEFAULT_NEW_STANDARD_START:
+        return 2
+    return None
+
+
+def _resolve_ns_type(ns_type: Optional[Any], start_time: str, end_time: str) -> Any:
+    if ns_type is not None:
+        try:
+            return int(ns_type)
+        except (TypeError, ValueError):
+            return ns_type
+    return _default_ns_type_for_range(start_time, end_time)
+
+
+def _build_default_standard_segments(start_time: str, end_time: str) -> List[Dict[str, Any]]:
+    start = _normalize_datetime(start_time)
+    end = _normalize_datetime(end_time, end_of_day=True)
+    start_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+    end_dt = datetime.strptime(end, "%Y-%m-%d %H:%M:%S")
+    if start_dt > end_dt:
+        return []
+    if end_dt < DEFAULT_NEW_STANDARD_START:
+        return [{"ns_type": 1, "standard": "旧国标", "start_time": start, "end_time": end}]
+    if start_dt >= DEFAULT_NEW_STANDARD_START:
+        return [{"ns_type": 2, "standard": "新国标", "start_time": start, "end_time": end}]
+    return [
+        {
+            "ns_type": 1,
+            "standard": "旧国标",
+            "start_time": start,
+            "end_time": DEFAULT_OLD_STANDARD_END.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        {
+            "ns_type": 2,
+            "standard": "新国标",
+            "start_time": DEFAULT_NEW_STANDARD_START.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": end,
+        },
+    ]
 
 
 STANDARD_REPORT_FIELD_DESCRIPTIONS: Dict[str, str] = {
@@ -335,6 +389,10 @@ def _build_reporting_record(record: Dict[str, Any], *, name_label: str, name_val
     _add_if_present(row, "超标天数", _first_present(record, "overDays", "OverDays"))
     _add_if_present(row, "超标率", _first_present(record, "overRate", "OverRate"))
     _add_if_present(row, "O3超标天数", _first_present(record, "o3_8h_PrimaryPollutantOverDays", "O3_8h_PrimaryPollutantOverDays"))
+    _add_if_present(row, "O3首要污染物天数", _first_present(record, "o3_8h_PrimaryPollutantDays", "O3_8h_PrimaryPollutantDays"))
+    _add_if_present(row, "O3首要污染物占比", _first_present(record, "o3_8h_PrimaryPollutantRate", "O3_8h_PrimaryPollutantRate"))
+    _add_if_present(row, "PM2.5首要污染物天数", _first_present(record, "pM2_5_PrimaryPollutantDays", "PM2_5_PrimaryPollutantDays"))
+    _add_if_present(row, "PM2.5首要污染物占比", _first_present(record, "pM2_5_PrimaryPollutantRate", "PM2_5_PrimaryPollutantRate"))
     _add_if_present(row, "PM2.5同比变化率", _first_present(record, "pM2_5_Decimal_Increase", "PM2_5_Decimal_Increase"))
     _add_if_present(row, "PM2.5接口原始同比变化率", _first_present(record, "pM2_5_Increase", "PM2_5_Increase"))
     _add_if_present(row, "综合指数", _first_present(record, "compositeIndex", "CompositeIndex"))
@@ -378,12 +436,18 @@ def _answer_ready_city_records(
 ) -> List[Dict[str, Any]]:
     """Return the compact city rows the Agent should answer from directly."""
     preferred_names: List[str] = []
-    if expanded_cities:
-        preferred_names.extend(expanded_cities)
     for requested in requested_cities:
-        name = "全省" if requested == "广东省" else requested
+        name = PUBLIC_REPORT_REGION_ALIASES.get(requested, requested)
         if name in PUBLIC_REPORT_REGION_ORDER and name not in preferred_names:
             preferred_names.append(name)
+
+    if preferred_names:
+        wanted = set(preferred_names)
+        filtered = [row for row in reporting_records if row.get("城市") in wanted]
+        return _sort_rows_by_name(filtered, "城市", preferred_names)
+
+    if expanded_cities:
+        preferred_names.extend(expanded_cities)
 
     if not preferred_names:
         preferred_names = PUBLIC_REPORT_CITY_ORDER + PUBLIC_REPORT_REGION_ORDER
@@ -447,7 +511,6 @@ def _build_city_standard_report_payload(
     city_codes: List[str],
     time_range: List[str],
     ns_type: int,
-    time_type: int,
     pollutant_codes: Optional[List[str]],
     plan_type: int,
     data_source: int,
@@ -459,7 +522,7 @@ def _build_city_standard_report_payload(
     payload: Dict[str, Any] = {
         "skipCount": skip_count,
         "maxResultCount": max_result_count,
-        "TimeType": time_type,
+        "TimeType": 8,
         "AreaType": 2,
         "TimePoint": time_range,
         "planType": plan_type,
@@ -487,7 +550,6 @@ def _fetch_city_standard_records_for_range(
     city_codes: List[str],
     time_range: List[str],
     ns_type: int,
-    time_type: int,
     plan_type: int,
     data_source: int,
     sand_type: int,
@@ -501,7 +563,6 @@ def _fetch_city_standard_records_for_range(
         city_codes=city_codes,
         time_range=time_range,
         ns_type=ns_type,
-        time_type=time_type,
         pollutant_codes=None,
         plan_type=plan_type,
         data_source=data_source,
@@ -531,7 +592,6 @@ def _attach_pm25_decimal_increase(
     current_range: List[str],
     comparison_range: List[str],
     ns_type: int,
-    time_type: int,
     plan_type: int,
     data_source: int,
     sand_type: int,
@@ -545,7 +605,6 @@ def _attach_pm25_decimal_increase(
         city_codes=city_codes,
         time_range=current_range,
         ns_type=ns_type,
-        time_type=time_type,
         plan_type=plan_type,
         data_source=data_source,
         sand_type=sand_type,
@@ -559,7 +618,6 @@ def _attach_pm25_decimal_increase(
         city_codes=city_codes,
         time_range=comparison_range,
         ns_type=ns_type,
-        time_type=time_type,
         plan_type=plan_type,
         data_source=data_source,
         sand_type=sand_type,
@@ -586,13 +644,120 @@ def _attach_pm25_decimal_increase(
             record["pM2_5_Decimal_Increase"] = increase
 
 
+async def _execute_split_query_city_standard_report(
+    *,
+    segments: List[Dict[str, Any]],
+    cities: Optional[List[str]],
+    pollutant_codes: Optional[List[str]],
+    plan_type: int,
+    data_source: int,
+    sand_type: int,
+    revise_type: int,
+    skip_count: int,
+    max_result_count: int,
+    context: Optional[ExecutionContext],
+) -> Dict[str, Any]:
+    segment_results: List[Dict[str, Any]] = []
+    combined_data: List[Dict[str, Any]] = []
+    combined_report_data_ids: List[str] = []
+    failures: List[str] = []
+
+    for segment in segments:
+        result = await execute_query_city_standard_report(
+            cities=cities,
+            start_time=segment["start_time"],
+            end_time=segment["end_time"],
+            ns_type=segment["ns_type"],
+            pollutant_codes=pollutant_codes,
+            plan_type=plan_type,
+            data_source=data_source,
+            sand_type=sand_type,
+            revise_type=revise_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count,
+            context=context,
+        )
+        if result.get("report_data_id"):
+            combined_report_data_ids.append(str(result["report_data_id"]))
+
+        segment_meta = {
+            "standard": segment["standard"],
+            "ns_type": segment["ns_type"],
+            "start_time": segment["start_time"],
+            "end_time": segment["end_time"],
+            "status": result.get("status"),
+            "success": result.get("success"),
+            "summary": result.get("summary"),
+            "report_data_id": result.get("report_data_id"),
+            "data_records": len(result.get("data") or []),
+        }
+        segment_results.append(segment_meta)
+
+        if not result.get("success"):
+            failures.append(result.get("summary") or f"{segment['standard']}分段查询失败")
+            continue
+
+        for row in result.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            combined_row = {
+                "标准": segment["standard"],
+                "ns_type": segment["ns_type"],
+                "查询开始时间": segment["start_time"],
+                "查询结束时间": segment["end_time"],
+            }
+            combined_row.update(row)
+            combined_data.append(combined_row)
+
+    success = not failures
+    metadata = {
+        "schema_version": "v2.0",
+        "tool_name": "query_city_standard_report",
+        "split_by_standard": True,
+        "split_boundary": DEFAULT_NEW_STANDARD_START.strftime("%Y-%m-%d %H:%M:%S"),
+        "requested_cities": list(cities or []),
+        "plan_type": plan_type,
+        "data_source": data_source,
+        "sand_type": sand_type,
+        "revise_type": revise_type,
+        "segments": segment_results,
+        "data_records": len(combined_data),
+        "data_view": "reporting",
+        "data_is_complete_for_requested_scope": success,
+        "report_data_ids": combined_report_data_ids,
+        "registry_usage": {
+            "note": (
+                "跨 2025-01-01 且未显式指定 ns_type 时，工具已按旧国标/新国标拆分查询；"
+                "data 合并返回两个分段的请求范围报告口径记录。"
+                "如需任一分段完整城市明细或原始接口字段，请按 metadata.segments 中的 report_data_id 读取 registry。"
+            )
+        },
+    }
+    summary = (
+        "城市统计报表跨标准时段查询完成："
+        + "；".join(
+            f"{item['standard']} {item['start_time']} 至 {item['end_time']} 返回 {item['data_records']} 条 data 记录"
+            for item in segment_results
+        )
+    )
+    if failures:
+        summary += "；失败分段：" + "；".join(failures)
+
+    return {
+        "status": "success" if success and combined_data else ("failed" if failures else "empty"),
+        "success": success,
+        "data": combined_data,
+        "metadata": metadata,
+        "summary": summary,
+    }
+
+
 async def execute_query_city_standard_report(
     *,
     cities: Optional[List[str]] = None,
     start_time: str,
     end_time: str,
-    ns_type: int = 2,
-    time_type: int = 8,
+    ns_type: Optional[int] = None,
     pollutant_codes: Optional[List[str]] = None,
     plan_type: int = 0,
     data_source: int = 1,
@@ -605,8 +770,37 @@ async def execute_query_city_standard_report(
     """
     查询城市统计报表。
 
-    ns_type: 2=新国标，1=旧国标。
+    ns_type: 2=新国标，1=旧国标；不传且跨 2025-01-01 时自动拆分为旧国标/新国标两段查询。
     """
+    start = _normalize_datetime(start_time)
+    end = _normalize_datetime(end_time, end_of_day=True)
+    default_segments: Optional[List[Dict[str, Any]]] = None
+    if ns_type is None:
+        default_segments = _build_default_standard_segments(start_time, end_time)
+        if not default_segments:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "result": [],
+                "metadata": {"tool_name": "query_city_standard_report", "error": "Invalid time range"},
+                "summary": "时间范围错误：start_time 不能晚于 end_time",
+            }
+        if len(default_segments) > 1:
+            return await _execute_split_query_city_standard_report(
+                segments=default_segments,
+                cities=cities,
+                pollutant_codes=pollutant_codes,
+                plan_type=plan_type,
+                data_source=data_source,
+                sand_type=sand_type,
+                revise_type=revise_type,
+                skip_count=skip_count,
+                max_result_count=max_result_count,
+                context=context,
+            )
+
+    ns_type = _resolve_ns_type(ns_type, start_time, end_time)
     if ns_type not in (1, 2):
         return {
             "status": "failed",
@@ -622,14 +816,12 @@ async def execute_query_city_standard_report(
     if city_error:
         return city_error
 
-    start = _normalize_datetime(start_time)
-    end = _normalize_datetime(end_time, end_of_day=True)
     effective_pollutants = _normalize_pollutant_codes(pollutant_codes)
 
     payload: Dict[str, Any] = {
         "skipCount": skip_count,
         "maxResultCount": max_result_count,
-        "TimeType": time_type,
+        "TimeType": 8,
         "AreaType": 2,
         "TimePoint": [start, end],
         "planType": plan_type,
@@ -662,7 +854,6 @@ async def execute_query_city_standard_report(
         is_all_cities=is_all_cities,
         should_send_station_code=should_send_station_code,
         ns_type=ns_type,
-        time_type=time_type,
         start_time=start,
         end_time=end,
     )
@@ -701,7 +892,6 @@ async def execute_query_city_standard_report(
             "requested_cities": requested_cities,
             "city_codes": city_codes,
             "time_range": f"{start} to {end}",
-            "time_type": time_type,
             "plan_type": plan_type,
             "data_source": data_source,
             "sand_type": sand_type,
@@ -734,7 +924,6 @@ async def execute_query_city_standard_report(
                 "start_time": start,
                 "end_time": end,
                 "ns_type": ns_type,
-                "time_type": time_type,
                 "pollutant_codes": effective_pollutants,
                 "plan_type": plan_type,
                 "data_source": data_source,
@@ -801,7 +990,6 @@ async def execute_query_city_standard_yoy_report(
     time_point: List[str],
     contrast_time: List[str],
     ns_type: int = 2,
-    time_type: int = 8,
     pollutant_codes: Optional[List[str]] = None,
     plan_type: int = 0,
     data_source: int = 1,
@@ -853,7 +1041,7 @@ async def execute_query_city_standard_yoy_report(
     payload: Dict[str, Any] = {
         "skipCount": skip_count,
         "maxResultCount": max_result_count,
-        "TimeType": time_type,
+        "TimeType": 8,
         "AreaType": 2,
         "TimePoint": current_range,
         "contrastTime": comparison_range,
@@ -883,7 +1071,6 @@ async def execute_query_city_standard_yoy_report(
         is_all_cities=is_all_cities,
         should_send_station_code=should_send_station_code,
         ns_type=ns_type,
-        time_type=time_type,
         time_point=current_range,
         contrast_time=comparison_range,
         pollutant_codes=effective_pollutants,
@@ -925,7 +1112,6 @@ async def execute_query_city_standard_yoy_report(
                     current_range=current_range,
                     comparison_range=comparison_range,
                     ns_type=ns_type,
-                    time_type=time_type,
                     plan_type=plan_type,
                     data_source=data_source,
                     sand_type=sand_type,
@@ -953,7 +1139,6 @@ async def execute_query_city_standard_yoy_report(
             "city_codes": city_codes,
             "time_point": current_range,
             "contrast_time": comparison_range,
-            "time_type": time_type,
             "plan_type": plan_type,
             "data_source": data_source,
             "sand_type": sand_type,
@@ -1004,7 +1189,6 @@ async def execute_query_city_standard_yoy_report(
                 "time_point": current_range,
                 "contrast_time": comparison_range,
                 "ns_type": ns_type,
-                "time_type": time_type,
                 "pollutant_codes": effective_pollutants,
                 "plan_type": plan_type,
                 "data_source": data_source,
@@ -1074,9 +1258,15 @@ class QueryCityStandardReportTool(LLMTool):
             "description": (
                 "【第一优先级】查询广东省城市统计报表接口，直接使用联网接口返回的新/旧国标统计结果，"
                 "不进行本地日报重算。用于综合指数、达标/超标天数、污染物统计浓度、首要污染物、排名等统计报表。"
-                "ns_type=2 表示新国标；ns_type=1 表示旧国标。"
+                "ns_type=2 表示新国标；ns_type=1 表示旧国标；不传时按查询时段自动选择："
+                "2025-01-01 之前默认旧国标，2025-01-01 及之后默认新国标；"
+                "跨 2025-01-01 时自动拆成旧国标、新国标两次查询并合并返回分段结果。"
+                "注意：2025-01-01 之前接口只有旧标准数据，指定 ns_type=2 查询 2025 年前时段通常无数据返回。"
                 "工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
                 "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
+                "cities 传入粤东、粤西、粤北、珠三角、非珠三角、粤东西北、全省/广东省等区域别名时，"
+                "接口仍获取含城市和区域的完整报表，但 data 只返回对应区域汇总行，不返回下辖城市明细；"
+                "如需城市明细或原始27条记录，读取 read_data_registry 的 reporting/raw/result 视图。"
                 "reporting/data 是报告口径精简视图，缺少完整排名明细、单项指数、首要污染物天数/占比、"
                 "各等级天数/占比、最大值、小数字段等接口字段；需要这些字段时读取 raw/result/cities 视图。"
                 "当 metadata.data_is_complete_for_requested_scope=true 时，data 已是请求范围完整结果，"
@@ -1089,7 +1279,11 @@ class QueryCityStandardReportTool(LLMTool):
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表；可传广东省、全省、珠三角、非珠三角等区域别名；不传则由接口返回默认范围",
+                        "description": (
+                            "城市或区域名称列表；可传广东省、全省、珠三角、非珠三角、粤东西北、粤东、粤西、粤北等区域别名。"
+                            "传区域别名时 data 只返回对应区域汇总行，不返回下辖城市明细；城市明细可从 registry 的 reporting/raw/result 视图读取。"
+                            "不传则由接口返回默认范围。"
+                        ),
                     },
                     "start_time": {
                         "type": "string",
@@ -1101,14 +1295,13 @@ class QueryCityStandardReportTool(LLMTool):
                     },
                     "ns_type": {
                         "type": "integer",
-                        "description": "接口标准类型：2=新国标，1=旧国标",
+                        "description": (
+                            "接口标准类型：2=新国标，1=旧国标；不传时按查询时段自动选择。"
+                            "2025-01-01 之前默认旧国标，2025-01-01 及之后默认新国标；"
+                            "跨 2025-01-01 时工具自动拆成旧国标、新国标两次查询并合并返回分段结果。"
+                            "注意：2025-01-01 之前接口只有旧标准数据，指定 ns_type=2 查询 2025 年前时段通常无数据返回。"
+                        ),
                         "enum": [1, 2],
-                    },
-                    "time_type": {
-                        "type": "integer",
-                        "description": "报表类型：3=周报, 4=月报, 5=季报, 7=年报, 8=任意时间；默认8",
-                        "enum": [3, 4, 5, 7, 8],
-                        "default": 8,
                     },
                     "pollutant_codes": {
                         "type": "array",
@@ -1169,16 +1362,11 @@ class QueryCityStandardReportTool(LLMTool):
                 "summary": "时间格式错误，期望 YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS",
             }
 
-        ns_type = kwargs.get("ns_type")
-        if ns_type is None:
-            ns_type = 2
-
         return await execute_query_city_standard_report(
             cities=kwargs.get("cities"),
             start_time=start_time,
             end_time=end_time,
-            ns_type=int(ns_type),
-            time_type=int(kwargs.get("time_type", 8)),
+            ns_type=kwargs.get("ns_type"),
             pollutant_codes=kwargs.get("pollutant_codes"),
             plan_type=int(kwargs.get("plan_type", 0)),
             data_source=int(kwargs.get("data_source", 1)),
@@ -1209,6 +1397,9 @@ class QueryCityStandardYoyReportTool(LLMTool):
                 "使用补算字段 pM2_5_Decimal_Increase；"
                 "接口原始 pM2_5_Compare/pM2_5_Increase 基于修约值，仅作为 "
                 "PM2.5接口原始对比值/PM2.5接口原始同比变化率 保留供追溯。"
+                "cities 传入粤东、粤西、粤北、珠三角、非珠三角、粤东西北、全省/广东省等区域别名时，"
+                "接口仍获取含城市和区域的完整报表，但 data 只返回对应区域汇总行，不返回下辖城市明细；"
+                "如需城市明细或原始27条记录，读取 read_data_registry 的 reporting/raw/result 视图。"
                 "reporting/data 是报告口径精简视图，缺少完整排名明细、单项指数、首要污染物天数/占比、"
                 "各等级天数/占比、最大值、小数字段等接口字段；需要这些字段时读取 raw/result/cities 视图。"
                 "当 metadata.data_is_complete_for_requested_scope=true 时，data 已是请求范围完整结果，"
@@ -1221,7 +1412,11 @@ class QueryCityStandardYoyReportTool(LLMTool):
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表；可传广东省、全省、珠三角、非珠三角等区域别名；不传则由接口返回默认范围",
+                        "description": (
+                            "城市或区域名称列表；可传广东省、全省、珠三角、非珠三角、粤东西北、粤东、粤西、粤北等区域别名。"
+                            "传区域别名时 data 只返回对应区域汇总行，不返回下辖城市明细；城市明细可从 registry 的 reporting/raw/result 视图读取。"
+                            "不传则由接口返回默认范围。"
+                        ),
                     },
                     "time_point": {
                         "type": "array",
@@ -1245,12 +1440,6 @@ class QueryCityStandardYoyReportTool(LLMTool):
                         "type": "integer",
                         "description": "接口标准类型：2=新国标，1=旧国标",
                         "enum": [1, 2],
-                    },
-                    "time_type": {
-                        "type": "integer",
-                        "description": "报表类型：4=月报, 8=任意时间；默认8",
-                        "enum": [4, 8],
-                        "default": 8,
                     },
                     "pollutant_codes": {
                         "type": "array",
@@ -1335,7 +1524,6 @@ class QueryCityStandardYoyReportTool(LLMTool):
             time_point=time_point,
             contrast_time=contrast_time,
             ns_type=int(ns_type),
-            time_type=int(kwargs.get("time_type", 8)),
             pollutant_codes=kwargs.get("pollutant_codes"),
             plan_type=int(kwargs.get("plan_type", 0)),
             data_source=int(kwargs.get("data_source", 1)),

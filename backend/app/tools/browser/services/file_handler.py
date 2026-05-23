@@ -7,6 +7,7 @@ import time
 import structlog
 from typing import Optional, Dict
 from playwright.sync_api import Page
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -17,13 +18,13 @@ class FileHandler:
     Manages file uploads and downloads in browser automation.
     """
 
-    def __init__(self, download_dir: str = "backend_data_registry/downloads"):
+    def __init__(self, download_dir: str = None):
         """Initialize file handler
 
         Args:
             download_dir: Directory for downloads
         """
-        self.download_dir = download_dir
+        self.download_dir = download_dir or str(get_data_registry() / "downloads")
         os.makedirs(self.download_dir, exist_ok=True)
         logger.info("[FILE_HANDLER] Initialized", download_dir=download_dir)
 

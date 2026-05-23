@@ -1,50 +1,93 @@
 <template>
   <div class="agent-mode-selector">
-    <span class="mode-label">Agent模式:</span>
     <button
       class="mode-button"
       :class="{ active: store.currentMode === 'assistant', running: isModeRunning('assistant') }"
       @click="selectMode('assistant')"
-      title="助手模式 - 通用办公任务：文件处理、Word/Excel/PPT、Shell命令"
+      title="助手"
     >
       <span v-if="isModeRunning('assistant')" class="running-indicator">●</span>
-      🧑‍💼 助手
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+        <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+      </svg>
+      <span>助手</span>
     </button>
     <button
       class="mode-button"
       :class="{ active: store.currentMode === 'expert', running: isModeRunning('expert') }"
       @click="selectMode('expert')"
-      title="专家模式 - 环境数据分析：空气质量、数据可视化"
+      title="专家"
     >
       <span v-if="isModeRunning('expert')" class="running-indicator">●</span>
-      🔬 专家
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M10 4v5.5l-4.6 7.6A2 2 0 0 0 7.1 20h9.8a2 2 0 0 0 1.7-2.9L14 9.5V4" />
+        <path d="M8 4h8" />
+        <path d="M8 15h8" />
+      </svg>
+      <span>专家</span>
     </button>
     <button
       class="mode-button"
       :class="{ active: store.currentMode === 'query', running: isModeRunning('query') }"
       @click="selectMode('query')"
-      title="问数模式 - 数据查询专家：本地数据库查询、SQL生成、数据聚合分析"
+      title="问数"
     >
       <span v-if="isModeRunning('query')" class="running-indicator">●</span>
-      🔍 问数
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="5.5" />
+        <path d="m15 15 4.5 4.5" />
+        <path d="M8 10h5" />
+        <path d="M8 13h3" />
+      </svg>
+      <span>问数</span>
     </button>
     <button
       class="mode-button"
       :class="{ active: store.currentMode === 'report', running: isModeRunning('report') }"
       @click="selectMode('report')"
-      title="报告模式 - 报告生成：基于模板和数据生成DOCX格式报告"
+      title="报告"
     >
       <span v-if="isModeRunning('report')" class="running-indicator">●</span>
-      📄 报告
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M6 3.5h8l4 4v13H6v-17Z" />
+        <path d="M14 3.5v4h4" />
+        <path d="M9 12h6" />
+        <path d="M9 15.5h6" />
+      </svg>
+      <span>报告</span>
     </button>
     <button
       class="mode-button"
       :class="{ active: store.currentMode === 'chart', running: isModeRunning('chart') }"
       @click="selectMode('chart')"
-      title="图表模式 - 数据可视化：基于已保存数据生成Matplotlib图表"
+      title="图表"
     >
       <span v-if="isModeRunning('chart')" class="running-indicator">●</span>
-      📊 图表
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 19V5" />
+        <path d="M5 19h14" />
+        <path d="M9 16v-5" />
+        <path d="M13 16V8" />
+        <path d="M17 16v-3" />
+      </svg>
+      <span>图表</span>
+    </button>
+    <button
+      class="mode-button"
+      :class="{ active: store.currentMode === 'ops', running: isModeRunning('ops') }"
+      @click="selectMode('ops')"
+      title="运维"
+    >
+      <span v-if="isModeRunning('ops')" class="running-indicator">●</span>
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16" />
+        <path d="M6 7v13h12V7" />
+        <path d="M9 7V4h6v3" />
+        <path d="M9 12h6" />
+        <path d="M9 16h4" />
+      </svg>
+      <span>运维</span>
     </button>
     <!-- 后台运行提示 -->
     <div v-if="backgroundRunningModes.length > 0" class="background-hint">
@@ -61,7 +104,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'expert', 'query', 'report', 'chart'].includes(value)
+    validator: (value) => ['assistant', 'expert', 'query', 'report', 'chart', 'ops'].includes(value)
   }
 })
 
@@ -86,7 +129,8 @@ const getModeLabel = (mode) => {
     'expert': '专家',
     'query': '问数',
     'report': '报告',
-    'chart': '图表'
+    'chart': '图表',
+    'ops': '运维'
   }
   return labelMap[mode] || mode
 }
@@ -105,21 +149,17 @@ const selectMode = (mode) => {
 .agent-mode-selector {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: wrap;
-}
-
-.mode-label {
-  font-size: 12px;
-  color: #718096;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 .mode-button {
   position: relative;
-  padding: 4px 12px;
+  min-height: 30px;
+  padding: 4px 10px;
   border: 1px solid #e2e8f0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: white;
   color: #4a5568;
   font-size: 12px;
@@ -136,6 +176,17 @@ const selectMode = (mode) => {
   border-color: #3182ce;
   background: #ebf8ff;
   color: #2c5282;
+}
+
+.mode-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: 0 0 auto;
 }
 
 .mode-button.active {
@@ -193,12 +244,21 @@ const selectMode = (mode) => {
   align-items: center;
 }
 
-/* 暗色主题支持 */
-@media (prefers-color-scheme: dark) {
-  .mode-label {
-    color: #a0aec0;
+@media (max-width: 768px) {
+  .agent-mode-selector {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 2px;
   }
 
+  .mode-button {
+    flex: 0 0 auto;
+  }
+}
+
+/* 暗色主题支持 */
+@media (prefers-color-scheme: dark) {
   .mode-button {
     background: #2d3748;
     color: #cbd5e0;

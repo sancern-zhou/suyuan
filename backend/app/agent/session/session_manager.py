@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 
 from .models import Session, SessionInfo
+from app.utils.path_config import get_sessions_dir
 
 logger = structlog.get_logger()
 
@@ -28,7 +29,7 @@ class SessionManager:
 
     def __init__(
         self,
-        storage_base_path: str = "backend_data_registry/sessions",
+        storage_base_path: str = None,
         auto_save: bool = True,
         retention_days: int = 30
     ):
@@ -40,7 +41,7 @@ class SessionManager:
             auto_save: 是否自动保存
             retention_days: 会话保留天数
         """
-        self.storage_path = Path(storage_base_path)
+        self.storage_path = Path(storage_base_path) if storage_base_path else get_sessions_dir()
         self.storage_path.mkdir(parents=True, exist_ok=True)
 
         self.auto_save = auto_save

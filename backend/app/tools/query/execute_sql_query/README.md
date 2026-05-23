@@ -49,6 +49,13 @@ Agent调用：execute_sql_query(sql="SELECT DDWORKINGORDERTYPE, COUNT(*) as cnt 
 当前允许的表：
 - `quality_control_records`: 质控例行检查记录
 - `working_orders`: 运维工单记录
+- `working_order_details`: 运维工单详情记录
+- `base_station`: 站点基础信息
+- `base_station_sup`: 上级站点基础信息
+- `base_device`: 设备基础信息
+- `base_user_station`: 用户-站点关联
+- `base_department_station`: 部门-站点关联
+- `base_contract_station`: 合同-站点关联
 - 以及`SQLValidator`中定义的其他表
 
 ### 3. LIMIT限制
@@ -102,6 +109,34 @@ Agent调用：execute_sql_query(sql="SELECT DDWORKINGORDERTYPE, COUNT(*) as cnt 
 | PLANFINISHTIME | datetime | 计划完成时间 |
 | TOTALOVERTIME | - | 总超时时间 |
 | TOTALEXPENSE | - | 总费用 |
+
+### working_order_details (运维工单详情)
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| WORKINGORDERDETAILID | int | 工单详情ID |
+| WORKINGORDERCODE | varchar | 工单编号，可与 `working_orders.WORKINGORDERCODE` 关联 |
+| DESCRIPTIONTA | nvarchar | 处理描述 |
+| PROCESSUSERID | varchar | 处理人ID |
+| PROCESSSTARTDATETIME | datetime2 | 处理开始时间 |
+| PROCESSENDDATETIME | datetime2 | 处理结束时间 |
+| PROCESSSTATUS | decimal | 处理状态 |
+| CREATEDATETIME | datetime2 | 创建时间 |
+| EXPENSE | decimal | 费用 |
+| PROCESSTIME | decimal | 处理耗时 |
+
+### base_* 基础关联表
+
+这些表位于 `AirPollutionAnalysis`，用于补充质控/运维工单关联信息。
+
+| 表名 | 记录数 | 说明 |
+|------|--------|------|
+| base_station | 331 | 站点基础信息 |
+| base_station_sup | 100 | 上级站点基础信息 |
+| base_device | 2606 | 设备基础信息 |
+| base_user_station | 3632 | 用户-站点关联 |
+| base_department_station | 511 | 部门-站点关联 |
+| base_contract_station | 1175 | 合同-站点关联 |
 
 ## 工具参数
 
@@ -164,7 +199,6 @@ result = await tool.execute(
 | 工具 | 用途 | 推荐场景 |
 |------|------|----------|
 | `get_quality_control_records` | 专用质控记录查询 | 简单的质控记录查询 |
-| `get_working_orders` | 专用工单查询 | 简单的工单查询 |
 | `execute_sql_query` | 通用SQL执行 | 复杂查询、JOIN、聚合等 |
 
 **选择建议**：
