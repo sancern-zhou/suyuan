@@ -20,6 +20,7 @@ import structlog
 import uuid
 from datetime import datetime
 
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 # 延迟导入避免循环依赖
 # from app.tools.office.unpack_tool import UnpackOfficeTool
@@ -294,6 +295,16 @@ class WordEditTool(LLMTool):
                         )
                 except Exception as pdf_error:
                     logger.warning("word_edit_pdf_conversion_failed", error=str(pdf_error))
+
+                attach_document_artifact(
+                    response_data,
+                    output_path,
+                    kind="office",
+                    format="docx",
+                    preview_key="pdf_preview",
+                    generator=self.name,
+                    metadata={"operation": operation},
+                )
 
                 # Use the summary from the operation result if available
                 operation_summary = result.get('summary') or f"{operation} 操作完成，{result['changes']} 处修改"

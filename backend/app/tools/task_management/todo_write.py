@@ -1,14 +1,14 @@
 """
 TodoWrite Tool - Simple task management tool
 
-Replaces the 4-tool task management system with a single complete-replacement tool.
+Single complete-replacement tool for the active session todo list.
 
 Key improvements:
-- Single tool instead of 4 (create_task, update_task, list_tasks, get_task)
 - 2 fields instead of 15+ (content, status)
 - Complete replacement mode instead of incremental updates
 - Constraints: max 20 items, one in_progress at a time
-- Simple text rendering output
+- Housekeeping semantics: state management only, not business progress
+- Structured old/new/active state output for runtime decisions
 
 Usage example:
     TodoWrite(items=[
@@ -34,8 +34,13 @@ class TodoWriteTool(LLMTool):
         function_schema = {
             "name": "TodoWrite",
             "description": (
-                "更新任务清单（完整替换）。复杂任务或3步以上流程使用；最多20项，"
-                "同时只能一个in_progress，每项包含content和status。"
+                "【⚠️ 仅用于复杂多步骤任务】更新当前会话的任务清单（完整替换）。"
+                "适用场景：任务包含5个以上子步骤，或预计需要≥7次工具调用才能完成。"
+                "简单任务（1-5步可直接完成）不要使用本工具，直接执行即可。"
+                "这是状态管理工具，不代表业务进展；调用后应继续执行实际业务工具或给出最终回答。"
+                "仅在创建计划、切换当前任务、发现新任务或任务状态发生实质变化时调用；"
+                "不要用相同items重复调用。全部任务completed后系统会清空活跃清单，随后不要再次调用TodoWrite。"
+                "最多20项，同时只能一个in_progress，每项包含content和status。"
             ),
             "parameters": {
                 "type": "object",
@@ -56,12 +61,18 @@ class TodoWriteTool(LLMTool):
                                 "status": {
                                     "type": "string",
                                     "enum": ["pending", "in_progress", "completed"],
-                                    "description": "任务状态：pending/in_progress/completed"
+                                    "description": (
+                                        "任务状态：pending待开始，in_progress当前正在执行，"
+                                        "completed已完成。只有实际完成后才标记completed。"
+                                    )
                                 }
                             },
                             "required": ["content", "status"]
                         },
-                        "description": "任务列表（完整替换，不是增量更新）"
+                        "description": (
+                            "完整任务列表（完整替换，不是增量更新）。"
+                            "如果列表与当前状态相同，不要调用本工具。"
+                        )
                     }
                 },
                 "required": ["items"]
@@ -70,7 +81,7 @@ class TodoWriteTool(LLMTool):
 
         super().__init__(
             name="TodoWrite",
-            description="更新任务清单（完整替换模式）",
+            description="更新任务清单（housekeeping状态管理，完整替换模式）",
             function_schema=function_schema,
             category=ToolCategory.TASK_MANAGEMENT,
             requires_context=True
@@ -105,7 +116,8 @@ class TodoWriteTool(LLMTool):
             if task_list_file:
                 items = await self._parse_task_list_from_file(task_list_file)
 
-            if not items:
+            # ✅ 修复：明确检查 None，允许空列表 []（用于清空任务清单）
+            if items is None:
                 raise ValueError("必须提供 items 或 task_list_file 参数")
 
             # Handle JSON string input (LLM sometimes serializes to string)
@@ -125,29 +137,67 @@ class TodoWriteTool(LLMTool):
                 logger.info("converting_old_tasklist_to_new_todolist")
                 todo_list = TodoList()
 
+            previous_items = todo_list.to_dict_list() if hasattr(todo_list, "to_dict_list") else []
+
             # Update todo list
             rendered = todo_list.update(items)
+            submitted_items = todo_list.to_dict_list() if hasattr(todo_list, "to_dict_list") else items
+            status_counts = self._build_status_counts(submitted_items)
+            total_count = status_counts["total_count"]
+            all_completed = total_count > 0 and status_counts["completed_count"] == total_count
+
+            # Keep completed checklists out of active runtime state. The tool
+            # still returns the submitted list as new_items for auditability,
+            # but the state used by future guardrails/context is empty.
+            stored_items = [] if all_completed else submitted_items
+            no_op = previous_items == stored_items
+            if all_completed and hasattr(todo_list, "clear"):
+                todo_list.clear()
+
+            if no_op and all_completed:
+                summary = "任务清单无变化，且所有任务已完成。请直接给出最终答案，不要再次调用TodoWrite。"
+            elif no_op:
+                summary = "任务清单无变化。请继续执行当前未完成任务，不要重复调用TodoWrite。"
+            else:
+                summary = f"任务清单已更新 ({len(submitted_items)} 个任务)"
 
             logger.info(
                 "todowrite_executed",
                 session_id=context.session_id,
-                item_count=len(items),
-                rendered_summary=rendered.split('\n')[-1] if rendered else ""
+                item_count=len(submitted_items),
+                rendered_summary=rendered.split('\n')[-1] if rendered else "",
+                no_op=no_op,
+                all_completed=all_completed,
+                active_item_count=len(stored_items),
+                completed_count=status_counts["completed_count"],
+                in_progress_count=status_counts["in_progress_count"],
+                pending_count=status_counts["pending_count"],
             )
 
+            # 当no_op=True时，返回失败状态，强制LLM改变策略
             return {
-                "status": "success",
-                "success": True,
+                "status": "failed" if no_op else "success",
+                "success": False if no_op else True,
+                "no_op": no_op,
+                "all_completed": all_completed,
+                **status_counts,
                 "data": {
                     "rendered": rendered,
-                    "items": items
+                    "items": submitted_items,
+                    "old_items": previous_items,
+                    "new_items": submitted_items,
+                    "active_items": stored_items,
+                    "changed": not no_op,
+                    "no_op": no_op,
+                    "all_completed": all_completed,
+                    **status_counts,
                 },
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "TodoWrite",
                     "field_mapping_applied": False
                 },
-                "summary": f"任务清单已更新 ({len(items)} 个任务)"
+                "summary": summary
             }
 
         except ValueError as e:
@@ -175,6 +225,19 @@ class TodoWriteTool(LLMTool):
                 },
                 "summary": f"任务清单更新失败: {str(e)}"
             }
+
+    def _build_status_counts(self, items: List[Dict[str, str]]) -> Dict[str, int]:
+        """Build structured todo completion statistics for runtime decisions."""
+        pending_count = sum(1 for item in items if item.get("status") == "pending")
+        in_progress_count = sum(1 for item in items if item.get("status") == "in_progress")
+        completed_count = sum(1 for item in items if item.get("status") == "completed")
+        total_count = len(items)
+        return {
+            "total_count": total_count,
+            "completed_count": completed_count,
+            "in_progress_count": in_progress_count,
+            "pending_count": pending_count,
+        }
 
     async def _parse_task_list_from_file(self, file_path: str) -> List[Dict[str, str]]:
         """从Markdown文件解析任务清单（包含详细信息）"""

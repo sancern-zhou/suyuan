@@ -178,6 +178,10 @@ app.include_router(notebook_router)
 from app.api.report_routes import router as report_router
 app.include_router(report_router)
 
+# Include HTML Artifact routes (展示型HTML预览与分享)
+from app.api.html_artifact_routes import router as html_artifact_router
+app.include_router(html_artifact_router)
+
 # Include File Manager routes (文件管理)
 from app.api.file_manager_routes import router as file_manager_router
 app.include_router(file_manager_router, prefix="/api")

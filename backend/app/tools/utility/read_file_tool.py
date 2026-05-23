@@ -7,6 +7,7 @@ ReadFile 工具 - 统一文件读取入口（支持分页、大小限制、多�
 - Word XML：智能分层读取（自动推断最优模式）
 - PDF 文件：委托给 parse_pdf 工具（支持OCR、表格、图片提取）
 - DOCX 文件：委托给 read_docx 工具（支持PDF预览）
+- PPTX 文件：委托给 read_pptx 工具（支持结构化读取和PDF预览）
 - 目录列表：查看目录中的文件和子目录
 
 智能分页策略：
@@ -20,7 +21,7 @@ Word XML 三种模式：
 3. raw（原始）：完整 XML，用于精确编辑
 
 委托模式：
-- PDF/DOCX 内部委托给专业工具，保持代码不变
+- PDF/DOCX/PPTX 内部委托给专业工具，保持代码不变
 - 自动降级策略确保鲁棒性
 """
 import os
@@ -44,6 +45,7 @@ class ReadFileTool(LLMTool):
     - 读取图片文件并自动分析
     - 读取 PDF 文件（委托给 parse_pdf，支持OCR、表格、图片提取）
     - 读取 DOCX 文件（委托给 read_docx，支持PDF预览）
+    - 读取 PPTX 文件（委托给 read_pptx，支持PDF预览）
     - 读取 Word XML（支持多种模式）
     - 自动检测文件类型和大小
     """
@@ -58,6 +60,9 @@ class ReadFileTool(LLMTool):
 
     # 支持的 DOCX 格式
     DOCX_EXTENSIONS = {'.docx'}
+
+    # 支持的 PPTX 格式
+    PPTX_EXTENSIONS = {'.pptx'}
 
     # 支持的 Excel 格式
     EXCEL_EXTENSIONS = {'.xlsx', '.xls', '.xlsm'}
@@ -78,8 +83,8 @@ class ReadFileTool(LLMTool):
         super().__init__(
             name="read_file",
             description=(
-                "读取文件或目录内容，支持文本分页、图片分析、PDF、DOCX、Word XML、Markdown、Notebook。"
-                "PDF/DOCX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
+                "读取文件或目录内容，支持文本分页、图片分析、PDF、DOCX、PPTX、Word XML、Markdown、Notebook。"
+                "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
                 "Excel文件不由 read_file 读取，需使用 execute_python。"
                 "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
                 "不返回base64，避免浪费上下文。"
@@ -170,6 +175,7 @@ class ReadFileTool(LLMTool):
             is_image = file_ext in self.IMAGE_EXTENSIONS
             is_pdf = file_ext in self.PDF_EXTENSIONS
             is_docx = file_ext in self.DOCX_EXTENSIONS
+            is_pptx = file_ext in self.PPTX_EXTENSIONS
             is_excel = file_ext in self.EXCEL_EXTENSIONS
             is_notebook = file_ext in self.NOTEBOOK_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
@@ -185,6 +191,10 @@ class ReadFileTool(LLMTool):
             elif is_docx:
                 return await self._read_docx_delegated(
                     resolved_path, file_size, pages, max_paragraphs, enable_preview
+                )
+            elif is_pptx:
+                return await self._read_pptx_delegated(
+                    resolved_path, file_size, pages, enable_preview
                 )
             elif is_excel:
                 # Excel 文件需要使用 execute_python 工具
@@ -798,6 +808,58 @@ class ReadFileTool(LLMTool):
                 "success": False,
                 "data": {"error": str(e)},
                 "summary": f"读取DOCX失败: {str(e)[:50]}"
+            }
+
+    async def _read_pptx_delegated(
+        self,
+        file_path: Path,
+        file_size: int,
+        pages: Optional[str] = None,
+        enable_preview: bool = True
+    ) -> Dict[str, Any]:
+        """委托 read_pptx 工具读取 PPTX"""
+        try:
+            from app.tools.office.read_pptx_tool import ReadPptxTool
+
+            tool = self._get_cached_tool(ReadPptxTool, "read_pptx")
+            read_pptx_args = {
+                "path": str(file_path),
+                "include_notes": True,
+                "enable_preview": enable_preview,
+            }
+            if pages:
+                try:
+                    page_numbers = [int(part.strip()) for part in pages.split(",") if part.strip()]
+                    if page_numbers:
+                        read_pptx_args["max_slides"] = max(page_numbers)
+                except ValueError:
+                    logger.warning("read_pptx_invalid_pages_ignored", path=str(file_path), pages=pages)
+
+            result = await tool.execute(**read_pptx_args)
+            if result.get("success"):
+                return {
+                    "success": True,
+                    "data": result["data"],
+                    "summary": result["summary"],
+                    "metadata": {
+                        "generator": "read_file",
+                        "delegated_to": "read_pptx",
+                    },
+                }
+            return result
+        except ImportError:
+            logger.error("read_pptx_not_available", path=str(file_path))
+            return {
+                "success": False,
+                "data": {"error": "read_pptx 工具不可用"},
+                "summary": "PPTX读取工具不可用",
+            }
+        except Exception as e:
+            logger.error("read_pptx_delegated_failed", path=str(file_path), error=str(e))
+            return {
+                "success": False,
+                "data": {"error": str(e)},
+                "summary": f"读取PPTX失败: {str(e)[:50]}",
             }
 
     async def _ensure_pdf_preview(self, file_path: Path, result_data: dict, is_pdf: bool = False):

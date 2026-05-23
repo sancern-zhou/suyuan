@@ -3,7 +3,7 @@ Tool Registry - 单一工具注册源
 
 统一管理所有LLM工具，提供：
 1. 单一注册源：所有工具在一个地方注册
-2. 元数据自动生成：Function Schema、输入适配器规则、测试样例
+2. 元数据自动生成：Function Schema、返回Schema、测试样例
 3. 数据规范校验：确保输出符合UDF v1.0和v3.0图表规范
 4. 性能监控：调用统计、失败率、响应时间
 """
@@ -22,7 +22,7 @@ class ToolRegistry:
 
     特点：
     1. 单一注册源：所有工具在一个地方注册
-    2. 元数据完整：自动生成 Function Schema、输入适配器规则、测试样例
+    2. 元数据完整：自动生成 Function Schema、返回Schema、测试样例
     3. 数据规范：确保输出符合统一数据格式(UDF v1.0)和v3.0图表规范
     4. 自动化：减少重复劳动，提升开发效率
     """
@@ -48,18 +48,14 @@ class ToolRegistry:
 
         自动化特性：
         1. 自动生成 Function Schema（如果未提供）
-        2. 自动生成输入适配器规则（如果未提供）
+        2. 自动生成返回Schema（如果未提供）
         3. 自动生成测试样例
         4. 自动验证符合统一数据格式规范
 
         Args:
             tool: 工具实例（必须继承LLMTool）
             priority: 优先级（数字越小优先级越高，范围1-1000）
-            input_adapter_rules: 输入适配器规则（YAML/JSON格式）
-                - 字段别名（aliases）
-                - 类型转换（normalizers）
-                - 默认值（fallback）
-                - 约束条件（constraints）
+            input_adapter_rules: 已废弃；保留参数仅兼容旧调用，不再存储或使用
             return_schema: 返回数据Schema（Pydantic模型或JSON Schema）
                 - 确保输出符合UDF v1.0统一数据格式
                 - 确保图表输出符合v3.0规范
@@ -83,21 +79,13 @@ class ToolRegistry:
 
         # 自动生成缺失的元数据
         if auto_generate:
-            if not input_adapter_rules:
-                input_adapter_rules = self._generate_input_adapter_rules(tool)
             if not return_schema:
                 return_schema = self._generate_return_schema(tool)
             if not metadata:
                 metadata = self._generate_tool_metadata(tool)
 
-        # 验证必要字段
-        if not input_adapter_rules:
-            logger.warning(
-                "tool_no_input_adapter",
-                tool=tool_name,
-                message="建议提供输入适配器规则以支持宽进严出原则"
-            )
-            input_adapter_rules = {}
+        # 参数契约由原生 tool schema 提供，不再生成或存储输入适配规则。
+        input_adapter_rules = {}
 
         if not return_schema:
             logger.warning(
@@ -144,7 +132,6 @@ class ToolRegistry:
         tool_data = {
             "tool": tool,
             "priority": priority,
-            "input_adapter_rules": input_adapter_rules,
             "return_schema": return_schema,
             "metadata": metadata or {},
             "registered_at": datetime.now().isoformat(),
@@ -162,7 +149,6 @@ class ToolRegistry:
             "total": 0,
             "success": 0,
             "failed": 0,
-            "adaptation_failed": 0,
             "reflexion_attempts": 0,
             "avg_execution_time": 0.0
         }
@@ -176,7 +162,7 @@ class ToolRegistry:
             registry=self.registry_name,
             tool=tool_name,
             priority=priority,
-            has_adapter=bool(input_adapter_rules),
+            has_adapter=False,
             has_schema=bool(return_schema),
             category=tool_data.get("category"),
             requires_context=tool_data.get("requires_context")
@@ -203,21 +189,16 @@ class ToolRegistry:
         return tool_data["tool"] if tool_data else None
 
     def get_tool_data(self, tool_name: str) -> Optional[Dict[str, Any]]:
-        """获取工具完整数据（工具+适配规则+Schema+元数据）"""
+        """获取工具完整数据（工具+Schema+元数据）"""
         return self._tools.get(tool_name)
 
     def get_input_adapter(self, tool_name: str) -> Dict[str, Any]:
-        """获取工具输入适配规则（v3.0兼容）"""
-        tool_data = self._tools.get(tool_name)
-        if tool_data:
-            # 兼容旧字段名
-            return tool_data.get("input_adapter_rules", tool_data.get("input_adapter", {}))
+        """输入适配已废弃；保留空返回兼容旧调用。"""
         return {}
 
     def get_input_adapter_rules(self, tool_name: str) -> Dict[str, Any]:
-        """获取工具输入适配器规则"""
-        tool_data = self._tools.get(tool_name)
-        return tool_data.get("input_adapter_rules", {}) if tool_data else {}
+        """输入适配已废弃；保留空返回兼容旧调用。"""
+        return {}
 
     def get_return_schema(self, tool_name: str) -> Dict[str, Any]:
         """获取工具返回Schema"""
@@ -261,11 +242,6 @@ class ToolRegistry:
         if tool_name in self._stats:
             self._stats[tool_name]["total"] += 1
             self._stats[tool_name]["failed"] += 1
-
-    def record_adaptation_failure(self, tool_name: str):
-        """记录输入适配失败"""
-        if tool_name in self._stats:
-            self._stats[tool_name]["adaptation_failed"] += 1
 
     async def execute_tool(self, tool_name: str, **kwargs) -> Any:
         """
@@ -313,163 +289,6 @@ class ToolRegistry:
     # ========================================
     # 自动元数据生成方法
     # ========================================
-
-    def _generate_input_adapter_rules(self, tool) -> Dict[str, Any]:
-        """
-        自动生成输入适配器规则（基于Function Schema）
-
-        支持的字段类型：
-        - 自然语言输入 → 自动生成 aliases
-        - 时间字段 → 自动添加相对时间支持
-        - 地理坐标 → 自动添加坐标验证
-        - 枚举值 → 自动生成 enum 约束
-        """
-        if not hasattr(tool, 'get_function_schema'):
-            return {}
-
-        schema = tool.get_function_schema()
-        if 'parameters' not in schema or 'properties' not in schema['parameters']:
-            return {}
-
-        properties = schema['parameters']['properties']
-        required_fields = schema['parameters'].get('required', [])
-
-        rules = {
-            "tool": tool.name,
-            "fields": {}
-        }
-
-        for field_name, field_config in properties.items():
-            field_rule = {
-                "required": field_name in required_fields,
-                "aliases": self._generate_field_aliases(field_name, field_config),
-                "normalizers": [],
-                "validators": []
-            }
-
-            # 添加类型特定的normalizer
-            field_rule["normalizers"] = self._generate_field_normalizers(field_name, field_config)
-
-            # 添加默认值支持
-            if "default" not in field_config:
-                field_rule["fallback"] = self._generate_fallback_strategy(field_name, field_config)
-
-            # 添加验证规则
-            field_rule["validators"] = self._generate_field_validators(field_name, field_config)
-
-            rules["fields"][field_name] = field_rule
-
-        # 添加全局约束
-        rules["constraints"] = self._generate_global_constraints(tool.name, properties)
-
-        return rules
-
-    def _generate_field_aliases(self, field_name: str, field_config: Dict) -> List[str]:
-        """生成字段别名（支持自然语言输入）"""
-        aliases = [field_name]
-
-        # 根据字段名生成常见别名
-        if "question" in field_name.lower() or "query" in field_name.lower():
-            aliases.extend(["查询", "问题", "需求"])
-        elif "city" in field_name.lower() or "location" in field_name.lower():
-            aliases.extend(["城市", "地点", "位置"])
-        elif "pollutant" in field_name:
-            aliases.extend(["污染物", "指标"])
-        elif "data_id" in field_name:
-            aliases.extend(["数据ID", "数据引用"])
-        elif "time" in field_name.lower():
-            aliases.extend(["时间"])
-
-        return list(set(aliases))
-
-    def _generate_field_normalizers(self, field_name: str, field_config: Dict) -> List[Dict]:
-        """生成字段标准化规则"""
-        normalizers = []
-
-        # 时间字段处理
-        if "time" in field_name.lower() or field_config.get("type") == "datetime":
-            normalizers.append({
-                "type": "datetime",
-                "formats": ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "relative"],
-                "relative_base": "now"
-            })
-
-        # 地理坐标处理
-        if "lat" in field_name or "lon" in field_name:
-            normalizers.append({
-                "type": "geo",
-                "validate_range": True
-            })
-
-        # 数值范围处理
-        if field_config.get("type") == "number":
-            if "min" in field_config:
-                normalizers.append({
-                    "type": "range",
-                    "min": field_config["min"],
-                    "max": field_config.get("max")
-                })
-
-        return normalizers
-
-    def _generate_fallback_strategy(self, field_name: str, field_config: Dict) -> Optional[Dict]:
-        """生成默认值策略"""
-        # 时间字段使用相对时间
-        if "time" in field_name.lower():
-            return {
-                "strategy": "relative",
-                "offset_hours": -24 if "start" in field_name else 0
-            }
-
-        # 城市字段可以从会话历史推断
-        if "city" in field_name.lower():
-            return {
-                "strategy": "context_fallback",
-                "source": "last_successful_query"
-            }
-
-        return None
-
-    def _generate_field_validators(self, field_name: str, field_config: Dict) -> List[Dict]:
-        """生成字段验证规则"""
-        validators = []
-
-        # 枚举值验证
-        if "enum" in field_config:
-            validators.append({
-                "type": "enum",
-                "values": field_config["enum"]
-            })
-
-        # 必填字段验证
-        if field_name in field_config.get("required", []):
-            validators.append({
-                "type": "required"
-            })
-
-        return validators
-
-    def _generate_global_constraints(self, tool_name: str, properties: Dict) -> List[Dict]:
-        """生成全局约束规则"""
-        constraints = []
-
-        # 时间范围验证
-        if "start_time" in properties and "end_time" in properties:
-            constraints.append({
-                "expression": "end_time > start_time",
-                "on_fail": "adjust_end_time(+1h)",
-                "message": "结束时间必须晚于开始时间"
-            })
-
-        # 坐标范围验证
-        if "lat" in properties and "lon" in properties:
-            constraints.append({
-                "expression": "(-90 <= lat <= 90) and (-180 <= lon <= 180)",
-                "on_fail": "return_error",
-                "message": "坐标值超出有效范围"
-            })
-
-        return constraints
 
     def _generate_return_schema(self, tool) -> Dict[str, Any]:
         """
@@ -768,10 +587,6 @@ class ToolRegistry:
             "warnings": []
         }
 
-        # 检查是否有输入适配器规则
-        if not tool_data.get("input_adapter_rules"):
-            results["warnings"].append("建议添加输入适配器规则以支持宽进严出")
-
         # 检查是否有返回Schema
         if not tool_data.get("return_schema"):
             results["warnings"].append("建议添加返回Schema以确保数据格式一致")
@@ -884,7 +699,7 @@ class ToolRegistry:
                 "requires_handle": metadata.get("requires_handle", False)
             },
             "function_schema": function_schema,
-            "has_input_adapter": bool(tool_data.get("input_adapter_rules")),
+            "has_input_adapter": False,
             "has_return_schema": bool(tool_data.get("return_schema"))
         }
 

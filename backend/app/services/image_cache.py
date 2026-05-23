@@ -157,6 +157,22 @@ class ImageCache:
         """
         return f"/api/image/{image_id}"
 
+    def get_report_package_path(self, image_id: str) -> str:
+        """获取旧版报告包路径提示。
+
+        注意：该路径只是基于 image_id 的旧版约定，不代表文件已经存在于
+        reports/{report_id}/assets/charts/ 下。正式报告应通过
+        create_report_package.assets 传入真实图片路径，由报告包工具复制资源并
+        规范化 QMD 图片引用。
+
+        Args:
+            image_id: 图片ID
+
+        Returns:
+            旧版路径提示: assets/charts/{image_id}.png
+        """
+        return f"assets/charts/{image_id}.png"
+
     def exists(self, image_id: str) -> bool:
         """检查图片是否存在"""
         filepath = os.path.join(self.cache_dir, f"{image_id}.png")

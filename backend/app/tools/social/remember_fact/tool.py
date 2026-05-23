@@ -37,6 +37,7 @@ class RememberFactTool(LLMTool):
             name="remember_fact",
             description="记住重要事实到长期记忆（MEMORY.md）",
             category=ToolCategory.TASK_MANAGEMENT,
+            function_schema=self._build_schema(),  # ✅ 传递 schema
             version="1.0.0",
             requires_context=False
         )
@@ -62,26 +63,30 @@ class RememberFactTool(LLMTool):
     def _build_schema(self) -> Dict[str, Any]:
         """构建工具schema"""
         return {
-            "type": "object",
-            "properties": {
-                "fact": {
-                    "type": "string",
-                    "description": "要记住的事实（简洁明确，一句话）"
+            "name": "remember_fact",
+            "description": "记住重要事实到长期记忆（MEMORY.md）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "要记住的事实（简洁明确，一句话）"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
+                        "description": "事实类别"
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "description": "优先级（1-5，5最高）",
+                        "default": 3,
+                        "minimum": 1,
+                        "maximum": 5
+                    }
                 },
-                "category": {
-                    "type": "string",
-                    "enum": ["用户偏好", "领域知识", "历史结论", "环境信息"],
-                    "description": "事实类别"
-                },
-                "priority": {
-                    "type": "integer",
-                    "description": "优先级（1-5，5最高）",
-                    "default": 3,
-                    "minimum": 1,
-                    "maximum": 5
-                }
-            },
-            "required": ["fact", "category"]
+                "required": ["fact", "category"]
+            }
         }
 
     async def execute(self, fact: str, category: str, priority: int = 3, **kwargs) -> Dict[str, Any]:

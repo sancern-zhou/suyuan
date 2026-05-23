@@ -258,12 +258,8 @@ defineExpose({
 }
 
 .viz-toggle-btn:not(.expanded) {
-  right: -18px;
+  right: 0;
   border-radius: 0 4px 4px 0;
-}
-
-.viz-toggle-btn:not(.expanded):hover {
-  right: -5px;
 }
 
 .toggle-icon {

@@ -332,6 +332,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             if actual_session_id:
                 session = await session_manager.load_session(actual_session_id)
                 if session:
+                    session_already_exists = True
                     logger.info(
                         "session_restored",
                         session_id=actual_session_id,
@@ -345,6 +346,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
                     # 避免重复加载历史消息
                 else:
+                    session_already_exists = False
                     logger.warning(
                         "session_not_found_creating_new",
                         session_id=actual_session_id,
@@ -353,6 +355,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     session = Session(session_id=actual_session_id, query=request.query)
                     conversation_history = []
             else:
+                session_already_exists = False
                 import uuid
                 actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
                 session = Session(session_id=actual_session_id, query=request.query)
@@ -364,8 +367,23 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             cancel_event = await cancellation_registry.register(actual_session_id)
             analyze_kwargs["cancel_event"] = cancel_event
 
-            # 保存初始会话
-            await session_manager.save_session(session)
+            # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
+            # 历史消息在本轮完成或异常时走增量保存，避免 DELETE + INSERT
+            # 阻塞用户看到首个响应事件。
+            if session_already_exists:
+                async def _save_initial_session_metadata() -> None:
+                    try:
+                        await session_manager.save_session(session, save_messages=False)
+                    except Exception as save_err:
+                        logger.warning(
+                            "initial_session_metadata_save_failed",
+                            session_id=actual_session_id,
+                            error=str(save_err)
+                        )
+
+                asyncio.create_task(_save_initial_session_metadata())
+            else:
+                await session_manager.save_session(session, save_messages=False)
 
             # ✅ 添加用户消息到对话历史
             user_message = {

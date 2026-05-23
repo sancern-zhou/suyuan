@@ -67,7 +67,10 @@ class ReActLoop:
             tool_registry=tool_executor.tool_registry if hasattr(tool_executor, "tool_registry") else None,
         )
 
-        self.task_completion_guard = TaskCompletionGuard(memory_manager)
+        self.task_completion_guard = TaskCompletionGuard(
+            memory_manager,
+            task_list=getattr(tool_executor, "task_list", None),
+        )
         self.enable_reasoning = enable_reasoning
         self.current_mode = "expert"
         self.schema_injector = SchemaInjector(consecutive_error_threshold=2)

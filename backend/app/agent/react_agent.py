@@ -573,8 +573,8 @@ class ReActAgent:
             await self._mark_session_used(actual_session_id)
 
     def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
-        """Persist office document preview metadata emitted during a run."""
-        if event.get("type") != "office_document" or not event.get("data"):
+        """Persist document preview metadata emitted during a run."""
+        if event.get("type") not in {"office_document", "notebook_document"} or not event.get("data"):
             return
 
         office_doc_data = event["data"]
@@ -585,14 +585,23 @@ class ReActAgent:
 
         doc_entry = {
             "pdf_preview": office_doc_data.get("pdf_preview"),
-            # "markdown_preview": office_doc_data.get("markdown_preview"),  # 暂时注释：历史会话恢复功能待实现
+            "markdown_preview": office_doc_data.get("markdown_preview"),
+            "html_preview": office_doc_data.get("html_preview"),
             "file_path": office_doc_data.get("file_path"),
+            "file_type": office_doc_data.get("file_type"),
             "generator": office_doc_data.get("generator"),
             "summary": office_doc_data.get("summary"),
             "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
         }
+        doc_entry = {k: v for k, v in doc_entry.items() if v is not None}
 
-        file_path = doc_entry["file_path"]
+        file_path = (
+            doc_entry.get("file_path")
+            or doc_entry.get("html_preview", {}).get("html_id")
+            or doc_entry.get("pdf_preview", {}).get("pdf_id")
+        )
+        if file_path:
+            doc_entry["file_path"] = file_path
         existing = self._session_store[session_id]["office_documents"]
         if not any(d.get("file_path") == file_path for d in existing):
             existing.append(doc_entry)
@@ -735,7 +744,7 @@ class ReActAgent:
             new_message_count = len(messages) - offset
 
             # ⚠️ 关键：只检查消息数量，与上下文压缩完全分离
-            should_consolidate = new_message_count >= 20
+            should_consolidate = new_message_count >= 50
 
             if not should_consolidate:
                 return
@@ -1022,7 +1031,7 @@ class ReActAgent:
                     session_manager = get_session_manager()
                     saved_session = await session_manager.load_session(session_id)
 
-                    if saved_session and saved_session.conversation_history:
+                    if saved_session:
                         logger.info(
                             "react_session_restored_from_manager",
                             session_id=session_id,
@@ -1050,11 +1059,19 @@ class ReActAgent:
                                 message_count=len(saved_session.conversation_history)
                             )
 
-                        # 保存到内存缓存
+                        saved_visualizations = []
+                        if isinstance(saved_session.metadata, dict):
+                            saved_visualizations = saved_session.metadata.get("visualizations") or []
+
+                        # 保存到内存缓存。即使历史消息为空，也要缓存已存在的
+                        # session，避免含 data/visual/office 状态的会话被当作新会话。
                         self._session_store[session_id] = {
                             "memory": memory_manager,
                             "created": datetime.utcnow(),
-                            "last_used": datetime.utcnow()
+                            "last_used": datetime.utcnow(),
+                            "collected_data_ids": list(saved_session.data_ids or []),
+                            "collected_visuals": saved_visualizations,
+                            "office_documents": list(saved_session.office_documents or []),
                         }
 
                         return session_id, memory_manager, False  # False 表示不是新建，是恢复的

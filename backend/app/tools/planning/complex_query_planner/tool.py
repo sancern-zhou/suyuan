@@ -25,50 +25,6 @@ QUERY_TOOL_METADATA_PATH = PLANNER_DIR / "query_tool_metadata.json"
 
 # 广东省查询工具的完整 function_schema 定义
 GUANGDONG_QUERY_TOOLS_SCHEMAS = {
-    "query_gd_suncere_city_day_new": {
-        "name": "query_gd_suncere_city_day_new",
-        "description": """
-查询广东省城市日空气质量数据（新标准 HJ 633-2026）。
-
-【返回数据说明】
-- data字段：前24条记录预览（包含每日六参数、AQI、首要污染物、空气质量等级）
-  - timestamp：日期时间
-  - measurements：{PM2_5, PM10, SO2, NO2, CO, O3_8h, PM2_5_IAQI, PM10_IAQI, AQI}
-  - air_quality_level：空气质量等级（优/良/轻度污染/中度污染/重度污染/严重污染）
-  - primary_pollutant：首要污染物
-- data_id字段：完整数据存储标识符（包含所有日期的日报数据）
-  - 支持通过 aggregate_data 工具进行后续分析
-  - 支持通过 smart_chart_generator 工具生成图表
-- metadata字段：
-  - total_records：总记录数
-  - standard：HJ 633-2026
-  - enable_sand_deduction：是否启用扣沙处理
-
-【新标准变化】
-- PM2.5断点：IAQI=100时60μg/m³（旧标准75）
-- PM10断点：IAQI=100时120μg/m³（旧标准150）
-- 扣沙日处理：剔除沙尘暴天气的PM2.5/PM10数据
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市列表，如 ['广州', '深圳', '珠海']"
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "开始日期，格式 YYYY-MM-DD"
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期，格式 YYYY-MM-DD"
-                }
-            },
-            "required": ["cities", "start_date", "end_date"]
-        }
-    },
     "query_city_standard_report": {
         "name": "query_city_standard_report",
         "description": """
@@ -77,6 +33,8 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
 【标准参数】
 - ns_type=2：新国标
 - ns_type=1：旧国标
+- ns_type 不传时按查询时段自动选择默认标准：2025-01-01 之前默认旧国标，2025-01-01 及之后默认新国标；跨 2025-01-01 时工具自动拆成旧国标、新国标两次查询并合并返回分段结果
+- 2025-01-01 之前接口只有旧标准数据，指定 ns_type=2 查询 2025 年前时段通常无数据返回；用户未明确要求新标准时不要对 2025 年前时段传 ns_type=2
 
 【使用场景】
 - 综合指数、达标天数、超标天数、优良率、重污染天数
@@ -98,7 +56,7 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
                 },
                 "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
                 "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
-                "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标", "enum": [1, 2]},
+                "ns_type": {"type": "integer", "description": "2=新国标，1=旧国标；不传时按查询时段自动选择，2025-01-01 前旧国标，2025-01-01 及之后新国标；跨 2025-01-01 时工具自动拆分两次查询并合并返回。2025-01-01 之前接口只有旧标准数据，指定 ns_type=2 查询 2025 年前时段通常无数据返回。", "enum": [1, 2]},
                 "time_type": {"type": "integer", "description": "3周报、4月报、5季报、7年报、8任意时间，默认8"},
                 "pollutant_codes": {
                     "type": "array",
@@ -158,146 +116,6 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
                 "sand_type": {"type": "integer", "description": "0不扣沙，1扣沙，默认1"}
             },
             "required": ["time_point", "contrast_time"]
-        }
-    },
-    "query_new_standard_report": {
-        "name": "query_new_standard_report",
-        "description": """
-查询基于HJ 633-2026新标准的空气质量统计报表。
-
-【返回数据说明】
-- result字段：⭐ 统计汇总结果（综合指数、超标天数、首要污染物比例等）
-  - **综合指标**：composite_index（综合指数）, exceed_days（超标天数）, valid_days（有效天数）, exceed_rate（超标率%）, compliance_rate（达标率%）, total_days（总天数）
-  - **六参数统计**：SO2, SO2_P98, NO2, NO2_P98, PM10, PM10_P95, PM2_5, PM2_5_P95, CO_P95, O3_8h_P90
-  - **加权单项质量指数**：single_indexes.SO2/NO2/PM10/CO/PM2_5/O3_8h
-  - **首要污染物统计**：primary_pollutant_days（各污染物作为首要污染物的天数）, primary_pollutant_ratio（首要污染物比例%）, total_primary_days（总首要污染物天数）
-  - **超标统计**：exceed_days_by_pollutant（各污染物超标天数）, exceed_rate_by_pollutant（各污染物超标率%）, primary_pollutant_exceed_days（首要污染物超标天，既是首要污染物又超标的天数）
-  - 单城市查询：直接返回城市统计数据
-  - 多城市查询：返回各城市统计数据 + province_wide（全省汇总统计）
-  - ⚠️ 重要：result 字段包含完整的统计汇总结果，**直接用于报告生成和分析**
-- data_id字段：完整日报数据（基于HJ 633-2026新标准计算的每日监测数据）
-  - ⚠️ 重要：data_id 只包含每日监测数据（timestamp、AQI、measurements 等），**不包含**统计汇总指标
-  - ❌ 不要从 data_id 读取 exceed_days_by_pollutant、primary_pollutant_exceed_days 等统计字段（这些字段只在 result 中）
-
-【全省汇总统计规则】（多城市查询时）
-- **均值类指标**（各城市均值）：composite_index, single_indexes.*, SO2, NO2, PM10, PM2_5, CO_P95, O3_8h_P90等
-- **累加类指标**（各城市累加）：exceed_days, valid_days, exceed_days_by_pollutant.*, primary_pollutant_days.*, primary_pollutant_exceed_days.*, total_primary_days
-- **计算类指标**：exceed_rate, compliance_rate, exceed_rate_by_pollutant.*, primary_pollutant_ratio
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市列表，如 ['广州', '深圳']"
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "开始日期，格式 YYYY-MM-DD"
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期，格式 YYYY-MM-DD"
-                },
-                "enable_sand_deduction": {
-                    "type": "boolean",
-                    "description": "是否启用扣沙处理（默认true，剔除沙尘暴天气的PM2.5/PM10数据）"
-                }
-            },
-            "required": ["cities", "start_date", "end_date"]
-        }
-    },
-    "query_old_standard_report": {
-        "name": "query_old_standard_report",
-        "description": """
-查询基于HJ 633-2013旧标准的空气质量统计报表。
-
-【返回数据说明】
-- result字段：⭐ 统计汇总结果（结构同新标准报表）
-  - **综合指标**：composite_index（综合指数）, exceed_days（超标天数）, valid_days（有效天数）, exceed_rate（超标率%）, compliance_rate（达标率%）, total_days（总天数）
-  - **六参数统计**：SO2, SO2_P98, NO2, NO2_P98, PM10, PM10_P95, PM2_5, PM2_5_P95, CO_P95, O3_8h_P90
-  - **加权单项质量指数**：single_indexes.*
-  - **首要污染物统计**：primary_pollutant_days.*, primary_pollutant_ratio.*, total_primary_days
-  - **超标统计**：exceed_days_by_pollutant.*, exceed_rate_by_pollutant.*, primary_pollutant_exceed_days.*
-- data_id字段：完整日报数据（基于HJ 633-2013旧标准计算的每日监测数据）
-
-【旧标准特点】
-- PM2.5断点：IAQI=100时75μg/m³
-- PM10断点：IAQI=100时150μg/m³
-- 超标判断：基于单项质量指数 > 1
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市列表，如 ['广州', '深圳']"
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "开始日期，格式 YYYY-MM-DD"
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期，格式 YYYY-MM-DD"
-                },
-                "enable_sand_deduction": {
-                    "type": "boolean",
-                    "description": "是否启用扣沙处理（默认true）"
-                }
-            },
-            "required": ["cities", "start_date", "end_date"]
-        }
-    },
-    "query_standard_comparison": {
-        "name": "query_standard_comparison",
-        "description": """
-查询新旧标准对比统计指标（HJ 633-2026 vs HJ 633-2013）。
-
-【返回数据说明】
-- result字段：⭐ 新旧标准对比结果
-  - **新标准统计**（new_standard）：基于HJ 633-2026计算的统计指标
-    - composite_index, exceed_days, exceed_rate, compliance_rate, total_days, valid_days
-    - 六参数统计：SO2, SO2_P98, NO2, NO2_P98, PM10, PM10_P95, PM2_5, PM2_5_P95, CO_P95, O3_8h_P90
-    - single_indexes.*, primary_pollutant_days.*, exceed_days_by_pollutant.*
-  - **旧标准统计**（old_standard）：基于HJ 633-2013计算的统计指标
-    - 结构同新标准统计
-  - **差值对比**（differences）：new_standard - old_standard
-    - composite_index_diff, exceed_days_diff, exceed_rate_diff, compliance_rate_diff
-    - 六参数统计差值：SO2_diff, NO2_diff, PM10_diff, PM2_5_diff, CO_P95_diff, O3_8h_P90_diff
-  - 单城市查询：直接返回城市对比数据
-  - 多城市查询：返回各城市对比数据 + province_wide（全省汇总对比）
-- data_id字段：包含新标准和旧标准计算的完整日报数据
-
-【使用场景】
-- 评估新标准实施对空气质量评价的影响
-- 对比新旧标准的综合指数、超标天数差异
-- 分析首要污染物认定变化
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市列表"
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "开始日期，格式 YYYY-MM-DD"
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期，格式 YYYY-MM-DD"
-                },
-                "enable_sand_deduction": {
-                    "type": "boolean",
-                    "description": "是否启用扣沙处理（默认true）"
-                }
-            },
-            "required": ["cities", "start_date", "end_date"]
         }
     },
     "query_xcai_city_history": {
@@ -496,312 +314,6 @@ SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）�
             }
         }
     },
-    "query_gd_suncere_city_day": {
-        "name": "query_gd_suncere_city_day",
-        "description": """
-查询广东省城市日空气质量数据（旧标准 HJ 633-2013）。
-
-【返回数据说明】
-- data字段：前24条记录预览（包含每日六参数、AQI、首要污染物、空气质量等级）
-  - timestamp：日期时间
-  - measurements：{PM2_5, PM10, SO2, NO2, CO, O3_8h, PM2_5_IAQI, PM10_IAQI, AQI}
-  - air_quality_level：空气质量等级
-  - primary_pollutant：首要污染物
-- data_id字段：完整数据存储标识符
-  - 支持通过 aggregate_data 工具进行后续分析
-  - 支持通过 smart_chart_generator 工具生成图表
-- metadata字段：
-  - total_records：总记录数
-  - standard：HJ 633-2013（旧标准）
-
-【旧标准特点】
-- PM2.5断点：IAQI=100时75μg/m³
-- PM10断点：IAQI=100时150μg/m³
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市列表，如 ['广州', '深圳']"
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "开始日期，格式 YYYY-MM-DD"
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期，格式 YYYY-MM-DD"
-                }
-            },
-            "required": ["cities", "start_date", "end_date"]
-        }
-    },
-    "query_gd_suncere_city_hour": {
-        "name": "query_gd_suncere_city_hour",
-        "description": """
-查询广东省城市小时空气质量数据。
-
-【核心功能】
-- 查询广东省城市的小时级别空气质量数据
-- 支持多城市并发查询
-- 城市/站点名称自动映射到编码
-- 根据查询时间自动判断数据源（原始实况/审核实况）
-
-【使用场景】
-- 城市空气质量时序分析
-- 区域传输分析
-- 多城市对比分析
-- 污染过程追溯
-
-【返回数据说明】
-- data字段：前24条记录预览
-- data_id字段：完整数据存储标识符（UDF v2.0格式）
-  - 包含多城市的小时级别污染物数据
-  - 可直接传递给可视化工具生成时序图
-- metadata字段：
-  - total_records：总记录数
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市名称列表，如 ['广州', '深圳', '佛山']"
-                },
-                "start_time": {
-                    "type": "string",
-                    "description": "开始时间，格式 'YYYY-MM-DD HH:MM:SS'"
-                },
-                "end_time": {
-                    "type": "string",
-                    "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
-                }
-            },
-            "required": ["cities", "start_time", "end_time"]
-        }
-    },
-    "query_gd_suncere_station_hour_new": {
-        "name": "query_gd_suncere_station_hour_new",
-        "description": """
-查询广东省站点级别小时空气质量数据（基于HJ 633-2026新标准）。
-
-【核心功能】
-- 查询广东省站点级别的小时空气质量数据
-- 支持按站点类型过滤（国控/省控/市控等）
-- 支持按城市名展开（自动查询该城市下所有站点）或直接输入站点名称
-- 支持多城市查询（自动合并站点列表）
-- ⭐ 按新标准计算IAQI、AQI和首要污染物（PM2.5断点60，PM10断点120）
-- 根据查询时间自动判断数据源（三天内原始，三天前审核）
-- 浓度值修约（CO保留1位小数，其他取整）
-- 返回结果包含 station_name 字段，直观显示站点名称
-
-【与城市小时数据的区别】
-- 城市小时数据（query_gd_suncere_city_hour）：城市级别的聚合数据
-- 站点小时数据（本工具）：单个监测站点的小时数据，更精细
-
-【使用场景】
-- 站点级别的污染物浓度分析
-- 城市内不同站点对比分析
-- 精细化污染溯源（需要站点级别数据）
-- 站点数据质量检查
-
-【输入参数】
-- station_type: 站点类型（必填），如 "国控"/"省控"/"市控" 或 "1.0"/"2.0"/"3.0"
-- cities: 城市名称列表（如 ["广州", "深圳"]），会自动展开为站点（与 stations 至少提供一个）
-- stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接查询指定站点（与 cities 至少提供一个）
-- start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
-- end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
-
-【站点类型说明】
-- 国控(1.0)、省控(2.0)、市控(3.0)、区县控(4.0)、乡镇控(5.0)等
-- 支持中文名称和数字ID两种格式
-
-【支持的城市和站点】
-- 广州（19站：广雅中学、市监测站、市五中、体育西、广东商学院、麓湖等）
-- 深圳（12站：洪湖、华侨城、盐田、龙岗、坪山等）
-- 珠海（3站：吉大、前山、唐家）
-- 佛山（3站：湾梁、华材职中、南海气象局）
-- 韶关（4站：韶关学院、曲江监测站、碧湖山庄、浈江十里亭）
-
-【返回数据说明】
-- data_id: 数据引用ID（UDF v2.0格式）
-  - 包含站点级别的小时污染物数据
-  - ⭐ 包含新标准计算的IAQI、AQI和首要污染物
-  - 每条记录包含 station_name 字段（站点中文名称）
-  - 可直接传递给可视化工具生成时序图
-- metadata字段：
-  - total_records：总记录数
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "station_type": {
-                    "type": "string",
-                    "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
-                },
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与 stations 至少提供一个）"
-                },
-                "stations": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与 cities 至少提供一个）"
-                },
-                "start_time": {
-                    "type": "string",
-                    "description": "开始时间，格式 'YYYY-MM-DD HH:MM:SS'"
-                },
-                "end_time": {
-                    "type": "string",
-                    "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
-                }
-            },
-            "required": ["station_type", "start_time", "end_time"]
-        }
-    },
-    "query_gd_suncere_station_day_new": {
-        "name": "query_gd_suncere_station_day_new",
-        "description": """
-查询广东省站点级别日空气质量数据（基于HJ 633-2026新标准）。
-
-【核心功能】
-- 查询广东省站点级别的日空气质量数据
-- 支持按站点类型过滤（国控/省控/市控等）
-- 支持按城市名展开（自动查询该城市下所有站点）或直接输入站点名称
-- 支持多城市查询（自动合并站点列表）
-- ⭐ 按新标准计算IAQI、AQI和首要污染物（PM2.5断点60，PM10断点120）
-- 根据查询时间自动判断数据源（三天内原始，三天前审核）
-- 浓度值修约（CO保留1位小数，其他取整）
-- 返回结果包含 station_name 字段，直观显示站点名称
-
-【与城市日数据的区别】
-- 城市日数据（query_gd_suncere_city_day）：城市级别的聚合数据
-- 站点日数据（本工具）：单个监测站点的日数据，更精细
-
-【与站点小时数据的区别】
-- 站点小时数据（query_gd_suncere_station_hour）：每小时一条记录
-- 站点日数据（本工具）：每天一条记录（日均值）
-
-【使用场景】
-- 站点级别的日均污染物浓度分析
-- 城市内不同站点日数据对比
-- 长时间序列趋势分析（站点级别）
-- 站点数据质量检查（日数据）
-
-【输入参数】
-- station_type: 站点类型（必填），如 "国控"/"省控"/"市控" 或 "1.0"/"2.0"/"3.0"
-- cities: 城市名称列表（如 ["广州", "深圳"]），会自动展开为站点（与 stations 至少提供一个）
-- stations: 站点名称列表（如 ["广雅中学", "市监测站"]），直接查询指定站点（与 cities 至少提供一个）
-- start_date: 开始日期，格式 "YYYY-MM-DD"
-- end_date: 结束日期，格式 "YYYY-MM-DD"
-
-【站点类型说明】
-- 国控(1.0)、省控(2.0)、市控(3.0)、区县控(4.0)、乡镇控(5.0)等
-- 支持中文名称和数字ID两种格式
-
-【支持的城市和站点】
-- 广州（19站：广雅中学、市监测站、市五中、体育西、广东商学院、麓湖等）
-- 深圳（12站：洪湖、华侨城、盐田、龙岗、坪山等）
-- 珠海（3站：吉大、前山、唐家）
-- 佛山（3站：湾梁、华材职中、南海气象局）
-- 韶关（4站：韶关学院、曲江监测站、碧湖山庄、浈江十里亭）
-
-【返回数据说明】
-- data_id: 数据引用ID（UDF v2.0格式）
-  - 包含站点级别的日污染物数据
-  - ⭐ 包含新标准计算的IAQI、AQI和首要污染物
-  - 每条记录包含 station_name 字段（站点中文名称）
-  - 可直接传递给可视化工具生成趋势图
-- metadata字段：
-  - total_records：总记录数
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "station_type": {
-                    "type": "string",
-                    "description": "站点类型（必填），如 '国控'/'省控'/'市控' 或 '1.0'/'2.0'/'3.0'"
-                },
-                "cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "城市名称列表，如 ['广州', '深圳']，会自动展开为站点代码（与 stations 至少提供一个）"
-                },
-                "stations": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "站点名称列表，如 ['广雅中学', '市监测站']，直接查询指定站点（与 cities 至少提供一个）"
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "开始日期，格式 'YYYY-MM-DD'"
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期，格式 'YYYY-MM-DD'"
-                }
-            },
-            "required": ["station_type", "start_date", "end_date"]
-        }
-    },
-    "query_gd_suncere_regional_comparison": {
-        "name": "query_gd_suncere_regional_comparison",
-        "description": """
-查询广东省区域对比空气质量数据。
-
-【核心功能】
-- 查询目标城市与周边城市的小时数据
-- 用于区域传输分析
-- 自动判断数据源类型
-- 返回统一格式数据
-
-【使用场景】
-- 区域传输分析（本地生成 vs 外部输送）
-- 目标城市与周边城市对比
-- 污染来源溯源分析
-
-【输入参数】
-- target_city: 目标城市名称（如 "广州"）
-- nearby_cities: 周边城市名称列表（如 ["佛山", "深圳", "东莞"]）
-- start_time: 开始时间，格式 "YYYY-MM-DD HH:MM:SS"
-- end_time: 结束时间，格式 "YYYY-MM-DD HH:MM:SS"
-
-【返回数据说明】
-- data_id: 数据引用ID（UDF v2.0格式）
-  - 包含目标城市和周边城市的小时数据
-  - 可直接用于区域传输分析
-- metadata字段：
-  - total_records：总记录数
-        """.strip(),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "target_city": {
-                    "type": "string",
-                    "description": "目标城市名称，如 '广州'"
-                },
-                "nearby_cities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "周边城市名称列表，如 ['佛山', '深圳', '东莞']"
-                },
-                "start_time": {
-                    "type": "string",
-                    "description": "开始时间，格式 'YYYY-MM-DD HH:MM:SS'"
-                },
-                "end_time": {
-                    "type": "string",
-                    "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
-                }
-            },
-            "required": ["target_city", "nearby_cities", "start_time", "end_time"]
-        }
-    },
     "query_station_standard_report": {
         "name": "query_station_standard_report",
         "description": "查询广东省站点新/旧国标统计报表，直接调用联网接口，不本地重算。ns_type=2新国标，ns_type=1旧国标；cities会按station_type展开站点，也可直接传stations或站点编码。data和read_data_registry(data_id)默认使用reporting报告口径视图。",
@@ -833,37 +345,214 @@ SQL Server 查询中文字符串时，必须使用 N 前缀（表示 Unicode）�
             },
             "required": ["time_point", "contrast_time"]
         }
+    },
+    "query_gd_suncere_district_report": {
+        "name": "query_gd_suncere_district_report",
+        "description": "查询广东省区县统计报表数据，支持月度(time_type=4)、年度(time_type=7)、任意时段(time_type=8，默认)。支持区县名称/编码，也支持按城市展开下辖区县。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']；会展开为下辖区县"},
+                "districts": {"type": "array", "items": {"type": "string"}, "description": "区县名称列表，如 ['天河区', '福田区']"},
+                "district_codes": {"type": "array", "items": {"type": "string"}, "description": "区县编码列表"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "time_type": {"type": "integer", "description": "4=月度，7=年度，8=任意时段（默认）", "enum": [4, 7, 8], "default": 8},
+                "area_type": {"type": "integer", "description": "区域类型，1=行政区（默认）", "default": 1},
+                "cal_area_type": {"type": "integer", "description": "计算区域类型，0=默认", "default": 0},
+                "data_source": {"type": "integer", "description": "0=原始实况，1=审核实况（默认）", "enum": [0, 1], "default": 1},
+                "ns_type": {"type": "integer", "description": "2=新国标（默认），1=旧国标", "enum": [1, 2], "default": 2},
+                "sand_type": {"type": "integer", "description": "0=不扣沙，1=扣沙（默认）", "enum": [0, 1], "default": 1}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "query_gd_suncere_city_hour": {
+        "name": "query_gd_suncere_city_hour",
+        "description": "查询广东省城市小时数据，用于小时级时间序列分析、污染过程解析。返回标准化的空气质量数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']；可传广东省、全省等区域别名"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD HH:MM:SS"},
+                "data_source": {"type": "integer", "description": "0=原始实况，1=审核实况（默认）", "enum": [0, 1], "default": 1},
+                "ns_type": {"type": "integer", "description": "2=新国标（默认），1=旧国标", "enum": [1, 2], "default": 2}
+            },
+            "required": ["cities", "start_time", "end_time"]
+        }
+    },
+    "query_gd_suncere_city_day": {
+        "name": "query_gd_suncere_city_day",
+        "description": "查询广东省城市日数据，通过ns_type参数选择新/旧国标。用于日报分析、月度统计汇总。返回标准化的空气质量数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']；可传广东省、全省等区域别名"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "data_source": {"type": "integer", "description": "0=原始实况，1=审核实况（默认）", "enum": [0, 1], "default": 1},
+                "ns_type": {"type": "integer", "description": "2=新国标（默认），1=旧国标", "enum": [1, 2], "default": 2},
+                "sand_type": {"type": "integer", "description": "0=不扣沙，1=扣沙（默认）", "enum": [0, 1], "default": 1}
+            },
+            "required": ["cities", "start_time", "end_time"]
+        }
+    },
+    "query_gd_suncere_district_day": {
+        "name": "query_gd_suncere_district_day",
+        "description": "查询广东省区县日数据，支持区县名称/编码查询，也支持按城市展开下辖区县。返回标准化的空气质量数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州']；会展开为下辖区县"},
+                "districts": {"type": "array", "items": {"type": "string"}, "description": "区县名称列表，如 ['天河区', '福田区']"},
+                "district_codes": {"type": "array", "items": {"type": "string"}, "description": "区县编码列表"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "data_source": {"type": "integer", "description": "0=原始实况，1=审核实况（默认）", "enum": [0, 1], "default": 1},
+                "ns_type": {"type": "integer", "description": "2=新国标（默认），1=旧国标", "enum": [1, 2], "default": 2},
+                "sand_type": {"type": "integer", "description": "0=不扣沙，1=扣沙（默认）", "enum": [0, 1], "default": 1}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "get_vocs_data": {
+        "name": "get_vocs_data",
+        "description": "查询VOCs组分数据，用于VOCs组分分析、臭氧生成潜势(OFP)计算、源解析(PMF)等。返回标准化的VOCs样品数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']"},
+                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点列表，如 ['麓湖站', '万顷沙站']"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "get_pm25_ionic": {
+        "name": "get_pm25_ionic",
+        "description": "查询PM2.5离子组分数据（SO42-、NO3-、NH4+、K+、Na+、Ca2+、Mg2+等），用于二次气溶胶分析、源解析(PMF)等。返回标准化的颗粒物样品数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']"},
+                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点列表，如 ['麓湖站', '万顷沙站']"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "get_pm25_carbon": {
+        "name": "get_pm25_carbon",
+        "description": "查询PM2.5碳组分数据（OC、EC等），用于碳质气溶胶分析、二次有机碳(SOC)估算、源解析(PMF)等。返回标准化的颗粒物样品数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']"},
+                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点列表，如 ['麓湖站', '万顷沙站']"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "get_pm25_crustal": {
+        "name": "get_pm25_crustal",
+        "description": "查询PM2.5地壳元素组分数据（Si、Al、Ca、Fe、Ti等），用于扬尘源解析、地壳元素分析等。返回标准化的颗粒物样品数据，包含data_id用于完整数据访问。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']"},
+                "stations": {"type": "array", "items": {"type": "string"}, "description": "站点列表，如 ['麓湖站', '万顷沙站']"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "get_weather_forecast": {
+        "name": "get_weather_forecast",
+        "description": "查询气象预报数据，用于气象条件分析、污染过程预报、轨迹分析等。返回ERA5预报数据或GFS预报数据。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cities": {"type": "array", "items": {"type": "string"}, "description": "城市列表，如 ['广州', '深圳']"},
+                "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS"},
+                "data_source": {"type": "string", "description": "数据源，era5或gfs", "enum": ["era5", "gfs"], "default": "era5"}
+            },
+            "required": ["start_time", "end_time"]
+        }
+    },
+    "query_national_province_air_quality": {
+        "name": "query_national_province_air_quality",
+        "description": "查询全国省份空气质量统计数据，返回六参数均值、综合指数SumIndex和AQI达标率。用于省份排名、区域对比和达标率统计；数据来源为全国发布数据，-99表示缺失。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "开始日期，格式 'YYYY-MM-DD'"},
+                "end_date": {"type": "string", "description": "结束日期，格式 'YYYY-MM-DD'"},
+                "ns_type": {"type": "string", "description": "数据类型，默认NS", "enum": ["NS", "NSDay", "OldNS"], "default": "NS"}
+            },
+            "required": ["start_date", "end_date"]
+        }
+    },
+    "query_national_city_air_quality": {
+        "name": "query_national_city_air_quality",
+        "description": "查询全国城市空气质量统计数据，返回六参数均值、综合指数SumIndex和AQI达标率。用于城市排名、区域对比和达标率统计；数据来源为全国发布数据，-99表示缺失。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "开始日期，格式 'YYYY-MM-DD'"},
+                "end_date": {"type": "string", "description": "结束日期，格式 'YYYY-MM-DD'"},
+                "ns_type": {"type": "string", "description": "数据类型，默认NS", "enum": ["NS", "NSDay", "OldNS"], "default": "NS"}
+            },
+            "required": ["start_date", "end_date"]
+        }
     }
 }
 
 # 各模式可用的工具名称
 MODE_TOOLS = {
     "query": [
-        "query_gd_suncere_city_day_new",
         "query_city_standard_report",
         "query_city_standard_yoy_report",
         "query_xcai_city_history",
         "execute_sql_query",
-        "query_gd_suncere_city_day",
-        "query_gd_suncere_city_hour",
-        "query_gd_suncere_station_hour_new",
-        "query_gd_suncere_station_day_new",
-        "query_gd_suncere_regional_comparison",
         "query_station_standard_report",
         "query_station_standard_yoy_report",
+        "query_gd_suncere_district_report",
+        "query_gd_suncere_city_hour",
+        "query_gd_suncere_city_day",
+        "query_gd_suncere_district_day",
+        "get_vocs_data",
+        "get_pm25_ionic",
+        "get_pm25_carbon",
+        "get_pm25_crustal",
+        "get_weather_forecast",
+        "query_national_province_air_quality",
+        "query_national_city_air_quality",
     ],
     "report": [
-        "query_gd_suncere_city_day_new",
         "query_city_standard_report",
         "query_city_standard_yoy_report",
         "query_xcai_city_history",
         "execute_sql_query",
-        "query_gd_suncere_city_hour",
-        "query_gd_suncere_station_hour_new",
-        "query_gd_suncere_station_day_new",
-        "query_gd_suncere_regional_comparison",
         "query_station_standard_report",
         "query_station_standard_yoy_report",
+        "query_gd_suncere_district_report",
+        "query_gd_suncere_city_hour",
+        "query_gd_suncere_city_day",
+        "query_gd_suncere_district_day",
+        "get_vocs_data",
+        "get_pm25_ionic",
+        "get_pm25_carbon",
+        "get_pm25_crustal",
+        "get_weather_forecast",
+        "query_national_province_air_quality",
+        "query_national_city_air_quality",
     ]
 }
 
@@ -911,6 +600,9 @@ PLANNING_PROMPT_TEMPLATE = """你是数据查询规划专家。请根据用户�
 - 时间范围保持一致
 - 如果需求信息不足（如缺少时间范围），在 plan_steps 中说明并返回 error 字段
 - 优先使用新标准工具（带 _new 后缀的工具）
+- **广东省数据查询优先接口工具**：用户查询广东省、广东省内城市、区县、站点或区域统计数据时，优先调用联网接口查询工具（如 query_city_standard_report、query_city_standard_yoy_report、query_station_standard_report、query_gd_suncere_district_report 等）；不要优先使用 execute_sql_query 查询 SQL 原始表，因为 SQL 数据可能是未经审核数据。只有接口工具无法覆盖全国排名、预计算统计表字段、复杂 JOIN 或白名单表专项查询时，才考虑 execute_sql_query，并在 reasoning/warnings 中说明原因。
+- **区域名称默认按区域统计**：用户查询“珠三角”“非珠三角”“粤东”“粤西”“粤北”“粤东西北”等区域时，一般指查询区域统计指标，应将区域名称作为区域/城市参数传给支持区域别名的接口工具，获取区域汇总统计；不要默认展开为下辖地市逐市查询，除非用户明确要求“各地市”“城市明细”“下辖城市分别统计”。
+- **月度/年度 time_type 要求**：用户明确需要月度数据、月报、按月统计时，调用支持 time_type 的统计报表工具必须设置 `time_type=4`；用户明确需要年度数据、年报、全年统计或年累计统计时，必须设置 `time_type=7`。不要把默认 `time_type=8` 的任意时段累计结果误当成月度或年度报表结果。
 - **简洁性原则**：选择最简洁的工具调用计划，避免不必要的重复查询
   - 如果一个工具能够满足需求，不要调用多个功能相似的工具
   - 优先使用功能完整的工具（如 query_city_standard_report 已包含接口统计报表，无需再调用 query_gd_suncere_city_day_new 获取日报后本地计算）
@@ -936,9 +628,11 @@ PLANNING_PROMPT_TEMPLATE = """你是数据查询规划专家。请根据用户�
             "step": 1,
             "tool": "execute_sql_query",
             "params": {{
-                "sql": "SELECT city_name, stat_date, comprehensive_index, comprehensive_index_rank FROM city_168_statistics_new_standard WHERE stat_type = 'annual_ytd' AND city_name IN (N'广州', N'深圳', N'珠海', N'佛山', N'东莞', N'中山', N'江门', N'惠州', N'肇庆') ORDER BY city_name"
+                "sql": "SELECT city_name, stat_date, comprehensive_index, comprehensive_index_rank FROM city_168_statistics_new_standard WHERE stat_type = 'annual_ytd' AND stat_date = '2025-01-01' AND city_name IN (N'广州', N'深圳', N'珠海', N'佛山', N'东莞', N'中山', N'江门', N'惠州', N'肇庆') ORDER BY city_name",
+                "database": "XcAiDb",
+                "limit": 100
             }},
-            "reasoning": "直接查询168城市表中预计算的排名数据（comprehensive_index_rank和comprehensive_index_rank_old字段），一次查询获取珠三角9个城市的新旧标准排名，无需使用窗口函数或分别查询新标准报表和旧标准报表",
+            "reasoning": "直接查询168城市新标准预计算排名数据，限定年度累计统计类型和2025年统计日期，一次查询获取珠三角9个城市的新标准综合指数及排名，无需使用窗口函数或广东省内报表接口代替全国排名",
             "dependencies": []
         }}
     ],
@@ -955,8 +649,8 @@ PLANNING_PROMPT_TEMPLATE = """你是数据查询规划专家。请根据用户�
         {{
             "step": 1,
             "tool": "query_city_standard_report",
-            "params": {{"cities": ["广州"], "start_time": "2025-01-01", "end_time": "2025-01-31", "ns_type": 2}},
-            "reasoning": "查询新国标城市统计报表接口，已包含完整的统计汇总数据",
+            "params": {{"cities": ["广州"], "start_time": "2025-01-01", "end_time": "2025-01-31", "ns_type": 2, "time_type": 4, "data_source": 1, "sand_type": 1}},
+            "reasoning": "查询广东联网新国标城市月度统计报表接口，time_type=4明确按月报口径返回，data_source=1使用审核实况，sand_type=1使用扣沙口径；未传pollutant_codes表示返回全部统计字段",
             "dependencies": []
         }}
     ],

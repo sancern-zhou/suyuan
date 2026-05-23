@@ -118,7 +118,7 @@ class QueryGDSuncereCityHourTool(LLMTool):
             "name": "query_gd_suncere_city_hour",
             "description": (
                 "查询广东省城市级小时空气质量数据，适合时序、过程追溯、区域传输和多城市小时对比。"
-                "城市名自动映射编码；根据结束时间自动判断数据源；include_weather默认true。"
+                "城市名自动映射编码；ns_type=2新国标、1旧国标；根据结束时间自动判断数据源；include_weather默认true。"
                 "站点级小时数据用query_gd_suncere_station_hour_new。"
             ),
             "parameters": {
@@ -140,6 +140,22 @@ class QueryGDSuncereCityHourTool(LLMTool):
                     "include_weather": {
                         "type": "boolean",
                         "description": "是否包含气象字段，默认true"
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "skip_count": {
+                        "type": "integer",
+                        "description": "分页跳过数，默认0",
+                        "default": 0
+                    },
+                    "max_result_count": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认1000",
+                        "default": 1000
                     }
                 },
                 "required": ["cities", "start_time", "end_time"]
@@ -162,6 +178,9 @@ class QueryGDSuncereCityHourTool(LLMTool):
         start_time: str,
         end_time: str,
         include_weather: bool = True,
+        ns_type: int = 2,
+        skip_count: int = 0,
+        max_result_count: int = 1000,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -173,6 +192,9 @@ class QueryGDSuncereCityHourTool(LLMTool):
             start_time: 开始时间
             end_time: 结束时间
             include_weather: 是否包含气象字段
+            ns_type: 标准类型（2新国标，1旧国标）
+            skip_count: 分页跳过数
+            max_result_count: 最大返回条数
 
         Returns:
             UDF v2.0格式的查询结果
@@ -185,6 +207,9 @@ class QueryGDSuncereCityHourTool(LLMTool):
             start_time=start_time,
             end_time=end_time,
             include_weather=include_weather,
+            ns_type=ns_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -194,7 +219,10 @@ class QueryGDSuncereCityHourTool(LLMTool):
             start_time=start_time,
             end_time=end_time,
             context=context,
-            include_weather=include_weather
+            include_weather=include_weather,
+            ns_type=ns_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
         # 应用数据外部化检查
@@ -215,9 +243,9 @@ class QueryGDSuncereStationHourTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_station_hour_new",
             "description": (
-                "查询广东省站点级小时空气质量数据，基于HJ 633-2026计算IAQI/AQI/首要污染物。"
+                "查询广东省站点级小时空气质量数据。"
                 "用户提到具体站点或需要站点级小时数据时使用；城市聚合小时数据用query_gd_suncere_city_hour。"
-                "cities和stations至少提供一个；station_type仅cities时生效；include_weather默认true。"
+                "通过ns_type选择标准：2新国标，1旧国标。cities和stations至少提供一个；station_type仅cities时生效；include_weather默认true。"
             ),
             "parameters": {
                 "type": "object",
@@ -247,6 +275,27 @@ class QueryGDSuncereStationHourTool(LLMTool):
                     "include_weather": {
                         "type": "boolean",
                         "description": "是否包含气象字段，默认true"
+                    },
+                    "data_type": {
+                        "type": "integer",
+                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；不传时自动判断",
+                        "enum": [0, 1, 2, 3]
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "skip_count": {
+                        "type": "integer",
+                        "description": "分页跳过数，默认0",
+                        "default": 0
+                    },
+                    "max_result_count": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认1000",
+                        "default": 1000
                     }
                 },
                 "required": ["start_time", "end_time"]
@@ -255,7 +304,7 @@ class QueryGDSuncereStationHourTool(LLMTool):
 
         super().__init__(
             name="query_gd_suncere_station_hour_new",
-            description="Query Guangdong station hourly air quality data (HJ 633-2026 new standard) - Suncere API",
+            description="Query Guangdong station hourly air quality data - Suncere API",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="2.0.0",
@@ -333,6 +382,10 @@ class QueryGDSuncereStationHourTool(LLMTool):
             start_time=start_time,
             end_time=end_time,
             include_weather=include_weather,
+            data_type=kwargs.get("data_type"),
+            ns_type=kwargs.get("ns_type", 2),
+            skip_count=kwargs.get("skip_count", 0),
+            max_result_count=kwargs.get("max_result_count", 1000),
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -343,7 +396,11 @@ class QueryGDSuncereStationHourTool(LLMTool):
             cities=cities,
             stations=stations,
             station_type=effective_station_type,
-            include_weather=include_weather
+            include_weather=include_weather,
+            data_type=kwargs.get("data_type"),
+            ns_type=kwargs.get("ns_type", 2),
+            skip_count=kwargs.get("skip_count", 0),
+            max_result_count=kwargs.get("max_result_count", 1000)
         )
 
         # 应用数据外部化检查
@@ -363,9 +420,9 @@ class QueryGDSuncereStationDayTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_station_day_new",
             "description": (
-                "查询广东省站点级日空气质量数据，基于HJ 633-2026计算IAQI/AQI/首要污染物。"
-                "用户提到具体站点或需要站点级日均数据时使用；城市聚合日数据用query_gd_suncere_city_day_new。"
-                "cities和stations至少提供一个；station_type仅cities时生效。"
+                "查询广东省站点级日空气质量数据。"
+                "用户提到具体站点或需要站点级日均数据时使用；城市聚合日数据用query_gd_suncere_city_day。"
+                "通过ns_type选择标准：2新国标，1旧国标。cities和stations至少提供一个；station_type仅cities时生效。"
             ),
             "parameters": {
                 "type": "object",
@@ -391,6 +448,33 @@ class QueryGDSuncereStationDayTool(LLMTool):
                     "end_date": {
                         "type": "string",
                         "description": "结束日期，格式 'YYYY-MM-DD'"
+                    },
+                    "data_type": {
+                        "type": "integer",
+                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；不传时自动选择近三天原始三天外审核",
+                        "enum": [0, 1, 2, 3]
+                    },
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
+                        "enum": [0, 1],
+                        "default": 1
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "skip_count": {
+                        "type": "integer",
+                        "description": "分页跳过数，默认0",
+                        "default": 0
+                    },
+                    "max_result_count": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认1000",
+                        "default": 1000
                     }
                 },
                 "required": ["start_date", "end_date"]
@@ -399,7 +483,7 @@ class QueryGDSuncereStationDayTool(LLMTool):
 
         super().__init__(
             name="query_gd_suncere_station_day_new",
-            description="Query Guangdong station daily air quality data (HJ 633-2026 new standard) - Suncere API",
+            description="Query Guangdong station daily air quality data - Suncere API",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="2.0.0",
@@ -474,6 +558,11 @@ class QueryGDSuncereStationDayTool(LLMTool):
             effective_station_type=effective_station_type,
             start_date=start_date,
             end_date=end_date,
+            data_type=kwargs.get("data_type"),
+            sand_type=kwargs.get("sand_type", 1),
+            ns_type=kwargs.get("ns_type", 2),
+            skip_count=kwargs.get("skip_count", 0),
+            max_result_count=kwargs.get("max_result_count", 1000),
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -483,7 +572,12 @@ class QueryGDSuncereStationDayTool(LLMTool):
             context=context,
             cities=cities,
             stations=stations,
-            station_type=effective_station_type
+            station_type=effective_station_type,
+            data_type=kwargs.get("data_type"),
+            sand_type=kwargs.get("sand_type", 1),
+            ns_type=kwargs.get("ns_type", 2),
+            skip_count=kwargs.get("skip_count", 0),
+            max_result_count=kwargs.get("max_result_count", 1000)
         )
 
         # 应用数据外部化检查
@@ -600,8 +694,8 @@ class QueryGDSuncereCityDayTool(LLMTool):
             "name": "query_gd_suncere_city_day",
             "description": (
                 "查询广东省城市级日空气质量数据，适合日变化、多城市日均对比和长时间序列分析。"
-                "城市名自动映射编码；data_type默认None自动选择近三天原始三天外审核；sand_type透传接口扣沙参数。"
-                "需要新标准日数据优先用query_gd_suncere_city_day_new。"
+                "城市名自动映射编码；单接口通过ns_type选择标准：2新国标，1旧国标。"
+                "cal_area_type默认0总站；data_type默认None自动选择近三天原始三天外审核；sand_type透传接口扣沙参数。"
             ),
             "parameters": {
                 "type": "object",
@@ -629,6 +723,28 @@ class QueryGDSuncereCityDayTool(LLMTool):
                         "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
                         "enum": [0, 1],
                         "default": 1
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "cal_area_type": {
+                        "type": "integer",
+                        "description": "统计类型：0=总站，2=省站，3=国控，4=国控+省控，5=国控+省控(除区域)；默认0",
+                        "enum": [0, 2, 3, 4, 5],
+                        "default": 0
+                    },
+                    "skip_count": {
+                        "type": "integer",
+                        "description": "分页跳过数，默认0",
+                        "default": 0
+                    },
+                    "max_result_count": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认1000",
+                        "default": 1000
                     },
                 },
                 "required": ["cities", "start_date", "end_date"]
@@ -673,6 +789,10 @@ class QueryGDSuncereCityDayTool(LLMTool):
 
         # 提取可选参数
         sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
+        ns_type = kwargs.get("ns_type", 2)
+        cal_area_type = kwargs.get("cal_area_type", 0)
+        skip_count = kwargs.get("skip_count", 0)
+        max_result_count = kwargs.get("max_result_count", 1000)
 
         logger.info(
             "query_gd_suncere_city_day_tool_start",
@@ -681,6 +801,10 @@ class QueryGDSuncereCityDayTool(LLMTool):
             end_date=end_date,
             data_type=data_type,
             sand_type=sand_type,
+            ns_type=ns_type,
+            cal_area_type=cal_area_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count,
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
@@ -691,13 +815,174 @@ class QueryGDSuncereCityDayTool(LLMTool):
             end_date=end_date,
             context=context,
             data_type=data_type,
-            sand_type=sand_type
+            sand_type=sand_type,
+            ns_type=ns_type,
+            cal_area_type=cal_area_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
         )
 
         # 应用数据外部化检查
         result = _apply_externalization_if_needed(result, context, "query_gd_suncere_city_day")
 
         return result
+
+
+class QueryGDSuncereDistrictDayTool(LLMTool):
+    """
+    广东省区县日数据查询工具
+
+    用于查询广东省区县级别的日空气质量数据。
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_gd_suncere_district_day",
+            "description": (
+                "查询广东省区县级日空气质量数据，使用DATDistrictDay接口并传9位区县编码。"
+                "支持区县名称到编码映射，也支持按城市名称展开为该城市下辖全部区县。"
+                "适合区县排名、区县日均对比、城市内各区县过程分析。"
+                "示例：districts=['清城区','清新区'] 或 cities=['清远']。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "districts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "区县名称或9位区县编码列表，如 ['清城区', '清新区'] 或 ['441800005']"
+                    },
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称或6位城市编码列表；提供后自动展开为该城市下辖所有区县，如 ['清远']"
+                    },
+                    "district_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "9位区县编码列表，如 ['441800005', '441800006']"
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "开始时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "cal_area_type": {
+                        "type": "integer",
+                        "description": "统计类型：0=国控+省控，1=省控，2=国控；默认0",
+                        "enum": [0, 1, 2],
+                        "default": 0
+                    },
+                    "data_type": {
+                        "type": "integer",
+                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；默认1审核实况",
+                        "enum": [0, 1, 2, 3],
+                        "default": 1
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1",
+                        "enum": [0, 1],
+                        "default": 1
+                    },
+                    "skip_count": {
+                        "type": "integer",
+                        "description": "分页跳过数，默认0",
+                        "default": 0
+                    },
+                    "max_result_count": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认20",
+                        "default": 20
+                    },
+                },
+                "required": ["start_time", "end_time"]
+            }
+        }
+
+        super().__init__(
+            name="query_gd_suncere_district_day",
+            description="Query Guangdong district daily air quality data - Suncere API",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=True
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        start_time: str,
+        end_time: str,
+        districts: Optional[List[str]] = None,
+        cities: Optional[List[str]] = None,
+        district_codes: Optional[List[str]] = None,
+        data_type: int = 1,
+        cal_area_type: int = 0,
+        ns_type: int = 2,
+        sand_type: int = 1,
+        skip_count: int = 0,
+        max_result_count: int = 20,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行区县日数据查询。
+        """
+        from app.tools.query.query_gd_suncere import execute_query_gd_suncere_district_day
+
+        if not districts and not cities and not district_codes:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "summary": "必须提供districts、district_codes或cities参数。为避免数据量过大，不支持默认全省区县查询。",
+                "metadata": {
+                    "error": "Missing districts, district_codes or cities parameter",
+                    "suggestion": "请提供区县名称、区县编码，或指定城市以展开下辖区县"
+                }
+            }
+
+        logger.info(
+            "query_gd_suncere_district_day_tool_start",
+            districts=districts,
+            cities=cities,
+            district_codes=district_codes,
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type,
+            cal_area_type=cal_area_type,
+            ns_type=ns_type,
+            sand_type=sand_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count,
+            session_id=getattr(context, 'session_id', 'unknown')
+        )
+
+        result = execute_query_gd_suncere_district_day(
+            start_time=start_time,
+            end_time=end_time,
+            context=context,
+            districts=districts,
+            cities=cities,
+            district_codes=district_codes,
+            data_type=data_type,
+            sand_type=sand_type,
+            ns_type=ns_type,
+            cal_area_type=cal_area_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
+        )
+
+        return _apply_externalization_if_needed(result, context, "query_gd_suncere_district_day")
 
 
 class QueryGDSuncereReportTool(LLMTool):
@@ -862,6 +1147,161 @@ time_type=8  # 任意时间报表
         result = _apply_externalization_if_needed(result, context, "query_gd_suncere_report")
 
         return result
+
+
+class QueryGDSuncereDistrictReportTool(LLMTool):
+    """
+    广东省区县统计报表查询工具。
+
+    支持区县月度、年度、任意时段统计报表。
+    """
+
+    def __init__(self):
+        function_schema = {
+            "name": "query_gd_suncere_district_report",
+            "description": (
+                "查询广东省区县统计报表数据，支持月度(time_type=4)、年度(time_type=7)、"
+                "任意时段(time_type=8，默认)。支持区县名称/编码，也支持按城市展开下辖区县。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "districts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "区县名称或9位区县编码列表，如 ['清城区', '清新区'] 或 ['441800005']"
+                    },
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "城市名称或6位城市编码列表；提供后自动展开为该城市下辖所有区县，如 ['清远']"
+                    },
+                    "district_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "9位区县编码列表，如 ['441800005', '441800006']"
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "开始时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "结束时间，格式 'YYYY-MM-DD HH:MM:SS'"
+                    },
+                    "time_type": {
+                        "type": "integer",
+                        "description": "报表类型：4=月度，7=年度，8=任意时段；默认8",
+                        "enum": [4, 7, 8],
+                        "default": 8
+                    },
+                    "area_type": {
+                        "type": "integer",
+                        "description": "区域类型：1=区县；默认1",
+                        "enum": [1],
+                        "default": 1
+                    },
+                    "cal_area_type": {
+                        "type": "integer",
+                        "description": "统计类型：0=国控+省控，1=省控，2=国控；默认0",
+                        "enum": [0, 1, 2],
+                        "default": 0
+                    },
+                    "data_source": {
+                        "type": "integer",
+                        "description": "数据源：0原始实况，1审核实况；默认1审核实况",
+                        "enum": [0, 1],
+                        "default": 1
+                    },
+                    "ns_type": {
+                        "type": "integer",
+                        "description": "标准类型：2=新国标，1=旧国标；默认2",
+                        "enum": [1, 2],
+                        "default": 2
+                    },
+                    "sand_type": {
+                        "type": "integer",
+                        "description": "扣沙类型：0不扣沙，1扣沙；默认1",
+                        "enum": [0, 1],
+                        "default": 1
+                    },
+                    "skip_count": {
+                        "type": "integer",
+                        "description": "分页跳过数，默认0",
+                        "default": 0
+                    },
+                    "max_result_count": {
+                        "type": "integer",
+                        "description": "最大返回条数，默认20",
+                        "default": 20
+                    },
+                },
+                "required": ["start_time", "end_time"]
+            }
+        }
+
+        super().__init__(
+            name="query_gd_suncere_district_report",
+            description="Query Guangdong district statistical report data - Suncere API",
+            category=ToolCategory.QUERY,
+            function_schema=function_schema,
+            version="1.0.0",
+            requires_context=True
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        start_time: str,
+        end_time: str,
+        districts: Optional[List[str]] = None,
+        cities: Optional[List[str]] = None,
+        district_codes: Optional[List[str]] = None,
+        time_type: int = 8,
+        area_type: int = 1,
+        cal_area_type: int = 0,
+        data_source: int = 1,
+        ns_type: int = 2,
+        sand_type: int = 1,
+        skip_count: int = 0,
+        max_result_count: int = 20,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行区县统计报表查询。
+        """
+        from app.tools.query.query_gd_suncere import execute_query_gd_suncere_district_report
+
+        if not districts and not cities and not district_codes:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": [],
+                "summary": "必须提供districts、district_codes或cities参数。为避免数据量过大，不支持默认全省区县查询。",
+                "metadata": {
+                    "error": "Missing districts, district_codes or cities parameter",
+                    "suggestion": "请提供区县名称、区县编码，或指定城市以展开下辖区县"
+                }
+            }
+
+        result = execute_query_gd_suncere_district_report(
+            start_time=start_time,
+            end_time=end_time,
+            context=context,
+            districts=districts,
+            cities=cities,
+            district_codes=district_codes,
+            time_type=time_type,
+            area_type=area_type,
+            cal_area_type=cal_area_type,
+            data_source=data_source,
+            ns_type=ns_type,
+            sand_type=sand_type,
+            skip_count=skip_count,
+            max_result_count=max_result_count
+        )
+
+        return _apply_externalization_if_needed(result, context, "query_gd_suncere_district_report")
 
 
 class QueryGDSuncereReportCompareTool(LLMTool):
@@ -1128,119 +1568,6 @@ class QueryStandardComparisonTool(LLMTool):
 
         # 应用数据外部化检查
         result = _apply_externalization_if_needed(result, context, "query_standard_comparison")
-
-        return result
-
-
-class QueryGDSuncereCityDayNewStandardTool(LLMTool):
-    """
-    广东省城市日数据查询工具（新标准 HJ 633-2026）
-
-    查询广东省城市级别的日空气质量数据，并自动更新为新标准字段。
-    """
-
-    def __init__(self):
-        function_schema = {
-            "name": "query_gd_suncere_city_day_new",
-            "description": (
-                "查询广东省城市级日空气质量数据，并按HJ 633-2026新标准计算IAQI/AQI/首要污染物。"
-                "需要新标准日报或新旧标准分析时优先使用；城市名自动映射编码。"
-                "data_type默认None自动选择近三天原始三天外审核；sand_type透传接口扣沙参数。统计报表优先用query_new_standard_report。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "cities": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "城市名称列表"
-                    },
-                    "start_date": {
-                        "type": "string",
-                        "description": "开始日期，格式 'YYYY-MM-DD'"
-                    },
-                    "end_date": {
-                        "type": "string",
-                        "description": "结束日期，格式 'YYYY-MM-DD'"
-                    },
-                    "data_type": {
-                        "type": "integer",
-                        "description": "数据类型：0原始实况，1审核实况，2原始标况，3审核标况；不传时自动选择近三天原始三天外审核",
-                        "enum": [0, 1, 2, 3]
-                    },
-                    "sand_type": {
-                        "type": "integer",
-                        "description": "接口扣沙类型：0不扣沙，1扣沙；默认1（扣沙）",
-                        "enum": [0, 1],
-                        "default": 1
-                    },
-                },
-                "required": ["cities", "start_date", "end_date"]
-            }
-        }
-
-        super().__init__(
-            name="query_gd_suncere_city_day_new",
-            description="Query Guangdong city daily air quality data (New Standard HJ 633-2026) - Suncere API",
-            category=ToolCategory.QUERY,
-            function_schema=function_schema,
-            version="1.0.0",
-            requires_context=True
-        )
-
-    async def execute(
-        self,
-        context: ExecutionContext,
-        cities: List[str],
-        start_date: str,
-        end_date: str,
-        data_type: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        执行城市日数据查询（新标准）
-
-        Args:
-            context: 执行上下文
-            cities: 城市名称列表
-            start_date: 开始日期
-            end_date: 结束日期
-            data_type: 数据类型（0原始实况，1审核实况，2原始标况，3审核标况）；
-                      None时自动近三天原始、三天外审核，默认None
-            **kwargs: 工具参数
-                - sand_type: 接口扣沙类型（0不扣沙，1扣沙）
-
-        Returns:
-            UDF v2.0 格式的查询结果
-        """
-        from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
-
-        # 提取可选参数
-        sand_type = kwargs.get("sand_type", 1)  # 默认1（扣沙）
-        from app.tools.query.query_gd_suncere.tool_city_day_new import execute_query_city_day_new_standard
-
-        logger.info(
-            "query_gd_suncere_city_day_new_tool_start",
-            cities=cities,
-            start_date=start_date,
-            end_date=end_date,
-            data_type=data_type,
-            sand_type=sand_type,
-            session_id=getattr(context, 'session_id', 'unknown')
-        )
-
-        # 调用核心实现函数（async）
-        result = await execute_query_city_day_new_standard(
-            cities=cities,
-            start_date=start_date,
-            end_date=end_date,
-            context=context,
-            data_type=data_type,
-            sand_type=sand_type
-        )
-
-        # 应用数据外部化检查
-        result = _apply_externalization_if_needed(result, context, "query_gd_suncere_city_day_new")
 
         return result
 
