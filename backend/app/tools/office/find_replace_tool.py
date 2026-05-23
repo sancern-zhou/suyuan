@@ -16,6 +16,7 @@ FindReplace 工具 - Word 文档查找替换
 from pathlib import Path
 from typing import Dict, Any, Optional
 from docx import Document
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 import structlog
 import re
@@ -311,6 +312,15 @@ class FindReplaceTool(LLMTool):
 
             if pdf_preview:
                 result_data["pdf_preview"] = pdf_preview
+
+            attach_document_artifact(
+                result_data,
+                output_path,
+                kind="office",
+                format="docx",
+                preview_key="pdf_preview",
+                generator=self.name,
+            )
 
             # 构建摘要信息
             summary_parts = [f"已替换 {total_replacements} 处文本，影响 {paragraphs_affected} 个段落"]

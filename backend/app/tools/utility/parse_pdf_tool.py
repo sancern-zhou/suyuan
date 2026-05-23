@@ -31,6 +31,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -105,7 +106,7 @@ class ParsePDFTool(LLMTool):
         self.max_file_size = 100 * 1024 * 1024  # 100MB
 
         # 文档存储目录
-        self.storage_dir = Path("backend_data_registry/parse_pdf_results")
+        self.storage_dir = get_data_registry() / "parse_pdf_results"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def _save_result_to_file(

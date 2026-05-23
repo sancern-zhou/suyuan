@@ -143,6 +143,8 @@ class ObservationProcessor:
         """处理文档事件（office_document、notebook_document）"""
         for result_data, metadata in self._iter_result_payloads(observation):
             inner = result_data.get("data", {}) if isinstance(result_data.get("data"), dict) else {}
+            result_metadata = result_data.get("metadata", {}) if isinstance(result_data.get("metadata"), dict) else {}
+            generator = metadata.get("generator") or result_metadata.get("generator") or result_metadata.get("tool_name")
             pdf_preview = result_data.get("pdf_preview") or inner.get("pdf_preview")
             markdown_preview = result_data.get("markdown_preview") or inner.get("markdown_preview")
             html_preview = result_data.get("html_preview") or inner.get("html_preview")
@@ -155,7 +157,7 @@ class ObservationProcessor:
             if pdf_preview or markdown_preview:
                 yield self.events.office_document({
                     "file_path": file_path,
-                    "generator": metadata.get("generator"),
+                    "generator": generator,
                     "summary": result_data.get("summary", ""),
                     "timestamp": datetime.now().isoformat(),
                     **({"pdf_preview": pdf_preview} if pdf_preview else {}),
@@ -165,8 +167,8 @@ class ObservationProcessor:
             if html_preview:
                 yield self.events.notebook_document({
                     "file_path": file_path,
-                    "file_type": inner.get("file_type", "notebook"),
-                    "generator": metadata.get("generator"),
+                    "file_type": inner.get("file_type") or result_data.get("file_type") or html_preview.get("file_type", "notebook"),
+                    "generator": generator,
                     "summary": result_data.get("summary", ""),
                     "timestamp": datetime.now().isoformat(),
                     "html_preview": html_preview,

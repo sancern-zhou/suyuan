@@ -144,9 +144,6 @@ class ToolCoordinator:
                     "summary": f"工具 {execution.tool_name} 执行失败",
                 }
 
-            guarded = self.loop_guard.before_call(execution.tool_name, execution.tool_input)
-            if guarded and execution.status != ToolStatus.COMPLETED:
-                result_data = guarded
             self._inject_schema_if_needed(execution.tool_name, result_data)
 
             is_error = execution.status in (ToolStatus.FAILED, ToolStatus.CANCELLED) or not result_data.get("success", False)

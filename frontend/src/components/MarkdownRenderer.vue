@@ -494,15 +494,23 @@ const handleImageClick = (e) => {
   }
 
   :deep(.md-base64-image) {
-    max-width: 100%;
+    max-width: min(100%, 760px);
+    max-height: 58vh;
     height: auto;
+    width: auto;
     display: block;
+    margin: 0 auto;
+    object-fit: contain;
   }
 
   :deep(.md-external-image) {
-    max-width: 100%;
+    max-width: min(100%, 760px);
+    max-height: 58vh;
     height: auto;
+    width: auto;
     display: block;
+    margin: 0 auto;
+    object-fit: contain;
   }
 
   :deep(.md-image-caption) {
@@ -535,10 +543,13 @@ const handleImageClick = (e) => {
 
   // 普通img标签样式 - 无边框样式
   :deep(img) {
-    max-width: 60%;
+    max-width: min(100%, 760px);
+    max-height: 58vh;
     height: auto;
+    width: auto;
     display: block;
     margin: 12px auto;
+    object-fit: contain;
     cursor: zoom-in;
     transition: transform 0.2s;
 
@@ -652,6 +663,13 @@ const handleImageClick = (e) => {
 
   // 确保公式在移动端也能正常显示
   @media (max-width: 768px) {
+    :deep(.md-base64-image),
+    :deep(.md-external-image),
+    :deep(img) {
+      max-width: 100%;
+      max-height: 50vh;
+    }
+
     :deep(.katex-display) {
       padding: 8px;
       margin: 12px 0;

@@ -1,12 +1,14 @@
 <template>
   <div class="knowledge-source-full-panel">
     <div v-if="sources.length === 0" class="empty-state">
-      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-        <path d="M2 17l10 5 10-5"/>
-        <path d="M2 12l10 5 10-5"/>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 5.5C5 4.67 5.67 4 6.5 4h11c.83 0 1.5.67 1.5 1.5v13c0 .83-.67 1.5-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-13Z" />
+        <path d="M8 8h8" />
+        <path d="M8 11.5h8" />
+        <path d="M8 15h5" />
       </svg>
-      <p>暂无知识溯源信息</p>
+      <p class="empty-title">暂无知识溯源</p>
+      <p class="empty-tip">使用知识库检索或问答后，参考文档会显示在这里</p>
     </div>
 
     <div v-else class="source-list">
@@ -73,7 +75,7 @@ const props = defineProps({
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f5f6fb;
+  background: #f8fafc;
   overflow: hidden;
 }
 
@@ -83,13 +85,35 @@ const props = defineProps({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #999;
-  gap: 16px;
+  color: #8a96a8;
+  gap: 8px;
+  padding: 32px 20px;
 }
 
-.empty-state p {
-  font-size: 14px;
+.empty-state svg {
+  width: 46px;
+  height: 46px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: #526173;
   margin: 0;
+}
+
+.empty-tip {
+  max-width: 240px;
+  margin: 0;
+  color: #8a96a8;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .source-list {
@@ -97,47 +121,54 @@ const props = defineProps({
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: 10px;
 }
 
 .source-item {
-  padding: 16px 20px;
-  border-bottom: 1px solid #e8e8e8;
-  background: transparent;
+  padding: 12px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #fff;
 }
 
 .source-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .source-title {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 8px;
   flex: 1;
+  min-width: 0;
 }
 
 .source-index {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: #1976d2;
-  color: white;
-  border-radius: 50%;
-  font-size: 13px;
+  width: 24px;
+  height: 24px;
+  background: #e3f2fd;
+  color: #1976d2;
+  border-radius: 7px;
+  font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
 .source-name {
   font-weight: 500;
-  color: #333;
-  font-size: 15px;
+  color: #35425f;
+  font-size: 14px;
   line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .source-meta {
@@ -145,35 +176,36 @@ const props = defineProps({
 }
 
 .relevance-badge {
-  padding: 4px 10px;
-  background: #4caf50;
-  color: white;
-  border-radius: 12px;
-  font-size: 12px;
+  padding: 3px 8px;
+  background: #f1f8f4;
+  color: #2e7d32;
+  border: 1px solid #c8e6c9;
+  border-radius: 999px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 .source-info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 
 .info-row {
   display: flex;
   gap: 8px;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .info-row label {
-  color: #666;
+  color: #7a879a;
   font-weight: 500;
   min-width: 50px;
 }
 
 .info-row span {
-  color: #333;
+  color: #526173;
 }
 
 .source-content {
@@ -181,13 +213,13 @@ const props = defineProps({
 }
 
 .content-preview {
-  padding: 16px;
-  background: #f5f5f5;
+  padding: 10px;
+  background: #f8fafc;
   border-radius: 6px;
-  font-size: 14px;
-  color: #666;
-  line-height: 1.7;
-  max-height: 400px;
+  font-size: 13px;
+  color: #526173;
+  line-height: 1.65;
+  max-height: 128px;
   overflow-y: auto;
   white-space: pre-wrap;
 }

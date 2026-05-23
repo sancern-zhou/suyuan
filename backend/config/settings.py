@@ -183,7 +183,7 @@ class Settings(BaseSettings):
     )
     llm_global_max_concurrency: int = Field(
         default=2,
-        description="Global concurrent LLM request limit shared by all providers"
+        description="Concurrent LLM request limit per provider/model pool"
     )
     llm_request_timeout_seconds: float = Field(
         default=180.0,

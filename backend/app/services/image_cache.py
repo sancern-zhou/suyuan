@@ -13,11 +13,12 @@ import base64
 from datetime import datetime
 from typing import Optional
 import structlog
+from app.utils.path_config import get_images_dir
 
 logger = structlog.get_logger()
 
 # 图片存储目录（相对于backend）
-IMAGE_CACHE_DIR = "backend_data_registry/images"
+IMAGE_CACHE_DIR = str(get_images_dir())
 
 
 class ImageCache:
@@ -32,38 +33,13 @@ class ImageCache:
         if cache_dir:
             self.cache_dir = cache_dir
         else:
-            # 使用绝对路径，避免工作目录变化导致的问题
-            # 尝试多个可能的基准目录
-            possible_bases = [
-                os.path.join(os.path.dirname(__file__), "..", "..", "backend_data_registry"),  # 相对于 app/services/
-                os.path.join(os.getcwd(), "backend_data_registry"),  # 相对于当前工作目录
-                "backend_data_registry",  # 相对路径
-                "/tmp/backend_images_cache",  # 回退到临时目录
-            ]
-
-            for base in possible_bases:
-                test_path = os.path.abspath(os.path.join(base, "images"))
-                # 尝试创建目录来测试路径是否有效
-                try:
-                    os.makedirs(test_path, exist_ok=True)
-                    # 验证可以写入
-                    test_file = os.path.join(test_path, ".write_test")
-                    with open(test_file, 'w') as f:
-                        f.write("test")
-                    os.remove(test_file)
-                    # 如果成功，使用这个路径
-                    self.cache_dir = test_path
-                    break
-                except (OSError, IOError) as e:
-                    continue
-            else:
-                # 如果所有路径都失败，使用临时目录
+            self.cache_dir = IMAGE_CACHE_DIR
+            try:
+                os.makedirs(self.cache_dir, exist_ok=True)
+            except Exception:
                 import tempfile
                 self.cache_dir = os.path.join(tempfile.gettempdir(), "backend_images_cache")
-                try:
-                    os.makedirs(self.cache_dir, exist_ok=True)
-                except Exception:
-                    pass
+                os.makedirs(self.cache_dir, exist_ok=True)
 
         logger.info(
             "image_cache_initialized",
@@ -180,6 +156,22 @@ class ImageCache:
             图片访问URL
         """
         return f"/api/image/{image_id}"
+
+    def get_report_package_path(self, image_id: str) -> str:
+        """获取旧版报告包路径提示。
+
+        注意：该路径只是基于 image_id 的旧版约定，不代表文件已经存在于
+        reports/{report_id}/assets/charts/ 下。正式报告应通过
+        create_report_package.assets 传入真实图片路径，由报告包工具复制资源并
+        规范化 QMD 图片引用。
+
+        Args:
+            image_id: 图片ID
+
+        Returns:
+            旧版路径提示: assets/charts/{image_id}.png
+        """
+        return f"assets/charts/{image_id}.png"
 
     def exists(self, image_id: str) -> bool:
         """检查图片是否存在"""

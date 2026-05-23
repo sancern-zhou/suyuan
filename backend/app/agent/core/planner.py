@@ -106,7 +106,7 @@ class ReActPlanner:
         tools: List[Dict],
         iteration: int = 0,
         mode: str = "expert",
-        conversation_history: Optional[List[Dict[str, Any]]] = None
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """原生工具调用规划器（非流式）
 
@@ -164,7 +164,7 @@ class ReActPlanner:
         tools: List[Dict],
         iteration: int = 0,
         mode: str = "expert",
-        conversation_history: Optional[List[Dict[str, Any]]] = None
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式规划器（按模式过滤 tools schema）
 
@@ -454,7 +454,7 @@ class ReActPlanner:
                 tools=tools,
                 iteration=iteration,
                 mode=mode,
-                conversation_history=conversation_history
+                conversation_history=conversation_history,
             )
             yield {
                 "type": "streaming_text",

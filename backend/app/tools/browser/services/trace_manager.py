@@ -7,6 +7,7 @@ import structlog
 from typing import Optional
 from datetime import datetime
 from playwright.sync_api import BrowserContext
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -17,13 +18,13 @@ class TraceManager:
     Manages Playwright trace recording for debugging.
     """
 
-    def __init__(self, trace_dir: str = "backend_data_registry/traces"):
+    def __init__(self, trace_dir: str = None):
         """Initialize trace manager
 
         Args:
             trace_dir: Directory for trace files
         """
-        self.trace_dir = trace_dir
+        self.trace_dir = trace_dir or str(get_data_registry() / "traces")
         self.active_traces = {}  # context -> trace_path
         os.makedirs(self.trace_dir, exist_ok=True)
         logger.info("[TRACE_MANAGER] Initialized", trace_dir=trace_dir)

@@ -56,6 +56,13 @@ class SQLValidator:
         'qc_history',  # 自动质控历史数据表（13551条记录）
         'quality_control_records',  # 质控例行检查记录
         'working_orders',  # 运维工单
+        'working_order_details',  # 运维工单详情
+        'base_station',  # 站点基础信息
+        'base_station_sup',  # 上级站点基础信息
+        'base_device',  # 设备基础信息
+        'base_user_station',  # 用户-站点关联
+        'base_department_station',  # 部门-站点关联
+        'base_contract_station',  # 合同-站点关联
         'analysis_history',  # 分析历史记录
         'BSD_STATION',  # 站点信息表（包含站点ID、名称、代码、区域、经纬度、地址等信息）
         # 系统视图（用于动态查询表结构）
@@ -63,14 +70,27 @@ class SQLValidator:
         'information_schema.tables',
     ]
 
-    def __init__(self, max_limit: int = 10000):
+    def __init__(
+        self,
+        max_limit: int = 10000,
+        allowed_tables: Optional[List[str]] = None,
+        allowed_table_prefixes: Optional[List[str]] = None,
+    ):
         """
         初始化SQL验证器
 
         Args:
             max_limit: 允许的最大查询行数
+            allowed_tables: 实例级表名白名单；为空时使用类默认白名单
+            allowed_table_prefixes: 实例级表名前缀白名单；为空时使用类默认前缀
         """
         self.max_limit = max_limit
+        self.ALLOWED_TABLES = list(allowed_tables) if allowed_tables is not None else list(type(self).ALLOWED_TABLES)
+        self.ALLOWED_TABLE_PREFIXES = (
+            list(allowed_table_prefixes)
+            if allowed_table_prefixes is not None
+            else list(type(self).ALLOWED_TABLE_PREFIXES)
+        )
 
     def validate(self, sql: str) -> Tuple[bool, str]:
         """
@@ -127,38 +147,29 @@ class SQLValidator:
         Returns:
             (is_valid, error_message): 验证结果和错误信息
         """
-        # 提取FROM和JOIN后的表名（支持schema.table格式）
-        sql_lower = sql.lower()
+        referenced_tables = self.extract_tables(sql)
+        if not referenced_tables:
+            return True, ""
 
-        # 检查是否包含任何允许的表名
-        # 支持格式：from table, from schema.table, join table, join schema.table
-        has_allowed_table = False
-        found_tables = []
+        allowed_tables = {table.lower() for table in self.ALLOWED_TABLES}
+        cte_names = {
+            match.group(1).lower()
+            for match in re.finditer(r'(?:\bwith|,)\s+([a-zA-Z_]\w*)\s+as\s*\(', sql, re.IGNORECASE)
+        }
 
-        for table in self.ALLOWED_TABLES:
-            # 检查各种可能的格式
-            patterns = [
-                f'from {table.lower()} ',  # from table
-                f'from {table.lower()}',   # from table（行尾）
-                f'join {table.lower()} ',  # join table
-                f'join {table.lower()}',   # join table（行尾）
-                f'from dbo.{table.lower()} ',  # from dbo.table
-                f'from dbo.{table.lower()}',   # from dbo.table（行尾）
-                f'join dbo.{table.lower()} ',  # join dbo.table
-                f'join dbo.{table.lower()}',   # join dbo.table（行尾）
-            ]
-            if any(pattern in sql_lower for pattern in patterns):
-                has_allowed_table = True
-                found_tables.append(table)
-                break
+        disallowed_tables = []
+        for table in referenced_tables:
+            table_lower = table.lower()
+            if table_lower in cte_names:
+                continue
+            if table_lower not in allowed_tables:
+                disallowed_tables.append(table)
 
-        if not has_allowed_table:
-            # 提取SQL中的表名（支持schema.table格式）
-            from_match = re.search(r'\bfrom\s+([\w.]+)', sql_lower)
-            join_match = re.search(r'\bjoin\s+([\w.]+)', sql_lower)
-
-            if from_match or join_match:
-                return False, f"表名不在白名单中。允许的表: {', '.join(self.ALLOWED_TABLES[:5])}..."
+        if disallowed_tables:
+            return False, (
+                f"表名不在白名单中: {', '.join(disallowed_tables)}。"
+                f"允许的表: {', '.join(self.ALLOWED_TABLES)}"
+            )
 
         return True, ""
 
@@ -232,16 +243,22 @@ class SQLValidator:
             表名列表
         """
         tables = []
-        sql_lower = sql.lower()
+        pattern = r'\b(?:from|join)\s+(?!\()(\[?\w+\]?(?:\s*\.\s*\[?\w+\]?)?)'
 
-        # 提取FROM后的表名
-        from_match = re.search(r'\bfrom\s+(\w+)', sql_lower)
-        if from_match:
-            tables.append(from_match.group(1))
+        for match in re.finditer(pattern, sql, re.IGNORECASE):
+            raw_table = match.group(1)
+            parts = [
+                part.strip().strip("[]").lower()
+                for part in raw_table.split(".")
+                if part.strip()
+            ]
+            if not parts:
+                continue
 
-        # 提取JOIN后的表名
-        for join_match in re.finditer(r'\bjoin\s+(\w+)', sql_lower):
-            tables.append(join_match.group(1))
+            if len(parts) >= 2 and parts[-2] == "information_schema":
+                tables.append(f"information_schema.{parts[-1]}")
+            else:
+                tables.append(parts[-1])
 
         return list(set(tables))  # 去重
 

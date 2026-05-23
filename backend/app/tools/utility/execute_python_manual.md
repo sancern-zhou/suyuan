@@ -6,15 +6,70 @@
 
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 图表生成：`matplotlib`，保存图片到 `backend_data_registry`。
+- 图表生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。
 - 文档生成：`python-docx`。
+- HTML 报告生成：优先使用自动注入的 `save_html_report(report_id, html_content, assets_dir=None)`。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
+
+## DOCX 政府报告默认格式
+
+生成正式报告 DOCX 时，默认使用公共样式工具，避免每次由模型重新决定字体和段落格式：
+
+```python
+from docx import Document
+from app.services.report.government_docx_style import (
+    apply_government_report_style,
+    add_government_title,
+    add_government_heading,
+    add_government_paragraph,
+    add_government_table,
+)
+
+doc = Document()
+apply_government_report_style(doc)
+add_government_title(doc, "报告标题")
+add_government_heading(doc, "一、总体情况", level=1)
+add_government_paragraph(doc, "正文内容。")
+add_government_table(doc, [["指标", "数值"], ["PM2.5", "30"]])
+doc.save("/home/xckj/suyuan/backend/backend_data_registry/report.docx")
+```
+
+默认规范：标题小标宋/宋体 fallback、二号居中；正文仿宋三号、首行缩进2字符、固定28磅行距；一级标题黑体三号，二级标题楷体三号，三级标题仿宋加粗三号；页边距上3.7cm、下3.5cm、左右2.8cm。用户明确要求其他格式时，在默认样式基础上局部覆盖。
 
 ## 文件路径
 
-- 生成文件必须保存到项目可访问目录，优先使用 `/home/xckj/suyuan/backend_data_registry/`。
+- 生成文件必须保存到项目可访问目录，优先使用 `/home/xckj/suyuan/backend/backend_data_registry/`。
+- 禁止保存到 `/home/xckj/suyuan/backend_data_registry/`，该目录在仓库根目录下，前端下载和后端文件管理不会以它作为标准输出目录。
 - 代码中打印保存路径，便于前端和后续工具定位。
-- 工具会检测 `backend_data_registry` 中新增文件。
+- 工具会检测 `/home/xckj/suyuan/backend/backend_data_registry/` 中新增文件。
+
+## 输出产物 Schema
+
+- `files`：本次生成的本地文件绝对路径列表。
+- `file_path`：主文件路径，用于预览或下载。
+- `pdf_preview`：Office/PDF 文件预览信息，适用于 `.docx/.xlsx/.pptx/.pdf`。
+- `html_preview`：HTML 预览信息；Notebook 使用 `/api/notebook/html/{html_id}`，HTML 报告使用 `/api/reports/{report_id}/html`。
+- `visuals`：图片或 ECharts 可视化块；`matplotlib` 图片会缓存为 `/api/image/{image_id}`。
+
+HTML 报告必须使用标准报告包结构：
+
+```text
+/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}/report.html
+```
+
+不要直接写成：
+
+```text
+/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}.html
+```
+
+推荐写法：
+
+```python
+html = "<!doctype html><html><body><h1>报告</h1></body></html>"
+result = save_html_report("my_report", html)
+print(result["html_preview"]["html_url"])
+```
 
 ## matplotlib 中文和化学式
 
@@ -59,10 +114,12 @@ ax.set_ylabel(r"PM$_{2.5}$ ($\mu$g/m$^3$)", fontproperties=chinese_font)
 
 ```python
 from docx import Document
+from app.services.report.government_docx_style import apply_government_report_style, add_government_title
 
-out = "/home/xckj/suyuan/backend_data_registry/report.docx"
+out = "/home/xckj/suyuan/backend/backend_data_registry/report.docx"
 doc = Document()
-doc.add_heading("报告", 0)
+apply_government_report_style(doc)
+add_government_title(doc, "报告")
 doc.save(out)
 print(out)
 ```

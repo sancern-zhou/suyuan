@@ -14,6 +14,7 @@ import structlog
 import json
 
 from app.social.heartbeat_service import HeartbeatService
+from app.utils.path_config import get_social_dir
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +38,7 @@ class UserHeartbeatManager:
             on_execute_callback: 执行任务回调函数
             on_notify_callback: 发送通知回调函数
         """
-        self.base_workspace = base_workspace or Path("backend_data_registry/social/heartbeat")
+        self.base_workspace = base_workspace or (get_social_dir() / "heartbeat")
         self.base_workspace.mkdir(parents=True, exist_ok=True)
 
         self._heartbeat_cache: Dict[str, HeartbeatService] = {}

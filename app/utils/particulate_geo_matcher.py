@@ -21,6 +21,19 @@ import structlog
 logger = structlog.get_logger()
 
 
+def _get_geo_mappings_path() -> Path:
+    """Return the single maintained geo mappings file path."""
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / "backend" / "config" / "geo_mappings.json"
+        if candidate.exists():
+            return candidate
+        candidate = parent / "config" / "geo_mappings.json"
+        if candidate.exists():
+            return candidate
+    return current.parents[2] / "backend" / "config" / "geo_mappings.json"
+
+
 class ParticulateGeoMatcher:
     """颗粒物组分站点地理映射器（单例模式）"""
 
@@ -45,7 +58,7 @@ class ParticulateGeoMatcher:
 
     def _load_data(self):
         """从 geo_mappings.json 加载组分站点数据"""
-        config_file = Path(__file__).parent.parent / "config" / "geo_mappings.json"
+        config_file = _get_geo_mappings_path()
 
         try:
             with open(config_file, 'r', encoding='utf-8') as f:

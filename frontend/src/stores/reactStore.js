@@ -5,7 +5,7 @@ import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 import { autoSaveSession } from '@/api/session'
 
-const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart']
+const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -516,7 +516,7 @@ export const useReactStore = defineStore('react', {
      * 重置所有模式的状态
      */
     resetAllModes() {
-      for (const mode of ['assistant', 'expert', 'query', 'report', 'chart']) {
+      for (const mode of VALID_MODES) {
         this.resetMode(mode)
       }
       console.log('[resetAllModes] All modes reset')
@@ -529,7 +529,7 @@ export const useReactStore = defineStore('react', {
       const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000)
       let cleanedCount = 0
 
-      for (const mode of ['assistant', 'expert', 'query', 'report', 'chart']) {
+      for (const mode of VALID_MODES) {
         const stateKey = `mode-state-${mode}`
         const savedStateJSON = localStorage.getItem(stateKey)
 
@@ -806,7 +806,7 @@ export const useReactStore = defineStore('react', {
         console.log('Available tools:', this.availableTools)
 
         // 恢复所有模式的状态
-        for (const mode of ['assistant', 'expert', 'query', 'report', 'chart']) {
+        for (const mode of VALID_MODES) {
           this._restoreModeState(mode)
         }
       } catch (error) {
@@ -1214,6 +1214,7 @@ export const useReactStore = defineStore('react', {
               markdown_preview: resultData.markdown_preview,
               html_preview: resultData.html_preview,
               file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
+              file_type: resultData.file_type || resultData.html_preview?.file_type,
               generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
               summary: result.summary,
               timestamp: toolResultData.timestamp

@@ -754,7 +754,7 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     获取工具的Schema定义（支持按模式过滤）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "code" | "query" | "report" | "social" | "chart")
+        mode: Agent模式 ("assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops")
               如果为None，返回所有工具的schema
 
     Returns:
@@ -850,7 +850,6 @@ def get_tool_metadata() -> Dict[str, Any]:
                 "version": tool_data.get("version"),
                 "category": tool_data.get("category"),
                 "requires_context": tool_data.get("requires_context"),
-                "input_adapter_rules": tool_data.get("input_adapter_rules", {}),
                 "return_schema": tool_data.get("return_schema", {}),
                 "metadata": tool_data.get("metadata", {}),
                 "test_samples": tool_data.get("test_samples", []),
@@ -859,4 +858,3 @@ def get_tool_metadata() -> Dict[str, Any]:
             }
 
     return metadata
-

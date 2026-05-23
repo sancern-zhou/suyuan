@@ -189,6 +189,7 @@ class ReActAgent:
         memory_store = None
         memory_context = ""
         unified_user_id = None
+        memory_tool_mode = manual_mode or "expert"
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
@@ -208,15 +209,10 @@ class ReActAgent:
             unified_user_id = None  # 社交模式不走通用记忆整合
 
         elif self.enable_memory and manual_mode:
-            if user_identifier and manual_mode != "social":
-                # 有user_identifier且非社交模式：跨模式共享记忆（同一用户在所有模式下共享同一个记忆文件）
-                unified_user_id = f"{user_identifier}:shared"
-                memory_mode = "shared"  # ✅ 使用特殊的 shared 模式，实现跨模式共享
-            else:
-                # 无user_identifier：模式内共享记忆（每个模式独立记忆，模式之间隔离）
-                # ✅ 修复：直接使用 "global" 作为 user_id，让 memory_store 创建模式专属记忆
-                unified_user_id = "global"
-                memory_mode = manual_mode or "expert"  # ✅ 使用当前模式，实现模式内共享
+            # 非社交模式不按用户隔离；统一使用模式级共享记忆。
+            unified_user_id = "global"
+            memory_mode = manual_mode or "expert"
+            memory_tool_mode = memory_mode
 
             # ✅ 加载记忆上下文（用于系统提示词注入，不修改user_query）
             memory_context = None
@@ -385,6 +381,25 @@ class ReActAgent:
                     has_user_context=social_user_context is not None,  # ✅ 新增日志
                     social_user_id=social_user_id
                 )
+            elif manual_mode:
+                # 非社交模式也可能直接暴露 remember_fact/replace_memory/remove_memory。
+                # 设置模式上下文，避免工具降级写入默认 social 记忆目录。
+                try:
+                    from app.tools.social.remember_fact.tool import RememberFactTool
+                    from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+                    from app.tools.social.remove_memory.tool import RemoveMemoryTool
+
+                    RememberFactTool.set_memory_context(memory_tool_mode, "global")
+                    ReplaceMemoryTool.set_memory_context(memory_tool_mode, "global")
+                    RemoveMemoryTool.set_memory_context(memory_tool_mode, "global")
+                    logger.debug(
+                        "mode_memory_tool_context_set",
+                        mode=manual_mode,
+                        memory_tool_mode=memory_tool_mode,
+                        user_identifier="global"
+                    )
+                except Exception as e:
+                    logger.warning("failed_to_set_mode_memory_tool_context", mode=manual_mode, memory_tool_mode=memory_tool_mode, error=str(e))
 
             async for event in react_loop.run(
                 user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
@@ -543,8 +558,8 @@ class ReActAgent:
                 except Exception as e:
                     logger.warning("failed_to_cleanup_snapshot", error=str(e))
 
-            # ✅ 清理记忆工具的用户上下文（社交模式）
-            if manual_mode == "social":
+            # ✅ 清理记忆工具上下文，避免后续模式复用类变量
+            if manual_mode:
                 try:
                     from app.tools.social.remember_fact.tool import RememberFactTool
                     from app.tools.social.replace_memory.tool import ReplaceMemoryTool
@@ -553,13 +568,13 @@ class ReActAgent:
                     ReplaceMemoryTool.clear_memory_context()
                     RemoveMemoryTool.clear_memory_context()
                 except Exception as e:
-                    logger.warning("failed_to_clear_social_memory_context", error=str(e))
+                    logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
             await self._mark_session_used(actual_session_id)
 
     def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
-        """Persist office document preview metadata emitted during a run."""
-        if event.get("type") != "office_document" or not event.get("data"):
+        """Persist document preview metadata emitted during a run."""
+        if event.get("type") not in {"office_document", "notebook_document"} or not event.get("data"):
             return
 
         office_doc_data = event["data"]
@@ -570,14 +585,23 @@ class ReActAgent:
 
         doc_entry = {
             "pdf_preview": office_doc_data.get("pdf_preview"),
-            # "markdown_preview": office_doc_data.get("markdown_preview"),  # 暂时注释：历史会话恢复功能待实现
+            "markdown_preview": office_doc_data.get("markdown_preview"),
+            "html_preview": office_doc_data.get("html_preview"),
             "file_path": office_doc_data.get("file_path"),
+            "file_type": office_doc_data.get("file_type"),
             "generator": office_doc_data.get("generator"),
             "summary": office_doc_data.get("summary"),
             "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
         }
+        doc_entry = {k: v for k, v in doc_entry.items() if v is not None}
 
-        file_path = doc_entry["file_path"]
+        file_path = (
+            doc_entry.get("file_path")
+            or doc_entry.get("html_preview", {}).get("html_id")
+            or doc_entry.get("pdf_preview", {}).get("pdf_id")
+        )
+        if file_path:
+            doc_entry["file_path"] = file_path
         existing = self._session_store[session_id]["office_documents"]
         if not any(d.get("file_path") == file_path for d in existing):
             existing.append(doc_entry)
@@ -720,7 +744,7 @@ class ReActAgent:
             new_message_count = len(messages) - offset
 
             # ⚠️ 关键：只检查消息数量，与上下文压缩完全分离
-            should_consolidate = new_message_count >= 20
+            should_consolidate = new_message_count >= 50
 
             if not should_consolidate:
                 return
@@ -1007,7 +1031,7 @@ class ReActAgent:
                     session_manager = get_session_manager()
                     saved_session = await session_manager.load_session(session_id)
 
-                    if saved_session and saved_session.conversation_history:
+                    if saved_session:
                         logger.info(
                             "react_session_restored_from_manager",
                             session_id=session_id,
@@ -1035,11 +1059,19 @@ class ReActAgent:
                                 message_count=len(saved_session.conversation_history)
                             )
 
-                        # 保存到内存缓存
+                        saved_visualizations = []
+                        if isinstance(saved_session.metadata, dict):
+                            saved_visualizations = saved_session.metadata.get("visualizations") or []
+
+                        # 保存到内存缓存。即使历史消息为空，也要缓存已存在的
+                        # session，避免含 data/visual/office 状态的会话被当作新会话。
                         self._session_store[session_id] = {
                             "memory": memory_manager,
                             "created": datetime.utcnow(),
-                            "last_used": datetime.utcnow()
+                            "last_used": datetime.utcnow(),
+                            "collected_data_ids": list(saved_session.data_ids or []),
+                            "collected_visuals": saved_visualizations,
+                            "office_documents": list(saved_session.office_documents or []),
                         }
 
                         return session_id, memory_manager, False  # False 表示不是新建，是恢复的

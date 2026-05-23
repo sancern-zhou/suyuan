@@ -63,10 +63,10 @@ export async function getSessionStats() {
  * 恢复会话
  * @param {string} sessionId - 会话ID
  * @param {object} options - 选项
- * @param {number} options.messageLimit - 消息数量限制（默认200，确保加载所有消息）
+ * @param {number} options.messageLimit - 首屏消息数量限制（默认30，更多历史通过分页加载）
  */
 export async function restoreSession(sessionId, options = {}) {
-  const { messageLimit = 200 } = options
+  const { messageLimit = 30 } = options
 
   // 构建查询参数
   const params = new URLSearchParams()

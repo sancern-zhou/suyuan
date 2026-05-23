@@ -107,6 +107,7 @@ class StreamingToolExecutor:
         self,
         tool_executor,
         tool_registry: Optional[Dict] = None,
+        loop_guard: Optional[Any] = None,
         concurrency_safe_tools: Optional[frozenset] = None,
         max_concurrency: int = 10,
     ):
@@ -114,11 +115,13 @@ class StreamingToolExecutor:
         Args:
             tool_executor: ToolExecutor 实例，用于实际执行工具
             tool_registry: 工具注册表（用于判断是否并发安全）
+            loop_guard: 工具重复调用保护器，在启动工具前拦截无进展循环
             concurrency_safe_tools: 并发安全工具名称集合
             max_concurrency: 最大并发执行数
         """
         self.tool_executor = tool_executor
         self.tool_registry = tool_registry or {}
+        self.loop_guard = loop_guard
         self.concurrency_safe_tools = concurrency_safe_tools or DEFAULT_CONCURRENCY_SAFE_TOOLS
         self.max_concurrency = max_concurrency
 
@@ -171,6 +174,25 @@ class StreamingToolExecutor:
         """
         if self._discarded:
             logger.warning("streaming_tool_executor_discarded", tool_name=tool_name)
+            return
+
+        guarded = self.loop_guard.before_call(tool_name, tool_input) if self.loop_guard else None
+        if guarded:
+            execution = ToolExecution(
+                tool_use_id=tool_use_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                is_concurrency_safe=True,
+            )
+            execution.mark_completed(guarded)
+            self._executions.append(execution)
+            logger.warning(
+                "streaming_tool_blocked_by_loop_guard",
+                tool_name=tool_name,
+                tool_use_id=tool_use_id[:12],
+                summary=guarded.get("summary") if isinstance(guarded, dict) else None,
+                total_executions=len(self._executions),
+            )
             return
 
         # ⚠️ 检测并发 call_sub_agent 调用，强制 session 隔离
@@ -260,7 +282,7 @@ class StreamingToolExecutor:
 
         try:
             # 使用 ToolExecutor 的 execute_tool_with_retry 方法
-            # 它已经包含了 InputAdapter + ExecutionContext + 重试逻辑
+            # 它负责 ExecutionContext 注入和重试逻辑；工具参数保持原生 tool_use 输入。
             result = await self.tool_executor.execute_tool_with_retry(
                 tool_name=execution.tool_name,
                 tool_args=execution.tool_input,

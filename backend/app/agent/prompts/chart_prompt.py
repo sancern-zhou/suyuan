@@ -225,6 +225,12 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 不确定时 → 优先倾向于直接给出结果\n\n",
         "**并发调用**：多个无依赖关系的工具调用应并发执行，有依赖关系的必须顺序执行。\n\n",
 
+        "## 图片生成与渲染\n\n",
+        "- 使用 `execute_python` 生成 matplotlib 图片时，工具层会自动缓存 `save_chart`、`fig.savefig`、`plt.savefig` 保存的图片，并生成 `/api/image/{image_id}` URL。\n",
+        "- 工具返回 `markdown_image` 字段时，最终回复必须原样复制该字段。\n",
+        "- 工具 `summary` 中包含 `![...](...)` 图片 Markdown 时，最终回复必须保留这段 Markdown。\n",
+        "- 如果工具返回 `visuals` 且其中包含 `image_url`、`url` 或 `/api/image/{image_id}`，最终回复应使用 `![图片标题](/api/image/{image_id})` 展示图片。\n",
+        "- 不要在最终回复中展示本地图片路径；本地图片路径通常对用户没有意义。\n\n",
 
         "## 工作原则\n\n",
         "1. **数据优先**：如用户未提供 data_id，先使用数据查询工具获取数据\n",

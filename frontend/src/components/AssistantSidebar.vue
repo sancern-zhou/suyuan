@@ -4,7 +4,10 @@
       <template v-if="!isCollapsed">
         <div class="header-title-wrapper">
           <img src="/wechat-screenshot.png" alt="企业微信截图" class="header-image">
-          <h2>风清气智</h2>
+          <div class="brand-copy">
+            <h2>风清气智</h2>
+            <span>智能体平台</span>
+          </div>
         </div>
       </template>
       <button class="collapse-btn" type="button" @click="toggleCollapse" :title="isCollapsed ? '展开' : '收起'">
@@ -19,36 +22,35 @@
         type="button"
         @click="handleModuleSelect('restart-session')"
       >
-        <template v-if="isCollapsed">
-          <span class="module-abbr">新对话</span>
-        </template>
-        <template v-else>
-          <div class="module-info">
-            <p class="module-title">新对话</p>
-          </div>
-        </template>
+        <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
+        <div v-if="!isCollapsed" class="module-info">
+          <p class="module-title">新对话</p>
+        </div>
       </button>
     </div>
 
     <div class="module-list">
-      <button
-        v-for="module in filteredModules"
-        :key="module.id"
-        class="module-card"
-        :class="{ active: isActive(module.id) }"
-        type="button"
-        @click="handleModuleSelect(module.id)"
-        :title="isCollapsed ? module.name : ''"
+      <div
+        v-for="group in moduleGroups"
+        :key="group.id"
+        class="module-group"
       >
-        <template v-if="isCollapsed">
-          <span class="module-abbr">{{ module.abbr }}</span>
-        </template>
-        <template v-else>
-          <div class="module-info">
+        <div v-if="!isCollapsed" class="module-group-title">{{ group.title }}</div>
+        <button
+          v-for="module in group.modules"
+          :key="module.id"
+          class="module-card"
+          :class="{ active: isActive(module.id) }"
+          type="button"
+          @click="handleModuleSelect(module.id)"
+          :title="isCollapsed ? module.name : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+          <div v-if="!isCollapsed" class="module-info">
             <p class="module-title">{{ module.name }}</p>
           </div>
-        </template>
-      </button>
+        </button>
+      </div>
     </div>
 
     <!-- 最近对话列表 -->
@@ -223,6 +225,79 @@ const modules = [
   }
 ]
 
+const moduleIcons = {
+  'restart-session': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  `,
+  'session-history': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 5h16" />
+      <path d="M4 12h12" />
+      <path d="M4 19h8" />
+      <path d="M17 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+      <path d="M17 11.5V13l1 1" />
+    </svg>
+  `,
+  'knowledge-base': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 5.5C5 4.67 5.67 4 6.5 4h11c.83 0 1.5.67 1.5 1.5v13c0 .83-.67 1.5-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-13Z" />
+      <path d="M8 8h8" />
+      <path d="M8 11.5h8" />
+      <path d="M8 15h5" />
+    </svg>
+  `,
+  'file-manager': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-15v-13.5Z" />
+      <path d="M3.5 10h17" />
+    </svg>
+  `,
+  'tools-management': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m14.5 6.5 3-3 3 3-3 3-3-3Z" />
+      <path d="M4 20l8.8-8.8" />
+      <path d="M9 4h4v4H9z" />
+      <path d="M4 11h4v4H4z" />
+    </svg>
+  `,
+  'skills-management': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4 5 7.5l7 3.5 7-3.5L12 4Z" />
+      <path d="M5 12l7 3.5L19 12" />
+      <path d="M5 16.5 12 20l7-3.5" />
+    </svg>
+  `,
+  fetchers: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+      <path d="M8 4v16" />
+      <path d="M16 4v16" />
+    </svg>
+  `,
+  'scheduled-tasks': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l3 2" />
+      <path d="M5 4 3 6" />
+      <path d="m19 4 2 2" />
+    </svg>
+  `,
+  'social-platform': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 9.5a4 4 0 1 1 8 0v3a4 4 0 0 1-8 0v-3Z" />
+      <path d="M15 11h1.5a3.5 3.5 0 0 1 0 7H14" />
+      <path d="M7 11H5.5a3.5 3.5 0 0 0 0 7H10" />
+    </svg>
+  `
+}
+
+const getModuleIcon = (moduleId) => moduleIcons[moduleId] || moduleIcons['tools-management']
+
 const handleModuleSelect = (moduleId) => {
   const module = modules.find(m => m.id === moduleId)
 
@@ -258,8 +333,32 @@ const loadSession = (session) => {
 }
 
 // 过滤后的模块列表（排除"新对话"）
-const filteredModules = computed(() => {
-  return modules.filter(m => m.id !== 'restart-session')
+const moduleGroups = computed(() => {
+  const byId = new Map(modules.map(module => [module.id, module]))
+  const groups = [
+    {
+      id: 'work',
+      title: '工作',
+      ids: ['session-history']
+    },
+    {
+      id: 'resources',
+      title: '资源',
+      ids: ['knowledge-base', 'file-manager']
+    },
+    {
+      id: 'system',
+      title: '系统',
+      ids: ['tools-management', 'skills-management', 'fetchers', 'scheduled-tasks', 'social-platform']
+    }
+  ]
+
+  return groups
+    .map(group => ({
+      ...group,
+      modules: group.ids.map(id => byId.get(id)).filter(Boolean)
+    }))
+    .filter(group => group.modules.length > 0)
 })
 
 // 截断查询文本
@@ -310,18 +409,19 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .assistant-sidebar {
-  width: 280px;
-  background: #fafbff;
+  width: 272px;
+  background: #f8fafc;
   display: flex;
   flex-direction: column;
-  padding: 20px 16px;
+  padding: 0 12px 14px;
   overflow-y: auto;
-  transition: width 0.2s ease;
+  transition: width 0.2s ease, padding 0.2s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  border-right: 1px solid #edf1f7;
 
   &.collapsed {
     width: 60px;
-    padding: 20px 8px;
+    padding: 0 8px 14px;
   }
 }
 
@@ -332,40 +432,49 @@ onUnmounted(() => {
   margin-bottom: 0;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  background: #fafbff;
-  padding-top: 4px;
-  padding-bottom: 16px;
+  align-items: center;
+  background: #f8fafc;
+  padding-top: 10px;
+  padding-bottom: 10px;
 
   .header-title-wrapper {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     flex: 1;
+    min-width: 0;
+  }
+
+  .brand-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
   }
 
   h2 {
     margin: 0;
-    font-size: 18px;
+    font-size: 16px;
     color: #1f2a44;
     font-weight: 600;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
 
-  p {
-    margin: 6px 0 0;
-    font-size: 13px;
+  span {
+    font-size: 11px;
     color: #7a86a0;
-    width: 100%;
+    white-space: nowrap;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
 
   .header-image {
-    width: 60px;
-    height: 60px;
-    border-radius: 8px;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
     object-fit: contain;
     flex-shrink: 0;
+    background: #fff;
+    border: 1px solid #edf1f7;
   }
 
   .collapsed & {
@@ -376,12 +485,12 @@ onUnmounted(() => {
 
 .new-session-section {
   position: sticky;
-  top: 84px;
+  top: 54px;
   z-index: 19;
-  background: #fafbff;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  box-shadow: 0 10px 0 #fafbff;
+  background: #f8fafc;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  box-shadow: 0 8px 0 #f8fafc;
 
   .collapsed & {
     position: static;
@@ -393,9 +502,19 @@ onUnmounted(() => {
 .collapse-btn {
   background: transparent;
   border: none;
-  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   cursor: pointer;
   margin-left: auto;
+  border-radius: 8px;
+
+  &:hover {
+    background: #eef4fb;
+  }
 
   .collapsed & {
     margin: 0;
@@ -419,28 +538,56 @@ onUnmounted(() => {
 .module-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+
+  .collapsed & {
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+.module-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  .collapsed & {
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.module-group-title {
+  padding: 0 8px;
+  font-size: 11px;
+  color: #8a96a8;
+  line-height: 1.8;
+  letter-spacing: 0;
 }
 
 .module-card {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
   border: none;
-  border-radius: 12px;
+  border-radius: 8px;
   background: transparent;
-  padding: 12px;
+  min-height: 38px;
+  padding: 8px 10px;
+  color: #526173;
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s ease;
+  transition: background 0.16s ease, color 0.16s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 
   &:hover {
-    background: rgba(0, 0, 0, 0.04);
+    background: #eef4fb;
+    color: #1976d2;
   }
 
   &.active {
     background: #e3f2fd;
+    color: #1976d2;
   }
 
   &.disabled {
@@ -449,26 +596,42 @@ onUnmounted(() => {
 
   .collapsed & {
     justify-content: center;
-    padding: 10px;
+    width: 44px;
+    height: 40px;
+    padding: 0;
+    gap: 0;
   }
 }
 
-.module-abbr {
-  font-size: 16px;
-  font-weight: 400;
-  color: #1976d2;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+.module-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+
+  :deep(svg) {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 }
 
 .module-info {
   flex: 1;
+  min-width: 0;
 }
 
 .module-title {
   margin: 0;
-  font-size: 15px;
-  color: #1f2a44;
-  font-weight: 400;
+  font-size: 14px;
+  color: inherit;
+  font-weight: 500;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
@@ -480,10 +643,16 @@ onUnmounted(() => {
 }
 
 .new-session-btn {
-  /* 继承默认的 .module-card 样式 */
+  background: #1976d2;
+  color: #fff;
+
+  &:hover {
+    background: #1565c0;
+    color: #fff;
+  }
 
   .module-title {
-    color: #1f2a44;
+    color: inherit;
   }
 }
 

@@ -8,6 +8,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from ..models.execution import TaskExecution, ExecutionStatus
+from app.utils.path_config import get_data_registry
 
 
 class ExecutionStorage:
@@ -15,8 +16,8 @@ class ExecutionStorage:
 
     MAX_RECORDS = 50  # 最多保留50条记录
 
-    def __init__(self, storage_dir: str = "backend_data_registry/scheduled_tasks"):
-        self.storage_dir = Path(storage_dir)
+    def __init__(self, storage_dir: str = None):
+        self.storage_dir = Path(storage_dir) if storage_dir else get_data_registry() / "scheduled_tasks"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.executions_file = self.storage_dir / "executions.json"
 

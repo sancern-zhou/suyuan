@@ -7,10 +7,10 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
 
 import structlog
 
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.office.analyze_pptx_template_tool import AnalyzePptxTemplateTool
 
@@ -110,10 +110,6 @@ class CreatePptxFromTemplateTool(LLMTool):
 
             prs.save(str(output_path))
 
-            from config.settings import settings
-
-            api_base = settings.backend_host.rstrip("/")
-            encoded_path = quote(str(output_path))
             result_data: Dict[str, Any] = {
                 "file_path": str(output_path),
                 "output_file": str(output_path),
@@ -123,8 +119,6 @@ class CreatePptxFromTemplateTool(LLMTool):
                 "warning_count": len(warnings),
                 "operations": operations,
                 "warnings": warnings,
-                "doc_url": f"{api_base}/api/utility/file/{encoded_path}",
-                "doc_download_filename": output_path.name,
             }
 
             quality_mode = str(quality or "draft").lower()
@@ -142,6 +136,22 @@ class CreatePptxFromTemplateTool(LLMTool):
                 except Exception as validation_error:
                     logger.warning("template_pptx_validation_failed", error=str(validation_error))
                     result_data["validation_error"] = str(validation_error)
+
+            try:
+                from app.services.pdf_converter import pdf_converter
+
+                result_data["pdf_preview"] = await pdf_converter.convert_to_pdf(str(output_path))
+            except Exception as preview_error:
+                logger.warning("template_pptx_preview_failed", error=str(preview_error))
+
+            attach_document_artifact(
+                result_data,
+                output_path,
+                kind="office",
+                format="pptx",
+                preview_key="pdf_preview",
+                generator=self.name,
+            )
 
             return {
                 "success": True,

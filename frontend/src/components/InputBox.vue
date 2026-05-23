@@ -7,13 +7,16 @@
           <img
             v-if="attachment.type === 'image' && attachment.preview"
             :src="attachment.preview"
+            :title="attachment.name"
             class="attachment-preview-image"
             @click="previewImage(attachment)"
           />
           <div v-else class="attachment-file-icon">
             <svg viewBox="0 0 24 24" class="file-icon-svg">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke="currentColor" stroke-width="2"/>
-              <polyline points="14 2 14 8 20 8" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path d="M6 3.5h8l4 4v13H6v-17Z"/>
+              <path d="M14 3.5v4h4"/>
+              <path d="M9 12h6"/>
+              <path d="M9 15.5h5"/>
             </svg>
             <span class="attachment-file-name">{{ attachment.name }}</span>
           </div>
@@ -23,7 +26,7 @@
               <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
             </svg>
           </button>
-          <div v-if="attachment.uploading" class="attachment-uploading">上传中...</div>
+          <div v-if="attachment.uploading" class="attachment-uploading" title="上传中"></div>
         </div>
       </div>
 
@@ -62,75 +65,86 @@
           rows="1"
         />
 
-        <div class="action-group">
-          <select
-            v-model="modelTier"
-            class="model-tier-select"
-            :disabled="disabled || isAnalyzing"
-            title="选择本次对话使用的模型"
-          >
-            <option value="auto">自动</option>
-            <option value="flash">Flash</option>
-            <option value="pro">Pro</option>
-          </select>
+        <div class="input-footer">
+          <AgentModeSelector
+            v-if="assistantMode === 'general-agent'"
+            v-model="agentMode"
+            @update:modelValue="handleAgentModeChange"
+          />
 
-          <button
-            class="kb-toggle-button"
-            :class="{ 'kb-active': showKnowledgeBaseSelector }"
-            @click="toggleKnowledgeBase"
-            title="选择知识库"
-          >
-            <svg viewBox="0 0 24 24" class="kb-icon">
-              <path d="M4 4h16v4H4V4zm0 6h16v10H4V10zm4 2v6h8v-6H8z" fill="currentColor"/>
-            </svg>
-          </button>
+          <div class="action-group">
+            <div class="model-tier-wrapper">
+              <select
+                v-model="modelTier"
+                class="model-tier-select"
+                :disabled="disabled || isAnalyzing"
+                title="选择本次对话使用的模型"
+              >
+                <option value="auto">自动</option>
+                <option value="flash">Flash</option>
+                <option value="pro">Pro</option>
+              </select>
+              <div class="model-tier-tooltip">
+                <span v-if="modelTier === 'flash'" class="tooltip-text">快速模式，适合日常问数、对话</span>
+                <span v-if="modelTier === 'pro'" class="tooltip-text">专家模式，适合报告生成、深度分析等复杂任务</span>
+                <span v-if="modelTier === 'auto'" class="tooltip-text">自动根据任务复杂度选择模型</span>
+              </div>
+            </div>
 
-          <label class="upload-label" title="上传文件或图片">
-            <input
-              ref="fileInputRef"
-              type="file"
-              @change="handleFileSelect"
-              accept="image/*,.pdf,.txt,.md,.json,.csv,.docx,.xlsx,.pptx"
-            />
-            <span class="upload-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path
-                  d="M8.5 13.5 17 5a3.5 3.5 0 0 1 5 5l-10 10a5.5 5.5 0 0 1-7.8-7.8L9 6"
-                  fill="none"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
+            <button
+              class="kb-toggle-button"
+              :class="{ 'kb-active': showKnowledgeBaseSelector }"
+              @click="toggleKnowledgeBase"
+              title="选择知识库"
+            >
+              <svg viewBox="0 0 24 24" class="kb-icon">
+                <path d="M5 5.5C5 4.67 5.67 4 6.5 4h11c.83 0 1.5.67 1.5 1.5v13c0 .83-.67 1.5-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-13Z"/>
+                <path d="M8 8h8"/>
+                <path d="M8 11.5h8"/>
+                <path d="M8 15h5"/>
               </svg>
-            </span>
-          </label>
+            </button>
 
-          <button
-            class="action-button"
-            :class="{ 'pause-button': isAnalyzing, 'send-button': !isAnalyzing }"
-            @click="isAnalyzing ? handlePause() : handleSend()"
-            :disabled="actionButtonDisabled"
-            :title="isAnalyzing ? '暂停分析 (Esc)' : '发送 (Enter)'"
-          >
-            <svg v-if="!isAnalyzing" viewBox="0 0 24 24" class="send-icon">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
-            </svg>
-            <span v-else>暂停</span>
-          </button>
+            <label class="upload-label" title="上传文件或图片">
+              <input
+                ref="fileInputRef"
+                type="file"
+                @change="handleFileSelect"
+                accept="image/*,.pdf,.txt,.md,.json,.csv,.docx,.xlsx,.pptx"
+              />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path
+                    d="M12 16V4"
+                  />
+                  <path
+                    d="m7 9 5-5 5 5"
+                  />
+                  <path
+                    d="M5 16v2.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V16"
+                  />
+                </svg>
+              </span>
+            </label>
+
+            <button
+              class="action-button"
+              :class="{ 'pause-button': isAnalyzing, 'send-button': !isAnalyzing }"
+              @click="isAnalyzing ? handlePause() : handleSend()"
+              :disabled="actionButtonDisabled"
+              :title="isAnalyzing ? '暂停分析 (Esc)' : '发送 (Enter)'"
+            >
+              <svg v-if="!isAnalyzing" viewBox="0 0 24 24" class="send-icon">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
+              </svg>
+              <span v-else>暂停</span>
+            </button>
+          </div>
         </div>
       </div>
 
       <!-- 知识库选择器 -->
       <KnowledgeBaseSelector v-if="showKnowledgeBaseSelector" />
-
-      <div class="feature-buttons">
-        <!-- Agent模式选择器（仅在通用Agent模式显示） -->
-        <AgentModeSelector
-          v-if="assistantMode === 'general-agent'"
-          v-model="agentMode"
-          @update:modelValue="handleAgentModeChange"
-        />
-      </div>
     </div>
   </div>
 </template>
@@ -168,6 +182,10 @@ const props = defineProps({
   useReranker: {
     type: Boolean,
     default: false
+  },
+  sessionId: {
+    type: String,
+    default: ''
   }
 })
 
@@ -181,12 +199,36 @@ const showWorkflowTools = ref(false)
 const atSymbolIndex = ref(-1)  // 记录@符号的位置
 const highlightedTool = ref(null)  // 高亮的工具
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
-const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart']
+const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 // ✅ 使用统一的模式键名，与 store.currentMode 保持一致
 const cachedMode = localStorage.getItem('current-mode') || 'assistant'
 const agentMode = ref(validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
-const cachedModelTier = localStorage.getItem('llm-model-tier') || 'auto'
-const modelTier = ref(['auto', 'flash', 'pro'].includes(cachedModelTier) ? cachedModelTier : 'auto')
+const validModelTiers = ['auto', 'flash', 'pro']
+const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
+const draftModelTierKey = 'llm-model-tier:draft'
+
+const getSessionModelTierKey = (sessionId) => `llm-model-tier:${sessionId}`
+
+const readStoredModelTier = (sessionId) => {
+  const sessionKey = sessionId ? getSessionModelTierKey(sessionId) : null
+  const sessionValue = sessionKey ? localStorage.getItem(sessionKey) : null
+  if (sessionValue && validModelTiers.includes(sessionValue)) {
+    return sessionValue
+  }
+
+  const draftValue = localStorage.getItem(draftModelTierKey)
+  if (draftValue && validModelTiers.includes(draftValue)) {
+    return draftValue
+  }
+
+  if (legacyModelTier && validModelTiers.includes(legacyModelTier)) {
+    return legacyModelTier
+  }
+
+  return 'auto'
+}
+
+const modelTier = ref(readStoredModelTier(props.sessionId))
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
@@ -218,8 +260,10 @@ const handleAgentModeChange = (newMode) => {
 const autoResize = () => {
   const textarea = textareaRef.value
   if (textarea) {
+    const maxHeight = 120
     textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
   }
 }
 
@@ -271,8 +315,11 @@ const selectWorkflowTool = (tool, event) => {
     event.stopPropagation()
   }
 
-  // 直接替换@为工具名称
-  let newValue = localValue.value.replace('@', '@' + toolName + ' ')
+  const replaceStart = atSymbolIndex.value >= 0 ? atSymbolIndex.value : localValue.value.indexOf('@')
+  const before = replaceStart >= 0 ? localValue.value.slice(0, replaceStart) : localValue.value
+  const after = replaceStart >= 0 ? localValue.value.slice(replaceStart + 1) : ''
+  const insertedText = '@' + toolName + ' '
+  const newValue = before + insertedText + after
 
   console.log('[InputBox] New value:', newValue)
 
@@ -285,7 +332,7 @@ const selectWorkflowTool = (tool, event) => {
 
   // 设置光标位置到工具名称后面
   nextTick(() => {
-    const newPosition = toolName.length + 2  // @ + 工具名 + 空格
+    const newPosition = before.length + insertedText.length
     console.log('[InputBox] Setting cursor position:', newPosition, 'value:', localValue.value)
     if (textareaRef.value) {
       textareaRef.value.setSelectionRange(newPosition, newPosition)
@@ -304,8 +351,21 @@ watch(localValue, async (newValue) => {
   autoResize()
 })
 
-watch(modelTier, (newTier) => {
-  localStorage.setItem('llm-model-tier', newTier)
+watch(
+  () => props.sessionId,
+  (newSessionId) => {
+    modelTier.value = readStoredModelTier(newSessionId)
+  },
+  { immediate: true }
+)
+
+watch([modelTier, () => props.sessionId], ([newTier, newSessionId]) => {
+  if (!validModelTiers.includes(newTier)) return
+  if (newSessionId) {
+    localStorage.setItem(getSessionModelTierKey(newSessionId), newTier)
+    return
+  }
+  localStorage.setItem(draftModelTierKey, newTier)
 })
 
 const handleKeydown = (e) => {
@@ -405,7 +465,14 @@ const handleSend = () => {
   nextTick(() => {
     if (textareaRef.value) {
       textareaRef.value.style.height = 'auto'
+      textareaRef.value.style.overflowY = 'hidden'
     }
+  })
+}
+
+const focus = () => {
+  nextTick(() => {
+    textareaRef.value?.focus()
   })
 }
 
@@ -590,6 +657,7 @@ const handleFilesDrop = async (files) => {
 
 // 暴露方法给父组件
 defineExpose({
+  focus,
   handleFilesDrop
 })
 </script>
@@ -612,7 +680,7 @@ defineExpose({
 
 .input-wrapper {
   display: flex;
-  align-items: stretch;
+  flex-direction: column;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
   background: #fff;
@@ -671,17 +739,18 @@ defineExpose({
 }
 
 .input-field {
-  flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 44px;
   max-height: 120px;
-  padding: 10px 16px;
+  padding: 12px 16px 8px;
   border: none;
-  border-radius: 8px 0 0 8px;
+  border-radius: 8px 8px 0 0;
   font-size: 15px;
   font-family: inherit;
   line-height: 1.5;
   resize: none;
-  overflow-y: hidden;
+  overflow-y: auto;
 
   &:focus {
     outline: none;
@@ -694,6 +763,16 @@ defineExpose({
   }
 }
 
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 4px 8px 8px 12px;
+  border-top: 1px solid #f2f4f8;
+}
+
 .action-group {
   display: flex;
   align-items: center;
@@ -702,20 +781,71 @@ defineExpose({
 }
 
 .model-tier-select {
-  height: 32px;
-  padding: 0 8px;
+  height: 30px;
+  padding: 0 24px 0 10px;
   border: 1px solid #d8deea;
-  border-radius: 6px;
-  color: #35425f;
+  border-radius: 999px;
+  color: #526173;
   background: #fff;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
+  outline: none;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 13px) 12px,
+    calc(100% - 8px) 12px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+
+  &:hover:not(:disabled),
+  &:focus:not(:disabled) {
+    color: #1976D2;
+    border-color: #90CAF9;
+    background-color: #f8fbff;
+  }
 
   &:disabled {
     color: #9aa5b8;
     background: #f5f7fb;
     cursor: not-allowed;
   }
+}
+
+.model-tier-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.model-tier-tooltip {
+  position: absolute;
+  bottom: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.model-tier-wrapper:hover .model-tier-tooltip {
+  opacity: 1;
+}
+
+.model-tier-tooltip .tooltip-text {
+  font-size: 11px;
+  color: #526173;
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #d8deea;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .upload-label {
@@ -745,6 +875,10 @@ defineExpose({
   width: 18px;
   height: 18px;
   stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .kb-toggle-button {
@@ -774,6 +908,11 @@ defineExpose({
 .kb-icon {
   width: 18px;
   height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .action-button {
@@ -829,15 +968,25 @@ defineExpose({
   }
 }
 
-.feature-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding-left: 4px;
-}
-
 @media (max-width: 768px) {
+  .input-area {
+    padding: 12px;
+  }
+
+  .input-field {
+    padding: 10px 12px 8px;
+  }
+
+  .input-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 6px 8px 8px;
+  }
+
   .action-group {
+    width: 100%;
+    justify-content: flex-end;
     padding: 4px;
   }
 }
@@ -845,27 +994,31 @@ defineExpose({
 .attachments-preview {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 0;
+  gap: 6px;
+  padding: 2px 0 8px;
 }
 
 .attachment-item {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #f5f5f5;
-  border-radius: 8px;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 3px 6px;
+  background: #fff;
+  border: 1px solid #d8deea;
+  border-radius: 999px;
   position: relative;
+  color: #5f6f89;
 }
 
 .attachment-preview-image {
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 30px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity 0.16s ease;
 
   &:hover {
     opacity: 0.8;
@@ -873,42 +1026,51 @@ defineExpose({
 }
 
 .attachment-file-icon {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  min-width: 0;
 }
 
 .file-icon-svg {
-  width: 24px;
-  height: 24px;
-  color: #7c8db5;
+  width: 15px;
+  height: 15px;
+  color: currentColor;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: 0 0 auto;
 }
 
 .attachment-file-name {
-  font-size: 13px;
-  color: #6b7a99;
-  max-width: 150px;
+  min-width: 0;
+  max-width: 136px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  color: #526173;
 }
 
 .attachment-remove {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
-  color: #999;
+  color: #8a96a8;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 50%;
   transition: all 0.2s;
 
   &:hover:not(:disabled) {
-    background: #e0e0e0;
-    color: #333;
+    background: #eef2f7;
+    color: #35425f;
   }
 
   &:disabled {
@@ -923,8 +1085,10 @@ defineExpose({
 }
 
 .attachment-uploading {
-  font-size: 11px;
-  color: #1976D2;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1976D2;
   animation: pulse 1.5s infinite;
 }
 
