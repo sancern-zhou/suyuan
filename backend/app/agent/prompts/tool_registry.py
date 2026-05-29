@@ -27,7 +27,7 @@ ASSISTANT_TOOL_NAMES = {
     # Office工具
     "edit_word_document",
     "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx", "validate_pptx",
+    "edit_pptx", "create_pptx_from_deck", "create_pptx", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact",
@@ -274,7 +274,7 @@ ASSISTANT_TOOL_ORDER = [
     # Office
     "edit_word_document",
     "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx", "validate_pptx",
+    "edit_pptx", "create_pptx_from_deck", "create_pptx", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact",
