@@ -220,7 +220,8 @@ class SessionManagerDB:
     async def load_session_with_pagination(
         self,
         session_id: str,
-        message_limit: int = 5
+        message_limit: int = 5,
+        include_artifacts: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         加载会话（数据库层分页，只加载最新N条消息）
@@ -248,7 +249,8 @@ class SessionManagerDB:
             # 1. 先获取会话元数据（不加载消息）
             session_dict = await self.repository.get_session_with_messages(
                 session_id,
-                include_messages=False  # 不加载消息
+                include_messages=False,  # 不加载消息
+                include_artifacts=include_artifacts
             )
 
             if not session_dict:
@@ -265,7 +267,8 @@ class SessionManagerDB:
                 message_result = await self.repository.get_messages_before(
                     session_id=session_id,
                     before_sequence=None,  # None 表示获取最新消息
-                    limit=message_limit
+                    limit=message_limit,
+                    include_data=include_artifacts
                 )
                 session_dict["conversation_history"] = message_result["messages"]
 
@@ -299,10 +302,8 @@ class SessionManagerDB:
                 current_expert=session_dict.get("current_expert")
             )
 
-            # 加载到内存缓存
-            if self.enable_cache:
-                self.sessions[session_id] = session
-
+            # Do not cache this partial Session. Continuation paths use load_session()
+            # and expect cached sessions to contain the complete conversation history.
             logger.info(
                 "session_loaded_with_pagination",
                 session_id=session_id,

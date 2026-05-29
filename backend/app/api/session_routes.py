@@ -5,7 +5,7 @@
 """
 
 from fastapi import APIRouter, HTTPException, Request
-from typing import Optional
+from typing import Optional, Any, Dict, List
 from datetime import datetime
 import structlog
 
@@ -14,6 +14,140 @@ from app.agent.session import get_session_manager
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+
+ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview"}
+
+
+def _strip_lazy_artifacts(obj: Any) -> Any:
+    """Return a copy with heavyweight visualization/document preview payloads removed."""
+    if isinstance(obj, list):
+        return [_strip_lazy_artifacts(item) for item in obj]
+    if isinstance(obj, dict):
+        stripped = {}
+        for key, value in obj.items():
+            if key in ARTIFACT_KEYS:
+                if key == "visuals" and isinstance(value, list):
+                    stripped["visuals_count"] = len(value)
+                elif key.endswith("_preview") and isinstance(value, dict):
+                    stripped[f"{key}_available"] = True
+                continue
+            stripped[key] = _strip_lazy_artifacts(value)
+        return stripped
+    return obj
+
+
+def _extract_visualizations_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    visuals: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    def add_visuals(items: Any) -> None:
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            payload = item.get("payload")
+            visual_id = item.get("id") or (payload.get("id") if isinstance(payload, dict) else None)
+            if visual_id and visual_id in seen_ids:
+                continue
+            if visual_id:
+                seen_ids.add(visual_id)
+            visuals.append(item)
+
+    for msg in messages:
+        if msg.get("type") != "tool_result":
+            continue
+        data = msg.get("data") or {}
+        result = data.get("result") or {}
+        results = data.get("results") or []
+
+        add_visuals(result.get("visuals"))
+        inner_data = result.get("data") if isinstance(result, dict) else None
+        if isinstance(inner_data, dict):
+            add_visuals(inner_data.get("visuals"))
+        for item in results if isinstance(results, list) else []:
+            if not isinstance(item, dict):
+                continue
+            add_visuals(item.get("visuals"))
+            item_data = item.get("data")
+            if isinstance(item_data, dict):
+                add_visuals(item_data.get("visuals"))
+
+    return visuals
+
+
+def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    documents: List[Dict[str, Any]] = []
+
+    for msg in messages:
+        if msg.get("type") != "tool_result":
+            continue
+        result = (msg.get("data") or {}).get("result") or {}
+        result_data = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(result_data, dict):
+            continue
+
+        preview_key = next(
+            (key for key in ("pdf_preview", "markdown_preview", "html_preview") if result_data.get(key)),
+            None,
+        )
+        if not preview_key:
+            continue
+
+        documents.append({
+            preview_key: result_data.get(preview_key),
+            "file_path": result_data.get("file_path")
+                or result_data.get("path")
+                or (result_data.get("pdf_preview") or {}).get("pdf_path"),
+            "file_type": result_data.get("file_type")
+                or (result_data.get("html_preview") or {}).get("file_type"),
+            "generator": result_data.get("generator")
+                or (result.get("metadata") or {}).get("generator")
+                or "document",
+            "summary": result.get("summary"),
+            "timestamp": msg.get("timestamp"),
+        })
+
+    return documents
+
+
+async def _get_session_artifacts(
+    session_id: str,
+    load_visualizations: bool = True,
+    load_office_documents: bool = True
+) -> Dict[str, List[Dict[str, Any]]]:
+    from app.db.session_repository import get_session_repository
+
+    repo = get_session_repository()
+    session_dict = await repo.get_session_with_messages(session_id, include_messages=False)
+    if not session_dict:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    metadata = session_dict.get("metadata") or {}
+    visualizations = (metadata.get("visualizations") or []) if load_visualizations else []
+    office_documents = (session_dict.get("office_documents") or []) if load_office_documents else []
+
+    if load_office_documents and not office_documents:
+        try:
+            from app.routers.agent import multi_expert_agent_instance
+            if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:
+                office_documents = multi_expert_agent_instance._session_store[session_id].get("office_documents", [])
+        except Exception as e:
+            logger.warning("lazy_office_documents_memory_fallback_failed", session_id=session_id, error=str(e))
+
+    if (load_visualizations and not visualizations) or (load_office_documents and not office_documents):
+        full_session = await repo.get_session_with_messages(session_id, include_messages=True)
+        messages = full_session.get("conversation_history", []) if full_session else []
+        if load_visualizations and not visualizations:
+            visualizations = _extract_visualizations_from_messages(messages)
+        if load_office_documents and not office_documents:
+            office_documents = _extract_office_documents_from_messages(messages)
+
+    return {
+        "visualizations": visualizations if isinstance(visualizations, list) else [],
+        "office_documents": office_documents if isinstance(office_documents, list) else [],
+    }
 
 
 @router.get("/")
@@ -150,6 +284,48 @@ async def get_session_messages(
     return result
 
 
+@router.get("/{session_id}/visualizations")
+async def get_session_visualizations(session_id: str):
+    """
+    按需获取会话可视化数据。
+
+    restore 接口默认只返回聊天首屏，图表数据由前端在首屏渲染后自动加载。
+    """
+    artifacts = await _get_session_artifacts(
+        session_id,
+        load_visualizations=True,
+        load_office_documents=False
+    )
+    visualizations = _sanitize_floats(artifacts["visualizations"])
+
+    return {
+        "session_id": session_id,
+        "visualizations": visualizations,
+        "total": len(visualizations)
+    }
+
+
+@router.get("/{session_id}/office-documents")
+async def get_session_office_documents(session_id: str):
+    """
+    按需获取会话文档/报告预览元数据。
+
+    restore 接口默认不返回这些预览，避免首屏触发 iframe 加载报告 HTML。
+    """
+    artifacts = await _get_session_artifacts(
+        session_id,
+        load_visualizations=False,
+        load_office_documents=True
+    )
+    office_documents = _sanitize_floats(artifacts["office_documents"])
+
+    return {
+        "session_id": session_id,
+        "office_documents": office_documents,
+        "total": len(office_documents)
+    }
+
+
 def _sanitize_floats(obj):
     """
     清理数据中的特殊浮点值（inf, -inf, nan），转换为 None
@@ -170,7 +346,11 @@ def _sanitize_floats(obj):
 
 
 @router.post("/{session_id}/restore")
-async def restore_session(session_id: str, message_limit: int = 100):
+async def restore_session(
+    session_id: str,
+    message_limit: int = 100,
+    lazy_artifacts: bool = False
+):
     """
     恢复会话（数据库层分页加载：只返回最新N条消息）
 
@@ -181,14 +361,20 @@ async def restore_session(session_id: str, message_limit: int = 100):
     Returns:
         会话元数据 + 最新N条消息 + 分页状态
     """
-    logger.info("[会话恢复] 开始恢复会话", session_id=session_id, message_limit=message_limit)
+    logger.info(
+        "[会话恢复] 开始恢复会话",
+        session_id=session_id,
+        message_limit=message_limit,
+        lazy_artifacts=lazy_artifacts
+    )
 
     session_manager = get_session_manager()
 
     # ✅ 使用数据库层分页方法，不加载全部消息到内存
     result = await session_manager.load_session_with_pagination(
         session_id,
-        message_limit
+        message_limit,
+        include_artifacts=not lazy_artifacts
     )
 
     if not result:
@@ -207,13 +393,64 @@ async def restore_session(session_id: str, message_limit: int = 100):
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
 
+    metadata = session_data.get("metadata") or {}
+    office_documents = session_data.get("office_documents") or []
+    visualizations = metadata.get("visualizations") or []
+    visual_ids = session_data.get("visual_ids") or []
+
+    # 根据lazy_artifacts模式决定是否提取消息中的图表和文档
+    if lazy_artifacts:
+        # 首屏模式：只统计数量，不遍历消息提取内容（性能优化）
+        has_lazy_visualizations = bool(visual_ids or visualizations)
+        visualization_count = len(visual_ids) if visual_ids else len(visualizations) if visualizations else 0
+        has_lazy_office_documents = bool(office_documents)
+        office_document_count = len(office_documents)
+    else:
+        # 完整模式：从消息中提取图表和文档（兼容旧数据）
+        message_visualizations = []
+        message_office_documents = []
+        loaded_messages = session_data.get("conversation_history", [])
+        if not visualizations and loaded_messages:
+            message_visualizations = _extract_visualizations_from_messages(loaded_messages)
+        if not office_documents and loaded_messages:
+            message_office_documents = _extract_office_documents_from_messages(loaded_messages)
+
+        has_lazy_visualizations = bool(visualizations or visual_ids or message_visualizations)
+        visualization_count = (
+            len(visualizations) if isinstance(visualizations, list) and visualizations
+            else len(visual_ids) if isinstance(visual_ids, list) and visual_ids
+            else len(message_visualizations)
+        )
+        has_lazy_office_documents = bool(office_documents or message_office_documents)
+        office_document_count = (
+            len(office_documents) if isinstance(office_documents, list) and office_documents
+            else len(message_office_documents)
+        )
+
     # 分页状态（从数据库查询结果获取）
     session_data["has_more_messages"] = pagination["has_more"]
     session_data["total_message_count"] = pagination["total_count"]
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
+    session_data["has_lazy_visualizations"] = has_lazy_visualizations
+    session_data["visualization_count"] = visualization_count
+    session_data["has_lazy_office_documents"] = has_lazy_office_documents
+    session_data["office_document_count"] = office_document_count
+
+    if lazy_artifacts:
+        # 首屏恢复只带聊天内容，图表/文档预览由前端在消息显示后自动拉取。
+        if isinstance(session_data.get("metadata"), dict):
+            session_data["metadata"] = {
+                key: value
+                for key, value in session_data["metadata"].items()
+                if key != "visualizations"
+            }
+        session_data["office_documents"] = []
+        session_data["conversation_history"] = _strip_lazy_artifacts(
+            session_data.get("conversation_history", [])
+        )
 
     # ✅ 优先从数据库获取office_documents，如果没有再从react_agent的_session_store获取（兼容旧数据）
-    if not session_data.get("office_documents"):
+    if not lazy_artifacts and not session_data.get("office_documents"):
         try:
             from app.routers.agent import multi_expert_agent_instance
             if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:

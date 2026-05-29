@@ -1,0 +1,160 @@
+# RF field-position heuristic profiles.
+
+tables:
+  RF_M_GASEOUSFLOWCHECK:
+    range_text_fields:
+      - DISPLAYVALUESO2
+      - MEASUREDVALUESO2
+      - DISPLAYVALUENO2
+      - MEASUREDVALUENO2
+      - DISPLAYVALUECO
+      - MEASUREDVALUECO
+      - DISPLAYVALUEO3
+      - MEASUREDVALUEO3
+    swap_formula_checks:
+      - id: monthly_so2_flow_error
+        label: SO2 月度气态流量误差
+        left_field: DISPLAYVALUESO2
+        right_field: MEASUREDVALUESO2
+        error_field: MEASUREDERRORSO2
+        tolerance: 0.2
+      - id: monthly_no2_flow_error
+        label: NO2 月度气态流量误差
+        left_field: DISPLAYVALUENO2
+        right_field: MEASUREDVALUENO2
+        error_field: MEASUREDERRORNO2
+        tolerance: 0.2
+      - id: monthly_co_flow_error
+        label: CO 月度气态流量误差
+        left_field: DISPLAYVALUECO
+        right_field: MEASUREDVALUECO
+        error_field: MEASUREDERRORCO
+        tolerance: 0.2
+      - id: monthly_o3_flow_error
+        label: O3 月度气态流量误差
+        left_field: DISPLAYVALUEO3
+        right_field: MEASUREDVALUEO3
+        error_field: MEASUREDERRORO3
+        tolerance: 0.2
+
+  RF_TW_PmFlowCheck:
+    range_text_fields:
+      - MainFlowTarget
+      - MainFlowRefer
+      - MainFlowReal
+      - MainFlowFixed
+      - ReferFlowTarget
+      - ReferFlowRefer
+      - ReferFlowReal
+      - ReferFlowFixed
+
+  RF_Q_GaseousFlowCheck:
+    range_text_fields:
+      - DF_Valuve_85
+      - DF_Valuve_60
+      - DF_Valuve_35
+      - DF_Valuve_80
+      - DF_Valuve_50
+      - DF_Valuve_20
+      - RF_Valuve_85
+      - RF_Valuve_60
+      - RF_Valuve_35
+      - RF_Valuve_80
+      - RF_Valuve_50
+      - RF_Valuve_20
+
+  RF_TW_PmFlowCalibrate:
+    range_text_fields:
+      - Prev_A
+      - Prev_B
+      - Prev_C
+      - Next_A
+      - Next_B
+      - Next_C
+      - F_A
+      - F_B
+      - F_R
+
+  RF_W_GASEOUSCHECK_CO:
+    range_text_fields:
+      - CYYLCHECKVALUE
+      - CYLLCHECKVALUE
+      - PMTCHECKVALUE
+      - ZWDCHECKVALUE
+      - YLCHECKVALUE
+      - JGCHECKVALUE
+      - GYCHECKVALUE
+      - FYCHECKVALUE
+      - ZYCHECKVALUE
+      - BJCHECKVALUE
+      - JXWDCKVALUE
+      - PZDYCKVALUE
+      - AGCCKVALUE
+      - HWGYDLCKVALUE
+      - CSCOCKXHCKVALUE
+      - QYCKVALUE
+      - JCQDLCKVALUE
+      - CBCHECKVALUE
+      - GSWDCHECKVALUE
+      - GFCCHECKVALUE
+
+  RF_W_GASEOUSCHECK_NOX:
+    range_text_fields:
+      - CYYLCHECKVALUE
+      - CYLLCHECKVALUE
+      - CYLLIANGCHECKVALUE
+      - PMTCHECKVALUE
+      - ZWDCHECKVALUE
+      - YLCHECKVALUE
+      - JGCHECKVALUE
+      - GYCHECKVALUE
+      - FYCHECKVALUE
+      - ZHLCHECKVALUE
+      - FYSHICHECKVALUE
+      - NOXYLCHECKVALUE
+      - NOXJGCHECKVALUE
+      - NOYLCHECKVALUE
+      - NOJGCHECKVALUE
+      - ZYCHECKVALUE
+      - BJCHECKVALUE
+
+  RF_W_GASEOUSCHECK_O3:
+    range_text_fields:
+      - CYYLCHECKVALUE
+      - CYLLCHECKVALUE
+      - CYLLBCHECKVALUE
+      - PMTCHECKVALUE
+      - ZWDCHECKVALUE
+      - ZWDBCHECKVALUE
+      - YLCHECKVALUE
+      - JGCHECKVALUE
+      - GYCHECKVALUE
+      - GYBCHECKVALUE
+      - FYCHECKVALUE
+      - GQCKVALUEA
+      - GQCKVALUEB
+      - CLXHCKVALUE
+      - YPWDCKVALUE
+      - DDLCKVALUE
+
+  RF_W_GASEOUSCHECK_SO2:
+    range_text_fields:
+      - CYYLCHECKVALUE
+      - CYLLCHECKVALUE
+      - PMTCHECKVALUE
+      - ZWDCHECKVALUE
+      - YLCHECKVALUE
+      - JGCHECKVALUE
+      - GYCHECKVALUE
+      - FYCHECKVALUE
+      - PTMCKVALUE
+      - GYGCKVALUE
+      - PTMDYCKVALUE
+      - ZWDDYCKVALUE
+      - DBJZCKVALUE
+      - ZWDDLCKVALUE
+
+  RF_W_PMCHECK:
+    range_text_fields:
+      - MAINFLOWVALUE
+      - AIRTEMPVALUE

@@ -31,6 +31,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact",
+    "create_flowchart_artifact",
 
     # 任务管理
     "TodoWrite",
@@ -39,7 +40,7 @@ ASSISTANT_TOOL_NAMES = {
     "execute_python",
 
     # 其他工具
-    "create_scheduled_task", "analyze_image", "browser", "call_sub_agent",
+    "create_scheduled_task", "broadcast_social_users", "analyze_image", "browser", "call_sub_agent",
 
     # CLI会话管理
     "cli_session", "terminal_session",
@@ -169,6 +170,16 @@ CHART_TOOL_NAMES = {
 OPS_TOOL_NAMES = {
     # 运维工单与通用SQL查询
     "execute_ops_sql_query",
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
+
+    # 展示型流程图
+    "create_flowchart_artifact",
+
+    # 报告产物
+    "create_report_package",
+    "validate_report_package",
 
     # 站点小时/日数据核对
     "query_gd_suncere_station_hour_new",
@@ -177,8 +188,11 @@ OPS_TOOL_NAMES = {
     # 数据读取
     "read_data_registry",
 
+    # 代码执行
+    "execute_python",
+
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files", "list_skills",
 }
 
 # ===== 社交模式工具（移动端助理） =====
@@ -283,7 +297,7 @@ ASSISTANT_TOOL_ORDER = [
     "write_file", "edit_file", "grep", "notebook_edit",
 
     # 执行
-    "bash", "execute_python", "analyze_image", "browser",
+    "bash", "create_flowchart_artifact", "execute_python", "analyze_image", "browser",
 
     # 任务管理
     "TodoWrite", "create_scheduled_task", "list_skills",
@@ -383,8 +397,22 @@ REPORT_TOOL_ORDER = [
 ]
 
 OPS_TOOL_ORDER = [
+    # 技能发现与按需读取
+    "list_skills",
+    "read_file",
+
     # 工单查询
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
     "execute_ops_sql_query",
+
+    # 展示型流程图
+    "create_flowchart_artifact",
+
+    # 报告产物收口
+    "create_report_package",
+    "validate_report_package",
 
     # 站点小时/日数据核对
     "query_gd_suncere_station_hour_new",
@@ -393,8 +421,11 @@ OPS_TOOL_ORDER = [
     # 数据读取
     "read_data_registry",
 
+    # 代码执行
+    "execute_python",
+
     # 文件操作
-    "grep", "read_file", "write_file", "edit_file", "edit_word_document", "list_directory", "search_files",
+    "grep", "write_file", "edit_file", "edit_word_document", "list_directory", "search_files",
 ]
 
 CHART_TOOL_ORDER = [

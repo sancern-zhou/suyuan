@@ -99,7 +99,7 @@ async def test_security_checks():
     print(f"成功: {result['success']}")
     print(f"错误: {result.get('error', 'N/A')}")
     assert not result['success'], "危险命令应该被拒绝"
-    assert "Dangerous command detected" in result.get('error', '')
+    assert "危险命令" in result.get('error', '') or "Dangerous command" in result.get('error', '')
 
     # 测试 3.2: sudo 命令拒绝
     print("\n[测试 3.2] 尝试执行 sudo 命令")
@@ -118,9 +118,37 @@ async def test_security_checks():
     print("\n[OK] 安全检查测试通过")
 
 
+async def test_pipeline_support():
+    """测试受限管道支持"""
+    print("\n=== 测试 4: 受限管道支持 ===")
+
+    tool = BashTool()
+
+    print("\n[测试 4.1] 执行常见检索管道")
+    result = await tool.execute(command="find . -type f -name \"*.py\" | grep bash_tool | head -5")
+    print(f"状态: {result['status']}")
+    print(f"输出: {result['data'].get('stdout', '')[:200]}")
+    assert result['success'], "find | grep | head 管道应该成功"
+    assert "bash_tool.py" in result['data'].get('stdout', '')
+
+    print("\n[测试 4.2] 引号内管道符不应被拆分")
+    validation = tool._validate_command("grep \"a|b\" tests/test_bash_tool.py")
+    print(f"校验结果: {validation}")
+    assert validation["valid"], "引号内的 | 应作为普通参数"
+
+    print("\n[测试 4.3] 管道中禁止执行器命令")
+    result = await tool.execute(command="echo hello | python -c \"print(1)\"")
+    print(f"状态: {result['status']}")
+    print(f"错误: {result.get('error', 'N/A')}")
+    assert not result['success'], "管道中 python 应被拒绝"
+    assert "管道中不允许使用命令" in result.get('error', '')
+
+    print("\n[OK] 受限管道测试通过")
+
+
 async def test_timeout_protection():
     """测试超时保护"""
-    print("\n=== 测试 4: 超时保护 ===")
+    print("\n=== 测试 5: 超时保护 ===")
 
     tool = BashTool()
 
@@ -136,27 +164,28 @@ async def test_timeout_protection():
     print("\n[OK] 超时保护测试通过")
 
 
-async def test_output_truncation():
-    """测试输出截断"""
-    print("\n=== 测试 5: 输出截断 ===")
+async def test_large_output_preserved():
+    """测试大输出保留"""
+    print("\n=== 测试 6: 大输出保留 ===")
 
     tool = BashTool()
 
-    # 测试 5.1: 长输出截断
+    # 测试 5.1: 长输出保留
     print("\n[测试 5.1] 生成长输出")
     result = await tool.execute(command="python -c \"print('A' * 100000)\"")
     print(f"状态: {result['status']}")
     print(f"输出长度: {len(result['data']['stdout'])} 字符")
-    print(f"是否截断: {result['metadata']['stdout_truncated']}")
-    assert result['metadata']['stdout_truncated'], "长输出应该被截断"
-    assert len(result['data']['stdout']) <= 55000, "截断后输出应该小于 55KB"
+    print(f"metadata 输出长度: {result['metadata']['stdout_length']}")
+    assert result['success'], "长输出命令应该成功"
+    assert len(result['data']['stdout']) == 100001, "长输出应该完整保留"
+    assert result['metadata']['stdout_length'] == len(result['data']['stdout'])
 
-    print("\n[OK] 输出截断测试通过")
+    print("\n[OK] 大输出保留测试通过")
 
 
 async def test_tool_registry():
     """测试工具注册"""
-    print("\n=== 测试 6: 工具注册 ===")
+    print("\n=== 测试 7: 工具注册 ===")
 
     # 测试 6.1: 工具是否已注册
     print("\n[测试 6.1] 检查工具注册")
@@ -187,7 +216,7 @@ async def test_tool_registry():
 
 async def test_working_directory():
     """测试工作目录限制"""
-    print("\n=== 测试 7: 工作目录限制 ===")
+    print("\n=== 测试 8: 工作目录限制 ===")
 
     tool = BashTool()
 
@@ -231,8 +260,9 @@ async def main():
         await test_basic_commands()
         await test_file_operations()
         await test_security_checks()
+        await test_pipeline_support()
         await test_timeout_protection()
-        await test_output_truncation()
+        await test_large_output_preserved()
         await test_tool_registry()
         await test_working_directory()
 

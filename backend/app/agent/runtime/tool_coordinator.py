@@ -96,8 +96,24 @@ class ToolCoordinator:
         tool_name = action.get("tool", "")
         tool_args = self.normalize_tool_input(tool_name, action.get("args", {}))
         guarded = self.loop_guard.before_call(tool_name, tool_args)
-        if guarded:
+        if guarded and guarded.get("severity") == "block":
             observation = guarded
+        elif guarded:
+            logger.warning(
+                "tool_loop_guard_warning",
+                tool_name=tool_name,
+                summary=guarded.get("summary") if isinstance(guarded, dict) else None,
+            )
+            observation = await self.executor.execute_tool_with_retry(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_call_id=action.get("tool_call_id", f"fallback_{tool_name}"),
+                iteration=state.iteration,
+            ) if action.get("tool_call_id") else await self.executor.execute_tool(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                iteration=state.iteration,
+            )
         elif action.get("tool_call_id"):
             observation = await self.executor.execute_tool_with_retry(
                 tool_name=tool_name,

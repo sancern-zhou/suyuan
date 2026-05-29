@@ -28,6 +28,7 @@ class SmartChartGenerator(LLMTool):
     1. 从统一存储加载已分析的固定格式数据
     2. 智能推荐最适合的图表类型
     3. 统一数据转换和存储
+    4. 默认优先输出最相关的单个图表配置，必要时再返回多个图表
 
     ⚠️ 重要：data_id必须是实际存在的ID，不能使用示例ID！
 
@@ -42,6 +43,7 @@ class SmartChartGenerator(LLMTool):
     - 如果有data_id（数据已存储）→ 使用smart_chart_generator
     - 如果是PMF/OBM分析结果 → 使用smart_chart_generator
     - 如果需要智能推荐图表类型 → 使用smart_chart_generator
+    - 图表策略写在工具本体里，避免由 adapter 重复覆写
 
     使用示例：
     1. PMF分析结果：smart_chart_generator(data_id="pmf_result:v1:[实际ID]")
@@ -63,6 +65,7 @@ class SmartChartGenerator(LLMTool):
 2. 智能格式转换和数据适配
 3. 自动推荐最佳图表类型
 4. 生成完整的图表配置（前端直接可用）
+5. 默认以单图输出为主，组合图只在数据和任务明确需要时使用
 
 支持的数据类型：
 - PMF结果 (pmf_result) → 饼图/柱状图/时序图

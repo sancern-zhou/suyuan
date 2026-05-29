@@ -21,7 +21,8 @@ export function useRightPanelState(store = null) {
     if (!store) return false
 
     const hasCharts = store.currentState.visualizationHistory?.length > 0 ||
-      store.currentState.currentVisualization?.visuals?.length > 0
+      store.currentState.currentVisualization?.visuals?.length > 0 ||
+      store.currentState.lazyArtifacts?.hasVisualizations
 
     return hasCharts
   })
@@ -31,6 +32,14 @@ export function useRightPanelState(store = null) {
    */
   const hasOfficeDocuments = computed(() => {
     if (!store || !store.messages) return false
+
+    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview) {
+      return true
+    }
+
+    if (store.currentState.lazyArtifacts?.hasOfficeDocuments) {
+      return true
+    }
 
     return store.messages.some(msg => {
       if (msg?.type === 'tool_result' && msg?.data?.result) {
@@ -48,7 +57,7 @@ export function useRightPanelState(store = null) {
           return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview)
         }
 
-        return isOfficeTool
+        return isOfficeTool && !!(msg.data.result?.data?.pdf_preview || msg.data.result?.data?.markdown_preview || msg.data.result?.data?.html_preview)
       }
       return false
     })

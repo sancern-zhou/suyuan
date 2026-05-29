@@ -23,6 +23,17 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
+def _safe_preview(value: Any, max_chars: int = 100) -> str:
+    if value is None:
+        return "empty"
+    if isinstance(value, str):
+        return value[:max_chars] if value else "empty"
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)[:max_chars]
+    except Exception:
+        return repr(value)[:max_chars]
+
+
 # ========================================
 # Request/Response Models
 # ========================================
@@ -439,12 +450,19 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
                             elif event["type"] == "tool_result":
                                 result_data = event_data.get("result", {})
-                                frontend_message["content"] = result_data.get("summary", "获得结果") if isinstance(result_data, dict) else str(result_data)
+                                if isinstance(result_data, dict):
+                                    frontend_message["content"] = (
+                                        result_data.get("summary_text")
+                                        or _safe_preview(result_data.get("summary"), 500)
+                                        or "获得结果"
+                                    )
+                                else:
+                                    frontend_message["content"] = str(result_data)
 
                             conversation_history.append(frontend_message)
                             # 防御性代码：确保 content 不为 None
                             content = frontend_message.get("content", "")
-                            content_preview = content[:50] if content else "empty"
+                            content_preview = _safe_preview(content, 50)
                             logger.debug("conversation_history_appended",
                                         event_type=event["type"],
                                         history_length=len(conversation_history),

@@ -19,11 +19,13 @@ ENV/
 .vscode/
 .cursor/
 .idea/
+.qoder/
 *.swp
 *.swo
 
 # Data & Cache
 backend_data_registry/
+backend_data_registry_old_*/
 backend_data/
 backend/models/
 data/
@@ -57,6 +59,7 @@ test_outputs/
 
 # Archives
 *.zip
+*.deb
 *.tar
 *.tar.gz
 *.rar

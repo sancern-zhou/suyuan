@@ -1,0 +1,61 @@
+brand_aliases:
+  API:
+    - API
+  THERMO:
+    - THERMO
+    - TE
+    - 热电
+
+device_identity:
+  history_days: 90
+  short_history_days: 30
+  history_limit: 5000
+  previous_same_device_limit: 2
+  enabled_order_types:
+    - Check
+    - SupCheck
+  enabled_maintenance_types:
+    - Week
+    - TwoWeek
+    - Month
+    - Quarter
+    - HalfYear
+    - Year
+  identity_fields:
+    - key: brand
+      label: 品牌
+      severity: 中
+    - key: model
+      label: 型号
+      severity: 中
+    - key: device_code
+      label: 设备编号
+      severity: 高
+  rf_identity_fields:
+    brand:
+      - DEVICEBRAND
+      - BRAND
+    model:
+      - DEVICEMODEL
+      - MODEL
+    device_code:
+      - DEVICECODE
+      - DEVICECODEN
+      - DEVICECODE_NEW
+  base_device_fields:
+    brand:
+      - DEVICEBRAND
+    model:
+      - DEVICEMODEL
+    device_code:
+      - DEVICECODE
+  replacement_tables:
+    - RF_Y_DEVICECHANGE
+    - RF_Y_DEVICEREPAIR
+  replacement_keywords:
+    - 更换
+    - 替换
+    - 维修
+    - 报废
+    - 停用
+    - 启用

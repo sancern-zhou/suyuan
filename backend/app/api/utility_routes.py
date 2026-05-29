@@ -5,6 +5,7 @@ Utility 工具 API 路由
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pathlib import Path
+from urllib.parse import unquote
 import structlog
 
 logger = structlog.get_logger()
@@ -30,7 +31,14 @@ async def download_file(file_path: str):
         文件内容作为 FileResponse
     """
     try:
-        path = Path(file_path)
+        decoded_path = unquote(file_path)
+        path = Path(decoded_path)
+
+        # 兼容前端/工具把绝对路径编码后丢失首个斜杠的情况
+        if not path.is_absolute():
+            absolute_candidate = Path("/") / decoded_path.lstrip("/")
+            if absolute_candidate.exists():
+                path = absolute_candidate
 
         # 安全检查：防止路径穿越攻击
         if not path.exists():

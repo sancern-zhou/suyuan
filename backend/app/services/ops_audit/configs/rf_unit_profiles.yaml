@@ -1,0 +1,64 @@
+# RF unit and value-scale profiles for operations work order audits.
+
+tables:
+  RF_M_GASEOUSFLOWCHECK:
+    checks:
+      - id: monthly_so2_flow
+        label: SO2 月度气态流量
+        unit_field: FLOWRANGSO2
+        value_fields: [DISPLAYVALUESO2, MEASUREDVALUESO2]
+        allowed_units: [L/min, ml/min]
+        unit_scales:
+          L/min: {min: 0, max: 5}
+          ml/min: {min: 0, max: 5000}
+      - id: monthly_no2_flow
+        label: NO2 月度气态流量
+        unit_field: FLOWRANGNO2
+        value_fields: [DISPLAYVALUENO2, MEASUREDVALUENO2]
+        allowed_units: [L/min, ml/min]
+        unit_scales:
+          L/min: {min: 0, max: 5}
+          ml/min: {min: 0, max: 5000}
+      - id: monthly_co_flow
+        label: CO 月度气态流量
+        unit_field: FLOWRANGCO
+        value_fields: [DISPLAYVALUECO, MEASUREDVALUECO]
+        allowed_units: [L/min, ml/min]
+        unit_scales:
+          L/min: {min: 0, max: 5}
+          ml/min: {min: 0, max: 5000}
+      - id: monthly_o3_flow
+        label: O3 月度气态流量
+        unit_field: FLOWRANGO3
+        value_fields: [DISPLAYVALUEO3, MEASUREDVALUEO3]
+        allowed_units: [L/min, ml/min]
+        unit_scales:
+          L/min: {min: 0, max: 5}
+          ml/min: {min: 0, max: 5000}
+
+  RF_TW_PmFlowCheck:
+    checks:
+      - id: tw_pm_main_flow
+        label: 两周颗粒物主流量
+        fixed_unit: L/min
+        value_fields: [MainFlowTarget, MainFlowRefer, MainFlowReal, MainFlowFixed]
+        allowed_units: [L/min]
+        unit_scales:
+          L/min: {min: 0, max: 30}
+      - id: tw_pm_refer_flow
+        label: 两周颗粒物参比流量
+        fixed_unit: L/min
+        value_fields: [ReferFlowTarget, ReferFlowRefer, ReferFlowReal, ReferFlowFixed]
+        allowed_units: [L/min]
+        unit_scales:
+          L/min: {min: 0, max: 30}
+
+  RF_TW_PmFlowCalibrate:
+    checks:
+      - id: tw_pm_calibrate_before_after
+        label: 颗粒物流量校准前后流量
+        fixed_unit: L/min
+        value_fields: [Prev_A, Prev_B, Next_A, Next_B]
+        allowed_units: [L/min]
+        unit_scales:
+          L/min: {min: 0, max: 30}

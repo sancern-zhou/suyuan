@@ -1,0 +1,8 @@
+audit_window:
+  anchor_weekday: Wednesday
+  created_start_offset_days: 14
+  created_end_offset_days: 7
+  order_statuses:
+    - Finish
+  timezone: Asia/Shanghai
+  include_auto_finish_risk: true

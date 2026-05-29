@@ -27,6 +27,7 @@ Word XML 三种模式：
 import os
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
@@ -50,9 +51,9 @@ class ReadFileTool(LLMTool):
     - 自动检测文件类型和大小
     """
 
-    # 支持的图片格式
+    # 支持的图片格式（SVG 作为文本/XML 读取，避免交给视觉模型）
     IMAGE_EXTENSIONS = {
-        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'
     }
 
     # 支持的 PDF 格式
@@ -881,7 +882,7 @@ class ReadFileTool(LLMTool):
 
                 result_data["pdf_preview"] = {
                     "pdf_id": f"{uuid.uuid4()}",
-                    "pdf_url": f"/api/file/{str(file_path)}",
+                    "pdf_url": f"/api/file/{quote(str(file_path), safe='')}",
                     "pages": pages,
                     "size": file_path.stat().st_size
                 }

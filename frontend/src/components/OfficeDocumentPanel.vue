@@ -202,6 +202,30 @@
         </div>
       </div>
     </template>
+
+    <transition name="share-toast">
+      <div
+        v-if="shareToast.visible"
+        class="share-toast"
+        :class="shareToast.type"
+        role="status"
+        aria-live="polite"
+      >
+        <div class="share-toast-indicator" aria-hidden="true"></div>
+        <div class="share-toast-content">
+          <div class="share-toast-title">{{ shareToast.title }}</div>
+          <div v-if="shareToast.message" class="share-toast-message">{{ shareToast.message }}</div>
+          <div v-if="shareToast.link" class="share-toast-link" :title="shareToast.link">
+            {{ shareToast.link }}
+          </div>
+          <div v-if="shareToast.link" class="share-toast-actions">
+            <button type="button" @click="copyShareToastLink">复制链接</button>
+            <a :href="shareToast.link" target="_blank" rel="noopener noreferrer">打开</a>
+          </div>
+        </div>
+        <button type="button" class="share-toast-close" @click="hideShareToast" aria-label="关闭提示">x</button>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -232,6 +256,14 @@ const showDownloadMenu = ref(false)
 const officeDocuments = ref([])
 const editHistory = ref([])
 const refreshTimeouts = ref(new Map())
+const shareToast = ref({
+  visible: false,
+  type: 'success',
+  title: '',
+  message: '',
+  link: ''
+})
+let shareToastTimer = null
 
 // 点击外部关闭下载菜单
 function handleClickOutside(event) {
@@ -250,6 +282,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (shareToastTimer) {
+    clearTimeout(shareToastTimer)
+  }
 })
 
 const hasOfficeDocuments = computed(() => {
@@ -922,11 +957,89 @@ async function copyTextToClipboard(text) {
   document.body.removeChild(textarea)
 }
 
+function showShareToast({ type = 'success', title, message = '', link = '', duration = 5200 }) {
+  if (shareToastTimer) {
+    clearTimeout(shareToastTimer)
+  }
+
+  shareToast.value = {
+    visible: true,
+    type,
+    title,
+    message,
+    link
+  }
+
+  if (duration > 0) {
+    shareToastTimer = setTimeout(() => {
+      hideShareToast()
+    }, duration)
+  }
+}
+
+function hideShareToast() {
+  if (shareToastTimer) {
+    clearTimeout(shareToastTimer)
+    shareToastTimer = null
+  }
+  shareToast.value.visible = false
+}
+
+async function showGeneratedShareLink(shareLink) {
+  try {
+    await copyTextToClipboard(shareLink)
+    showShareToast({
+      type: 'success',
+      title: '分享链接已生成',
+      message: '链接已自动复制到剪贴板。',
+      link: shareLink
+    })
+  } catch (error) {
+    console.warn('[OfficeDocumentPanel] 分享链接复制失败:', error)
+    showShareToast({
+      type: 'warning',
+      title: '分享链接已生成',
+      message: '自动复制失败，可在这里手动复制。',
+      link: shareLink,
+      duration: 0
+    })
+  }
+}
+
+async function copyShareToastLink() {
+  if (!shareToast.value.link) {
+    return
+  }
+
+  try {
+    await copyTextToClipboard(shareToast.value.link)
+    showShareToast({
+      type: 'success',
+      title: '链接已复制',
+      message: '分享链接已复制到剪贴板。',
+      link: shareToast.value.link
+    })
+  } catch (error) {
+    console.warn('[OfficeDocumentPanel] 手动复制分享链接失败:', error)
+    showShareToast({
+      type: 'warning',
+      title: '复制失败',
+      message: '请选中链接后手动复制。',
+      link: shareToast.value.link,
+      duration: 0
+    })
+  }
+}
+
 // 处理Quarto报告分享
 async function handleReportShare(doc) {
   const reportId = getReportId(doc)
   if (!reportId) {
-    alert('无法分享：缺少报告ID')
+    showShareToast({
+      type: 'error',
+      title: '无法分享',
+      message: '缺少报告ID。'
+    })
     return
   }
 
@@ -943,11 +1056,14 @@ async function handleReportShare(doc) {
     }
 
     const shareLink = `${window.location.origin}${result.share_url}`
-    await copyTextToClipboard(shareLink)
-    alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
+    await showGeneratedShareLink(shareLink)
   } catch (error) {
     console.error('[OfficeDocumentPanel] 生成报告分享链接失败:', error)
-    alert('❌ 生成分享链接失败：' + error.message)
+    showShareToast({
+      type: 'error',
+      title: '生成分享链接失败',
+      message: error.message
+    })
   } finally {
     doc.sharing = false
   }
@@ -957,7 +1073,11 @@ async function handleReportShare(doc) {
 async function handleHtmlArtifactShare(doc) {
   const artifactId = getHtmlArtifactId(doc)
   if (!artifactId) {
-    alert('无法分享：缺少HTML展示页ID')
+    showShareToast({
+      type: 'error',
+      title: '无法分享',
+      message: '缺少HTML展示页ID。'
+    })
     return
   }
 
@@ -974,11 +1094,14 @@ async function handleHtmlArtifactShare(doc) {
     }
 
     const shareLink = `${window.location.origin}${result.share_url}`
-    await copyTextToClipboard(shareLink)
-    alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
+    await showGeneratedShareLink(shareLink)
   } catch (error) {
     console.error('[OfficeDocumentPanel] 生成HTML展示页分享链接失败:', error)
-    alert('❌ 生成分享链接失败：' + error.message)
+    showShareToast({
+      type: 'error',
+      title: '生成分享链接失败',
+      message: error.message
+    })
   } finally {
     doc.sharing = false
   }
@@ -987,7 +1110,11 @@ async function handleHtmlArtifactShare(doc) {
 // 处理Notebook分享
 async function handleNotebookShare(doc) {
   if (!doc.file_path) {
-    alert('无法分享：缺少Notebook文件路径')
+    showShareToast({
+      type: 'error',
+      title: '无法分享',
+      message: '缺少Notebook文件路径。'
+    })
     return
   }
 
@@ -1011,23 +1138,22 @@ async function handleNotebookShare(doc) {
     const result = await response.json()
 
     if (result.success) {
-      // 显示分享链接
       const shareLink = result.data.share_link
-      const userCopy = confirm(`分享链接已生成：\n\n${shareLink}\n\n点击"确定"复制链接到剪贴板`)
-
-      if (userCopy) {
-        copyTextToClipboard(shareLink).then(() => {
-          alert('✅ 链接已复制到剪贴板！')
-        }).catch(() => {
-          alert('链接已生成，但复制失败，请手动复制：\n' + shareLink)
-        })
-      }
+      await showGeneratedShareLink(shareLink)
     } else {
-      alert('❌ 生成分享链接失败：' + (result.summary || '未知错误'))
+      showShareToast({
+        type: 'error',
+        title: '生成分享链接失败',
+        message: result.summary || '未知错误'
+      })
     }
   } catch (error) {
     console.error('[OfficeDocumentPanel] 生成分享链接失败:', error)
-    alert('❌ 生成分享链接失败：' + error.message)
+    showShareToast({
+      type: 'error',
+      title: '生成分享链接失败',
+      message: error.message
+    })
   } finally {
     doc.sharing = false
   }
@@ -1051,6 +1177,7 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .doc-list {
@@ -1426,4 +1553,115 @@ defineExpose({
 
 .empty-title { font-size: 15px; font-weight: 500; color: #526173; margin: 0; }
 .empty-tip { font-size: 13px; margin: 0; line-height: 1.6; color: #8a96a8; }
+
+.share-toast {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 120;
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  gap: 12px;
+  width: min(420px, calc(100% - 24px));
+  padding: 12px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 38px rgba(31, 45, 68, 0.18);
+  color: #243044;
+}
+
+.share-toast.success .share-toast-indicator { background: #19a06b; }
+.share-toast.warning .share-toast-indicator { background: #d08a00; }
+.share-toast.error .share-toast-indicator { background: #d14343; }
+
+.share-toast-indicator {
+  width: 4px;
+  border-radius: 999px;
+}
+
+.share-toast-content {
+  min-width: 0;
+}
+
+.share-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.share-toast-message {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5e6b7c;
+}
+
+.share-toast-link {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid #e3e8f2;
+  border-radius: 6px;
+  background: #f7f9fc;
+  color: #2c5f9e;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-toast-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.share-toast-actions button,
+.share-toast-actions a,
+.share-toast-close {
+  border: 1px solid #d8deea;
+  background: #fff;
+  color: #526173;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.share-toast-actions button,
+.share-toast-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-decoration: none;
+}
+
+.share-toast-actions button:hover,
+.share-toast-actions a:hover,
+.share-toast-close:hover {
+  color: #1976d2;
+  border-color: #90caf9;
+  background: #f8fbff;
+}
+
+.share-toast-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  line-height: 1;
+}
+
+.share-toast-enter-active,
+.share-toast-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.share-toast-enter-from,
+.share-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
 </style>

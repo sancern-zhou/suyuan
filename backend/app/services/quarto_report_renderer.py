@@ -20,6 +20,7 @@ import structlog
 
 from app.services.report.government_docx_style import (
     ensure_government_reference_docx,
+    finalize_government_docx,
     normalize_docx_image_paragraphs,
 )
 from app.utils.path_config import get_images_dir, get_reports_dir
@@ -198,18 +199,8 @@ class QuartoReportRenderer:
             docx_path = report_dir / "report.docx"
             image_cleanup = normalize_docx_image_paragraphs(docx_path)
             logger.info("quarto_docx_image_paragraphs_normalized", **image_cleanup)
-
-            # Check if images were actually embedded
-            from zipfile import ZipFile
-            with ZipFile(docx_path) as zf:
-                media_files = [n for n in zf.namelist() if 'media/' in n]
-                if not media_files:
-                    logger.warning("quarto_docx_no_images_embedded",
-                                 docx_path=str(docx_path),
-                                 fallback="using_html_conversion")
-                    # Fallback: convert from HTML if images are missing
-                    return self._render_docx_from_html_fallback(report_dir)
-
+            style_cleanup = finalize_government_docx(docx_path)
+            logger.info("quarto_docx_government_style_finalized", **style_cleanup)
             return docx_path
         except Exception as exc:
             logger.error("quarto_docx_render_failed", error=str(exc), fallback="using_html_conversion")

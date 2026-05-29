@@ -1,0 +1,55 @@
+# RF multipoint calibration hard checks.
+
+tables:
+  RF_Q_GASEOUSMULTIPOINT_CO:
+    pollutant: CO
+    expected_range: 20000
+    tolerance: 1
+    range_fields:
+      - RANGE
+      - RANG
+      - MEASURERANGE
+      - FULLSCALE
+      - RANGEVALUE
+      - DEVICE_RANGE
+      - DEVICERANGE
+      - CALIBRATIONRANGE
+  RF_Q_GASEOUSMULTIPOINT_NO2:
+    pollutant: NO2
+    expected_range: 500
+    tolerance: 1
+    range_fields:
+      - RANGE
+      - RANG
+      - MEASURERANGE
+      - FULLSCALE
+      - RANGEVALUE
+      - DEVICE_RANGE
+      - DEVICERANGE
+      - CALIBRATIONRANGE
+  RF_Q_GASEOUSMULTIPOINT_O3:
+    pollutant: O3
+    expected_range: 500
+    tolerance: 1
+    range_fields:
+      - RANGE
+      - RANG
+      - MEASURERANGE
+      - FULLSCALE
+      - RANGEVALUE
+      - DEVICE_RANGE
+      - DEVICERANGE
+      - CALIBRATIONRANGE
+  RF_Q_GASEOUSMULTIPOINT_SO2:
+    pollutant: SO2
+    expected_range: 500
+    tolerance: 1
+    range_fields:
+      - RANGE
+      - RANG
+      - MEASURERANGE
+      - FULLSCALE
+      - RANGEVALUE
+      - DEVICE_RANGE
+      - DEVICERANGE
+      - CALIBRATIONRANGE
