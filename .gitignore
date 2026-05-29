@@ -147,6 +147,7 @@ temp_images/
 test_results/
 tmp/
 tmpnumpy_wheels/
+.worktrees/
 __pycache__/
 D:tmp/
 
