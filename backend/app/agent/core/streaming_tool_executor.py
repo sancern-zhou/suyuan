@@ -177,7 +177,7 @@ class StreamingToolExecutor:
             return
 
         guarded = self.loop_guard.before_call(tool_name, tool_input) if self.loop_guard else None
-        if guarded:
+        if guarded and guarded.get("severity") == "block":
             execution = ToolExecution(
                 tool_use_id=tool_use_id,
                 tool_name=tool_name,
@@ -194,6 +194,14 @@ class StreamingToolExecutor:
                 total_executions=len(self._executions),
             )
             return
+        if guarded:
+            logger.warning(
+                "streaming_tool_loop_guard_warning",
+                tool_name=tool_name,
+                tool_use_id=tool_use_id[:12],
+                summary=guarded.get("summary") if isinstance(guarded, dict) else None,
+                total_executions=len(self._executions),
+            )
 
         # ⚠️ 检测并发 call_sub_agent 调用，强制 session 隔离
         if tool_name == "call_sub_agent":

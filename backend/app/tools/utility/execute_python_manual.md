@@ -7,13 +7,41 @@
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
 - 图表生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。
-- 文档生成：`python-docx`。
-- HTML 报告生成：优先使用自动注入的 `save_html_report(report_id, html_content, assets_dir=None)`。
+- 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
+- HTML 展示资源准备：可生成 CSS/JS/图片等资源，但最终展示页应交给 `create_html_artifact` 收口。
+- 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd/HTML 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
 
-## DOCX 政府报告默认格式
+## 正式报告边界
 
-生成正式报告 DOCX 时，默认使用公共样式工具，避免每次由模型重新决定字体和段落格式：
+正式报告不要通过 `execute_python` 直接交付 DOCX/HTML，也不要在 Python 脚本中手写格式转换流程。
+
+标准流程：
+
+1. 用查询工具和 `execute_python` 完成计算、制图、表格整理。
+2. 准备 `report.qmd` 内容，图片最终使用报告包内相对路径，例如 `assets/charts/chart_01.png`。
+   不要根据 `/api/image/{image_id}` 或缓存 id 推断这个路径；应把真实图片文件路径传给
+   `create_report_package.assets`，必要时用 `name` 指定 `chart_01.png`，由报告包工具复制并规范化引用。
+3. 调用 `create_report_package` 保存为 `reports/{report_id}/report.qmd` 并触发右侧面板 HTML 预览。
+4. 用户在右侧面板点击下载 QMD/Word，或点击分享生成报告预览链接。展示型 HTML 使用正式工具 `create_html_artifact`。
+
+`save_html_report(report_id, html_content, assets_dir=None)` 仅作为轻量 HTML 或历史兼容流程使用，不是正式报告的优先入口。
+
+## HTML 展示路径
+
+演讲材料、数据大屏、交互式说明页、网页、可视化叙事等非正式报告，使用 `create_html_artifact` 收口。
+
+标准流程：
+
+1. 用 `execute_python` 生成图表图片、数据 JSON、静态资源或 HTML 片段。
+2. 调用 `create_html_artifact`，传入完整 HTML 和资源路径。
+3. 右侧面板显示 HTML 预览，用户可下载 HTML 或点击分享生成链接。
+
+HTML 展示页不承诺 Word/QMD 同源导出；用户需要正式报告时回到 `create_report_package`。
+
+## 一次性 DOCX 兼容格式
+
+只有用户明确要求一次性 Word 文件，且不需要 qmd/HTML 同源报告包时，才直接使用 `python-docx`。此时默认使用公共样式工具，避免每次由模型重新决定字体和段落格式。
 
 ```python
 from docx import Document
@@ -23,6 +51,8 @@ from app.services.report.government_docx_style import (
     add_government_heading,
     add_government_paragraph,
     add_government_table,
+    add_government_image,
+    resolve_report_image_path,
 )
 
 doc = Document()
@@ -36,11 +66,39 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/report.docx")
 
 默认规范：标题小标宋/宋体 fallback、二号居中；正文仿宋三号、首行缩进2字符、固定28磅行距；一级标题黑体三号，二级标题楷体三号，三级标题仿宋加粗三号；页边距上3.7cm、下3.5cm、左右2.8cm。用户明确要求其他格式时，在默认样式基础上局部覆盖。
 
+### DOCX 图片嵌入
+
+正式报告的 Word 导出由报告 API 处理，一般不需要手写图片嵌入逻辑。只有在直接用 `python-docx` 从零生成一次性 Word 文件时，才需要显式调用图片工具：
+
+```python
+from pathlib import Path
+from bs4 import BeautifulSoup
+from docx import Document
+from app.services.report.government_docx_style import (
+    apply_government_report_style,
+    add_government_image,
+    resolve_report_image_path,
+)
+
+html_path = Path("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.html")
+soup = BeautifulSoup(html_path.read_text(encoding="utf-8"), "html.parser")
+
+doc = Document()
+apply_government_report_style(doc)
+for img in soup.find_all("img"):
+    image_path = resolve_report_image_path(img.get("src", ""), html_path.parent)
+    if image_path:
+        caption = img.get("alt") or ""
+        add_government_image(doc, image_path, caption=caption)
+
+doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.docx")
+```
+
 ## 文件路径
 
 - 生成文件必须保存到项目可访问目录，优先使用 `/home/xckj/suyuan/backend/backend_data_registry/`。
 - 禁止保存到 `/home/xckj/suyuan/backend_data_registry/`，该目录在仓库根目录下，前端下载和后端文件管理不会以它作为标准输出目录。
-- 代码中打印保存路径，便于前端和后续工具定位。
+- 代码中打印中间资源保存路径，便于后续工具传给 `create_report_package`。
 - 工具会检测 `/home/xckj/suyuan/backend/backend_data_registry/` 中新增文件。
 
 ## 输出产物 Schema
@@ -48,28 +106,23 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/report.docx")
 - `files`：本次生成的本地文件绝对路径列表。
 - `file_path`：主文件路径，用于预览或下载。
 - `pdf_preview`：Office/PDF 文件预览信息，适用于 `.docx/.xlsx/.pptx/.pdf`。
-- `html_preview`：HTML 预览信息；Notebook 使用 `/api/notebook/html/{html_id}`，HTML 报告使用 `/api/reports/{report_id}/html`。
+- `html_preview`：HTML 预览信息；Notebook 使用 `/api/notebook/html/{html_id}`。正式报告的 HTML 预览应由 `create_report_package` 返回。
 - `visuals`：图片或 ECharts 可视化块；`matplotlib` 图片会缓存为 `/api/image/{image_id}`。
 
-HTML 报告必须使用标准报告包结构：
+正式报告必须使用标准报告包结构：
 
 ```text
-/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}/report.html
+/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}/report.qmd
 ```
 
-不要直接写成：
+不要直接写成根目录文件或绕过报告包：
 
 ```text
+/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}.qmd
 /home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}.html
 ```
 
-推荐写法：
-
-```python
-html = "<!doctype html><html><body><h1>报告</h1></body></html>"
-result = save_html_report("my_report", html)
-print(result["html_preview"]["html_url"])
-```
+生成正式报告时，调用 `create_report_package`，不要把本地绝对路径作为最终交付方式。
 
 ## matplotlib 中文和化学式
 
@@ -96,6 +149,40 @@ ax.set_ylabel(r"PM$_{2.5}$ ($\mu$g/m$^3$)", fontproperties=chinese_font)
 
 常用写法：`O$_3$`、`NO$_2$`、`SO$_2$`、`PM$_{2.5}$`、`PM$_{10}$`。
 
+## 政府报告图表默认排版
+
+- `execute_python` 会自动注入这套默认模板，常规 `plt.subplots()` 会直接继承更大的画布、字号、网格和导出分辨率。
+- 如需进一步收紧某张图，可显式调用 `apply_government_report_style(fig, ax)`。
+- `figsize` 建议从 `10x6` 起步，复杂图表可到 `12x7`。
+- `savefig(dpi=200)` 或更高，避免导出后文字发虚。
+- 标题字号建议 `14-18`，轴标签 `12-14`，刻度 `10-12`，图例 `10-12`。
+- 如果同一张图的类别很多，优先旋转 x 轴标签、缩短标签、拆分为横向条形图，而不是继续缩小字体。
+- 图表要兼顾印刷和屏幕展示，默认不要把字号压到 10 以下。
+- 对长标题、长图例、密集类别，优先使用 `tight_layout()` 或 `constrained_layout=True`。
+
+```python
+fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+ax.set_title('图表标题', fontsize=16)
+ax.set_xlabel('横轴', fontsize=13)
+ax.set_ylabel('纵轴', fontsize=13)
+ax.tick_params(axis='both', labelsize=11)
+ax.legend(fontsize=11)
+save_chart(fig, 'report_chart.png', dpi=200)
+```
+
+如果需要二次收紧：
+```python
+apply_government_report_style(fig, ax)
+```
+
+## 图表组织规则
+
+- 默认一张图片只表达一个核心图表或一个分析问题。
+- 除非用户明确要求“多子图”“组合图”“仪表盘”“一页多图对比”，不要在单个 Figure 中使用 `subplot`、`subplots` 或多个 `Axes` 拼接多个图表。
+- 同一数据源可以支持多个分析视角，但应先选择与用户问题最相关的一张图。
+- 确需多个独立图表时，分别保存为多个图片文件，例如 `trend_pm25.png`、`ranking_city.png`，不要合并进单张图片。
+- 单个坐标轴中的多条折线、多组柱或多系列散点用于对比是允许的；这属于一个图表，不属于多图拼接。
+
 ## Excel 规则
 
 - 修改现有 Excel 时优先用 `openpyxl`，避免 `pandas.to_excel()` 覆盖导致图表和格式丢失。
@@ -110,7 +197,7 @@ ax.set_ylabel(r"PM$_{2.5}$ ($\mu$g/m$^3$)", fontproperties=chinese_font)
 - 使用变量前检查 `None`。
 - 超时默认 30 秒，复杂任务应拆分或提高 `timeout`。
 
-## 最小示例
+## 一次性 DOCX 最小示例
 
 ```python
 from docx import Document

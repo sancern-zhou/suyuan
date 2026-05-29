@@ -3,7 +3,12 @@
  * 处理会话的创建、恢复、清理等操作
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { restoreSession, getSessionMessages } from '@/api/session'
+import {
+  restoreSession,
+  getSessionMessages,
+  getSessionVisualizations,
+  getSessionOfficeDocuments
+} from '@/api/session'
 
 export function useSessionManagement(store) {
   // ========== 状态 ==========
@@ -13,6 +18,86 @@ export function useSessionManagement(store) {
   const sessionHistoryStats = ref(null)
   let autoRefreshTimer = null
   let refreshInFlight = null
+
+  const runAfterFirstPaint = (callback) => {
+    if (typeof window === 'undefined') {
+      setTimeout(callback, 0)
+      return
+    }
+    const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 0))
+    schedule(callback)
+  }
+
+  const loadLazyArtifacts = async (sessionId, options = {}) => {
+    const {
+      loadVisualizations = true,
+      loadOfficeDocuments = true
+    } = options
+
+    if (!sessionId) return
+
+    console.log('[会话恢复] 开始自动加载延迟资源:', {
+      sessionId,
+      loadVisualizations,
+      loadOfficeDocuments
+    })
+
+    const tasks = []
+
+    if (loadVisualizations && !store.currentState.lazyArtifacts?.visualizationsLoaded) {
+      store.setLazyArtifacts({ loadingVisualizations: true })
+      tasks.push(
+        getSessionVisualizations(sessionId)
+          .then(response => {
+            if (store.currentState.sessionId !== sessionId) return
+            const visualizations = response?.visualizations || []
+            console.log('[会话恢复] 图表延迟加载完成:', visualizations.length)
+            store.setVisualizationHistory(visualizations)
+            store.setLazyArtifacts({
+              hasVisualizations: visualizations.length > 0,
+              visualizationCount: visualizations.length,
+              visualizationsLoaded: true,
+              loadingVisualizations: false
+            })
+          })
+          .catch(error => {
+            console.error('[会话恢复] 延迟加载图表失败:', error)
+            if (store.currentState.sessionId === sessionId) {
+              store.setLazyArtifacts({ loadingVisualizations: false })
+            }
+          })
+      )
+    }
+
+    if (loadOfficeDocuments && !store.currentState.lazyArtifacts?.officeDocumentsLoaded) {
+      store.setLazyArtifacts({ loadingOfficeDocuments: true })
+      tasks.push(
+        getSessionOfficeDocuments(sessionId)
+          .then(response => {
+            if (store.currentState.sessionId !== sessionId) return
+            const officeDocs = response?.office_documents || []
+            console.log('[会话恢复] 文档延迟加载完成:', officeDocs.length)
+            if (officeDocs.length > 0) {
+              store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
+            }
+            store.setLazyArtifacts({
+              hasOfficeDocuments: officeDocs.length > 0,
+              officeDocumentCount: officeDocs.length,
+              officeDocumentsLoaded: true,
+              loadingOfficeDocuments: false
+            })
+          })
+          .catch(error => {
+            console.error('[会话恢复] 延迟加载文档失败:', error)
+            if (store.currentState.sessionId === sessionId) {
+              store.setLazyArtifacts({ loadingOfficeDocuments: false })
+            }
+          })
+      )
+    }
+
+    await Promise.allSettled(tasks)
+  }
 
   const localSessionHistoryData = computed(() => {
     return Object.values(store.sessionStates || {})
@@ -146,7 +231,8 @@ export function useSessionManagement(store) {
   const doRestoreSession = async (sessionId, options = {}) => {
     const {
       messageLimit = 30,
-      restoreOfficeDocs = true
+      restoreOfficeDocs = true,
+      lazyArtifacts = true
     } = options
 
     try {
@@ -156,7 +242,7 @@ export function useSessionManagement(store) {
       }
 
       // 1. 调用恢复API
-      const restoreResult = await restoreSession(sessionId, { messageLimit })
+      const restoreResult = await restoreSession(sessionId, { messageLimit, lazyArtifacts })
 
       if (!restoreResult) {
         return {
@@ -225,8 +311,11 @@ export function useSessionManagement(store) {
       // 2. 提取可视化内容（优先使用 metadata.visualizations）
       let visuals = []
 
-      // 优先从 session.metadata.visualizations 获取完整可视化数据
-      if (sessionData.metadata?.visualizations && Array.isArray(sessionData.metadata.visualizations)) {
+      // lazy 模式下图表由独立接口在首屏消息显示后自动加载
+      if (lazyArtifacts) {
+        visuals = []
+      } else if (sessionData.metadata?.visualizations && Array.isArray(sessionData.metadata.visualizations)) {
+        // 优先从 session.metadata.visualizations 获取完整可视化数据
         visuals = sessionData.metadata.visualizations
 
         // 【修复】补充 tool_result 消息的缺失 data.result.visuals（旧会话兼容）
@@ -265,6 +354,16 @@ export function useSessionManagement(store) {
       store.reset()
       store.setSessionId(sessionId)
       store.setMessages(messages)
+      store.setLazyArtifacts({
+        hasVisualizations: !!sessionData.has_lazy_visualizations,
+        visualizationCount: sessionData.visualization_count || 0,
+        visualizationsLoaded: !lazyArtifacts,
+        loadingVisualizations: false,
+        hasOfficeDocuments: !!sessionData.has_lazy_office_documents,
+        officeDocumentCount: sessionData.office_document_count || 0,
+        officeDocumentsLoaded: !lazyArtifacts,
+        loadingOfficeDocuments: false
+      })
 
       // 设置分页信息
       if (sessionData.has_more_messages !== undefined || sessionData.total_message_count !== undefined) {
@@ -276,11 +375,13 @@ export function useSessionManagement(store) {
         })
       }
 
-      // 无论 visuals 是否为空都要设置，确保清空旧会话的图表数据
-      store.setVisualizationHistory(visuals)
+      if (!lazyArtifacts) {
+        // 无论 visuals 是否为空都要设置，确保清空旧会话的图表数据
+        store.setVisualizationHistory(visuals)
+      }
 
       // 4. 恢复Office文档
-      if (restoreOfficeDocs) {
+      if (restoreOfficeDocs && !lazyArtifacts) {
         let officeDocs = sessionData.office_documents || []
 
         // 如果sessionData中没有，从消息中提取
@@ -296,11 +397,21 @@ export function useSessionManagement(store) {
         }
       }
 
+      if (lazyArtifacts) {
+        console.log('[会话恢复] 首屏消息已恢复，准备调度延迟资源自动加载:', sessionId)
+        runAfterFirstPaint(() => {
+          loadLazyArtifacts(sessionId, {
+            loadVisualizations: true,
+            loadOfficeDocuments: restoreOfficeDocs
+          })
+        })
+      }
+
       return {
         success: true,
         messageCount: messages.length,
-        visualCount: visuals.length,
-        officeDocCount: restoreOfficeDocs ? (sessionData.office_documents || []).length : 0
+        visualCount: lazyArtifacts ? (sessionData.visualization_count || 0) : visuals.length,
+        officeDocCount: lazyArtifacts ? (sessionData.office_document_count || 0) : (restoreOfficeDocs ? (sessionData.office_documents || []).length : 0)
       }
 
     } catch (error) {

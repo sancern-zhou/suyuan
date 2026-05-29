@@ -23,6 +23,7 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social）")
     schedule_type: ScheduleType = Field(..., description="调度类型")
     enabled: bool = Field(default=True, description="是否启用")
     steps: List[TaskStep] = Field(..., description="任务步骤")
@@ -33,6 +34,7 @@ class UpdateTaskRequest(BaseModel):
     """更新任务请求"""
     name: Optional[str] = None
     description: Optional[str] = None
+    execution_mode: Optional[str] = None
     schedule_type: Optional[ScheduleType] = None
     enabled: Optional[bool] = None
     steps: Optional[List[TaskStep]] = None
@@ -80,6 +82,7 @@ async def create_task(request: CreateTaskRequest):
             task_id=task_id,
             name=request.name,
             description=request.description,
+            execution_mode=request.execution_mode,
             schedule_type=request.schedule_type,
             enabled=request.enabled,
             steps=request.steps,
@@ -180,6 +183,8 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
             task.name = request.name
         if request.description is not None:
             task.description = request.description
+        if request.execution_mode is not None:
+            task.execution_mode = request.execution_mode
         if request.schedule_type is not None:
             task.schedule_type = request.schedule_type
         if request.enabled is not None:

@@ -298,6 +298,21 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 
+    try:
+        from app.tools.analysis.ops_work_order_audit.tool import (
+            OpsAuditFetchDatasetTool,
+            OpsAuditInspectTool,
+            OpsAuditRunRulesTool,
+        )
+        registry.register(OpsAuditFetchDatasetTool(), priority=48)
+        logger.info("tool_loaded", tool="ops_audit_fetch_dataset")
+        registry.register(OpsAuditRunRulesTool(), priority=49)
+        logger.info("tool_loaded", tool="ops_audit_run_rules")
+        registry.register(OpsAuditInspectTool(), priority=50)
+        logger.info("tool_loaded", tool="ops_audit_inspect")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
+
     # 5分钟数据查询工具
     try:
         from app.tools.query.get_5min_data.tool import Get5MinDataTool
@@ -454,6 +469,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="generate_map")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="generate_map", error=str(e))
+
+    try:
+        from app.tools.visualization.create_flowchart_artifact.tool import CreateFlowchartArtifactTool
+        registry.register(CreateFlowchartArtifactTool(), priority=211)
+        logger.info("tool_loaded", tool="create_flowchart_artifact")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_flowchart_artifact", error=str(e))
 
     try:
         from app.tools.analysis.smart_chart_generator.tool import SmartChartGenerator
@@ -705,36 +727,43 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="send_notification", error=str(e))
 
     try:
+        from app.tools.social.broadcast.tool import BroadcastSocialUsersTool
+        registry.register(BroadcastSocialUsersTool(), priority=363)
+        logger.info("tool_loaded", tool="broadcast_social_users")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="broadcast_social_users", error=str(e))
+
+    try:
         from app.tools.social.search_history.tool import SearchHistoryTool
-        registry.register(SearchHistoryTool(), priority=363)  # 修复: 704->363
+        registry.register(SearchHistoryTool(), priority=364)  # 修复: 704->364
         logger.info("tool_loaded", tool="search_history")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_history", error=str(e))
 
     try:
         from app.tools.social.session_search.tool import SessionSearchTool
-        registry.register(SessionSearchTool(), priority=364)
+        registry.register(SessionSearchTool(), priority=365)
         logger.info("tool_loaded", tool="session_search")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="session_search", error=str(e))
 
     try:
         from app.tools.social.remember_fact.tool import RememberFactTool
-        registry.register(RememberFactTool(), priority=370)  # 修复: 720->370
+        registry.register(RememberFactTool(), priority=371)  # 修复: 720->371
         logger.info("tool_loaded", tool="remember_fact")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="remember_fact", error=str(e))
 
     try:
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
-        registry.register(ReplaceMemoryTool(), priority=371)  # 修复: 721->371
+        registry.register(ReplaceMemoryTool(), priority=372)  # 修复: 721->372
         logger.info("tool_loaded", tool="replace_memory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="replace_memory", error=str(e))
 
     try:
         from app.tools.social.remove_memory.tool import RemoveMemoryTool
-        registry.register(RemoveMemoryTool(), priority=372)  # 修复: 722->372
+        registry.register(RemoveMemoryTool(), priority=373)  # 修复: 722->373
         logger.info("tool_loaded", tool="remove_memory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="remove_memory", error=str(e))

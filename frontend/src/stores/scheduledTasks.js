@@ -44,6 +44,21 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       }
     },
 
+    async createTask(data) {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+      if (!response.ok) throw new Error('Failed to create task');
+      const task = await response.json();
+      await this.fetchTasks();
+      await this.fetchStats();
+      return task;
+    },
+
     // WebSocket连接
     connectWebSocket() {
       if (this.ws && this.wsConnected) return;

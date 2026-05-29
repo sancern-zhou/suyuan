@@ -217,6 +217,16 @@ class Settings(BaseSettings):
         description="Qwen3 model name"
     )
 
+    # 阿里云OCR配置
+    aliyun_ocr_access_key_id: Optional[str] = Field(
+        default=None,
+        description="Alibaba Cloud OCR AccessKey ID"
+    )
+    aliyun_ocr_access_key_secret: Optional[str] = Field(
+        default=None,
+        description="Alibaba Cloud OCR AccessKey Secret"
+    )
+
     # Redis Configuration
     redis_host: str = Field(default="localhost", description="Redis host")
     redis_port: int = Field(default=6379, description="Redis port")

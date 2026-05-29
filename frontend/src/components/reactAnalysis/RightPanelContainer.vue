@@ -54,7 +54,7 @@
 
       <!-- 可视化面板 -->
       <VisualizationPanel
-        v-show="activeTab === 'visualization'"
+        v-if="activeTab === 'visualization'"
         ref="vizPanelRef"
         key="visualization-panel"
         class="panel-content"
@@ -67,7 +67,7 @@
 
       <!-- Office文档预览面板（包含 PDF/Markdown/Notebook） -->
       <OfficeDocumentPanel
-        v-show="activeTab === 'document'"
+        v-if="activeTab === 'document'"
         ref="officePanelRef"
         key="document-panel"
         class="panel-content"
@@ -78,7 +78,7 @@
 
       <!-- 知识溯源面板 -->
       <KnowledgeSourcePanel
-        v-show="activeTab === 'knowledge'"
+        v-if="activeTab === 'knowledge'"
         ref="knowledgePanelRef"
         key="knowledge-panel"
         class="panel-content"

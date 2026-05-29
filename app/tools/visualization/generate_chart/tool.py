@@ -28,7 +28,7 @@ class GenerateChartTool(LLMTool):
     1. 对原始/临时数据进行灵活可视化
     2. 支持15种图表类型（基础、气象、空间、3D）
     3. 使用模板库或LLM智能生成
-    4. 支持多图表组合输出
+    4. 默认单次生成一个图表配置，避免把多个独立图表拼到同一张图里
 
     与 smart_chart_generator 的区别：
     ┌──────────────────────────────────────────────────────────────┐
@@ -59,7 +59,7 @@ class GenerateChartTool(LLMTool):
     - 如果有data_id（数据已存储） → 使用 smart_chart_generator
     - 如果是PMF/OBM分析结果 → 使用 smart_chart_generator
     - 如果是原始数据快速可视化 → 使用 generate_chart
-    - 如果需要多图组合 → 使用 generate_chart
+    - 如果需要多个独立图表 → 分多次调用 generate_chart，每次只生成一个图表
     """
 
     def __init__(self):
@@ -72,6 +72,7 @@ class GenerateChartTool(LLMTool):
 - 参数简单：只需传入数据 + 指定图表类型
 - 智能回退：模板优先，失败时自动回退到LLM生成
 - 格式统一：输出UDF v2.0格式（含visuals字段）
+- 默认单图：一次调用只生成一个图表配置；除非用户明确要求组合图，不要把多个独立图表合并为一个输出
 
 【重要：标准字段名称】
 生成图表时必须使用以下标准字段名称：
@@ -106,6 +107,7 @@ class GenerateChartTool(LLMTool):
 - 如果是原始数据需要快速可视化 → 使用generate_chart
 - 如果是PMF/OBM分析结果 → 使用smart_chart_generator
 - 如果不确定，优先使用generate_chart（更简单）
+- 图表策略写在工具本体里，避免由 adapter 重复覆写
 
 【支持的15种图表类型】
 

@@ -66,7 +66,7 @@
       </div>
 
       <!-- 空状态 -->
-      <div v-else-if="filteredSessions.length === 0" class="empty-state">
+      <div v-else-if="sessions.length === 0" class="empty-state">
         <span class="empty-icon">📭</span>
         <p>{{ emptyMessage }}</p>
       </div>
@@ -92,7 +92,6 @@ import SessionItem from './SessionItem.vue'
 import {
   listSessions,
   getSessionStats,
-  restoreSession,
   exportSession,
   deleteSession,
   cleanupSessions
@@ -134,19 +133,7 @@ const refreshSessions = async () => {
 }
 
 const handleRestore = async (sessionId) => {
-  try {
-    const response = await restoreSession(sessionId)
-    console.log('会话恢复成功:', response)
-
-    // 通知父组件恢复会话
-    emit('restore', sessionId)
-
-    // 可选：显示成功提示
-    alert(`会话 ${sessionId.substring(0, 12)}... 已恢复`)
-  } catch (error) {
-    console.error('Failed to restore session:', error)
-    alert('会话恢复失败: ' + error.message)
-  }
+  emit('restore', sessionId)
 }
 
 const handleExport = async (sessionId) => {

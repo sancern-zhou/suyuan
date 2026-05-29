@@ -1,0 +1,109 @@
+# RF form range check profiles for operations work order audits
+
+# Expected check value fields by table
+check_value_fields:
+  RF_W_GASEOUSCHECK_CO:
+    - DISPLAYVALUE
+    - MEASUREVALUE
+    - SENSORVALUE
+  RF_W_GASEOUSCHECK_NOX:
+    - DISPLAYVALUE
+    - MEASUREVALUE
+    - SENSORVALUE
+  RF_W_GASEOUSCHECK_O3:
+    - DISPLAYVALUE
+    - MEASUREVALUE
+    - SENSORVALUE
+  RF_W_GASEOUSCHECK_SO2:
+    - DISPLAYVALUE
+    - MEASUREVALUE
+    - SENSORVALUE
+  RF_W_PMCHECK:
+    - PMDISPLAYVALUE
+    - PMMEASUREVALUE
+    - PMSENSORVALUE
+
+# Brand-specific normal ranges (ppm or ug/m3 depending on pollutant)
+brand_ranges:
+  THERMO:
+    CO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO2:
+      min: 0
+      max: 50
+      unit: ppm
+    NOX:
+      min: 0
+      max: 100
+      unit: ppm
+    O3:
+      min: 0
+      max: 50
+      unit: ppm
+    SO2:
+      min: 0
+      max: 50
+      unit: ppm
+  API:
+    CO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO2:
+      min: 0
+      max: 50
+      unit: ppm
+    NOX:
+      min: 0
+      max: 100
+      unit: ppm
+    O3:
+      min: 0
+      max: 50
+      unit: ppm
+    SO2:
+      min: 0
+      max: 50
+      unit: ppm
+
+# Gas type detection by table and field
+gas_type_mapping:
+  RF_W_GASEOUSCHECK_CO:
+    field: POLLUTANTTYPE
+    gas_type: CO
+    aliases: ["一氧化碳"]
+  RF_W_GASEOUSCHECK_NOX:
+    field: POLLUTANTTYPE
+    gas_type: NOX
+    aliases: ["NO", "NO2", "氮氧化物"]
+  RF_W_GASEOUSCHECK_O3:
+    field: POLLUTANTTYPE
+    gas_type: O3
+    aliases: ["臭氧"]
+  RF_W_GASEOUSCHECK_SO2:
+    field: POLLUTANTTYPE
+    gas_type: SO2
+    aliases: ["二氧化硫"]
+
+# Range value fields
+range_value_fields:
+  - RANGEVALUE
+  - RANGE
+  - MEASURERANGE
+  - FULLSCALE
+
+# Range unit fields
+range_unit_fields:
+  - RANGEUNIT
+  - UNIT
+  - MEASUREUNIT

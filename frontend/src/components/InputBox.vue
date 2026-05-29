@@ -152,11 +152,13 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
+import { useReactStore } from '@/stores/reactStore'
 import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
 import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
 
 const kbStore = useKnowledgeBaseStore()
+const reactStore = useReactStore()
 
 const props = defineProps({
   modelValue: {
@@ -202,7 +204,10 @@ const useReranker = ref(props.useReranker)  // 精准检索开关状态
 const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 // ✅ 使用统一的模式键名，与 store.currentMode 保持一致
 const cachedMode = localStorage.getItem('current-mode') || 'assistant'
-const agentMode = ref(validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
+const initialAgentMode = validAgentModes.includes(reactStore.currentMode)
+  ? reactStore.currentMode
+  : (validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
+const agentMode = ref(initialAgentMode)
 const validModelTiers = ['auto', 'flash', 'pro']
 const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
 const draftModelTierKey = 'llm-model-tier:draft'
@@ -251,8 +256,16 @@ const toggleKnowledgeBase = () => {
 }
 
 const handleAgentModeChange = (newMode) => {
+  if (!validAgentModes.includes(newMode)) {
+    console.warn('[InputBox] Invalid agent mode:', newMode)
+    return
+  }
+
   // ✅ 处理Agent模式变化
   agentMode.value = newMode
+  if (reactStore.currentMode !== newMode) {
+    reactStore.switchMode(newMode)
+  }
   emit('update:agentMode', newMode)
   console.log('[InputBox] Agent mode changed:', newMode)
 }
@@ -344,6 +357,16 @@ const selectWorkflowTool = (tool, event) => {
 watch(() => props.modelValue, (newValue) => {
   localValue.value = newValue
 })
+
+watch(
+  () => reactStore.currentMode,
+  (newMode) => {
+    if (validAgentModes.includes(newMode) && agentMode.value !== newMode) {
+      agentMode.value = newMode
+    }
+  },
+  { immediate: true }
+)
 
 watch(localValue, async (newValue) => {
   emit('update:modelValue', newValue)
@@ -451,10 +474,15 @@ const handleSend = () => {
   }))
 
   // 将查询、知识库ID、Agent模式、附件一起发送
+  const activeAgentMode = validAgentModes.includes(reactStore.currentMode)
+    ? reactStore.currentMode
+    : agentMode.value
+  agentMode.value = activeAgentMode
+
   emit('send', {
     query: localValue.value,
     knowledgeBaseIds: knowledgeBaseIds,
-    agentMode: agentMode.value,
+    agentMode: activeAgentMode,
     modelTier: modelTier.value,
     attachments: attachmentsData
   })

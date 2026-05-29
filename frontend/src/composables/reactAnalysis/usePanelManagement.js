@@ -48,7 +48,8 @@ export function usePanelManagement(store = null) {
 
     // 检查是否有可视化图表
     const hasCharts = store.currentState.visualizationHistory?.length > 0 ||
-      store.currentState.currentVisualization?.visuals?.length > 0
+      store.currentState.currentVisualization?.visuals?.length > 0 ||
+      store.currentState.lazyArtifacts?.hasVisualizations
 
     // 检查知识问答检索来源，复用可视化面板展示知识溯源
     const messages = store.messages || store.currentState?.messages || []
@@ -73,6 +74,10 @@ export function usePanelManagement(store = null) {
       return true
     }
 
+    if (store.currentState.lazyArtifacts?.hasOfficeDocuments) {
+      return true
+    }
+
     return store.messages.some(msg => {
       if (msg?.type === 'tool_result' && msg?.data?.result) {
         const metadata = msg.data.result.metadata || {}
@@ -92,7 +97,7 @@ export function usePanelManagement(store = null) {
           return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview)
         }
 
-        return isOfficeTool
+        return isOfficeTool && !!(msg.data.result?.data?.pdf_preview || msg.data.result?.data?.markdown_preview || msg.data.result?.data?.html_preview)
       }
       return false
     })

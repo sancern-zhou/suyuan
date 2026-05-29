@@ -104,6 +104,17 @@ const createEmptyModeState = () => ({
     loadingMore: false
   },
 
+  lazyArtifacts: {
+    hasVisualizations: false,
+    visualizationCount: 0,
+    visualizationsLoaded: false,
+    loadingVisualizations: false,
+    hasOfficeDocuments: false,
+    officeDocumentCount: 0,
+    officeDocumentsLoaded: false,
+    loadingOfficeDocuments: false
+  },
+
   // 流式渲染状态
   streamingAnswerMessageId: null,
   _forceRenderCount: 0,
@@ -135,7 +146,8 @@ export const useReactStore = defineStore('react', {
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
         report: createEmptyModeState(),
-        chart: createEmptyModeState()
+        chart: createEmptyModeState(),
+        ops: createEmptyModeState()
       },
 
       // 同一模式下的多会话状态，key 为完整 sessionId
@@ -304,6 +316,19 @@ export const useReactStore = defineStore('react', {
       return this.extractModeFromSessionId(sessionId) || this.currentMode
     },
 
+    _resolveEventMode(eventData = {}, sessionId = null) {
+      const explicitMode = eventData?.mode
+      if (VALID_MODES.includes(explicitMode)) {
+        return explicitMode
+      }
+
+      if (sessionId && this.sessionStates[sessionId]?.mode && VALID_MODES.includes(this.sessionStates[sessionId].mode)) {
+        return this.sessionStates[sessionId].mode
+      }
+
+      return this.extractModeFromSessionId(sessionId)
+    },
+
     _ensureSessionState(sessionId, mode = null) {
       if (!sessionId) return this.currentState
 
@@ -439,6 +464,7 @@ export const useReactStore = defineStore('react', {
         currentVisualization: modeState.currentVisualization,
         visualizationHistory: modeState.visualizationHistory,
         groupedVisualizations: modeState.groupedVisualizations,
+        lazyArtifacts: modeState.lazyArtifacts,
         results: modeState.results,
         sessionRound: modeState.sessionRound,
         interventionQueue: modeState.interventionQueue,
@@ -696,6 +722,13 @@ export const useReactStore = defineStore('react', {
      */
     setPagination(state) {
       Object.assign(this.currentState.pagination, state)
+    },
+
+    setLazyArtifacts(state) {
+      if (!this.currentState.lazyArtifacts) {
+        this.currentState.lazyArtifacts = createEmptyModeState().lazyArtifacts
+      }
+      Object.assign(this.currentState.lazyArtifacts, state)
     },
 
     /**
@@ -1014,13 +1047,13 @@ export const useReactStore = defineStore('react', {
      */
     getEventTargetState(eventData) {
       const sessionId = eventData?.session_id
+      const eventMode = this._resolveEventMode(eventData, sessionId)
       if (sessionId) {
-        return this._ensureSessionState(sessionId)
+        return this._ensureSessionState(sessionId, eventMode)
       }
-      const eventMode = this.extractModeFromSessionId(sessionId)
 
       if (!eventMode) {
-        // 无法从 sessionId 提取模式，使用当前模式
+        // 无法从事件或 sessionId 提取模式，使用当前模式
         return this.currentState
       }
 
@@ -1047,13 +1080,13 @@ export const useReactStore = defineStore('react', {
       const sessionId = data?.session_id || event?.session_id
       console.log('[handleEvent] sessionId:', sessionId)
 
-      const eventMode = this.extractModeFromSessionId(sessionId)
+      const eventMode = this._resolveEventMode(data, sessionId)
       console.log('[handleEvent] Extracted eventMode:', eventMode)
 
       // 【关键修复】路由逻辑：
-      // 1. 优先使用session_id提取的模式（支持并行任务）
-      // 2. 如果没有session_id，使用currentMode（兼容旧版事件）
-      // 3. 否则使用currentMode作为默认值
+      // 1. 优先使用事件中的 mode
+      // 2. 再使用已知 session 状态或 session_id 前缀
+      // 3. 否则使用 currentMode 作为默认值
       const targetMode = eventMode || this.currentMode
       console.log('[handleEvent] targetMode:', targetMode)
 
@@ -1889,11 +1922,18 @@ export const useReactStore = defineStore('react', {
         return
       }
 
-      // 【修复】确定使用的模式：优先从 sessionId 提取，否则使用 currentMode
-      let actualMode = agentMode
+      const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
+      if (requestedMode !== this.currentMode) {
+        this.switchMode(requestedMode)
+      }
+
+      // 【修复】确定使用的模式：优先尊重本次请求的显式模式，继续已有会话时再使用会话自身记录的模式
+      let actualMode = requestedMode
       let sessionState = this.currentState
       if (sessionState.sessionId) {
-        const sessionMode = this.extractModeFromSessionId(sessionState.sessionId)
+        const sessionMode = VALID_MODES.includes(sessionState.mode)
+          ? sessionState.mode
+          : this.extractModeFromSessionId(sessionState.sessionId)
         if (sessionMode) {
           actualMode = sessionMode
           console.log(`[startAnalysis] sessionId=${sessionState.sessionId}, 提取模式=${sessionMode}, currentMode=${this.currentMode}`)

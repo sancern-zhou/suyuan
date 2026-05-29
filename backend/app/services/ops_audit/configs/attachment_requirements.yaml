@@ -1,0 +1,126 @@
+global_keywords:
+  report:
+    - 报告
+    - 记录
+    - 检查单
+    - 维护单
+    - report
+  certificate:
+    - 证书
+    - 检定
+    - 校准证
+    - 校准
+    - 检定证书
+    - 流量计证书
+    - 流量计
+    - 温湿度测试仪
+    - 气压表
+    - 空盒气压表
+    - sn_
+    - _sn
+    - p300
+    - slpm
+    - dym
+    - certificate
+    - cert
+  curve:
+    - 曲线
+    - 线性
+    - 多点
+    - 校准曲线
+    - 标准曲线
+    - curve
+  photo:
+    - 照片
+    - 图片
+    - 现场
+    - 水印
+    - jpg
+    - jpeg
+    - png
+    - image
+    - photo
+photo_extensions:
+  - .jpg
+  - .jpeg
+  - .png
+  - .bmp
+  - .gif
+  - .webp
+  - .heic
+
+requirements:
+  - id: MONTH_FLOW_CHECK_REPORT
+    name: 月流量检查报告
+    enabled: true
+    order_types: [Check, SupCheck]
+    maintenance_types: [Month]
+    rf_tables:
+      - RF_M_GASEOUSFLOWCHECK
+      - RF_Q_GaseousFlowCheck
+    required_types: [report, certificate]
+    severity: 高
+    suggestion: 补充月流量检查报告和流量计校准/检定证书附件。
+
+  - id: TWOWEEK_PM_FLOW_CHECK_REPORT
+    name: 两周颗粒物流量检查报告
+    enabled: true
+    order_types: [Check, SupCheck]
+    maintenance_types: [TwoWeek]
+    rf_tables:
+      - RF_TW_PmFlowCheck
+      - RF_TW_PmFlowCalibrate
+    required_types: [report, certificate]
+    severity: 高
+    suggestion: 补充颗粒物流量检查报告和流量计校准/检定证书附件。
+
+  - id: MULTIPOINT_CALIBRATION_CURVE
+    name: 多点校准曲线图
+    enabled: true
+    order_types: [Check, SupCheck]
+    maintenance_types: [Quarter, HalfYear, Year]
+    rf_tables:
+      - RF_Q_GASEOUSMULTIPOINT_CO
+      - RF_Q_GASEOUSMULTIPOINT_NO2
+      - RF_Q_GASEOUSMULTIPOINT_O3
+      - RF_Q_GASEOUSMULTIPOINT_SO2
+    required_types: [report, curve]
+    severity: 高
+    suggestion: 补充多点校准报告和曲线图附件。
+
+  - id: PREVENTIVE_MAINTENANCE_REPORT
+    name: 预防性维护报告
+    enabled: true
+    order_types: [Maintain, Check, SupCheck]
+    maintenance_types: [Quarter, HalfYear, Year]
+    rf_tables:
+      - RF_Y_PreventiveMaintenance
+    required_types: [report, photo]
+    severity: 中
+    suggestion: 补充预防性维护报告和现场照片附件。
+
+  - id: MONTH_STATION_MAINTAIN_PHOTOS
+    name: 站点设备维护现场照片
+    enabled: true
+    order_types: [Check, SupCheck]
+    maintenance_types: [Month]
+    rf_tables:
+      - RF_M_STATIONDEVICEMAINTAIN
+      - RF_M_StationMaintainCheck
+      - RF_HY_STATIONDEVICEMAINTAIN
+    required_types: [particle_clock_photo, data_logger_clock_photo, filter_cleaning_photo]
+    severity: 中
+    suggestion: 补充颗粒物仪器时钟检查、数据采集仪时钟检查、过滤网/防尘网清洗对应现场照片，并在文件名中体现照片类型。
+
+  - id: VISIBILITY_CALIBRATION_EVIDENCE
+    name: 能见度校准记录附件
+    enabled: true
+    order_types: [Check, SupCheck]
+    maintenance_types: [HalfYear, Year]
+    rf_tables:
+      - RF_HY_VISIBILITYCALI
+      - Sup_RF_NepheloMeterCalibration
+      - Sup_RF_MonthNepheloMeterCheck
+    required_types: [report, photo]
+    severity: 中
+    suggestion: 补充能见度或散射仪校准记录、设备照片或无设备说明附件。

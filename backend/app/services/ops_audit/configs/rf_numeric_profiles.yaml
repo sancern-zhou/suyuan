@@ -1,0 +1,73 @@
+# RF numeric profiles for range validation and calibration.
+
+unit_whitelist:
+  - ppm
+  - ug/m3
+  - mg/m3
+  - ml/min
+  - L/min
+  - mmHg
+  - "%"
+  - HZ
+  - "℃"
+
+formula_definitions:
+  - id: RF_Q_GASEOUSMULTIPOINT_LINEARITY
+    name: 多点校准线性指标
+    fields:
+      - XL
+      - JU
+      - XGXS
+    description: 斜率、截距和相关系数应完整填报。
+
+brand_ranges:
+  THERMO:
+    CO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO2:
+      min: 0
+      max: 50
+      unit: ppm
+    NOX:
+      min: 0
+      max: 100
+      unit: ppm
+    O3:
+      min: 0
+      max: 50
+      unit: ppm
+    SO2:
+      min: 0
+      max: 50
+      unit: ppm
+  API:
+    CO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO:
+      min: 0
+      max: 50
+      unit: ppm
+    NO2:
+      min: 0
+      max: 50
+      unit: ppm
+    NOX:
+      min: 0
+      max: 100
+      unit: ppm
+    O3:
+      min: 0
+      max: 50
+      unit: ppm
+    SO2:
+      min: 0
+      max: 50
+      unit: ppm

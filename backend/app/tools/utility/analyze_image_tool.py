@@ -42,6 +42,7 @@ class AnalyzeImageTool(LLMTool):
     QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
     QWEN_VL_BASE_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     QWEN_VL_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")
+    QWEN_OCR_MODEL = os.getenv("QWEN_OCR_MODEL", "qwen-vl-ocr-latest")
 
     def __init__(self):
         super().__init__(
@@ -126,10 +127,12 @@ class AnalyzeImageTool(LLMTool):
                 prompt = self._get_default_prompt(operation)
 
             # 5. 调用 Vision API
+            model = self._get_model_for_operation(operation)
             analysis_result = await self._call_vision_api(
                 base64_data=base64_data,
                 file_format=file_ext,
-                prompt=prompt
+                prompt=prompt,
+                model=model
             )
 
             result = {
@@ -148,7 +151,8 @@ class AnalyzeImageTool(LLMTool):
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "analyze_image",
-                    "operation": operation
+                    "operation": operation,
+                    "model": model
                 },
                 "summary": f"✅ 图片分析完成: {file_path.name} ({operation})"
             }
@@ -182,11 +186,18 @@ class AnalyzeImageTool(LLMTool):
         }
         return prompts.get(operation, prompts["analyze"])
 
+    def _get_model_for_operation(self, operation: str) -> str:
+        """根据操作类型选择模型。OCR 使用专用 OCR 模型，其它图片理解任务使用 VL 模型。"""
+        if operation == "ocr":
+            return self.QWEN_OCR_MODEL
+        return self.QWEN_VL_MODEL
+
     async def _call_vision_api(
         self,
         base64_data: str,
         file_format: str,
-        prompt: str
+        prompt: str,
+        model: str
     ) -> str:
         """
         调用通义千问 VL API 分析图片
@@ -212,7 +223,7 @@ class AnalyzeImageTool(LLMTool):
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": self.QWEN_VL_MODEL,
+                        "model": model,
                         "messages": [
                             {
                                 "role": "user",
@@ -238,7 +249,7 @@ class AnalyzeImageTool(LLMTool):
 
                 logger.info(
                     "qwen_vl_analysis_success",
-                    model=self.QWEN_VL_MODEL,
+                    model=model,
                     analysis_length=len(analysis)
                 )
 

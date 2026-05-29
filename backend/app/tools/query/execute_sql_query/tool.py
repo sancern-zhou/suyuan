@@ -52,10 +52,16 @@ MONITORING_SQL_TABLES = [
 
 
 OPS_SQL_TABLES = [
+    # 系统管理
+    'sys_user',
+    'sys_department',
+    'wfl_workflow',
+    'wfl_task',
     # 运维工单与站点设备基础信息
     'working_orders',
     'working_order_details',
     'wo_commonfile_links',
+    'WO_COMMONFILE',
     'base_station',
     'base_station_sup',
     'base_device',
@@ -68,8 +74,15 @@ OPS_SQL_TABLES = [
     'RF_W_GASEOUSCHECK_NOX',
     'RF_W_GASEOUSCHECK_O3',
     'RF_W_GASEOUSCHECK_SO2',
+    'RF_W_GrainCalibrationCheck_PM10',
+    'RF_W_GrainCalibrationCheck_PM25',
+    'RF_W_GrainCalibrationCheckAttach',
+    'RF_W_INSPECTION',
     'RF_W_INSPECTIONSUMMARY',
+    'RF_W_LONGOPTICALPATH',
     'RF_W_OTHERDEVICECHECK',
+    'RF_W_PMCHECK',
+    'RF_W_STANDARD_ALL',
     # 双周表
     'RF_TW_CleanCuttingHead',
     'RF_TW_PmFlowCalibrate',
@@ -106,6 +119,35 @@ OPS_SQL_TABLES = [
     'RF_SEC_INSPECTION',
     'RF_SEC_INSTRUMENTRECORD',
     'RF_SEC_MONITORINGCHECK',
+    'RF_PM1MonitorInspection',
+    'RF_BCMonitorInspection',
+    # 现场检查表
+    'SEC_CHECKSCORE',
+    'SEC_CHECKSCORE_SX',
+    'SEC_CHECKSCORE_SXNEW',
+    # 年度/应急维护表
+    'RF_Y_DEVICECHANGE',
+    'RF_Y_DEVICEREPAIR',
+    'RF_Y_PreventiveMaintenance',
+    # 超站表单
+    'Sup_RF_MonthNepheloMeterCheck',
+    'Sup_RF_NepheloMeterCalibration',
+    # 海盐运维表单
+    'RF_HY_EnvironmentHumidity',
+    'RF_HY_GASEOUSCALIDEVICECHECK',
+    'RF_HY_NOXCONVERSIONRATE',
+    'RF_HY_O3VALUEPASS',
+    'RF_HY_STATIONDEVICEMAINTAIN',
+    'RF_HY_StationMaintainCheck',
+    'RF_HY_VISIBILITYCALI',
+    # 质控校准管理表
+    'qa_appraisalcalibrationlog',
+    'qa_appraisalcalibrationmanagem',
+    'qa_calibrationpass',
+    'qa_ozonecalibration',
+    'qa_ozonetransfer',
+    'qa_standardmateriallog',
+    'qa_standardmaterialstorage',
 ]
 
 
@@ -772,9 +814,15 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "SQL Server语法：中文字符串必须加N前缀，如 N'完成'；分页/限制用TOP，不支持LIMIT。"
             "database默认为AirPollutionAnalysis。"
             "\n\n常用表说明："
+            "\n【系统管理】"
+            "\n- sys_user：用户信息（CREATEUSERID, CURRENTUSERID, PREVUSERID, NEXTUSERID）"
+            "\n- sys_department：部门信息（DEPARTMENTID, FIELDDEPARTMENTID）"
+            "\n- wfl_workflow：工作流程定义（WORKFLOWID）"
+            "\n- wfl_task：任务节点定义（STARTTASKID）"
             "\n【工单与站点设备】"
             "\n- working_orders/working_order_details：运维工单及详情"
             "\n- wo_commonfile_links：工单/运维表单通用附件关联"
+            "\n- WO_COMMONFILE：工单通用文件表"
             "\n- BSD_STATION/base_station/base_station_sup：站点基础信息"
             "\n- base_device：设备基础信息"
             "\n- base_user_station/base_department_station/base_contract_station：用户/部门/合同-站点关联"
@@ -783,8 +831,15 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "\n- RF_W_GASEOUSCHECK_NOX：周检-NOX检查"
             "\n- RF_W_GASEOUSCHECK_O3：周检-O3检查"
             "\n- RF_W_GASEOUSCHECK_SO2：周检-SO2检查"
+            "\n- RF_W_GrainCalibrationCheck_PM10：周检-PM10颗粒物监测仪校准检查"
+            "\n- RF_W_GrainCalibrationCheck_PM25：周检-PM2.5颗粒物监测仪校准检查"
+            "\n- RF_W_GrainCalibrationCheckAttach：颗粒物监测仪校准检查附件"
+            "\n- RF_W_INSPECTION：周检-站点巡检记录"
             "\n- RF_W_INSPECTIONSUMMARY：周检-巡检汇总"
+            "\n- RF_W_LONGOPTICALPATH：周检-长光程分析仪器运行状况检查"
             "\n- RF_W_OTHERDEVICECHECK：周检-其他设备"
+            "\n- RF_W_PMCHECK：周检-PM2.5自动监测分析仪运行状况检查"
+            "\n- RF_W_STANDARD_ALL：周检-流量检查的仪器设备和标准流量"
             "\n【双周表】"
             "\n- RF_TW_CleanCuttingHead：双周-切割头清洗"
             "\n- RF_TW_PmFlowCalibrate：双周-PM流量校准"
@@ -809,10 +864,38 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "\n- RF_Q_PMPRESSURE：PM压力/流量"
             "\n- RF_Q_STATIONDEVICECLEAN：季检-站点设备清洁"
             "\n- RF_Q_StationMaintainCheck：季检-站点维护检查"
+            "\n【年度/应急维护表】"
+            "\n- RF_Y_DEVICECHANGE：年度-备机更换记录"
+            "\n- RF_Y_DEVICEREPAIR：年度-空气自动监测仪器设备检修"
+            "\n- RF_Y_PreventiveMaintenance：年度-预防性维护"
             "\n【现场表】"
             "\n- RF_SEC_INSPECTION：现场巡检"
             "\n- RF_SEC_INSTRUMENTRECORD：仪器记录"
             "\n- RF_SEC_MONITORINGCHECK：监测检查"
+            "\n- RF_PM1MonitorInspection：PM1监测巡检"
+            "\n- RF_BCMonitorInspection：BC监测巡检"
+            "\n- SEC_CHECKSCORE：运维情况现场质控检查评分"
+            "\n- SEC_CHECKSCORE_SX：运维情况现场质控检查评分(山西)"
+            "\n- SEC_CHECKSCORE_SXNEW：运维情况现场质控检查评分(山西新版)"
+            "\n【超站表单】"
+            "\n- Sup_RF_MonthNepheloMeterCheck：超站-浊度计巡检维护记录"
+            "\n- Sup_RF_NepheloMeterCalibration：超站-浊度计零点跨度检查校准"
+            "\n【海盐运维表单】"
+            "\n- RF_HY_EnvironmentHumidity：海盐-环境湿度校准"
+            "\n- RF_HY_GASEOUSCALIDEVICECHECK：海盐-气体校准设备检查"
+            "\n- RF_HY_NOXCONVERSIONRATE：海盐-NOx转化率"
+            "\n- RF_HY_O3VALUEPASS：海盐-O3数值通过"
+            "\n- RF_HY_STATIONDEVICEMAINTAIN：海盐-站点设备维护"
+            "\n- RF_HY_StationMaintainCheck：海盐-站点维护检查"
+            "\n- RF_HY_VISIBILITYCALI：海盐-能见度校准"
+            "\n【质控校准管理表】"
+            "\n- qa_appraisalcalibrationlog：评价校准操作日志"
+            "\n- qa_appraisalcalibrationmanagem：评价校准管理"
+            "\n- qa_calibrationpass：校准通过记录"
+            "\n- qa_ozonecalibration：臭氧校准记录"
+            "\n- qa_ozonetransfer：臭氧传递记录"
+            "\n- qa_standardmateriallog：标准物质日志"
+            "\n- qa_standardmaterialstorage：标准物质库存/存储"
             "\n\n提示：使用describe_table可查看白名单表的完整字段结构。空气质量监测统计请使用execute_sql_query。"
         )
         super().__init__(

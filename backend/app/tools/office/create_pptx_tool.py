@@ -710,8 +710,9 @@ class CreatePptxTool(LLMTool):
                         "type": "object",
                         "description": (
                             "主题配置，推荐字段: primary/secondary/accent/text/muted/bg/surface/line/"
-                            "headFontFace/bodyFontFace，以及spacingPageMargin/spacingBlockGap/radiusCard/"
-                            "fontTitle/fontBody/fontCaption。颜色只使用6位hex，可带或不带#。"
+                            "spacingPageMargin/spacingBlockGap/radiusCard/fontTitle/fontBody/fontCaption。"
+                            "不要传 headFontFace/bodyFontFace；字体由工具按运行环境统一管理。"
+                            "颜色只使用6位hex，可带或不带#。"
                         ),
                     },
                     "design_brief": {

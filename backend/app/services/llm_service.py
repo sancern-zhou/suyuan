@@ -923,11 +923,49 @@ class LLMService:
         }
 
     def _restore_provider_state(self, state: Dict[str, Any]) -> None:
+        current_client = getattr(self, "anthropic_client", None)
+        target_client = state["anthropic_client"]
+        if current_client is not None and current_client is not target_client:
+            self._schedule_anthropic_client_close(current_client)
         self.provider = state["provider"]
         self.base_url = state["base_url"]
         self.api_key = state["api_key"]
         self.model = state["model"]
         self.anthropic_client = state["anthropic_client"]
+
+    def _schedule_anthropic_client_close(self, client: Any) -> None:
+        """Close a temporary Anthropic SDK client without leaking task errors."""
+        close = getattr(client, "close", None)
+        if not callable(close):
+            return
+
+        async def close_client() -> None:
+            try:
+                await close()
+            except RuntimeError as exc:
+                if "handler is closed" in str(exc):
+                    logger.debug("llm_anthropic_client_close_ignored", error=str(exc))
+                    return
+                raise
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        task = loop.create_task(close_client())
+
+        def consume_close_result(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+            except Exception as exc:
+                logger.warning(
+                    "llm_anthropic_client_close_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+
+        task.add_done_callback(consume_close_result)
 
     def _switch_provider_for_attempt(self, provider: str, model: Optional[str] = None) -> None:
         """Switch this service instance to a fallback candidate for one attempt."""
@@ -1773,9 +1811,96 @@ class LLMService:
         Returns:
             解析后的JSON响应
         """
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
+
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_json_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(
+                        "json_response",
+                        lambda: self._call_llm_with_json_response_once(prompt, max_retries=max_retries),
+                    )
+                    if attempts:
+                        logger.warning(
+                            "llm_json_fallback_candidate_succeeded",
+                            provider=self.provider,
+                            model=self.model,
+                            attempts=summarize_attempts(attempts),
+                        )
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_json_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_json_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
+
+    async def _call_llm_with_json_response_once(
+        self,
+        prompt: str,
+        max_retries: int = 2,
+    ) -> Dict[str, Any]:
+        """Call the currently selected provider and parse a JSON object response."""
         import httpx
 
-        # 调试日志：打印 JSON 调用的 prompt 长度与部分内容
         try:
             logger.info(
                 "llm_json_request_debug",
@@ -1815,7 +1940,8 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
+                timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
                     data = response.json()

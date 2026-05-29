@@ -45,6 +45,10 @@ class ScheduledTask(BaseModel):
     task_id: str = Field(..., description="任务ID")
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
+    execution_mode: str = Field(
+        default="expert",
+        description="执行模式（assistant/expert/query/social）"
+    )
 
     # 调度配置
     schedule_type: ScheduleType = Field(..., description="调度类型")
@@ -80,6 +84,7 @@ class ScheduledTask(BaseModel):
                 "task_id": "task_001",
                 "name": "每日O3污染分析",
                 "description": "每天早上8点分析广州昨天的O3污染情况",
+                "execution_mode": "expert",
                 "schedule_type": "daily_8am",
                 "enabled": True,
                 "steps": [

@@ -28,7 +28,7 @@ class GenerateChartTool(LLMTool):
     1. 对原始/临时数据进行灵活可视化
     2. 支持15种图表类型（基础、气象、空间、3D）
     3. 使用模板库或LLM智能生成
-    4. 支持多图表组合输出
+    4. 默认单次生成一个图表配置，避免把多个独立图表拼到同一张图里
 
     与 smart_chart_generator 的区别：
     ┌──────────────────────────────────────────────────────────────┐
@@ -36,7 +36,7 @@ class GenerateChartTool(LLMTool):
     ├──────────────────────────────────────────────────────────────┤
     │ 原始/临时数据（dict/list）           已存储数据（data_id）   │
     │ 高自由度、灵活性强                   固定格式、严格验证      │
-    │ 可一次生成多图                       单图输出                │
+    │ 单次生成一个图表配置                 单图输出                │
     │ 适合探索性分析                       适合标准化分析          │
     │ 15种图表类型全支持                   15种图表类型全支持      │
     │ LLM智能生成 + 模板库                 转换器驱动              │
@@ -47,8 +47,7 @@ class GenerateChartTool(LLMTool):
     1. 原始数据快速可视化：generate_chart(data=[...], scenario="custom", chart_type_hint="pie")
     2. 气象数据分析：generate_chart(data=[{"wind_speed": ..., ...}], chart_type_hint="wind_rose")
     3. 空间数据可视化：generate_chart(data=[{"lng": ..., "lat": ..., ...}], chart_type_hint="map")
-    4. 多图组合生成：generate_chart(data={...}, scenario="vocs_analysis")  # 自动生成饼图+时序图
-    5. 探索性分析：数据格式未知，使用chart_type_hint="auto"让LLM智能推荐
+    4. 探索性分析：数据格式未知时，先判断用户最关心的图表类型再调用
 
     不适用场景：
     - 已存储的PMF结果 → 使用 smart_chart_generator(data_id="pmf_result:...")
@@ -59,7 +58,7 @@ class GenerateChartTool(LLMTool):
     - 如果有data_id（数据已存储） → 使用 smart_chart_generator
     - 如果是PMF/OBM分析结果 → 使用 smart_chart_generator
     - 如果是原始数据快速可视化 → 使用 generate_chart
-    - 如果需要多图组合 → 使用 generate_chart
+    - 如果需要多个独立图表 → 分多次调用 generate_chart，每次只生成一个图表
     """
 
     def __init__(self):
@@ -72,6 +71,7 @@ class GenerateChartTool(LLMTool):
 - 参数简单：只需传入数据 + 指定图表类型
 - 智能回退：模板优先，失败时自动回退到LLM生成
 - 格式统一：输出UDF v2.0格式（含visuals字段）
+- 默认单图：一次调用只生成一个图表配置；除非用户明确要求组合图，不要把多个独立图表合并为一个输出
 
 【重要：标准字段名称】
 生成图表时必须使用以下标准字段名称：
@@ -84,6 +84,7 @@ class GenerateChartTool(LLMTool):
 1. 传入实际数据对象（list/dict格式）
 2. 明确指定图表类型（从15种类型中选择）
 3. 工具自动尝试模板生成，失败时回退到LLM生成
+4. 同一数据源有多个可视角度时，选择最贴合用户问题的一个图表；确需多个图表时分多次调用本工具
 
 【示例】
 - generate_chart(data=[{"name": "A", "value": 10}], chart_type="pie")
@@ -106,6 +107,8 @@ class GenerateChartTool(LLMTool):
 - 如果是原始数据需要快速可视化 → 使用generate_chart
 - 如果是PMF/OBM分析结果 → 使用smart_chart_generator
 - 如果不确定，优先使用generate_chart（更简单）
+- 不要因为同一份数据能支持多个图表，就默认一次性生成饼图、柱状图、折线图等多个视角；用户未要求时只生成最相关的一张图
+- 图表策略写在工具本体里，避免由 adapter 重复覆写
 
 【支持的图表类型】
 
@@ -190,6 +193,7 @@ class GenerateChartTool(LLMTool):
 - chart_type必须明确指定（不支持"auto"）
 - 如果数据已存储，请使用smart_chart_generator工具
 - 工具会自动处理模板和LLM回退，无需手动选择
+- 默认单图输出；多图需求应由用户明确提出，或由上层流程分多次调用
 
 【ECharts模板检索功能】
 如需查找更多ECharts官方示例模板，可使用以下工具：
