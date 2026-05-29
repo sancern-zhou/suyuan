@@ -14,6 +14,7 @@
 
 | 任务类型 | 推荐工具 | 理由 |
 |---------|---------|------|
+| **业务型PPT生成** | `create_pptx_from_deck` | Agent 只写业务结构，代码负责版式和质量 |
 | **基于模板创建PPT** | `create_pptx_from_template` | 保持设计风格，推荐 |
 | 从头创建PPT | `create_pptx` | 无模板时使用 |
 | 读取PPT内容 | `read_pptx` | 了解幻灯片内容 |
@@ -33,6 +34,59 @@ analyze_pptx_template(path="模板.pptx")
 ---
 
 ## 工具详解
+
+### Deck Spec 优先原则
+
+生成正式或业务型 PPT 时，优先使用 `create_pptx_from_deck`，不要让 Agent 直接从零构造低层 PPT 元素。Agent 应输出 `suyuan.deck.v1` 业务结构，由工具转换成 `create_pptx` 可渲染结构，或根据 `template_manifest` 转换为模板物理 slot。
+
+支持的业务 slide 类型：
+
+```text
+cover, toc, section, executive_summary, metric_dashboard, map_insight,
+chart_insight, city_ranking, pollution_process, forecast_warning,
+evidence_table, conclusion_actions
+```
+
+除 `cover`、`toc`、`section` 外，每页必须包含至少一种视觉证据：`visual`、`metrics`、`table`、`chart` 或业务可视化结构。
+
+示例：
+
+```json
+{
+  "deck": {
+    "version": "suyuan.deck.v1",
+    "title": "广东省3月空气质量分析汇报",
+    "audience": "management",
+    "tone": "professional, evidence-led, concise",
+    "slides": [
+      {
+        "id": "s01",
+        "type": "cover",
+        "title": "广东省3月空气质量分析汇报",
+        "subtitle": "污染特征与管控建议"
+      },
+      {
+        "id": "s02",
+        "type": "metric_dashboard",
+        "title": "全省核心指标概览",
+        "metrics": [
+          {"label": "PM2.5均值", "value": 38, "unit": "ug/m3", "tone": "warning"},
+          {"label": "O3最大8小时", "value": 172, "unit": "ug/m3", "tone": "danger"}
+        ]
+      },
+      {
+        "id": "s03",
+        "type": "map_insight",
+        "title": "珠三角北部污染累积明显",
+        "visual": {"kind": "map", "asset": "assets/maps/pm25_map.png"},
+        "insights": ["夜间静稳导致污染累积", "区域传输贡献明显"]
+      }
+    ]
+  },
+  "quality": "standard",
+  "run_validation": true
+}
+```
 
 ### 1. read_pptx - 读取 PPT 内容
 
