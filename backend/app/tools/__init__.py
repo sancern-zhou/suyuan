@@ -667,6 +667,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="validate_pptx", error=str(e))
 
+    try:
+        from app.tools.office.deck.deck_tool import CreatePptxFromDeckTool
+        registry.register(CreatePptxFromDeckTool(), priority=351)
+        logger.info("tool_loaded", tool="create_pptx_from_deck")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_pptx_from_deck", error=str(e))
+
 
     # ========================================
     # Scheduled Tasks Tools（定时任务工具）
