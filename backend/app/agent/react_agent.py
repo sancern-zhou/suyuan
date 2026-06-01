@@ -13,6 +13,7 @@ ReAct Agent - 主类
 
 from typing import Dict, Any, AsyncGenerator, Optional, Tuple, List
 from datetime import datetime, timedelta
+from contextlib import nullcontext
 import uuid
 import structlog
 import asyncio
@@ -235,17 +236,21 @@ class ReActAgent:
                 memory_preview=memory_context[:200] if memory_context else ""
             )
 
+        runtime_attachments = []
+
         # ✅ 如果有附件，添加到查询中（保存到对话历史，确保后续能访问文件）
         if attachments and len(attachments) > 0:
             attachment_info = "\n\n**用户上传的附件**：\n"
             for i, att in enumerate(attachments, 1):
+                normalized_att = dict(att)
                 att_type = att.get("type", "file")
                 att_name = att.get("name", "unknown")
                 att_file_id = att.get("file_id")
                 att_url = att.get("url") or ""
+                att_mime_type = att.get("mime_type") or att.get("content_type")
 
-                # 对于图片和有file_id的附件，优先使用本地文件路径
-                # 因为analyze_image等工具可以直接读取本地文件
+                # 对于图片和有file_id的附件，优先使用本地文件路径。
+                # 社交模式会把本地图片编码为 Anthropic 原生 image block。
                 if att_file_id and (att_type == "image" or not att_url.startswith("/")):
                     try:
                         from app.db.database import async_session
@@ -254,14 +259,23 @@ class ReActAgent:
 
                         async with async_session() as db:
                             result = await db.execute(
-                                select(UploadedFile.file_path).where(UploadedFile.id == att_file_id)
+                                select(UploadedFile.file_path, UploadedFile.mime_type).where(UploadedFile.id == att_file_id)
                             )
-                            path = result.scalar_one_or_none()
-                            if path:
+                            row = result.one_or_none()
+                            if row:
+                                path, mime_type = row
                                 att_url = path
+                                normalized_att["local_path"] = path
+                                if mime_type:
+                                    normalized_att["mime_type"] = mime_type
                                 logger.info("using_local_file_path", file_id=att_file_id, path=path)
                     except Exception as e:
                         logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
+
+                normalized_att["url"] = att_url
+                if att_mime_type:
+                    normalized_att["mime_type"] = att_mime_type
+                runtime_attachments.append(normalized_att)
 
                 if att_type == "image":
                     attachment_info += f"{i}. 图片: {att_name}\n"
@@ -324,6 +338,7 @@ class ReActAgent:
                 enable_reasoning=enable_reasoning,
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
+                attachments=runtime_attachments if manual_mode == "social" else None,
             )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
@@ -401,33 +416,39 @@ class ReActAgent:
                 except Exception as e:
                     logger.warning("failed_to_set_mode_memory_tool_context", mode=manual_mode, memory_tool_mode=memory_tool_mode, error=str(e))
 
-            async for event in react_loop.run(
-                user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
-                enhance_with_history=enhance_with_history,
-                initial_messages=initial_messages,
-                manual_mode=manual_mode
-            ):
-                self._capture_office_document(actual_session_id, event)
-
-                if self._should_run_report_auto_followup(
-                    manual_mode,
-                    event,
-                    user_query,
-                    skip_auto_followup=skip_auto_followup,
+            model_context = (
+                self.planner.llm_service.use_provider_model("minimax", "MiniMax-M3")
+                if manual_mode == "social"
+                else nullcontext()
+            )
+            with model_context:
+                async for event in react_loop.run(
+                    user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
+                    enhance_with_history=enhance_with_history,
+                    initial_messages=initial_messages,
+                    manual_mode=manual_mode
                 ):
-                    logger.info(
-                        "report_auto_followup_pending",
-                        session_id=actual_session_id,
-                        prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
-                    )
-                    event_data = event.setdefault("data", {})
-                    event_data["auto_followup_pending"] = True
-                    event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
-                    event_data["auto_followup_hook_name"] = "report_final_review"
-                    yield event
-                    return
+                    self._capture_office_document(actual_session_id, event)
 
-                yield event
+                    if self._should_run_report_auto_followup(
+                        manual_mode,
+                        event,
+                        user_query,
+                        skip_auto_followup=skip_auto_followup,
+                    ):
+                        logger.info(
+                            "report_auto_followup_pending",
+                            session_id=actual_session_id,
+                            prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
+                        )
+                        event_data = event.setdefault("data", {})
+                        event_data["auto_followup_pending"] = True
+                        event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
+                        event_data["auto_followup_hook_name"] = "report_final_review"
+                        yield event
+                        return
+
+                    yield event
 
         except Exception as e:
             logger.error(
@@ -574,7 +595,7 @@ class ReActAgent:
 
     def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
         """Persist document preview metadata emitted during a run."""
-        if event.get("type") not in {"office_document", "notebook_document"} or not event.get("data"):
+        if event.get("type") not in {"office_document", "html_document"} or not event.get("data"):
             return
 
         office_doc_data = event["data"]

@@ -503,9 +503,11 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="bash", error=str(e))
 
     try:
-        from app.tools.utility.execute_python_tool import ExecutePythonTool
+        from app.tools.utility.execute_python_tool import ExecuteEChartsPythonTool, ExecutePythonTool
         registry.register(ExecutePythonTool(), priority=301)  # 修复: 501->301
         logger.info("tool_loaded", tool="execute_python")
+        registry.register(ExecuteEChartsPythonTool(), priority=301)
+        logger.info("tool_loaded", tool="execute_echarts_python")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_python", error=str(e))
 
@@ -582,22 +584,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="parse_pdf")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
-
-    try:
-        # Notebook 编辑工具（支持专家模式和助手模式）
-        from app.tools.utility.notebook_edit_tool import NotebookEditTool
-        registry.register(NotebookEditTool(), priority=312)  # 修复: 510->312
-        logger.info("tool_loaded", tool="notebook_edit")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="notebook_edit", error=str(e))
-
-    try:
-        # Notebook 分享HTML生成工具
-        from app.tools.utility.generate_shareable_notebook.tool_wrapper import GenerateShareableNotebookTool
-        registry.register(GenerateShareableNotebookTool(), priority=313)  # 修复: 511->313
-        logger.info("tool_loaded", tool="generate_shareable_notebook")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="generate_shareable_notebook", error=str(e))
 
     # ========================================
     # Office Automation Tools（Cross-Platform - Phase 1-4）

@@ -28,6 +28,7 @@ EXCLUDED_RULE_IDS = {
     "LIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE",
     "RF_AUDITOR_EMPTY",
     "RF_REVIEW_EMPTY",
+    "RF_VALUE_FORMULA_MISMATCH",
 }
 
 EXCLUDED_RULE_PREFIXES = ("FLOW_", "LIFECYCLE_")
@@ -60,13 +61,23 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_POLLUTANT_TYPE_MISMATCH",
         "RF_DEVICE_IDENTITY_INCONSISTENT",
         "RF_ENUM_VALUE_INVALID",
+        "RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT",
     }:
         return "一致性问题"
-    if rule in {"RF_CHECK_TIME_OUTSIDE_RANGE", "RF_CALIBRATION_DATE_EXPIRED"}:
+    if rule in {
+        "RF_CHECK_TIME_OUTSIDE_RANGE",
+        "RF_CALIBRATION_DATE_EXPIRED",
+        "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID",
+    }:
+        return "时间合理性问题"
+    if rule in {"RF_Q_MULTIPOINT_STEP_TIME_INVALID"}:
         return "时间合理性问题"
     if rule in {
         "RF_UNIT_MISMATCH",
         "RF_VALUE_FORMULA_MISMATCH",
+        "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH",
+        "RF_PM_PRESSURE_ERROR_MISMATCH",
+        "RF_PM_PRESSURE_UNIT_MISMATCH",
         "RF_FIELD_POSITION_SUSPECT",
         "RF_MULTIPOINT_RANGE_INVALID",
         "RF_RANGE_OUT_OF_SPEC",
@@ -84,8 +95,11 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "REMARK_SEMANTIC_INCOMPLETE",
         "RF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE",
         "RF_PM_TAPE_USAGE_INVALID",
+        "RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT",
     }:
         return "规范性问题"
+    if rule in {"RF_HY_ENV_HUMIDITY_SENSOR_VALUE_MISSING"}:
+        return "完整性问题"
     if "一致性" in current:
         return "一致性问题"
     if "时间" in current or "有效期" in current:

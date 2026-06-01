@@ -41,7 +41,7 @@ class CliSessionTool(LLMTool):
     """Run multi-turn Claude Code or Codex sessions from social mode."""
 
     VALID_PROVIDERS = {"claude", "codex"}
-    VALID_ACTIONS = {"start", "send", "status", "list", "reset"}
+    VALID_ACTIONS = {"start", "send", "status", "list", "reset", "task_status", "task_list", "task_cancel"}
 
     def __init__(self) -> None:
         function_schema = {
@@ -49,6 +49,7 @@ class CliSessionTool(LLMTool):
             "description": (
                 "通过 Claude Code 或 Codex CLI 执行多轮编程/问答任务。"
                 "会话按社交用户和 session_name 持久化，后续 send 会自动恢复同一 CLI 上下文。"
+                "start/send 默认后台执行并立即返回任务ID，不阻塞当前对话。"
                 "适合让外部编程 Agent 修改代码、运行测试、解释工程问题。"
             ),
             "parameters": {
@@ -56,8 +57,8 @@ class CliSessionTool(LLMTool):
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["start", "send", "status", "list", "reset"],
-                        "description": "操作：start/send 发起一轮；status 查看指定会话；list 列出会话；reset 删除会话状态。"
+                        "enum": ["start", "send", "status", "list", "reset", "task_status", "task_list", "task_cancel"],
+                        "description": "操作：start/send 发起一轮；status 查看指定会话；list 列出会话；reset 删除会话状态；task_status/task_list/task_cancel 管理后台CLI任务。"
                     },
                     "provider": {
                         "type": "string",
@@ -113,6 +114,15 @@ class CliSessionTool(LLMTool):
                         "type": "boolean",
                         "description": "是否在成功时也返回 stdout/stderr 摘要。默认 false；失败时会自动返回 stderr/stdout 摘要。",
                         "default": False
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "start/send 时是否后台执行。默认 true，立即返回 task_id；特殊短任务可显式设为 false 使用同步模式。",
+                        "default": True
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "task_status/task_cancel 时指定后台CLI任务ID。"
                     }
                 },
                 "required": ["action"]
@@ -143,6 +153,8 @@ class CliSessionTool(LLMTool):
         approval_policy: str = "never",
         max_output_chars: int = DEFAULT_ANSWER_CHARS,
         include_raw_output: bool = False,
+        background: bool = True,
+        task_id: Optional[str] = None,
         context: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -156,6 +168,52 @@ class CliSessionTool(LLMTool):
             return self._failed(f"不支持的 action: {action}")
 
         user_key = self._get_user_key(context)
+
+        if action in {"task_status", "task_cancel"}:
+            if not task_id:
+                return self._failed(f"action={action} 时必须提供 task_id")
+            manager = self._get_cli_task_manager()
+            if not manager:
+                return self._failed("CliTaskManager未初始化")
+            if action == "task_status":
+                task = await manager.get_task(task_id)
+                if not task:
+                    return self._failed(f"CLI后台任务不存在: {task_id}")
+                if task.get("social_user_id") and task.get("social_user_id") != user_key:
+                    return self._failed(f"CLI后台任务不存在: {task_id}")
+                return {
+                    "status": "success",
+                    "success": True,
+                    "metadata": self._metadata(action=action, task_id=task_id),
+                    "data": task,
+                    "summary": f"CLI后台任务 {task_id} 当前状态: {task.get('status')}",
+                }
+            task = await manager.get_task(task_id)
+            if task and task.get("social_user_id") and task.get("social_user_id") != user_key:
+                return self._failed(f"CLI后台任务不存在: {task_id}")
+            result = await manager.cancel_task(task_id)
+            if not result.get("success"):
+                return self._failed(result.get("error", "取消后台CLI任务失败"))
+            return {
+                "status": "success",
+                "success": True,
+                "metadata": self._metadata(action=action, task_id=task_id),
+                "data": result,
+                "summary": f"已取消CLI后台任务: {task_id}",
+            }
+
+        if action == "task_list":
+            manager = self._get_cli_task_manager()
+            if not manager:
+                return self._failed("CliTaskManager未初始化")
+            tasks = await manager.list_tasks(social_user_id=user_key)
+            return {
+                "status": "success",
+                "success": True,
+                "metadata": self._metadata(action=action),
+                "data": {"tasks": tasks, "count": len(tasks)},
+                "summary": f"共有 {len(tasks)} 个CLI后台任务",
+            }
 
         if action == "list":
             return self._list_sessions(user_key)
@@ -230,6 +288,21 @@ class CliSessionTool(LLMTool):
                 model=model,
                 sandbox=sandbox,
                 approval_policy=approval_policy,
+            )
+
+        if background:
+            return await self._start_background_task(
+                user_key=user_key,
+                provider=provider,
+                session_name=session_name,
+                prompt=prompt,
+                cwd=resolved_cwd,
+                args=args,
+                stdin_text=stdin_text,
+                timeout=timeout,
+                state_path=state_path,
+                state=state,
+                output_file=output_file,
             )
 
         started_at = datetime.now().isoformat()
@@ -318,6 +391,89 @@ class CliSessionTool(LLMTool):
             ),
         }
 
+    async def _start_background_task(
+        self,
+        *,
+        user_key: str,
+        provider: str,
+        session_name: str,
+        prompt: str,
+        cwd: Path,
+        args: List[str],
+        stdin_text: str,
+        timeout: int,
+        state_path: Path,
+        state: Dict[str, Any],
+        output_file: Optional[Path],
+    ) -> Dict[str, Any]:
+        manager = self._get_cli_task_manager()
+        if not manager:
+            return self._failed("CliTaskManager未初始化")
+
+        origin_info = self._get_origin_info()
+        label = f"{provider} CLI: {session_name}"
+        started_at = datetime.now().isoformat()
+
+        def parser(stdout: str, stderr: str) -> Tuple[str, Optional[str]]:
+            return self._parse_cli_output(provider, stdout, stderr, output_file)
+
+        def completion_callback(payload: Dict[str, Any]) -> None:
+            result = {
+                "exit_code": payload.get("exit_code", -1),
+                "stdout": payload.get("stdout", ""),
+                "stderr": payload.get("stderr", ""),
+            }
+            self._record_turn(
+                state_path=state_path,
+                state=state,
+                prompt=prompt,
+                started_at=started_at,
+                finished_at=payload.get("finished_at") or datetime.now().isoformat(),
+                result=result,
+                parsed_text=payload.get("parsed_text", ""),
+                vendor_session_id=payload.get("vendor_session_id"),
+            )
+
+        result = await manager.start_task(
+            social_user_id=user_key,
+            origin_info=origin_info,
+            provider=provider,
+            session_name=session_name,
+            cwd=str(cwd),
+            args=args,
+            stdin_text=stdin_text,
+            timeout=timeout,
+            label=label,
+            parser=parser,
+            completion_callback=completion_callback,
+        )
+        if not result.get("success"):
+            return self._failed(result.get("error", "创建CLI后台任务失败"))
+
+        return {
+            "status": "success",
+            "success": True,
+            "metadata": self._metadata(
+                action="background",
+                provider=provider,
+                session_name=session_name,
+                task_id=result.get("task_id"),
+                cwd=str(cwd),
+                command=self._redact_command(args),
+            ),
+            "data": {
+                "task_id": result.get("task_id"),
+                "provider": provider,
+                "session_name": session_name,
+                "cwd": str(cwd),
+                "background": True,
+            },
+            "summary": (
+                f"已创建CLI后台任务 `{result.get('task_id')}`，当前对话不会阻塞。"
+                "可用 action=task_status 查询，action=task_cancel 取消。"
+            ),
+        }
+
     def _build_claude_command(
         self,
         binary: str,
@@ -392,6 +548,38 @@ class CliSessionTool(LLMTool):
             args.append("-")
         return args, prompt, output_file
 
+    def _record_turn(
+        self,
+        *,
+        state_path: Path,
+        state: Dict[str, Any],
+        prompt: str,
+        started_at: str,
+        finished_at: str,
+        result: Dict[str, Any],
+        parsed_text: str,
+        vendor_session_id: Optional[str],
+    ) -> None:
+        if vendor_session_id:
+            state["vendor_session_id"] = vendor_session_id
+        turn = {
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "prompt": prompt,
+            "exit_code": result["exit_code"],
+            "success": result["exit_code"] == 0,
+            "stdout_tail": self._tail(result["stdout"], 12000),
+            "stderr_tail": self._tail(result["stderr"], 6000),
+            "answer": self._tail(parsed_text, 30000),
+            "background": True,
+        }
+        state.setdefault("turns", []).append(turn)
+        state["updated_at"] = finished_at
+        state["last_exit_code"] = result["exit_code"]
+        state["last_success"] = result["exit_code"] == 0
+        state["last_error"] = result["stderr"] if result["exit_code"] != 0 else ""
+        self._save_state(state_path, state)
+
     async def _run_cli(
         self,
         args: List[str],
@@ -451,6 +639,40 @@ class CliSessionTool(LLMTool):
         except Exception as exc:
             logger.error("cli_session_run_failed", error=str(exc), exc_info=True)
             return {"exit_code": -1, "stdout": "", "stderr": str(exc)}
+
+    def _get_cli_task_manager(self):
+        try:
+            from app.social.cli_task_singleton import get_cli_task_manager
+
+            manager = get_cli_task_manager()
+            if manager:
+                return manager
+        except Exception:
+            pass
+
+        try:
+            from app.social.cli_task_manager import CliTaskManager
+            from app.social.cli_task_store import CliTaskStore
+            from app.social.message_bus_singleton import get_message_bus
+
+            manager = CliTaskManager(task_store=CliTaskStore(), message_bus=get_message_bus())
+            from app.social.cli_task_singleton import set_cli_task_manager
+
+            set_cli_task_manager(manager)
+            return manager
+        except Exception as exc:
+            logger.error("cli_task_manager_init_failed", error=str(exc), exc_info=True)
+            return None
+
+    def _get_origin_info(self) -> Dict[str, str]:
+        try:
+            from app.social.message_bus_singleton import get_current_chat_id, get_current_channel
+
+            channel = get_current_channel() or "unknown"
+            chat_id = get_current_chat_id() or "unknown"
+            return {"channel": channel, "chat_id": chat_id, "sender_id": chat_id}
+        except Exception:
+            return {"channel": "unknown", "chat_id": "unknown", "sender_id": "unknown"}
 
     def _parse_cli_output(
         self,

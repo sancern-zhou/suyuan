@@ -20,6 +20,7 @@ from .tool_classification import all_housekeeping_tools
 from .transcript_repairer import TranscriptRepairer
 from .types import PlannerResult, RunState, ToolCall
 from .cancellation import AgentRunCancelled, cancellation_registry
+from .steering import steering_registry
 from ..context.context_diagnostics import ContextDiagnostics
 
 logger = structlog.get_logger()
@@ -40,6 +41,7 @@ class AgentRuntimeConfig:
     agent_logger: Any = None
     schema_injector: Any = None
     cancel_event: Optional[asyncio.Event] = None
+    attachments: Optional[List[Dict[str, Any]]] = None
 
 
 class AgentRuntime:
@@ -78,8 +80,12 @@ class AgentRuntime:
         )
 
         async with self.session_queue.lock(state.session_id):
-            async for event in self._run_locked(state, initial_messages):
-                yield event
+            await steering_registry.register(state.session_id, state.run_id, state.mode)
+            try:
+                async for event in self._run_locked(state, initial_messages):
+                    yield event
+            finally:
+                await steering_registry.unregister(state.session_id, state.run_id)
 
     async def _run_locked(
         self,
@@ -104,6 +110,8 @@ class AgentRuntime:
                 self._raise_if_cancelled()
                 state.iteration += 1
                 try:
+                    async for event in self._apply_steering_inputs(state):
+                        yield event
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
@@ -140,6 +148,13 @@ class AgentRuntime:
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
+        if state.mode == "social" and self.config.attachments:
+            from .multimodal import build_anthropic_user_content
+
+            state.user_message_content = build_anthropic_user_content(
+                state.user_query,
+                self.config.attachments,
+            )
         self._raise_if_cancelled()
         planner_result = None
         streaming_tool_executor = None
@@ -194,6 +209,32 @@ class AgentRuntime:
         }
         self._ensure_user_message_written(state)
         self.writer.add_iteration(planner_result.thought, action, observation)
+
+    async def _apply_steering_inputs(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
+        items = await steering_registry.drain(state.session_id, state.run_id)
+        if not items:
+            return
+
+        self._ensure_user_message_written(state)
+        messages = [item.content for item in items]
+        for content in messages:
+            self.writer.add_user_message(f"【执行中用户补充】{content}")
+
+        steering_block = "\n".join(f"- {content}" for content in messages)
+        state.user_query = (
+            f"{state.user_query}\n\n"
+            "## 用户在执行过程中追加的输入\n"
+            "以下内容是在当前任务执行过程中由用户补充或纠偏的输入。"
+            "后续计划和回答必须优先纳入这些信息：\n"
+            f"{steering_block}"
+        )
+        logger.info(
+            "steering_inputs_applied",
+            session_id=state.session_id,
+            run_id=state.run_id,
+            count=len(messages),
+        )
+        yield self.events.steering_applied(state, messages)
 
     async def _build_context(self, state: RunState) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         latest_observation = ""
@@ -269,6 +310,14 @@ class AgentRuntime:
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
         buffer = AssistantStreamBuffer()
         planner_result = PlannerResult()
+        user_content = None
+        if state.mode == "social" and self.config.attachments:
+            from .multimodal import build_anthropic_user_content
+
+            user_content = build_anthropic_user_content(
+                context_result["user_conversation"],
+                self.config.attachments,
+            )
 
         async for event in self.planner.think_and_action_streaming(
             query=state.user_query,
@@ -278,6 +327,7 @@ class AgentRuntime:
             iteration=state.iteration,
             mode=state.mode,
             conversation_history=conversation_history,
+            user_content=user_content,
         ):
             self._raise_if_cancelled()
             event_type = event["type"]
@@ -418,6 +468,14 @@ class AgentRuntime:
         partial: PlannerResult,
     ) -> PlannerResult:
         self._raise_if_cancelled()
+        user_content = None
+        if state.mode == "social" and self.config.attachments:
+            from .multimodal import build_anthropic_user_content
+
+            user_content = build_anthropic_user_content(
+                context_result["user_conversation"],
+                self.config.attachments,
+            )
         result = await self.planner.think_and_action(
             query=state.user_query,
             system_prompt=context_result["system_prompt"],
@@ -426,6 +484,7 @@ class AgentRuntime:
             iteration=state.iteration,
             mode=state.mode,
             conversation_history=conversation_history,
+            user_content=user_content,
         )
         partial.thought = result.get("thought")
         partial.action = result.get("action")
@@ -495,7 +554,9 @@ class AgentRuntime:
         """Persist the current user turn exactly once, after planning context is built."""
         if state.user_message_written:
             return
-        self.writer.add_user_message(state.user_query)
+        self.writer.add_user_message(
+            state.user_message_content if state.user_message_content is not None else state.user_query
+        )
         state.user_message_written = True
 
     def _raise_if_cancelled(self) -> None:

@@ -69,16 +69,20 @@ class AnnualYtdConsultationFileFetcher(ConsultationFileFetcher):
         return month_dir / f"年度累计会商文件（{year}年1-{month}月）{today_str}.xlsx"
 
     def _get_last_year_same_day(self, time_range: Dict[str, str], full_month: bool = False) -> str:
-        """去年同期结束日：去年1月1日到去年同日。"""
+        """去年同期结束日：去年同月月末（与年度累计时间范围一致）。
+
+        年度累计数据范围是"年初到上个月月末"，因此去年同期应该是：
+        "去年1月1日到去年同月月末"，而不是"去年同一天"。
+        """
         current_end = datetime.strptime(time_range["end_date"], "%Y-%m-%d")
         last_year = int(time_range["last_year"])
 
-        try:
-            last_year_date = current_end.replace(year=last_year)
-        except ValueError:
-            last_year_date = current_end.replace(year=last_year, day=28)
+        # 获取去年同月的最后一天
+        # 方法：先取去年同月的第一天，然后减去1天得到上个月月末
+        last_year_month_start = current_end.replace(day=1, year=last_year)
+        last_year_month_end = (last_year_month_start.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
-        return last_year_date.strftime("%Y-%m-%d")
+        return last_year_month_end.strftime("%Y-%m-%d")
 
     async def fetch_and_store(self, full_month: bool = False):
         logger.info("annual_ytd_consultation_file_fetch_start")

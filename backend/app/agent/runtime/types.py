@@ -57,6 +57,7 @@ class RunState:
     user_query: str
     mode: str
     enhance_with_history: bool = True
+    user_message_content: Any = None
     run_id: str = field(default_factory=lambda: uuid4().hex)
     iteration: int = 0
     task_completed: bool = False

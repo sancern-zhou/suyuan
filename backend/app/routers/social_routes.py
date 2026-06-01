@@ -8,6 +8,12 @@ import structlog
 from app.social.session_mapper import SessionMapper
 from app.social.monitoring import get_monitor
 from app.social.cache import get_query_cache
+from app.social.user_registry import (
+    SocialUserCreate,
+    SocialUserRecord,
+    SocialUserUpdate,
+    get_social_user_registry,
+)
 from app.channels.manager import ChannelManager
 
 logger = structlog.get_logger(__name__)
@@ -47,6 +53,91 @@ class SessionInfo(BaseModel):
     social_user_id: str
     session_id: str
     last_used: str
+
+
+class SocialUserCreateResponse(SocialUserRecord):
+    """Created social user with binding instructions."""
+
+    qr_code_url: Optional[str] = None
+    bind_instruction: str
+
+
+def _default_weixin_qr_code_url(channel_manager: ChannelManager | None) -> Optional[str]:
+    if not channel_manager:
+        return None
+
+    for channel_key in channel_manager.channels.keys():
+        if channel_key.startswith("weixin:"):
+            account_id = channel_key.split(":", 1)[1]
+            return f"/api/social/accounts/weixin/{account_id}/qrcode"
+        if channel_key == "weixin":
+            return "/api/social/accounts/weixin/default/qrcode"
+
+    return None
+
+
+@router.post("/users", response_model=SocialUserCreateResponse)
+async def create_social_user(
+    payload: SocialUserCreate,
+    channel_manager: ChannelManager = Depends(get_channel_manager),
+) -> SocialUserCreateResponse:
+    """Create a pending social user and return a binding code."""
+    try:
+        registry = get_social_user_registry()
+        user = await registry.create_user(payload)
+        return SocialUserCreateResponse(
+            **user.model_dump(),
+            qr_code_url=_default_weixin_qr_code_url(channel_manager),
+            bind_instruction=str(user.bind_code or ""),
+        )
+    except Exception as e:
+        logger.error("failed_to_create_social_user", error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users", response_model=List[SocialUserRecord])
+async def list_social_users() -> List[SocialUserRecord]:
+    """List social users."""
+    try:
+        registry = get_social_user_registry()
+        return await registry.list_users()
+    except Exception as e:
+        logger.error("failed_to_list_social_users", error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}", response_model=SocialUserRecord)
+async def get_social_user(user_id: str) -> SocialUserRecord:
+    """Get a social user by id."""
+    try:
+        registry = get_social_user_registry()
+        user = await registry.get_user(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Social user not found")
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("failed_to_get_social_user", user_id=user_id, error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/users/{user_id}", response_model=SocialUserRecord)
+async def update_social_user(user_id: str, payload: SocialUserUpdate) -> SocialUserRecord:
+    """Update social user profile or status."""
+    try:
+        registry = get_social_user_registry()
+        user = await registry.update_user(user_id, payload)
+        if not user:
+            raise HTTPException(status_code=404, detail="Social user not found")
+        return user
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("failed_to_update_social_user", user_id=user_id, error=str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/status", response_model=SocialStatusResponse)
@@ -440,4 +531,3 @@ async def refresh_weixin_qrcode(
     except Exception as e:
         logger.error("Failed to refresh QR code", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
-

@@ -71,9 +71,6 @@ class ReadFileTool(LLMTool):
     # 支持的 Markdown 格式
     MARKDOWN_EXTENSIONS = {'.md', '.markdown', '.qmd'}
 
-    # 支持的 Jupyter Notebook 格式
-    NOTEBOOK_EXTENSIONS = {'.ipynb'}
-
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
 
@@ -84,7 +81,7 @@ class ReadFileTool(LLMTool):
         super().__init__(
             name="read_file",
             description=(
-                "读取文件或目录内容，支持文本分页、图片分析、PDF、DOCX、PPTX、Word XML、Markdown、Notebook。"
+                "读取文件或目录内容，支持文本分页、图片分析、PDF、DOCX、PPTX、Word XML、Markdown。"
                 "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
                 "Excel文件不由 read_file 读取，需使用 execute_python。"
                 "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
@@ -178,7 +175,6 @@ class ReadFileTool(LLMTool):
             is_docx = file_ext in self.DOCX_EXTENSIONS
             is_pptx = file_ext in self.PPTX_EXTENSIONS
             is_excel = file_ext in self.EXCEL_EXTENSIONS
-            is_notebook = file_ext in self.NOTEBOOK_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
 
             if is_image:
@@ -204,23 +200,6 @@ class ReadFileTool(LLMTool):
                 return await self._read_word_xml(
                     resolved_path, file_size, raw_mode, include_formatting, max_paragraphs
                 )
-            elif is_notebook:
-                # 读取 Jupyter Notebook（作为文本文件处理）
-                result = await self._read_text(
-                    resolved_path, encoding, file_size, offset, limit, max_size
-                )
-                # 标记为已读取（用于 notebook_edit 的 Read-Before-Edit 机制）
-                if result.get("success"):
-                    try:
-                        from app.tools.utility.notebook_edit_tool import mark_notebook_as_read
-                        full_content = resolved_path.read_text(encoding=encoding)
-                        mark_notebook_as_read(str(resolved_path), full_content)
-                    except ImportError:
-                        pass
-                # 生成 HTML 预览
-                if result.get("success") and enable_preview:
-                    await self._ensure_notebook_preview(resolved_path, result["data"])
-                return result
             else:
                 # 读取文本文件（支持分页）
                 return await self._read_text(
@@ -896,24 +875,6 @@ class ReadFileTool(LLMTool):
             logger.warning("pdf_preview_generation_failed", path=str(file_path), error=str(e))
             # 预览失败不影响主流程
 
-    async def _ensure_notebook_preview(self, notebook_path: Path, result_data: dict):
-        """确保Notebook HTML预览已生成"""
-        if "html_preview" in result_data:
-            return  # 已有预览
-
-        try:
-            from app.services.notebook_converter import notebook_converter
-            html_preview = await notebook_converter.convert_to_html(str(notebook_path))
-            result_data["html_preview"] = html_preview
-            logger.info(
-                "notebook_preview_generated",
-                notebook_path=str(notebook_path),
-                html_id=html_preview["html_id"]
-            )
-        except Exception as e:
-            logger.warning("notebook_preview_generation_failed", path=str(notebook_path), error=str(e))
-            # 预览失败不影响主流程
-
     def _get_cached_tool(self, tool_class, tool_name: str):
         """获取缓存的工具实例"""
         if tool_name not in self._tool_cache:
@@ -1251,7 +1212,7 @@ class ReadFileTool(LLMTool):
         return {
             "name": "read_file",
             "description": (
-                "读取文件/目录；支持文本分页、图片、PDF、DOCX、Word XML、Markdown、Notebook。"
+                "读取文件/目录；支持文本分页、图片、PDF、DOCX、Word XML、Markdown。"
                 "PDF/DOCX可预览；Excel用execute_python；大文本用grep或分页；不返回base64。"
             ),
             "parameters": {

@@ -129,15 +129,23 @@
 
             <button
               class="action-button"
-              :class="{ 'pause-button': isAnalyzing, 'send-button': !isAnalyzing }"
-              @click="isAnalyzing ? handlePause() : handleSend()"
+              :class="{ 'send-button': !isAnalyzing, 'steer-button': isAnalyzing }"
+              @click="handleSend()"
               :disabled="actionButtonDisabled"
-              :title="isAnalyzing ? '暂停分析 (Esc)' : '发送 (Enter)'"
+              :title="isAnalyzing ? runningActionTitle : '发送 (Enter)'"
             >
               <svg v-if="!isAnalyzing" viewBox="0 0 24 24" class="send-icon">
                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
               </svg>
-              <span v-else>暂停</span>
+              <span v-else>{{ runningActionLabel }}</span>
+            </button>
+            <button
+              v-if="isAnalyzing"
+              class="action-button pause-button"
+              @click="handlePause"
+              title="暂停分析 (Esc)"
+            >
+              <span>暂停</span>
             </button>
           </div>
         </div>
@@ -237,10 +245,14 @@ const modelTier = ref(readStoredModelTier(props.sessionId))
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
+const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
+const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
+const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
 
 const actionButtonDisabled = computed(() => {
   if (props.isAnalyzing) {
-    return false
+    if (!canSteerWhileRunning.value) return false
+    return (!localValue.value.trim() && attachments.value.length === 0) || props.disabled
   }
   return (!localValue.value.trim() && attachments.value.length === 0) || props.disabled
 })
@@ -425,7 +437,7 @@ const handleKeydown = (e) => {
     }
   }
 
-  if (e.key === 'Enter' && !e.shiftKey && !props.isAnalyzing) {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
   } else if (e.key === 'Escape' && props.isAnalyzing) {
@@ -448,7 +460,7 @@ const handleBlur = () => {
 }
 
 const handleSend = () => {
-  if ((!localValue.value.trim() && attachments.value.length === 0) || props.disabled || props.isAnalyzing) return
+  if ((!localValue.value.trim() && attachments.value.length === 0) || props.disabled) return
 
   // 检查是否有附件还在上传中
   const uploadingAttachments = attachments.value.filter(a => a.uploading)
@@ -967,6 +979,22 @@ defineExpose({
 }
 
 .send-button {
+  background: #1976D2;
+  color: white;
+
+  &:hover:not(:disabled) {
+    background: #1565C0;
+  }
+
+  &:disabled {
+    background: #e0e0e0;
+    color: #999;
+  }
+}
+
+.steer-button {
+  width: auto;
+  padding: 0 12px;
   background: #1976D2;
   color: white;
 

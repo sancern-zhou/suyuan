@@ -65,7 +65,7 @@
         :expert-results="expertResults"
       />
 
-      <!-- Office文档预览面板（包含 PDF/Markdown/Notebook） -->
+      <!-- Office文档预览面板（包含 PDF/Markdown/HTML） -->
       <OfficeDocumentPanel
         v-if="activeTab === 'document'"
         ref="officePanelRef"

@@ -49,6 +49,8 @@ evidence_table, conclusion_actions
 
 除 `cover`、`toc`、`section` 外，每页必须包含至少一种视觉证据：`visual`、`metrics`、`table`、`chart` 或业务可视化结构。
 
+`chart_insight` 的 `chart` 字段用于生成 PPT 内原生图表，当前支持 `bar`、`line`、`pie`、`doughnut`、`scatter`。如果是模板填充模式，图表位需要模板本身预留图表槽位；否则应先把图表导出为图片，再通过 `visual.asset` 引用。
+
 示例：
 
 ```json

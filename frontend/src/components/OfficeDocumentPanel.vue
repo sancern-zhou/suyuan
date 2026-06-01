@@ -16,7 +16,7 @@
             <!-- Action buttons in top-right corner -->
             <div class="action-buttons">
               <button
-                v-if="!['notebook', 'report', 'html_artifact'].includes(doc.doc_type)"
+                v-if="!['report', 'html_artifact'].includes(doc.doc_type)"
                 @click="toggleEditMode"
                 class="action-btn edit-btn"
                 title="编辑模式"
@@ -115,33 +115,15 @@
               ></iframe>
             </div>
 
-            <!-- HTML preview (Notebook/Quarto报告/HTML展示页使用iframe显示) -->
-            <div v-else-if="['notebook', 'report', 'html_artifact'].includes(doc.doc_type) && doc.html_url" class="notebook-wrapper">
+            <!-- HTML preview (Quarto报告/HTML展示页使用iframe显示) -->
+            <div v-else-if="['report', 'html_artifact'].includes(doc.doc_type) && doc.html_url" class="html-wrapper">
               <iframe
                 :src="doc.html_url"
                 :key="doc.html_url"
-                class="notebook-iframe"
+                class="html-iframe"
                 type="text/html"
                 @load="onPdfLoaded(doc)"
               ></iframe>
-            </div>
-
-            <!-- Notebook with share button (如果有file_path) -->
-            <div v-else-if="doc.doc_type === 'notebook' && doc.file_path" class="notebook-with-share">
-              <div class="notebook-actions">
-                <button
-                  @click="handleNotebookShare(doc)"
-                  class="share-button"
-                  :disabled="doc.sharing"
-                >
-                  <span v-if="doc.sharing">生成中...</span>
-                  <span v-else>分享报告</span>
-                </button>
-              </div>
-              <div class="notebook-placeholder">
-                <p>📝 Notebook文件：{{ doc.file_name }}</p>
-                <p class="hint">点击"分享报告"生成可分享的HTML链接</p>
-              </div>
             </div>
 
             <!-- Markdown preview -->
@@ -338,7 +320,7 @@ watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
       existingDoc.markdown_content = doc.markdown_preview.content
       existingDoc.file_path = filePath
     }
-    // 更新 Notebook HTML预览
+    // 更新 HTML 预览
     if (doc.html_preview) {
       existingDoc.html_url = withPreviewVersion(doc.html_preview.html_url, doc.html_preview.preview_version)
       existingDoc.html_id = doc.html_preview.html_id
@@ -820,10 +802,6 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
   if (['report', 'html_report', 'quarto_report'].includes(explicitType)) {
     return 'report'
   }
-  if (explicitType === 'notebook') {
-    return 'notebook'
-  }
-
   // 先根据 generator 判断
   if (generator === 'quarto_report' || filePath?.endsWith('report.qmd')) {
     return 'report'
@@ -833,8 +811,6 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
     return 'ppt'
-  } else if (filePath?.endsWith('.ipynb')) {
-    return 'notebook'
   } else if (markdownPreview) {
     return 'markdown'
   }
@@ -1107,58 +1083,6 @@ async function handleHtmlArtifactShare(doc) {
   }
 }
 
-// 处理Notebook分享
-async function handleNotebookShare(doc) {
-  if (!doc.file_path) {
-    showShareToast({
-      type: 'error',
-      title: '无法分享',
-      message: '缺少Notebook文件路径。'
-    })
-    return
-  }
-
-  doc.sharing = true
-
-  try {
-    // 调用后端API生成分享HTML
-    const response = await fetch('/api/tools/execute', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        tool: 'generate_shareable_notebook',
-        parameters: {
-          notebook_path: doc.file_path
-        }
-      })
-    })
-
-    const result = await response.json()
-
-    if (result.success) {
-      const shareLink = result.data.share_link
-      await showGeneratedShareLink(shareLink)
-    } else {
-      showShareToast({
-        type: 'error',
-        title: '生成分享链接失败',
-        message: result.summary || '未知错误'
-      })
-    }
-  } catch (error) {
-    console.error('[OfficeDocumentPanel] 生成分享链接失败:', error)
-    showShareToast({
-      type: 'error',
-      title: '生成分享链接失败',
-      message: error.message
-    })
-  } finally {
-    doc.sharing = false
-  }
-}
-
 defineExpose({
   hasOfficeDocuments,
   isEditMode,
@@ -1349,7 +1273,7 @@ defineExpose({
   transition: height 0.3s ease;
 }
 
-.notebook-wrapper {
+.html-wrapper {
   width: 100%;
   flex: 1;
   min-height: 600px;
@@ -1357,44 +1281,11 @@ defineExpose({
   flex-direction: column;
 }
 
-.notebook-iframe {
+.html-iframe {
   width: 100%;
   flex: 1;
   border: none;
   display: block;
-}
-
-.notebook-with-share {
-  padding: 20px;
-  text-align: center;
-  background: #f9f9f9;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  margin: 12px;
-}
-
-.notebook-actions {
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: center;
-}
-
-.notebook-placeholder {
-  padding: 40px 20px;
-  background: white;
-  border-radius: 8px;
-  border: 2px dashed #e0e0e0;
-}
-
-.notebook-placeholder p {
-  margin: 10px 0;
-  color: #666;
-  font-size: 14px;
-}
-
-.notebook-placeholder .hint {
-  color: #999;
-  font-size: 13px;
 }
 
 .markdown-wrapper {

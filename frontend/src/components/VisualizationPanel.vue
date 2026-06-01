@@ -458,6 +458,27 @@ const isDirectUrlImage = (viz) => {
   return false
 }
 
+const normalizeVisual = (visual) => {
+  if (!visual || typeof visual !== 'object') return null
+  if (visual.payload) {
+    return {
+      ...visual.payload,
+      meta: visual.meta || visual.payload.meta
+    }
+  }
+  return visual
+}
+
+const appendVisuals = (target, visuals) => {
+  if (!Array.isArray(visuals) || visuals.length === 0) return
+  visuals.forEach(visual => {
+    const normalized = normalizeVisual(visual)
+    if (normalized) {
+      target.push(normalized)
+    }
+  })
+}
+
 const visualizations = computed(() => {
   let allVisualizations = []
 
@@ -476,8 +497,11 @@ const visualizations = computed(() => {
       return v
     })
   }
-  // 普通模式：从 messages 的 tool_result 事件中提取visuals
+  // 普通模式：优先使用恢复/懒加载后的图表历史，再兼容从消息事件中提取 visuals
   else {
+    appendVisuals(allVisualizations, props.content?.visuals)
+    appendVisuals(allVisualizations, store.currentState.visualizationHistory)
+
     if (props.history && Array.isArray(props.history)) {
       props.history.forEach((msg, msgIndex) => {
         // 只处理 tool_result 类型的消息
@@ -493,33 +517,14 @@ const visualizations = computed(() => {
 
         // 格式1：单个工具 result.visuals
         if (result && result.visuals && Array.isArray(result.visuals) && result.visuals.length > 0) {
-          // 兼容两种格式：
-          // 1. VisualBlock格式: {payload: {...}, meta: {...}}
-          // 2. 直接格式: {id, type, data, meta, ...}
-          const extractedVisuals = result.visuals.map((v) => {
-            if (v.payload) {
-              return { ...v.payload, meta: v.meta }
-            } else {
-              return v
-            }
-          })
-
-          allVisualizations = allVisualizations.concat(extractedVisuals)
+          appendVisuals(allVisualizations, result.visuals)
         }
 
         // 格式2：多个工具 results[].visuals
         if (results && Array.isArray(results)) {
           results.forEach((r, rIdx) => {
             if (r.visuals && Array.isArray(r.visuals) && r.visuals.length > 0) {
-              const extractedVisuals = r.visuals.map((v) => {
-                if (v.payload) {
-                  return { ...v.payload, meta: v.meta }
-                } else {
-                  return v
-                }
-              })
-
-              allVisualizations = allVisualizations.concat(extractedVisuals)
+              appendVisuals(allVisualizations, r.visuals)
             }
           })
         }

@@ -6,6 +6,7 @@ tables:
     expected_range: 20000
     tolerance: 1
     range_fields:
+      - PPB
       - RANGE
       - RANG
       - MEASURERANGE
@@ -19,6 +20,7 @@ tables:
     expected_range: 500
     tolerance: 1
     range_fields:
+      - PPB
       - RANGE
       - RANG
       - MEASURERANGE
@@ -32,6 +34,7 @@ tables:
     expected_range: 500
     tolerance: 1
     range_fields:
+      - PPB
       - RANGE
       - RANG
       - MEASURERANGE
@@ -45,6 +48,7 @@ tables:
     expected_range: 500
     tolerance: 1
     range_fields:
+      - PPB
       - RANGE
       - RANG
       - MEASURERANGE

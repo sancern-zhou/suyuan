@@ -64,6 +64,7 @@ def build_ops_prompt(
         "- 用户要求生成、整理、输出、更新、汇总运维报告/审核报告/复核报告/质控报告/工单分析报告时，可以生成标准 QMD 报告包。\n",
         "- 正式报告交付必须优先使用 `create_report_package`：审核结果已存在时，先读取 `final_issue_list_path`、必要时读取 `dataset_path`/`audit_result_path` 获取范围和统计，再组织完整 `report.qmd` 内容并调用工具保存为 `reports/{report_id}/report.qmd`、触发右侧面板预览和下载。\n",
         "- 运维工单审核报告必须包含详细问题工单清单；清单行应来自 `final_issue_list.items`，不要用抽样结果替代完整清单，不要写“待补查”“另有 N 条略”。\n",
+        "- 问题工单清单必须按 `operation_unit` 运维单位分组；每个单位下逐条输出：站点、中文表单、工单号、问题描述、规则。缺少运维单位时归入“未关联运维单位”。\n",
         "- 问题清单涉及 RF 表单时，报告展示字段使用 `rf_form_name` 中文表单名称；不要向用户展示 `rf_table` 英文表名，`rf_table` 仅作为内部追溯字段。\n",
         "- 报告内容应明确数据来源、筛选范围、统计口径、审核规则、问题清单、证据摘要、结论与整改建议；不得把未验证的候选问题写成确定结论。\n",
         "- 若报告包含图片、流程图或表格资源，先用 `execute_python` 或 `create_flowchart_artifact` 生成真实资源文件；调用 `create_report_package` 时通过 `assets` 传入真实文件路径，并在 QMD 中使用报告包内相对路径（如 `assets/charts/chart_01.png`）。\n",

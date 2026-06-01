@@ -39,7 +39,7 @@ class ObservationProcessor:
         ⚠️ 重要变更：
         - 移除visuals提取逻辑（visuals应该从tool_result获取）
         - 保留knowledge_qa_workflow的sources处理（用于知识溯源）
-        - 保留文档事件处理（office_document、notebook_document）
+        - 保留文档事件处理（office_document、html_document）
         - 保留图表记录功能（用于memory追踪）
         """
         state.last_observation = observation
@@ -69,7 +69,7 @@ class ObservationProcessor:
                 "summary": observation.get("summary", ""),
             })
 
-        # ✅ 处理文档事件（office_document、notebook_document）
+        # ✅ 处理文档事件（office_document、html_document）
         async for event in self._document_events(observation):
             yield event
 
@@ -140,7 +140,7 @@ class ObservationProcessor:
         return response
 
     async def _document_events(self, observation: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        """处理文档事件（office_document、notebook_document）"""
+        """处理文档事件（office_document、html_document）"""
         for result_data, metadata in self._iter_result_payloads(observation):
             inner = result_data.get("data", {}) if isinstance(result_data.get("data"), dict) else {}
             result_metadata = result_data.get("metadata", {}) if isinstance(result_data.get("metadata"), dict) else {}
@@ -165,9 +165,9 @@ class ObservationProcessor:
                 })
 
             if html_preview:
-                yield self.events.notebook_document({
+                yield self.events.html_document({
                     "file_path": file_path,
-                    "file_type": inner.get("file_type") or result_data.get("file_type") or html_preview.get("file_type", "notebook"),
+                    "file_type": inner.get("file_type") or result_data.get("file_type") or html_preview.get("file_type", "html"),
                     "generator": generator,
                     "summary": result_data.get("summary", ""),
                     "timestamp": datetime.now().isoformat(),

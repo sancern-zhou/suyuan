@@ -307,7 +307,7 @@ export function usePanelManagement(store = null) {
     // 监听office_document事件
     if (store) {
       watch(() => store.lastOfficeDocument, (doc) => {
-        // 支持 PDF/Markdown/Notebook 预览，统一显示在"文档预览"标签页
+        // 支持 PDF/Markdown/HTML 预览，统一显示在"文档预览"标签页
         if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview) {
           officePanelVisible.value = true
           activeRightTab.value = 'document'

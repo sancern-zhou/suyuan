@@ -141,7 +141,9 @@ def _check_pollutant_type(
 
 
 def _normalize(value: Any) -> str:
-    return str(value or "").strip().upper().replace("－", "-").replace("—", "-").replace("～", "~")
+    if value is None:
+        return ""
+    return str(value).strip().upper().replace("－", "-").replace("—", "-").replace("～", "~")
 
 
 def _normalize_pollutant(value: Any) -> str:

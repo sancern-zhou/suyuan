@@ -41,7 +41,14 @@
       @click="handleMessageClick(message, index)"
     >
       <!-- 用户消息 -->
-      <div v-if="getMessageType(message) === 'user'" class="message user-message">
+      <div
+        v-if="getMessageType(message) === 'user'"
+        class="message user-message"
+        :class="{
+          'steering-pending': isPendingSteeringMessage(message),
+          'steering-applied': isAppliedSteeringMessage(message)
+        }"
+      >
         <!-- 附件显示 -->
         <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
           <div v-for="(attachment, idx) in message.attachments" :key="idx" class="message-attachment">
@@ -68,6 +75,12 @@
         </div>
 
         <div class="message-content user-message-content" v-if="getMessageContent(message)">
+          <div v-if="isPendingSteeringMessage(message)" class="user-message-status">
+            等待 Agent 接收
+          </div>
+          <div v-else-if="isAppliedSteeringMessage(message)" class="user-message-status applied">
+            Agent 已接收
+          </div>
           <div
             class="user-message-text"
             :class="{ collapsed: isUserMessageCollapsed(message) }"
@@ -726,6 +739,10 @@ const isProcessExpanded = (messageId) => {
 }
 
 const getMessageContent = (message) => message?.content ?? message?.content_preview ?? ''
+
+const isPendingSteeringMessage = (message) => message?.steering && message?.steeringStatus === 'pending'
+
+const isAppliedSteeringMessage = (message) => message?.steering && message?.steeringStatus === 'applied'
 
 const getUserMessageText = (content) => contentToString(content).trim()
 
@@ -2086,6 +2103,30 @@ const closeImagePreview = () => {
   max-width: 70%;
   box-sizing: border-box;
   min-width: 0;
+
+  &.steering-pending {
+    background: #f7f8fa;
+    border-style: dashed;
+    border-color: #b7c0cc;
+    color: #6b7280;
+    opacity: 0.82;
+  }
+
+  &.steering-applied {
+    background: #eef6ff;
+    border-color: #90caf9;
+  }
+
+  .user-message-status {
+    margin-bottom: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #6b7280;
+
+    &.applied {
+      color: #1565c0;
+    }
+  }
 
   .message-content {
     text-align: left;

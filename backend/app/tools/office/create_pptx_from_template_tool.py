@@ -29,6 +29,7 @@ class CreatePptxFromTemplateTool(LLMTool):
                 "- ✅ 需要保持统一的设计风格\n"
                 "- ✅ 批量生成相似结构的PPT\n"
                 "- ✅ 公司标准模板\n\n"
+                "注意：当前模板替换只支持文本、表格和图片；原生图表请在非模板模式下通过 create_pptx_from_deck / create_pptx 生成，或先导出为图片再引用。\n\n"
                 "使用流程：\n"
                 "1. 先用 analyze_pptx_template 分析模板获取 slot_id\n"
                 "2. 用本工具替换内容\n\n"

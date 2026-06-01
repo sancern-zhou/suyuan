@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -25,7 +26,7 @@ def build_semantic_values_from_deck(deck: DeckSpec) -> Dict[str, Any]:
             values[f"{prefix}.message"] = slide.message
         if slide.visual and slide.visual.asset:
             key = "main_map" if slide.visual.kind == "map" else "main_visual"
-            values[f"{prefix}.{key}"] = slide.visual.asset
+            values[f"{prefix}.{key}"] = {"type": "image", "path": slide.visual.asset}
         if slide.insights:
             values[f"{prefix}.key_findings"] = "\n".join(slide.insights)
         if slide.actions:
@@ -34,6 +35,14 @@ def build_semantic_values_from_deck(deck: DeckSpec) -> Dict[str, Any]:
             values[f"{prefix}.metrics"] = "\n".join(
                 f"{metric.label}: {metric.value}{metric.unit or ''}" for metric in slide.metrics
             )
+            for index, metric in enumerate(slide.metrics[:4], start=1):
+                values[f"metric_{index}.label"] = metric.label
+                values[f"metric_{index}.value"] = f"{metric.value}{metric.unit or ''}"
+                note = metric.delta or metric.tone
+                if note:
+                    values[f"metric_{index}.note"] = note
+        if slide.table is not None:
+            values[f"{prefix}.table"] = slide.table
     return values
 
 
@@ -52,7 +61,7 @@ class CreatePptxFromDeckTool(LLMTool):
 
     async def execute(
         self,
-        deck: Dict[str, Any],
+        deck: Optional[Any] = None,
         output_file: Optional[str] = None,
         quality: str = "standard",
         run_validation: bool = True,
@@ -60,6 +69,30 @@ class CreatePptxFromDeckTool(LLMTool):
         template_manifest: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        if deck is None:
+            return {
+                "success": False,
+                "data": {"error": "deck 参数缺失"},
+                "summary": "创建PPT失败：deck 参数缺失",
+            }
+
+        if isinstance(deck, str):
+            try:
+                deck = json.loads(deck)
+            except json.JSONDecodeError as exc:
+                return {
+                    "success": False,
+                    "data": {"error": f"deck 不是有效 JSON: {exc}"},
+                    "summary": "创建PPT失败：deck 参数格式错误",
+                }
+
+        if not isinstance(deck, dict):
+            return {
+                "success": False,
+                "data": {"error": "deck 必须是对象"},
+                "summary": "创建PPT失败：deck 参数无效",
+            }
+
         spec = DeckSpec.model_validate(deck)
         issues = validate_visual_rules(spec)
         if issues:

@@ -24,6 +24,12 @@ def normalize_deck_for_create_pptx(deck: DeckSpec) -> Dict[str, Any]:
     }
 
 
+def _visual_image(slide: DeckSlideSpec) -> Dict[str, str]:
+    if not slide.visual or not slide.visual.asset:
+        return {}
+    return {"path": slide.visual.asset}
+
+
 def _normalize_slide(slide: DeckSlideSpec) -> Dict[str, Any]:
     if slide.type == "cover":
         return {"type": "title", "title": slide.title, "subtitle": slide.subtitle or ""}
@@ -32,6 +38,14 @@ def _normalize_slide(slide: DeckSlideSpec) -> Dict[str, Any]:
     if slide.type == "section":
         return {"type": "section", "title": slide.title, "subtitle": slide.subtitle or ""}
     if slide.type in {"executive_summary", "conclusion_actions"}:
+        if slide.visual and slide.visual.asset:
+            return {
+                "type": "image_text",
+                "title": slide.title,
+                "image": _visual_image(slide),
+                "bullets": slide.insights + slide.actions,
+                "text": slide.message or "",
+            }
         return {
             "type": "summary",
             "title": slide.title,
@@ -43,10 +57,26 @@ def _normalize_slide(slide: DeckSlideSpec) -> Dict[str, Any]:
         return {
             "type": "image_text",
             "title": slide.title,
-            "image": _image_from_visual(slide),
+            "image": _visual_image(slide),
             "bullets": slide.insights or slide.actions,
         }
     if slide.type == "chart_insight":
+        if slide.chart:
+            return {
+                "type": "data_story",
+                "title": slide.title,
+                "chart": slide.chart,
+                "message": slide.message or "",
+                "items": _items_from_text(slide.insights or slide.actions),
+            }
+        if slide.visual and slide.visual.asset:
+            return {
+                "type": "image_text",
+                "title": slide.title,
+                "image": _visual_image(slide),
+                "bullets": slide.insights or slide.actions,
+                "text": slide.message or "",
+            }
         return {
             "type": "data_story",
             "title": slide.title,
@@ -70,9 +100,7 @@ def _normalize_slide(slide: DeckSlideSpec) -> Dict[str, Any]:
 
 
 def _image_from_visual(slide: DeckSlideSpec) -> Dict[str, str]:
-    if not slide.visual or not slide.visual.asset:
-        return {}
-    return {"path": slide.visual.asset}
+    return _visual_image(slide)
 
 
 def _items_from_text(items: List[str]) -> List[Dict[str, str]]:

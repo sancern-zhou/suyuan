@@ -72,6 +72,24 @@ def test_validate_pptx_design_quality_report(tmp_path: Path):
     assert any(issue["type"] == "high_text_density" for issue in report["issues"])
 
 
+def test_validate_pptx_toc_like_slide_is_not_flagged_text_only(tmp_path: Path):
+    pptx = pytest.importorskip("pptx")
+    presentation = pptx.Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    title = slide.shapes.add_textbox(914400, 914400, 7315200, 914400)
+    title.text = "汇报大纲"
+    item1 = slide.shapes.add_textbox(1828800, 2286000, 9144000, 365760)
+    item1.text = "1. 我们做了什么"
+    item2 = slide.shapes.add_textbox(1828800, 2743200, 9144000, 365760)
+    item2.text = "2. 怎么做的"
+    pptx_path = tmp_path / "toc_like.pptx"
+    presentation.save(pptx_path)
+
+    report = ValidatePptxTool()._inspect_design_quality(pptx_path)
+
+    assert not any(issue["type"] == "text_only_slide" for issue in report["issues"])
+
+
 def test_validate_pptx_rendered_visual_quality_flags_overcrowding(tmp_path: Path):
     image_module = pytest.importorskip("PIL.Image")
     draw_module = pytest.importorskip("PIL.ImageDraw")

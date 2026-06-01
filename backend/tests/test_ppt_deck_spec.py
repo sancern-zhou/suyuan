@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.tools.office.deck.deck_tool import CreatePptxFromDeckTool
+from app.tools.office.deck.deck_tool import CreatePptxFromDeckTool, build_semantic_values_from_deck
 from app.tools.office.deck.models import DeckSpec
 from app.tools.office.deck.normalizer import normalize_deck_for_create_pptx
 from app.tools.office.deck.visual_rules import validate_visual_rules
@@ -128,6 +128,66 @@ def test_normalize_map_insight_to_image_text_slide():
     assert slide["type"] == "image_text"
     assert slide["image"]["path"] == "assets/maps/pm25.png"
     assert slide["bullets"] == ["北部污染较高", "沿海扩散较好"]
+
+
+def test_build_semantic_values_outputs_image_replacements():
+    deck = DeckSpec.model_validate(
+        {
+            "version": "suyuan.deck.v1",
+            "title": "地图和趋势图",
+            "slides": [
+                {
+                    "id": "s01",
+                    "type": "map_insight",
+                    "title": "污染空间分布",
+                    "visual": {"kind": "map", "asset": "assets/maps/pm25.png"},
+                    "insights": ["北部污染较高"],
+                },
+                {
+                    "id": "s02",
+                    "type": "chart_insight",
+                    "title": "趋势变化",
+                    "visual": {"kind": "chart", "asset": "assets/charts/trend.png"},
+                    "insights": ["夜间浓度抬升"],
+                },
+            ],
+        }
+    )
+
+    values = build_semantic_values_from_deck(deck)
+
+    assert values["map_insight.main_map"] == {"type": "image", "path": "assets/maps/pm25.png"}
+    assert values["chart_insight.main_visual"] == {"type": "image", "path": "assets/charts/trend.png"}
+
+
+def test_build_semantic_values_flattens_metric_cards():
+    deck = DeckSpec.model_validate(
+        {
+            "version": "suyuan.deck.v1",
+            "title": "指标页",
+            "slides": [
+                {
+                    "id": "s01",
+                    "type": "metric_dashboard",
+                    "title": "核心指标",
+                    "metrics": [
+                        {"label": "PM2.5均值", "value": 38, "unit": "ug/m3", "delta": "同比下降 6%"},
+                        {"label": "优良率", "value": "82%", "tone": "positive"},
+                    ],
+                }
+            ],
+        }
+    )
+
+    values = build_semantic_values_from_deck(deck)
+
+    assert values["metric_dashboard.metrics"] == "PM2.5均值: 38ug/m3\n优良率: 82%"
+    assert values["metric_1.label"] == "PM2.5均值"
+    assert values["metric_1.value"] == "38ug/m3"
+    assert values["metric_1.note"] == "同比下降 6%"
+    assert values["metric_2.label"] == "优良率"
+    assert values["metric_2.value"] == "82%"
+    assert values["metric_2.note"] == "positive"
 
 
 @pytest.mark.asyncio

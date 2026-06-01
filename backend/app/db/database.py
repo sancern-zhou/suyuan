@@ -117,6 +117,10 @@ async def init_db():
     Initialize database tables.
     Should be called on application startup.
     """
+    # Import optional model modules so their tables are registered on Base.metadata
+    # before create_all runs.
+    import app.social.models  # noqa: F401
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("database_initialized")
