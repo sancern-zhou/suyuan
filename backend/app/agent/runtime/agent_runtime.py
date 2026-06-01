@@ -42,6 +42,8 @@ class AgentRuntimeConfig:
     schema_injector: Any = None
     cancel_event: Optional[asyncio.Event] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class AgentRuntime:
@@ -149,9 +151,13 @@ class AgentRuntime:
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
         if state.mode == "social" and self.config.attachments:
-            from .multimodal import build_anthropic_user_content
+            from .multimodal import build_anthropic_user_content, build_persisted_user_content
 
             state.user_message_content = build_anthropic_user_content(
+                state.user_query,
+                self.config.attachments,
+            )
+            state.persisted_user_message_content = build_persisted_user_content(
                 state.user_query,
                 self.config.attachments,
             )
@@ -328,6 +334,9 @@ class AgentRuntime:
             mode=state.mode,
             conversation_history=conversation_history,
             user_content=user_content,
+            attachments=self.config.attachments,
+            llm_provider=self.config.llm_provider,
+            llm_model=self.config.llm_model,
         ):
             self._raise_if_cancelled()
             event_type = event["type"]
@@ -485,6 +494,9 @@ class AgentRuntime:
             mode=state.mode,
             conversation_history=conversation_history,
             user_content=user_content,
+            attachments=self.config.attachments,
+            llm_provider=self.config.llm_provider,
+            llm_model=self.config.llm_model,
         )
         partial.thought = result.get("thought")
         partial.action = result.get("action")
@@ -555,7 +567,9 @@ class AgentRuntime:
         if state.user_message_written:
             return
         self.writer.add_user_message(
-            state.user_message_content if state.user_message_content is not None else state.user_query
+            state.persisted_user_message_content
+            if state.persisted_user_message_content is not None
+            else state.user_query
         )
         state.user_message_written = True
 

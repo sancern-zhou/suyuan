@@ -13,7 +13,6 @@ ReAct Agent - 主类
 
 from typing import Dict, Any, AsyncGenerator, Optional, Tuple, List
 from datetime import datetime, timedelta
-from contextlib import nullcontext
 import uuid
 import structlog
 import asyncio
@@ -339,6 +338,8 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if manual_mode == "social" else None,
+                llm_provider="minimax" if manual_mode == "social" else None,
+                llm_model="MiniMax-M3" if manual_mode == "social" else None,
             )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
@@ -416,39 +417,33 @@ class ReActAgent:
                 except Exception as e:
                     logger.warning("failed_to_set_mode_memory_tool_context", mode=manual_mode, memory_tool_mode=memory_tool_mode, error=str(e))
 
-            model_context = (
-                self.planner.llm_service.use_provider_model("minimax", "MiniMax-M3")
-                if manual_mode == "social"
-                else nullcontext()
-            )
-            with model_context:
-                async for event in react_loop.run(
-                    user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
-                    enhance_with_history=enhance_with_history,
-                    initial_messages=initial_messages,
-                    manual_mode=manual_mode
+            async for event in react_loop.run(
+                user_query=user_query,  # ✅ 原始用户查询（不包含记忆增强）
+                enhance_with_history=enhance_with_history,
+                initial_messages=initial_messages,
+                manual_mode=manual_mode
+            ):
+                self._capture_office_document(actual_session_id, event)
+
+                if self._should_run_report_auto_followup(
+                    manual_mode,
+                    event,
+                    user_query,
+                    skip_auto_followup=skip_auto_followup,
                 ):
-                    self._capture_office_document(actual_session_id, event)
-
-                    if self._should_run_report_auto_followup(
-                        manual_mode,
-                        event,
-                        user_query,
-                        skip_auto_followup=skip_auto_followup,
-                    ):
-                        logger.info(
-                            "report_auto_followup_pending",
-                            session_id=actual_session_id,
-                            prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
-                        )
-                        event_data = event.setdefault("data", {})
-                        event_data["auto_followup_pending"] = True
-                        event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
-                        event_data["auto_followup_hook_name"] = "report_final_review"
-                        yield event
-                        return
-
+                    logger.info(
+                        "report_auto_followup_pending",
+                        session_id=actual_session_id,
+                        prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
+                    )
+                    event_data = event.setdefault("data", {})
+                    event_data["auto_followup_pending"] = True
+                    event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
+                    event_data["auto_followup_hook_name"] = "report_final_review"
                     yield event
+                    return
+
+                yield event
 
         except Exception as e:
             logger.error(

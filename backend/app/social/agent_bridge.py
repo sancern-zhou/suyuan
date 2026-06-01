@@ -1,6 +1,7 @@
 """社交 Agent 桥接模块，负责连接消息总线与 ReActAgent。"""
 
 import asyncio
+import mimetypes
 import re
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -8,6 +9,7 @@ from typing import Optional, List, Dict, Any
 import structlog
 
 from app.agent.react_agent import ReActAgent
+from app.services.media_object_store import get_media_object_store
 from app.social.events import InboundMessage, OutboundMessage
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
@@ -200,6 +202,81 @@ class AgentBridge:
             return channel.bot_account
         return "default"
 
+    @staticmethod
+    def _is_image_media(media_path: str) -> bool:
+        mime_type, _ = mimetypes.guess_type(media_path)
+        if mime_type and mime_type.startswith("image/"):
+            return True
+        return Path(media_path).suffix.lower() in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".bmp",
+            ".tif",
+            ".tiff",
+        }
+
+    def _build_agent_attachments(self, media: Optional[List[str]]) -> List[Dict[str, Any]]:
+        """Convert social channel media references into agent attachments."""
+        attachments: List[Dict[str, Any]] = []
+        for item in media or []:
+            if not item:
+                continue
+            media_type = "image" if self._is_image_media(item) else "file"
+            attachment: Dict[str, Any] = {
+                "type": media_type,
+                "name": Path(item).name or "attachment",
+            }
+            if item.startswith(("http://", "https://")):
+                attachment["url"] = item
+            else:
+                attachment["local_path"] = item
+                mime_type, _ = mimetypes.guess_type(item)
+                if media_type == "image":
+                    try:
+                        object_url = get_media_object_store().upload_and_presign(
+                            item,
+                            content_type=mime_type,
+                        )
+                        if object_url:
+                            attachment["url"] = object_url
+                    except Exception as exc:
+                        logger.warning(
+                            "media_object_store_upload_failed",
+                            path=item,
+                            error=str(exc),
+                        )
+                    try:
+                        from app.services.signed_media import get_signed_media_service
+
+                        signed_url = get_signed_media_service().create_url(item)
+                        if signed_url and not attachment.get("url"):
+                            attachment["url"] = signed_url
+                    except Exception as exc:
+                        logger.warning(
+                            "signed_media_url_generation_failed",
+                            path=item,
+                            error=str(exc),
+                        )
+            mime_type, _ = mimetypes.guess_type(item)
+            if mime_type:
+                attachment["mime_type"] = mime_type
+            attachments.append(attachment)
+        return attachments
+
+    @staticmethod
+    def _strip_media_source_markers(content: str) -> str:
+        """Remove local/remote media source paths that are supplied as attachments."""
+        cleaned = re.sub(
+            r"(?im)^\[(?:Image|Audio|Video|File):\s*source:\s*[^\]]+\]\s*$",
+            "",
+            content or "",
+        )
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
     async def _consume_loop(self) -> None:
         """Main consumption loop."""
         logger.info("AgentBridge consume loop started", running=self._running)
@@ -381,11 +458,19 @@ class AgentBridge:
                 social_soul_context = social_context["social_soul_context"]
                 social_user_context = social_context["social_user_context"]
 
+            agent_attachments = self._build_agent_attachments(msg.media) if self.mode == "social" else []
+            agent_content = (
+                self._strip_media_source_markers(msg.content)
+                if agent_attachments
+                else msg.content
+            )
+
             response_text, reasoning_content = await self._aggregate_agent_events(
-                content=msg.content,
+                content=agent_content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
                 channel=msg.channel,
+                attachments=agent_attachments,
                 social_user_id=social_user_id if self.mode == "social" else None,
                 social_memory_store=social_memory_store,
                 social_user_preferences=social_user_prefs,
@@ -482,7 +567,8 @@ class AgentBridge:
         social_user_file_path: str = None,
         social_heartbeat_file_path: str = None,  # ✅ 新增
         social_soul_context: str = None,
-        social_user_context: str = None
+        social_user_context: str = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> tuple[str, str]:
         """聚合 Agent 事件并生成最终回复。
 
@@ -515,7 +601,8 @@ class AgentBridge:
                 social_user_file_path=social_user_file_path if self.mode == "social" else None,
                 social_heartbeat_file_path=social_heartbeat_file_path if self.mode == "social" else None,  # ✅ 新增
                 social_soul_context=social_soul_context if self.mode == "social" else None,
-                social_user_context=social_user_context if self.mode == "social" else None
+                social_user_context=social_user_context if self.mode == "social" else None,
+                attachments=attachments if self.mode == "social" else None,
             ):
                 events_buffer.append(event)
 

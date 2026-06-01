@@ -14,6 +14,7 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
+import copy
 import structlog
 
 # 单一工具注册源
@@ -25,6 +26,22 @@ from app.tools.openmeteo_current_tool import openmeteo_current_tool
 from app.tools.weatherapi_com_tool import weatherapi_com_tool
 
 logger = structlog.get_logger()
+
+
+def _social_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Hide image-analysis affordances from social mode read_file schema."""
+    social_schema = copy.deepcopy(schema)
+    social_schema["description"] = (
+        "读取文件或目录内容，支持文本分页、PDF、DOCX、PPTX、Word XML、Markdown。"
+        "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
+        "Excel文件不由 read_file 读取，需使用 execute_python。"
+        "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
+        "不返回base64，避免浪费上下文。"
+    )
+    properties = social_schema.get("parameters", {}).get("properties", {})
+    properties.pop("auto_analyze", None)
+    properties.pop("analysis_type", None)
+    return social_schema
 
 
 # ========================================
@@ -752,7 +769,10 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
         if tool.is_available():
             if allowed_tools is not None and tool.name not in allowed_tools:
                 continue
-            schemas.append(tool.get_function_schema())
+            schema = tool.get_function_schema()
+            if mode == "social" and tool.name == "read_file":
+                schema = _social_read_file_schema(schema)
+            schemas.append(schema)
 
     # ========================================
     # 2. 添加天气观测工具 schema（特殊工具）

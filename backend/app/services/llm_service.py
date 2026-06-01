@@ -117,13 +117,15 @@ class LLMService:
         state = _llm_request_state.get()
         if state is not None:
             return state.get("fallbacks")
-        return None
+        return getattr(self, "_request_fallbacks", None)
 
     @request_fallbacks.setter
     def request_fallbacks(self, value: Optional[str]) -> None:
         state = _llm_request_state.get()
         if state is not None:
             state["fallbacks"] = value
+        else:
+            self._request_fallbacks = value
 
     @contextmanager
     def use_provider_model(self, provider: str, model: Optional[str] = None):
@@ -970,6 +972,9 @@ class LLMService:
         async def close_client() -> None:
             try:
                 await close()
+            except asyncio.CancelledError:
+                logger.debug("llm_anthropic_client_close_cancelled")
+                return
             except RuntimeError as exc:
                 if "handler is closed" in str(exc):
                     logger.debug("llm_anthropic_client_close_ignored", error=str(exc))
@@ -986,6 +991,8 @@ class LLMService:
         def consume_close_result(done_task: asyncio.Task) -> None:
             try:
                 done_task.result()
+            except asyncio.CancelledError:
+                logger.debug("llm_anthropic_client_close_task_cancelled")
             except Exception as exc:
                 logger.warning(
                     "llm_anthropic_client_close_failed",
@@ -1008,6 +1015,35 @@ class LLMService:
             provider=self.provider,
             model=self.model,
         )
+
+    def _create_provider_override_service(self, provider: Optional[str], model: Optional[str]) -> Optional["LLMService"]:
+        """Create an isolated service instance for an explicit provider/model call."""
+        selected_provider = (provider or "").strip().lower()
+        selected_model = (model or "").strip()
+        if not selected_provider and not selected_model:
+            return None
+
+        service = self.__class__()
+        if selected_provider:
+            service.provider = selected_provider
+            service._load_provider_config()
+        if selected_model:
+            service.model = selected_model
+        service.request_fallbacks = ""
+        logger.info(
+            "llm_call_provider_model_selected",
+            provider=service.provider,
+            model=service.model,
+            base_url=service.base_url,
+        )
+        return service
+
+    def _schedule_provider_override_service_close(self, service: Optional["LLMService"]) -> None:
+        if service is None:
+            return
+        temporary_client = getattr(service, "anthropic_client", None)
+        if temporary_client is not None:
+            self._schedule_anthropic_client_close(temporary_client)
 
     async def _run_llm_request_with_global_limit(self, operation: str, call):
         semaphore = get_llm_pool_semaphore(self.provider, self.model)
@@ -2516,7 +2552,9 @@ class LLMService:
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: float = 0.3,
-        system: Optional[str] = None
+        system: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -2536,13 +2574,26 @@ class LLMService:
                 "usage": {...}
             }
         """
-        if not self.anthropic_client:
-            raise RuntimeError(
-                "Anthropic client not initialized. "
-                f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
-            )
+        override_service = self._create_provider_override_service(provider, model)
+        if override_service is not None:
+            try:
+                return await override_service.chat_anthropic(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
+            finally:
+                self._schedule_provider_override_service_close(override_service)
 
         try:
+            if not self.anthropic_client:
+                raise RuntimeError(
+                    "Anthropic client not initialized. "
+                    f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
+                )
+
             async def create_message():
                 if not self.anthropic_client:
                     raise RuntimeError(
@@ -2657,7 +2708,7 @@ class LLMService:
                             tools=tools,
                             max_tokens=max_tokens,
                             temperature=temperature,
-                            system=system
+                            system=system,
                         )
                         return result
                     finally:
@@ -2677,7 +2728,9 @@ class LLMService:
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: float = 0.3,
-        system: Optional[str] = None
+        system: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Anthropic 格式流式聊天，支持原生工具调用
 
@@ -2695,6 +2748,21 @@ class LLMService:
             - {"type": "message_delta", "data": {"stop_reason": str, "usage": {...}}}
             - {"type": "message_stop", "data": {}}
         """
+        override_service = self._create_provider_override_service(provider, model)
+        if override_service is not None:
+            try:
+                async for event in override_service.chat_anthropic_streaming(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                ):
+                    yield event
+            finally:
+                self._schedule_provider_override_service_close(override_service)
+            return
+
         if not self.anthropic_client:
             raise RuntimeError(
                 "Anthropic client not initialized. "

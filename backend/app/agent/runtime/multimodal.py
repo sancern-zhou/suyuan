@@ -35,7 +35,47 @@ def build_anthropic_user_content(
     return blocks if len(blocks) > 1 else text
 
 
+def build_base64_user_content(
+    text: str,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+) -> str | List[Dict[str, Any]]:
+    """Build Anthropic content blocks forcing local image bytes.
+
+    Used only as a current-turn fallback when a provider cannot fetch a remote
+    signed URL. The returned content must never be persisted to history.
+    """
+    if not attachments:
+        return text
+
+    blocks: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        if attachment.get("type") != "image":
+            continue
+        image_block = _build_local_base64_image_block(attachment)
+        if image_block:
+            blocks.append(image_block)
+
+    return blocks if len(blocks) > 1 else text
+
+
 def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    url = attachment.get("url") or attachment.get("signed_url")
+    if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):
+        return {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": url,
+            },
+        }
+
+    local_path = attachment.get("local_path") or attachment.get("path")
+    return _build_local_base64_image_block(attachment) if local_path else None
+
+
+def _build_local_base64_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     local_path = attachment.get("local_path") or attachment.get("path")
     if local_path:
         path = Path(str(local_path))
@@ -51,17 +91,33 @@ def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 },
             }
 
-    url = attachment.get("url")
-    if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):
-        return {
-            "type": "image",
-            "source": {
-                "type": "url",
-                "url": url,
-            },
-        }
-
     return None
+
+
+def build_persisted_user_content(
+    text: str,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+) -> str | List[Dict[str, Any]]:
+    """Build compact history content for a multimodal social user turn."""
+    if not attachments:
+        return text
+
+    blocks: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        if attachment.get("type") != "image":
+            continue
+        name = str(attachment.get("name") or "image")
+        media_type = str(attachment.get("mime_type") or attachment.get("content_type") or "image")
+        blocks.append(
+            {
+                "type": "text",
+                "text": f"[用户发送了一张图片：{name}，{media_type}，已在当前轮以原生多模态方式提供。]",
+            }
+        )
+
+    return blocks if len(blocks) > 1 else text
 
 
 def _media_type(attachment: Dict[str, Any], path: Path) -> str:
