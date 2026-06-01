@@ -30,6 +30,50 @@ class Settings(BaseSettings):
         default="http://localhost:8000",
         description="Backend server host URL (for generating image URLs)"
     )
+    signed_media_base_url: Optional[str] = Field(
+        default=None,
+        description="Public backend URL for temporary signed media links"
+    )
+    signed_media_secret: Optional[str] = Field(
+        default=None,
+        description="Secret used to sign temporary media URLs"
+    )
+    signed_media_ttl_seconds: int = Field(
+        default=600,
+        description="Temporary signed media URL lifetime in seconds"
+    )
+    media_object_store_enabled: bool = Field(
+        default=False,
+        description="Upload social media to an S3-compatible object store before sending to multimodal LLMs"
+    )
+    media_object_store_endpoint_url: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store endpoint URL"
+    )
+    media_object_store_access_key_id: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store access key ID"
+    )
+    media_object_store_secret_access_key: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store secret access key"
+    )
+    media_object_store_bucket: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store bucket"
+    )
+    media_object_store_region: str = Field(
+        default="auto",
+        description="S3-compatible object store region"
+    )
+    media_object_store_prefix: str = Field(
+        default="social-media",
+        description="Object key prefix for uploaded social media"
+    )
+    media_object_store_presign_ttl_seconds: int = Field(
+        default=600,
+        description="Object store presigned URL lifetime in seconds"
+    )
     api_base_url: Optional[str] = Field(
         default=None,
         description="Frontend API base URL (for callback URLs, overrides auto-detection)"

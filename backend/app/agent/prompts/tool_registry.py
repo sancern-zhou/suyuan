@@ -440,7 +440,7 @@ CHART_TOOL_ORDER = [
 SOCIAL_TOOL_ORDER = [
     "read_file", "edit_file", "edit_word_document", "grep", "write_file",
     "list_directory", "search_files", "list_skills",
-    "analyze_image", "knowledge_qa_workflow", "knowledge_document_reader",
+    "knowledge_qa_workflow", "knowledge_document_reader",
     "get_weather_forecast", "execute_python", "call_sub_agent",
     "web_search", "web_fetch", "TodoWrite",
     "schedule_task", "send_notification", "spawn",
