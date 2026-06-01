@@ -8,13 +8,12 @@
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
 - 图表生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。
 - 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
-- HTML 展示资源准备：可生成 CSS/JS/图片等资源，但最终展示页应交给 `create_html_artifact` 收口。
-- 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd/HTML 同源报告包时使用。
+- 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
 
 ## 正式报告边界
 
-正式报告不要通过 `execute_python` 直接交付 DOCX/HTML，也不要在 Python 脚本中手写格式转换流程。
+正式报告不要通过 `execute_python` 直接交付 DOCX，也不要在 Python 脚本中手写格式转换流程。
 
 标准流程：
 
@@ -22,26 +21,12 @@
 2. 准备 `report.qmd` 内容，图片最终使用报告包内相对路径，例如 `assets/charts/chart_01.png`。
    不要根据 `/api/image/{image_id}` 或缓存 id 推断这个路径；应把真实图片文件路径传给
    `create_report_package.assets`，必要时用 `name` 指定 `chart_01.png`，由报告包工具复制并规范化引用。
-3. 调用 `create_report_package` 保存为 `reports/{report_id}/report.qmd` 并触发右侧面板 HTML 预览。
-4. 用户在右侧面板点击下载 QMD/Word，或点击分享生成报告预览链接。展示型 HTML 使用正式工具 `create_html_artifact`。
-
-`save_html_report(report_id, html_content, assets_dir=None)` 仅作为轻量 HTML 或历史兼容流程使用，不是正式报告的优先入口。
-
-## HTML 展示路径
-
-演讲材料、数据大屏、交互式说明页、网页、可视化叙事等非正式报告，使用 `create_html_artifact` 收口。
-
-标准流程：
-
-1. 用 `execute_python` 生成图表图片、数据 JSON、静态资源或 HTML 片段。
-2. 调用 `create_html_artifact`，传入完整 HTML 和资源路径。
-3. 右侧面板显示 HTML 预览，用户可下载 HTML 或点击分享生成链接。
-
-HTML 展示页不承诺 Word/QMD 同源导出；用户需要正式报告时回到 `create_report_package`。
+3. 调用 `create_report_package` 保存为 `reports/{report_id}/report.qmd` 并触发右侧面板预览。
+4. 用户在右侧面板点击下载 QMD/Word，或点击分享生成报告预览链接。
 
 ## 一次性 DOCX 兼容格式
 
-只有用户明确要求一次性 Word 文件，且不需要 qmd/HTML 同源报告包时，才直接使用 `python-docx`。此时默认使用公共样式工具，避免每次由模型重新决定字体和段落格式。
+只有用户明确要求一次性 Word 文件，且不需要 qmd 同源报告包时，才直接使用 `python-docx`。此时默认使用公共样式工具，避免每次由模型重新决定字体和段落格式。
 
 ```python
 from docx import Document
@@ -72,24 +57,16 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/report.docx")
 
 ```python
 from pathlib import Path
-from bs4 import BeautifulSoup
 from docx import Document
 from app.services.report.government_docx_style import (
     apply_government_report_style,
     add_government_image,
-    resolve_report_image_path,
 )
-
-html_path = Path("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.html")
-soup = BeautifulSoup(html_path.read_text(encoding="utf-8"), "html.parser")
 
 doc = Document()
 apply_government_report_style(doc)
-for img in soup.find_all("img"):
-    image_path = resolve_report_image_path(img.get("src", ""), html_path.parent)
-    if image_path:
-        caption = img.get("alt") or ""
-        add_government_image(doc, image_path, caption=caption)
+image_path = Path("/home/xckj/suyuan/backend/backend_data_registry/charts/demo.png")
+add_government_image(doc, image_path, caption="图1 示例图")
 
 doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.docx")
 ```
@@ -106,7 +83,6 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.do
 - `files`：本次生成的本地文件绝对路径列表。
 - `file_path`：主文件路径，用于预览或下载。
 - `pdf_preview`：Office/PDF 文件预览信息，适用于 `.docx/.xlsx/.pptx/.pdf`。
-- `html_preview`：HTML 预览信息；Notebook 使用 `/api/notebook/html/{html_id}`。正式报告的 HTML 预览应由 `create_report_package` 返回。
 - `visuals`：图片或 ECharts 可视化块；`matplotlib` 图片会缓存为 `/api/image/{image_id}`。
 
 正式报告必须使用标准报告包结构：
@@ -119,7 +95,6 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.do
 
 ```text
 /home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}.qmd
-/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}.html
 ```
 
 生成正式报告时，调用 `create_report_package`，不要把本地绝对路径作为最终交付方式。

@@ -88,7 +88,12 @@ def _summarize_dataset(dataset: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def write_report(audit: dict[str, Any], path: Path, dataset: dict[str, Any] | None = None) -> None:
+def write_report(
+    audit: dict[str, Any],
+    path: Path,
+    dataset: dict[str, Any] | None = None,
+    final_issue_list: dict[str, Any] | None = None,
+) -> None:
     summary = audit["summary"]
     records = audit["records"]
     visible_issues = _collect_visible_issues(records)
@@ -127,29 +132,88 @@ def write_report(audit: dict[str, Any], path: Path, dataset: dict[str, Any] | No
         for key, value in dataset_summary["maintenance_type_counts"].items():
             lines.append(f"- {key}：{value} 条")
 
-    lines.extend(["", "## 问题工单明细", ""])
-    lines.append(f"- 问题工单数：{len(visible_records)} 条")
-    lines.append(f"- 问题条目数：{len(visible_issues)} 条")
-    lines.append("")
-
-    issues_by_order: dict[str, list[dict[str, Any]]] = {}
-    order_meta: dict[str, dict[str, Any]] = {}
-    for issue in visible_issues:
-        code = issue["working_order_code"]
-        issues_by_order.setdefault(code, []).append(issue)
-    for record in records:
-        code = record.get("working_order_code")
-        if code in visible_records:
-            order_meta[code] = record
-
-    for code in sorted(issues_by_order.keys()):
-        record = order_meta.get(code, {})
-        lines.append(
-            f"### {code} | 站点 {record.get('station_id', '')} | "
-            f"{record.get('order_type', '')}/{record.get('maintenance_type', '')}"
-        )
-        for issue in issues_by_order[code]:
-            lines.append(f"- {issue['rule_id']}（{issue['severity']}）：{issue['message']}")
+    if final_issue_list is not None:
+        lines.extend(_format_final_issue_list_by_operation_unit(final_issue_list))
+    else:
+        lines.extend(["", "## 问题工单明细", ""])
+        lines.append(f"- 问题工单数：{len(visible_records)} 条")
+        lines.append(f"- 问题条目数：{len(visible_issues)} 条")
         lines.append("")
 
+        issues_by_order: dict[str, list[dict[str, Any]]] = {}
+        order_meta: dict[str, dict[str, Any]] = {}
+        for issue in visible_issues:
+            code = issue["working_order_code"]
+            issues_by_order.setdefault(code, []).append(issue)
+        for record in records:
+            code = record.get("working_order_code")
+            if code in visible_records:
+                order_meta[code] = record
+
+        for code in sorted(issues_by_order.keys()):
+            record = order_meta.get(code, {})
+            lines.append(
+                f"### {code} | 站点 {record.get('station_id', '')} | "
+                f"{record.get('order_type', '')}/{record.get('maintenance_type', '')}"
+            )
+            for issue in issues_by_order[code]:
+                lines.append(f"- {issue['rule_id']}（{issue['severity']}）：{issue['message']}")
+            lines.append("")
+
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _format_final_issue_list_by_operation_unit(final_issue_list: dict[str, Any]) -> list[str]:
+    items = [item for item in final_issue_list.get("items", []) if isinstance(item, dict)]
+    affected_orders = {item.get("working_order_code") for item in items if item.get("working_order_code")}
+    lines = ["", "## 问题工单明细", ""]
+    lines.append(f"- 问题工单数：{len(affected_orders)} 条")
+    lines.append(f"- 问题条目数：{len(items)} 条")
+    lines.append("")
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        operation_unit = _display_value(item.get("operation_unit"), "未关联运维单位")
+        grouped.setdefault(operation_unit, []).append(item)
+
+    for operation_unit in sorted(grouped):
+        lines.append(f"### {operation_unit}")
+        lines.append("")
+        for index, item in enumerate(_sort_issue_items(grouped[operation_unit]), start=1):
+            lines.append(
+                f"{index}. {_issue_station_label(item)}、"
+                f"{_display_value(item.get('rf_form_name'), '未关联中文表单')}、"
+                f"{_display_value(item.get('working_order_code'), '未关联工单号')}、"
+                f"{_display_value(item.get('message'), '未填写问题描述')}、"
+                f"{_display_value(item.get('rule_id'), '未关联规则')}"
+            )
+        lines.append("")
+    return lines
+
+
+def _sort_issue_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            str(item.get("station_name") or item.get("station_id") or ""),
+            str(item.get("working_order_code") or ""),
+            str(item.get("rf_form_name") or ""),
+            str(item.get("rule_id") or ""),
+            str(item.get("message") or ""),
+        ),
+    )
+
+
+def _issue_station_label(item: dict[str, Any]) -> str:
+    station_name = str(item.get("station_name") or "").strip()
+    if station_name:
+        return station_name
+    station_id = str(item.get("station_id") or "").strip()
+    if station_id:
+        return f"站点{station_id}"
+    return "未关联站点"
+
+
+def _display_value(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    return text if text else fallback

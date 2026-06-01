@@ -176,7 +176,13 @@ def _parse_time(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S.%f%z"):
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S.%f%z",
+        "%m %d %Y %I:%M%p",
+        "%m %d %Y  %I:%M%p",
+    ):
         try:
             return datetime.strptime(str(value), fmt)
         except ValueError:

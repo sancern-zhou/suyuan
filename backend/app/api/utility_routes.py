@@ -81,11 +81,20 @@ async def download_file(file_path: str):
         elif path.suffix in ['.txt']:
             media_type = 'text/plain'
 
+        # 对于PDF文件，设置为inline预览（避免自动下载）
+        # 其他文件保持attachment下载行为
+        headers = {}
+        if path.suffix in ['.pdf']:
+            headers['Content-Disposition'] = f'inline; filename="{filename}"'
+        else:
+            headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+
         # 返回文件
         return FileResponse(
             path=str(path),
             filename=filename,
-            media_type=media_type
+            media_type=media_type,
+            headers=headers
         )
 
     except HTTPException:

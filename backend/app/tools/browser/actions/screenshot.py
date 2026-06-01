@@ -27,6 +27,8 @@ def handle_screenshot(
         {
             "image_id": str,  # Image ID for retrieval
             "image_url": str,  # Full URL to access the image (for LLM)
+            "local_path": str,  # Local file path for backend tools like analyze_image
+            "size_kb": float,  # Image file size in KB
             "markdown_image": str,  # Markdown format image link (for LLM)
             "description": str,  # Text description of the page
             "url": str,  # Page URL
@@ -52,13 +54,13 @@ def handle_screenshot(
     image_cache = get_image_cache()
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     image_id = f"screenshot_{timestamp}"
-    image_cache.save(base64_data, chart_id=image_id)
+    save_result = image_cache.save(base64_data, chart_id=image_id)
 
     # Generate description from page content
     description = _generate_page_description(page)
 
     # 【修复】使用相对路径，让前端通过vite代理或同域访问
-    image_url = f"/api/image/{image_id}"
+    image_url = save_result.get("url") or f"/api/image/{image_id}"
 
     # Generate markdown image format (for LLM output)
     markdown_image = f"![{title}]({image_url})"
@@ -75,6 +77,8 @@ def handle_screenshot(
     return {
         "image_id": image_id,
         "image_url": image_url,
+        "local_path": save_result.get("local_path"),
+        "size_kb": save_result.get("size_kb"),
         "markdown_image": markdown_image,
         "description": description,
         "url": url,

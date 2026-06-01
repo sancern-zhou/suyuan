@@ -57,12 +57,15 @@ from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnor
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates  # noqa: E402
 from app.services.ops_audit.rules.rf_enum_rules import check_rf_enum_values  # noqa: E402
 from app.services.ops_audit.rules.rf_formula_rules import check_rf_formula_values  # noqa: E402
+from app.services.ops_audit.rules.rf_humidity_rules import check_rf_environment_humidity_values  # noqa: E402
 from app.services.ops_audit.rules.rf_multipoint_rules import check_rf_multipoint_values  # noqa: E402
+from app.services.ops_audit.rules.rf_pm_pressure_rules import check_rf_pm_pressure_values  # noqa: E402
 from app.services.ops_audit.rules.rf_position_rules import check_rf_field_positions  # noqa: E402
 from app.services.ops_audit.rules.rf_range_rules import check_rf_range_values  # noqa: E402
 from app.services.ops_audit.rules.rf_required_rules import check_rf_required_fields  # noqa: E402
 from app.services.ops_audit.rules.rf_time_rules import check_rf_time_ranges  # noqa: E402
 from app.services.ops_audit.rules.rf_unit_rules import check_rf_unit_values  # noqa: E402
+from app.services.ops_audit.rules.rf_visibility_rules import check_rf_visibility_values  # noqa: E402
 from app.services.ops_audit.rules.workflow_rules import check_workflow_completeness  # noqa: E402
 from app.services.ops_audit.scoring import (  # noqa: E402
     COMMON_PATTERN_ELIGIBLE_RULES,
@@ -505,6 +508,46 @@ def _clean_values(values: list[str] | None) -> list[str]:
     return [str(value).strip() for value in values if str(value).strip()]
 
 
+def _station_meta_by_id(stations: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    meta: dict[str, dict[str, Any]] = {}
+    for station in stations:
+        station_id = _first_non_empty(
+            station,
+            ["STATIONID", "StationID", "station_id", "stationid", "ID", "id"],
+        )
+        if station_id is None:
+            continue
+        meta[str(station_id)] = {
+            "station_name": _first_non_empty(
+                station,
+                ["STATIONNAME", "StationName", "station_name", "stationname", "NAME", "Name", "name"],
+            ),
+            "operation_unit": _first_non_empty(
+                station,
+                [
+                    "OPERATIONUNIT",
+                    "OPERATION_UNIT",
+                    "OperationUnit",
+                    "operation_unit",
+                    "operationUnit",
+                    "MAINTENANCEUNIT",
+                    "MAINTENANCE_UNIT",
+                    "maintenance_unit",
+                    "运维单位",
+                ],
+            ),
+        }
+    return meta
+
+
+def _first_non_empty(record: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip():
+            return value
+    return None
+
+
 def _in_clause(column: str, values: list[str], params: list[Any]) -> str:
     placeholders = ", ".join("?" for _ in values)
     params.extend(values)
@@ -599,6 +642,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
                 "details": [],
                 "attachments": [],
                 "wo_commonfile": [],
+                "stations": [],
                 "devices": [],
                 "device_history": {"orders": [], "rf_forms": {}, "query_info": {"skipped": True, "reason": "no_orders"}},
                 "rf_forms": {},
@@ -639,6 +683,41 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
             """,
             codes,
         )
+
+        station_ids_for_query = sorted({str(row.get("STATIONID")) for row in orders if row.get("STATIONID")})
+        stations = []
+        if station_ids_for_query:
+            station_placeholders = ", ".join("?" for _ in station_ids_for_query)
+            try:
+                stations = rows(
+                    cursor,
+                    f"""
+                    SELECT TOP 2000
+                        bs.STATIONID,
+                        bs.NAME,
+                        bs.CODE,
+                        bs.UNIQUECODE,
+                        op.DEPARTMENTID AS OPERATIONUNITID,
+                        op.DEPARTMENTNAME AS OPERATIONUNIT
+                    FROM dbo.base_station bs
+                    OUTER APPLY (
+                        SELECT TOP 1 sd.DEPARTMENTID, sd.DEPARTMENTNAME
+                        FROM dbo.base_department_station bds
+                        JOIN dbo.sys_department sd
+                          ON bds.DEPARTMENTID = sd.DEPARTMENTID
+                        WHERE bds.STATIONID = CAST(bs.STATIONID AS NVARCHAR(64))
+                          AND sd.USERTYPE = '3'
+                        ORDER BY
+                            CASE WHEN sd.PARENTID = 'Default-3-OperationUnit' THEN 0 ELSE 1 END,
+                            sd.DEPARTMENTNAME
+                    ) op
+                    WHERE CAST(bs.STATIONID AS NVARCHAR(64)) IN ({station_placeholders})
+                    """,
+                    station_ids_for_query,
+                )
+            except Exception:
+                logger.exception("ops_audit_station_fetch_failed")
+                conn.rollback()
 
         rf_forms: dict[str, list[dict[str, Any]]] = {}
         for table in RF_TABLES:
@@ -706,6 +785,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
         "details": details,
         "attachments": attachments,
         "wo_commonfile": wo_commonfile,
+        "stations": stations,
         "devices": devices,
         "device_history": device_history,
         "rf_forms": rf_forms,
@@ -1381,6 +1461,7 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     for detail in dataset.get("details", []):
         details_by_code[detail.get("WORKINGORDERCODE")].append(detail)
 
+    station_meta_by_id = _station_meta_by_id(dataset.get("stations", []))
     devices_by_id = {
         str(device.get("DEVICEID")): device
         for device in dataset.get("devices", [])
@@ -1407,6 +1488,7 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     flow_visual_tasks: list[dict[str, Any]] = []
     for order in dataset.get("orders", []):
         code = order.get("WORKINGORDERCODE")
+        station_meta = station_meta_by_id.get(str(order.get("STATIONID") or ""), {})
         issues: list[Issue] = []
         forms = forms_by_code.get(code, [])
         details = details_by_code.get(code, [])
@@ -1421,9 +1503,12 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         check_rf_unit_values(order, forms, issues)
         check_rf_range_values(order, forms, issues)
         check_rf_formula_values(order, forms, issues)
+        check_rf_environment_humidity_values(order, forms, issues)
         check_rf_multipoint_values(order, forms, issues)
+        check_rf_pm_pressure_values(order, forms, issues)
         check_rf_field_positions(order, forms, issues)
         check_rf_enum_values(order, forms, issues)
+        check_rf_visibility_values(order, forms, issues)
         check_rf_abnormal_remarks(order, forms, issues)
         check_rf_calibration_dates(order, forms, issues)
 
@@ -1466,6 +1551,8 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             {
                 "working_order_code": code,
                 "station_id": order.get("STATIONID"),
+                "station_name": station_meta.get("station_name"),
+                "operation_unit": station_meta.get("operation_unit"),
                 "order_type": order.get("DDWORKINGORDERTYPE"),
                 "create_type": order.get("DDORDERCREATETYPE"),
                 "maintenance_type": order.get("MAINTENANCETYPE"),

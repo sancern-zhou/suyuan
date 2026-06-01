@@ -22,9 +22,10 @@ date: 2026-05-08
 
 import shutil
 import subprocess
+from copy import copy
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 import structlog
 
 from app.fetchers.base.fetcher_interface import DataFetcher
@@ -400,6 +401,8 @@ EXTRA_SHEET_CONFIG = {
             {"pollutant": "CO", "col": "H", "field": "CO_P95"},
         ],
         "year_col": "A",  # 年份列
+        "standard_col": "I",
+        "standard_header": "标准类型",
     },
 }
 
@@ -515,6 +518,13 @@ class ConsultationFileFetcher(DataFetcher):
         return result
 
     @staticmethod
+    def _historical_standard_label(year: int) -> str:
+        """Return the standard label used by historical concentration queries."""
+        from app.tools.query.query_city_standard_report.tool import DEFAULT_NEW_STANDARD_START
+
+        return "新标准" if year >= DEFAULT_NEW_STANDARD_START.year else "旧标准"
+
+    @staticmethod
     def _extract_report_records(
         query_result: Dict[str, Any],
         *,
@@ -570,7 +580,7 @@ class ConsultationFileFetcher(DataFetcher):
         *,
         cities: List[str] = None,
         pollutant_codes: List[str] = None,
-        ns_type: int = 2,
+        ns_type: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """调用统一的城市统计报表工具。"""
         from app.tools.query.query_city_standard_report.tool import execute_query_city_standard_report
@@ -580,7 +590,6 @@ class ConsultationFileFetcher(DataFetcher):
             start_time=start_date,
             end_time=end_date,
             ns_type=ns_type,
-            time_type=8,
             pollutant_codes=pollutant_codes,
             data_source=1,
             sand_type=1,
@@ -618,7 +627,6 @@ class ConsultationFileFetcher(DataFetcher):
             time_point=[current_start, current_end],
             contrast_time=[last_year_start, last_year_end],
             ns_type=ns_type,
-            time_type=8,
             pollutant_codes=pollutant_codes,
             data_source=1,
             sand_type=1,
@@ -2264,6 +2272,8 @@ class ConsultationFileFetcher(DataFetcher):
         start_year = config["start_year"]
         start_row = config["start_row"]
         year_col = config["year_col"]
+        standard_col = config.get("standard_col")
+        standard_header = config.get("standard_header", "标准类型")
 
         # 当前年份和月份
         current_year = int(time_range["year"])
@@ -2277,6 +2287,24 @@ class ConsultationFileFetcher(DataFetcher):
         if ws.max_row < required_rows:
             for _ in range(required_rows - ws.max_row):
                 ws.append([None] * ws.max_column)
+
+        if standard_col:
+            from openpyxl.styles import Alignment, Font, PatternFill
+
+            header_row = start_row - 1
+            standard_header_cell = ws[f"{standard_col}{header_row}"]
+            source_header_cell = ws[f"{config['columns'][-1]['col']}{header_row}"]
+            standard_header_cell.value = standard_header
+            if source_header_cell.has_style:
+                standard_header_cell._style = copy(source_header_cell._style)
+            standard_header_cell.font = copy(source_header_cell.font) if source_header_cell.has_style else Font(bold=True)
+            standard_header_cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.column_dimensions[standard_col].width = max(ws.column_dimensions[standard_col].width or 0, 12)
+            old_standard_fill = PatternFill("solid", fgColor="FFF2CC")
+            new_standard_fill = PatternFill("solid", fgColor="D9EAD3")
+        else:
+            old_standard_fill = None
+            new_standard_fill = None
 
         logger.info(
             "historical_comparison_pre_query",
@@ -2310,17 +2338,24 @@ class ConsultationFileFetcher(DataFetcher):
             ws[f"{year_col}{row}"] = None
             for col_config in config["columns"]:
                 ws[f"{col_config['col']}{row}"] = None
+            if standard_col:
+                ws[f"{standard_col}{row}"] = None
 
         for year in historical_years:
             row = start_row + (year - start_year)
             query_start, query_end = build_year_range(year)
             ws[f"{year_col}{row}"] = year
+            standard_label = self._historical_standard_label(year)
+            if standard_col:
+                standard_cell = ws[f"{standard_col}{row}"]
+                standard_cell.value = standard_label
+                standard_cell.alignment = Alignment(horizontal="center", vertical="center")
+                standard_cell.fill = new_standard_fill if standard_label == "新标准" else old_standard_fill
 
             try:
                 records = await self._query_city_standard_records(
                     query_start,
                     query_end,
-                    ns_type=2,
                 )
 
                 province_records = [r for r in records if r.get("cityName") == "全省"]

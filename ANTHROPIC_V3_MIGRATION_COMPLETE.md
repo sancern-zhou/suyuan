@@ -335,7 +335,7 @@ final_answer 事件
 
 3. **特殊事件**:
    - `office_document`: Office文档预览
-   - `notebook_document`: Notebook预览
+   - `html_document`: HTML预览
    - `streaming_text`: 流式文本
    - `result`: 分析结果
 

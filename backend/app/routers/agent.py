@@ -16,6 +16,7 @@ import structlog
 from app.agent import create_react_agent
 from app.agent.session import Session, get_session_manager
 from app.agent.runtime.cancellation import cancellation_registry
+from app.agent.runtime.steering import steering_registry
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -124,6 +125,11 @@ class AgentQueryRequest(BaseModel):
                 "assistant_mode": "meteorology-expert"
             }
         }
+
+
+class AgentSteerRequest(BaseModel):
+    """执行中用户补充/纠偏输入。"""
+    message: str = Field(..., description="追加到当前 active run 的用户输入")
 
 
 class AgentQueryResponse(BaseModel):
@@ -698,6 +704,18 @@ async def cancel_analysis(session_id: str):
         "cancelled": cancelled,
         "session_id": session_id,
         "message": "已发送取消信号" if cancelled else "没有找到运行中的分析任务",
+    }
+
+
+@router.post("/{session_id}/steer")
+async def steer_analysis(session_id: str, request: AgentSteerRequest):
+    """Append user steering input to an active steerable run."""
+    accepted = await steering_registry.add_input(session_id, request.message)
+    return {
+        "success": True,
+        "accepted": accepted,
+        "session_id": session_id,
+        "message": "已追加到当前执行任务" if accepted else "没有找到可追加的运行中任务",
     }
 
 

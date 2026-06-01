@@ -190,6 +190,8 @@ def _check_env_temp_humidity(
 
     if has_order_env_temp_humidity:
         return
+    if _form_indicates_not_applicable_device(form):
+        return
 
     temp_fields = RF_FIELD_PROFILES.get("temperature_fields", [])
     humidity_fields = RF_FIELD_PROFILES.get("humidity_fields", [])
@@ -270,6 +272,40 @@ def _form_value_case_insensitive(form: dict[str, Any], field: str) -> tuple[str 
 
 def _has_meaningful_env_value(value: Any) -> bool:
     return value is not None and str(value).strip() not in {"", "/", "-", "0"}
+
+
+def _form_indicates_not_applicable_device(form: dict[str, Any]) -> bool:
+    text = " ".join(
+        _text(form.get(field))
+        for field in (
+            "REMARK",
+            "Remark",
+            "remark",
+            "DESCRIPTION",
+            "Description",
+            "DESCRIPTIONTA",
+            "SITUATION",
+            "Situation",
+        )
+    )
+    not_applicable_markers = (
+        "无该设备",
+        "无此设备",
+        "无对应设备",
+        "无设备",
+        "未配置",
+        "不适用",
+        "无需",
+        "无此项",
+    )
+    special_maintenance_markers = (
+        "流动监测车",
+        "监测车",
+        "非常规",
+        "不完全一样",
+        "停运状态",
+    )
+    return any(marker in text for marker in not_applicable_markers + special_maintenance_markers)
 
 
 def _text(value: Any) -> str:

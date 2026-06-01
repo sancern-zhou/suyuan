@@ -189,6 +189,23 @@ class ReactAgentAPI {
     }
   }
 
+  async steer(sessionId, message) {
+    const url = `${API_BASE_URL}/agent/${encodeURIComponent(sessionId)}/steer`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    return await response.json()
+  }
+
   // 取消请求
   async cancel(requestKey = null) {
     if (requestKey) {

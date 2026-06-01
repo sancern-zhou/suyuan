@@ -107,6 +107,7 @@ class ReActPlanner:
         iteration: int = 0,
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        user_content: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """原生工具调用规划器（非流式）
 
@@ -136,7 +137,7 @@ class ReActPlanner:
 
         # 构建 messages（Anthropic API 不接受 system 在 messages 中）
         messages = conversation_history + [
-            {"role": "user", "content": user_conversation}
+            {"role": "user", "content": user_content if user_content is not None else user_conversation}
         ]
 
         # 转换工具为 Anthropic 格式
@@ -165,6 +166,7 @@ class ReActPlanner:
         iteration: int = 0,
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        user_content: Optional[Any] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式规划器（按模式过滤 tools schema）
 
@@ -191,7 +193,7 @@ class ReActPlanner:
         conversation_history = self._fix_missing_tool_results(conversation_history)
 
         messages = conversation_history + [
-            {"role": "user", "content": user_conversation}
+            {"role": "user", "content": user_content if user_content is not None else user_conversation}
         ]
 
         # 转换工具为 Anthropic 格式

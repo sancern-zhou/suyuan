@@ -19,7 +19,7 @@ class ConversationWriter:
             return
         self.session.load_history_messages(initial_messages)
 
-    def add_user_message(self, content: str) -> None:
+    def add_user_message(self, content: Any) -> None:
         self.session.add_user_message(content)
 
     def add_tool_exchange(

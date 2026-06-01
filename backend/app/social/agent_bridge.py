@@ -15,6 +15,7 @@ from app.social.heartbeat_service import HeartbeatService
 from app.social.memory_store import MemoryStore
 from app.social.task_status_store import TaskStatusStore
 from app.social.user_preferences import UserPreferences
+from app.agent.runtime.steering import steering_registry
 
 logger = structlog.get_logger(__name__)
 
@@ -57,6 +58,8 @@ class AgentBridge:
 
         self._running = False
         self._consume_task: Optional[asyncio.Task] = None
+        self._message_tasks: set[asyncio.Task] = set()
+        self._active_social_sessions: set[str] = set()
 
         
         # 初始化用户心跳管理器
@@ -99,6 +102,19 @@ class AgentBridge:
             set_subagent_manager(self.subagent_manager)
             logger.info("subagent_manager_initialized")
 
+            from app.social.cli_task_manager import CliTaskManager
+            from app.social.cli_task_singleton import set_cli_task_manager
+            from app.social.cli_task_store import CliTaskStore
+
+            self.cli_task_manager = CliTaskManager(
+                task_store=CliTaskStore(),
+                message_bus=message_bus,
+            )
+            set_cli_task_manager(self.cli_task_manager)
+            logger.info("cli_task_manager_initialized")
+        else:
+            self.cli_task_manager = None
+
         
         self._channel_map: Dict[str, "BaseChannel"] = {}
 
@@ -114,6 +130,9 @@ class AgentBridge:
         # ✅ 启动子Agent管理器
         if self.subagent_manager:
             await self.subagent_manager.start()
+
+        if self.cli_task_manager:
+            await self.cli_task_manager.start()
 
         # ✅ 后端重启后恢复已有用户的社交定时任务心跳循环
         if self.user_heartbeat_manager and self.mode == "social":
@@ -144,6 +163,12 @@ class AgentBridge:
             except asyncio.CancelledError:
                 pass
 
+        for task in list(self._message_tasks):
+            task.cancel()
+        if self._message_tasks:
+            await asyncio.gather(*self._message_tasks, return_exceptions=True)
+            self._message_tasks.clear()
+
         
         if self.user_heartbeat_manager:
             await self.user_heartbeat_manager.shutdown()
@@ -151,6 +176,9 @@ class AgentBridge:
         
         if self.subagent_manager:
             await self.subagent_manager.shutdown()
+
+        if self.cli_task_manager:
+            await self.cli_task_manager.shutdown()
 
         logger.info("AgentBridge stopped")
 
@@ -185,7 +213,9 @@ class AgentBridge:
                            channel=msg.channel,
                            sender_id=msg.sender_id,
                            content_preview=msg.content[:50])
-                await self._process_message(msg)
+                task = asyncio.create_task(self._route_message(msg))
+                self._message_tasks.add(task)
+                task.add_done_callback(self._message_tasks.discard)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -198,7 +228,95 @@ class AgentBridge:
                            error=str(e),
                            exc_info=True)
 
-    async def _process_message(self, msg: InboundMessage) -> None:
+    async def _route_message(self, msg: InboundMessage) -> None:
+        bot_account = await self._get_bot_account(msg.channel)
+        social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+
+        if self.mode == "social":
+            from app.social.user_registry import BIND_CODE_PATTERN, get_social_user_registry
+
+            registry = get_social_user_registry()
+            if BIND_CODE_PATTERN.match(msg.content or ""):
+                bound_user = await registry.bind_by_code(
+                    message_text=msg.content,
+                    channel=msg.channel,
+                    bot_account=bot_account,
+                    sender_id=msg.sender_id,
+                )
+                if bound_user:
+                    await self.message_bus.publish_outbound(
+                        OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=f"绑定成功，{bound_user.name}。现在可以正常使用了。",
+                            reply_to=msg.sender_id,
+                        )
+                    )
+                    logger.info(
+                        "social_user_bound",
+                        social_user_id=bound_user.social_user_id,
+                        user_id=bound_user.id,
+                    )
+                else:
+                    await self.message_bus.publish_outbound(
+                        OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="绑定码无效、已使用，或当前微信已经绑定过用户。",
+                            reply_to=msg.sender_id,
+                        )
+                    )
+                    logger.warning(
+                        "social_user_bind_failed",
+                        channel=msg.channel,
+                        sender_id=msg.sender_id,
+                        content_preview=msg.content[:40],
+                    )
+                return
+
+            social_user = await registry.touch_social_user(social_user_id)
+            if social_user and social_user.status == "disabled":
+                await self.message_bus.publish_outbound(
+                    OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="当前用户已被禁用，请联系管理员。",
+                        reply_to=msg.sender_id,
+                    )
+                )
+                return
+
+        session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+
+        if self.mode == "social" and session_id in self._active_social_sessions:
+            accepted = await steering_registry.add_input(session_id, msg.content)
+            if not accepted:
+                await asyncio.sleep(0.2)
+                accepted = await steering_registry.add_input(session_id, msg.content)
+            if accepted:
+                logger.info(
+                    "social_message_steered_to_active_run",
+                    channel=msg.channel,
+                    sender_id=msg.sender_id,
+                    session_id=session_id,
+                    content_preview=msg.content[:80],
+                )
+                return
+
+        await self._process_message(
+            msg,
+            bot_account=bot_account,
+            social_user_id=social_user_id,
+            session_id=session_id,
+        )
+
+    async def _process_message(
+        self,
+        msg: InboundMessage,
+        bot_account: Optional[str] = None,
+        social_user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> None:
         """
         Process an inbound message through the agent.
 
@@ -212,11 +330,13 @@ class AgentBridge:
                        content_length=len(msg.content))
 
             
-            bot_account = await self._get_bot_account(msg.channel)
-            social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+            bot_account = bot_account or await self._get_bot_account(msg.channel)
+            social_user_id = social_user_id or f"{msg.channel}:{bot_account}:{msg.sender_id}"
 
             
-            session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+            session_id = session_id or await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+            if self.mode == "social":
+                self._active_social_sessions.add(session_id)
 
             logger.info("Session obtained",
                        channel=msg.channel,
@@ -344,6 +464,9 @@ class AgentBridge:
                 reply_to=msg.sender_id
             )
             await self.message_bus.publish_outbound(error_msg)
+        finally:
+            if self.mode == "social" and session_id:
+                self._active_social_sessions.discard(session_id)
 
     async def _aggregate_agent_events(
         self,
@@ -780,6 +903,27 @@ class AgentBridge:
                 context["social_memory_store"] = await self.user_memory_manager.get_user_memory(user_id)
                 logger.debug("user_memory_loaded", user_id=user_id)
 
+            try:
+                from app.social.user_registry import get_social_user_registry
+
+                social_user = await get_social_user_registry().get_by_social_user_id(user_id)
+                if social_user:
+                    structured_user_context = [
+                        "## 结构化用户档案",
+                        f"- 用户姓名：{social_user.name}",
+                        f"- 用户状态：{social_user.status}",
+                    ]
+                    if social_user.email:
+                        structured_user_context.append(f"- 邮箱：{social_user.email}")
+
+                    existing_user_context = context.get("social_user_context") or ""
+                    context["social_user_context"] = "\n".join(
+                        [*structured_user_context, "", existing_user_context]
+                    ).strip()
+                    context["social_user_profile"] = social_user.model_dump()
+            except Exception as e:
+                logger.warning("failed_to_load_structured_social_user", user_id=user_id, error=str(e))
+
             # 2. 加载用户偏好和文件路径
             preferences_manager = UserPreferences(user_id)
             user_preferences = preferences_manager.get_preferences()
@@ -792,7 +936,13 @@ class AgentBridge:
 
                 # 加载 soul.md 和 USER.md 内容
                 context["social_soul_context"] = preferences_manager.load_soul_md()
-                context["social_user_context"] = preferences_manager.load_user_md()
+                user_md_context = preferences_manager.load_user_md()
+                if context["social_user_context"] and user_md_context:
+                    context["social_user_context"] = (
+                        context["social_user_context"] + "\n\n" + user_md_context
+                    )
+                elif user_md_context:
+                    context["social_user_context"] = user_md_context
 
                 has_soul = len(context["social_soul_context"].strip()) > 0 if context["social_soul_context"] else False
 

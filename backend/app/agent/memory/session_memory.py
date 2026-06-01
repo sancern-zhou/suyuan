@@ -868,13 +868,13 @@ class SessionMemory:
 
         return dict(self.data_files)
 
-    def add_user_message(self, content: str) -> None:
+    def add_user_message(self, content: str | List[Dict[str, Any]]) -> None:
         """Record a user utterance."""
         self._append_conversation_turn("user", content, type="user")
         logger.debug(
             "add_user_message_called",
             session_id=self.session_id,
-            content_preview=content[:100],
+            content_preview=_safe_content_preview(content, 100),
             history_length=len(self.conversation_history)
         )
 
@@ -1299,7 +1299,7 @@ class SessionMemory:
             previous_history_length=len(self.conversation_history) - loaded_count
         )
 
-    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
+    def _append_conversation_turn(self, role: str, content: str | List[Dict[str, Any]], thought: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
         self.conversation_history.append(
             ConversationTurn(
                 role=role,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from datetime import datetime
 from typing import Any
 
 from app.services.ops_audit.config import load_yaml_config
@@ -13,6 +14,7 @@ from app.services.ops_audit.rules.base import add_issue
 
 
 RULE_ID = "RF_MULTIPOINT_RANGE_INVALID"
+TIME_RULE_ID = "RF_Q_MULTIPOINT_STEP_TIME_INVALID"
 PROFILES = load_yaml_config("rf_multipoint_profiles.yaml", {})
 SKIP_TOKENS = {"", "/", "-", "nan", "none", "null", "无", "无该项指标", "不适用", "未填写"}
 
@@ -31,6 +33,24 @@ def check_rf_multipoint_values(
     for table, form in forms:
         if form.get("_query_error") or table not in table_profiles:
             continue
+
+        time_violations = _check_step_times(table, form)
+        if time_violations:
+            evidence = {
+                "working_order_code": order.get("WORKINGORDERCODE"),
+                "rf_table": table,
+                "violations": time_violations[:20],
+            }
+            first = time_violations[0]
+            add_issue(
+                issues,
+                TIME_RULE_ID,
+                "时间合理性",
+                "高",
+                f"rf.{table}.{first.get('field')}",
+                f"多点校准时间异常: {first.get('label')} {first.get('reason')}",
+                json.dumps(evidence, ensure_ascii=False, default=str),
+            )
 
         profile = table_profiles[table]
         expected = _to_float(profile.get("expected_range"))
@@ -80,6 +100,138 @@ def check_rf_multipoint_values(
             f"多点校准量程填写错误: {profile.get('pollutant')} 量程 {first['parsed_range']}，应为 {expected:g}",
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
+
+
+def _check_step_times(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
+    if not table.startswith("RF_Q_GASEOUSMULTIPOINT_"):
+        return []
+
+    steps = _available_steps(form)
+
+    violations = []
+    for step_id, label, start_field, end_field in steps:
+        start = _parse_time(form.get(start_field))
+        end = _parse_time(form.get(end_field))
+        if not start and not end:
+            continue
+        if start and end:
+            if end < start:
+                violations.append(
+                    _time_violation(label, end_field, start, end, "结束时间早于开始时间")
+                )
+            hours = (end - start).total_seconds() / 3600
+            if hours > 6:
+                violations.append(
+                    _time_violation(label, end_field, start, end, "单点持续时间异常过长")
+                )
+    order_violation = _sequence_violation(steps, form)
+    if order_violation:
+        violations.append(order_violation)
+    return violations
+
+
+def _available_steps(form: dict[str, Any]) -> list[tuple[str, str, str, str]]:
+    step_defs = [("zero", "零点", "LINGDIANSDTDATE", "LINGDIANEDTDATE")]
+    step_defs.extend(
+        (point, f"{point}%点", f"MCLSDTDATE{point}", f"MCLEDTDATE{point}")
+        for point in ("10", "20", "40", "60", "80")
+    )
+    return [
+        step
+        for step in step_defs
+        if _parse_time(form.get(step[2])) or _parse_time(form.get(step[3]))
+    ]
+
+
+def _sequence_violation(
+    steps: list[tuple[str, str, str, str]],
+    form: dict[str, Any],
+) -> dict[str, Any] | None:
+    intervals = []
+    for step_id, label, start_field, end_field in steps:
+        start = _parse_time(form.get(start_field))
+        end = _parse_time(form.get(end_field))
+        if not start:
+            continue
+        intervals.append(
+            {
+                "step": step_id,
+                "label": label,
+                "field": start_field,
+                "start": start,
+                "end": end,
+            }
+        )
+    if len(intervals) < 2:
+        return None
+
+    chronological = sorted(intervals, key=lambda item: item["start"])
+    step_order = [item["step"] for item in chronological]
+    allowed_orders = [
+        ["zero", "10", "20", "40", "60", "80"],
+        ["80", "60", "40", "20", "10", "zero"],
+    ]
+    compact_allowed = [
+        [step for step in allowed if step in step_order]
+        for allowed in allowed_orders
+    ]
+    if step_order in compact_allowed:
+        return None
+
+    return {
+        "step": chronological[0]["step"],
+        "label": chronological[0]["label"],
+        "field": chronological[0]["field"],
+        "observed_order": step_order,
+        "allowed_orders": compact_allowed,
+        "reason": "多点校准点位时间顺序既不符合升序也不符合降序作业",
+    }
+
+
+def _time_violation(
+    label: str,
+    field: str,
+    start: datetime,
+    end: datetime,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "field": field,
+        "start_time": _format_time(start),
+        "end_time": _format_time(end),
+        "duration_hours": round((end - start).total_seconds() / 3600, 3),
+        "reason": reason,
+    }
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _format_time(value: datetime | None) -> str | None:
+    if not value:
+        return None
+    return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _range_number(value: Any) -> float | None:

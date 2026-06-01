@@ -4,6 +4,7 @@ Validate PPTX deliverables by rendering and running lightweight QA checks.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -304,6 +305,7 @@ class ValidatePptxTool(LLMTool):
             charts = 0
             font_sizes: List[float] = []
             shape_signature = []
+            slide_text_parts: List[str] = []
 
             for shape in slide.shapes:
                 left = round(int(getattr(shape, "left", 0) or 0) / 914400, 1)
@@ -315,6 +317,7 @@ class ValidatePptxTool(LLMTool):
                 if getattr(shape, "has_text_frame", False):
                     text = (getattr(shape, "text", "") or "").strip()
                     if text:
+                        slide_text_parts.append(text)
                         text_boxes += 1
                         text_chars += len(text)
                         text_lines += max(1, len([line for line in text.splitlines() if line.strip()]))
@@ -354,7 +357,9 @@ class ValidatePptxTool(LLMTool):
                 slide_issues.append(
                     {"type": "moderate_text_density", "slide": slide_index, "chars": text_chars, "lines": text_lines}
                 )
-            if visual_shapes == 0 and text_boxes >= 2 and slide_index > 1:
+            slide_text = "\n".join(slide_text_parts)
+            is_toc_like = self._is_toc_like_slide(slide_text)
+            if visual_shapes == 0 and text_boxes >= 2 and slide_index > 1 and not is_toc_like:
                 score -= 20
                 slide_issues.append({"type": "text_only_slide", "slide": slide_index})
             if font_sizes:
@@ -402,6 +407,18 @@ class ValidatePptxTool(LLMTool):
             "issues": issues,
             "recommendations": self._design_recommendations(slide_scores, repeated_layouts),
         }
+
+    def _is_toc_like_slide(self, text: str) -> bool:
+        if not text:
+            return False
+        patterns = [
+            r"目录",
+            r"大纲",
+            r"汇报大纲",
+            r"agenda",
+            r"toc",
+        ]
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
     def _design_grade(self, score: float) -> str:
         if score >= 90:

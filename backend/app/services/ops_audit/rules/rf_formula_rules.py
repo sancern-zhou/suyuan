@@ -11,6 +11,7 @@ from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "RF_VALUE_FORMULA_MISMATCH"
+PRESSURE_TRUE_VALUE_RULE_ID = "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH"
 SKIP_TOKENS = {"", "/", "-", "nan", "none", "null", "无", "无该项指标", "不适用", "未填写"}
 
 
@@ -36,6 +37,9 @@ def check_rf_formula_values(
         elif table == "RF_M_GASEOUSFLOWCHECK":
             violations.extend(_check_monthly_gas_flow(table, form))
         elif table == "RF_Q_GaseousFlowCheck":
+            pressure_violations = _check_quarter_pressure_true_value(table, form)
+            if pressure_violations:
+                _add_pressure_true_value_issue(order, table, pressure_violations, issues)
             violations.extend(_check_quarter_gas_flow(table, form))
         elif table == "RF_TW_PmFlowCheck":
             violations.extend(_check_tw_pm_flow_check(table, form))
@@ -61,6 +65,30 @@ def check_rf_formula_values(
             f"RF表单公式计算结果不一致: {first.get('formula_id')} {first.get('actual')} != {first.get('expected')}",
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
+
+
+def _add_pressure_true_value_issue(
+    order: dict[str, Any],
+    table: str,
+    violations: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "violation_count": len(violations),
+        "violations": violations[:20],
+    }
+    first = violations[0]
+    add_issue(
+        issues,
+        PRESSURE_TRUE_VALUE_RULE_ID,
+        "表单数值逻辑",
+        "高",
+        f"rf.{table}.{first.get('actual_field')}",
+        f"季度气体流量检查气压真实值复算不一致: {first.get('actual')} != {first.get('expected')}",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _check_weekly_gas_true_values(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
@@ -203,6 +231,29 @@ def _check_quarter_gas_flow(table: str, form: dict[str, Any]) -> list[dict[str, 
     return violations
 
 
+def _check_quarter_pressure_true_value(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
+    measuring_value = _num(form.get("P_MeasuringValue"))
+    slope = _num(form.get("P_As"))
+    intercept = _num(form.get("P_Bs"))
+    actual = _num(form.get("P_Pa"))
+    if measuring_value is None or slope is None or intercept is None or actual is None:
+        return []
+    expected = measuring_value * slope + intercept
+    return _compare(
+        table,
+        "quarter_gaseous_flow_pressure_true_value",
+        "P_Pa",
+        actual,
+        expected,
+        abs_tol=0.2,
+        inputs={
+            "P_MeasuringValue": measuring_value,
+            "P_As": slope,
+            "P_Bs": intercept,
+        },
+    )
+
+
 def _check_tw_pm_flow_check(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
     violations = []
     for prefix, label in (("MainFlow", "main_flow"), ("ReferFlow", "refer_flow")):
@@ -304,12 +355,29 @@ def _standard_flow_formula(table: str, form: dict[str, Any], point: str, *, abs_
     actual = _num(form.get(f"RF_Qs_{point}"))
     pa_value = _num(form.get("P_Pa"))
     ta_value = _num(form.get("T_Ta"))
-    if qa_value is None or actual is None or pa_value is None or ta_value is None:
+    if qa_value is None or actual is None:
         return []
-    denominator = ta_value + 273
-    if denominator == 0:
+    method = str(form.get("CalculationMethod") or "").strip().upper()
+    if method == "SRC":
+        expected = qa_value
+        inputs = {f"RF_Qa_{point}": qa_value, "CalculationMethod": method}
+    else:
+        if pa_value is None or ta_value is None:
+            return []
+        denominator = ta_value + 273
+        if denominator == 0:
+            return []
+        standard_temperature = 298 if method == "TE_25" else 273
+        expected = qa_value * (pa_value / 760) * standard_temperature / denominator
+        inputs = {
+            f"RF_Qa_{point}": qa_value,
+            "P_Pa": pa_value,
+            "T_Ta": ta_value,
+            "CalculationMethod": method,
+            "standard_temperature": standard_temperature,
+        }
+    if expected is None:
         return []
-    expected = qa_value * (pa_value / 760) * 298 / denominator
     return _compare(
         table,
         f"standard_flow_qs_{point}",
@@ -317,11 +385,7 @@ def _standard_flow_formula(table: str, form: dict[str, Any], point: str, *, abs_
         actual,
         expected,
         abs_tol=abs_tol,
-        inputs={
-            f"RF_Qa_{point}": qa_value,
-            "P_Pa": pa_value,
-            "T_Ta": ta_value,
-        },
+        inputs=inputs,
     )
 
 

@@ -34,6 +34,8 @@ def check_attachment_requirements(
         return
 
     for requirement in matched_requirements:
+        if _requirement_is_not_applicable(requirement, forms):
+            continue
         required_types = [str(item) for item in requirement.get("required_types", []) if item]
         if requirement.get("id") == "MONTH_STATION_MAINTAIN_PHOTOS":
             _add_station_maintain_photo_semantic_candidate(order, requirement, inventory, issues)
@@ -115,6 +117,65 @@ def _requirement_applies(requirement: dict[str, Any], order: dict[str, Any], rf_
         if not any(keyword in title_text for keyword in title_keywords):
             return False
     return True
+
+
+def _requirement_is_not_applicable(requirement: dict[str, Any], forms: list[tuple[str, dict[str, Any]]]) -> bool:
+    relevant_forms = _requirement_forms(requirement, forms)
+    if not relevant_forms:
+        return False
+
+    text = " ".join(_form_exemption_text(form) for _table, form in relevant_forms)
+    if _has_not_applicable_device_marker(text):
+        return True
+    if requirement.get("id") == "MONTH_STATION_MAINTAIN_PHOTOS" and _has_special_station_maintenance_marker(text):
+        return True
+    return False
+
+
+def _requirement_forms(requirement: dict[str, Any], forms: list[tuple[str, dict[str, Any]]]) -> list[tuple[str, dict[str, Any]]]:
+    required_rf_tables = {str(item) for item in requirement.get("rf_tables", [])}
+    if not required_rf_tables:
+        return forms
+    return [(table, form) for table, form in forms if table in required_rf_tables and not form.get("_query_error")]
+
+
+def _form_exemption_text(form: dict[str, Any]) -> str:
+    fields = (
+        "REMARK",
+        "Remark",
+        "remark",
+        "DESCRIPTION",
+        "Description",
+        "DESCRIPTIONTA",
+        "SITUATION",
+        "Situation",
+    )
+    return " ".join(str(form.get(field) or "").strip() for field in fields if str(form.get(field) or "").strip())
+
+
+def _has_not_applicable_device_marker(text: str) -> bool:
+    markers = (
+        "无该设备",
+        "无此设备",
+        "无对应设备",
+        "无设备",
+        "未配置",
+        "不适用",
+        "无需",
+        "无此项",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _has_special_station_maintenance_marker(text: str) -> bool:
+    markers = (
+        "流动监测车",
+        "监测车",
+        "非常规",
+        "不完全一样",
+        "停运状态",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _add_missing_issue(

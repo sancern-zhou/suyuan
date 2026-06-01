@@ -95,6 +95,7 @@ const createEmptyModeState = () => ({
   // 原有工作流字段
   sessionRound: 0,
   interventionQueue: [],
+  pendingUserInputs: [],
 
   // 消息分页加载状态
   pagination: {
@@ -1277,12 +1278,12 @@ export const useReactStore = defineStore('react', {
           break
         }
 
-        case 'notebook_document': {
-          // Notebook HTML预览事件
+        case 'html_document': {
+          // HTML预览事件
           targetState.lastOfficeDocument = {
             html_preview: data?.html_preview,
             file_path: data?.file_path,
-            file_type: data?.file_type || 'notebook',
+            file_type: data?.file_type || 'html',
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
@@ -1755,6 +1756,29 @@ export const useReactStore = defineStore('react', {
           break
         }
 
+        case 'steering_applied': {
+          const appliedMessages = Array.isArray(data?.messages) ? data.messages : []
+          for (const content of appliedMessages) {
+            const pending = [...targetState.messages]
+              .reverse()
+              .find(message =>
+                message.type === 'user' &&
+                message.steering &&
+                message.steeringStatus === 'pending' &&
+                String(message.content || '').trim() === String(content || '').trim()
+              )
+            if (pending) {
+              pending.steeringStatus = 'applied'
+              pending.steeringAppliedAt = data?.timestamp || new Date().toISOString()
+            }
+          }
+          console.log('[event:steering_applied] 执行中补充已应用', {
+            count: data?.count,
+            session_id: data?.session_id
+          })
+          break
+        }
+
         default:
           console.warn('Unknown event type:', type)
       }
@@ -1915,7 +1939,8 @@ export const useReactStore = defineStore('react', {
         attachments = null,  // ✅ 附件列表
         skipAutoFollowup = false,
         synthetic = false,
-        syntheticMeta = null
+        syntheticMeta = null,
+        queuedAlreadyShown = false
       } = options
 
       if (!query.trim() && (!attachments || attachments.length === 0)) {
@@ -1940,6 +1965,37 @@ export const useReactStore = defineStore('react', {
         }
       }
 
+      if (sessionState.isAnalyzing) {
+        if (actualMode === 'assistant' && (!attachments || attachments.length === 0) && sessionState.sessionId) {
+          await this.steerActiveAnalysis(query, sessionState)
+          return
+        }
+
+        sessionState.pendingUserInputs = sessionState.pendingUserInputs || []
+        sessionState.pendingUserInputs.push({
+          query,
+          options: {
+            ...options,
+            agentMode: actualMode,
+            queuedAlreadyShown: true
+          }
+        })
+        this._addMessageToState(
+          sessionState,
+          'user',
+          query,
+          syntheticMeta,
+          attachments,
+          { queued: true }
+        )
+        sessionState.currentMessage = ''
+        console.log('[startAnalysis] 当前模式运行中，用户输入已排队', {
+          mode: actualMode,
+          queuedCount: sessionState.pendingUserInputs.length
+        })
+        return
+      }
+
       // 首次分析或继续分析
       if (!sessionState.sessionId) {
         this.createSessionId()
@@ -1952,14 +2008,16 @@ export const useReactStore = defineStore('react', {
       }
 
       // 重置状态
-      this._addMessageToState(
-        sessionState,
-        'user',
-        query,
-        syntheticMeta,
-        attachments,
-        synthetic ? { synthetic: true } : {}
-      )
+      if (!queuedAlreadyShown) {
+        this._addMessageToState(
+          sessionState,
+          'user',
+          query,
+          syntheticMeta,
+          attachments,
+          synthetic ? { synthetic: true } : {}
+        )
+      }
       sessionState.currentMessage = ''
       sessionState.isAnalyzing = true
       sessionState.isComplete = false
@@ -2030,6 +2088,8 @@ export const useReactStore = defineStore('react', {
             }
           })
         }
+
+        await this._runNextQueuedInput(sessionState, actualMode)
       } catch (error) {
         // 检查是否为用户主动取消
         if (error.name === 'AbortError' || error.message === 'The user aborted a request.') {
@@ -2043,6 +2103,52 @@ export const useReactStore = defineStore('react', {
           this._addMessageToState(sessionState, 'error', `分析失败: ${error.message}`)
         }
       }
+    },
+
+    async steerActiveAnalysis(query, sessionState = this.currentState) {
+      const text = (query || '').trim()
+      if (!text || !sessionState.sessionId) return
+
+      this._addMessageToState(
+        sessionState,
+        'user',
+        text,
+        { source: 'steering' },
+        null,
+        { steering: true, steeringStatus: 'pending' }
+      )
+      sessionState.currentMessage = ''
+
+      let accepted = false
+      try {
+        const result = await agentAPI.steer(sessionState.sessionId, text)
+        accepted = !!result.accepted
+      } catch (error) {
+        console.warn('[steerActiveAnalysis] 追加指令失败，已转入队列', error)
+      }
+
+      if (!accepted) {
+        sessionState.pendingUserInputs = sessionState.pendingUserInputs || []
+        sessionState.pendingUserInputs.push({
+          query: text,
+          options: { agentMode: 'assistant' }
+        })
+        console.warn('[steerActiveAnalysis] 后端没有可追加任务，已转入队列')
+      }
+    },
+
+    async _runNextQueuedInput(sessionState, actualMode) {
+      const next = sessionState.pendingUserInputs?.shift()
+      if (!next) return
+
+      console.log('[runNextQueuedInput] 开始处理排队输入', {
+        mode: actualMode,
+        remaining: sessionState.pendingUserInputs.length
+      })
+      await this.startAnalysis(next.query, {
+        ...next.options,
+        agentMode: next.options?.agentMode || actualMode
+      })
     },
 
     // 继续分析（新问题）

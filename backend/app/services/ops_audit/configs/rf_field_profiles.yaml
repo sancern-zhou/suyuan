@@ -45,9 +45,15 @@ start_time_fields:
   - STARTDATETIME
   - BEGINTIME
   - BEGIN_TIME
+  - StartTime
+  - SdtTime
+  - CheckSdt
 end_time_fields:
   - ENDTIME
   - ENDDATETIME
   - FINISHTIME
   - END_TIME
+  - EndTime
+  - EdtTime
+  - CheckEdt
 near_deadline_hours: 4

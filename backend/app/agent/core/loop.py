@@ -43,6 +43,7 @@ class ReActLoop:
         is_interruption: bool = False,
         knowledge_base_ids: Optional[list] = None,
         cancel_event: Optional[asyncio.Event] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ):
         self.memory = memory_manager
         self.planner = llm_planner
@@ -52,6 +53,7 @@ class ReActLoop:
         self.is_interruption = is_interruption
         self.knowledge_base_ids = knowledge_base_ids
         self.cancel_event = cancel_event
+        self.attachments = attachments
 
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = (
@@ -114,6 +116,7 @@ class ReActLoop:
             agent_logger=self.agent_logger,
             schema_injector=self.schema_injector,
             cancel_event=self.cancel_event,
+            attachments=self.attachments,
         ))
 
         async for event in runtime.run(

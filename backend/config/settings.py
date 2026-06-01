@@ -131,11 +131,15 @@ class Settings(BaseSettings):
 
     minimax_api_key: Optional[str] = Field(default=None, description="MiniMax API key")
     minimax_base_url: str = Field(
-        default="https://api.minimax.chat/v1",
-        description="MiniMax API base URL"
+        default="https://api.minimaxi.com/v1",
+        description="MiniMax OpenAI-compatible API base URL"
+    )
+    minimax_anthropic_base_url: str = Field(
+        default="https://api.minimaxi.com/anthropic",
+        description="MiniMax Anthropic-compatible API base URL"
     )
     minimax_model: str = Field(
-        default="minimax-m2",
+        default="MiniMax-M3",
         description="MiniMax model name"
     )
 

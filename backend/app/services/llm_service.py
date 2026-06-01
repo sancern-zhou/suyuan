@@ -126,6 +126,34 @@ class LLMService:
             state["fallbacks"] = value
 
     @contextmanager
+    def use_provider_model(self, provider: str, model: Optional[str] = None):
+        """Temporarily select a concrete provider/model for the current async request."""
+        selected_provider = (provider or "").strip().lower()
+        if not selected_provider:
+            yield
+            return
+
+        token = _llm_request_state.set({})
+        try:
+            self.provider = selected_provider
+            self._load_provider_config()
+            if model:
+                self.model = model
+            self.request_fallbacks = None
+            logger.info(
+                "llm_request_provider_model_selected",
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+            )
+            yield
+        finally:
+            temporary_client = self.anthropic_client
+            _llm_request_state.reset(token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
+
+    @contextmanager
     def use_model_tier(self, model_tier: Optional[str]):
         """Temporarily select the primary model for the current async request."""
         tier = (model_tier or "").strip().lower()
@@ -499,7 +527,7 @@ class LLMService:
         if system:
             api_params["system"] = system
 
-        if self.provider in ["mimo", "anthropic"] or "claude" in self.model.lower():
+        if self.provider in ["mimo", "minimax", "anthropic"] or "claude" in self.model.lower():
             api_params = self._add_cache_control(api_params)
             logger.info(
                 "prompt_cache_enabled",
@@ -851,10 +879,10 @@ class LLMService:
         },
         "minimax": {
             "url_env": "MINIMAX_BASE_URL",
-            "url_default": "https://api.minimax.chat/v1",
+            "url_default": "https://api.minimaxi.com/v1",
             "key_env": "MINIMAX_API_KEY",
             "model_env": "MINIMAX_MODEL",
-            "model_default": "minimax-m2",
+            "model_default": "MiniMax-M3",
         },
         "openai": {
             "url_env": "OPENAI_BASE_URL",
@@ -1244,13 +1272,19 @@ class LLMService:
 
         # Anthropic Native Client (always initialized for V3 architecture)
         self.anthropic_client = None
-        if self.provider in ["deepseek", "mimo", "glm"]:  # 支持 Anthropic 格式的提供商
+        if self.provider in ["deepseek", "mimo", "glm", "minimax"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
                 # 完全从环境变量读取 base_url
                 if self.provider == "mimo":
                     anthropic_base_url = settings.mimo_base_url
+                elif self.provider == "minimax":
+                    anthropic_base_url = (
+                        getattr(settings, "minimax_anthropic_base_url", None)
+                        or os.getenv("MINIMAX_ANTHROPIC_BASE_URL")
+                        or "https://api.minimaxi.com/anthropic"
+                    )
                 elif self.provider == "deepseek":
                     # DeepSeek 的 Anthropic 格式端点
                     anthropic_base_url = settings.deepseek_base_url.replace("/v1", "/anthropic")
@@ -1276,6 +1310,8 @@ class LLMService:
                     original_url=(
                         settings.mimo_base_url
                         if self.provider == "mimo"
+                        else getattr(settings, "minimax_anthropic_base_url", None)
+                        if self.provider == "minimax"
                         else settings.deepseek_base_url
                         if self.provider == "deepseek"
                         else settings.glm_anthropic_base_url

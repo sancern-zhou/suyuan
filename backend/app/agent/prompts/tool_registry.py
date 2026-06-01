@@ -22,7 +22,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 文件操作
     "read_file", "edit_file", "grep", "write_file", "list_directory",
-    "search_files", "notebook_edit", "list_skills",
+    "search_files", "list_skills",
 
     # Office工具
     "edit_word_document",
@@ -41,6 +41,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 其他工具
     "create_scheduled_task", "broadcast_social_users", "analyze_image", "browser", "call_sub_agent",
+    "web_search", "web_fetch",
 
     # CLI会话管理
     "cli_session", "terminal_session",
@@ -163,7 +164,7 @@ CHART_TOOL_NAMES = {
     "bash",
 
     # 代码执行
-    "execute_python",
+    "execute_python", "execute_echarts_python",
 }
 
 # ===== 运维管理模式工具 =====
@@ -203,9 +204,6 @@ SOCIAL_TOOL_NAMES = {
     # === 文件操作 ===
     "read_file", "edit_file", "edit_word_document", "grep", "write_file",
     "list_directory", "search_files", "list_skills",
-
-    # === 图片分析 ===
-    "analyze_image",
 
     # === 知识库检索 ===
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -294,7 +292,7 @@ ASSISTANT_TOOL_ORDER = [
     "create_report_package", "validate_report_package", "create_html_artifact",
 
     # 编辑
-    "write_file", "edit_file", "grep", "notebook_edit",
+    "write_file", "edit_file", "grep",
 
     # 执行
     "bash", "create_flowchart_artifact", "execute_python", "analyze_image", "browser",
@@ -430,7 +428,7 @@ OPS_TOOL_ORDER = [
 
 CHART_TOOL_ORDER = [
     "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
-    "bash", "execute_python",
+    "bash", "execute_python", "execute_echarts_python",
     "read_data_registry",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
