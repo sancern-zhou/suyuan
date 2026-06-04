@@ -6,6 +6,7 @@ import ToolsManagementView from '@/views/ToolsManagementView.vue'
 import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
 import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
+import DemoShowcase from '@/views/DemoShowcase.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),

@@ -41,7 +41,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 其他工具
     "create_scheduled_task", "broadcast_social_users", "analyze_image", "browser", "call_sub_agent",
-    "web_search", "web_fetch",
+    "web_search", "web_fetch", "wait_task",
 
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -223,7 +223,7 @@ SOCIAL_TOOL_NAMES = {
     "call_sub_agent",
 
     # === 呼吸式特有工具 ===
-    "schedule_task", "send_notification", "spawn",
+    "schedule_task", "send_notification", "spawn", "wait_task",
 
     # === 网络搜索 ===
     "web_search", "web_fetch", "browser",
@@ -300,7 +300,7 @@ ASSISTANT_TOOL_ORDER = [
     "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 任务管理
-    "TodoWrite", "create_scheduled_task", "list_skills",
+    "TodoWrite", "create_scheduled_task", "wait_task", "list_skills",
 
     # 模式互调
     "call_sub_agent"
@@ -447,7 +447,7 @@ SOCIAL_TOOL_ORDER = [
     "knowledge_qa_workflow", "knowledge_document_reader",
     "get_weather_forecast", "execute_python", "call_sub_agent",
     "web_search", "web_fetch", "browser",
-    "schedule_task", "send_notification", "spawn",
+    "schedule_task", "send_notification", "spawn", "wait_task",
     "cli_session", "terminal_session", "session_search",
     "bash",
 ]

@@ -10,6 +10,7 @@
     <MainLayout
       ref="mainLayoutRef"
       :messages="currentModeMessages"
+      :pending-steering-inputs="currentModePendingSteeringInputs"
       :is-analyzing="currentModeIsAnalyzing"
       :input-disabled="inputDisabled"
       :current-message="currentModeCurrentMessage"
@@ -290,6 +291,7 @@ const currentModeExpertResults = computed(() => store.currentState.lastExpertRes
 const currentModeSessionId = computed(() => store.currentState.sessionId)
 const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
 const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
+const currentModePendingSteeringInputs = computed(() => store.currentState.pendingSteeringInputs || [])
 
 const inputDisabled = computed(() => {
   // 执行中允许用户预编辑下一条消息；发送由 InputBox 的 isAnalyzing 保护阻止。

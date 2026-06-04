@@ -15,6 +15,7 @@
     <div class="analysis-panel" ref="layoutRef">
       <ChatArea
         :messages="messages"
+        :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
         :input-disabled="inputDisabled"
         :current-message="currentMessage"
@@ -168,6 +169,10 @@ import FileManagerPanel from '@/components/FileManagerPanel.vue'
 const props = defineProps({
   // Store状态
   messages: {
+    type: Array,
+    default: () => []
+  },
+  pendingSteeringInputs: {
     type: Array,
     default: () => []
   },

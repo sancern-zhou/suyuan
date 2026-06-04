@@ -25,12 +25,11 @@ export function useDataFetcher() {
     fetcherError.value = null
 
     try {
-      const response = await fetch('/api/system/status')
+      const response = await fetch('/api/fetchers/status')
       if (!response.ok) throw new Error('Failed to fetch status')
 
       const data = await response.json()
-      // 从系统状态中提取 fetchers 信息
-      fetcherSystemStatus.value = data.fetchers || null
+      fetcherSystemStatus.value = data || null
       return true
     } catch (error) {
       fetcherError.value = error.message

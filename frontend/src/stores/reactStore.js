@@ -5,6 +5,12 @@ import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 import { autoSaveSession } from '@/api/session'
 import { convertStreamingAnswerToThoughtIfToolPlanning } from './reactStoreStreaming'
+import {
+  addPendingSteeringInput,
+  applyPendingSteeringInputs,
+  promoteUnappliedSteeringInputsToQueue,
+  removePendingSteeringInput
+} from './reactStoreSteering'
 
 const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 
@@ -97,6 +103,7 @@ const createEmptyModeState = () => ({
   sessionRound: 0,
   interventionQueue: [],
   pendingUserInputs: [],
+  pendingSteeringInputs: [],
 
   // 消息分页加载状态
   pagination: {
@@ -470,6 +477,7 @@ export const useReactStore = defineStore('react', {
         results: modeState.results,
         sessionRound: modeState.sessionRound,
         interventionQueue: modeState.interventionQueue,
+        pendingSteeringInputs: modeState.pendingSteeringInputs,
         streamingAnswerMessageId: modeState.streamingAnswerMessageId,
         _forceRenderCount: modeState._forceRenderCount,
         _lastProcessedExpertResultsHash: modeState._lastProcessedExpertResultsHash
@@ -510,6 +518,10 @@ export const useReactStore = defineStore('react', {
         savedState.isAnalyzing = false
         savedState.isInterruption = false
         savedState.streamingAnswerMessageId = null
+        promoteUnappliedSteeringInputsToQueue(savedState, {
+          agentMode: mode,
+          queuedAlreadyShown: true
+        })
         const lastMessage = savedState.messages && savedState.messages[savedState.messages.length - 1]
         if (lastMessage?.type === 'final' && !lastMessage.streaming) {
           savedState.isComplete = true
@@ -1499,6 +1511,11 @@ export const useReactStore = defineStore('react', {
             targetState._pendingAutoFollowupPrompt = data.auto_followup_prompt
             targetState._pendingAutoFollowupHookName = data.auto_followup_hook_name || 'report_final_review'
           }
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           this._persistModeState(targetMode)
           break
         }
@@ -1551,6 +1568,11 @@ export const useReactStore = defineStore('react', {
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           break
         }
 
@@ -1567,6 +1589,11 @@ export const useReactStore = defineStore('react', {
           targetState.isInterruption = true
           targetState.streamingAnswerMessageId = null
           targetState.streamingThinkingMessageId = null
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           break
         }
 
@@ -1576,6 +1603,11 @@ export const useReactStore = defineStore('react', {
           targetState.error = data?.error || '致命错误'
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           break
         }
 
@@ -1726,20 +1758,7 @@ export const useReactStore = defineStore('react', {
 
         case 'steering_applied': {
           const appliedMessages = Array.isArray(data?.messages) ? data.messages : []
-          for (const content of appliedMessages) {
-            const pending = [...targetState.messages]
-              .reverse()
-              .find(message =>
-                message.type === 'user' &&
-                message.steering &&
-                message.steeringStatus === 'pending' &&
-                String(message.content || '').trim() === String(content || '').trim()
-              )
-            if (pending) {
-              pending.steeringStatus = 'applied'
-              pending.steeringAppliedAt = data?.timestamp || new Date().toISOString()
-            }
-          }
+          applyPendingSteeringInputs(targetState, appliedMessages, data?.timestamp || new Date().toISOString())
           console.log('[event:steering_applied] 执行中补充已应用', {
             count: data?.count,
             session_id: data?.session_id
@@ -2077,14 +2096,7 @@ export const useReactStore = defineStore('react', {
       const text = (query || '').trim()
       if (!text || !sessionState.sessionId) return
 
-      this._addMessageToState(
-        sessionState,
-        'user',
-        text,
-        { source: 'steering' },
-        null,
-        { steering: true, steeringStatus: 'pending' }
-      )
+      addPendingSteeringInput(sessionState, text)
       sessionState.currentMessage = ''
 
       let accepted = false
@@ -2096,11 +2108,20 @@ export const useReactStore = defineStore('react', {
       }
 
       if (!accepted) {
+        removePendingSteeringInput(sessionState, text)
         sessionState.pendingUserInputs = sessionState.pendingUserInputs || []
         sessionState.pendingUserInputs.push({
           query: text,
           options: { agentMode: 'assistant' }
         })
+        this._addMessageToState(
+          sessionState,
+          'user',
+          text,
+          { source: 'steering_fallback' },
+          null,
+          { queued: true }
+        )
         console.warn('[steerActiveAnalysis] 后端没有可追加任务，已转入队列')
       }
     },
