@@ -34,13 +34,7 @@ class TodoWriteTool(LLMTool):
         function_schema = {
             "name": "TodoWrite",
             "description": (
-                "【⚠️ 仅用于复杂多步骤任务】更新当前会话的任务清单（完整替换）。"
-                "适用场景：任务包含5个以上子步骤，或预计需要≥7次工具调用才能完成。"
-                "简单任务（1-5步可直接完成）不要使用本工具，直接执行即可。"
-                "这是状态管理工具，不代表业务进展；调用后应继续执行实际业务工具或给出最终回答。"
-                "仅在创建计划、切换当前任务、发现新任务或任务状态发生实质变化时调用；"
-                "不要用相同items重复调用。全部任务completed后系统会清空活跃清单，随后不要再次调用TodoWrite。"
-                "最多20项，同时只能一个in_progress，每项包含content和status。"
+                "长任务链才用：完整替换当前任务清单；最多20项，同时只能一个 in_progress。"
             ),
             "parameters": {
                 "type": "object",
@@ -61,18 +55,12 @@ class TodoWriteTool(LLMTool):
                                 "status": {
                                     "type": "string",
                                     "enum": ["pending", "in_progress", "completed"],
-                                    "description": (
-                                        "任务状态：pending待开始，in_progress当前正在执行，"
-                                        "completed已完成。只有实际完成后才标记completed。"
-                                    )
+                                    "description": "任务状态。"
                                 }
                             },
                             "required": ["content", "status"]
                         },
-                        "description": (
-                            "完整任务列表（完整替换，不是增量更新）。"
-                            "如果列表与当前状态相同，不要调用本工具。"
-                        )
+                        "description": "完整任务列表。"
                     }
                 },
                 "required": ["items"]

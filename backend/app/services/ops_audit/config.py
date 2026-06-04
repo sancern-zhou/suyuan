@@ -35,20 +35,23 @@ DEFAULT_BRAND_ALIASES = {
 }
 
 DEFAULT_DEVICE_IDENTITY_PROFILES = {
-    "history_days": 90,
+    "history_days": 370,
     "history_limit": 5000,
     "short_history_days": 30,
+    "previous_same_station_limit": 20,
     "enabled_order_types": ["Check", "SupCheck"],
     "enabled_maintenance_types": ["Week", "TwoWeek", "Month", "Quarter", "HalfYear", "Year"],
     "identity_fields": [
         {"key": "brand", "label": "品牌", "severity": "中"},
         {"key": "model", "label": "型号", "severity": "中"},
-        {"key": "device_code", "label": "设备编号", "severity": "高"},
+        {"key": "device_code", "label": "设备编号", "severity": "中"},
+        {"key": "range", "label": "量程", "severity": "中"},
     ],
     "rf_identity_fields": {
         "brand": ["DEVICEBRAND", "BRAND"],
         "model": ["DEVICEMODEL", "MODEL"],
         "device_code": ["DEVICECODE", "DEVICECODEN", "DEVICECODE_NEW"],
+        "range": ["RANGEVALUE", "RANGE", "MEASURERANGE", "FULLSCALE"],
     },
     "base_device_fields": {
         "brand": ["DEVICEBRAND"],
@@ -150,7 +153,6 @@ DEFAULT_SCORING_CONFIG = {
     "common_pattern_order_ratio": 0.25,
     "common_pattern_eligible_rules": [
         "RF_AUDITOR_EMPTY",
-        "RF_CREATEDATE_EMPTY",
         "FLOW_REMARK_LOW_VALUE",
         "FLOW_NO_REVIEW",
         "RF_REQUIRED_FIELD_LOW_VALUE",
@@ -169,6 +171,8 @@ DEFAULT_SCORING_CONFIG = {
         "RF_Q_MULTIPOINT_METRIC_EMPTY",
         "RF_MULTIPOINT_RANGE_INVALID",
         "RF_CALIBRATION_DATE_EXPIRED",
+        "RF_CALIBRATION_PREV_DATE_MISMATCH",
+        "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
         "RF_ENUM_VALUE_INVALID",
         "RF_POLLUTANT_TYPE_MISMATCH",
         "RF_Q_PENDING_NO_REMARK",
@@ -180,6 +184,7 @@ DEFAULT_SCORING_CONFIG = {
         "RF_VALUE_FORMULA_MISMATCH",
         "RF_FIELD_POSITION_SUSPECT",
         "ATTACHMENT_REQUIRED_MISSING",
+        "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
     ],
     "critical_hard_error_rules": [
         "FLOW_MISSING",
@@ -191,6 +196,8 @@ DEFAULT_SCORING_CONFIG = {
         "RF_Q_MULTIPOINT_METRIC_EMPTY",
         "RF_MULTIPOINT_RANGE_INVALID",
         "RF_CALIBRATION_DATE_EXPIRED",
+        "RF_CALIBRATION_PREV_DATE_MISMATCH",
+        "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
         "RF_ENUM_VALUE_INVALID",
         "RF_POLLUTANT_TYPE_MISMATCH",
         "RF_Q_PENDING_NO_REMARK",
@@ -200,6 +207,7 @@ DEFAULT_SCORING_CONFIG = {
         "RF_FIELD_POSITION_SUSPECT",
         "RF_RANGE_BY_GAS_TYPE_MISMATCH",
         "ATTACHMENT_REQUIRED_MISSING",
+        "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
     ],
 }
 
@@ -293,6 +301,54 @@ DEFAULT_RULE_CATALOG = [
         "rationale": "现场照片应尽量带有包含日期的水印信息。",
     },
     {
+        "rule_id": "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
+        "name": "颗粒物温度压力照片读数与表单值不一致",
+        "category": "附件读数一致性",
+        "default_severity": "高",
+        "scope": "RF_Q_PMPRESSURE/温度压力校准照片",
+        "rationale": "通过多模态识别读取颗粒物温度、压力校准照片中的仪器显示值和标准值，并与表单 PM10/PM25 温度、气压字段比对。",
+    },
+    {
+        "rule_id": "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
+        "name": "O3 量值传递 XLS 附件数据与表单不一致",
+        "category": "附件读数一致性",
+        "default_severity": "高",
+        "scope": "RF_HY_O3VALUEPASS/WO_COMMONFILE",
+        "rationale": "臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的 G26、G27、G29 单元格一致。",
+    },
+    {
+        "rule_id": "RF_PM_TEMP_ERROR_MISMATCH",
+        "name": "颗粒物温度误差复算不一致",
+        "category": "表单数值逻辑",
+        "default_severity": "高",
+        "scope": "RF_Q_PMPRESSURE",
+        "rationale": "颗粒物温度误差字段应按仪器显示值减标准值复算得到，填报不一致说明读数或误差位置可能错误。",
+    },
+    {
+        "rule_id": "RF_PM_PRESSURE_ERROR_OUT_OF_RANGE",
+        "name": "颗粒物气压误差超出±1kPa",
+        "category": "表单结果合理性",
+        "default_severity": "高",
+        "scope": "RF_Q_PMPRESSURE",
+        "rationale": "颗粒物气压误差应小于±1kPa；表单按 hPa 填写时等价为小于±10hPa，超出范围时应复测、校准或补充异常处置说明。",
+    },
+    {
+        "rule_id": "RF_PM_TEMP_ERROR_OUT_OF_RANGE",
+        "name": "颗粒物温度误差超出±2℃",
+        "category": "表单结果合理性",
+        "default_severity": "高",
+        "scope": "RF_Q_PMPRESSURE",
+        "rationale": "颗粒物温度误差应小于±2℃，超出范围时应复测、校准或补充异常处置说明。",
+    },
+    {
+        "rule_id": "RF_PM_TEMP_PRESSURE_ERROR_UNRECALCULABLE",
+        "name": "颗粒物温度/气压误差无法复算",
+        "category": "表单完整性",
+        "default_severity": "中",
+        "scope": "RF_Q_PMPRESSURE",
+        "rationale": "仪器显示值、标准值或误差字段缺失/不可解析时，无法复核误差公式和阈值是否符合要求。",
+    },
+    {
         "rule_id": "REPORT_TOC_NOT_UPDATED",
         "name": "报告目录未更新",
         "category": "附件内容质量",
@@ -364,6 +420,9 @@ DEFAULT_RULE_REVIEW_STAGES = {
         "flow_visual": [
             "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
             "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH",
+            "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
+            "ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH",
+            "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
         ],
         "future_ocr": [
             "ATTACHMENT_CERT_INCOMPLETE",
@@ -383,7 +442,6 @@ DEFAULT_RULE_REVIEW_STAGES = {
             "MAIN_DEVICE_EMPTY",
             "RF_AUDITOR_EMPTY",
             "RF_REVIEW_EMPTY",
-            "RF_CREATEDATE_EMPTY",
         ],
     },
     "default_stage": "deterministic",

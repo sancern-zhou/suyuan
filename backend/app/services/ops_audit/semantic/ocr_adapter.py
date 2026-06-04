@@ -24,6 +24,7 @@ DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_PROMPT = "请识别图片中的所有文字内容，按原文输出，不要添加任何解释。"
 DEFAULT_MODEL = "qwen-vl-plus"
 DEFAULT_MIMO_MODEL = "mimo-v2.5"
+PDF_FIRST_PAGE_RENDER_DPI = 180
 _OCR_CACHE: dict[tuple[str, str, int, int], dict[str, Any]] = {}
 _OCR_CACHE_LIMIT = 64
 _FLOW_PROVIDER_LOCK = Lock()
@@ -278,7 +279,17 @@ def _resolve_source(source: str) -> dict[str, Any]:
 
 def _build_image_url_payload(resolved: dict[str, Any]) -> dict[str, Any]:
     if resolved.get("kind") == "url" and resolved.get("url"):
-        return {"status": "success", "url": str(resolved["url"])}
+        url = str(resolved["url"])
+        if _looks_like_pdf_source(url):
+            try:
+                response = requests.get(url, timeout=DEFAULT_TIMEOUT_SECONDS)
+                response.raise_for_status()
+            except requests.Timeout as exc:
+                return {"status": "error", "error": f"下载PDF首页失败，请求超时：{exc}"}
+            except requests.RequestException as exc:
+                return {"status": "error", "error": f"下载PDF首页失败：{exc}"}
+            return _pdf_first_page_image_payload(response.content)
+        return {"status": "success", "url": url}
 
     source_path = Path(str(resolved.get("path") or "")).expanduser()
     if not source_path.exists():
@@ -289,9 +300,37 @@ def _build_image_url_payload(resolved: dict[str, Any]) -> dict[str, Any]:
         image_payload = source_path.read_bytes()
     except Exception as exc:
         return {"status": "error", "error": f"读取文件失败：{exc}"}
+    if _looks_like_pdf_source(str(source_path)):
+        return _pdf_first_page_image_payload(image_payload)
     image_base64 = base64.b64encode(image_payload).decode("utf-8")
     mime_type = mimetypes.guess_type(source_path.name)[0] or "image/jpeg"
     return {"status": "success", "url": f"data:{mime_type};base64,{image_base64}"}
+
+
+def _looks_like_pdf_source(source: str) -> bool:
+    path = urlparse(str(source or "")).path or str(source or "")
+    return path.lower().endswith(".pdf")
+
+
+def _pdf_first_page_image_payload(pdf_payload: bytes) -> dict[str, Any]:
+    if not pdf_payload:
+        return {"status": "error", "error": "PDF内容为空，无法识别首页"}
+    try:
+        import fitz
+
+        doc = fitz.open(stream=pdf_payload, filetype="pdf")
+        if doc.page_count < 1:
+            doc.close()
+            return {"status": "error", "error": "PDF没有可识别页面"}
+        page = doc.load_page(0)
+        matrix = fitz.Matrix(PDF_FIRST_PAGE_RENDER_DPI / 72, PDF_FIRST_PAGE_RENDER_DPI / 72)
+        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+        png_payload = pixmap.tobytes("png")
+        doc.close()
+    except Exception as exc:
+        return {"status": "error", "error": f"PDF首页转图片失败：{exc}"}
+    image_base64 = base64.b64encode(png_payload).decode("utf-8")
+    return {"status": "success", "url": f"data:image/png;base64,{image_base64}"}
 
 
 def _extract_service_error(raw_response: dict[str, Any]) -> str | None:

@@ -67,6 +67,8 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
     if rule in {
         "RF_CHECK_TIME_OUTSIDE_RANGE",
         "RF_CALIBRATION_DATE_EXPIRED",
+        "RF_CALIBRATION_PREV_DATE_MISMATCH",
+        "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
         "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID",
     }:
         return "时间合理性问题"
@@ -76,13 +78,21 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_UNIT_MISMATCH",
         "RF_VALUE_FORMULA_MISMATCH",
         "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH",
+        "RF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE",
+        "RF_PM_MEMBRANE_ERROR_MISMATCH",
+        "RF_PM_MEMBRANE_ERROR_OUT_OF_RANGE",
         "RF_PM_PRESSURE_ERROR_MISMATCH",
+        "RF_PM_TEMP_ERROR_MISMATCH",
+        "RF_PM_TEMP_ERROR_OUT_OF_RANGE",
+        "RF_PM_PRESSURE_ERROR_OUT_OF_RANGE",
         "RF_PM_PRESSURE_UNIT_MISMATCH",
         "RF_FIELD_POSITION_SUSPECT",
         "RF_MULTIPOINT_RANGE_INVALID",
         "RF_RANGE_OUT_OF_SPEC",
     }:
         return "数值逻辑问题"
+    if rule in {"RF_PM_TEMP_PRESSURE_ERROR_UNRECALCULABLE"}:
+        return "表单完整性问题"
     if rule in {
         "RF_ABNORMAL_VALUE_NO_REMARK",
         "RF_Q_PENDING_NO_REMARK",

@@ -17,7 +17,6 @@ UNCHANGED_RULE_ID = "RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT"
 DATE_RULE_ID = "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID"
 TABLE = "RF_HY_EnvironmentHumidity"
 SKIP_VALUES = {"", "/", "-", "无", "不适用", "none", "null", "nan"}
-EXEMPTION_KEYWORDS = ("无校准功能", "无湿度功能", "仅作参考", "不具备校准", "无法校准")
 
 
 def check_rf_environment_humidity_values(
@@ -31,13 +30,11 @@ def check_rf_environment_humidity_values(
         if form.get("_query_error") or table != TABLE:
             continue
 
-        remark = str(form.get("REMARK") or "")
-        exempted = any(keyword in remark for keyword in EXEMPTION_KEYWORDS)
         prev_value = _num(form.get("CailbPrevReadNum"))
         next_value = _num(form.get("CailbNextReadNum"))
         standard_value = _num(form.get("StandardReadNum"))
 
-        if not exempted and standard_value is not None and (prev_value is None and next_value is None):
+        if standard_value is not None and (prev_value is None and next_value is None):
             evidence = {
                 "working_order_code": order.get("WORKINGORDERCODE"),
                 "rf_table": table,
@@ -46,6 +43,7 @@ def check_rf_environment_humidity_values(
                 "cailb_prev_read_num": form.get("CailbPrevReadNum"),
                 "cailb_next_read_num": form.get("CailbNextReadNum"),
                 "remark": form.get("REMARK"),
+                "needs_semantic_review": bool(str(form.get("REMARK") or "").strip()),
             }
             add_issue(
                 issues,
@@ -57,7 +55,7 @@ def check_rf_environment_humidity_values(
                 json.dumps(evidence, ensure_ascii=False, default=str),
             )
 
-        if not exempted and prev_value is not None and next_value is not None and abs(prev_value - next_value) <= 0.01:
+        if prev_value is not None and next_value is not None and abs(prev_value - next_value) <= 0.01:
             evidence = {
                 "working_order_code": order.get("WORKINGORDERCODE"),
                 "rf_table": table,
@@ -66,6 +64,7 @@ def check_rf_environment_humidity_values(
                 "cailb_next_read_num": form.get("CailbNextReadNum"),
                 "standard_read_num": form.get("StandardReadNum"),
                 "remark": form.get("REMARK"),
+                "needs_semantic_review": bool(str(form.get("REMARK") or "").strip()),
             }
             add_issue(
                 issues,

@@ -89,8 +89,7 @@ def _has_workflow_review(workflows: list[dict[str, Any]]) -> bool:
             ).strip()
 
             if step_name in {"checkorder", "supcheck_check", "review"} or any(keyword in step_name for keyword in ["审核", "复核", "审批", "review", "check", "approve"]):
-                if remark and remark not in LOW_VALUE_REMARKS:
-                    return True
+                continue
 
     return False
 
@@ -110,10 +109,6 @@ def _has_substantive_forms(forms: list[tuple[str, dict[str, Any]]]) -> bool:
             except (ValueError, TypeError):
                 if str(check_value).strip() not in LOW_VALUE_REMARKS:
                     return True
-
-        remark = form.get("REMARK") or form.get("REMARKS")
-        if remark and str(remark).strip() not in LOW_VALUE_REMARKS:
-            return True
 
     return False
 

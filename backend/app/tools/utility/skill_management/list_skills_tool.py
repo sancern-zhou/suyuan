@@ -258,39 +258,13 @@ class ListSkillsTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "list_skills",
-            "description": """【重要】列出【技能文档】（MD文档），不是查看可用工具列表
-
-⚠️ 区别说明：
-- 技能文档 = MD教程文档（描述如何组合使用多个工具完成复杂任务）
-- 工具列表 = 可直接调用的函数（如 read_file, bash, execute_python）
-- 如果用户问"查看工具列表"或"有哪些工具"，请勿使用此工具
-
-此工具用于：
-- 浏览系统中的技能教程文档
-- 查找特定领域的最佳实践（如"Excel批量处理"、"数据可视化"）
-- 学习如何组合多个工具解决复杂问题
-
-参数：
-- keyword: 可选，搜索关键词（如 "Excel", "图表", "会商"）
-- category: 可选，分类过滤（预留字段）
-
-返回：技能文档列表（名称、文件路径、描述）
-
-示例：
-- list_skills() - 列出所有技能文档
-- list_skills(keyword="Excel") - 查找Excel相关技能文档
-""",
+            "description": "列出技能文档（MD教程），不是工具列表；可按 keyword 搜索最佳实践。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "keyword": {
                         "type": "string",
-                        "description": (
-                            "过滤关键词（不区分大小写）。示例：\n"
-                            "- \"Excel\" - 查找Excel相关技能\n"
-                            "- \"可视化\" - 查找可视化相关技能\n"
-                            "- 留空 - 列出所有技能"
-                        )
+                        "description": "过滤关键词。"
                     },
                     "category": {
                         "type": "string",

@@ -1,10 +1,14 @@
 # RF multipoint calibration hard checks.
 
 tables:
+  RF_HY_O3VALUEPASS:
+    pollutant: O3
+    history_tolerance: 1
+    range_fields:
+      - ISOK
   RF_Q_GASEOUSMULTIPOINT_CO:
     pollutant: CO
-    expected_range: 20000
-    tolerance: 1
+    history_tolerance: 1
     range_fields:
       - PPB
       - RANGE
@@ -17,8 +21,7 @@ tables:
       - CALIBRATIONRANGE
   RF_Q_GASEOUSMULTIPOINT_NO2:
     pollutant: NO2
-    expected_range: 500
-    tolerance: 1
+    history_tolerance: 1
     range_fields:
       - PPB
       - RANGE
@@ -31,8 +34,7 @@ tables:
       - CALIBRATIONRANGE
   RF_Q_GASEOUSMULTIPOINT_O3:
     pollutant: O3
-    expected_range: 500
-    tolerance: 1
+    history_tolerance: 1
     range_fields:
       - PPB
       - RANGE
@@ -45,8 +47,7 @@ tables:
       - CALIBRATIONRANGE
   RF_Q_GASEOUSMULTIPOINT_SO2:
     pollutant: SO2
-    expected_range: 500
-    tolerance: 1
+    history_tolerance: 1
     range_fields:
       - PPB
       - RANGE

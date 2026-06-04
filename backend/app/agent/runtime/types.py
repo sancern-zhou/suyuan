@@ -74,6 +74,7 @@ class RunState:
     # direct_from_workflow: bool = False
     last_observation: Optional[Dict[str, Any]] = None
     last_single_tool_result: Optional[Dict[str, Any]] = None
+    pending_attachments: List[Dict[str, Any]] = field(default_factory=list)
     suppress_tool_names_next_turn: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
 

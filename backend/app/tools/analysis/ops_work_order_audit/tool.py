@@ -70,13 +70,13 @@ class OpsAuditFetchDatasetTool(LLMTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "工单数量，默认200，最大2000。"},
+                        "limit": {"type": "integer", "description": "工单数量，默认200，最大3000。"},
                         "order_statuses": {"type": "array", "items": {"type": "string"}, "description": "工单状态列表，支持 Finish/Doing/Wait/Invalid，不填默认查所有状态工单。"},
-                        "create_time_start": {"type": "string", "description": "创建时间起始，包含该时间，如 2026-05-13 00:00:00。周期审核优先使用创建时间。"},
-                        "create_time_end": {"type": "string", "description": "创建时间结束，不包含该时间，如 2026-05-20 00:00:00。周期审核优先使用创建时间。"},
-                        "finish_time_start": {"type": "string", "description": "完成时间起始，包含该时间，如 2026-05-23 00:00:00。"},
-                        "finish_time_end": {"type": "string", "description": "完成时间结束，不包含该时间，如 2026-05-24 00:00:00。"},
-                        "audit_window_preset": {"type": "string", "description": "审核窗口预设：weekly_created 默认按最近周三回看上上周三至上周三创建且已完成工单；none 关闭默认窗口。"},
+                        "create_time_start": {"type": "string", "description": "创建时间起始，包含该时间，如 2026-05-13 00:00:00。仅在用户明确说按创建时间、创建/发起/生成的工单，或周期审核窗口时使用。"},
+                        "create_time_end": {"type": "string", "description": "创建时间结束，不包含该时间，如 2026-05-20 00:00:00。仅在用户明确说按创建时间、创建/发起/生成的工单，或周期审核窗口时使用。"},
+                        "finish_time_start": {"type": "string", "description": "完成时间起始，包含该时间，如 2026-05-23 00:00:00。用户说这段时间完成、最近完成、某天完成、已完成工单并给出时间范围时优先使用。"},
+                        "finish_time_end": {"type": "string", "description": "完成时间结束，不包含该时间，如 2026-05-24 00:00:00。用户说这段时间完成、最近完成、某天完成、已完成工单并给出时间范围时优先使用。"},
+                        "audit_window_preset": {"type": "string", "description": "审核窗口预设：weekly_created 默认按最近周三回看上上周三至上周三创建且已完成工单；none 关闭默认窗口。仅用于周期审核/周审核窗口，不用于用户要求某段时间完成的工单。"},
                         "evidence_level": {"type": "string", "enum": ["summary", "detail", "raw"], "description": "证据层级：summary 默认，detail 加载结构化明细，raw 仅保存引用。"},
                         "station_id": {"type": "string", "description": "单个站点ID；如需多个站点使用 station_ids。"},
                         "station_ids": {"type": "array", "items": {"type": "string"}, "description": "站点ID列表。"},
@@ -118,7 +118,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
         try:
             result = fetch_ops_audit_dataset(
                 OpsWorkOrderAuditConfig(
-                    limit=max(1, min(int(limit or 200), 2000)),
+                    limit=max(1, min(int(limit or 200), 3000)),
                     order_statuses=_merge_single_and_many(None, order_statuses),
                     create_time_start=create_time_start,
                     create_time_end=create_time_end,
@@ -142,9 +142,20 @@ class OpsAuditFetchDatasetTool(LLMTool):
 
     def _summary_text(self, result: Dict[str, Any]) -> str:
         summary = result.get("summary", {})
+        order_filter = result.get("query_info", {}).get("order_filter", {})
         audit_window = result.get("audit_window") or {}
         window_text = ""
-        if audit_window:
+        if order_filter.get("finish_time_start") or order_filter.get("finish_time_end"):
+            window_text = (
+                f"筛选范围：完成时间 {order_filter.get('finish_time_start')} 至 "
+                f"{order_filter.get('finish_time_end')}；"
+            )
+        elif order_filter.get("create_time_start") or order_filter.get("create_time_end"):
+            window_text = (
+                f"筛选范围：创建时间 {order_filter.get('create_time_start')} 至 "
+                f"{order_filter.get('create_time_end')}；"
+            )
+        elif audit_window:
             window_text = (
                 f"审核窗口：创建时间 {audit_window.get('create_time_start')} 至 "
                 f"{audit_window.get('create_time_end')}；"

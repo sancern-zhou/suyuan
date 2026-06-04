@@ -53,6 +53,7 @@ from app.services.ops_audit.rules.attachment_rules import (  # noqa: E402
 from app.services.ops_audit.rules.attachment_ocr_rules import build_flow_visual_tasks, run_flow_visual_task  # noqa: E402
 from app.services.ops_audit.semantic.ocr_adapter import flow_visual_provider_summary  # noqa: E402
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure as check_modular_lifecycle_closure  # noqa: E402
+from app.services.ops_audit.rules.o3_value_pass_xls_rules import check_o3_value_pass_xls_values  # noqa: E402
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks  # noqa: E402
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates  # noqa: E402
 from app.services.ops_audit.rules.rf_enum_rules import check_rf_enum_values  # noqa: E402
@@ -161,6 +162,7 @@ LOW_VALUE_REMARKS = load_low_value_remarks()
 BRAND_ALIASES = load_brand_aliases()
 RF_FIELD_PROFILES = load_rf_field_profiles()
 DEVICE_IDENTITY_PROFILE = load_device_identity_profiles()
+EXCLUDED_AUDIT_ORDER_TYPES = {"SupCheck"}
 
 FORM_RANGE_PROFILES = {
     "RF_W_GASEOUSCHECK_CO": {
@@ -488,6 +490,88 @@ def rows(cursor: pyodbc.Cursor, sql: str, params: list[Any] | None = None) -> li
     return result
 
 
+def select_final_rf_form_versions(table: str, forms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return RF rows unchanged while validating whether version filtering is needed."""
+
+    return forms
+
+
+def _select_rf_forms_with_filter_stats(
+    table: str,
+    forms: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    selected = select_final_rf_form_versions(table, forms)
+    raw_count = len(forms)
+    selected_count = len(selected)
+    query_error = next((form.get("_query_error") for form in selected if form.get("_query_error")), None)
+    stats = {
+        "raw_count": raw_count,
+        "selected_count": selected_count,
+        "filtered_count": max(0, raw_count - selected_count),
+        "query_error": query_error,
+    }
+    logger.info(
+        "ops_audit_rf_form_filter_stats table=%s raw_count=%s selected_count=%s filtered_count=%s query_error=%s",
+        table,
+        stats["raw_count"],
+        stats["selected_count"],
+        stats["filtered_count"],
+        stats["query_error"],
+        extra={
+            "table": table,
+            "raw_count": stats["raw_count"],
+            "selected_count": stats["selected_count"],
+            "filtered_count": stats["filtered_count"],
+            "query_error": stats["query_error"],
+        },
+    )
+    return selected, stats
+
+
+def _rf_business_identity(table: str, form: dict[str, Any]) -> tuple[str, Any] | None:
+    normalized_table = re.sub(r"[^A-Z0-9]", "", table.upper())
+    normalized_without_pollutant = re.sub(r"(CO|NOX|NO2|O3|SO2|PM10|PM25)$", "", normalized_table)
+    preferred_keys = [
+        f"{normalized_table}ID",
+        f"{normalized_without_pollutant}ID",
+    ]
+    excluded = {
+        "WORKINGORDERID",
+        "WORKINGORDERCODE",
+        "STATIONID",
+        "DEVICEID",
+        "AREAID",
+        "OPERATIONSUNITID",
+        "PREPARERUSERID",
+        "REVIEWUSERID",
+        "AUDITORUSERID",
+    }
+    for key in preferred_keys:
+        if key in form and _has_value(form.get(key)):
+            return (key, form.get(key))
+    for key, value in form.items():
+        upper_key = key.upper()
+        if upper_key.endswith("ID") and upper_key not in excluded and _has_value(value):
+            return (key, value)
+    return None
+
+
+def _deduplicate_rf_forms(forms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    deduplicated: list[dict[str, Any]] = []
+    for form in forms:
+        signature = tuple(sorted((str(key), str(value)) for key, value in form.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        deduplicated.append(form)
+    return deduplicated
+
+
+def _has_value(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
 @dataclass
 class WorkOrderDatasetFilter:
     limit: int = 200
@@ -506,6 +590,12 @@ def _clean_values(values: list[str] | None) -> list[str]:
     if not values:
         return []
     return [str(value).strip() for value in values if str(value).strip()]
+
+
+def effective_audit_order_types(order_types: list[str] | None) -> list[str] | None:
+    if order_types is None:
+        return None
+    return [order_type for order_type in _clean_values(order_types) if order_type not in EXCLUDED_AUDIT_ORDER_TYPES]
 
 
 def _station_meta_by_id(stations: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -554,6 +644,12 @@ def _in_clause(column: str, values: list[str], params: list[Any]) -> str:
     return f"{column} IN ({placeholders})"
 
 
+def _not_in_clause(column: str, values: list[str], params: list[Any]) -> str:
+    placeholders = ", ".join("?" for _ in values)
+    params.extend(values)
+    return f"({column} IS NULL OR {column} NOT IN ({placeholders}))"
+
+
 def _normalize_dataset_filter(filter_config: WorkOrderDatasetFilter | int) -> WorkOrderDatasetFilter:
     if isinstance(filter_config, int):
         return WorkOrderDatasetFilter(limit=filter_config)
@@ -562,14 +658,15 @@ def _normalize_dataset_filter(filter_config: WorkOrderDatasetFilter | int) -> Wo
 
 def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]:
     filters = _normalize_dataset_filter(filter_config)
-    limit = max(1, min(int(filters.limit or 200), 2000))
+    limit = max(1, min(int(filters.limit or 200), 3000))
     station_ids = _clean_values(filters.station_ids)
-    order_types = _clean_values(filters.order_types)
+    requested_order_types = _clean_values(filters.order_types)
+    order_types = effective_audit_order_types(requested_order_types)
     maintenance_types = _clean_values(filters.maintenance_types)
     working_order_codes = _clean_values(filters.working_order_codes)
     order_statuses = _clean_values(filters.order_statuses)
     if working_order_codes:
-        limit = max(limit, min(len(working_order_codes), 2000))
+        limit = max(limit, min(len(working_order_codes), 3000))
 
     order_params: list[Any] = []
     where_parts: list[str] = []
@@ -594,6 +691,9 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
         where_parts.append(_in_clause("STATIONID", station_ids, order_params))
     if order_types:
         where_parts.append(_in_clause("DDWORKINGORDERTYPE", order_types, order_params))
+    elif requested_order_types:
+        where_parts.append("1 = 0")
+    where_parts.append(_not_in_clause("DDWORKINGORDERTYPE", sorted(EXCLUDED_AUDIT_ORDER_TYPES), order_params))
     if maintenance_types:
         where_parts.append(_in_clause("MAINTENANCETYPE", maintenance_types, order_params))
     if working_order_codes:
@@ -665,7 +765,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
         attachments = rows(
             cursor,
             f"""
-            SELECT TOP 2000 *
+            SELECT TOP 3000 *
             FROM dbo.wo_commonfile_links
             WHERE refid IN ({code_placeholders}) OR remark IN ({code_placeholders})
             ORDER BY createdate DESC
@@ -676,7 +776,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
         wo_commonfile = rows(
             cursor,
             f"""
-            SELECT TOP 2000 *
+            SELECT TOP 3000 *
             FROM dbo.WO_COMMONFILE
             WHERE REFID IN ({code_placeholders})
             ORDER BY CREATEDATE DESC
@@ -692,7 +792,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
                 stations = rows(
                     cursor,
                     f"""
-                    SELECT TOP 2000
+                    SELECT TOP 3000
                         bs.STATIONID,
                         bs.NAME,
                         bs.CODE,
@@ -720,19 +820,26 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
                 conn.rollback()
 
         rf_forms: dict[str, list[dict[str, Any]]] = {}
+        rf_form_filter_stats: dict[str, dict[str, Any]] = {}
         for table in RF_TABLES:
             try:
-                rf_forms[table] = rows(
+                table_rows = rows(
                     cursor,
                     f"""
-                    SELECT TOP 2000 *
+                    SELECT TOP 3000 *
                     FROM dbo.{table}
                     WHERE WORKINGORDERCODE IN ({code_placeholders})
                     """,
                     codes,
                 )
+                selected_rows, stats = _select_rf_forms_with_filter_stats(table, table_rows)
+                rf_forms[table] = selected_rows
+                rf_form_filter_stats[table] = stats
             except Exception as exc:  # keep extraction useful if one table drifts
-                rf_forms[table] = [{"_query_error": str(exc)}]
+                error_rows = [{"_query_error": str(exc)}]
+                selected_rows, stats = _select_rf_forms_with_filter_stats(table, error_rows)
+                rf_forms[table] = selected_rows
+                rf_form_filter_stats[table] = stats
                 conn.rollback()
 
         device_ids = {str(row.get("DEVICEID")) for row in orders if row.get("DEVICEID")}
@@ -778,6 +885,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
                 "maintenance_types": maintenance_types,
                 "working_order_codes": working_order_codes,
             },
+            "rf_form_filter_stats": rf_form_filter_stats,
             "order_by": "FINISHTIME DESC, CREATETIME DESC",
             "limit": limit,
         },
@@ -793,22 +901,21 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
 
 
 def _fetch_device_history(cursor: pyodbc.Cursor, orders: list[dict[str, Any]], limit: int = 5000) -> dict[str, Any]:
-    """Fetch recent same-DEVICEID history for identity checks."""
+    """Fetch recent same-station history for RF table identity checks."""
 
     keyed_orders = [
         order
         for order in orders
         if order.get("WORKINGORDERCODE")
-        and order.get("DEVICEID")
-        and str(order.get("DEVICEID")) != "00000000-0000-0000-0000-000000000000"
+        and order.get("STATIONID")
         and parse_time(order.get("CREATETIME"))
     ]
     if not keyed_orders:
-        return {"orders": [], "rf_forms": {}, "query_info": {"skipped": True, "reason": "missing_device_or_time"}}
+        return {"orders": [], "rf_forms": {}, "query_info": {"skipped": True, "reason": "missing_station_or_time"}}
 
     history_days = int(DEVICE_IDENTITY_PROFILE.get("history_days", 90))
-    per_order_limit = int(DEVICE_IDENTITY_PROFILE.get("previous_same_device_limit", 2) or 2)
-    per_order_limit = max(1, min(per_order_limit, 5))
+    per_order_limit = int(DEVICE_IDENTITY_PROFILE.get("previous_same_station_limit", 20) or 20)
+    per_order_limit = max(1, min(per_order_limit, 100))
     total_limit = max(1, min(limit, 10000))
     history_orders_by_code: dict[str, dict[str, Any]] = {}
 
@@ -820,7 +927,7 @@ def _fetch_device_history(cursor: pyodbc.Cursor, orders: list[dict[str, Any]], l
             if not create_time:
                 continue
             params: list[Any] = [
-                order.get("DEVICEID"),
+                order.get("STATIONID"),
                 (create_time - timedelta(days=history_days)).strftime("%Y-%m-%d %H:%M:%S"),
                 create_time.strftime("%Y-%m-%d %H:%M:%S"),
                 order.get("WORKINGORDERCODE"),
@@ -836,7 +943,7 @@ def _fetch_device_history(cursor: pyodbc.Cursor, orders: list[dict[str, Any]], l
                     FINISHTIME, PLANFINISHTIME, MAINTENANCETYPE, TOTALOVERTIME,
                     TOTALEXPENSE
                 FROM dbo.working_orders
-                WHERE DEVICEID = ?
+                WHERE STATIONID = ?
                   AND CREATETIME >= ?
                   AND CREATETIME < ?
                   AND WORKINGORDERCODE <> ?
@@ -863,7 +970,7 @@ def _fetch_device_history(cursor: pyodbc.Cursor, orders: list[dict[str, Any]], l
         code_placeholders = ", ".join("?" for _ in history_codes)
         for table in RF_TABLES:
             try:
-                history_rf_forms[table] = rows(
+                table_rows = rows(
                     cursor,
                     f"""
                     SELECT TOP {max(1, min(limit, 10000))} *
@@ -872,19 +979,20 @@ def _fetch_device_history(cursor: pyodbc.Cursor, orders: list[dict[str, Any]], l
                     """,
                     history_codes,
                 )
+                history_rf_forms[table], _ = _select_rf_forms_with_filter_stats(table, table_rows)
             except Exception as exc:
-                history_rf_forms[table] = [{"_query_error": str(exc)}]
+                history_rf_forms[table], _ = _select_rf_forms_with_filter_stats(table, [{"_query_error": str(exc)}])
                 cursor.connection.rollback()
 
     return {
         "orders": history_orders,
         "rf_forms": history_rf_forms,
         "query_info": {
-            "strategy": "previous_same_device",
+            "strategy": "previous_same_station",
             "history_days": history_days,
-            "previous_same_device_limit": per_order_limit,
+            "previous_same_station_limit": per_order_limit,
             "seed_order_count": len(keyed_orders),
-            "device_count": len({str(order.get("DEVICEID")) for order in keyed_orders}),
+            "station_count": len({str(order.get("STATIONID")) for order in keyed_orders}),
             "order_count": len(history_orders),
         },
     }
@@ -1317,12 +1425,8 @@ def check_rf_forms(
         if station and str(station) != str(order.get("STATIONID")):
             add_issue(issues, "RF_STATION_MISMATCH", "一致性", "高", f"{prefix}.STATIONID", "RF 表单站点与工单站点不一致", f"form={station}, order={order.get('STATIONID')}")
 
-        if "PREPARERUSERID" in form and is_blank(form.get("PREPARERUSERID")):
-            add_issue(issues, "RF_PREPARER_EMPTY", "表单完整性", "中", f"{prefix}.PREPARERUSERID", "表单编制人为空", "")
         if "AUDITORUSERID" in form and is_blank(form.get("AUDITORUSERID")):
             add_issue(issues, "RF_AUDITOR_EMPTY", "表单完整性", "低", f"{prefix}.AUDITORUSERID", "表单审批人为空", "")
-        if "CREATEDATE" in form and is_blank(form.get("CREATEDATE")):
-            add_issue(issues, "RF_CREATEDATE_EMPTY", "表单完整性", "中", f"{prefix}.CREATEDATE", "表单创建日期为空", "")
 
         if table == "RF_TW_CleanCuttingHead":
             if form.get("PollutantType") and form.get("PM_DeviceType") and str(form["PollutantType"]).upper() != str(form["PM_DeviceType"]).upper():
@@ -1340,32 +1444,15 @@ def check_rf_forms(
 
 
 def severity_score(issues: list[Issue] | list[dict[str, Any]]) -> int:
-    score = 100
-    for issue in issues:
-        severity = issue.severity if isinstance(issue, Issue) else issue.get("severity")
-        score -= SEVERITY_PENALTY.get(str(severity), 0)
-    return max(score, 0)
+    return 0 if issues else 100
 
 
 def risk_level(score: int, issues: list[Issue] | list[dict[str, Any]]) -> str:
-    has_high = any((issue.severity if isinstance(issue, Issue) else issue.get("severity")) == "高" for issue in issues)
     issue_rule_ids = {
         issue.rule_id if isinstance(issue, Issue) else issue.get("rule_id")
         for issue in issues
     }
-    if issue_rule_ids & CRITICAL_HARD_ERROR_RULES:
-        return "高风险"
-    if has_high:
-        return "需补正" if score >= 50 else "高风险"
-    if has_high and score < 70:
-        return "高风险"
-    if score >= 85:
-        return "通过"
-    if score >= 70:
-        return "轻微问题"
-    if score >= 50:
-        return "需补正"
-    return "高风险"
+    return "有问题" if issue_rule_ids else ""
 
 
 def dedupe_issues(issues: list[Issue]) -> list[Issue]:
@@ -1504,13 +1591,25 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         check_rf_range_values(order, forms, issues)
         check_rf_formula_values(order, forms, issues)
         check_rf_environment_humidity_values(order, forms, issues)
-        check_rf_multipoint_values(order, forms, issues)
+        check_rf_multipoint_values(
+            order,
+            forms,
+            issues,
+            all_orders=all_orders_for_device_consistency,
+            forms_by_code=all_forms_by_code,
+        )
         check_rf_pm_pressure_values(order, forms, issues)
         check_rf_field_positions(order, forms, issues)
         check_rf_enum_values(order, forms, issues)
         check_rf_visibility_values(order, forms, issues)
         check_rf_abnormal_remarks(order, forms, issues)
-        check_rf_calibration_dates(order, forms, issues)
+        check_rf_calibration_dates(
+            order,
+            forms,
+            issues,
+            all_orders=all_orders_for_device_consistency,
+            forms_by_code=all_forms_by_code,
+        )
 
         check_rf_forms(order, forms, issues, devices_by_id, devices_by_code, attachment_rf_typecodes)
         check_device_identity_consistency(
@@ -1523,6 +1622,13 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             issues,
         )
         check_attachment_requirements(
+            order,
+            forms,
+            attachments_by_code.get(str(code), []),
+            wo_commonfile_by_code.get(str(code), []),
+            issues,
+        )
+        check_o3_value_pass_xls_values(
             order,
             forms,
             attachments_by_code.get(str(code), []),
@@ -1595,7 +1701,7 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     severity_counter = Counter()
     category_counter = Counter()
     assessment_counter = Counter()
-    level_counter = Counter(record["audit_level"] for record in records)
+    level_counter = Counter(record["audit_level"] for record in records if record.get("audit_level"))
     device_consistency_issue_count = 0
     attachment_issue_count = 0
     attachment_review_candidate_count = 0
@@ -1709,6 +1815,8 @@ def apply_rule_pattern_assessment(records: list[dict[str, Any]], rule_patterns: 
                 issue["score_effect"] = "excluded_pending_calibration"
                 common_pattern_rules.append(issue.get("rule_id"))
                 continue
+            if _requires_semantic_assessment(issue):
+                pattern_type = "candidate_issue"
             if pattern_type == "deterministic_issue":
                 issue["assessment"] = "deterministic_issue"
                 deterministic_rules.append(issue.get("rule_id"))
@@ -1731,6 +1839,13 @@ def apply_rule_pattern_assessment(records: list[dict[str, Any]], rule_patterns: 
         record["common_pattern_rules"] = sorted(set(common_pattern_rules))
         record["candidate_rules"] = sorted(set(candidate_rules))
         record["deterministic_rules"] = sorted(set(deterministic_rules))
+
+
+def _requires_semantic_assessment(issue: dict[str, Any]) -> bool:
+    evidence = issue.get("evidence")
+    if not isinstance(evidence, str):
+        return False
+    return '"needs_semantic_review": true' in evidence or '"needs_semantic_review":true' in evidence
 
 
 def write_report(audit: dict[str, Any], path: Path) -> None:

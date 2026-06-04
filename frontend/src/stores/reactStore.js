@@ -4,6 +4,7 @@
 import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 import { autoSaveSession } from '@/api/session'
+import { convertStreamingAnswerToThoughtIfToolPlanning } from './reactStoreStreaming'
 
 const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 
@@ -1015,32 +1016,7 @@ export const useReactStore = defineStore('react', {
     },
 
     _convertStreamingAnswerToThoughtIfToolPlanning(modeState) {
-      const messageId = modeState?.streamingAnswerMessageId
-      if (!messageId) return
-
-      const message = modeState.messages.find(m => m.id === messageId)
-      if (!message || message.type !== 'final') return
-
-      const content = contentToString(message.content).trim()
-      if (!content) {
-        modeState.streamingAnswerMessageId = null
-        modeState.finalAnswer = ''
-        return
-      }
-
-      Object.assign(message, {
-        type: 'thought',
-        content,
-        streaming: false,
-        data: {
-          ...(message.data || {}),
-          converted_from: 'pre_tool_streaming_text'
-        }
-      })
-
-      modeState.streamingAnswerMessageId = null
-      modeState.finalAnswer = ''
-      modeState._forceRenderCount++
+      convertStreamingAnswerToThoughtIfToolPlanning(modeState, contentToString)
     },
 
     /**
@@ -1215,6 +1191,10 @@ export const useReactStore = defineStore('react', {
 
         case 'tool_result': {
           // ✅ V3: Anthropic tool_result 事件
+          // task_guard 等虚拟工具不会先发送 tool_use；如果它拦截了已流出的
+          // PLAIN_TEXT_REPLY，需要先把该文本降级为过程消息，避免下一轮重复追加。
+          this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
+
           const toolResultData = data || {}
           const resultToolUseId = toolResultData.tool_use_id
           const result = toolResultData.result || {}
@@ -1263,7 +1243,9 @@ export const useReactStore = defineStore('react', {
           targetState.lastOfficeDocument = {
             pdf_preview: data?.pdf_preview,
             markdown_preview: data?.markdown_preview,
+            html_preview: data?.html_preview,
             file_path: data?.file_path,
+            file_type: data?.file_type,
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
@@ -1282,6 +1264,7 @@ export const useReactStore = defineStore('react', {
           // HTML预览事件
           targetState.lastOfficeDocument = {
             html_preview: data?.html_preview,
+            markdown_preview: data?.markdown_preview,
             file_path: data?.file_path,
             file_type: data?.file_type || 'html',
             generator: data?.generator,
@@ -1488,21 +1471,6 @@ export const useReactStore = defineStore('react', {
               expert_results: data.expert_results
             }
             console.log('[event:complete] lastExpertResults已设置')
-          }
-
-          // ✅ 兜底处理Office文档预览：后端会在complete事件中附带本轮文档元数据
-          // 避免前端错过实时office_document事件时无法打开预览面板。
-          const officeDoc = data?.last_office_document ||
-            (Array.isArray(data?.office_documents) && data.office_documents.length > 0
-              ? data.office_documents[data.office_documents.length - 1]
-              : null)
-          if (officeDoc?.pdf_preview || officeDoc?.markdown_preview || officeDoc?.html_preview) {
-            targetState.lastOfficeDocument = officeDoc
-            console.log('[event:complete] Office文档预览已从complete事件恢复:', {
-              generator: officeDoc.generator,
-              pdf_id: officeDoc.pdf_preview?.pdf_id,
-              file_path: officeDoc.file_path
-            })
           }
 
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）

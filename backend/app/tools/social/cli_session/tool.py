@@ -46,84 +46,58 @@ class CliSessionTool(LLMTool):
     def __init__(self) -> None:
         function_schema = {
             "name": "cli_session",
-            "description": (
-                "通过 Claude Code 或 Codex CLI 执行多轮编程/问答任务。"
-                "会话按社交用户和 session_name 持久化，后续 send 会自动恢复同一 CLI 上下文。"
-                "start/send 默认后台执行并立即返回任务ID，不阻塞当前对话。"
-                "适合让外部编程 Agent 修改代码、运行测试、解释工程问题。"
-            ),
+            "description": "运行可恢复 Claude Code/Codex CLI 会话；start/send 默认后台返回 task_id。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["start", "send", "status", "list", "reset", "task_status", "task_list", "task_cancel"],
-                        "description": "操作：start/send 发起一轮；status 查看指定会话；list 列出会话；reset 删除会话状态；task_status/task_list/task_cancel 管理后台CLI任务。"
+                        "description": "操作类型：start/send/status/list/reset/task_status/task_list/task_cancel。"
                     },
                     "provider": {
                         "type": "string",
                         "enum": ["claude", "codex"],
-                        "description": "外部 CLI：claude 或 codex。start/send 默认 claude。"
+                        "description": "外部CLI，默认claude。"
                     },
                     "session_name": {
                         "type": "string",
-                        "description": "社交用户下的会话名，默认 default。不同任务请使用不同名称。"
+                        "description": "会话名，默认default。"
                     },
                     "prompt": {
                         "type": "string",
-                        "description": "发送给 Claude Code/Codex 的本轮用户消息。action=start/send 时必填。"
+                        "description": "start/send必填。"
                     },
-                    "cwd": {
-                        "type": "string",
-                        "description": "CLI 工作目录，必须在项目目录内。默认项目根目录 D:/溯源。"
-                    },
+                    "cwd": {"type": "string", "description": "项目内工作目录。"},
                     "timeout": {
                         "type": "integer",
-                        "description": "本轮 CLI 最大执行秒数，默认 600，范围 30-3600。",
-                        "minimum": 30,
-                        "maximum": 3600,
-                        "default": 600
+                        "description": "执行秒数，默认600（范围30-3600）。"
                     },
-                    "model": {
-                        "type": "string",
-                        "description": "可选模型名，透传给 CLI。"
-                    },
+                    "model": {"type": "string", "description": "透传模型名。"},
                     "permission_mode": {
                         "type": "string",
-                        "enum": ["default", "acceptEdits", "bypassPermissions", "dontAsk", "plan"],
-                        "description": "Claude Code 权限模式，默认 acceptEdits。需要完全自动化时才用 bypassPermissions。"
+                        "description": "Claude Code权限：default/acceptEdits/bypassPermissions/dontAsk/plan。"
                     },
                     "sandbox": {
                         "type": "string",
-                        "enum": ["read-only", "workspace-write", "danger-full-access"],
-                        "description": "Codex 沙箱模式，默认 workspace-write。"
+                        "description": "Codex沙箱：read-only/workspace-write/danger-full-access。"
                     },
                     "approval_policy": {
                         "type": "string",
-                        "enum": ["untrusted", "on-failure", "on-request", "never"],
-                        "description": "Codex 审批策略，默认 never，避免社交渠道卡在交互确认。"
+                        "description": "Codex审批：untrusted/on-failure/on-request/never。"
                     },
                     "max_output_chars": {
                         "type": "integer",
-                        "description": "返回给当前 Agent 的 answer 最大字符数，默认 12000。原始 stdout/stderr 默认不返回。",
-                        "minimum": 1000,
-                        "maximum": 100000,
-                        "default": DEFAULT_ANSWER_CHARS
+                        "description": "answer字符上限，默认12000（范围1000-100000）。"
                     },
                     "include_raw_output": {
                         "type": "boolean",
-                        "description": "是否在成功时也返回 stdout/stderr 摘要。默认 false；失败时会自动返回 stderr/stdout 摘要。",
-                        "default": False
+                        "description": "返回stdout/stderr摘要，默认false。"
                     },
                     "background": {
                         "type": "boolean",
-                        "description": "start/send 时是否后台执行。默认 true，立即返回 task_id；特殊短任务可显式设为 false 使用同步模式。",
-                        "default": True
+                        "description": "start/send后台执行，默认true。"
                     },
-                    "task_id": {
-                        "type": "string",
-                        "description": "task_status/task_cancel 时指定后台CLI任务ID。"
-                    }
+                    "task_id": {"type": "string", "description": "后台任务ID。"}
                 },
                 "required": ["action"]
             }

@@ -49,9 +49,7 @@ class CallSubAgentTool(LLMTool):
         function_schema = {
             "name": "call_sub_agent",
             "description": (
-                "调用另一个Agent模式作为子Agent执行任务，支持session连续对话。"
-                "注意：target_mode=\"assistant\" 时默认不会自动复用旧的 assistant 子会话；"
-                "如需继续某个 assistant 子会话，必须显式传入 session_id。"
+                "调用另一个 Agent 模式执行任务；继续旧会话需传 session_id。"
             ),
             "parameters": {
                 "type": "object",
@@ -59,17 +57,17 @@ class CallSubAgentTool(LLMTool):
                     "target_mode": {
                         "type": "string",
                     "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops"],
-                    "description": "目标Agent模式（ops模式用于运维工单、审核和异常分析）"
+                    "description": "目标 Agent 模式。"
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
                     "goal": {
                         "type": "string",
-                        "description": "任务目标；必须完整保留文件路径、时间范围、sheet索引、城市名等具体参数，禁止摘要化"
+                        "description": "任务目标，保留具体参数。"
                     },
                     # ✅ 新设计：context_str（可选）- 补充上下文
                     "context_str": {
                         "type": "string",
-                        "description": "补充上下文，可填技能名称、操作步骤、背景信息等"
+                        "description": "补充上下文。"
                     },
                     # ✅ 新设计：workspace_path（可选）- 工作目录
                     "workspace_path": {
@@ -87,18 +85,11 @@ class CallSubAgentTool(LLMTool):
                     },
                     "session_id": {
                         "type": "string",
-                        "description": (
-                            "子Agent会话ID，可选；传入则继续指定会话。"
-                            "target_mode=\"assistant\" 时只有显式传入 session_id 才会复用旧会话。"
-                        )
+                        "description": "子Agent会话ID；传入则继续指定会话。"
                     },
                     "force_new_session": {
                         "type": "boolean",
-                        "description": (
-                            "是否强制创建新会话，默认false；新话题时使用。"
-                            "assistant 子会话未传 session_id 时默认已创建新会话；"
-                            "其他模式可用该参数阻止自动复用最近会话。"
-                        )
+                        "description": "是否强制创建新会话。"
                     },
                     "_force_isolated_session": {
                         "type": "boolean",

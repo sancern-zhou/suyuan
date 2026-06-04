@@ -7,10 +7,10 @@ brand_aliases:
     - 热电
 
 device_identity:
-  history_days: 90
+  history_days: 370
   short_history_days: 30
   history_limit: 5000
-  previous_same_device_limit: 2
+  previous_same_station_limit: 20
   enabled_order_types:
     - Check
     - SupCheck
@@ -30,7 +30,10 @@ device_identity:
       severity: 中
     - key: device_code
       label: 设备编号
-      severity: 高
+      severity: 中
+    - key: range
+      label: 量程
+      severity: 中
   rf_identity_fields:
     brand:
       - DEVICEBRAND
@@ -42,6 +45,11 @@ device_identity:
       - DEVICECODE
       - DEVICECODEN
       - DEVICECODE_NEW
+    range:
+      - RANGEVALUE
+      - RANGE
+      - MEASURERANGE
+      - FULLSCALE
   base_device_fields:
     brand:
       - DEVICEBRAND

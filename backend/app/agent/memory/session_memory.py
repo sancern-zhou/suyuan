@@ -1234,6 +1234,20 @@ class SessionMemory:
                             loaded_count += 1
                         else:
                             skipped_count += 1
+                    elif "role" in msg and "content" in msg:
+                        # 允许带自定义 type 的标准 role/content 消息恢复，例如 compact_memory。
+                        self.conversation_history.append(
+                            ConversationTurn(
+                                role=msg.get("role", "user"),
+                                content=msg.get("content", ""),
+                                timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
+                                type=msg_type,
+                                data=data if isinstance(data, dict) else None,
+                                tool_use_id=msg.get("tool_use_id"),
+                                is_error=msg.get("is_error"),
+                            )
+                        )
+                        loaded_count += 1
                     else:
                         logger.debug(
                             "load_history_messages_unknown_type",

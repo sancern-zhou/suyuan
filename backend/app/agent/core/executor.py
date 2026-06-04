@@ -69,6 +69,8 @@ class ToolExecutor:
         self.task_list = task_list
         self.llm_planner = llm_planner  # ✅ 存储llm_planner
         self.event_bus = event_bus  # Phase 3.1: 存储事件总线
+        self.runtime_mode: Optional[str] = None
+        self.user_identifier: Optional[str] = None
 
         # Initialize DataContextManager if memory_manager provided
         if memory_manager:
@@ -214,6 +216,29 @@ class ToolExecutor:
             session_id=memory_manager.session_id,
             has_context_manager=True
         )
+
+    def clone_for_run(
+        self,
+        memory_manager: "HybridMemoryManager",
+        task_list: Optional[Any] = None,
+        llm_planner: Optional[Any] = None,
+    ) -> "ToolExecutor":
+        """Create a run-scoped executor with isolated execution context.
+
+        Tool definitions are shared as immutable callables, while per-session
+        state such as memory_manager/data_context_manager/task_list is bound to
+        the returned executor only.
+        """
+        cloned = ToolExecutor(
+            tool_registry=dict(self.tool_registry),
+            memory_manager=memory_manager,
+            task_list=task_list if task_list is not None else self.task_list,
+            llm_planner=llm_planner if llm_planner is not None else self.llm_planner,
+            event_bus=self.event_bus,
+        )
+        cloned.runtime_mode = self.runtime_mode
+        cloned.user_identifier = self.user_identifier
+        return cloned
 
     async def execute_tool(
         self,
@@ -884,6 +909,8 @@ class ToolExecutor:
             context.memory_manager = self.memory_manager
             context.llm_planner = self.llm_planner
             context.tool_executor = self
+            context.runtime_mode = self.runtime_mode
+            context.user_identifier = self.user_identifier
 
             logger.debug(
                 "execution_context_created",

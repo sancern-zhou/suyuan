@@ -17,6 +17,7 @@ from app.agent import create_react_agent
 from app.agent.session import Session, get_session_manager
 from app.agent.runtime.cancellation import cancellation_registry
 from app.agent.runtime.steering import steering_registry
+from app.agent.runtime.session_advisory_lock import session_advisory_lock
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -336,6 +337,11 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
         collected_visuals = []
         seen_visual_ids = set()  # ✅ 用于去重：记录已添加的图表ID
 
+        if not actual_session_id:
+            import uuid
+            actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
+            analyze_kwargs["session_id"] = actual_session_id
+
         async def event_generator():
             """SSE 事件生成器"""
             nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, seen_visual_ids
@@ -373,8 +379,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     conversation_history = []
             else:
                 session_already_exists = False
-                import uuid
-                actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
                 session = Session(session_id=actual_session_id, query=request.query)
                 conversation_history = []
                 logger.info("session_created", session_id=actual_session_id)
@@ -535,7 +539,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                         if event["type"] == "complete":
                             # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
                             # office_document 实时事件后无法打开预览面板。
-                            office_documents = multi_expert_agent_instance._session_store.get(
+                            office_documents = agent._session_store.get(
                                 actual_session_id, {}
                             ).get("office_documents", [])
                             if office_documents:
@@ -575,11 +579,11 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                        collected_visuals_count=len(collected_visuals))
 
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                            if actual_session_id not in multi_expert_agent_instance._session_store:
-                                multi_expert_agent_instance._session_store[actual_session_id] = {}
+                            if actual_session_id not in agent._session_store:
+                                agent._session_store[actual_session_id] = {}
 
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                            agent._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                            agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                             logger.info(
                                 "collected_data_stored",
                                 session_id=actual_session_id,
@@ -603,16 +607,16 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
 
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                            if actual_session_id not in multi_expert_agent_instance._session_store:
-                                multi_expert_agent_instance._session_store[actual_session_id] = {}
+                            if actual_session_id not in agent._session_store:
+                                agent._session_store[actual_session_id] = {}
 
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
-                            multi_expert_agent_instance._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
-                            multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
-                            multi_expert_agent_instance._session_store[actual_session_id]["error_type"] = event["type"]
+                            agent._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                            agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                            agent._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
+                            agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
+                            agent._session_store[actual_session_id]["error_type"] = event["type"]
                             if "data" in event and "error" in event["data"]:
-                                multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
+                                agent._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
                             if event["type"] == "interrupted":
                                 event_data = event.get("data") or {}
                                 compressed_history.append({
@@ -673,8 +677,13 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
+        async def locked_event_generator():
+            async with session_advisory_lock(actual_session_id):
+                async for chunk in event_generator():
+                    yield chunk
+
         return StreamingResponse(
-            event_generator(),
+            locked_event_generator(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

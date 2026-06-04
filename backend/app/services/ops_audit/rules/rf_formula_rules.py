@@ -12,6 +12,9 @@ from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "RF_VALUE_FORMULA_MISMATCH"
 PRESSURE_TRUE_VALUE_RULE_ID = "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH"
+MONTHLY_GAS_FLOW_ERROR_RANGE_RULE_ID = "RF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE"
+PM_MEMBRANE_ERROR_MISMATCH_RULE_ID = "RF_PM_MEMBRANE_ERROR_MISMATCH"
+PM_MEMBRANE_ERROR_RANGE_RULE_ID = "RF_PM_MEMBRANE_ERROR_OUT_OF_RANGE"
 SKIP_TOKENS = {"", "/", "-", "nan", "none", "null", "无", "无该项指标", "不适用", "未填写"}
 
 
@@ -35,6 +38,9 @@ def check_rf_formula_values(
         }:
             violations.extend(_check_weekly_gas_true_values(table, form))
         elif table == "RF_M_GASEOUSFLOWCHECK":
+            monthly_error_range_violations = _check_monthly_gas_flow_error_range(table, form)
+            if monthly_error_range_violations:
+                _add_monthly_gas_flow_error_range_issue(order, table, monthly_error_range_violations, issues)
             violations.extend(_check_monthly_gas_flow(table, form))
         elif table == "RF_Q_GaseousFlowCheck":
             pressure_violations = _check_quarter_pressure_true_value(table, form)
@@ -45,6 +51,14 @@ def check_rf_formula_values(
             violations.extend(_check_tw_pm_flow_check(table, form))
         elif table == "RF_TW_PmFlowCalibrate":
             violations.extend(_check_tw_pm_flow_calibrate(table, form))
+        elif table in {"RF_Q_PM10RUNSTATUSCHECK", "RF_Q_PM25RUNSTATUSCHECK"}:
+            pm_membrane_violations = _check_pm_membrane_error(table, form)
+            mismatch_violations = [item for item in pm_membrane_violations if item.get("violation_type") == "mismatch"]
+            range_violations = [item for item in pm_membrane_violations if item.get("violation_type") == "out_of_range"]
+            if mismatch_violations:
+                _add_pm_membrane_error_issue(order, table, mismatch_violations, issues)
+            if range_violations:
+                _add_pm_membrane_error_range_issue(order, table, range_violations, issues)
 
         if not violations:
             continue
@@ -87,6 +101,78 @@ def _add_pressure_true_value_issue(
         "高",
         f"rf.{table}.{first.get('actual_field')}",
         f"季度气体流量检查气压真实值复算不一致: {first.get('actual')} != {first.get('expected')}",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _add_monthly_gas_flow_error_range_issue(
+    order: dict[str, Any],
+    table: str,
+    violations: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "violation_count": len(violations),
+        "violations": violations[:20],
+    }
+    first = violations[0]
+    add_issue(
+        issues,
+        MONTHLY_GAS_FLOW_ERROR_RANGE_RULE_ID,
+        "表单结果合理性",
+        "高",
+        f"rf.{table}.{first.get('error_field')}",
+        f"月度气体流量检查{first.get('gas_type')}测量误差{first.get('expected_error')}%超出±10%",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _add_pm_membrane_error_issue(
+    order: dict[str, Any],
+    table: str,
+    violations: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "violation_count": len(violations),
+        "violations": violations[:20],
+    }
+    first = violations[0]
+    add_issue(
+        issues,
+        PM_MEMBRANE_ERROR_MISMATCH_RULE_ID,
+        "表单数值逻辑",
+        "高",
+        f"rf.{table}.{first.get('error_field')}",
+        f"颗粒物校准膜误差复算不一致: {first.get('actual_error')} != {first.get('expected_error')}",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _add_pm_membrane_error_range_issue(
+    order: dict[str, Any],
+    table: str,
+    violations: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "violation_count": len(violations),
+        "violations": violations[:20],
+    }
+    first = violations[0]
+    add_issue(
+        issues,
+        PM_MEMBRANE_ERROR_RANGE_RULE_ID,
+        "表单结果合理性",
+        "高",
+        f"rf.{table}.{first.get('error_field')}",
+        f"颗粒物校准膜误差{first.get('expected_error')}%超出±2%",
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
@@ -153,7 +239,7 @@ def _check_monthly_gas_flow(table: str, form: dict[str, Any]) -> list[dict[str, 
         actual = _num(form.get(f"MEASUREDERROR{gas}"))
         if display is None or measured in (None, 0) or actual is None:
             continue
-        expected = (display - measured) / measured * 100
+        expected = round((display - measured) / measured * 100, 2)
         violations.extend(
             _compare(
                 table,
@@ -161,13 +247,82 @@ def _check_monthly_gas_flow(table: str, form: dict[str, Any]) -> list[dict[str, 
                 f"MEASUREDERROR{gas}",
                 actual,
                 expected,
-                abs_tol=0.2,
+                abs_tol=0.0101,
                 inputs={
                     f"DISPLAYVALUE{gas}": display,
                     f"MEASUREDVALUE{gas}": measured,
                 },
             )
         )
+    return violations
+
+
+def _check_monthly_gas_flow_error_range(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
+    violations = []
+    for gas in ("SO2", "NO2", "CO", "O3"):
+        display = _num(form.get(f"DISPLAYVALUE{gas}"))
+        measured = _num(form.get(f"MEASUREDVALUE{gas}"))
+        if display is None or measured in (None, 0):
+            continue
+        expected = round((display - measured) / measured * 100, 2)
+        if abs(expected) <= 10:
+            continue
+        violations.append(
+            {
+                "rf_table": table,
+                "gas_type": gas,
+                "display_field": f"DISPLAYVALUE{gas}",
+                "measured_field": f"MEASUREDVALUE{gas}",
+                "error_field": f"MEASUREDERROR{gas}",
+                "display_value": display,
+                "measured_value": measured,
+                "expected_error": expected,
+                "allowed_min": -10,
+                "allowed_max": 10,
+            }
+        )
+    return violations
+
+
+def _check_pm_membrane_error(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
+    if table == "RF_Q_PM25RUNSTATUSCHECK":
+        pollutant = "PM2.5"
+        original_field = "PM25CHECKTEMP1VALUE"
+        check_field = "PM25CHECKTEMP2VALUE"
+        error_field = "PM25CHECKTEMP3VALUE"
+    elif table == "RF_Q_PM10RUNSTATUSCHECK":
+        pollutant = "PM10"
+        original_field = "PM10CHECKTEMP1VALUE"
+        check_field = "PM10CHECKTEMP2VALUE"
+        error_field = "PM10CHECKTEMP3VALUE"
+    else:
+        return []
+
+    original = _num(form.get(original_field))
+    check = _num(form.get(check_field))
+    actual_error = _num(form.get(error_field))
+    if original in (None, 0) or check is None:
+        return []
+
+    expected_error = round((original - check) / original * 100, 1)
+    base = {
+        "rf_table": table,
+        "pollutant": pollutant,
+        "original_field": original_field,
+        "check_field": check_field,
+        "error_field": error_field,
+        "original_value": original,
+        "check_value": check,
+        "actual_error": actual_error,
+        "expected_error": expected_error,
+        "allowed_min": -2,
+        "allowed_max": 2,
+    }
+    violations = []
+    if actual_error is not None and abs(expected_error - actual_error) > 0.11:
+        violations.append({**base, "violation_type": "mismatch"})
+    if abs(expected_error) > 2:
+        violations.append({**base, "violation_type": "out_of_range"})
     return violations
 
 

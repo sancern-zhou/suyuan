@@ -38,7 +38,7 @@ def fetch_ops_audit_dataset(request: DatasetFetchRequest) -> dict[str, Any]:
     request = _apply_window_defaults(request)
     dataset = fetch_dataset(
         WorkOrderDatasetFilter(
-            limit=max(1, min(int(request.limit or 200), 2000)),
+            limit=max(1, min(int(request.limit or 200), 3000)),
             order_statuses=request.order_statuses,
             create_time_start=request.create_time_start,
             create_time_end=request.create_time_end,

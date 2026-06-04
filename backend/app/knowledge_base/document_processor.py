@@ -1377,7 +1377,7 @@ class DocumentProcessor:
         elif provider == "mimo":
             api_key = os.getenv("MIMO_API_KEY")
             base_url = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
-            model = os.getenv("MIMO_MODEL", "mimo-v2-flash")
+            model = os.getenv("MIMO_MODEL", "mimo-v2.5")
         else:  # openai
             api_key = os.getenv("OPENAI_API_KEY")
             base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")

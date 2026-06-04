@@ -5,7 +5,8 @@ Visualization Tools
 """
 
 from app.tools.visualization.generate_chart.tool import GenerateChartTool
-from app.tools.visualization.create_flowchart_artifact.tool import CreateFlowchartArtifactTool
+from app.tools.visualization.create_diagram_artifact.tool import CreateDiagramArtifactTool
+from app.tools.visualization.create_report_chart import CreateReportChartTool
 from app.tools.visualization.generate_map.tool import GenerateMapTool
 
-__all__ = ["GenerateChartTool", "GenerateMapTool", "CreateFlowchartArtifactTool"]
+__all__ = ["GenerateChartTool", "GenerateMapTool", "CreateDiagramArtifactTool", "CreateReportChartTool"]

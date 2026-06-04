@@ -34,6 +34,7 @@ tables:
       - label: 动态校准仪校准有效期
         prev_field: D_CalibrateDatePrev
         next_field: D_CalibrateDateNext
+        prev_must_match_actual_previous: true
 
   RF_TW_PmFlowCheck:
     reference_time_fields:

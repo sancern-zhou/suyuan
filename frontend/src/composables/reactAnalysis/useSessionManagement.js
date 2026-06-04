@@ -230,7 +230,7 @@ export function useSessionManagement(store) {
    */
   const doRestoreSession = async (sessionId, options = {}) => {
     const {
-      messageLimit = 30,
+      messageLimit = 100,
       restoreOfficeDocs = true,
       lazyArtifacts = true
     } = options
@@ -502,27 +502,16 @@ export function useSessionManagement(store) {
         const resultData = result.data
         if (!resultData) continue
 
-        // 提取 pdf_preview、markdown_preview 或 html_preview
-        if (resultData.pdf_preview) {
+        // 提取所有可用预览，避免 report 同时带 markdown/html 时丢失 HTML iframe 预览
+        if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview) {
           docs.push({
             pdf_preview: resultData.pdf_preview,
-            file_path: resultData.file_path || resultData.pdf_preview.pdf_path,
-            file_type: resultData.file_type,
-            generator: resultData.generator || 'word_processor'
-          })
-        } else if (resultData.markdown_preview) {
-          docs.push({
             markdown_preview: resultData.markdown_preview,
-            file_path: resultData.file_path,
-            file_type: resultData.file_type,
-            generator: resultData.generator || 'read_file'
-          })
-        } else if (resultData.html_preview) {
-          docs.push({
             html_preview: resultData.html_preview,
-            file_path: resultData.file_path,
+            file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
             file_type: resultData.file_type || resultData.html_preview?.file_type,
-            generator: resultData.generator || result?.metadata?.generator || 'quarto_report'
+            generator: resultData.generator || result?.metadata?.generator || 'word_processor',
+            summary: result.summary
           })
         }
       }
@@ -536,7 +525,7 @@ export function useSessionManagement(store) {
    * @param {string} sessionId - 会话ID
    */
   const handleSessionRestore = async (sessionId) => {
-    const result = await doRestoreSession(sessionId, { messageLimit: 30, restoreOfficeDocs: true })
+    const result = await doRestoreSession(sessionId, { messageLimit: 100, restoreOfficeDocs: true })
 
     if (result.success) {
       return true
@@ -552,7 +541,7 @@ export function useSessionManagement(store) {
    */
   const handleLoadSession = async (sessionId) => {
     const result = await doRestoreSession(sessionId, {
-      messageLimit: 30,
+      messageLimit: 100,
       restoreOfficeDocs: true
     })
 

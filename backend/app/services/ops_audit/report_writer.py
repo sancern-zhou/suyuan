@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,6 @@ from typing import Any
 
 EXCLUDED_REPORT_RULE_IDS = {
     "RF_AUDITOR_EMPTY",
-    "RF_CREATEDATE_EMPTY",
     "RF_REVIEW_EMPTY",
     "RF_REQUIRED_FIELD_LOW_VALUE",
 }
@@ -44,9 +44,7 @@ def _collect_visible_issues(records: list[dict[str, Any]]) -> list[dict[str, Any
                     "station_id": record.get("station_id", ""),
                     "order_type": record.get("order_type", ""),
                     "maintenance_type": record.get("maintenance_type", ""),
-                    "audit_level": record.get("audit_level", ""),
                     "rule_id": issue.get("rule_id", ""),
-                    "severity": issue.get("severity", ""),
                     "message": issue.get("message", ""),
                 }
             )
@@ -110,11 +108,7 @@ def write_report(
         f"- 审核阶段：{audit['audit_info']['rule_stage']}",
         f"- 工单数量：{audit['audit_info']['order_count']}",
         "",
-        "## 总体分布",
-        "",
     ]
-    for key, value in summary["audit_level_counts"].items():
-        lines.append(f"- {key}：{value}")
 
     if dataset_summary:
         lines.extend(["", "## 数据覆盖情况", ""])
@@ -157,7 +151,7 @@ def write_report(
                 f"{record.get('order_type', '')}/{record.get('maintenance_type', '')}"
             )
             for issue in issues_by_order[code]:
-                lines.append(f"- {issue['rule_id']}（{issue['severity']}）：{issue['message']}")
+                lines.append(f"- {issue['rule_id']}：{issue['message']}")
             lines.append("")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -184,7 +178,7 @@ def _format_final_issue_list_by_operation_unit(final_issue_list: dict[str, Any])
                 f"{index}. {_issue_station_label(item)}、"
                 f"{_display_value(item.get('rf_form_name'), '未关联中文表单')}、"
                 f"{_display_value(item.get('working_order_code'), '未关联工单号')}、"
-                f"{_display_value(item.get('message'), '未填写问题描述')}、"
+                f"{_issue_message(item)}、"
                 f"{_display_value(item.get('rule_id'), '未关联规则')}"
             )
         lines.append("")
@@ -212,6 +206,55 @@ def _issue_station_label(item: dict[str, Any]) -> str:
     if station_id:
         return f"站点{station_id}"
     return "未关联站点"
+
+
+def _issue_message(item: dict[str, Any]) -> str:
+    message = _display_value(item.get("message"), "未填写问题描述")
+    detail = _issue_evidence_detail(item)
+    return f"{message}（{detail}）" if detail else message
+
+
+def _issue_evidence_detail(item: dict[str, Any]) -> str:
+    if item.get("rule_id") != "RF_DEVICE_IDENTITY_INCONSISTENT":
+        return ""
+    evidence = _parse_evidence(item.get("evidence"))
+    comparisons = evidence.get("comparisons")
+    if not isinstance(comparisons, list) or not comparisons:
+        return ""
+    details = []
+    for comparison in comparisons[:3]:
+        if not isinstance(comparison, dict):
+            continue
+        compare_order = _display_value(comparison.get("compare_order_code"), "未关联对比工单")
+        compare_time = str(comparison.get("compare_create_time") or "").strip()
+        compare_label = f"对比工单{compare_order}"
+        if compare_time:
+            compare_label = f"{compare_label}（{compare_time}）"
+        current_raw = _display_value(comparison.get("current_raw") or evidence.get("current_value"), "空")
+        compare_raw = _display_value(comparison.get("compare_raw"), "空")
+        source_detail = _source_detail(comparison)
+        details.append(f"{compare_label}：当前值{current_raw}，历史值{compare_raw}{source_detail}")
+    return "；".join(details)
+
+
+def _source_detail(comparison: dict[str, Any]) -> str:
+    current_source = str(comparison.get("current_source") or "").strip()
+    compare_source = str(comparison.get("compare_source") or "").strip()
+    if current_source or compare_source:
+        return f"，字段{current_source or '-'}/{compare_source or '-'}"
+    return ""
+
+
+def _parse_evidence(evidence: Any) -> dict[str, Any]:
+    if isinstance(evidence, dict):
+        return evidence
+    if not evidence:
+        return {}
+    try:
+        parsed = json.loads(str(evidence))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _display_value(value: Any, fallback: str) -> str:

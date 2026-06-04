@@ -167,14 +167,6 @@ RULE_CATALOG = [
         "rationale": "当前作为提示项，需确认审批字段是否实际启用。",
     },
     {
-        "rule_id": "RF_CREATEDATE_EMPTY",
-        "name": "RF 表单创建日期为空",
-        "category": "表单完整性",
-        "default_severity": "中",
-        "scope": "RF_*",
-        "rationale": "创建日期为空会影响记录形成时间和追溯性。",
-    },
-    {
         "rule_id": "RF_REQUIRED_FIELD_LOW_VALUE",
         "name": "RF 表单关键字段为空或低价值",
         "category": "表单完整性",
@@ -493,7 +485,7 @@ def _finalize_rule_group(group: dict[str, dict[str, Any]]) -> list[dict[str, Any
 
 def _build_dataset_filter(config: OpsWorkOrderAuditConfig) -> WorkOrderDatasetFilter:
     return WorkOrderDatasetFilter(
-        limit=max(1, min(int(config.limit or 200), 2000)),
+        limit=max(1, min(int(config.limit or 200), 3000)),
         order_statuses=config.order_statuses,
         create_time_start=config.create_time_start,
         create_time_end=config.create_time_end,

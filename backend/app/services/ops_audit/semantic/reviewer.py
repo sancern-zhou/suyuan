@@ -580,20 +580,21 @@ def _review_no_device_tasks_batch(
         confirmed = insufficient_by_code.get(code, [])
         if confirmed:
             judgment = "confirmed_issue"
-            conclusion = "其他设备型号为占位值，运行情况未充分说明无对应设备、停用或不适用原因。"
+            problem_description = _compose_no_device_problem_description(confirmed)
+            conclusion = problem_description
             confidence = max(item.get("confidence", 0.0) for item in confirmed)
             remark_review = {
                 "is_complete": False,
                 "has_cause": False,
                 "has_action": False,
                 "has_result": False,
-                "problem_description": "其他设备型号为占位值，运行情况未充分说明无对应设备、未配置、停用或不适用原因。",
+                "problem_description": problem_description,
                 "confidence": confidence,
                 "remark": json.dumps(confirmed, ensure_ascii=False, default=str),
             }
         else:
             judgment = "cleared"
-            conclusion = "运行情况已能说明无对应设备、停用或不适用原因。"
+            conclusion = "运行情况已能合理解释型号字段缺失或占位原因。"
             confidence = max([item.get("confidence", 0.0) for item in reviewed_by_code.get(code, [])] or [0.7])
             remark_review = {
                 "is_complete": True,
@@ -604,7 +605,7 @@ def _review_no_device_tasks_batch(
                 "confidence": confidence,
                 "remark": json.dumps(reviewed_by_code.get(code, []), ensure_ascii=False, default=str),
             }
-        results[code] = _build_semantic_task_result(
+        result = _build_semantic_task_result(
             task,
             audit_records.get(code, {}),
             dataset_orders.get(code, {}),
@@ -615,8 +616,33 @@ def _review_no_device_tasks_batch(
             [],
             json.dumps(reviewed_by_code.get(code, []), ensure_ascii=False, default=str),
         )
+        _attach_no_device_rf_context(result, confirmed or reviewed_by_code.get(code, []))
+        results[code] = result
         _limit_supported_rule_ids(results[code], "RF_NO_DEVICE_WITHOUT_REMARK")
     return results
+
+
+def _attach_no_device_rf_context(result: dict[str, Any], items: list[dict[str, Any]]) -> None:
+    if not items:
+        return
+    item = items[0]
+    model_field = str(item.get("model_field") or "").strip()
+    result["rf_table"] = "RF_W_OTHERDEVICECHECK"
+    if model_field:
+        result["rf_field"] = model_field
+        result["field"] = f"rf.RF_W_OTHERDEVICECHECK.{model_field}"
+        result["rf_record_key"] = "::".join(
+            part
+            for part in (
+                str(result.get("working_order_code") or "").strip(),
+                "RF_W_OTHERDEVICECHECK",
+                model_field,
+            )
+            if part
+        )
+    label = str(item.get("label") or "").strip()
+    if label:
+        result["field_label"] = label
 
 
 def _review_remark_tasks_batch(
@@ -664,6 +690,32 @@ def _review_remark_tasks_batch(
             text_by_code.get(code, ""),
         )
     return results
+
+
+def _compose_no_device_problem_description(items: list[dict[str, Any]]) -> str:
+    descriptions = [
+        str(item.get("problem_description") or "").strip()
+        for item in items
+        if str(item.get("problem_description") or "").strip()
+    ]
+    if descriptions:
+        return "；".join(descriptions)
+
+    fallback_parts = []
+    for item in items:
+        label = str(item.get("label") or "其他设备").strip()
+        model_value = str(item.get("model_value") or "<空>").strip()
+        situation_value = str(item.get("situation_value") or "<空>").strip()
+        reason = str(item.get("reason") or "").strip()
+        text = f"{label}型号填写为{model_value}，运行情况为“{situation_value}”"
+        if reason:
+            text = f"{text}，{reason}"
+        else:
+            text = f"{text}，未解释型号字段为何缺失或占位。"
+        fallback_parts.append(text)
+    if fallback_parts:
+        return "；".join(fallback_parts)
+    return "其他设备型号为占位值，运行情况未解释型号字段为何缺失或占位。"
 
 
 def _review_pm_tape_usage_tasks_batch(
@@ -842,6 +894,7 @@ def _review_filename_attachment_tasks_batch(
         issue = _first_focus_issue(task, "ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING")
         evidence = _issue_evidence(issue)
         required_types = [str(item) for item in evidence.get("required_types", []) if str(item).strip()]
+        rf_remarks = _station_maintain_rf_remarks(rf_forms_by_code.get(code, []))
         items.append(
             {
                 "working_order_code": code,
@@ -856,6 +909,8 @@ def _review_filename_attachment_tasks_batch(
                     for item in evidence.get("sample_attachments", [])
                     if isinstance(item, dict) and (item.get("name") or item.get("descriptor"))
                 ],
+                "rf_remarks": rf_remarks,
+                "exemption_review_required": bool(rf_remarks.strip()),
             }
         )
     raw = _call_semantic_llm_json(
@@ -870,7 +925,19 @@ def _review_filename_attachment_tasks_batch(
         parsed = parsed_by_code.get(code, {})
         confidence = _bounded_confidence(parsed.get("confidence"), default=0.0)
         missing_types = [str(item) for item in (parsed.get("missing_types") or []) if str(item).strip()]
-        if confidence >= 0.7 and missing_types:
+        if bool(parsed.get("is_exempt")) and confidence >= 0.7:
+            judgment = "cleared"
+            conclusion = f"站点设备维护现场照片要求已豁免：{parsed.get('exemption_reason') or '语义复核确认存在合理豁免说明'}。"
+            remark_review = {
+                "is_complete": True,
+                "has_cause": True,
+                "has_action": True,
+                "has_result": True,
+                "problem_description": "",
+                "confidence": confidence,
+                "remark": json.dumps(parsed, ensure_ascii=False, default=str),
+            }
+        elif confidence >= 0.7 and missing_types:
             judgment = "confirmed_issue"
             conclusion = f"站点设备维护现场照片缺失：{', '.join(missing_types)}。"
             remark_review = {
@@ -906,6 +973,36 @@ def _review_filename_attachment_tasks_batch(
             json.dumps(parsed, ensure_ascii=False, default=str),
         )
     return results
+
+
+def _station_maintain_rf_remarks(rf_forms: list[tuple[str, dict[str, Any]]]) -> str:
+    station_maintain_tables = {
+        "RF_M_STATIONDEVICEMAINTAIN",
+        "RF_M_StationMaintainCheck",
+        "RF_HY_STATIONDEVICEMAINTAIN",
+    }
+    remark_fields = (
+        "REMARK",
+        "Remark",
+        "remark",
+        "REMARKS",
+        "Remarks",
+        "remarks",
+        "DESCRIPTION",
+        "Description",
+        "DESCRIPTIONTA",
+        "SITUATION",
+        "Situation",
+    )
+    remarks: list[str] = []
+    for table, form in rf_forms:
+        if table not in station_maintain_tables or form.get("_query_error"):
+            continue
+        for field in remark_fields:
+            value = str(form.get(field) or "").strip()
+            if value and value not in remarks:
+                remarks.append(value)
+    return "\n".join(remarks)[:2000]
 
 
 def _build_semantic_task_result(

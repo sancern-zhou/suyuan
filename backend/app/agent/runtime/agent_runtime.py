@@ -44,6 +44,8 @@ class AgentRuntimeConfig:
     attachments: Optional[List[Dict[str, Any]]] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    runtime_mode: Optional[str] = None
+    user_identifier: Optional[str] = None
 
 
 class AgentRuntime:
@@ -99,7 +101,12 @@ class AgentRuntime:
                 run_id = self.config.agent_logger.start_new_run(
                     session_id=state.session_id,
                     query=state.user_query,
-                    metadata={"enhance_with_history": state.enhance_with_history, "runtime": "decomposed"},
+                    metadata={
+                        "enhance_with_history": state.enhance_with_history,
+                        "runtime": "decomposed",
+                        "runtime_mode": self.config.runtime_mode or state.mode,
+                        "user_identifier": self.config.user_identifier,
+                    },
                 )
                 logger.info("agent_runtime_run_started", run_id=run_id)
 
@@ -150,16 +157,17 @@ class AgentRuntime:
 
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
-        if state.mode == "social" and self.config.attachments:
+        attachments = self._effective_attachments(state)
+        if state.mode == "social" and attachments:
             from .multimodal import build_anthropic_user_content, build_persisted_user_content
 
             state.user_message_content = build_anthropic_user_content(
                 state.user_query,
-                self.config.attachments,
+                attachments,
             )
             state.persisted_user_message_content = build_persisted_user_content(
                 state.user_query,
-                self.config.attachments,
+                attachments,
             )
         self._raise_if_cancelled()
         planner_result = None
@@ -198,6 +206,7 @@ class AgentRuntime:
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
             observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
+            self._capture_multimodal_attachments(state, observation)
             self._apply_housekeeping_policy(state, action, observation)
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
@@ -216,6 +225,35 @@ class AgentRuntime:
         self._ensure_user_message_written(state)
         self.writer.add_iteration(planner_result.thought, action, observation)
 
+    def _effective_attachments(self, state: RunState) -> List[Dict[str, Any]]:
+        """Current-run image attachments available to social-mode native multimodal calls."""
+        attachments: List[Dict[str, Any]] = []
+        if self.config.attachments:
+            attachments.extend(self.config.attachments)
+        if state.pending_attachments:
+            attachments.extend(state.pending_attachments)
+        return attachments
+
+    def _capture_multimodal_attachments(self, state: RunState, observation: Dict[str, Any]) -> None:
+        if state.mode != "social" or not isinstance(observation, dict):
+            return
+
+        from .multimodal import extract_multimodal_attachments
+
+        attachments = extract_multimodal_attachments(observation)
+        if not attachments:
+            return
+
+        state.pending_attachments.extend(attachments)
+        logger.info(
+            "multimodal_attachments_captured_from_tool",
+            session_id=state.session_id,
+            run_id=state.run_id,
+            iteration=state.iteration,
+            count=len(attachments),
+            names=[item.get("name") for item in attachments if isinstance(item, dict)],
+        )
+
     async def _apply_steering_inputs(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         items = await steering_registry.drain(state.session_id, state.run_id)
         if not items:
@@ -226,14 +264,6 @@ class AgentRuntime:
         for content in messages:
             self.writer.add_user_message(f"【执行中用户补充】{content}")
 
-        steering_block = "\n".join(f"- {content}" for content in messages)
-        state.user_query = (
-            f"{state.user_query}\n\n"
-            "## 用户在执行过程中追加的输入\n"
-            "以下内容是在当前任务执行过程中由用户补充或纠偏的输入。"
-            "后续计划和回答必须优先纳入这些信息：\n"
-            f"{steering_block}"
-        )
         logger.info(
             "steering_inputs_applied",
             session_id=state.session_id,
@@ -254,7 +284,7 @@ class AgentRuntime:
             latest_observation=latest_observation,
             conversation_history=conversation_history,
             mode=state.mode,
-            is_interruption=self.config.is_interruption,
+            is_interruption=self.config.is_interruption if state.iteration == 1 else False,
         )
         conversation_history = self.memory.session.get_messages_for_llm()
         conversation_history = self.transcript_repairer.repair(conversation_history)
@@ -317,12 +347,13 @@ class AgentRuntime:
         buffer = AssistantStreamBuffer()
         planner_result = PlannerResult()
         user_content = None
-        if state.mode == "social" and self.config.attachments:
+        attachments = self._effective_attachments(state)
+        if state.mode == "social" and attachments:
             from .multimodal import build_anthropic_user_content
 
             user_content = build_anthropic_user_content(
                 context_result["user_conversation"],
-                self.config.attachments,
+                attachments,
             )
 
         async for event in self.planner.think_and_action_streaming(
@@ -334,7 +365,7 @@ class AgentRuntime:
             mode=state.mode,
             conversation_history=conversation_history,
             user_content=user_content,
-            attachments=self.config.attachments,
+            attachments=attachments,
             llm_provider=self.config.llm_provider,
             llm_model=self.config.llm_model,
         ):
@@ -370,7 +401,11 @@ class AgentRuntime:
                 tool_data = event["data"]
                 tool_use_id = tool_data.get("tool_use_id", "")
                 tool_name = tool_data.get("tool_name", "")
-                tool_input = self.tool_coordinator.normalize_tool_input(tool_name, tool_data.get("input", {}))
+                tool_input = self.tool_coordinator.normalize_tool_input(
+                    tool_name,
+                    tool_data.get("input", {}),
+                    mode=state.mode,
+                )
                 state.has_seen_tool_use = True
                 buffer.note_tool_use()
                 planner_result.tool_calls.append(ToolCall(tool_name, tool_input, tool_use_id))
@@ -478,12 +513,13 @@ class AgentRuntime:
     ) -> PlannerResult:
         self._raise_if_cancelled()
         user_content = None
-        if state.mode == "social" and self.config.attachments:
+        attachments = self._effective_attachments(state)
+        if state.mode == "social" and attachments:
             from .multimodal import build_anthropic_user_content
 
             user_content = build_anthropic_user_content(
                 context_result["user_conversation"],
-                self.config.attachments,
+                attachments,
             )
         result = await self.planner.think_and_action(
             query=state.user_query,
@@ -494,7 +530,7 @@ class AgentRuntime:
             mode=state.mode,
             conversation_history=conversation_history,
             user_content=user_content,
-            attachments=self.config.attachments,
+            attachments=attachments,
             llm_provider=self.config.llm_provider,
             llm_model=self.config.llm_model,
         )
@@ -518,6 +554,7 @@ class AgentRuntime:
             yield completed_result["message"]
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
+        self._capture_multimodal_attachments(state, observation)
         self._apply_housekeeping_policy(state, action, observation)
         self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)

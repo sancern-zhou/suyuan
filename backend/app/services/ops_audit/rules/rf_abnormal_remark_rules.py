@@ -47,6 +47,7 @@ def check_rf_abnormal_remarks(
         table = _issue_table(issue, form_by_table)
         if not table:
             continue
+        trigger_evidence = _issue_evidence(issue)
         _add_if_no_remark(
             order,
             table,
@@ -56,6 +57,7 @@ def check_rf_abnormal_remarks(
             reason_rule_id=issue.rule_id,
             abnormal_field=issue.field,
             abnormal_message=issue.message,
+            extra_remark_candidates=trigger_evidence.get("handling_record_candidates"),
         )
 
     for table, form in form_by_table.items():
@@ -138,7 +140,7 @@ def _check_pm_sample_tube_temperature(
     status = str(form.get("AIRTEMPISNORMAL") or "").strip()
     number = _num(value)
     missing = value is None or str(value).strip() in {"", "/", "-", "未填", "无"}
-    abnormal_status = bool(status and status not in LOW_VALUE_REMARKS and "正常" not in status)
+    abnormal_status = _is_pm_sample_tube_temp_status_abnormal(status)
     out_of_range = number is not None and (number < 0 or number > 60)
     if not (missing or abnormal_status or out_of_range):
         return
@@ -163,6 +165,24 @@ def _check_pm_sample_tube_temperature(
     )
 
 
+def _is_pm_sample_tube_temp_status_abnormal(status: str) -> bool:
+    if not status or status in LOW_VALUE_REMARKS:
+        return False
+    text = status.strip()
+    lowered = text.lower()
+    normal_values = {"是", "1", "1.0", "true", "正常", "合格", "通过", "无异常"}
+    abnormal_values = {"否", "0", "0.0", "false"}
+    if text in normal_values or lowered in normal_values:
+        return False
+    if text in abnormal_values or lowered in abnormal_values:
+        return True
+    if any(token in text for token in NORMAL_TEXT_TOKENS):
+        return False
+    if any(token in text for token in ABNORMAL_TEXT_TOKENS):
+        return True
+    return True
+
+
 def _add_if_no_remark(
     order: dict[str, Any],
     table: str,
@@ -173,18 +193,25 @@ def _add_if_no_remark(
     reason_rule_id: str,
     abnormal_field: str,
     abnormal_message: str,
+    extra_remark_candidates: dict[str, Any] | None = None,
 ) -> None:
     key = (table, str(abnormal_field))
-    if key in emitted or _has_meaningful_remark(form):
+    if key in emitted:
         return
     emitted.add(key)
+    remark_candidates = _remark_candidates(form)
+    for field, value in (extra_remark_candidates or {}).items():
+        if str(field) not in remark_candidates:
+            remark_candidates[str(field)] = value
+    has_remark = any(str(value or "").strip() for value in remark_candidates.values())
     evidence = {
         "working_order_code": order.get("WORKINGORDERCODE"),
         "rf_table": table,
         "reason_rule_id": reason_rule_id,
         "abnormal_field": abnormal_field,
         "abnormal_message": abnormal_message,
-        "remark_candidates": _remark_candidates(form),
+        "remark_candidates": remark_candidates,
+        "needs_semantic_review": has_remark,
     }
     add_issue(
         issues,
@@ -192,7 +219,12 @@ def _add_if_no_remark(
         "结果合理性",
         "高",
         f"rf.{table}.remark",
-        f"RF表单存在异常/漏填/错配但无有效说明: {abnormal_message}",
+        (
+            "RF表单存在异常/漏填/错配，需语义判断备注是否解释充分: "
+            if has_remark
+            else "RF表单存在异常/漏填/错配但无有效说明: "
+        )
+        + abnormal_message,
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
@@ -206,6 +238,14 @@ def _issue_table(issue: Issue, form_by_table: dict[str, dict[str, Any]]) -> str 
         if re.search(rf"(^|[.\s\"']){re.escape(table)}($|[.\s\"'])", haystack):
             return table
     return None
+
+
+def _issue_evidence(issue: Issue) -> dict[str, Any]:
+    try:
+        parsed = json.loads(issue.evidence or "{}")
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _has_meaningful_remark(form: dict[str, Any]) -> bool:

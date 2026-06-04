@@ -471,11 +471,18 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="generate_map", error=str(e))
 
     try:
-        from app.tools.visualization.create_flowchart_artifact.tool import CreateFlowchartArtifactTool
-        registry.register(CreateFlowchartArtifactTool(), priority=211)
-        logger.info("tool_loaded", tool="create_flowchart_artifact")
+        from app.tools.visualization.create_diagram_artifact.tool import CreateDiagramArtifactTool
+        registry.register(CreateDiagramArtifactTool(), priority=211)
+        logger.info("tool_loaded", tool="create_diagram_artifact")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_flowchart_artifact", error=str(e))
+        logger.warning("tool_import_failed", tool="create_diagram_artifact", error=str(e))
+
+    try:
+        from app.tools.visualization.create_report_chart import CreateReportChartTool
+        registry.register(CreateReportChartTool(), priority=212)
+        logger.info("tool_loaded", tool="create_report_chart")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_report_chart", error=str(e))
 
     try:
         from app.tools.analysis.smart_chart_generator.tool import SmartChartGenerator
@@ -483,13 +490,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="smart_chart_generator")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="smart_chart_generator", error=str(e))
-
-    try:
-        from app.tools.visualization.generate_aqi_calendar import GenerateAQICalendarTool
-        registry.register(GenerateAQICalendarTool(), priority=221)
-        logger.info("tool_loaded", tool="generate_aqi_calendar")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="generate_aqi_calendar", error=str(e))
 
     # ========================================
     # Utility Tools（实用工具）

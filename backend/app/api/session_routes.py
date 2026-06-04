@@ -66,6 +66,16 @@ def _extract_visualizations_from_messages(messages: List[Dict[str, Any]]) -> Lis
         inner_data = result.get("data") if isinstance(result, dict) else None
         if isinstance(inner_data, dict):
             add_visuals(inner_data.get("visuals"))
+        tool_results = result.get("tool_results") if isinstance(result, dict) else None
+        for tool_result in tool_results if isinstance(tool_results, list) else []:
+            if not isinstance(tool_result, dict):
+                continue
+            tool_result_payload = tool_result.get("result")
+            if isinstance(tool_result_payload, dict):
+                add_visuals(tool_result_payload.get("visuals"))
+                tool_result_data = tool_result_payload.get("data")
+                if isinstance(tool_result_data, dict):
+                    add_visuals(tool_result_data.get("visuals"))
         for item in results if isinstance(results, list) else []:
             if not isinstance(item, dict):
                 continue
@@ -88,26 +98,32 @@ def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> L
         if not isinstance(result_data, dict):
             continue
 
-        preview_key = next(
-            (key for key in ("pdf_preview", "markdown_preview", "html_preview") if result_data.get(key)),
-            None,
-        )
-        if not preview_key:
+        pdf_preview = result_data.get("pdf_preview")
+        markdown_preview = result_data.get("markdown_preview")
+        html_preview = result_data.get("html_preview")
+        if not (pdf_preview or markdown_preview or html_preview):
             continue
 
-        documents.append({
-            preview_key: result_data.get(preview_key),
+        document = {
             "file_path": result_data.get("file_path")
                 or result_data.get("path")
-                or (result_data.get("pdf_preview") or {}).get("pdf_path"),
+                or (pdf_preview or {}).get("pdf_path")
+                or (html_preview or {}).get("html_id"),
             "file_type": result_data.get("file_type")
-                or (result_data.get("html_preview") or {}).get("file_type"),
+                or (html_preview or {}).get("file_type"),
             "generator": result_data.get("generator")
                 or (result.get("metadata") or {}).get("generator")
                 or "document",
             "summary": result.get("summary"),
             "timestamp": msg.get("timestamp"),
-        })
+        }
+        if pdf_preview:
+            document["pdf_preview"] = pdf_preview
+        if markdown_preview:
+            document["markdown_preview"] = markdown_preview
+        if html_preview:
+            document["html_preview"] = html_preview
+        documents.append(document)
 
     return documents
 

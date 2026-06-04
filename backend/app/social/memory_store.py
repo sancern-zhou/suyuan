@@ -233,7 +233,7 @@ class MemoryConsolidator(BaseMemoryConsolidator):
         user_id: str,
         messages: List[Dict[str, Any]],
         llm_call: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,  # ⚠️ 已弃用
-        model: str = "mimo-v2-flash",
+        model: str = "mimo-v2.5",
     ) -> bool:
         """
         合并消息到持久化存储（兼容层）
@@ -262,7 +262,7 @@ class MemoryConsolidator(BaseMemoryConsolidator):
         user_id: str,
         messages: List[Dict[str, Any]],
         llm_call: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,  # ⚠️ 已弃用
-        model: str = "mimo-v2-flash",
+        model: str = "mimo-v2.5",
     ) -> bool:
         """
         根据 Token预算自动触发合并（兼容层）

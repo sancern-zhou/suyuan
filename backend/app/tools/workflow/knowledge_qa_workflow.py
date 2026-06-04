@@ -101,9 +101,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
 
     name = "knowledge_qa_workflow"
     description = (
-        "知识库检索工具，只检索不生成答案。query应保留用户原问题全文，"
-        "并追加3-8个关键词/同义词/标准号写法/文件简称；标准规范、政策法规、技术文档问题优先使用。"
-        "reranker默认auto，低置信或跨文档对比可用always。"
+        "检索知识库，只返回来源不生成答案；严肃问答后续按 document_read_targets 调 knowledge_document_reader。"
     )
     version = "1.0.0"
     category = "knowledge_qa"
@@ -117,7 +115,6 @@ class KnowledgeQAWorkflow(WorkflowTool):
         self,
         query: Optional[str] = None,
         question: Optional[str] = None,  # 别名，兼容 LLM 调用
-        session_id: Optional[str] = None,
         knowledge_base_ids: Optional[List[str]] = None,  # 知识库ID列表
         top_k: int = 3,
         reranker: str = "auto"
@@ -128,7 +125,6 @@ class KnowledgeQAWorkflow(WorkflowTool):
         Args:
             query: 用户问题
             question: 用户问题（别名，兼容 LLM 调用）
-            session_id: 会话ID（可选，当前未使用）
             knowledge_base_ids: 知识库ID列表（可选）
             top_k: 检索文档数量
             reranker: 精排模式，auto/always/never
@@ -156,7 +152,6 @@ class KnowledgeQAWorkflow(WorkflowTool):
         try:
             self._record_step("knowledge_retrieval_start", "running", {
                 "query": actual_query[:100] if actual_query else "",
-                "session_id": session_id,
                 "top_k": top_k,
                 "reranker": reranker
             })
@@ -300,24 +295,20 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "组合检索词：保留用户原问题全文，并追加3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写；不要只传抽象摘要。示例：'HJ 633-2026 综合指数怎么算 综合指数 计算方法 评价项目 分指数 IAQI AQI HJ633-2026 环境空气质量指数'"
+                        "description": "原问题+补充关键词/同义词。"
                     },
                     "question": {
                         "type": "string",
-                        "description": "query别名；同样应传原问题全文 + 补充关键词的组合检索词"
-                    },
-                    "session_id": {
-                        "type": "string",
-                        "description": "会话ID（当前未使用，保留用于未来扩展）"
+                        "description": "query别名。"
                     },
                     "knowledge_base_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "知识库ID列表（可选，不指定则使用所有可用知识库）"
+                        "description": "知识库ID。"
                     },
                     "top_k": {
                         "type": "integer",
-                        "description": "检索文档数量，默认3，最多10",
+                        "description": "返回数量。",
                         "default": 3,
                         "minimum": 1,
                         "maximum": 10
@@ -325,7 +316,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                     "reranker": {
                         "type": "string",
                         "enum": ["auto", "always", "never"],
-                        "description": "Reranker精排模式。auto默认按粗召回置信度决定；always强制精排；never跳过精排。",
+                        "description": "精排模式。",
                         "default": "auto"
                     }
                 },

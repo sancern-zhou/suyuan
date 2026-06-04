@@ -155,19 +155,26 @@ class SessionManagerDB:
             )
             return False
 
-    async def load_session(self, session_id: str, include_messages: bool = True) -> Optional[Session]:
+    async def load_session(
+        self,
+        session_id: str,
+        include_messages: bool = True,
+        use_cache: bool = False,
+    ) -> Optional[Session]:
         """
         从数据库加载会话
 
         Args:
             session_id: 会话ID
             include_messages: 是否加载消息
+            use_cache: 是否允许使用本 worker 的进程内缓存。默认 False，
+                避免 4 worker 下读取到其他 worker 已更新前的旧历史。
 
         Returns:
             会话对象，如果不存在则返回None
         """
         # 先检查内存缓存
-        if self.enable_cache and session_id in self.sessions:
+        if use_cache and self.enable_cache and session_id in self.sessions:
             return self.sessions[session_id]
 
         # 从数据库加载

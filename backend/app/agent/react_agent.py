@@ -190,15 +190,22 @@ class ReActAgent:
         memory_context = ""
         unified_user_id = None
         memory_tool_mode = manual_mode or "expert"
+        memory_snapshot_created = False
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
             memory_store = social_memory_store
-            # ✅ 使用 ActiveMemoryRetriever 按关键词召回相关记忆（而非整块注入）
             try:
-                from .memory.active_memory_retriever import ActiveMemoryRetriever
+                memory_store.create_snapshot()
+                memory_snapshot_created = True
+            except Exception as e:
+                logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
-                memory_context = ActiveMemoryRetriever().retrieve(
+            # 社交模式：完整注入用户隔离 MEMORY.md，并单独追加 daily notes 历史会话召回。
+            try:
+                from .memory.active_memory_retriever import build_social_memory_context
+
+                memory_context = build_social_memory_context(
                     memory_store=social_memory_store,
                     query=user_query,
                     recent_messages=initial_messages or []
@@ -296,15 +303,29 @@ class ReActAgent:
             reset_session
         )
 
-        # Update executor's memory_manager and task_list to enable DataContextManager
-        self.executor.set_memory_manager(memory_manager, task_list=self.task_list)
+        from .task.todo_models import TodoList
+
+        run_task_list = TodoList()
+        run_planner = ReActPlanner(
+            tool_registry=self.planner.tool_registry,
+            llm_client=self.planner.llm_service,
+            max_context_turns=self.planner.max_context_turns,
+        )
+        run_executor = self.executor.clone_for_run(
+            memory_manager,
+            task_list=run_task_list,
+            llm_planner=run_planner,
+        )
+        run_executor.runtime_mode = manual_mode or "expert"
+        run_executor.user_identifier = user_identifier
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
         # 其他模式：通过 UnifiedMemoryManager 获取
-        if self.enable_memory and memory_store:
+        if self.enable_memory and memory_store and not memory_snapshot_created:
             try:
                 memory_store.create_snapshot()  # 创建独立副本
+                memory_snapshot_created = True
             except Exception as e:
                 logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
@@ -329,8 +350,8 @@ class ReActAgent:
             # - 任务清单驱动流程（Agent 读取 md 模板 + TodoWrite）
             react_loop = ReActLoop(
                 memory_manager=memory_manager,
-                llm_planner=self.planner,
-                tool_executor=self.executor,
+                llm_planner=run_planner,
+                tool_executor=run_executor,
                 max_iterations=iteration_limit,
                 stream_enabled=True,
                 is_interruption=is_interruption,
@@ -338,8 +359,8 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if manual_mode == "social" else None,
-                llm_provider="minimax" if manual_mode == "social" else None,
-                llm_model="MiniMax-M3" if manual_mode == "social" else None,
+                llm_provider="mimo" if manual_mode == "social" else None,
+                llm_model="mimo-v2.5" if manual_mode == "social" else None,
             )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
@@ -1033,14 +1054,9 @@ class ReActAgent:
             # 清理过期会话
             self._cleanup_expired_sessions()
 
-            # ✅ 优先重用内存中的会话
-            if not reset_session and session_id and session_id in self._session_store:
-                entry = self._session_store[session_id]
-                entry["last_used"] = datetime.utcnow()
-                logger.info("react_session_reused", session_id=session_id)
-                return session_id, entry["memory"], False
-
-            # ✅ 新增：尝试从 SessionManager 恢复会话
+            # 有 session_id 的请求必须从持久化层恢复最新上下文。4 worker
+            # 部署下，worker 本地 _session_store 可能落后于其他 worker 已写入
+            # 的数据库历史，不能作为会话真源。
             if session_id and not reset_session:
                 try:
                     from app.agent.session import get_session_manager

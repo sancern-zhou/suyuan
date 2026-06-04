@@ -673,96 +673,72 @@ class GrepTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "grep",
-            "description": """搜索文件内容（基于ripgrep，高速完整版）
-
-在 backend/ 目录下搜索正则表达式匹配的内容。
-自动跳过 logs、node_modules、.git 等目录。
-
-使用场景：
-- 查找代码中的类/函数定义
-- 搜索配置文件中的参数
-- 统计关键词出现次数
-- 多文件模式搜索
-
-特性：
-- 三种输出模式：content（匹配行）、files_with_matches（文件列表）、count（统计）
-- Glob 模式：支持 "*.{py,ts}", "**/*.test.js" 等复杂模式
-- 分页查询：head_limit + offset
-- 精细上下文：context_before/context_after 或 context
-- 多行模式：multiline 让 . 匹配换行符
-- 结果排序：files_with_matches 按修改时间排序
-- 默认限制：head_limit 默认 250（0 表示无限制）
-
-注意：
-- 需要安装ripgrep: apt install ripgrep
-- 搜索范围限制在backend/目录
-- 30秒超时自动中断
-""",
+            "description": "在 backend/ 内用 ripgrep 搜索文件内容；支持正则、过滤、上下文和分页。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "正则表达式模式。示例：\"class.*Agent\"、\"def execute\"、\"TODO|FIXME\""
+                        "description": "正则表达式。"
                     },
                     "path": {
                         "type": "string",
-                        "description": "搜索路径，相对于 backend/。示例：\"app/agent\"、\"app/tools\"",
+                        "description": "相对 backend/ 的路径。",
                         "default": "."
                     },
                     "glob": {
                         "type": "string",
-                        "description": "Glob 模式过滤文件。支持复杂模式：\n- \"*.py\" - 所有 Python 文件\n- \"*.{py,ts}\" - Python 和 TypeScript 文件\n- \"**/*.test.js\" - 所有测试文件\n- \"*.py **/*.md\" - 多个模式（空格分隔）"
+                        "description": "Glob 文件过滤。"
                     },
                     "type": {
                         "type": "string",
                         "enum": ["py", "js", "ts", "json", "yaml", "md", "txt", "html", "css", "sh", "sql", "xml"],
-                        "description": "文件类型别名（ripgrep 内置类型）。示例：\"py\" 仅搜索 Python 文件"
+                        "description": "文件类型。"
                     },
                     "output_mode": {
                         "type": "string",
                         "enum": ["content", "files_with_matches", "count"],
-                        "description": "输出模式：\n- content: 显示匹配的具体行内容\n- files_with_matches: 只显示包含匹配的文件路径（按修改时间排序）\n- count: 统计每个文件的匹配次数",
+                        "description": "输出模式。",
                         "default": "files_with_matches"
                     },
                     "context": {
                         "type": "integer",
-                        "description": "匹配行前后各显示几行（等同于同时设置 context_before 和 context_after）",
+                        "description": "前后上下文行数。",
                         "default": None
                     },
                     "context_before": {
                         "type": "integer",
-                        "description": "匹配行前显示几行（-B 参数）",
+                        "description": "匹配前行数。",
                         "default": None
                     },
                     "context_after": {
                         "type": "integer",
-                        "description": "匹配行后显示几行（-A 参数）",
+                        "description": "匹配后行数。",
                         "default": None
                     },
                     "show_line_numbers": {
                         "type": "boolean",
-                        "description": "是否显示行号（仅 content 模式有效，默认 True）",
+                        "description": "显示行号。",
                         "default": True
                     },
                     "case_insensitive": {
                         "type": "boolean",
-                        "description": "是否忽略大小写（-i 参数）",
+                        "description": "忽略大小写。",
                         "default": False
                     },
                     "multiline": {
                         "type": "boolean",
-                        "description": "是否启用多行模式，让 . 可以匹配换行符（-U --multiline-dotall）",
+                        "description": "是否启用多行模式。",
                         "default": False
                     },
                     "head_limit": {
                         "type": "integer",
-                        "description": "最多返回几条结果（默认 250，0 表示不限制）",
+                        "description": "结果上限，0 不限制。",
                         "default": 250
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "跳过前几条结果（用于分页，默认 0）",
+                        "description": "分页偏移。",
                         "default": 0
                     }
                 },

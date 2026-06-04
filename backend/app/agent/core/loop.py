@@ -123,6 +123,8 @@ class ReActLoop:
             attachments=self.attachments,
             llm_provider=self.llm_provider,
             llm_model=self.llm_model,
+            runtime_mode=self.current_mode,
+            user_identifier=getattr(self.executor, "user_identifier", None),
         ))
 
         async for event in runtime.run(
