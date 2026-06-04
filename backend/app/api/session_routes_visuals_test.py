@@ -2,6 +2,9 @@ from app.api.session_routes import (
     _extract_office_documents_from_messages,
     _extract_visualizations_from_messages,
 )
+from app.agent.runtime.event_bus import RuntimeEventBus
+from app.agent.runtime.observation_processor import ObservationProcessor
+import pytest
 
 
 def test_extract_visualizations_from_nested_tool_results():
@@ -57,3 +60,30 @@ def test_extract_office_documents_preserves_report_html_preview_with_markdown_pr
     assert documents[0]["markdown_preview"]["content"] == "# qmd"
     assert documents[0]["html_preview"]["html_url"] == "/api/reports/ops_audit/html"
     assert documents[0]["file_type"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_document_events_preserve_markdown_and_html_preview_for_same_report():
+    processor = ObservationProcessor(finalizer=None, event_bus=RuntimeEventBus())
+    observation = {
+        "success": True,
+        "summary": "报告包已创建",
+        "metadata": {"generator": "create_report_package"},
+        "data": {
+            "file_path": "/tmp/reports/ops_audit/report.qmd",
+            "file_type": "report",
+            "markdown_preview": {"content": "# qmd", "file_type": "report"},
+            "html_preview": {
+                "html_id": "ops_audit",
+                "html_url": "/api/reports/ops_audit/html",
+                "file_type": "report",
+            },
+        },
+    }
+
+    events = [event async for event in processor._document_events(observation)]
+
+    assert len(events) == 1
+    assert events[0]["data"]["markdown_preview"]["content"] == "# qmd"
+    assert events[0]["data"]["html_preview"]["html_url"] == "/api/reports/ops_audit/html"
+    assert events[0]["data"]["file_type"] == "report"
