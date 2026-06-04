@@ -413,15 +413,22 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="write_file", error=str(e))
 
     try:
+        from app.tools.utility.present_artifact_tool import PresentArtifactTool
+        registry.register(PresentArtifactTool(), priority=506)
+        logger.info("tool_loaded", tool="present_artifact")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="present_artifact", error=str(e))
+
+    try:
         from app.tools.utility.glob_tool import GlobTool
-        registry.register(GlobTool(), priority=506)
+        registry.register(GlobTool(), priority=507)
         logger.info("tool_loaded", tool="search_files")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="search_files", error=str(e))
 
     try:
         from app.tools.utility.list_directory_tool import ListDirectoryTool
-        registry.register(ListDirectoryTool(), priority=507)
+        registry.register(ListDirectoryTool(), priority=508)
         logger.info("tool_loaded", tool="list_directory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="list_directory", error=str(e))
@@ -475,28 +482,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="add_ppt_slide")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="add_ppt_slide", error=str(e))
-
-    # 旧版 Win32 工具（待废弃）
-    try:
-        from app.tools.office.word_tool import WordWin32LLMTool
-        registry.register(WordWin32LLMTool(), priority=600)
-        logger.info("tool_loaded", tool="word_processor")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="word_processor", error=str(e))
-
-    try:
-        from app.tools.office.excel_tool import ExcelWin32LLMTool
-        registry.register(ExcelWin32LLMTool(), priority=601)
-        logger.info("tool_loaded", tool="excel_processor")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="excel_processor", error=str(e))
-
-    try:
-        from app.tools.office.ppt_tool import PPTWin32LLMTool
-        registry.register(PPTWin32LLMTool(), priority=602)
-        logger.info("tool_loaded", tool="ppt_processor")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="ppt_processor", error=str(e))
 
     # ========================================
     # Scheduled Tasks Tools（定时任务工具）
