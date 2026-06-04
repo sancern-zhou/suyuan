@@ -51,6 +51,19 @@
           </span>
         </div>
 
+        <div
+          v-if="pendingSteeringInputs.length > 0"
+          class="pending-steering-indicator"
+          role="status"
+          aria-label="等待 Agent 接收"
+        >
+          <div class="pending-steering-icon" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+
         <textarea
           ref="textareaRef"
           v-model="localValue"
@@ -184,6 +197,10 @@ const props = defineProps({
   isAnalyzing: {
     type: Boolean,
     default: false
+  },
+  pendingSteeringInputs: {
+    type: Array,
+    default: () => []
   },
   assistantMode: {
     type: String,
@@ -800,6 +817,51 @@ defineExpose({
     background: #f5f5f5;
     cursor: not-allowed;
     color: #999;
+  }
+}
+
+.pending-steering-indicator {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px 0;
+  min-height: 18px;
+}
+
+.pending-steering-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 14px;
+
+  span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #64748b;
+    opacity: 0.42;
+    animation: pending-steering-pulse 1.2s ease-in-out infinite;
+
+    &:nth-child(2) {
+      animation-delay: 0.16s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.32s;
+    }
+  }
+}
+
+@keyframes pending-steering-pulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: translateY(-3px);
+    opacity: 0.9;
   }
 }
 

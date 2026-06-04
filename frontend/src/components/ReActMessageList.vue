@@ -45,8 +45,7 @@
         v-if="getMessageType(message) === 'user'"
         class="message user-message"
         :class="{
-          'steering-pending': isPendingSteeringMessage(message),
-          'steering-applied': isAppliedSteeringMessage(message)
+          'steering-pending': isPendingSteeringMessage(message)
         }"
       >
         <!-- 附件显示 -->
@@ -75,11 +74,17 @@
         </div>
 
         <div class="message-content user-message-content" v-if="getMessageContent(message)">
-          <div v-if="isPendingSteeringMessage(message)" class="user-message-status">
-            等待 Agent 接收
-          </div>
-          <div v-else-if="isAppliedSteeringMessage(message)" class="user-message-status applied">
-            Agent 已接收
+          <div
+            v-if="isPendingSteeringMessage(message)"
+            class="user-message-status"
+            role="status"
+            aria-label="等待 Agent 接收"
+          >
+            <span class="pending-steering-icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
           </div>
           <div
             class="user-message-text"
@@ -292,17 +297,14 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import {
+  getExecutingProcessMessages,
+  getMessageType,
+  getUnifiedProcessMessages as collectUnifiedProcessMessages,
+  isProcessMessage
+} from './reactAnalysis/messageProcessGrouping.js'
 
 const reactStore = useReactStore()
-
-// 【修复】辅助函数：获取消息类型（兼容 type 和 role 字段）
-const getMessageType = (message) => {
-  // 优先使用 type 字段（后端返回的格式），如果没有则使用 role 字段（旧格式）
-  const type = message.type || message.role
-  // 将后端的 assistant 映射为 final
-  if (type === 'assistant') return 'final'
-  return type
-}
 
 // 【新增】辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -656,36 +658,9 @@ const welcomeContent = computed(() => {
   return contentMap[props.assistantMode] || contentMap['general-agent']
 })
 
-const PROCESS_MESSAGE_TYPES = new Set(['thought', 'tool_use', 'tool_result'])
-
-const isProcessMessage = (message) => PROCESS_MESSAGE_TYPES.has(getMessageType(message))
-
 // 执行中的过程消息：只显示当前用户消息之后、最终答案到达之前的过程。
 const executingProcessMessages = computed(() => {
-  let lastFinalIndex = -1
-  let lastUserIndex = -1
-  for (let i = props.messages.length - 1; i >= 0; i--) {
-    const type = getMessageType(props.messages[i])
-    if (lastFinalIndex === -1 && type === 'final') {
-      lastFinalIndex = i
-    }
-    if (lastUserIndex === -1 && type === 'user') {
-      lastUserIndex = i
-    }
-    if (lastFinalIndex !== -1 && lastUserIndex !== -1) {
-      break
-    }
-  }
-
-  if (lastUserIndex > lastFinalIndex) {
-    return props.messages.slice(lastUserIndex + 1).filter(isProcessMessage)
-  }
-
-  if (lastFinalIndex === -1) {
-    return props.messages.filter(isProcessMessage)
-  }
-
-  return []
+  return getExecutingProcessMessages(props.messages)
 })
 
 const displayedMessages = computed(() => {
@@ -741,8 +716,6 @@ const isProcessExpanded = (messageId) => {
 const getMessageContent = (message) => message?.content ?? message?.content_preview ?? ''
 
 const isPendingSteeringMessage = (message) => message?.steering && message?.steeringStatus === 'pending'
-
-const isAppliedSteeringMessage = (message) => message?.steering && message?.steeringStatus === 'applied'
 
 const getUserMessageText = (content) => contentToString(content).trim()
 
@@ -1043,39 +1016,7 @@ const formatProcessValue = (value) => {
 }
 
 const getUnifiedProcessMessages = (finalMessage, allMessages) => {
-  const messages = allMessages || []
-  const finalIndex = messages.findIndex(m =>
-    (finalMessage.id && m.id === finalMessage.id) || m === finalMessage
-  )
-  if (finalIndex === -1) {
-    return []
-  }
-
-  let previousBoundaryIndex = -1
-  for (let i = finalIndex - 1; i >= 0; i--) {
-    const type = getMessageType(messages[i])
-    if (type === 'final' || type === 'user') {
-      previousBoundaryIndex = i
-      break
-    }
-  }
-
-  const beforeFinal = messages
-    .slice(previousBoundaryIndex + 1, finalIndex)
-    .filter(isProcessMessage)
-
-  const afterFinal = []
-  for (let i = finalIndex + 1; i < messages.length; i++) {
-    const type = getMessageType(messages[i])
-    if (type === 'user' || type === 'final' || type === 'error') {
-      break
-    }
-    if (isProcessMessage(messages[i])) {
-      afterFinal.push(messages[i])
-    }
-  }
-
-  return [...beforeFinal, ...afterFinal]
+  return collectUnifiedProcessMessages(finalMessage, allMessages)
 }
 
 // 【修复】智能滚动控制
@@ -2112,21 +2053,35 @@ const closeImagePreview = () => {
     opacity: 0.82;
   }
 
-  &.steering-applied {
-    background: #eef6ff;
-    border-color: #90caf9;
-  }
-
   .user-message-status {
     margin-bottom: 4px;
-    font-size: 12px;
-    line-height: 1.4;
-    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    height: 14px;
 
-    &.applied {
-      color: #1565c0;
-    }
+    .pending-steering-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+
+      span {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #64748b;
+        opacity: 0.42;
+        animation: message-pending-steering-pulse 1.2s ease-in-out infinite;
+
+        &:nth-child(2) {
+          animation-delay: 0.16s;
+        }
+
+        &:nth-child(3) {
+          animation-delay: 0.32s;
+        }
+      }
   }
+}
 
   .message-content {
     text-align: left;
@@ -2232,6 +2187,20 @@ const closeImagePreview = () => {
     .badge-text {
       font-weight: 500;
     }
+  }
+}
+
+@keyframes message-pending-steering-pulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: translateY(-3px);
+    opacity: 0.9;
   }
 }
 

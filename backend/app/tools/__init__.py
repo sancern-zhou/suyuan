@@ -780,15 +780,22 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="spawn", error=str(e))
 
     try:
+        from app.tools.social.wait_task.tool import WaitTaskTool
+        registry.register(WaitTaskTool(), priority=378)
+        logger.info("tool_loaded", tool="wait_task")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="wait_task", error=str(e))
+
+    try:
         from app.tools.social.cli_session.tool import CliSessionTool
-        registry.register(CliSessionTool(), priority=378)
+        registry.register(CliSessionTool(), priority=379)
         logger.info("tool_loaded", tool="cli_session")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="cli_session", error=str(e))
 
     try:
         from app.tools.social.terminal_session.tool import TerminalSessionTool
-        registry.register(TerminalSessionTool(), priority=379)
+        registry.register(TerminalSessionTool(), priority=380)
         logger.info("tool_loaded", tool="terminal_session")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="terminal_session", error=str(e))
@@ -799,7 +806,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.task_management.todo_write import todo_write_tool
-        registry.register(todo_write_tool, priority=380)  # 修复: 800->380
+        registry.register(todo_write_tool, priority=381)  # 修复: 800->381
         logger.info("tool_loaded", tool="TodoWrite")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="TodoWrite", error=str(e))

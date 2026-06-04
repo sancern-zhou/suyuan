@@ -12,6 +12,7 @@ import uvicorn
 
 from app.api.social_account_routes import router as social_account_router
 from app.api.social_account_routes import set_channel_manager_override
+from app.api.fetcher_worker_routes import router as fetcher_worker_router
 from config.settings import settings
 
 logger = structlog.get_logger()
@@ -34,6 +35,7 @@ def create_social_worker_api_app(
         return await call_next(request)
 
     app.include_router(social_account_router)
+    app.include_router(fetcher_worker_router)
     return app
 
 

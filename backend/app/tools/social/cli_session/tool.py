@@ -444,7 +444,7 @@ class CliSessionTool(LLMTool):
             },
             "summary": (
                 f"已创建CLI后台任务 `{result.get('task_id')}`，当前对话不会阻塞。"
-                "可用 action=task_status 查询，action=task_cancel 取消。"
+                "请优先使用 wait_task 等待完成，必要时再用 action=task_status 查询或 action=task_cancel 取消。"
             ),
         }
 
