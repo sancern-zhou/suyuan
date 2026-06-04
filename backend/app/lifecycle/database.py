@@ -17,8 +17,8 @@ from app.services.lifecycle_manager import initialize_fetchers, stop_fetchers
 logger = structlog.get_logger()
 
 
-async def init_database_and_fetchers() -> bool:
-    """Initialize database and optionally start data fetchers.
+async def init_database() -> bool:
+    """Initialize database-backed features without starting background fetchers.
 
     Returns:
         True when DATABASE_URL is configured and database initialization
@@ -32,17 +32,29 @@ async def init_database_and_fetchers() -> bool:
     try:
         await init_db()
         logger.info("database_initialized")
+        return True
+    except Exception as e:
+        logger.error("database_initialization_failed", error=str(e), exc_info=True)
+        logger.warning("continuing_without_database_features")
+        return False
 
+
+async def init_database_and_fetchers() -> bool:
+    """Initialize database and optionally start data fetchers."""
+    database_ready = await init_database()
+    if not database_ready:
+        return False
+
+    try:
         if os.getenv("ENABLE_AUTO_FETCHING", "true").lower() == "true":
             initialize_fetchers()
             logger.info("data_fetchers_started")
         else:
             logger.info("data_fetchers_disabled")
-
         return True
     except Exception as e:
-        logger.error("database_initialization_failed", error=str(e), exc_info=True)
-        logger.warning("continuing_without_database_features")
+        logger.error("data_fetchers_initialization_failed", error=str(e), exc_info=True)
+        logger.warning("continuing_without_data_fetchers")
         return False
 
 
@@ -63,4 +75,3 @@ async def close_database() -> None:
             logger.info("database_closed")
     except Exception as e:
         logger.error("database_close_failed", error=str(e))
-
