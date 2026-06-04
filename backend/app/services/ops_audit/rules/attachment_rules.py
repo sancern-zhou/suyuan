@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+import re
 
 from app.services.ops_audit.config import load_attachment_requirements
 from app.services.ops_audit.models import Issue
@@ -34,11 +35,15 @@ def check_attachment_requirements(
         return
 
     for requirement in matched_requirements:
-        if _requirement_is_not_applicable(requirement, forms):
-            continue
+        # 优先使用基于出厂编号的检查（针对 MONTH_FLOW_CHECK_REPORT）
+        if check_attachment_requirements_by_factory_code(order, requirement, forms, inventory, issues):
+            continue  # 已通过出厂编号检查，跳过原有检查
+
         required_types = [str(item) for item in requirement.get("required_types", []) if item]
         if requirement.get("id") == "MONTH_STATION_MAINTAIN_PHOTOS":
             _add_station_maintain_photo_semantic_candidate(order, requirement, inventory, issues)
+            continue
+        if _requirement_is_not_applicable(requirement, forms):
             continue
         missing_types, filename_semantic_review = _resolve_missing_attachment_types(
             order,
@@ -417,3 +422,180 @@ def _first_present(record: dict[str, Any], fields: list[str]) -> Any:
         if value is not None and str(value).strip():
             return value
     return None
+
+
+def _normalize_factory_code(value: Any) -> str:
+    """标准化出厂编号：移除所有非字母数字字符并转为大写"""
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _factory_code_from_text(text: Any) -> str:
+    """从文本中提取出厂编号（支持标签和通用格式）"""
+    value = str(text or "")
+    # 匹配标签格式：出厂编号: xxx, Serial No: xxx 等
+    label_match = re.search(
+        r"(?:出厂编号|出厂号|设备编号|序列号|编号|Serial\s*No\.?|S/?N)[:：\s]*([A-Z0-9][A-Z0-9\-_/]{4,})",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if label_match:
+        return _normalize_factory_code(label_match.group(1))
+
+    # 匹配完整出厂编号格式：字母数字组合，可能包含连字符
+    # 优先匹配更长、更完整的格式（如 THM-703-A741905036）
+    full_match = re.search(r"\b[A-Z]{2,4}[-_/]?\d{3,}[-_/]?[A-Z0-9]{4,}\b", value, flags=re.IGNORECASE)
+    if full_match:
+        return _normalize_factory_code(full_match.group(0))
+
+    # 匹配通用格式：字母开头+6位以上数字+字母数字组合
+    generic_match = re.search(r"\b[A-Z]\d{6,}[A-Z0-9]*\b", value, flags=re.IGNORECASE)
+    if generic_match:
+        return _normalize_factory_code(generic_match.group(0))
+
+    return ""
+
+
+def extract_factory_codes_from_form(form: dict[str, Any]) -> set[str]:
+    """从RF表单中提取流量计出厂编号"""
+    codes = set()
+
+    # RF表单中可能的出厂编号字段（根据实际表单结构调整）
+    factory_fields = [
+        "REFERENCEFLOWMETERSERIALNO",  # 参考流量计出厂编号
+        "FLOWMETERSERIALNO",            # 流量计出厂编号
+        "STANDARDFLOWMETERNO",          # 标准流量计编号
+        "FLOWMETERNO",                  # 流量计编号
+        "FLOWMETERCODE",                # 流量计代码
+        "STANDARDFLOWMETERCODE",        # 标准流量计代码
+        "REFERENCEFLOWMETERCODE",       # 参考流量计代码
+        # 可能的其他字段名变体
+        "FLOWMETER_SERIALNO",
+        "FLOWMETER_SERIAL_NO",
+        "FLOWMETER_ID",
+    ]
+
+    for field in factory_fields:
+        value = form.get(field)
+        if value:
+            normalized = _normalize_factory_code(value)
+            if normalized and len(normalized) >= 4:  # 至少4位有效字符
+                codes.add(normalized)
+
+    return codes
+
+
+def extract_factory_codes_from_attachments(items: list[dict[str, Any]]) -> set[str]:
+    """从附件元数据中提取出厂编号（无需OCR）"""
+    codes = set()
+
+    for item in items:
+        # 从文件名、备注等字段中提取
+        text = " ".join([
+            str(item.get("name", "")),
+            str(item.get("descriptor", "")),
+        ])
+
+        code = _factory_code_from_text(text)
+        if code and len(code) >= 4:  # 至少4位有效字符
+            codes.add(code)
+
+    return codes
+
+
+def check_attachment_requirements_by_factory_code(
+    order: dict[str, Any],
+    requirement: dict[str, Any],
+    forms: list[tuple[str, dict[str, Any]]],
+    inventory: dict[str, Any],
+    issues: list[Issue],
+) -> bool:
+    """基于出厂编号检查附件完整性（ MONTH_FLOW_CHECK_REPORT 专用）
+
+    返回 True 表示已处理，False 表示应继续原有的关键词检查
+    """
+    # 只对月度流量检查报告规则启用出厂编号检查
+    if requirement.get("id") != "MONTH_FLOW_CHECK_REPORT":
+        return False
+
+    # 获取 RF_M_GASEOUSFLOWCHECK 表单
+    relevant_forms = [
+        (table, form) for table, form in forms
+        if table in {"RF_M_GASEOUSFLOWCHECK", "RF_Q_GaseousFlowCheck"}
+        and not form.get("_query_error")
+    ]
+
+    if not relevant_forms:
+        return False  # 没有相关表单，使用原有检查
+
+    # 从所有相关表单中提取出厂编号
+    required_codes = set()
+    for table, form in relevant_forms:
+        form_codes = extract_factory_codes_from_form(form)
+        required_codes.update(form_codes)
+
+    if not required_codes:
+        return False  # 表单中没有出厂编号信息，使用原有检查
+
+    # 从附件中提取已有的出厂编号
+    attachment_codes = extract_factory_codes_from_attachments(inventory.get("items", []))
+
+    # 检查是否有缺失
+    missing_codes = required_codes - attachment_codes
+
+    if missing_codes:
+        # 生成基于出厂编号的问题报告
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE"),
+            "requirement_id": requirement.get("id"),
+            "requirement_name": requirement.get("name"),
+            "required_factory_codes": sorted(required_codes),
+            "found_factory_codes": sorted(attachment_codes),
+            "missing_factory_codes": sorted(missing_codes),
+            "attachment_count": inventory.get("attachment_count", 0),
+            "sample_attachments": inventory.get("items", [])[:8],
+        }
+
+        add_issue(
+            issues,
+            "ATTACHMENT_REQUIRED_MISSING",
+            "附件清单",
+            str(requirement.get("severity", "高")),
+            f"attachment.{requirement.get('id')}.factory_code_missing",
+            f"{requirement.get('name') or '流量计证书'}缺失以下出厂编号对应的附件：{', '.join(sorted(missing_codes))}",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
+
+        return True  # 已处理，不需要继续原有检查
+
+    # 检查是否有证书类型附件（至少有一个包含出厂编号的证书）
+    certificate_count = sum(
+        1 for item in inventory.get("items", [])
+        if "certificate" in item.get("types", [])
+    )
+
+    if certificate_count == 0:
+        # 有出厂编号但没有识别到证书类型附件
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE"),
+            "requirement_id": requirement.get("id"),
+            "requirement_name": requirement.get("name"),
+            "required_factory_codes": sorted(required_codes),
+            "found_factory_codes": sorted(attachment_codes),
+            "note": "附件中包含出厂编号，但未识别到证书类型附件",
+            "attachment_count": inventory.get("attachment_count", 0),
+            "sample_attachments": inventory.get("items", [])[:8],
+        }
+
+        add_issue(
+            issues,
+            "ATTACHMENT_REQUIRED_MISSING",
+            "附件清单",
+            str(requirement.get("severity", "高")),
+            f"attachment.{requirement.get('id')}.certificate_type_missing",
+            f"{requirement.get('name') or '流量计证书'}：检测到出厂编号 {', '.join(sorted(attachment_codes))}，但未识别到证书类型附件",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
+
+        return True
+
+    return True  # 检查通过，不需要继续原有检查

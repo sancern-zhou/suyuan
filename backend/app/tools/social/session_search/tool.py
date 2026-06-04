@@ -60,7 +60,7 @@ class SessionSearchTool(LLMTool):
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0",
-            requires_context=False
+            requires_context=True
         )
 
         self._fts_index = None
@@ -74,6 +74,7 @@ class SessionSearchTool(LLMTool):
 
     async def execute(
         self,
+        context=None,
         query: str = None,
         limit: int = 5,
         rebuild: bool = False,
@@ -108,6 +109,35 @@ class SessionSearchTool(LLMTool):
 
         try:
             fts_index = self._get_fts_index()
+            runtime_mode = (
+                getattr(context, "runtime_mode", None)
+                or getattr(context, "mode", None)
+                or kwargs.get("runtime_mode")
+                or kwargs.get("mode")
+            )
+            user_identifier = (
+                getattr(context, "user_identifier", None)
+                or getattr(context, "user_id", None)
+                or kwargs.get("user_identifier")
+                or kwargs.get("user_id")
+            )
+            owner_type = None
+            owner_id = None
+            if runtime_mode == "social":
+                if not user_identifier:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "data": {"results": [], "count": 0},
+                        "metadata": {
+                            "schema_version": "v1.0",
+                            "tool_name": "session_search",
+                            "owner_type": "social"
+                        },
+                        "summary": "社交模式检索历史会话需要用户标识"
+                    }
+                owner_type = "social"
+                owner_id = str(user_identifier)
 
             # Rebuild index if requested
             if rebuild:
@@ -118,24 +148,41 @@ class SessionSearchTool(LLMTool):
             # Ensure index is initialized
             if not fts_index._initialized:
                 logger.info("initializing_fts_index")
-                indexed_count = fts_index.build_index()
-                if indexed_count == 0:
+                if owner_type and owner_id:
+                    fts_index.initialize_schema()
+                    indexed_count = 0
+                else:
+                    indexed_count = fts_index.build_index()
+                if indexed_count == 0 and not (owner_type and owner_id):
                     return {
                         "status": "empty",
                         "success": True,
+                        "data": {"results": [], "count": 0},
+                        "metadata": {
+                            "schema_version": "v1.0",
+                            "tool_name": "session_search"
+                        },
                         "results": [],
                         "count": 0,
                         "summary": "索引为空，没有找到历史会话记录"
                     }
 
             # Execute search
-            results = fts_index.search(query, limit)
+            results = fts_index.search(
+                query,
+                limit,
+                owner_type=owner_type,
+                owner_id=owner_id,
+            )
 
             logger.info(
                 "session_searched",
                 query=query,
                 results_found=len(results),
-                cjk_detected=fts_index._count_cjk(query) > 0
+                cjk_detected=fts_index._count_cjk(query) > 0,
+                runtime_mode=runtime_mode,
+                owner_type=owner_type,
+                owner_id=owner_id
             )
 
             # Format results
@@ -154,6 +201,16 @@ class SessionSearchTool(LLMTool):
             return {
                 "status": "success",
                 "success": True,
+                "data": {
+                    "results": formatted_results,
+                    "count": len(formatted_results)
+                },
+                "metadata": {
+                    "schema_version": "v1.0",
+                    "tool_name": "session_search",
+                    "owner_type": owner_type,
+                    "owner_id": owner_id
+                },
                 "results": formatted_results,
                 "count": len(formatted_results),
                 "summary": f"找到 {len(formatted_results)} 条相关会话记录"
@@ -169,6 +226,11 @@ class SessionSearchTool(LLMTool):
             return {
                 "status": "failed",
                 "success": False,
+                "data": {"results": [], "count": 0},
+                "metadata": {
+                    "schema_version": "v1.0",
+                    "tool_name": "session_search"
+                },
                 "summary": f"搜索会话失败：{str(e)}"
             }
 

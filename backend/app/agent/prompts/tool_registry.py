@@ -31,7 +31,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact",
-    "create_flowchart_artifact",
+    "create_diagram_artifact", "create_report_chart",
 
     # 任务管理
     "TodoWrite",
@@ -42,6 +42,9 @@ ASSISTANT_TOOL_NAMES = {
     # 其他工具
     "create_scheduled_task", "broadcast_social_users", "analyze_image", "browser", "call_sub_agent",
     "web_search", "web_fetch",
+
+    # 知识库检索
+    "knowledge_qa_workflow", "knowledge_document_reader",
 
     # CLI会话管理
     "cli_session", "terminal_session",
@@ -65,7 +68,7 @@ EXPERT_TOOL_NAMES = {
     "calculate_crustal", "calculate_trace", "predict_air_quality",
 
     # 可视化
-    "revise_chart", "generate_map",
+    "revise_chart", "generate_map", "create_report_chart",
 
     # 代码执行
     "execute_python",
@@ -133,6 +136,7 @@ REPORT_TOOL_NAMES = {
     # === 报告/展示产物 ===
     "create_report_package",       # 正式报告收口为标准 ReportPackage，并触发右侧预览
     "validate_report_package",     # 检查 report.qmd、图片引用和已生成格式
+    "create_report_chart",         # 正式报告静态图表，优先于自由 execute_python 绘图
 
     # === 代码执行 ===
     "execute_python",
@@ -164,7 +168,7 @@ CHART_TOOL_NAMES = {
     "bash",
 
     # 代码执行
-    "execute_python", "execute_echarts_python",
+    "create_report_chart", "execute_python", "execute_echarts_python",
 }
 
 # ===== 运维管理模式工具 =====
@@ -176,7 +180,8 @@ OPS_TOOL_NAMES = {
     "ops_audit_inspect",
 
     # 展示型流程图
-    "create_flowchart_artifact",
+    "create_diagram_artifact",
+    "create_report_chart",
 
     # 报告产物
     "create_report_package",
@@ -208,9 +213,6 @@ SOCIAL_TOOL_NAMES = {
     # === 知识库检索 ===
     "knowledge_qa_workflow", "knowledge_document_reader",
 
-    # === 记忆管理 ===
-    "remember_fact", "replace_memory", "remove_memory",
-
     # === 数据查询（统一通过 call_sub_agent 调用问数模式） ===
     "get_weather_forecast",
 
@@ -224,10 +226,7 @@ SOCIAL_TOOL_NAMES = {
     "schedule_task", "send_notification", "spawn",
 
     # === 网络搜索 ===
-    "web_search", "web_fetch",
-
-    # === 任务管理 ===
-    "TodoWrite",
+    "web_search", "web_fetch", "browser",
 
     # === CLI会话管理 ===
     "cli_session", "terminal_session",
@@ -295,7 +294,10 @@ ASSISTANT_TOOL_ORDER = [
     "write_file", "edit_file", "grep",
 
     # 执行
-    "bash", "create_flowchart_artifact", "execute_python", "analyze_image", "browser",
+    "bash", "create_diagram_artifact", "create_report_chart", "execute_python", "analyze_image", "browser",
+
+    # 知识库检索
+    "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 任务管理
     "TodoWrite", "create_scheduled_task", "list_skills",
@@ -323,7 +325,7 @@ EXPERT_TOOL_ORDER = [
     "predict_air_quality",
 
     # 可视化
-    "revise_chart", "generate_map",
+    "revise_chart", "generate_map", "create_report_chart",
 
     # 代码执行
     "execute_python",
@@ -387,6 +389,7 @@ REPORT_TOOL_ORDER = [
     "list_directory",
     "search_files",
     "bash",
+    "create_report_chart",
     "execute_python",
 
     # 报告产物收口
@@ -406,7 +409,8 @@ OPS_TOOL_ORDER = [
     "execute_ops_sql_query",
 
     # 展示型流程图
-    "create_flowchart_artifact",
+    "create_diagram_artifact",
+    "create_report_chart",
 
     # 报告产物收口
     "create_report_package",
@@ -428,7 +432,7 @@ OPS_TOOL_ORDER = [
 
 CHART_TOOL_ORDER = [
     "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
-    "bash", "execute_python", "execute_echarts_python",
+    "bash", "create_report_chart", "execute_python", "execute_echarts_python",
     "read_data_registry",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
@@ -442,10 +446,9 @@ SOCIAL_TOOL_ORDER = [
     "list_directory", "search_files", "list_skills",
     "knowledge_qa_workflow", "knowledge_document_reader",
     "get_weather_forecast", "execute_python", "call_sub_agent",
-    "web_search", "web_fetch", "TodoWrite",
+    "web_search", "web_fetch", "browser",
     "schedule_task", "send_notification", "spawn",
     "cli_session", "terminal_session", "session_search",
-    "remember_fact", "replace_memory", "remove_memory",
     "bash",
 ]
 

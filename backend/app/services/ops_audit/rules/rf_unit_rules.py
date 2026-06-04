@@ -10,6 +10,9 @@ from typing import Any
 from app.services.ops_audit.config import load_yaml_config
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
+from app.services.ops_audit.rules.rf_quarter_gaseous_flow_units import (
+    normalize_quarter_gaseous_flow_to_l_min,
+)
 
 
 RULE_ID = "RF_UNIT_MISMATCH"
@@ -93,14 +96,24 @@ def _check_unit_scale(table: str, form: dict[str, Any], check: dict[str, Any]) -
     for field in check.get("value_fields", []):
         if field not in form:
             continue
-        value = _parse_number(form.get(field))
+        raw_value = _parse_number(form.get(field))
+        value = _normalized_value_for_check(field, raw_value, check)
         if value is None:
             continue
         if min_value is not None and value < min_value:
-            violations.append(_scale_violation(table, check, unit_field, unit_text, unit, field, value, min_value, max_value))
+            violations.append(_scale_violation(table, check, unit_field, unit_text, unit, field, value, min_value, max_value, raw_value))
         elif max_value is not None and value > max_value:
-            violations.append(_scale_violation(table, check, unit_field, unit_text, unit, field, value, min_value, max_value))
+            violations.append(_scale_violation(table, check, unit_field, unit_text, unit, field, value, min_value, max_value, raw_value))
     return violations
+
+
+def _normalized_value_for_check(field: str, value: float | None, check: dict[str, Any]) -> float | None:
+    if value is None:
+        return None
+    normalizer = str(check.get("value_normalizer") or "").strip()
+    if normalizer == "quarter_gaseous_flow_l_min":
+        return normalize_quarter_gaseous_flow_to_l_min(field, value)
+    return value
 
 
 def _scale_violation(
@@ -113,8 +126,9 @@ def _scale_violation(
     value: float,
     min_value: float | None,
     max_value: float | None,
+    raw_value: float | None = None,
 ) -> dict[str, Any]:
-    return {
+    violation = {
         "rf_table": table,
         "check_id": check.get("id"),
         "label": check.get("label"),
@@ -127,6 +141,11 @@ def _scale_violation(
         "expected_max": max_value,
         "reason": "value_scale_outside_unit_range",
     }
+    if raw_value is not None and raw_value != value:
+        violation["raw_value"] = raw_value
+        violation["normalized_value"] = value
+        violation["value_normalizer"] = check.get("value_normalizer")
+    return violation
 
 
 def _extract_unit(text: str) -> str | None:

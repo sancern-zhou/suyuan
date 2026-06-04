@@ -62,3 +62,21 @@ tables:
         allowed_units: [L/min]
         unit_scales:
           L/min: {min: 0, max: 30}
+
+  RF_Q_GaseousFlowCheck:
+    checks:
+      - id: quarter_gaseous_high_flow
+        label: 季度气态流量高量程点
+        fixed_unit: L/min
+        value_fields: [RF_Valuve_85, RF_Valuve_60, RF_Valuve_35, RF_Qa_85, RF_Qa_60, RF_Qa_35, RF_Qs_85, RF_Qs_60, RF_Qs_35]
+        value_normalizer: quarter_gaseous_flow_l_min
+        allowed_units: [L/min]
+        unit_scales:
+          L/min: {min: 0, max: 20}
+      - id: quarter_gaseous_low_flow
+        label: 季度气态流量低量程点
+        fixed_unit: L/min
+        value_fields: [RF_Valuve_80, RF_Valuve_50, RF_Valuve_20, RF_Qa_80, RF_Qa_50, RF_Qa_20, RF_Qs_80, RF_Qs_50, RF_Qs_20]
+        allowed_units: [L/min]
+        unit_scales:
+          L/min: {min: 0, max: 100}

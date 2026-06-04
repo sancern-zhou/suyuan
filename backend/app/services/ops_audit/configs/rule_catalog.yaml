@@ -41,24 +41,12 @@ rules:
     default_severity: 高
     scope: working_orders/RF_*
     rationale: 检查、巡检、维护类完工工单必须有可追溯表单作为实际作业证据。
-  - rule_id: RF_PREPARER_EMPTY
-    name: RF 表单编制人为空
-    category: 表单完整性
-    default_severity: 中
-    scope: RF_*
-    rationale: 编制人是表单责任追溯字段，缺失时需补充或说明系统口径。
   - rule_id: RF_AUDITOR_EMPTY
     name: RF 表单审批人为空
     category: 表单完整性
     default_severity: 低
     scope: RF_*
     rationale: 审批字段在部分流程可能非强制，默认作为待确认或信息项处理。
-  - rule_id: RF_CREATEDATE_EMPTY
-    name: RF 表单创建日期为空
-    category: 表单完整性
-    default_severity: 中
-    scope: RF_*
-    rationale: 表单创建日期缺失会影响作业时间和附件时间的交叉核验。
   - rule_id: RF_ENV_TEMP_HUMIDITY_EMPTY
     name: RF 表单室内温湿度未填
     category: 表单完整性
@@ -161,18 +149,54 @@ rules:
     default_severity: 高
     scope: RF_M_GASEOUSFLOWCHECK/RF_Q_GaseousFlowCheck/气体流量检查照片
     rationale: 通过多模态识别直接读取仪器面板显示流量值，并与表单显示值字段比对，避免把水印时间、编号或量程误识别为读数。
-  - rule_id: RF_RANGE_OUT_OF_SPEC
-    name: RF 表单检查值超出品牌正常范围
+  - rule_id: ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH
+    name: 气体流量检查照片流量计测量值与表单值不一致
+    category: 附件读数一致性
+    default_severity: 高
+    scope: RF_M_GASEOUSFLOWCHECK/气体流量检查测量值照片
+    rationale: 通过多模态识别读取外接流量计或质量流量计测量值，并与表单 MEASUREDVALUE* 字段比对；支持 LPM/L/min 与 ml/min/cc/min 的单位换算。
+  - rule_id: ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH
+    name: 颗粒物校准膜照片读数与表单值不一致
+    category: 附件读数一致性
+    default_severity: 高
+    scope: RF_Q_PM10RUNSTATUSCHECK/RF_Q_PM25RUNSTATUSCHECK/校准膜原始值和检查值照片
+    rationale: 通过多模态识别读取季度颗粒物运行状态检查中校准膜原始值、检查值照片，并与表单 PM10/PM25CHECKTEMP1VALUE、PM10/PM25CHECKTEMP2VALUE 比对。
+  - rule_id: ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH
+    name: 颗粒物温度压力照片读数与表单值不一致
+    category: 附件读数一致性
+    default_severity: 高
+    scope: RF_Q_PMPRESSURE/温度压力校准照片
+    rationale: 通过多模态识别读取颗粒物温度、压力校准照片中的仪器显示值和标准值，并与表单 PM10/PM25 温度、气压字段比对。
+  - rule_id: RF_PM_MEMBRANE_ERROR_MISMATCH
+    name: 颗粒物校准膜误差复算不一致
+    category: 表单数值逻辑
+    default_severity: 高
+    scope: RF_Q_PM10RUNSTATUSCHECK/RF_Q_PM25RUNSTATUSCHECK
+    rationale: 颗粒物校准膜误差应按（原始值-检查值）/原始值*100 计算并保留 1 位小数，表单填写不一致时需核对读数或修正误差。
+  - rule_id: RF_PM_MEMBRANE_ERROR_OUT_OF_RANGE
+    name: 颗粒物校准膜误差超出±2%
     category: 表单结果合理性
     default_severity: 高
-    scope: RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK
-    rationale: 检查值超出对应品牌正常范围，需核对单位、复测或补充异常处理记录。
+    scope: RF_Q_PM10RUNSTATUSCHECK/RF_Q_PM25RUNSTATUSCHECK
+    rationale: 颗粒物校准膜原始值与检查值计算误差超过±2%时，应复测、维护或补充异常处置说明。
+  - rule_id: RF_RANGE_OUT_OF_SPEC
+    name: RF 表单检查值超出正常范围
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK/RF_M_GASEOUSFLOWCHECK
+    rationale: 检查值超出对应品牌正常范围，或月度气体流量显示值、测量值超出表单流量范围文本解析出的上下限，需核对单位、复测或补充异常处理记录。
   - rule_id: RF_VALUE_FORMULA_MISMATCH
     name: RF 表单公式计算结果不一致
     category: 表单数值逻辑
     default_severity: 高
     scope: RF_W_GASEOUSCHECK_*/RF_M_GASEOUSFLOWCHECK/RF_Q_GaseousFlowCheck/RF_TW_PmFlowCheck/RF_TW_PmFlowCalibrate
     rationale: 表单中可复算的真实值、误差、修正流量等字段应与源字段计算结果一致，否则无法保证校准或检查结论可信；周气态真实值适用显示值加修正量或显示值乘斜率加截距。
+  - rule_id: RF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE
+    name: 月度气体流量检查测量误差超出±10%
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_M_GASEOUSFLOWCHECK
+    rationale: 月度气体流量检查测量误差应按（显示值-测量值）/测量值*100 计算并保留两位小数，计算结果超过±10%时应复测或补充异常处置。
   - rule_id: RF_FIELD_POSITION_SUSPECT
     name: RF 表单字段位置疑似错填
     category: 表单数值逻辑
@@ -180,22 +204,40 @@ rules:
     scope: RF_M_GASEOUSFLOWCHECK/RF_TW_PmFlowCheck/RF_Q_GaseousFlowCheck
     rationale: 数值字段出现量程文本，或显示值/测量值交换后误差公式反而成立时，说明字段位置可能填反，需要结合附件或原始记录复核。
   - rule_id: RF_MULTIPOINT_RANGE_INVALID
-    name: 多点校准量程填写错误
+    name: 多点校准量程较上一条同站点同类表单发生变化
     category: 表单数值逻辑
     default_severity: 高
-    scope: RF_Q_GASEOUSMULTIPOINT_CO/RF_Q_GASEOUSMULTIPOINT_NO2/RF_Q_GASEOUSMULTIPOINT_O3/RF_Q_GASEOUSMULTIPOINT_SO2
-    rationale: 气体多点校准应按污染物使用正确量程；CO 通常为 20000，其他气体通常为 500。
+    scope: RF_HY_O3VALUEPASS/RF_Q_GASEOUSMULTIPOINT_CO/RF_Q_GASEOUSMULTIPOINT_NO2/RF_Q_GASEOUSMULTIPOINT_O3/RF_Q_GASEOUSMULTIPOINT_SO2
+    rationale: 同一站点同类气体多点校准或 O3 数值通过表的仪器量程应保持连续一致；若当前量程与上一条同站点同类表单量程不一致，应复核是否填错、设备变更或量程调整未留痕。
   - rule_id: RF_CALIBRATION_DATE_EXPIRED
     name: RF 表单校准有效期异常
     category: 时间合理性
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck/RF_TW_PmFlowCheck/RF_TW_PmFlowCalibrate/RF_Q_GASEOUSMULTIPOINT_*
-    rationale: 上次校准日期不得晚于下次校准日期，下次校准日期或有效期不得早于检查/校准作业日期。
+    rationale: 上次校准日期不得晚于下次校准日期，下次校准日期或有效期必须晚于检查/校准作业日期。
+  - rule_id: RF_CALIBRATION_PREV_DATE_MISMATCH
+    name: RF 表单上一次校准日期与实际上一条作业日期不一致
+    category: 时间合理性
+    default_severity: 高
+    scope: RF_Q_GaseousFlowCheck
+    rationale: 季度气态流量检查中动态校准仪的上一次校准日期应与同站点上一条气态流量检查表的实际作业日期一致。
+  - rule_id: RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH
+    name: 月度气态流量检查参考流量计证书日期不一致
+    category: 时间合理性
+    default_severity: 高
+    scope: RF_M_GASEOUSFLOWCHECK/WO_COMMONFILE
+    rationale: 月度气态流量检查的参考流量计资料应按出厂编号匹配附件 PDF 证书首页，资料中的上次校准日期和下次校准日期应与证书首页校准日期、有效期或下次校准日期一致；证书首页无法提取对应校准日期信息时判定为问题工单。
+  - rule_id: ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH
+    name: O3 量值传递 XLS 附件数据与表单不一致
+    category: 附件读数一致性
+    default_severity: 高
+    scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
+    rationale: 臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的 G26、G27、G29 单元格一致。
   - rule_id: RF_ENUM_VALUE_INVALID
     name: RF 表单枚举字段取值异常
     category: 表单填报一致性
     default_severity: 高
-    scope: RF_HY_O3VALUEPASS/RF_W_OTHERDEVICECHECK/RF_TW_PmFlowCalibrate
+    scope: RF_W_OTHERDEVICECHECK/RF_TW_PmFlowCalibrate
     rationale: 是否、状态、通过结果等枚举字段只能填写固定取值；填成量程或自由数值时通常表示字段位置或内容错填。
   - rule_id: RF_POLLUTANT_TYPE_MISMATCH
     name: RF 表单污染物类型与表名不一致
@@ -250,13 +292,37 @@ rules:
     category: 表单数值逻辑
     default_severity: 高
     scope: RF_Q_PMPRESSURE
-    rationale: 颗粒物气压误差字段应由标准气压与检查气压复算得到，填报不一致说明读数或误差位置可能错误。
-  - rule_id: RF_DEVICE_IDENTITY_INCONSISTENT
-    name: 同设备跨工单品牌/型号/编号不一致
-    category: 跨工单一致性
+    rationale: 颗粒物气压误差字段应按仪器显示值减标准值复算得到，填报不一致说明读数或误差位置可能错误。
+  - rule_id: RF_PM_TEMP_ERROR_MISMATCH
+    name: 颗粒物温度误差复算不一致
+    category: 表单数值逻辑
     default_severity: 高
+    scope: RF_Q_PMPRESSURE
+    rationale: 颗粒物温度误差字段应按仪器显示值减标准值复算得到，填报不一致说明读数或误差位置可能错误。
+  - rule_id: RF_PM_TEMP_ERROR_OUT_OF_RANGE
+    name: 颗粒物温度误差超出±2℃
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_Q_PMPRESSURE
+    rationale: 颗粒物温度误差应小于±2℃，超出范围时应复测、校准或补充异常处置说明。
+  - rule_id: RF_PM_PRESSURE_ERROR_OUT_OF_RANGE
+    name: 颗粒物气压误差超出±1kPa
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_Q_PMPRESSURE
+    rationale: 颗粒物气压误差应小于±1kPa；表单按 hPa 填写时等价为小于±10hPa，超出范围时应复测、校准或补充异常处置说明。
+  - rule_id: RF_PM_TEMP_PRESSURE_ERROR_UNRECALCULABLE
+    name: 颗粒物温度/气压误差无法复算
+    category: 表单完整性
+    default_severity: 中
+    scope: RF_Q_PMPRESSURE
+    rationale: 仪器显示值、标准值或误差字段缺失/不可解析时，无法复核误差公式和阈值是否符合要求。
+  - rule_id: RF_DEVICE_IDENTITY_INCONSISTENT
+    name: 跨工单设备身份疑似不一致
+    category: 跨工单一致性
+    default_severity: 中
     scope: working_orders/RF_*/base_device/device_history
-    rationale: 同一站点同一设备在周检、月检、季度、半年等工单中的品牌、型号、设备编号应保持一致；不一致时需提供设备更换或维修证据。
+    rationale: 同一站点同类表单中的品牌、型号或设备编号发生变化时，可能是填报错误，也可能是正常设备更换、维修、停用启用或台账变更；默认作为疑似问题，需结合更换/维修记录或台账变更证据复核。
   - rule_id: ATTACHMENT_REQUIRED_MISSING
     name: 必需附件缺失
     category: 附件清单

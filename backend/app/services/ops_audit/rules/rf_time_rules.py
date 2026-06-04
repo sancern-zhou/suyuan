@@ -11,6 +11,7 @@ from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
 
 RF_FIELD_PROFILES = load_rf_field_profiles()
+TIME_ONLY_WINDOW_TABLES = {"RF_TW_PmFlowCalibrate", "RF_TW_PmFlowCheck"}
 
 def check_rf_time_ranges(
     order: dict[str, Any],
@@ -48,6 +49,10 @@ def _check_time_outside_range(
     end_time_fields = RF_FIELD_PROFILES.get("end_time_fields", [])
 
     if not check_time_fields or not start_time_fields or not end_time_fields:
+        return
+
+    if table in TIME_ONLY_WINDOW_TABLES:
+        _check_time_only_window(order, table, form, issues)
         return
 
     check_time = _first_time_value(form, check_time_fields)
@@ -114,6 +119,55 @@ def _check_time_outside_range(
                 f"RF表单检查时间{_format_time(check_time)}晚于结束时间{_format_time(end_time)}",
                 json.dumps(evidence, ensure_ascii=False, default=str),
             )
+
+
+def _check_time_only_window(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    check_time = _parse_time(form.get("CHECKDATE"))
+    start_time = _parse_time(form.get("CheckSdt"))
+    end_time = _parse_time(form.get("CheckEdt"))
+    if not check_time or not start_time or not end_time:
+        return
+
+    check_clock = check_time.time()
+    start_clock = start_time.time()
+    end_clock = end_time.time()
+    if _clock_in_window(check_clock, start_clock, end_clock):
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "check_time": _format_time(check_time),
+        "start_time": _format_time(start_time),
+        "end_time": _format_time(end_time),
+        "check_clock": check_clock.strftime("%H:%M:%S"),
+        "start_clock": start_clock.strftime("%H:%M:%S"),
+        "end_clock": end_clock.strftime("%H:%M:%S"),
+        "date_ignored": True,
+    }
+    add_issue(
+        issues,
+        "RF_CHECK_TIME_OUTSIDE_RANGE",
+        "时间合理性",
+        "高",
+        f"rf.{table}.check_time",
+        (
+            f"RF表单检查时刻{check_clock.strftime('%H:%M:%S')}不在开始结束时段"
+            f"({start_clock.strftime('%H:%M:%S')} 至 {end_clock.strftime('%H:%M:%S')})内"
+        ),
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _clock_in_window(check_clock: Any, start_clock: Any, end_clock: Any) -> bool:
+    if start_clock <= end_clock:
+        return start_clock <= check_clock <= end_clock
+    return check_clock >= start_clock or check_clock <= end_clock
 
 
 def _check_finish_near_deadline(

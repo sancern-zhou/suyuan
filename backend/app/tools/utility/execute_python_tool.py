@@ -73,135 +73,14 @@ class ExecutePythonTool(LLMTool):
 
         super().__init__(
             name="execute_python",
-            description=f"""执行 Python 代码（用于数据处理、可视化、中间资源生成）
-
-    重要说明：
-    - 每次调用都是独立执行环境；上一次 execute_python 中定义的变量、函数、DataFrame 不会保留
-    - 使用工具返回的 data_id/report_data_id 计算前，必须先调用 read_data_registry 读取所需视图/字段；execute_python 的 get_raw_data 只返回已读取的数据快照
-    - 需要跨多次工具调用复用的中间结果，必须显式调用 `save_data(...)` 保存为 data_id，后续先用 read_data_registry 读取再计算
-- 不要在后续 execute_python 调用中直接引用前一次脚本里的变量名（如 city_map、df、report_data）
-- 统一数据目录：{get_data_registry()}
-- 当前工作目录：{self.PERMANENT_DIR}
-- 图表保存目录：{self.CHARTS_DIR}
-- 报告资源保存目录：{self.REPORTS_DIR}
-- 生成图表、表格、临时文件、Office 文件必须保存到上述统一数据目录下；不要使用 `/home/xckj/suyuan/backend_data_registry/...`
-- 推荐使用相对路径（如：'report.docx'）或统一目录绝对路径（如：'{self.CHARTS_DIR}/report.docx'）
-- 工具会自动将生成的文件保存到永久目录，并返回完整路径
-- 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
-- 超时时间：30秒（可调整）
-
-📄 正式报告工具边界：
-- 正式报告默认使用 `create_report_package` 保存 `reports/{{report_id}}/report.qmd` 并触发右侧面板预览。
-- execute_python 主要用于计算、制图、整理表格、生成报告包所需的本地相对路径资源，不作为正式报告最终交付工具。
-- 流程图、架构图、步骤图、决策树不要优先用 execute_python 生成 DOT/SVG；应直接使用 `create_flowchart_artifact`。
-- 不要在 Python 脚本里手写正式报告格式转换流程；报告下载和分享由右侧面板按钮触发固定后端报告 API。
-- 只有用户明确要求“一次性 Word/Office 文件”且不需要 qmd 同源报告包时，才直接用 python-docx/openpyxl/python-pptx 生成 Office 文件。
-
-📊 图表保存与前端渲染：
-- 系统自动注入 save_chart() 辅助函数
-- 使用 save_chart(fig, 'chart.png') 保存图表，自动生成 /api/image/{{image_id}} URL
-- 也可以直接使用 plt.savefig()，系统会智能识别路径并缓存
-- 默认注入“政府报告图表模板”：自动把常规图表的画布、字号、网格、边距调整到报告可读性优先的默认值
-- 默认遵循“一张图片只表达一个核心图表/分析问题”：除非用户明确要求“多子图/组合图/仪表盘/一页多图对比”，不要在同一个 Figure 中使用 subplot/subplots/多 Axes 拼接多个图表。
-- 同一数据源可用于多个分析视角，但应按用户问题选择最相关的一张图；确需多个独立图表时，分别生成多个图片文件并使用清晰文件名，不要合并到单张图片里。
-- 绘制单个时序/柱状/散点图时，可以在同一个坐标轴中放多条系列用于对比；这不属于“多图拼接”。但不要把折线图、柱状图、饼图等不同图表并排塞进同一张图片。
-- 示例代码见下方
-
-📄 报告包资源说明：
-- 正式报告应生成 qmd 内容和相对路径资源后调用 create_report_package。
-- qmd 图片最终必须使用报告包内相对路径，如 `assets/charts/chart_01.png`，不要使用 `/api/image/...`。
-  生成报告包时不要自行根据 `/api/image/{{image_id}}` 或缓存 id 推断该路径；应把真实图片文件路径作为
-  `create_report_package.assets[].path` 传入，并用可选 `name` 指定稳定文件名，由 create_report_package 复制和规范化引用。
-
-    📊 数据访问功能（自动注入）：
-    当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 和 `save_data(data, ...)` 函数：
-    - `get_raw_data(data_id)`: 返回 read_data_registry 已读取的数据快照；未先读取会报错。
-    - `save_data(data, schema='python_result', metadata=None)`: 将中间结果保存到数据注册表并返回 data_id
-
-    使用示例：
-    ```python
-    # 先用 read_data_registry 读取数据，再把已返回的小规模数据用于计算
-    data = [
-        {{'city': '广州', 'o3_primary_days': 120, 'valid_days': 365}},
-        {{'city': '深圳', 'o3_primary_days': 110, 'valid_days': 365}},
-    ]
-    ratio = sum(row['o3_primary_days'] for row in data) / sum(row['valid_days'] for row in data)
-    print(f"臭氧首要污染物占比: {{ratio:.2%}}")
-
-    # 保存后续还要复用的中间结果
-    result_id = save_data(
-        [{{'metric': 'o3_primary_ratio', 'value': ratio}}],
-        schema='python_result',
-        metadata={{'purpose': 'report_check_intermediate'}}
-    )
-    print(f"中间结果 data_id: {{result_id}}")
-```
-
-📈 Excel 处理最佳实践：
-使用 pandas 和 openpyxl 标准库（无需自定义辅助函数）：
-```python
-# 读取 Excel
-import pandas as pd
-df = pd.read_excel('file.xlsx')  # 第一个工作表
-all_sheets = pd.read_excel('file.xlsx', sheet_name=None)  # 所有工作表
-
-# 创建 Excel（使用公式）
-from openpyxl import Workbook, load_workbook
-wb = Workbook()
-ws = wb.active
-ws['A1'] = '标题'
-ws['B2'] = '=SUM(A1:A10)'  # ✅ 使用公式，不要硬编码计算结果
-wb.save('output.xlsx')
-
-# 编辑现有 Excel
-wb = load_workbook('existing.xlsx')
-ws = wb.active
-ws['A1'] = '新值'
-wb.save('modified.xlsx')
-```
-
-核心原则：
-- ✅ 使用标准库（pandas/openpyxl），不要依赖自定义辅助函数
-- ✅ 公式优先：使用 Excel 公式（如 '=SUM(A1:A10)'），不要在 Python 中计算后硬编码
-- ✅ 详细文档：backend/docs/skills/excel.md
-
-中文字体设置（matplotlib图表）：
-- 不要在代码中指定中文字体、字体文件或字体族；系统会自动注入并在保存图片前强制应用后端统一中文字体。
-- 不要写 `FontProperties(...)`、`plt.rcParams['font.family']`、`plt.rcParams['font.sans-serif']`、`matplotlib.rcParams[...]` 或 `fontfamily=...` 来控制中文字体。
-- 只需要正常设置中文标题、坐标轴、图例文本即可。
-
-📊 图表保存示例（推荐使用save_chart辅助函数）：
-```python
-import matplotlib.pyplot as plt
-import numpy as np
-
-# 创建图表
-fig, ax = plt.subplots()
-x = np.linspace(0, 10, 100)
-ax.plot(x, np.sin(x))
-ax.set_xlabel('横轴')
-ax.set_ylabel('纵轴')
-ax.set_title('示例图表')
-
-# ✅ 推荐：使用save_chart辅助函数（自动生成 /api/image/{{image_id}} URL）
-save_chart(fig, 'example_chart.png', dpi=150)
-
-# ✅ 也支持：直接使用plt.savefig（系统会智能识别路径）
-plt.savefig('chart2.png', dpi=150)
-print('图表已保存: chart2.png')  # 系统会自动提取路径
-```
-
-示例：
-```python
-# ✅ 正确：使用相对路径
-from docx import Document
-doc = Document()
-doc.add_paragraph('Hello')
-doc.save('report.docx')  # 保存到当前工作目录
-
-# ❌ 错误：使用绝对路径（可能导致权限问题）
-doc.save('/root/report.docx')
-```""",
+            description=(
+                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理中间资源生成。"
+                "每次调用是独立环境；跨调用复用结果请用 save_data(...) 保存 data_id。"
+                "使用 data_id 前先用 read_data_registry 读取。"
+                "正式报告静态图表优先使用 create_report_chart，流程/架构图优先使用 create_diagram_artifact；"
+                "execute_python 只保留通用计算和临时资源生成职责。"
+                f"生成文件保存到统一数据目录：{get_data_registry()}。"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.3",
             requires_context=True  # ✅ 需要上下文以支持数据访问功能
@@ -274,12 +153,17 @@ doc.save('/root/report.docx')
         except SyntaxError:
             # Let the Python executor surface syntax errors. Only catch obvious
             # pre-read bypasses in unparsable snippets.
-            direct_registry_access.extend(
-                token for token in ("app.services.data_registry", "backend_data_registry")
-                if token in code
-            )
+            # 使用更精确的模式匹配，避免路径字符串误报
+            # 检测 import 语句
+            if re.search(r"\bimport\s+backend_data_registry\b", code):
+                direct_registry_access.append("import backend_data_registry")
+            if re.search(r"\bfrom\s+(backend_data_registry|app\.services\.data_registry)\s+import\b", code):
+                direct_registry_access.append("import from data_registry")
+            # 检测函数调用（但不检测字符串中的函数名）
             if re.search(r"\bget_raw_data\s*\(", code):
                 unknown_get_raw_data = True
+            if re.search(r"\.(load_dataset|load_payload)\s*\(", code):
+                direct_registry_access.append("direct data registry method call")
             return {
                 "get_raw_data_ids": get_raw_data_ids,
                 "unknown_get_raw_data": unknown_get_raw_data,
@@ -448,8 +332,8 @@ doc.save('/root/report.docx')
                 original_code = code
                 code = self._inject_data_context(code, context)
 
-                # ✅ 自动注册中文字体（避免用户代码中字体设置错误）
-                code = self._inject_chinese_font_support(code)
+                # ✅ 注入 matplotlib 保存路径捕获（不接管图表视觉设计）
+                code = self._inject_matplotlib_save_support(code)
 
                 # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
                 code = self._inject_excel_helpers(code)
@@ -460,7 +344,7 @@ doc.save('/root/report.docx')
                     injected_code_length=len(code),
                     code_modified=(code != original_code),
                     has_matplotlib_import='import matplotlib' in original_code or 'from matplotlib' in original_code,
-                    has_chinese_font_setup='FontProperties' in original_code or 'font.sans-serif' in original_code or 'Noto' in original_code,
+                    has_matplotlib_save_support='import matplotlib' in original_code or 'from matplotlib' in original_code,
                     has_excel_usage='openpyxl' in original_code or 'pandas' in original_code and 'read_excel' in original_code or '.xlsx' in original_code,
                     has_context=context is not None,
                     available_data_count=len(context.available_data_ids) if context and hasattr(context, 'available_data_ids') else 0
@@ -477,8 +361,8 @@ doc.save('/root/report.docx')
                 original_code = code
                 code = self._inject_data_context(code, context)
 
-                # ✅ 自动注册中文字体
-                code = self._inject_chinese_font_support(code)
+                # ✅ 注入 matplotlib 保存路径捕获（不接管图表视觉设计）
+                code = self._inject_matplotlib_save_support(code)
 
                 # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
                 code = self._inject_excel_helpers(code)
@@ -1541,36 +1425,132 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 
         return converted_code
 
-    def _inject_chinese_font_support(self, code: str) -> str:
-        """
-        自动注入中文字体支持代码
-
-        策略：
-        1. 在代码开头注册字体
-        2. 自动转换Unicode下标/上标字符为LaTeX格式
-        3. 替换用户错误的字体设置
-        """
-        # 检测是否使用了matplotlib
-        has_matplotlib_import = any([
-            'import matplotlib' in code,
-            'from matplotlib' in code,
-        ])
-
+    def _inject_matplotlib_save_support(self, code: str) -> str:
+        """Inject only matplotlib image save detection and save_chart()."""
+        has_matplotlib_import = "import matplotlib" in code or "from matplotlib" in code
         if not has_matplotlib_import:
-            logger.debug("font_injection_skipped", reason="no matplotlib import")
+            logger.debug("matplotlib_save_injection_skipped", reason="no matplotlib import")
             return code
 
-        logger.info("font_injection_started", has_matplotlib_import=has_matplotlib_import)
-
-        # 步骤1：在代码开头注册字体文件并设置为默认字体
-        # 使用与 calendar_renderer.py 相同的字体优先级
         images_dir_literal = repr(str(get_images_dir()))
-        font_registration_code = """# ===== 自动注入中文字体支持 =====
+        save_support_code = """# ===== Matplotlib 图片保存捕获（自动注入） =====
 import os
-from pathlib import Path
+from matplotlib.figure import Figure
+from matplotlib.text import Text
 
-# ===== Matplotlib 图片保存兜底（自动注入） =====
+_SUYUAN_CHINESE_FONT_PROP = None
+_SUYUAN_FONT_WARNING_EMITTED = False
+_SUYUAN_LAST_CONFIGURED_FONT = None
+
+def _suyuan_configure_matplotlib_chinese_font(force_default=False):
+    '''默认方正小标宋简；显式字体支持中文时优先显式字体。'''
+    try:
+        global _SUYUAN_CHINESE_FONT_PROP, _SUYUAN_FONT_WARNING_EMITTED, _SUYUAN_LAST_CONFIGURED_FONT
+        import matplotlib.pyplot as _suyuan_plt
+        from matplotlib import font_manager as _suyuan_font_manager
+        from matplotlib.ft2font import FT2Font
+        current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
+        default_font_path = '/home/xckj/.local/share/fonts/方正小标宋简.TTF'
+        if not os.path.exists(default_font_path):
+            return
+        _suyuan_font_manager.fontManager.addfont(default_font_path)
+        default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
+        default_font_name = default_font_prop.get_name()
+
+        def _font_supports_chinese(font_name):
+            try:
+                prop = _suyuan_font_manager.FontProperties(family=[font_name])
+                path = _suyuan_font_manager.findfont(prop, fallback_to_default=False)
+                charmap = FT2Font(path).get_charmap()
+                return ord('中') in charmap, _suyuan_font_manager.FontProperties(fname=path)
+            except Exception:
+                return False, None
+
+        selected_name = default_font_name
+        selected_prop = default_font_prop
+        requested_font = current_fonts[0] if current_fonts else None
+        user_requested_font = (
+            not force_default
+            and requested_font
+            and requested_font != default_font_name
+            and requested_font != _SUYUAN_LAST_CONFIGURED_FONT
+        )
+        if user_requested_font:
+            supports_chinese, font_prop = _font_supports_chinese(requested_font) if requested_font else (False, None)
+            if supports_chinese:
+                selected_name = font_prop.get_name()
+                selected_prop = font_prop
+            elif requested_font and not _SUYUAN_FONT_WARNING_EMITTED:
+                print(f'字体提示：指定字体不支持中文，已回退为方正小标宋简。font={requested_font}')
+                _SUYUAN_FONT_WARNING_EMITTED = True
+
+        if not selected_name:
+            return
+        merged_fonts = [selected_name] + [f for f in current_fonts if f != selected_name]
+        _suyuan_plt.rcParams['font.family'] = 'sans-serif'
+        _suyuan_plt.rcParams['font.sans-serif'] = merged_fonts
+        _suyuan_plt.rcParams['axes.unicode_minus'] = False
+        _SUYUAN_CHINESE_FONT_PROP = selected_prop
+        _SUYUAN_LAST_CONFIGURED_FONT = selected_name
+    except Exception:
+        pass
+
+_suyuan_configure_matplotlib_chinese_font(force_default=True)
+
 _SUYUAN_CHART_PATHS_EMITTED = set()
+_suyuan_original_figure_savefig = getattr(Figure.savefig, '_suyuan_original_savefig', Figure.savefig)
+
+def _suyuan_normalize_matplotlib_label_text(value):
+    '''将常见污染物 Unicode 下标/上标转为 Matplotlib mathtext，避免字体缺字显示黑框。'''
+    if not isinstance(value, str) or not value:
+        return value
+    replacements = [
+        ('PM₂.₅', 'PM$_{2.5}$'),
+        ('PM₂₅', 'PM$_{2.5}$'),
+        ('PM₁₀', 'PM$_{10}$'),
+        ('O₃', 'O$_3$'),
+        ('NO₂', 'NO$_2$'),
+        ('SO₂', 'SO$_2$'),
+        ('CO₂', 'CO$_2$'),
+        ('CH₄', 'CH$_4$'),
+        ('N₂O', 'N$_2$O'),
+        ('μg/m³', 'μg/m$^3$'),
+        ('ug/m³', 'ug/m$^3$'),
+        ('/m³', '/m$^3$'),
+        ('m³', 'm$^3$'),
+        ('km²', 'km$^2$'),
+        ('m²', 'm$^2$'),
+    ]
+    normalized = value
+    for old, new in replacements:
+        normalized = normalized.replace(old, new)
+    return normalized
+
+def _suyuan_normalize_matplotlib_figure_text(fig):
+    try:
+        for text in fig.findobj(match=Text):
+            original = text.get_text()
+            normalized = _suyuan_normalize_matplotlib_label_text(original)
+            if normalized != original:
+                text.set_text(normalized)
+    except Exception:
+        pass
+
+def _suyuan_text_contains_cjk(value):
+    return isinstance(value, str) and any('\\u4e00' <= ch <= '\\u9fff' for ch in value)
+
+def _suyuan_apply_chinese_font_to_figure(fig):
+    try:
+        if _SUYUAN_CHINESE_FONT_PROP is None:
+            return
+        for text in fig.findobj(match=Text):
+            if not _suyuan_text_contains_cjk(text.get_text()):
+                continue
+            current_size = text.get_fontsize()
+            text.set_fontproperties(_SUYUAN_CHINESE_FONT_PROP)
+            text.set_fontsize(current_size)
+    except Exception:
+        pass
 
 def _suyuan_emit_chart_saved(path):
     '''输出标准图片保存标记，供 execute_python 后处理缓存到 /api/image/{image_id}。'''
@@ -1580,7 +1560,6 @@ def _suyuan_emit_chart_saved(path):
         if isinstance(path, (str, os.PathLike)):
             chart_path = os.path.abspath(os.fspath(path))
         else:
-            # BytesIO 等文件对象无法直接作为前端图片缓存路径处理。
             return
         if chart_path not in _SUYUAN_CHART_PATHS_EMITTED:
             _SUYUAN_CHART_PATHS_EMITTED.add(chart_path)
@@ -1588,329 +1567,52 @@ def _suyuan_emit_chart_saved(path):
     except Exception:
         pass
 
-# ===== 字体注册 =====
-from matplotlib import font_manager
-from matplotlib.figure import Figure
-from matplotlib.text import Text
-import matplotlib.pyplot as plt
-
-_SUYUAN_FONT_PROP = None
-_SUYUAN_FONT_NAME = None
-_SUYUAN_FONT_FAMILY_CHAIN = ['Noto Sans CJK JP', 'Noto Sans CJK SC', 'Droid Sans Fallback', 'DejaVu Sans', 'sans-serif']
-_suyuan_original_figure_savefig = Figure.savefig
-
-def _suyuan_apply_chinese_font_config(fig=None):
-    '''强制应用后端中文字体策略，忽略用户代码中的字体覆盖。'''
-    try:
-        plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = list(_SUYUAN_FONT_FAMILY_CHAIN)
-        plt.rcParams['axes.unicode_minus'] = False
-        plt.rcParams['mathtext.fontset'] = 'dejavusans'
-        plt.rcParams['mathtext.default'] = 'it'
-    except Exception:
-        pass
-
-    if fig is not None and _SUYUAN_FONT_PROP is not None:
-        try:
-            for text_obj in fig.findobj(match=Text):
-                try:
-                    text_obj.set_fontproperties(_SUYUAN_FONT_PROP)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    return fig
-
 def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
-    _suyuan_apply_chinese_font_config(self)
+    _suyuan_configure_matplotlib_chinese_font()
+    _suyuan_normalize_matplotlib_figure_text(self)
+    _suyuan_apply_chinese_font_to_figure(self)
     result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
     _suyuan_emit_chart_saved(fname)
     return result
 
-if getattr(Figure.savefig, '__name__', '') != '_suyuan_patched_figure_savefig':
-    Figure.savefig = _suyuan_patched_figure_savefig
+_suyuan_patched_figure_savefig._suyuan_original_savefig = _suyuan_original_figure_savefig
+Figure.savefig = _suyuan_patched_figure_savefig
 
-# ===== 政府报告图表模板（自动注入） =====
-_SUYUAN_GOVERNMENT_REPORT_STYLE_APPLIED = False
-
-def _suyuan_axes_list(axes):
-    if axes is None:
-        return []
-    if isinstance(axes, (list, tuple)):
-        items = []
-        for item in axes:
-            items.extend(_suyuan_axes_list(item))
-        return items
-    if hasattr(axes, 'flat'):
-        try:
-            return [ax for ax in axes.flat if ax is not None]
-        except Exception:
-            pass
-    return [axes]
-
-def apply_government_report_style(fig=None, axes=None):
-    '''应用政府报告图表默认样式。'''
-    global _SUYUAN_GOVERNMENT_REPORT_STYLE_APPLIED
-    style_rcparams = {
-        'figure.figsize': [10.5, 6.2],
-        'figure.dpi': 120,
-        'savefig.dpi': 220,
-        'savefig.facecolor': 'white',
-        'savefig.bbox': 'tight',
-        'axes.titlesize': 16,
-        'axes.titleweight': 'semibold',
-        'axes.labelsize': 13,
-        'axes.labelweight': 'normal',
-        'axes.labelpad': 6,
-        'axes.titlepad': 12,
-        'axes.grid': True,
-        'axes.axisbelow': True,
-        'axes.linewidth': 0.9,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'grid.alpha': 0.22,
-        'grid.linestyle': '--',
-        'grid.linewidth': 0.6,
-        'legend.fontsize': 11,
-        'legend.frameon': False,
-        'lines.linewidth': 2.0,
-        'lines.markersize': 5,
-        'xtick.labelsize': 11,
-        'ytick.labelsize': 11,
-        'xtick.direction': 'out',
-        'ytick.direction': 'out',
-        'patch.linewidth': 0.5,
-        'patch.edgecolor': 'white',
-    }
-    plt.rcParams.update(style_rcparams)
-
-    for ax in _suyuan_axes_list(axes):
-        try:
-            ax.set_axisbelow(True)
-            ax.grid(True, alpha=0.22, linestyle='--', linewidth=0.6)
-            ax.tick_params(axis='both', labelsize=11, length=3, width=0.8)
-            for spine_name in ('top', 'right'):
-                if spine_name in ax.spines:
-                    ax.spines[spine_name].set_visible(False)
-        except Exception:
-            pass
-
-    if fig is not None:
-        try:
-            _suyuan_apply_chinese_font_config(fig)
-            fig.set_facecolor('white')
-            fig.tight_layout()
-        except Exception:
-            pass
-
-    return fig, axes
-
-def _suyuan_patch_subplots():
-    if getattr(plt, '_suyuan_government_subplots_patched', False):
-        return
-    plt._suyuan_government_subplots_patched = True
-    plt._suyuan_original_subplots = plt.subplots
-
-    def _suyuan_report_subplots(*args, **kwargs):
-        kwargs.setdefault('figsize', (10.5, 6.2))
-        kwargs.setdefault('dpi', 120)
-        kwargs.setdefault('constrained_layout', True)
-        fig, axes = plt._suyuan_original_subplots(*args, **kwargs)
-        apply_government_report_style(fig, axes)
-        return fig, axes
-
-    plt.subplots = _suyuan_report_subplots
-
-_suyuan_patch_subplots()
-
-# ===== 图表保存辅助函数（自动注入） =====
-def save_chart(fig, filename, dpi=220, bbox_inches='tight', facecolor='white'):
+def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
     '''
-    保存图表并触发前端缓存(自动通过ImageCache生成URL)
-
-    Args:
-        fig: matplotlib图表对象
-        filename: 文件名(如 'chart.png')
-        dpi: 分辨率(默认220)
-        bbox_inches: 边界框(默认'tight')
-        facecolor: 背景色(默认'white')
-
-    Returns:
-        str: 保存的文件路径
-
-    Example:
-        >>> import matplotlib.pyplot as plt
-        >>> fig, ax = plt.subplots()
-        >>> ax.plot([1, 2, 3], [1, 4, 9])
-        >>> save_chart(fig, 'my_chart.png')  # 自动生成 /api/image/xxx URL
+    保存 matplotlib 图表并输出 CHART_SAVED 标记，便于工具缓存为 /api/image/{image_id}。
+    本函数不修改字体、字号、画布、布局或其他视觉设计。
     '''
-    # 确保图表目录存在
     charts_dir = __SUYUAN_IMAGES_DIR__
     try:
         os.makedirs(charts_dir, exist_ok=True)
     except PermissionError:
-        # 如果默认目录无权限，使用临时目录
         import tempfile
         charts_dir = tempfile.gettempdir()
         os.makedirs(charts_dir, exist_ok=True)
 
-    # 构建完整路径
     filepath = os.path.join(charts_dir, filename)
-
-    # 保存图表。优先使用原始 savefig，避免自动拦截层重复输出标记。
-    _suyuan_apply_chinese_font_config(fig)
-    savefig_func = globals().get('_suyuan_original_figure_savefig')
-    if savefig_func:
-        savefig_func(fig, filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
-    else:
-        fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
-
-    # 关键：输出标准格式标记，触发 ImageCache 缓存
+    _suyuan_configure_matplotlib_chinese_font()
+    _suyuan_normalize_matplotlib_figure_text(fig)
+    _suyuan_apply_chinese_font_to_figure(fig)
+    _suyuan_original_figure_savefig(
+        fig,
+        filepath,
+        dpi=dpi,
+        bbox_inches=bbox_inches,
+        facecolor=facecolor,
+    )
     _suyuan_emit_chart_saved(filepath)
-
     return filepath
-
-# 字体优先级（与 calendar_renderer.py 一致）
-_font_configs = [
-    # 1. 方正小标宋简体 - 最高优先级
-    Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
-    # 2. Noto Sans CJK - 系统字体
-    Path('/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'),
-]
-
-_font_registered = False
-for _font_path in _font_configs:
-    if _font_path.exists():
-        try:
-            font_manager.fontManager.addfont(str(_font_path))
-            _font_prop = font_manager.FontProperties(fname=str(_font_path))
-            _font_name = _font_prop.get_name()
-            _SUYUAN_FONT_PROP = _font_prop
-            _SUYUAN_FONT_NAME = _font_name
-            _SUYUAN_FONT_FAMILY_CHAIN = [_font_name, 'Noto Sans CJK JP', 'Droid Sans Fallback', 'DejaVu Sans', 'sans-serif']
-            _suyuan_apply_chinese_font_config()
-
-            # 配置matplotlib的mathtext以支持LaTeX格式上下标
-            # 注意：由于中文字体不支持LaTeX数学符号，系统会自动将Unicode下标转换为简写格式
-            # 例如：PM2.5，ug/m3
-            # 这样可以避免LaTeX与中文混合导致的显示问题
-            # 如果需要严格科学符号，可以手动使用LaTeX格式（但要确保不与中文混合）
-            plt.rcParams['mathtext.fontset'] = 'dejavusans'  # 使用dejavu字体渲染数学公式
-            plt.rcParams['mathtext.default'] = 'it'  # 数学公式默认斜体（更符合数学符号惯例）
-
-            # 确保中文字体和数学符号字体共存
-            # 中文字体用于普通文本，mathtext用于数学符号
-            # 政府报告默认字号：偏大、偏稳，保证投屏/打印可读性
-            plt.rcParams['figure.figsize'] = [10.5, 6.2]
-            plt.rcParams['figure.dpi'] = 120
-            plt.rcParams['savefig.dpi'] = 220
-            plt.rcParams['savefig.facecolor'] = 'white'
-            plt.rcParams['savefig.bbox'] = 'tight'
-            plt.rcParams['axes.titlesize'] = 16  # 标题字体大小
-            plt.rcParams['axes.titleweight'] = 'semibold'
-            plt.rcParams['axes.labelsize'] = 13  # 轴标签字体大小
-            plt.rcParams['axes.labelweight'] = 'normal'
-            plt.rcParams['axes.labelpad'] = 6
-            plt.rcParams['axes.titlepad'] = 12
-            plt.rcParams['axes.grid'] = True
-            plt.rcParams['axes.axisbelow'] = True
-            plt.rcParams['axes.linewidth'] = 0.9
-            plt.rcParams['axes.spines.top'] = False
-            plt.rcParams['axes.spines.right'] = False
-            plt.rcParams['grid.alpha'] = 0.22
-            plt.rcParams['grid.linestyle'] = '--'
-            plt.rcParams['grid.linewidth'] = 0.6
-            plt.rcParams['legend.fontsize'] = 11  # 图例字体大小
-            plt.rcParams['legend.frameon'] = False
-            plt.rcParams['lines.linewidth'] = 2.0
-            plt.rcParams['lines.markersize'] = 5
-            plt.rcParams['xtick.labelsize'] = 11
-            plt.rcParams['ytick.labelsize'] = 11
-            plt.rcParams['xtick.direction'] = 'out'
-            plt.rcParams['ytick.direction'] = 'out'
-            plt.rcParams['patch.linewidth'] = 0.5
-            plt.rcParams['patch.edgecolor'] = 'white'
-            # 注意：不使用 text.usetex=True，因为需要安装完整的LaTeX系统，速度较慢
-
-            _font_registered = True
-            break
-        except Exception:
-            pass
-
-# ✅ 回退机制：如果字体文件注册失败，使用系统中已知的中文字体名称
-if not _font_registered:
-    # 使用系统已安装的 Noto Sans CJK 字体（支持中文和数字）
-    _SUYUAN_FONT_PROP = None
-    _SUYUAN_FONT_NAME = None
-    _SUYUAN_FONT_FAMILY_CHAIN = ['Noto Sans CJK JP', 'Noto Sans CJK SC', 'Droid Sans Fallback', 'DejaVu Sans', 'sans-serif']
-    _suyuan_apply_chinese_font_config()
-    plt.rcParams['figure.figsize'] = [10.5, 6.2]
-    plt.rcParams['figure.dpi'] = 120
-    plt.rcParams['savefig.dpi'] = 220
-    plt.rcParams['savefig.facecolor'] = 'white'
-    plt.rcParams['savefig.bbox'] = 'tight'
-    plt.rcParams['axes.titlesize'] = 16
-    plt.rcParams['axes.titleweight'] = 'semibold'
-    plt.rcParams['axes.labelsize'] = 13
-    plt.rcParams['axes.labelweight'] = 'normal'
-    plt.rcParams['axes.labelpad'] = 6
-    plt.rcParams['axes.titlepad'] = 12
-    plt.rcParams['axes.grid'] = True
-    plt.rcParams['axes.axisbelow'] = True
-    plt.rcParams['axes.linewidth'] = 0.9
-    plt.rcParams['axes.spines.top'] = False
-    plt.rcParams['axes.spines.right'] = False
-    plt.rcParams['grid.alpha'] = 0.22
-    plt.rcParams['grid.linestyle'] = '--'
-    plt.rcParams['grid.linewidth'] = 0.6
-    plt.rcParams['legend.fontsize'] = 11
-    plt.rcParams['legend.frameon'] = False
-    plt.rcParams['lines.linewidth'] = 2.0
-    plt.rcParams['lines.markersize'] = 5
-    plt.rcParams['xtick.labelsize'] = 11
-    plt.rcParams['ytick.labelsize'] = 11
-    plt.rcParams['xtick.direction'] = 'out'
-    plt.rcParams['ytick.direction'] = 'out'
-    plt.rcParams['patch.linewidth'] = 0.5
-    plt.rcParams['patch.edgecolor'] = 'white'
-
-# ===== 字体注册完成 =====
 
 """.replace("__SUYUAN_IMAGES_DIR__", images_dir_literal)
 
-        lines = code.split('\n')
-        modified_lines = [font_registration_code]
-
-        # 步骤2：处理每一行，删除错误的字体设置
-        for line in lines:
-            # 检测并删除错误的字体设置（已在注册代码中统一配置）
-            # 同时检测 plt.rcParams 和 matplotlib.rcParams，以及可能覆盖中文字体的字体设置。
-            has_font_setting = (
-                ("font.sans-serif" in line or "font.family" in line)
-                and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
-            ) or (
-                "axes.unicode_minus" in line and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
-            )
-
-            if has_font_setting:
-                logger.debug("font_setting_removed", original_line=line.strip())
-                continue  # 跳过这行，不添加到结果中
-            else:
-                modified_lines.append(line)
-
-        # 步骤3：拼接代码
-        injected_code = '\n'.join(modified_lines)
-
-        # 步骤4：自动转换Unicode下标/上标字符为LaTeX格式
-        injected_code = self._convert_unicode_subscript_to_latex(injected_code)
-
+        injected_code = save_support_code + "\n" + code
         logger.info(
-            "font_injection_completed",
+            "matplotlib_save_injection_completed",
             original_length=len(code),
             injected_length=len(injected_code),
-            injection_type="replace_font_settings"
         )
-
         return injected_code
 
     def _inject_excel_helpers(self, code: str) -> str:
@@ -2552,28 +2254,12 @@ def merge_excel_with_charts(file_paths, output_path):
         return {
             "name": "execute_python",
             "description": (
-                "执行 Python 代码，用于数据处理、数值计算、可视化、Excel处理和中间资源生成。"
-                "助手Agent和社交Agent在处理复杂 Python、Excel、图表或文件生成前，"
-                "必须先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "正式报告最终交付必须优先使用 create_report_package："
-                "先准备 report.qmd 内容和真实资源路径，再由 create_report_package 复制资源、规范化报告包内相对路径并触发右侧面板预览；"
-                "报告下载和分享由前端右侧面板调用固定后端报告API处理。"
-                "不要把 execute_python 作为正式报告最终交付工具，也不要在 Python 脚本里手写正式报告格式转换。"
-                "只有用户明确要求一次性 Word/Office 文件且不需要 qmd 同源报告包时，才直接生成 Office 文件。"
-                "优先使用专用统计/查询工具；只有专用工具无法满足自定义计算时再使用本工具。"
-                "使用工具返回的 data_id/report_data_id 计算前必须先调用 read_data_registry 读取数据；"
-                "execute_python 的 get_raw_data 只返回 read_data_registry 已读取的数据快照，未读取会报错；"
-                "不要在代码中绕过 read_data_registry 直接导入 data_registry 或 backend_data_registry。"
-                "执行 matplotlib 画图时，系统会自动注入政府报告图表模板，默认把字号、画布、网格和导出分辨率调大。"
-                "matplotlib 中文字体由系统自动注入并在保存图片前强制应用；代码中不要指定字体文件、FontProperties、font.family、font.sans-serif 或 fontfamily。"
-                "使用 Python 绘制图表时，默认一张图片只包含一个核心图表/分析问题；"
-                "除非用户明确要求多子图、组合图、仪表盘或一页多图对比，不要使用 subplot/subplots/多 Axes 把多个图表拼到同一张图片。"
-                "同一数据源需要多个分析视角时，优先选择最相关的一张图；确需多图则分别保存为多个图片文件。"
-                "政府报告图片默认使用较大字号和较高分辨率，避免标题、坐标轴和图例过小。"
-                "生成中间文件保存到 backend_data_registry，并打印输出路径供后续工具使用。默认超时30秒。"
-                "输出artifact schema：files为生成文件列表，file_path为主文件；"
-                "Office/PDF返回pdf_preview，"
-                "图片返回visuals。"
+                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理中间资源生成。"
+                "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
+                "每次调用是独立环境；跨调用复用请用 save_data(...) 保存 data_id。"
+                "使用 data_id 前先通过 read_data_registry 读取。"
+                "正式报告静态图表优先使用 create_report_chart，流程/架构图优先使用 create_diagram_artifact。"
+                "生成文件保存到 backend_data_registry；默认超时30秒。"
             ),
             "parameters": {
                 "type": "object",
@@ -2581,10 +2267,9 @@ def merge_excel_with_charts(file_paths, output_path):
                     "code": {
                         "type": "string",
                         "description": (
-                            "要执行的 Python 代码。涉及 matplotlib/seaborn/plotly 静态出图时，"
-                            "默认每个输出图片只包含一个核心图表；除非用户明确要求多子图/组合图，"
-                            "不要使用 subplot/subplots/多 Axes 在单张图片中拼接多个图表。政府报告图片默认会注入更大的字号、画布和更高分辨率；"
-                            "中文字体由系统自动接管，代码不要指定 FontProperties、font.family、font.sans-serif 或 fontfamily。"
+                            "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
+                            "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
+                            "工具只捕获保存路径，不接管图表字号、画布或布局。"
                         )
                     },
                     "timeout": {

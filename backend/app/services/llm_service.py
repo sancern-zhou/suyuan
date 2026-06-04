@@ -899,7 +899,7 @@ class LLMService:
             "url_default": "https://api.xiaomimimo.com/v1",
             "key_env": "MIMO_API_KEY",
             "model_env": "MIMO_MODEL",
-            "model_default": "mimo-v2-flash",
+            "model_default": "mimo-v2.5",
         },
         # 千问3本地部署（OpenAI 兼容协议）
         "qwen": {

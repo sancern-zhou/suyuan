@@ -7,7 +7,7 @@ import { restoreSession, getSessionMessages } from '@/api/session'
 
 export function useSessionRecovery(store, options = {}) {
   const {
-    initialMessageLimit = 30, // 初始加载消息数
+    initialMessageLimit = 100, // 初始加载消息数
     onProgress = null, // 进度回调
     onComplete = null, // 完成回调
     onError = null // 错误回调
@@ -96,10 +96,37 @@ export function useSessionRecovery(store, options = {}) {
    */
   const extractVisualsFromMessages = (messages) => {
     const visuals = []
+    const addVisuals = (items) => {
+      if (Array.isArray(items) && items.length > 0) {
+        visuals.push(...items)
+      }
+    }
 
     for (const msg of messages) {
-      if (msg.type === 'tool_result' && msg.data?.result?.data?.visuals) {
-        visuals.push(...msg.data.result.data.visuals)
+      if (msg.type !== 'tool_result') {
+        continue
+      }
+
+      const result = msg.data?.result
+      const results = msg.data?.results
+
+      if (result) {
+        addVisuals(result.visuals)
+        addVisuals(result.data?.visuals)
+
+        if (Array.isArray(result.tool_results)) {
+          for (const toolResult of result.tool_results) {
+            addVisuals(toolResult?.result?.visuals)
+            addVisuals(toolResult?.result?.data?.visuals)
+          }
+        }
+      }
+
+      if (Array.isArray(results)) {
+        for (const item of results) {
+          addVisuals(item?.visuals)
+          addVisuals(item?.data?.visuals)
+        }
       }
     }
 

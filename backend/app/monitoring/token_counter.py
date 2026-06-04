@@ -27,7 +27,7 @@ class TokenCounter:
         # MiniMax
         "minimax-m2": "cl100k_base",
         # Mimo
-        "mimo-v2-flash": "cl100k_base",
+        "mimo-v2.5": "cl100k_base",
         # Qwen (使用 cl100k_base 作为近似)
         "qwen3:30b": "cl100k_base",
         "/qwen/Qwen3-30B-A3B-Instruct-2507-AWQ/": "cl100k_base",

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", description="Environment name")
     debug: bool = Field(default=True, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
+    app_role: str = Field(
+        default="web",
+        description="Application role: web, worker, or all. Web workers must not start background schedulers.",
+    )
 
     # Backend URL Configuration (用于生成图片等资源的完整URL)
     backend_host: str = Field(
@@ -243,7 +247,7 @@ class Settings(BaseSettings):
     )
     llm_flash_models: str = Field(
         default="",
-        description="Comma-separated Flash model priority chain, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2-flash"
+        description="Comma-separated Flash model priority chain, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2.5"
     )
     llm_pro_models: str = Field(
         default="",
@@ -412,6 +416,22 @@ class Settings(BaseSettings):
     social_enabled: bool = Field(
         default=False,
         description="Enable social platform integration"
+    )
+    social_worker_internal_host: str = Field(
+        default="127.0.0.1",
+        description="Host for the worker-only social account internal API"
+    )
+    social_worker_internal_port: int = Field(
+        default=8011,
+        description="Port for the worker-only social account internal API"
+    )
+    social_worker_internal_url: str = Field(
+        default="http://127.0.0.1:8011",
+        description="Base URL used by web processes to reach the social worker internal API"
+    )
+    social_worker_internal_token: str = Field(
+        default="",
+        description="Shared token for web-to-worker social account API calls"
     )
 
     @property

@@ -884,7 +884,7 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "\n- RF_HY_EnvironmentHumidity：海盐-环境湿度校准"
             "\n- RF_HY_GASEOUSCALIDEVICECHECK：海盐-气体校准设备检查"
             "\n- RF_HY_NOXCONVERSIONRATE：海盐-NOx转化率"
-            "\n- RF_HY_O3VALUEPASS：海盐-O3数值通过"
+            "\n- RF_HY_O3VALUEPASS：臭氧（O3）校准仪（工作标准）量值传递记录表（每季度）"
             "\n- RF_HY_STATIONDEVICEMAINTAIN：海盐-站点设备维护"
             "\n- RF_HY_StationMaintainCheck：海盐-站点维护检查"
             "\n- RF_HY_VISIBILITYCALI：海盐-能见度校准"

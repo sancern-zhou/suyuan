@@ -27,10 +27,19 @@ class ToolCoordinator:
         self.schema_injector = schema_injector
         self.events = RuntimeEventBus()
 
-    def normalize_tool_input(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    def normalize_tool_input(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        mode: str | None = None,
+    ) -> Dict[str, Any]:
+        normalized = tool_input or {}
         if self.knowledge_base_ids and tool_name == "knowledge_qa_workflow":
-            return {**(tool_input or {}), "knowledge_base_ids": self.knowledge_base_ids}
-        return tool_input or {}
+            normalized = {**normalized, "knowledge_base_ids": self.knowledge_base_ids}
+        if mode == "social" and tool_name == "read_file":
+            normalized = {**normalized}
+            normalized.setdefault("as_multimodal_attachment", True)
+        return normalized
 
     async def execute_legacy_action(
         self,
@@ -45,8 +54,11 @@ class ToolCoordinator:
         if action_type == "TOOL_CALLS":
             tools = action.get("tools", [])
             for tool in tools:
-                if tool.get("tool") == "knowledge_qa_workflow":
-                    tool["args"] = self.normalize_tool_input(tool.get("tool", ""), tool.get("args", {}))
+                tool["args"] = self.normalize_tool_input(
+                    tool.get("tool", ""),
+                    tool.get("args", {}),
+                    mode=state.mode,
+                )
 
             # ⚠️ 方案A：检测并发的 call_sub_agent 调用，强制 session 隔离
             sub_agent_tools = [t for t in tools if t.get("tool") == "call_sub_agent"]
@@ -94,7 +106,7 @@ class ToolCoordinator:
             return {"success": True, "summary": f"无需工具执行: {action_type}"}, [], []
 
         tool_name = action.get("tool", "")
-        tool_args = self.normalize_tool_input(tool_name, action.get("args", {}))
+        tool_args = self.normalize_tool_input(tool_name, action.get("args", {}), mode=state.mode)
         guarded = self.loop_guard.before_call(tool_name, tool_args)
         if guarded and guarded.get("severity") == "block":
             observation = guarded

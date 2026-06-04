@@ -317,6 +317,52 @@ def _read_qmd(report_dir: Path) -> str:
     return qmd_path.read_text(encoding="utf-8", errors="replace")
 
 
+def _disable_quarto_docx_auto_structure(qmd_content: str) -> str:
+    """Keep Word TOC and heading numbering ownership in DOCX finalization."""
+    if not qmd_content.startswith("---"):
+        return qmd_content
+
+    end_match = re.search(r"(?m)^---\s*$", qmd_content[3:])
+    if not end_match:
+        return qmd_content
+
+    header_end = 3 + end_match.end()
+    header = qmd_content[:header_end]
+    body = qmd_content[header_end:]
+    lines = header.splitlines(keepends=True)
+    in_docx_block = False
+    docx_indent = -1
+    changed = False
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        if in_docx_block and indent <= docx_indent and stripped != "docx:":
+            in_docx_block = False
+
+        if stripped == "docx:":
+            in_docx_block = True
+            docx_indent = indent
+            continue
+
+        if in_docx_block and re.match(r"(toc|number-sections):\s*true\s*(#.*)?$", stripped):
+            key = stripped.split(":", 1)[0]
+            newline = "\n" if line.endswith("\n") else ""
+            comment = ""
+            if "#" in stripped:
+                comment = " " + stripped[stripped.index("#") :]
+            lines[index] = f"{' ' * indent}{key}: false{comment}{newline}"
+            changed = True
+
+    if not changed:
+        return qmd_content
+
+    return "".join(lines) + body
+
+
 class CreateReportPackageTool(LLMTool):
     """Create a standard ReportPackage and optionally render HTML preview."""
 
@@ -324,20 +370,8 @@ class CreateReportPackageTool(LLMTool):
         super().__init__(
             name="create_report_package",
             description=(
-                "创建标准 Quarto ReportPackage。用于正式报告交付：保存 report.qmd、"
-                "复制图表/表格资源、写入 meta.json/report_data.json，并可自动渲染 HTML 预览。"
-                "正式报告应优先调用本工具收口，而不是用 execute_python 直接生成 docx 或把 qmd 写到 reports 根目录。"
-                "\n\n"
-                "**重要约束**："
-                "1. 禁止在 qmd_content 中使用 R 代码块（```{r}），系统没有安装 R 环境"
-                "2. 推荐方式：先用 execute_python 生成图表到临时目录，然后通过 assets 参数传入真实文件路径；"
-                "   Agent 只负责提供图片真实路径、图片标题/说明和可选规范文件名 name，"
-                "   不要根据 /api/image/{image_id} 或缓存 id 推断 assets/charts/{image_id}.png。"
-                "3. qmd_content 中的图片可先引用真实路径、原始文件名或 name；本工具会复制资源并规范化为"
-                "   assets/charts/{filename}。若直接写 assets/charts/{filename}.png，必须与 assets.name 或源文件名一致。"
-                "4. 如需动态图表，可使用 Python 代码块（```{python}），但需确保已安装必要依赖"
-                "5. assets 参数支持：字符串路径或 {path, type, name} 对象，type 可选 image/table/asset；"
-                "   name 是复制到报告包后的文件名，用于稳定 QMD 引用。"
+                "创建正式 Quarto ReportPackage；调用前读 report_package/references/index.md。"
+                "禁止 R 和 /api/image；资源传真实路径到 assets。"
             ),
             category=ToolCategory.REPORTING,
             version="1.0.0",
@@ -350,57 +384,44 @@ class CreateReportPackageTool(LLMTool):
                 "properties": {
                     "report_id": {
                         "type": "string",
-                        "description": "报告ID，只允许字母、数字、下划线、连字符；其他字符会自动转义。",
+                        "description": "报告ID，会安全转义。",
                     },
                     "qmd_content": {
                         "type": "string",
-                        "description": (
-                            "完整 report.qmd 内容，包含 YAML 头和正文。不要写 reference-doc: default；"
-                            "如需 Word 参考模板，应提供真实 .docx 路径，否则由系统默认模板处理。"
-                            "图片引用不要使用 /api/image，也不要根据 image_id 猜测路径。"
-                        ),
+                        "description": "完整 report.qmd；规则见 references/index.md。",
                     },
                     "title": {"type": "string", "description": "报告标题，可选。"},
                     "report_type": {
                         "type": "string",
                         "enum": ["government", "analysis", "briefing", "research", "custom"],
-                        "description": "报告类型。government 适合正式公文/政务报告，analysis 适合分析报告，briefing 适合简报。",
+                        "description": "报告类型。",
                     },
                     "design_profile": {
                         "type": "string",
                         "enum": ["formal", "executive", "technical", "visual", "custom"],
-                        "description": "报告呈现风格。formal 偏正式交付，executive 偏管理层摘要，technical 偏方法细节，visual 偏图表叙事。",
+                        "description": "报告呈现风格。",
                     },
                     "design_intent": {
                         "type": "string",
-                        "description": "报告设计意图，例如目标读者、版式密度、图表优先级、是否适合打印归档。",
+                        "description": "报告设计意图。",
                     },
                     "assets": {
                         "type": "array",
-                        "description": (
-                            "需要复制进报告包的资源。元素可为真实文件路径字符串，或 {path, type, name}。"
-                            "path 必须是 execute_python 等工具返回的真实本地文件路径；"
-                            "type=image 的资源会复制到 assets/charts/；type=table 复制到 tables/。"
-                            "name 可选，用于指定报告包内规范文件名。Agent 不应把 /api/image/{image_id} 或 image_id "
-                            "自行改写为 assets/charts/{image_id}.png；应传 path/name，由本工具复制并规范化引用。"
-                        ),
+                        "description": "真实文件路径或 {path,type,name}；见 references/index.md。",
                         "items": {
                             "oneOf": [
                                 {
                                     "type": "string",
-                                    "description": "真实本地文件路径，例如 /tmp/report/aqi_trend.png。",
                                 },
                                 {
                                     "type": "object",
                                     "properties": {
                                         "path": {
                                             "type": "string",
-                                            "description": "真实本地文件路径，不是 /api/image URL，也不是推断出的 assets/charts 路径。",
                                         },
                                         "type": {"type": "string", "enum": ["image", "table", "asset"]},
                                         "name": {
                                             "type": "string",
-                                            "description": "复制进报告包后的规范文件名，例如 aqi_trend.png；QMD 可引用 assets/charts/aqi_trend.png。",
                                         },
                                     },
                                     "required": ["path"],
@@ -410,15 +431,15 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "report_data": {
                         "type": "object",
-                        "description": "报告核心指标和结构化结论，写入 report_data.json。",
+                        "description": "写入 report_data.json。",
                     },
                     "metadata": {
                         "type": "object",
-                        "description": "额外元数据，写入 meta.json。",
+                        "description": "写入 meta.json。",
                     },
                     "render_html": {
                         "type": "boolean",
-                        "description": "是否立即渲染 HTML 预览，默认 true。",
+                        "description": "渲染 HTML 预览。",
                         "default": True,
                     },
                 },
@@ -491,6 +512,7 @@ format:
         qmd_content, api_copied_assets = _download_and_copy_api_images(report_dir, qmd_content)
         copied_assets.extend(api_copied_assets)
         qmd_content = _rewrite_missing_image_refs_to_copied_assets(report_dir, qmd_content, copied_assets)
+        qmd_content = _disable_quarto_docx_auto_structure(qmd_content)
         qmd_path = report_dir / "report.qmd"
         qmd_path.write_text(qmd_content, encoding="utf-8")
 

@@ -29,10 +29,11 @@ logger = structlog.get_logger()
 
 
 def _social_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Hide image-analysis affordances from social mode read_file schema."""
+    """Expose native multimodal image attachment while hiding legacy image analysis."""
     social_schema = copy.deepcopy(schema)
     social_schema["description"] = (
-        "读取文件或目录内容，支持文本分页、PDF、DOCX、PPTX、Word XML、Markdown。"
+        "读取文件或目录内容，支持文本分页、图片原生多模态挂载、PDF、DOCX、PPTX、Word XML、Markdown。"
+        "图片文件会返回 multimodal_attachment，由社交模式在下一轮以原生多模态输入提供；不会返回base64或文本分析结果。"
         "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
         "Excel文件不由 read_file 读取，需使用 execute_python。"
         "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
@@ -41,6 +42,11 @@ def _social_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     properties = social_schema.get("parameters", {}).get("properties", {})
     properties.pop("auto_analyze", None)
     properties.pop("analysis_type", None)
+    properties["as_multimodal_attachment"] = {
+        "type": "boolean",
+        "description": "社交模式读取图片文件时使用：true 表示将本地图片挂载为原生多模态输入，并在下一轮由模型直接查看。",
+        "default": True,
+    }
     return social_schema
 
 
@@ -777,7 +783,8 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     # ========================================
     # 2. 添加天气观测工具 schema（特殊工具）
     # ========================================
-    schemas.append({
+    if allowed_tools is None or "get_observed_weather" in allowed_tools:
+        schemas.append({
         "name": "get_observed_weather",
         "description": "获取指定位置的实时天气观测数据（原始观测数据，非预报），包括温度、湿度、风速、风向、气压等信息",
         "parameters": {
@@ -802,12 +809,13 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
             },
             "required": ["lat", "lon"]
         }
-    })
+        })
 
     # ========================================
     # 3. 添加数据加载工具 schema（内置工具）
     # ========================================
-    schemas.append({
+    if allowed_tools is None or "load_data_from_memory" in allowed_tools:
+        schemas.append({
         "name": "load_data_from_memory",
         "description": (
             "从外部化存储读取数据（智能采样，避免token超限）。"
@@ -844,7 +852,7 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
             },
             "required": ["data_id"]
         }
-    })
+        })
 
     logger.info("tool_schemas_generated", count=len(schemas))
 

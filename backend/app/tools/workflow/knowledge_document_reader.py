@@ -16,21 +16,10 @@ class KnowledgeDocumentReader(WorkflowTool):
     """读取知识库文档的chunk文本视图。"""
 
     name = "knowledge_document_reader"
-    description = """知识文档阅读工具 - 按document_id读取原文档解析后的chunk文本视图
-
-用于在knowledge_qa_workflow返回document_read_targets后，继续阅读命中chunk的相邻上下文或该文档全部chunks。
-
-参数：
-- knowledge_base_id: 知识库ID
-- document_id: 文档ID
-- chunk_index: 命中的单个chunk索引（可选）
-- chunk_indices: 命中的多个chunk索引（可选）
-- mode: neighbor_chunks 或 all_chunks
-- window: mode=neighbor_chunks时，读取命中chunk前后多少个chunk，默认2
-- max_chunks: 返回chunk数量上限，默认30
-
-返回：文档chunk文本、章节/主题元数据、读取范围和总chunk数。
-"""
+    description = (
+        "按 knowledge_qa_workflow 返回的 document_read_targets 读取文档 chunks；"
+        "可读命中块邻近上下文或全文 chunks。"
+    )
     version = "1.0.0"
     category = "knowledge_qa"
     requires_context = False
@@ -189,7 +178,7 @@ class KnowledgeDocumentReader(WorkflowTool):
                     },
                     "chunk_index": {
                         "type": "integer",
-                        "description": "命中的单个chunk索引"
+                        "description": "单个命中chunk索引"
                     },
                     "chunk_indices": {
                         "type": "array",
@@ -199,19 +188,19 @@ class KnowledgeDocumentReader(WorkflowTool):
                     "mode": {
                         "type": "string",
                         "enum": ["neighbor_chunks", "all_chunks"],
-                        "description": "读取模式：相邻chunks或全文chunks",
+                        "description": "读取模式",
                         "default": "neighbor_chunks"
                     },
                     "window": {
                         "type": "integer",
-                        "description": "相邻读取窗口，默认读取命中chunk前后2个chunk",
+                        "description": "邻近窗口",
                         "default": 2,
                         "minimum": 0,
                         "maximum": 10
                     },
                     "max_chunks": {
                         "type": "integer",
-                        "description": "最多返回多少个chunks",
+                        "description": "返回chunk上限",
                         "default": 30,
                         "minimum": 1,
                         "maximum": 200

@@ -227,6 +227,16 @@ class SimplifiedContextBuilder:
         """
         # ✅ 使用新的提示词构建器，传递记忆上下文、soul上下文和用户上下文
         from ..prompts.prompt_builder import build_react_system_prompt
+        from config.settings import settings
+
+        # 仅social模式需要backend_host（使用公网可访问的网关地址）
+        backend_host = None
+        if self.current_mode == "social":
+            # 优先使用 api_base_url（网关地址，如 http://219.135.180.51:56041）
+            # 其次使用 signed_media_base_url（公网后端地址）
+            # 最后使用 backend_host（本地地址，仅开发环境）
+            backend_host = settings.api_base_url or settings.signed_media_base_url or settings.backend_host
+
         mode_prompt = build_react_system_prompt(
             mode=self.current_mode,
             user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
@@ -236,7 +246,8 @@ class SimplifiedContextBuilder:
             heartbeat_file_path=self.heartbeat_file_path,  # ✅ 传递 HEARTBEAT.md 文件路径
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
-            user_context=self.user_context  # ✅ 传递用户上下文内容（USER.md）
+            user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
+            backend_host=backend_host  # ✅ 传递网关地址（仅social模式使用）
         )
         return f"{mode_prompt.rstrip()}\n\n{self._build_agent_control_prompt()}"
 
@@ -244,9 +255,9 @@ class SimplifiedContextBuilder:
         """Build system-level loop control rules for every agent mode."""
         return (
             "<agent_control>\n"
-            "本轮开始前先判断用户任务是否已经完成。\n"
-            "如果已有对话和工具结果足以回答，直接给出最终答案。\n"
-            "如果仍缺少必要信息，才调用工具；不要重复调用已成功且结果仍有效的工具。\n"
+            "每轮开始前，我先整理眼前的对话、工具结果和刚刚完成的动作，判断用户这件事是否已经可以交代清楚。\n"
+            "如果现有信息已经足够，就直接给出自然、明确的回复；如果用户问“刚才在做什么”，优先依据真实对话历史和工具结果回顾。\n"
+            "需要补信息时，再安静地调用合适的工具；同一份仍然有效的结果已经拿到后，就继续使用它，不在原地反复查询。\n"
             "</agent_control>"
         )
 
@@ -321,7 +332,7 @@ class SimplifiedContextBuilder:
         包括：
         1. 当前查询
         2. 当前运行状态
-        3. 必要的中断提示/附件提示
+        3. 必要的附件提示
 
         Args:
             query: 用户查询
@@ -352,18 +363,6 @@ class SimplifiedContextBuilder:
             )
 
         sections = []
-
-        # ✅ 检测到中断时，在对话历史前添加明确提示
-        if is_interruption:
-            sections.append("""⚠️ **用户已中断对话并重新输入**
-
-用户之前中断了对话，这通常意味着之前的分析方向不符合预期。请：
-1. **优先理解用户新输入的完整意图**，而不是继续之前的方向
-2. 结合对话历史中的数据和结果，但**不要被之前的分析思路限制**
-3. 如果对话历史中已有TodoWrite任务清单，仅在计划确有变化时更新；不要为同一清单重复调用TodoWrite
-4. 优先执行实际业务工具或直接回答；TodoWrite只是状态面板，不是任务进展
-
----""")
 
         if not conversation_history:
             logger.warning("context_builder_no_conversation_history", iteration=iteration)

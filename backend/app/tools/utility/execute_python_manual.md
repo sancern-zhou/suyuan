@@ -6,7 +6,7 @@
 
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 图表生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。
+- 临时图表或调试图片生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。正式报告静态图表优先使用 `create_report_chart`。
 - 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
 - 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
@@ -17,7 +17,7 @@
 
 标准流程：
 
-1. 用查询工具和 `execute_python` 完成计算、制图、表格整理。
+1. 用查询工具和 `execute_python` 完成计算、表格整理；正式报告静态图表用 `create_report_chart` 生成。
 2. 准备 `report.qmd` 内容，图片最终使用报告包内相对路径，例如 `assets/charts/chart_01.png`。
    不要根据 `/api/image/{image_id}` 或缓存 id 推断这个路径；应把真实图片文件路径传给
    `create_report_package.assets`，必要时用 `name` 指定 `chart_01.png`，由报告包工具复制并规范化引用。
@@ -99,55 +99,18 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.do
 
 生成正式报告时，调用 `create_report_package`，不要把本地绝对路径作为最终交付方式。
 
-## matplotlib 中文和化学式
+## matplotlib 图片保存
 
-使用无界面后端：
+`execute_python` 只负责运行代码和捕获图片保存路径，不负责报告图表字体、字号、画布或布局设计。正式报告图表请改用 `create_report_chart`。
 
 ```python
 import matplotlib
 matplotlib.use("Agg")
-```
+import matplotlib.pyplot as plt
 
-中文字体推荐直接指定字体文件：
-
-```python
-from matplotlib.font_manager import FontProperties
-chinese_font = FontProperties(fname="/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc")
-```
-
-不要使用 Unicode 下标字符，例如 `O₃`、`PM₂.₅`、`NO₂`，部分字体会显示方框。使用 mathtext：
-
-```python
-ax.set_title(r"O$_3$浓度变化", fontproperties=chinese_font)
-ax.set_ylabel(r"PM$_{2.5}$ ($\mu$g/m$^3$)", fontproperties=chinese_font)
-```
-
-常用写法：`O$_3$`、`NO$_2$`、`SO$_2$`、`PM$_{2.5}$`、`PM$_{10}$`。
-
-## 政府报告图表默认排版
-
-- `execute_python` 会自动注入这套默认模板，常规 `plt.subplots()` 会直接继承更大的画布、字号、网格和导出分辨率。
-- 如需进一步收紧某张图，可显式调用 `apply_government_report_style(fig, ax)`。
-- `figsize` 建议从 `10x6` 起步，复杂图表可到 `12x7`。
-- `savefig(dpi=200)` 或更高，避免导出后文字发虚。
-- 标题字号建议 `14-18`，轴标签 `12-14`，刻度 `10-12`，图例 `10-12`。
-- 如果同一张图的类别很多，优先旋转 x 轴标签、缩短标签、拆分为横向条形图，而不是继续缩小字体。
-- 图表要兼顾印刷和屏幕展示，默认不要把字号压到 10 以下。
-- 对长标题、长图例、密集类别，优先使用 `tight_layout()` 或 `constrained_layout=True`。
-
-```python
-fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
-ax.set_title('图表标题', fontsize=16)
-ax.set_xlabel('横轴', fontsize=13)
-ax.set_ylabel('纵轴', fontsize=13)
-ax.tick_params(axis='both', labelsize=11)
-ax.legend(fontsize=11)
-save_chart(fig, 'report_chart.png', dpi=200)
-```
-
-如果需要二次收紧：
-```python
-apply_government_report_style(fig, ax)
+fig, ax = plt.subplots()
+ax.plot([1, 2, 3], [1, 4, 9])
+save_chart(fig, "debug_chart.png")
 ```
 
 ## 图表组织规则

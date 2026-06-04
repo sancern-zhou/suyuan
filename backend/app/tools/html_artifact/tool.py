@@ -24,6 +24,7 @@ def guizang_deck_asset_paths() -> Dict[str, str]:
         "layouts_swiss": str(GUIZANG_REFERENCES / "layouts-swiss.md"),
         "themes_magazine": str(GUIZANG_REFERENCES / "themes.md"),
         "themes_swiss": str(GUIZANG_REFERENCES / "themes-swiss.md"),
+        "index": str(GUIZANG_REFERENCES / "index.md"),
         "checklist": str(GUIZANG_REFERENCES / "checklist.md"),
         "swiss_layout_lock": str(GUIZANG_REFERENCES / "swiss-layout-lock.md"),
         "image_prompts": str(GUIZANG_REFERENCES / "image-prompts.md"),
@@ -40,18 +41,8 @@ class CreateHtmlArtifactTool(LLMTool):
         super().__init__(
             name="create_html_artifact",
             description=(
-                "创建展示型 HTML 产物，用于演讲材料、视觉优先 PPT/deck、数据大屏、交互说明页、可视化叙事等。"
-                "本工具会保存 index.html、复制资源、触发右侧面板 HTML 预览，并提供下载 HTML 和分享链接能力。"
-                "不要用于正式报告；正式报告必须使用 create_report_package 生成 report.qmd 同源报告包。"
-                "HTML 展示产物不承诺 Word/PPT/QMD 同源导出。"
-                "生成时应优先设计完整可阅读的展示效果：清晰层级、响应式布局、适合投屏/分享的视觉密度。"
-                "当 display_mode=presentation 且 layout_system=guizang 时，必须先用 read_file 读取对应内置资源，再生成 html_content："
-                f"magazine 先读 {guizang_paths['template_magazine']}、{guizang_paths['layouts_magazine']}、"
-                f"{guizang_paths['themes_magazine']}、{guizang_paths['checklist']}；"
-                f"swiss 先读 {guizang_paths['template_swiss']}、{guizang_paths['layouts_swiss']}、"
-                f"{guizang_paths['themes_swiss']}、{guizang_paths['checklist']}、{guizang_paths['swiss_layout_lock']}。"
-                "不要从零自写一套 deck CSS；html_content 应基于所选模板和 layouts 骨架改写。"
-                "数据密集型表格/图表汇报仍优先使用 create_pptx_from_deck。"
+                "创建 HTML 展示；正式报告用 create_report_package。"
+                f"guizang 先读 {guizang_paths['index']}，再按 style 读模板/layouts/themes/checklist.md。"
             ),
             category=ToolCategory.REPORTING,
             version="1.0.0",
@@ -64,79 +55,49 @@ class CreateHtmlArtifactTool(LLMTool):
                 "properties": {
                     "artifact_id": {
                         "type": "string",
-                        "description": "展示页ID，只允许字母、数字、下划线、连字符；其他字符会自动转义。",
+                        "description": "展示页ID，会安全转义。",
                     },
                     "html_content": {
                         "type": "string",
                         "description": (
-                            "完整 HTML 内容，建议包含完整 <!doctype html><html> 结构。"
-                            "若 display_mode=presentation 且 layout_system=guizang，本字段必须基于对应 guizang 模板生成："
-                            "magazine 基于 template_magazine + layouts_magazine；swiss 基于 template_swiss + layouts_swiss。"
-                            "调用本工具前先读取 layout_system/presentation_style 指定的模板、layouts、themes 和 checklist，"
-                            "不要凭空编写新的 deck 框架或 CSS。"
+                            "完整 HTML。guizang 基于模板和 layouts。"
                         ),
                     },
                     "title": {"type": "string", "description": "展示页标题，可选。"},
                     "display_mode": {
                         "type": "string",
                         "enum": ["presentation", "dashboard", "story", "single_page", "custom"],
-                        "description": (
-                            "展示效果类型。presentation 适合演讲材料/类 PPT，dashboard 适合数据大屏，"
-                            "story 适合可视化叙事，single_page 适合单页说明，custom 为自定义。"
-                        ),
+                        "description": "展示类型。",
                     },
                     "presentation_kind": {
                         "type": "string",
                         "enum": ["deck", "page", "cover"],
-                        "description": (
-                            "presentation 模式下的产物形态。deck 表示横向翻页 HTML PPT，"
-                            "page 表示普通展示页，cover 表示单张封面。"
-                        ),
+                        "description": "presentation 形态。",
                     },
                     "layout_system": {
                         "type": "string",
                         "enum": ["guizang", "custom"],
                         "description": (
-                            "presentation/deck 的版式系统。guizang 表示使用内置 guizang-ppt-skill 模板、"
-                            "layouts、themes 和 checklist；custom 表示完全自定义 HTML。"
-                            "选择 guizang 时，调用本工具前必须先读取对应资源路径："
-                            f"template_magazine={guizang_paths['template_magazine']}；"
-                            f"template_swiss={guizang_paths['template_swiss']}；"
-                            f"layouts_magazine={guizang_paths['layouts_magazine']}；"
-                            f"layouts_swiss={guizang_paths['layouts_swiss']}；"
-                            f"themes_magazine={guizang_paths['themes_magazine']}；"
-                            f"themes_swiss={guizang_paths['themes_swiss']}；"
-                            f"checklist={guizang_paths['checklist']}。"
+                            "guizang 先读 guizang_references/index.md 和 checklist.md。"
                         ),
                     },
                     "presentation_style": {
                         "type": "string",
                         "enum": ["magazine", "swiss"],
-                        "description": (
-                            "layout_system=guizang 时的视觉风格。magazine=电子杂志风；"
-                            "swiss=瑞士国际主义风，需使用 layouts-swiss.md 中登记版式。"
-                            "magazine 生成前先读 template_magazine、layouts_magazine、themes_magazine、checklist；"
-                            "swiss 生成前先读 template_swiss、layouts_swiss、themes_swiss、checklist、swiss_layout_lock。"
-                        ),
+                        "description": "guizang 风格：magazine 或 swiss。",
                     },
                     "validation": {
                         "type": "string",
                         "enum": ["none", "swiss"],
-                        "description": (
-                            "HTML deck 自检方式。swiss 表示产物应按内置 validate-swiss-deck.mjs 校验；"
-                            "工具会把校验器路径写入 metadata，供 Agent 或后续流程执行。"
-                        ),
+                        "description": "HTML deck 自检方式。",
                     },
                     "design_intent": {
                         "type": "string",
-                        "description": (
-                            "设计意图说明，例如目标受众、投屏/移动端/桌面优先、视觉风格、关键交互。"
-                            "用于记录到元数据，帮助后续编辑保持一致。"
-                        ),
+                        "description": "设计意图，写入元数据。",
                     },
                     "assets": {
                         "type": "array",
-                        "description": "需要复制进展示产物 assets/ 的资源。元素可为路径字符串，或 {path, name}。",
+                        "description": "复制到 assets/ 的资源：路径或 {path,name}。",
                         "items": {
                             "oneOf": [
                                 {"type": "string"},

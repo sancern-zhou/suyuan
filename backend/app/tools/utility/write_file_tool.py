@@ -591,14 +591,7 @@ format:
         return {
             "name": "write_file",
             "description": (
-                "创建或完整覆写文件。已存在文件必须先read_file；局部修改用edit_file。"
-                "会做修改时间检查并返回diff，避免覆盖并发修改。"
-                "正式报告不要用 write_file 直接写入 backend_data_registry/reports 根目录或手工拼装交付路径；"
-                "应调用 create_report_package 保存为 reports/{report_id}/report.qmd 并触发右侧面板预览。"
-                "write_file 只适合创建草稿片段、临时说明文件或非正式文本文件；"
-                "如维护已有标准报告包 report.qmd 或 HTML展示页 index.html，后端会自动刷新右侧预览并返回html_preview；报告包随后可用 validate_report_package 校验。"
-                "qmd 图片最终必须使用报告包内相对路径，不要使用 /api/image/... 或 data URL；"
-                "正式报告应把真实图片路径交给 create_report_package.assets，由报告包工具复制并规范化引用。"
+                "创建或完整覆写文件；已存在文件先 read_file，局部修改用 edit_file。正式报告用 create_report_package。"
             ),
             "parameters": {
                 "type": "object",
@@ -613,7 +606,7 @@ format:
                     },
                     "encoding": {
                         "type": "string",
-                        "description": "文件编码（默认 utf-8），中文文件可尝试 'gbk'",
+                        "description": "文件编码。",
                         "default": "utf-8"
                     },
                     "create_dirs": {

@@ -172,9 +172,7 @@ class EditWordDocumentTool(LLMTool):
         return {
             "name": "edit_word_document",
             "description": (
-                "统一编辑 DOCX。action=find_replace/simple_replace/replace_all 做简单替换；"
-                "action=replace_text/replace_paragraph/insert_after/insert_before/delete_paragraph 做结构化编辑；"
-                "action=accept_changes 接受修订。返回 file_path、pdf_preview 和 document artifact，不返回下载链接。"
+                "编辑 DOCX：替换、段落插入/删除、接受修订；返回预览 artifact。"
             ),
             "parameters": {
                 "type": "object",
@@ -195,18 +193,18 @@ class EditWordDocumentTool(LLMTool):
                         ],
                         "description": "编辑动作",
                     },
-                    "find_text": {"type": "string", "description": "简单替换要查找的文本"},
-                    "replace_text": {"type": "string", "description": "简单替换的新文本"},
-                    "search": {"type": "string", "description": "replace_text 要查找的文本"},
-                    "replace": {"type": "string", "description": "replace_text 替换文本"},
-                    "contains": {"type": "string", "description": "段落操作的定位文本"},
-                    "marker": {"type": "string", "description": "插入操作的定位文本"},
-                    "content": {"type": "string", "description": "插入或替换段落的新内容"},
-                    "new_content": {"type": "string", "description": "content 的别名"},
-                    "output_file": {"type": "string", "description": "输出文件路径；可选"},
-                    "use_regex": {"type": "boolean", "description": "简单替换是否使用正则", "default": False},
-                    "case_sensitive": {"type": "boolean", "description": "简单替换是否大小写敏感", "default": True},
-                    "backup": {"type": "boolean", "description": "结构化编辑是否备份原文件", "default": True},
+                    "find_text": {"type": "string"},
+                    "replace_text": {"type": "string"},
+                    "search": {"type": "string"},
+                    "replace": {"type": "string"},
+                    "contains": {"type": "string"},
+                    "marker": {"type": "string"},
+                    "content": {"type": "string"},
+                    "new_content": {"type": "string"},
+                    "output_file": {"type": "string"},
+                    "use_regex": {"type": "boolean", "default": False},
+                    "case_sensitive": {"type": "boolean", "default": True},
+                    "backup": {"type": "boolean", "default": True},
                 },
                 "required": ["path", "action"],
             },

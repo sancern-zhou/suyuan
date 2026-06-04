@@ -61,6 +61,12 @@ def build_base64_user_content(
 
 
 def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    local_path = attachment.get("local_path") or attachment.get("path")
+    if local_path:
+        image_block = _build_local_base64_image_block(attachment)
+        if image_block:
+            return image_block
+
     url = attachment.get("url") or attachment.get("signed_url")
     if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):
         return {
@@ -71,8 +77,7 @@ def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             },
         }
 
-    local_path = attachment.get("local_path") or attachment.get("path")
-    return _build_local_base64_image_block(attachment) if local_path else None
+    return None
 
 
 def _build_local_base64_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -118,6 +123,35 @@ def build_persisted_user_content(
         )
 
     return blocks if len(blocks) > 1 else text
+
+
+def extract_multimodal_attachments(observation: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract image attachments emitted by tools for the next native multimodal turn."""
+    attachments: List[Dict[str, Any]] = []
+
+    def collect(value: Any) -> None:
+        if not isinstance(value, dict):
+            return
+
+        if value.get("type") == "multimodal_attachment":
+            candidates = value.get("attachments")
+            if not candidates and isinstance(value.get("data"), dict):
+                candidates = value["data"].get("attachments")
+            if isinstance(candidates, list):
+                for item in candidates:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") != "image":
+                        continue
+                    if item.get("url") or item.get("signed_url") or item.get("local_path") or item.get("path"):
+                        attachments.append(item)
+
+        for item in value.get("tool_results", []) or []:
+            if isinstance(item, dict):
+                collect(item.get("result"))
+
+    collect(observation)
+    return attachments
 
 
 def _media_type(attachment: Dict[str, Any], path: Path) -> str:

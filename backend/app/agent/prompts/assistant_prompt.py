@@ -46,6 +46,17 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     excel_guide_path = (current_dir.parent.parent.parent / "docs" / "skills" / "excel.md").resolve()
     excel_guide_path_str = str(excel_guide_path).replace("\\", "/")
 
+    # 多类型图表设计参考路径
+    diagram_reference_index_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "index.md"
+    ).resolve()
+    diagram_reference_index_path_str = str(diagram_reference_index_path).replace("\\", "/")
+
     # 使用字符串拼接避免 f-string 中的大括号转义问题
     prompt_parts = []
 
@@ -89,10 +100,13 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- 最终回复不要只给本地路径；若工具已触发右侧面板，提示用户在右侧预览、下载或分享。\n",
         "- 不要生成、猜测或转述 `/api/utility/file`、本地绝对路径或基于本地绝对路径拼接的下载链接；预览和下载统一由前端右侧面板处理。\n",
         "- 图片结果优先使用工具返回的可访问 URL 或 Markdown 图片，不展示本地图片路径。\n",
-        "- 流程图、架构图、步骤图、决策树优先使用 `create_flowchart_artifact` 生成 Graphviz SVG HTML 展示页。\n",
-        "- 默认使用 `layout_engine=\"graphviz\"`；只有在明确需要简单草图时才考虑 `layout_engine=\"mermaid\"`。\n",
-        "- 不要先用 `execute_python` 生成 DOT/SVG 再交给 HTML 工具；流程图任务直接走 `create_flowchart_artifact`。\n",
-        "- 生成流程图时先拆成节点和连线，再调用工具；不要只用纯文本描述代替图形结果。\n",
+        "- 面向 QMD/Word 正式报告的静态数据图表优先使用 `create_report_chart`，并按该工具 references/index.md 渐进阅读视觉规范；`execute_python` 主要用于上游数据准备或临时计算。\n",
+        "- 流程图、架构图、步骤图、决策树优先使用 `create_diagram_artifact` 生成 HTML 展示页。\n",
+        "- 使用 `create_diagram_artifact` 前，必须先判断图表类型（架构图、分层系统图、流程图、决策树、数据流图），先阅读 `" + diagram_reference_index_path_str + "`（create_diagram_artifact/references/index.md），再读取对应类型模板和 checklist。\n",
+        "- 架构图/分层系统图必须按模板设计 `layers/groups/items`；旧 `steps + group` 仅作为兼容格式，避免把所有模块平铺成一条长图。\n",
+        "- 分层架构图使用 `diagram_type=\"layered_architecture\"`，优先传 `layers`；流程/决策/数据流再使用 `steps` 和 `edges`。\n",
+        "- 不要先用 `execute_python` 生成 DOT/SVG 再交给 HTML 工具；图表任务直接走 `create_diagram_artifact`。\n",
+        "- 生成图表时先拆成结构化层级、节点和连线，再读取对应类型模板后调用工具；不要只用纯文本描述代替图形结果。\n",
         "\n",
         "### 委托子Agent\n",
         "\n",
@@ -107,10 +121,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "### 工具调用出错时\n",
         "工具参数错误时，优先根据错误信息和 tool schema 修正；仍不明确时再查阅相关工具文档或源码。\n",
         "\n",
-        "## 任务清单\n",
-        "\n",
-        "TodoWrite 仅用于 5 步以上复杂任务或用户明确要求跟踪进度的任务；同时只保留一个 in_progress。子Agent任务或文件处理任务中，任务内容必须保留路径、时间范围、sheet索引等关键参数。\n",
-        "\n",
         "## 专项指南\n",
         "\n",
         f"- Office 编辑任务：先阅读 `{office_guide_path_str}`\n",
@@ -119,7 +129,11 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "\n",
         "## 工作原则\n",
         "\n",
-        "1. **文件类型识别**：根据扩展名选择工具\n",
+        "1. **信息真实性**：不知道或缺少依据时直接说明，不编造信息\n",
+        "   - 所有具体数据、事实、结论必须有可靠来源\n",
+        "   - 信息缺失或不明确时，明确说明而非猜测\n",
+        "\n",
+        "2. **文件类型识别**：根据扩展名选择工具\n",
         "   - 文本文件 → `read_file` / `edit_file`\n",
         "   - Word 文档：读取统一用 `read_file`，编辑统一用 `edit_word_document`\n",
         "   - Excel/PPT → 对应工具或查看技能文档\n",

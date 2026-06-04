@@ -7,7 +7,7 @@ Useful for:
 - Custom page interactions
 - Debugging and testing
 
-v2.2: Fixed double arrow function issue - detect if user code already contains () =>
+v2.3: Fixed 'return var' syntax error - removed 'return' keyword to allow declarations
 """
 import structlog
 import re
@@ -88,6 +88,7 @@ def handle_execute_js(
                 )
             else:
                 # Wrap user code with arrow function
+                # Note: Don't add 'return' - let user code handle it
                 result = page.evaluate(f"(refs) => {{ {code} }}", refs)
                 refs_provided = True
                 logger.info(
@@ -109,6 +110,7 @@ def handle_execute_js(
                 )
             else:
                 # Wrap user code with arrow function
+                # Note: Don't add 'return' - let user code handle it
                 result = page.evaluate(f"() => {{ {code} }}")
                 refs_provided = False
                 logger.info(

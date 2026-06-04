@@ -24,17 +24,13 @@ def severity_score(issues: list[Issue] | list[dict[str, Any]]) -> int | None:
 
 
 def risk_level(score: int | None, issues: list[Issue] | list[dict[str, Any]]) -> str:
-    """Return a classification label without numeric scoring."""
+    """Return the only user-facing classification used by ops audits."""
 
     issue_rule_ids = {
         issue.rule_id if isinstance(issue, Issue) else issue.get("rule_id")
         for issue in issues
     }
-    if issue_rule_ids & HARD_ERROR_RULES:
-        return "确定性规则问题"
-    if issue_rule_ids:
-        return "待确认问题"
-    return "通过"
+    return "有问题" if issue_rule_ids else ""
 
 
 def classify_rule_patterns(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -92,6 +88,8 @@ def apply_rule_pattern_assessment(records: list[dict[str, Any]], rule_patterns: 
         for issue in record.get("issues", []):
             pattern = rule_patterns.get(issue.get("rule_id"), {})
             pattern_type = pattern.get("pattern_type", "candidate_issue")
+            if _requires_semantic_assessment(issue):
+                pattern_type = "candidate_issue"
             issue["pattern_type"] = pattern_type
             if pattern_type == "deterministic_issue":
                 issue["assessment"] = "deterministic_issue"
@@ -113,3 +111,10 @@ def apply_rule_pattern_assessment(records: list[dict[str, Any]], rule_patterns: 
         record["common_pattern_rules"] = []
         record["candidate_rules"] = sorted(set(candidate_rules))
         record["deterministic_rules"] = sorted(set(deterministic_rules))
+
+
+def _requires_semantic_assessment(issue: dict[str, Any]) -> bool:
+    evidence = issue.get("evidence")
+    if not isinstance(evidence, str):
+        return False
+    return '"needs_semantic_review": true' in evidence or '"needs_semantic_review":true' in evidence

@@ -54,6 +54,7 @@ HEADING_LEVEL_1_SIZE_PT = 22  # 二号
 HEADING_LEVEL_2_SIZE_PT = 16  # 三号
 HEADING_LEVEL_3_SIZE_PT = 16  # 三号
 HEADING_LEVEL_4_SIZE_PT = 14  # 四号
+TOC_TITLE_SIZE_PT = 14  # 四号
 
 
 SKIP_HTML_TAGS = {"script", "style", "meta", "link", "noscript"}
@@ -190,6 +191,60 @@ def set_image_paragraph_format(paragraph) -> None:
     fmt.space_after = Pt(6)
 
 
+def _next_non_empty_paragraph(paragraphs: list[Paragraph], start_index: int) -> Paragraph | None:
+    for paragraph in paragraphs[start_index:]:
+        if paragraph.text.strip():
+            return paragraph
+    return None
+
+
+def _strip_existing_figure_caption_prefix(text: str) -> str:
+    text = sanitize_report_text(text)
+    patterns = [
+        r"^图\s*\d+\s*[：:\.、]?\s*",
+        r"^图\s*[一二三四五六七八九十百]+\s*[：:\.、]?\s*",
+    ]
+    for pattern in patterns:
+        text = re.sub(pattern, "", text)
+    return text.strip()
+
+
+def _format_figure_captions(doc: DocumentObject) -> int:
+    paragraphs = list(doc.paragraphs)
+    caption_count = 0
+    image_indices = [
+        index for index, paragraph in enumerate(paragraphs) if paragraph_has_drawing(paragraph)
+    ]
+
+    for image_index in image_indices:
+        caption = _next_non_empty_paragraph(paragraphs, image_index + 1)
+        if caption is None or paragraph_has_drawing(caption):
+            continue
+        if caption.style and caption.style.name.startswith("Heading"):
+            continue
+
+        caption_count += 1
+        caption_text = _strip_existing_figure_caption_prefix(caption.text)
+        if not caption_text:
+            continue
+
+        _clear_paragraph(caption)
+        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        set_paragraph_format(
+            caption,
+            alignment=WD_ALIGN_PARAGRAPH.CENTER,
+            first_line_indent_chars=0,
+            line_spacing_pt=20,
+            space_before_pt=0,
+            space_after_pt=6,
+        )
+        run = caption.add_run(f"图{caption_count} {caption_text}")
+        set_run_font(run, BODY_FONT, BODY_SIZE_PT)
+        run.italic = True
+
+    return caption_count
+
+
 def normalize_docx_image_paragraphs(docx_path: str | Path) -> dict:
     """Apply safe paragraph formatting to every inline picture in a DOCX."""
     path = Path(docx_path)
@@ -304,7 +359,8 @@ def _add_centered_page_number(section) -> None:
 
 def _is_cover_or_toc_heading(text: str) -> bool:
     normalized = sanitize_report_text(text)
-    return normalized in {"目录"} or normalized.endswith("报告")
+    compact = normalized.replace(" ", "")
+    return compact == "目录" or normalized.endswith("报告")
 
 
 def _heading_prefix(level: int, counters: dict[int, int]) -> str:
@@ -373,13 +429,13 @@ def _first_report_heading(doc: DocumentObject):
     for paragraph in doc.paragraphs:
         level = _heading_level(paragraph)
         text = paragraph.text.strip()
-        if level and text and text != "目录":
+        if level and text and text.replace(" ", "") != "目录":
             return paragraph
     return None
 
 
 def _toc_already_inserted(doc: DocumentObject) -> bool:
-    return any(paragraph.text.strip() == "目录" for paragraph in doc.paragraphs[:8])
+    return any(paragraph.text.strip().replace(" ", "") == "目录" for paragraph in doc.paragraphs[:8])
 
 
 def _insert_toc_page(doc: DocumentObject) -> tuple[bool, Paragraph | None]:
@@ -397,8 +453,8 @@ def _insert_toc_page(doc: DocumentObject) -> tuple[bool, Paragraph | None]:
     toc_title = _insert_paragraph_before(body_start)
     toc_title.style = doc.styles["Title"]
     toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    toc_run = toc_title.add_run("目录")
-    set_run_font(toc_run, HEADING_FONT, BODY_SIZE_PT, bold=True)
+    toc_run = toc_title.add_run("目  录")
+    set_run_font(toc_run, HEADING_FONT, TOC_TITLE_SIZE_PT, bold=True)
 
     toc_field = _insert_paragraph_before(body_start)
     toc_field.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -473,7 +529,7 @@ def _format_cover_page(doc: DocumentObject) -> bool:
                 break
             continue
         style_name = paragraph.style.name if paragraph.style else ""
-        if text == "目录" or style_name.startswith("Heading"):
+        if text.replace(" ", "") == "目录" or style_name.startswith("Heading"):
             break
         cover_paragraphs.append(paragraph)
 
@@ -536,6 +592,7 @@ def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> 
         toc_inserted = False
 
     cover_formatted = _format_cover_page(doc)
+    figure_captions = _format_figure_captions(doc)
 
     heading_numbers = 0
     image_paragraphs = 0
@@ -582,6 +639,7 @@ def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> 
         "toc_inserted": toc_inserted,
         "heading_numbers": heading_numbers,
         "image_paragraphs": image_paragraphs,
+        "figure_captions": figure_captions,
         "sections": len(doc.sections),
         "invalid_date_removed": invalid_date_removed,
         "cover_formatted": cover_formatted,

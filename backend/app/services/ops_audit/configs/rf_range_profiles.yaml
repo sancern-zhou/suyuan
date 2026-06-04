@@ -107,3 +107,346 @@ range_unit_fields:
   - RANGEUNIT
   - UNIT
   - MEASUREUNIT
+
+o3_weekly_check_profiles:
+  RF_W_GASEOUSCHECK_O3:
+    display_name: O3
+    brand_field: DEVICEBRAND
+    pollutant_field: POLLUTANTTYPE
+    pollutant_values: ["O3", "臭氧"]
+    brand_aliases:
+      API: ["API"]
+      FPI: ["FPI", "聚光"]
+      ESA: ["ESA"]
+      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电"]
+      TH: ["TH", "天虹"]
+      DASIBI: ["DASIBI", "大西比"]
+      XH: ["XH", "新先河", "先河环保"]
+      EC: ["EC"]
+    fields:
+      - key: measurement_signal_a
+        label: 测量信号A
+        field: GYCHECKVALUE
+        ranges: &o3_signal_ranges
+          API: {min: 2500, max: 4800, unit: mV}
+          FPI: {min: 1.5, max: 4.096, unit: V}
+          ESA: {min: 500, max: 4800, unit: mV}
+          THERMO: {min: 45000, max: 150000, unit: HZ}
+          TH: {min: 2300, max: 5200, unit: mV}
+          XH: {min: 2000, max: 4900, unit: mV}
+      - key: measurement_signal_b
+        label: 测量信号B
+        field: GYBCHECKVALUE
+        ranges: *o3_signal_ranges
+      - key: reference_signal_a
+        label: 参比信号A
+        field: ZWDCHECKVALUE
+        ranges: *o3_signal_ranges
+      - key: reference_signal_b
+        label: 参比信号B
+        field: ZWDBCHECKVALUE
+        ranges: *o3_signal_ranges
+      - key: sample_pressure
+        label: 压力
+        field: CYYLCHECKVALUE
+        ranges:
+          API: {max: 28, unit: In-Hg-A, operator: "<="}
+          EC: {min: 400, max: 800, unit: TORR}
+          FPI: {min: 7, max: 15, unit: psia}
+          THERMO: {min: 200, max: 1000, unit: mmHg}
+          TH: {min: 50, max: 110, unit: kPa}
+          DASIBI: {min: 90, max: 106, unit: kPa}
+          XH: {min: 50, max: 102, unit: kPa}
+      - key: sample_flow_a
+        label: 采样流量A
+        field: CYLLCHECKVALUE
+        ranges: &o3_flow_ranges
+          API: {min: 720, max: 880, unit: ml/min}
+          EC: {min: 0.25, max: 0.55, unit: LPM}
+          FPI: {min: 720, max: 880, unit: SCCM}
+          THERMO: {min: 0.400, max: 1.400, unit: L/min}
+          TH: {min: 300, max: 1200, unit: ml/min}
+          DASIBI: {min: 1.2, max: 1.7, unit: L/min}
+          XH: {min: 720, max: 880, unit: ml/min}
+      - key: sample_flow_b
+        label: 采样流量B
+        field: CYLLBCHECKVALUE
+        ranges: *o3_flow_ranges
+      - key: sample_temperature
+        label: 样品温度
+        field: FYCHECKVALUE
+        ranges:
+          API: {min: 10, max: 50, unit: ℃}
+          THERMO: {min: 15, max: 45, unit: ℃}
+          TH: {min: 30, max: 70, unit: ℃}
+          DASIBI: {min: 20, max: 43, unit: ℃}
+          XH: {min: 0, max: 55, unit: ℃}
+      - key: slope
+        label: 斜率
+        field: YLCHECKVALUE
+        ranges:
+          API: {min: -0.5, max: 2.5}
+          FPI: {min: 0.85, max: 1.15}
+          THERMO: {min: 0.500, max: 2.000}
+          TH: {min: 0.5, max: 2}
+          XH: {min: 0.5, max: 1.5}
+      - key: offset
+        label: 截距
+        field: JGCHECKVALUE
+        ranges:
+          API: {min: -5, max: 5, unit: ppb}
+          FPI: {min: -20, max: 50, unit: ppb}
+          THERMO: {min: -26.5, operator: ">"}
+          TH: {min: -50, max: 50}
+          XH: {min: -5, max: 5, unit: mV}
+
+nox_weekly_check_profiles:
+  RF_W_GASEOUSCHECK_NOX:
+    display_name: NOx
+    brand_field: DEVICEBRAND
+    pollutant_field: POLLUTANTTYPE
+    pollutant_values: ["NOX", "NO", "NO2", "氮氧化物"]
+    brand_aliases:
+      API: ["API"]
+      FPI: ["FPI", "聚光"]
+      ESA: ["ESA"]
+      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电"]
+      TH: ["TH", "天虹"]
+      DASIBI: ["DASIBI", "大西比"]
+      XH: ["XH", "新先河", "先河环保", "先河"]
+      EC: ["EC"]
+    fields:
+      - key: sample_flow
+        label: 采样流量
+        field: CYLLCHECKVALUE
+        ranges:
+          API: {min: 450, max: 550, unit: ml/min}
+          EC: {min: 0.35, max: 0.7, unit: SLPM}
+          FPI: {min: 350, max: 650, unit: sccm}
+          THERMO: {min: 0.350, max: 0.900, unit: L/min}
+          TH: {min: 300, max: 800, unit: ml/min}
+          DASIBI: {min: 0.15, max: 0.5, unit: L/min}
+          XH: {min: 450, max: 550, unit: ml/min}
+      - key: ozone_flow
+        label: 臭氧流量
+        field: CYLLIANGCHECKVALUE
+        ranges:
+          API: {min: 65, max: 95, unit: ml/min}
+          FPI: {min: 72, max: 88, unit: scc}
+          THERMO: {min: 50, operator: ">", unit: mL/min}
+          TH: {min: 30, max: 120, unit: ml/min}
+          XH: {min: 65, max: 95, unit: ml/min}
+          DASIBI: {min: 0.02, max: 0.071, unit: L/min}
+      - key: reference_pmt_signal
+        label: 参考PMT信号
+        field: PMTCHECKVALUE
+        ranges:
+          API: {min: 0, max: 5000, unit: mV}
+          ESA: {min: 0, max: 9999, unit: mV}
+          FPI: {min: 1.5, max: 4.096, unit: V}
+          XH: {min: -100, max: 5000, unit: mV}
+      - key: high_voltage
+        label: 高压电源
+        field: GYCHECKVALUE
+        ranges:
+          API: {min: 450, max: 900, unit: V}
+          EC: {min: 640, max: 700, unit: V}
+          FPI: {min: 450, max: 900, unit: V}
+          ESA: {min: 500, max: 950, unit: mV}
+          THERMO: {min: -1200, max: 0, unit: V}
+          TH: {min: -1100, max: -500, unit: V}
+          DASIBI: {min: 500, max: 900, unit: V}
+      - key: reaction_temperature
+        label: 反应室温度
+        field: FYCHECKVALUE
+        ranges:
+          API: {min: 49, max: 51, unit: ℃}
+          EC: {min: 47, max: 53, unit: ℃}
+          FPI: {min: 49, max: 51, unit: ℃}
+          ESA: {min: 1350, max: 1450, unit: mV}
+          DASIBI: {min: 42.5, max: 43.5, unit: ℃}
+          THERMO: {min: 48, max: 52, unit: ℃}
+          TH: {min: 45, max: 55, unit: ℃}
+          XH: {min: 49, max: 51, unit: ℃}
+      - key: converter_temperature
+        label: 转化炉温度
+        field: ZHLCHECKVALUE
+        ranges:
+          API: {min: 310, max: 320, unit: ℃}
+          EC: {min: 315, max: 335, unit: ℃}
+          FPI: {min: 305, max: 350, unit: ℃}
+          THERMO: {min: 300, max: 350, unit: ℃}
+          TH: {min: 180, max: 360, unit: ℃}
+          DASIBI: {min: 260, max: 290, unit: ℃}
+          XH: {min: 310, max: 320, unit: ℃}
+      - key: reaction_pressure
+        label: 反应室压力
+        field: FYSHICHECKVALUE
+        ranges:
+          API: {max: 10, operator: "<", unit: In-Hg-A}
+          FPI: {min: 0, max: 15, unit: psia}
+          ESA: {min: 133, max: 433, unit: mV}
+          XH: {min: 13, max: 34, unit: KPa}
+      - key: sample_pressure
+        label: 采样压力
+        field: CYYLCHECKVALUE
+        ranges:
+          API: {min: 25, max: 30, unit: In-Hg-A}
+          EC: {min: 75, max: 375, unit: TORR}
+          FPI: {min: 0, max: 15, unit: psia}
+          ESA: {min: 408, max: 610, unit: mV}
+          THERMO: {min: 150, max: 300, unit: mmHg}
+          TH: {min: 60, max: 110, unit: kPa}
+          DASIBI: {min: 8, max: 40, unit: kPa}
+          XH: {min: 84, max: 102, unit: KPa}
+      - key: nox_slope
+        label: NOx斜率
+        field: NOXYLCHECKVALUE
+        ranges: &nox_slope_ranges
+          API: {min: 0.7, max: 1.3}
+          FPI: {min: 0.85, max: 1.15}
+          THERMO: {min: 0.500, max: 2.000}
+          TH: {min: 0.5, max: 2}
+          XH: {min: 0.7, max: 1.3}
+      - key: nox_offset
+        label: NOx截距
+        field: NOXJGCHECKVALUE
+        ranges:
+          API: {min: -10, max: 150, unit: mV}
+          FPI: {min: -20, max: 50, unit: ppb}
+          THERMO: {min: 0, operator: ">"}
+          TH: {min: -50, max: 50, unit: ppb}
+          XH: {min: -100, max: 100, unit: mV}
+      - key: no_slope
+        label: NO斜率
+        field: NOYLCHECKVALUE
+        ranges: *nox_slope_ranges
+      - key: no_offset
+        label: NO截距
+        field: NOJGCHECKVALUE
+        ranges:
+          API: {min: -50, max: 150, unit: mV}
+          FPI: {min: -20, max: 50, unit: ppb}
+          THERMO: {min: 0, operator: ">"}
+          TH: {min: -50, max: 50, unit: ppb}
+          XH: {min: -160, operator: ">=", unit: mV}
+
+so2_weekly_check_profiles:
+  RF_W_GASEOUSCHECK_SO2:
+    display_name: SO2
+    brand_field: DEVICEBRAND
+    pollutant_field: POLLUTANTTYPE
+    pollutant_values: ["SO2", "二氧化硫"]
+    brand_aliases:
+      API: ["API"]
+      FPI: ["FPI", "聚光"]
+      ESA: ["ESA"]
+      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电"]
+      TH: ["TH", "天虹"]
+      DASIBI: ["DASIBI", "大西比"]
+      XH: ["XH", "新先河", "先河环保", "先河"]
+      EC: ["EC"]
+    fields:
+      - key: sample_pressure
+        label: 采样压力
+        field: CYYLCHECKVALUE
+        ranges:
+          API: {min: 25, max: 30, unit: In-Hg-A}
+          FPI: {min: 7, max: 15, unit: PSIA}
+          THERMO: {min: 400, max: 1000, unit: mmHg}
+          TH: {min: 50, max: 105, unit: kPa}
+          DASIBI: {min: 13, max: 79, unit: kPa}
+          EC: {min: 400, max: 800, unit: TORR}
+          XH: {min: 50, max: 102, unit: kPa}
+      - key: sample_flow
+        label: 室采样流量
+        field: CYLLCHECKVALUE
+        ranges:
+          API: {min: 585, max: 715, unit: ml/min}
+          TH: {min: 300, max: 800, unit: ml/min}
+          DASIBI: {min: 0.5, max: 0.8, unit: L/min}
+          FPI: {min: 580, max: 720, unit: sccm}
+          THERMO: {min: 0.350, max: 0.750, unit: L/min}
+          EC: {min: 0.4, max: 0.8, unit: SLPM}
+          XH: {min: 585, max: 715, unit: ml/min}
+      - key: reference_pmt_signal
+        label: 参考PMT信号
+        field: PMTCHECKVALUE
+        ranges:
+          API: {min: 0, max: 5000, unit: mV}
+          FPI: {min: 1.5, max: 4.096, unit: V}
+          EC: {min: 11.6, max: 12.2, unit: V}
+          XH: {min: 0, max: 5000, unit: mV}
+          DASIBI: {min: 0, max: 200, unit: mV}
+      - key: uv_lamp_intensity
+        label: 紫外灯光强
+        field: ZWDCHECKVALUE
+        ranges:
+          API: {min: 700, max: 4000, unit: mV}
+          FPI: {min: 1.5, max: 4.096, unit: V}
+          THERMO: {min: 40, max: 100, unit: "%"}
+          TH: {min: 300, max: 5000, unit: mV}
+          DASIBI: {min: 3.5, max: 9.0, unit: V}
+          EC: {min: 1.50, max: 3.50, unit: V}
+          ESA: {min: 2.0, max: 9.0, unit: V}
+      - key: slope
+        label: 斜率
+        field: YLCHECKVALUE
+        ranges:
+          API: {min: 0.7, max: 1.3}
+          FPI: {min: 0.85, max: 1.15}
+          THERMO: {min: 0.500, max: 2.000}
+          TH: {min: 0.4, max: 2}
+          XH: {min: 0.1, max: 0.3}
+      - key: offset
+        label: 截距
+        field: JGCHECKVALUE
+        ranges:
+          API: {max: 250, operator: "<", unit: mV}
+          FPI: {min: -20, max: 50, unit: ppb}
+          THERMO: {min: 0, operator: ">"}
+          TH: {min: -50, max: 50, unit: ppb}
+          XH: {max: 250, operator: "<", unit: mV}
+      - key: high_voltage
+        label: 高压电源
+        field: GYCHECKVALUE
+        ranges:
+          API: {min: 400, max: 900, unit: V}
+          FPI: {min: 400, max: 900, unit: V}
+          THERMO: {min: -1200, max: -500, unit: V}
+          EC: {min: 630, max: 730, unit: V}
+          TH: {min: -1100, max: -500, unit: V}
+          DASIBI: {min: 600, max: 900}
+          XH: {min: 450, max: 900, unit: V}
+      - key: reaction_temperature
+        label: 反应室温度
+        field: FYCHECKVALUE
+        ranges:
+          API: {min: 49, max: 51, unit: ℃}
+          FPI: {min: 45, max: 55, unit: ℃}
+          TH: {min: 45, max: 55, unit: ℃}
+          THERMO: {min: 43, max: 47, unit: ℃}
+          DASIBI: {min: 32, max: 45, unit: ℃}
+          EC: {min: 47, max: 53, unit: ℃}
+          XH: {min: 49, max: 51, unit: ℃}
+
+pm_weekly_check_profiles:
+  RF_W_PMCHECK:
+    display_name: PM周检
+    brand_field: DEVICEBRAND
+    pollutant_field: POLLUTANTTYPE
+    pollutant_values: ["PM10", "PM2.5", "PM25"]
+    brand_aliases:
+      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电", "赛默飞世尔"]
+    fields:
+      - key: main_flow
+        label: 流量(Main Flow)
+        field: MAINFLOWVALUE
+        semantic_required_when_blank: true
+        ranges:
+          THERMO: {min: 15.87, max: 17.54, unit: L/min}
+      - key: air_temperature
+        label: 采样管温度(Air.Temp)
+        field: AIRTEMPVALUE
+        ranges:
+          THERMO: {max: 50, operator: "<=", unit: ℃}

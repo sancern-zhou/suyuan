@@ -154,25 +154,23 @@ class ObservationProcessor:
                 inner.get("file_path") or inner.get("path")
             )
 
-            if pdf_preview or markdown_preview:
-                yield self.events.office_document({
+            if pdf_preview or markdown_preview or html_preview:
+                document = {
                     "file_path": file_path,
+                    "file_type": inner.get("file_type")
+                    or result_data.get("file_type")
+                    or (html_preview or {}).get("file_type"),
                     "generator": generator,
                     "summary": result_data.get("summary", ""),
                     "timestamp": datetime.now().isoformat(),
                     **({"pdf_preview": pdf_preview} if pdf_preview else {}),
                     **({"markdown_preview": markdown_preview} if markdown_preview else {}),
-                })
-
-            if html_preview:
-                yield self.events.html_document({
-                    "file_path": file_path,
-                    "file_type": inner.get("file_type") or result_data.get("file_type") or html_preview.get("file_type", "html"),
-                    "generator": generator,
-                    "summary": result_data.get("summary", ""),
-                    "timestamp": datetime.now().isoformat(),
-                    "html_preview": html_preview,
-                })
+                    **({"html_preview": html_preview} if html_preview else {}),
+                }
+                if html_preview and not (pdf_preview or markdown_preview):
+                    yield self.events.html_document(document)
+                else:
+                    yield self.events.office_document(document)
 
     def _iter_result_payloads(self, observation: Dict[str, Any]):
         """迭代结果载荷"""

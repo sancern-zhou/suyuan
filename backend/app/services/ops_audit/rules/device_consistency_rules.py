@@ -58,48 +58,57 @@ def check_device_identity_consistency(
 
     comparisons_by_field: dict[str, list[dict[str, Any]]] = defaultdict(list)
     current_code = current_order.get("WORKINGORDERCODE")
-    current_create = _parse_time(current_order.get("CREATETIME"))
-
-    for other_order in all_orders:
-        other_code = other_order.get("WORKINGORDERCODE")
-        if not other_code or other_code == current_code or not _is_rule_applicable(other_order):
+    for current_table, current_form in current_forms:
+        if current_form.get("_query_error"):
+            continue
+        previous = _previous_same_table_station_record(
+            current_order,
+            current_table,
+            current_form,
+            all_orders,
+            forms_by_code,
+        )
+        if previous is None:
             continue
 
-        other_forms = forms_by_code.get(str(other_code), [])
+        other_order, other_table, other_form, table_station_key = previous
+        other_forms = forms_by_code.get(str(other_order.get("WORKINGORDERCODE")), [])
         if _has_replacement_evidence(other_forms):
             continue
 
-        other_identity = _build_identity(
-            other_order,
-            other_forms,
+        current_form_identity = _build_identity(
+            current_order,
+            [(current_table, current_form)],
             devices_by_id,
             devices_by_code,
         )
-        shared_match_keys = sorted(match_keys & set(other_identity.get("match_keys", [])))
-        if not shared_match_keys:
-            continue
-
-        other_create = _parse_time(other_order.get("CREATETIME"))
-        if current_create and other_create:
-            history_days = int(DEVICE_PROFILE.get("history_days", 90))
-            if other_create >= current_create or (current_create - other_create).days > history_days:
-                continue
+        other_identity = _build_identity(
+            other_order,
+            [(other_table, other_form)],
+            devices_by_id,
+            devices_by_code,
+        )
+        shared_match_keys = [table_station_key]
+        shared_device_keys = sorted(match_keys & set(other_identity.get("match_keys", [])))
+        shared_match_keys.extend(key for key in shared_device_keys if key not in shared_match_keys)
 
         for field_config in DEVICE_PROFILE.get("identity_fields", []):
             field_key = str(field_config.get("key") or "")
-            current_value = current_identity["normalized"].get(field_key)
+            current_value = current_form_identity["normalized"].get(field_key)
             other_value = other_identity["normalized"].get(field_key)
             if not current_value or not other_value or current_value == other_value:
                 continue
             comparisons_by_field[field_key].append(
                 {
-                    "compare_order_code": other_code,
+                    "current_table": current_table,
+                    "compare_order_code": other_order.get("WORKINGORDERCODE"),
                     "compare_create_time": other_order.get("CREATETIME"),
                     "compare_maintenance_type": other_order.get("MAINTENANCETYPE"),
+                    "compare_table": other_table,
                     "shared_match_keys": shared_match_keys,
-                    "current_raw": current_identity["raw"].get(field_key),
+                    "current_raw": current_form_identity["raw"].get(field_key),
                     "compare_raw": other_identity["raw"].get(field_key),
-                    "current_source": current_identity["sources"].get(field_key),
+                    "current_source": current_form_identity["sources"].get(field_key),
                     "compare_source": other_identity["sources"].get(field_key),
                 }
             )
@@ -114,10 +123,20 @@ def check_device_identity_consistency(
         label = str(field_config.get("label") or field_key)
         severity = str(field_config.get("severity") or "中")
         sample_comparisons = comparisons[:5]
+        current_tables = sorted(
+            {
+                str(comparison.get("current_table") or "").strip()
+                for comparison in sample_comparisons
+                if str(comparison.get("current_table") or "").strip()
+            }
+        )
         evidence = {
             "current_order_code": current_code,
             "current_create_time": current_order.get("CREATETIME"),
             "current_maintenance_type": current_order.get("MAINTENANCETYPE"),
+            "rf_table": current_tables[0] if len(current_tables) == 1 else None,
+            "current_table": current_tables[0] if len(current_tables) == 1 else None,
+            "current_tables": current_tables,
             "device_match_keys": sorted(match_keys),
             "field": field_key,
             "current_value": current_identity["raw"].get(field_key),
@@ -130,7 +149,7 @@ def check_device_identity_consistency(
             "跨工单一致性",
             severity,
             f"device_identity.{field_key}",
-            f"同设备跨工单{label}不一致",
+            f"跨工单{label}疑似不一致，需核查是否存在设备更换、维修或台账变更",
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
 
@@ -206,6 +225,71 @@ def _copy_history_index(
     return list(all_orders), defaultdict(list, {code: list(forms) for code, forms in forms_by_code.items()})
 
 
+def _previous_same_table_station_record(
+    current_order: dict[str, Any],
+    current_table: str,
+    current_form: dict[str, Any],
+    all_orders: list[dict[str, Any]],
+    forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> tuple[dict[str, Any], str, dict[str, Any], str] | None:
+    station_id = _form_station(current_order, current_form)
+    if not station_id:
+        return None
+
+    current_time = _form_reference_time(current_order, current_form)
+    current_code = str(current_order.get("WORKINGORDERCODE") or "")
+    history_days = int(DEVICE_PROFILE.get("history_days", 90))
+    table_station_key = f"table_station|{current_table}|{station_id}"
+    previous: tuple[datetime, dict[str, Any], str, dict[str, Any]] | None = None
+
+    for other_order in all_orders:
+        other_code = str(other_order.get("WORKINGORDERCODE") or "")
+        if not other_code or other_code == current_code or not _is_rule_applicable(other_order):
+            continue
+        for other_table, other_form in forms_by_code.get(other_code, []):
+            if other_table != current_table or other_form.get("_query_error"):
+                continue
+            if _form_station(other_order, other_form) != station_id:
+                continue
+            other_time = _form_reference_time(other_order, other_form)
+            if current_time and other_time:
+                if other_time >= current_time or (current_time - other_time).days > history_days:
+                    continue
+            elif current_time or other_time:
+                continue
+            candidate_time = other_time or datetime.min
+            if previous is None or candidate_time > previous[0]:
+                previous = (candidate_time, other_order, other_table, other_form)
+
+    if previous is None:
+        return None
+    _, other_order, other_table, other_form = previous
+    return other_order, other_table, other_form, table_station_key
+
+
+def _form_station(order: dict[str, Any], form: dict[str, Any]) -> str:
+    return _normalize_text(form.get("STATIONID") or order.get("STATIONID"))
+
+
+def _form_reference_time(order: dict[str, Any], form: dict[str, Any]) -> datetime | None:
+    for field in (
+        "CHECKTIME",
+        "CHECKDATETIME",
+        "CHECKDATE",
+        "CALIBRATIONDATE",
+        "CREATEDATE",
+        "STARTTIME",
+        "StartTime",
+        "SdtTime",
+        "CheckSdt",
+    ):
+        value = form.get(field)
+        parsed = _parse_time(value)
+        if parsed:
+            return parsed
+    return _parse_time(order.get("CREATETIME"))
+
+
 def _is_rule_applicable(order: dict[str, Any]) -> bool:
     enabled_order_types = {str(item) for item in DEVICE_PROFILE.get("enabled_order_types", [])}
     if enabled_order_types and str(order.get("DDWORKINGORDERTYPE") or "") not in enabled_order_types:
@@ -245,6 +329,7 @@ def _build_identity(
         "brand": _normalize_brand(raw.get("brand"), raw.get("model")),
         "model": _normalize_text(raw.get("model")),
         "device_code": _normalize_text(raw.get("device_code")),
+        "range": _normalize_text(raw.get("range")),
     }
 
     station_id = _normalize_text(order.get("STATIONID"))

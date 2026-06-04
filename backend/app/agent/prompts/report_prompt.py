@@ -133,7 +133,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词只保留报告生成的业务流程约束。\n",
         "\n",
-        "**关键约束**：读取DOCX参考文档使用 `read_file`；用户明确要求编辑既有 Word 时使用 `edit_word_document`；计算、制图、表格整理可使用 `execute_python`；正式报告最终交付必须使用 `create_report_package` 收口；没有可复用计划模板时必须先调用 `complex_query_planner`（query_description=用户查询原文，mode='report'）。\n",
+        "**关键约束**：读取DOCX参考文档使用 `read_file`；用户明确要求编辑既有 Word 时使用 `edit_word_document`；正式报告静态数据图表优先使用 `create_report_chart`，计算和表格整理可使用 `execute_python`；正式报告最终交付必须使用 `create_report_package` 收口；没有可复用计划模板时必须先调用 `complex_query_planner`（query_description=用户查询原文，mode='report'）。\n",
         "\n",
         "**⚠️ 默认城市范围**：如果用户没有指定城市，则默认查询广东省21个地级市（广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆、汕头、韶关、湛江、茂名、梅州、汕尾、河源、阳江、清远、潮州、揭阳、云浮）。\n",
         "\n",
@@ -143,7 +143,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "**⚠️ 并发查询**：不同城市、不同时间段、不同类型的数据应并发查询，提高效率。\n",
         "\n",
-        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。生成报告包时，优先把 `execute_python` 返回的真实图片文件路径传给 `create_report_package.assets`，并用 `name` 指定稳定文件名；不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
+        "**⚠️ 正式报告交付注意事项**：默认不要使用 `python-docx` 直接生成正式报告；只有用户明确要求只要 Word 且不需要 HTML/qmd 同源时才可使用。正式报告的 qmd 图片最终必须使用报告包内相对路径（如 `assets/charts/chart_01.png`），不要使用 `/api/image/...`。生成报告包时，优先把 `create_report_chart` 返回的真实图片文件路径传给 `create_report_package.assets`，并用 `name` 指定稳定文件名；仅在 `create_report_chart` 无法覆盖时才使用 `execute_python` 生成图片资源。不要根据 `/api/image/{image_id}`、`image_id` 或缓存 id 自行推断 `assets/charts/{image_id}.png`。\n",
         "\n",
         "**HTML展示页例外**：如果用户明确要的是展示页、数据大屏、交互网页或可视化叙事，而不是正式报告，正式使用 `create_html_artifact`；该工具接收完整 HTML 和资源路径，保存展示页 `index.html`，并返回右侧面板可识别的 `html_preview`。交付时只说明右侧面板可预览、下载 HTML、分享链接，不提供 Word/QMD 同源导出承诺。\n",
         "\n",
@@ -206,7 +206,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "- ⚠️ **避免生成超长代码**：如果代码超过500字符，JSON可能被截断，建议拆分为多个步骤\n",
         "- ⚠️ **Python无状态**：每次 `execute_python` 都是独立环境，不保留上次脚本变量、函数或 DataFrame\n",
         "- ⚠️ **显式保存中间结果**：后续还要复用的核验表、映射表、DataFrame 必须调用 `save_data(...)` 保存为 `data_id`，后续脚本用 `get_raw_data(data_id)` 读取\n",
-        "- ⚠️ **不要用 execute_python 直接交付正式报告**：它只用于计算、制图和整理资源；正式报告使用 `create_report_package`\n",
+        "- ⚠️ **不要用 execute_python 直接交付正式报告**：正式报告静态图表优先使用 `create_report_chart`，execute_python 主要用于计算和整理资源；正式报告使用 `create_report_package`\n",
         "- ⚠️ **打印中间资源路径**：如生成图表/表格资源，代码中添加 print 语句输出路径，便于传给 `create_report_package`\n",
     ])
 
