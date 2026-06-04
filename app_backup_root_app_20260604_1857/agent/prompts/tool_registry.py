@@ -16,6 +16,7 @@ ASSISTANT_TOOLS = {
     "edit_file": "精确编辑文件内容（字符串替换）",
     "grep": "搜索文件内容（正则表达式，支持上下文行、文件过滤）",
     "write_file": "写入文件内容",
+    "present_artifact": "将已生成文件推送到右侧预览面板并提供下载",
     "list_directory": "列出目录内容",
     "search_files": "搜索文件（支持glob模式）",
 
@@ -26,10 +27,6 @@ ASSISTANT_TOOLS = {
     "find_replace_word": "Word文档查找替换 [需详细参数]",
     "recalc_excel": "Excel公式重算 [需详细参数]",
     "add_ppt_slide": "PPT添加幻灯片 [需详细参数]",
-    "word_processor": "处理Word文档（读取、编辑、生成）",
-    "excel_processor": "处理Excel表格（读取、计算、生成图表）",
-    "ppt_processor": "处理PPT演示文稿",
-
     # 任务管理
     "create_scheduled_task": "创建定时任务 [需详细参数]",
 
@@ -78,6 +75,7 @@ EXPERT_TOOLS = {
     "smart_chart_generator": "智能图表生成（自动选择最佳图表类型，需要data_id参数）",
     "revise_chart": "修订已生成图表（需要原图表的chart_id）",
     "generate_map": "生成地图可视化（需先调用get_nearby_stations或query_station_info获取站点坐标）",
+    "present_artifact": "将已生成文件推送到右侧预览面板并提供下载",
 
     # 任务管理
     "create_task": "创建任务到任务清单",
@@ -134,9 +132,8 @@ DELIBERATION_REVIEWER_TOOLS = {
 
 # ===== 工具排序（影响展示顺序） =====
 ASSISTANT_TOOL_ORDER = [
-    "bash", "read_file", "edit_file", "grep", "write_file", "list_directory", "search_files",
+    "bash", "read_file", "edit_file", "grep", "write_file", "present_artifact", "list_directory", "search_files",
     "unpack_office", "pack_office", "accept_word_changes", "find_replace_word", "recalc_excel", "add_ppt_slide",
-    "word_processor", "excel_processor", "ppt_processor",
     "create_scheduled_task", "analyze_image",
     "browser",  # 浏览器自动化工具
     "call_sub_agent",  # 调用专家Agent
@@ -156,7 +153,7 @@ EXPERT_TOOL_ORDER = [
     "calculate_iaqi", "predict_air_quality",
 
     # 可视化
-    "generate_chart", "smart_chart_generator", "revise_chart", "generate_map",
+    "generate_chart", "smart_chart_generator", "revise_chart", "generate_map", "present_artifact",
 
     # 任务管理
     "create_task", "update_task", "list_tasks", "get_task",

@@ -18,10 +18,6 @@ Office Automation Tools
 - ExcelRecalcTool: Excel 公式重算
 - AddSlideTool: PPT 幻灯片添加
 - soffice: LibreOffice 沙箱适配（跨平台）
-
-旧版工具（Win32 COM，待废弃）：
-- WordWin32Tool, ExcelWin32Tool, PPTWin32Tool
-- WordWin32LLMTool, ExcelWin32LLMTool, PPTWin32LLMTool
 """
 
 # Phase 1: 跨平台工具（已完成）
@@ -38,14 +34,6 @@ from .excel_recalc_tool import ExcelRecalcTool
 # Phase 4: PPT 幻灯片操作（已完成）
 from .add_slide_tool import AddSlideTool
 
-# 旧版 Win32 工具（待废弃）
-from .word_win32_tool import WordWin32Tool
-from .excel_win32_tool import ExcelWin32Tool
-from .ppt_win32_tool import PPTWin32Tool
-from .word_tool import WordWin32LLMTool
-from .excel_tool import ExcelWin32LLMTool
-from .ppt_tool import PPTWin32LLMTool
-
 __all__ = [
     # Phase 1: 跨平台工具
     'UnpackOfficeTool',
@@ -60,12 +48,4 @@ __all__ = [
 
     # Phase 4: PPT 幻灯片操作
     'AddSlideTool',
-
-    # 旧版 Win32 工具
-    'WordWin32Tool',
-    'ExcelWin32Tool',
-    'PPTWin32Tool',
-    'WordWin32LLMTool',
-    'ExcelWin32LLMTool',
-    'PPTWin32LLMTool',
 ]
