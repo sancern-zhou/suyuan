@@ -74,7 +74,7 @@ def convert_openai_to_anthropic_schema(tool_schema: Dict[str, Any]) -> Dict[str,
         "input_schema": tool_schema.get("parameters", {"type": "object", "properties": {}}),
     }
 
-async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any]:
+async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
     """
     通用LLM工具调用适配器（符合UDF v1.0规范）
 
@@ -92,6 +92,14 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
             "summary": str
         }
     """
+    if len(args) > 1:
+        raise TypeError(f"call_llm_tool expected at most 1 positional context argument, got {len(args)}")
+
+    context = args[0] if args else None
+    runtime_context = kwargs.pop("__execution_context", None)
+    if runtime_context is not None:
+        context = runtime_context
+
     start_time = datetime.now()
     try:
         # 从单一注册源获取工具
@@ -135,6 +143,12 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
                 "summary": f"❌ {error_msg}"
             }
 
+        tool_data = global_tool_registry.get_tool_data(tool_name)
+        requires_context = tool_data.get("requires_context", False) if tool_data else False
+
+        if context is None and requires_context and "context" in kwargs:
+            context = kwargs.pop("context")
+
         # 执行工具（传递context，如果工具需要的话）
         # 【修复】对于需要data_context_manager的工具，正确处理已注入的data_context_manager
         # 注意：expert_executor通过位置参数传递execution_context，需要在这里正确处理
@@ -170,7 +184,6 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
 
         # 注入依赖（基于工具属性动态判断）
         if data_context_manager is not None:
-            tool_data = global_tool_registry.get_tool_data(tool_name)
             requires_context = tool_data.get("requires_context", False) if tool_data else False
 
             # ✅ 只为数据分析工具注入 data_context_manager
@@ -191,9 +204,6 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
 
         # 执行工具
         # 根据 requires_context 标志决定是否传递 ExecutionContext
-        tool_data = global_tool_registry.get_tool_data(tool_name)
-        requires_context = tool_data.get("requires_context", False) if tool_data else False
-
         if execution_context is not None and requires_context:
             # 数据分析工具：需要 ExecutionContext
             # execute(self, context, ...)
@@ -335,6 +345,8 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         # 如果工具没有返回 success 字段，通过 status 推断
         if "success" in result:
             success = result["success"]
+            if success is False and status == "success":
+                status = "failed"
         else:
             # 如果有 error 字段，标记为失败
             if "error" in result:
@@ -382,6 +394,10 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "metadata": metadata,
             "summary": summary
         }
+
+        for key in ("error", "error_code", "required_action", "current_refs", "diagnostics"):
+            if key in result:
+                standard_result[key] = result[key]
 
         # 【修复】保留 data_id 到顶层（供 parameter_binder 使用）
         if data_id:
@@ -634,8 +650,8 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     for tool_name in global_tools:
         # 为每个工具创建一个闭包，避免延迟绑定问题
         def make_tool_wrapper(name: str):
-            async def tool_wrapper(context=None, **kwargs):
-                return await call_llm_tool(name, context=context, **kwargs)
+            async def tool_wrapper(**kwargs):
+                return await call_llm_tool(name, **kwargs)
             tool_wrapper.__name__ = name
             # 从注册表获取工具描述
             tool_data = global_tool_registry.get_tool_data(name)
@@ -650,8 +666,9 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     # 2. 天气观测工具（特殊的独立工具）
     # ========================================
     # 包装 get_observed_weather 以支持 context 参数
-    async def get_observed_weather_wrapper(context=None, **kwargs):
+    async def get_observed_weather_wrapper(**kwargs):
         """包装器：支持context参数但不使用它"""
+        kwargs.pop("__execution_context", None)
         return await get_observed_weather(**kwargs)
 
     get_observed_weather_wrapper.__name__ = "get_observed_weather"
@@ -674,6 +691,10 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
         Returns:
             包含采样后数据的字典
         """
+        runtime_context = kwargs.pop("__execution_context", None)
+        if runtime_context is not None:
+            context = runtime_context
+
         if not context:
             return {
                 "status": "failed",

@@ -49,6 +49,7 @@ class FileHandler:
         self,
         page: Page,
         selector: Optional[str] = None,
+        click_context=None,
         timeout: int = 30000
     ) -> Dict:
         """Wait for file download to complete
@@ -65,10 +66,12 @@ class FileHandler:
                 "size_kb": float
             }
         """
+        click_context = click_context or page
+
         try:
             with page.expect_download(timeout=timeout) as download_info:
                 if selector:
-                    page.click(selector)
+                    click_context.locator(selector).click(timeout=timeout)
                     logger.info("[FILE_HANDLER] Clicked download button", selector=selector)
 
             download = download_info.value
@@ -97,7 +100,8 @@ class FileHandler:
         self,
         page: Page,
         selector: str,
-        file_path: str
+        file_path: str,
+        context=None
     ) -> Dict:
         """Upload file
 
@@ -116,9 +120,11 @@ class FileHandler:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
+        context = context or page
+
         try:
             # Set file input
-            file_input = page.locator(selector)
+            file_input = context.locator(selector)
             file_input.set_input_files(file_path)
 
             filename = os.path.basename(file_path)

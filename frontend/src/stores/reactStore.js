@@ -48,6 +48,70 @@ const getContentPreview = (content, maxLength = 100) => {
   return text.substring(0, maxLength)
 }
 
+const isPresentedImageArtifact = (payload = {}, metadata = {}) => {
+  const generator = payload.generator || metadata.generator || metadata.tool_name
+  const fileType = payload.file_type || payload.html_preview?.file_type
+  return generator === 'present_artifact' && fileType === 'image'
+}
+
+const getFilenameFromPath = (filePath = '') => {
+  if (!filePath || typeof filePath !== 'string') return ''
+  return filePath.split('/').pop() || filePath
+}
+
+const buildPresentedImageVisual = (payload = {}, metadata = {}) => {
+  if (!isPresentedImageArtifact(payload, metadata)) return null
+  const imageUrl = payload.html_preview?.html_url || payload.html_url
+  if (!imageUrl) return null
+
+  const filePath = payload.file_path || payload.path || ''
+  const fileName = payload.file_name || getFilenameFromPath(filePath) || '图片'
+  const stableId = payload.html_preview?.html_id || filePath || imageUrl
+
+  return {
+    id: `present_artifact_image_${String(stableId).replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+    type: 'image',
+    title: fileName,
+    image_url: imageUrl,
+    data: { url: imageUrl },
+    meta: {
+      generator: 'present_artifact',
+      file_path: filePath,
+      file_type: 'image',
+      schema_version: 'present_artifact.v1'
+    }
+  }
+}
+
+const ensurePresentedImageVisual = (result = {}) => {
+  const payload = result.data || {}
+  const visual = buildPresentedImageVisual(payload, result.metadata || {})
+  if (!visual) return false
+  if (!Array.isArray(result.visuals)) {
+    result.visuals = []
+  }
+  const exists = result.visuals.some(item => item?.id === visual.id)
+  if (!exists) {
+    result.visuals.push(visual)
+  }
+  return true
+}
+
+const hasVisualizationRecord = (targetState, visualId) => {
+  return !!visualId && Array.isArray(targetState?.visualizationHistory) &&
+    targetState.visualizationHistory.some(item => item?.id === visualId)
+}
+
+const getOfficeDocumentIdentity = (doc = {}) => {
+  return doc.file_path ||
+    doc.path ||
+    doc.pdf_preview?.pdf_id ||
+    doc.html_preview?.html_id ||
+    doc.html_preview?.html_url ||
+    doc.markdown_preview?.content ||
+    ''
+}
+
 // 辅助函数：创建空的模式状态
 const createEmptyModeState = () => ({
   // 基础状态
@@ -77,6 +141,7 @@ const createEmptyModeState = () => ({
 
   // Office文档预览状态
   lastOfficeDocument: null,
+  officeDocumentHistory: [],
 
   // 结果
   finalAnswer: '',
@@ -224,6 +289,10 @@ export const useReactStore = defineStore('react', {
     // ✅ 向后兼容：lastOfficeDocument
     lastOfficeDocument() {
       return this.currentState?.lastOfficeDocument || null
+    },
+
+    officeDocumentHistory() {
+      return this.currentState?.officeDocumentHistory || []
     },
 
     // ✅ 向后兼容：groupedVisualizations
@@ -467,6 +536,7 @@ export const useReactStore = defineStore('react', {
         lastExpertResults: modeState.lastExpertResults,
         selectedExperts: modeState.selectedExperts,
         lastOfficeDocument: modeState.lastOfficeDocument,
+        officeDocumentHistory: modeState.officeDocumentHistory,
         finalAnswer: modeState.finalAnswer,
         finalAnswers: modeState.finalAnswers,
         hasResults: modeState.hasResults,
@@ -668,8 +738,44 @@ export const useReactStore = defineStore('react', {
      */
     setLastOfficeDocument(doc) {
       if (!doc) return
-      this.currentState.lastOfficeDocument = doc
+      this.recordOfficeDocument(doc, this.currentState)
       console.log(`[setLastOfficeDocument] Set office document for mode ${this.currentMode}`)
+    },
+
+    setOfficeDocumentHistory(documents) {
+      if (!Array.isArray(documents)) {
+        console.warn('[setOfficeDocumentHistory] Invalid documents:', documents)
+        return
+      }
+      this.currentState.officeDocumentHistory = []
+      documents.forEach(doc => this.recordOfficeDocument(doc, this.currentState))
+      console.log(`[setOfficeDocumentHistory] Set ${documents.length} office documents for mode ${this.currentMode}`)
+    },
+
+    recordOfficeDocument(doc, targetState = this.currentState) {
+      if (!doc || !targetState) return
+      const normalizedDoc = {
+        ...doc,
+        file_path: doc.file_path || doc.path || doc.pdf_preview?.pdf_path,
+        file_type: doc.file_type || doc.html_preview?.file_type,
+        timestamp: doc.timestamp || new Date().toISOString()
+      }
+      const identity = getOfficeDocumentIdentity(normalizedDoc)
+      targetState.lastOfficeDocument = normalizedDoc
+      if (!Array.isArray(targetState.officeDocumentHistory)) {
+        targetState.officeDocumentHistory = []
+      }
+      const existingIndex = targetState.officeDocumentHistory.findIndex(item =>
+        getOfficeDocumentIdentity(item) === identity
+      )
+      if (existingIndex >= 0) {
+        targetState.officeDocumentHistory.splice(existingIndex, 1, {
+          ...targetState.officeDocumentHistory[existingIndex],
+          ...normalizedDoc
+        })
+      } else {
+        targetState.officeDocumentHistory.push(normalizedDoc)
+      }
     },
 
     /**
@@ -1211,6 +1317,7 @@ export const useReactStore = defineStore('react', {
           const resultToolUseId = toolResultData.tool_use_id
           const result = toolResultData.result || {}
           const isError = toolResultData.is_error || false
+          const isPresentedImage = ensurePresentedImageVisual(result)
 
           // 格式化工具结果信息
           let toolResultContent = isError ? 'Tool Error' : 'Tool Result'
@@ -1233,9 +1340,18 @@ export const useReactStore = defineStore('react', {
             timestamp: toolResultData.timestamp
           })
 
+          if (isPresentedImage && Array.isArray(result.visuals)) {
+            result.visuals.forEach(visual => {
+              if (!hasVisualizationRecord(targetState, visual?.id)) {
+                this.recordVisualization(visual, targetState)
+              }
+            })
+            targetState.hasResults = true
+          }
+
           const resultData = result?.data || {}
-          if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview) {
-            targetState.lastOfficeDocument = {
+          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview)) {
+            this.recordOfficeDocument({
               pdf_preview: resultData.pdf_preview,
               markdown_preview: resultData.markdown_preview,
               html_preview: resultData.html_preview,
@@ -1244,7 +1360,7 @@ export const useReactStore = defineStore('react', {
               generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
               summary: result.summary,
               timestamp: toolResultData.timestamp
-            }
+            }, targetState)
           }
           break
         }
@@ -1252,7 +1368,16 @@ export const useReactStore = defineStore('react', {
         case 'office_document': {
           // Office文档PDF预览事件（用于驱动文档预览面板）
           // 【修复】使用targetState而不是currentState
-          targetState.lastOfficeDocument = {
+          const imageVisual = buildPresentedImageVisual(data || {}, { generator: data?.generator })
+          if (imageVisual) {
+            if (!hasVisualizationRecord(targetState, imageVisual.id)) {
+              this.recordVisualization(imageVisual, targetState)
+            }
+            targetState.hasResults = true
+            break
+          }
+
+          this.recordOfficeDocument({
             pdf_preview: data?.pdf_preview,
             markdown_preview: data?.markdown_preview,
             html_preview: data?.html_preview,
@@ -1261,7 +1386,7 @@ export const useReactStore = defineStore('react', {
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
-          }
+          }, targetState)
           console.log('[reactStore] office_document事件:', {
             generator: data?.generator,
             pdf_id: data?.pdf_preview?.pdf_id,
@@ -1274,7 +1399,16 @@ export const useReactStore = defineStore('react', {
 
         case 'html_document': {
           // HTML预览事件
-          targetState.lastOfficeDocument = {
+          const imageVisual = buildPresentedImageVisual(data || {}, { generator: data?.generator })
+          if (imageVisual) {
+            if (!hasVisualizationRecord(targetState, imageVisual.id)) {
+              this.recordVisualization(imageVisual, targetState)
+            }
+            targetState.hasResults = true
+            break
+          }
+
+          this.recordOfficeDocument({
             html_preview: data?.html_preview,
             markdown_preview: data?.markdown_preview,
             file_path: data?.file_path,
@@ -1282,7 +1416,7 @@ export const useReactStore = defineStore('react', {
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
-          }
+          }, targetState)
           break
         }
 

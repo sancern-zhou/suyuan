@@ -44,6 +44,7 @@ class AgentRuntimeConfig:
     attachments: Optional[List[Dict[str, Any]]] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    auto_profile: Optional[str] = None
     runtime_mode: Optional[str] = None
     user_identifier: Optional[str] = None
 
@@ -368,6 +369,7 @@ class AgentRuntime:
             attachments=attachments,
             llm_provider=self.config.llm_provider,
             llm_model=self.config.llm_model,
+            auto_profile=self.config.auto_profile,
         ):
             self._raise_if_cancelled()
             event_type = event["type"]
@@ -533,6 +535,7 @@ class AgentRuntime:
             attachments=attachments,
             llm_provider=self.config.llm_provider,
             llm_model=self.config.llm_model,
+            auto_profile=self.config.auto_profile,
         )
         partial.thought = result.get("thought")
         partial.action = result.get("action")

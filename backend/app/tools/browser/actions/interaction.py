@@ -19,6 +19,7 @@ import base64
 from ..config import config
 from ....services.image_cache import ImageCache
 from ..refs.ref_resolver import get_global_resolver
+from ..services.frame_target import FrameTarget, resolve_frame
 
 logger = structlog.get_logger()
 
@@ -50,6 +51,9 @@ def handle_act(
     button: str = None,
     modifiers: list = None,
     session_id: str = "default",
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Perform interaction action (SYNC version)
@@ -80,6 +84,9 @@ def handle_act(
         }
     """
     page = manager.get_active_page(session_id)
+    ref_target = FrameTarget.from_ref(ref)
+    target_frame_index = ref_target.frame_index if ref_target.frame_index is not None else frame_index
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=target_frame_index)
 
     action_performed = None
     result_message = ""
@@ -88,12 +95,19 @@ def handle_act(
     # Fill form action (batch operation)
     if fill_fields:
         action_performed = "fill"
-        result_message = _handle_fill(page, fill_fields, ref, selector, session_id)
+        result_message = _handle_fill(
+            page,
+            fill_fields,
+            default_ref=ref,
+            default_selector=selector,
+            session_id=session_id,
+            context=context,
+        )
 
     # Select dropdown action
     elif select_values is not None:
         action_performed = "select"
-        locator = _get_locator(page, ref, selector)
+        locator = _get_locator(context, ref, selector)
         element_descriptor = ref or selector
 
         try:
@@ -119,8 +133,10 @@ def handle_act(
         end_descriptor = drag_to_ref
 
         try:
-            start_locator = _get_locator(page, ref, selector)
-            end_locator = _get_locator(page, drag_to_ref, None)
+            start_locator = _get_locator(context, ref, selector)
+            drag_target = FrameTarget.from_ref(drag_to_ref)
+            drag_context = resolve_frame(page, frame_index=drag_target.frame_index) if drag_target.frame_index is not None else context
+            end_locator = _get_locator(drag_context, drag_to_ref, None)
             start_locator.drag_to(end_locator, timeout=config.DEFAULT_TIMEOUT)
             result_message = f"Dragged from {start_descriptor} to {end_descriptor}"
         except Exception as e:
@@ -138,7 +154,7 @@ def handle_act(
         action_performed = "hover"
 
         try:
-            locator = _get_locator(page, ref, selector)
+            locator = _get_locator(context, ref, selector)
             element_descriptor = ref or selector
             locator.hover(timeout=config.DEFAULT_TIMEOUT)
             result_message = f"Hovered over {element_descriptor}"
@@ -159,7 +175,7 @@ def handle_act(
         try:
             # Press key on page (or element if ref/selector provided)
             if ref or selector:
-                locator = _get_locator(page, ref, selector)
+                locator = _get_locator(context, ref, selector)
                 element_descriptor = ref or selector
                 locator.press(press, timeout=config.DEFAULT_TIMEOUT)
                 result_message = f"Pressed key '{press}' on {element_descriptor}"
@@ -183,7 +199,7 @@ def handle_act(
         action_performed = "scrollIntoView"
 
         try:
-            locator = _get_locator(page, ref, selector)
+            locator = _get_locator(context, ref, selector)
             element_descriptor = ref or selector
             locator.scroll_into_view_if_needed(timeout=config.DEFAULT_TIMEOUT)
             result_message = f"Scrolled {element_descriptor} into view"
@@ -196,20 +212,25 @@ def handle_act(
             selector=selector,
             session_id=session_id
         )
+
+    # Scroll action
+    elif scroll:
         action_performed = "scroll"
 
         if scroll == "up":
-            page.evaluate("window.scrollBy(0, -500)")
+            context.evaluate("window.scrollBy(0, -500)")
             result_message = "Scrolled up 500px"
         elif scroll == "down":
-            page.evaluate("window.scrollBy(0, 500)")
+            context.evaluate("window.scrollBy(0, 500)")
             result_message = "Scrolled down 500px"
         elif scroll == "top":
-            page.evaluate("window.scrollTo(0, 0)")
+            context.evaluate("window.scrollTo(0, 0)")
             result_message = "Scrolled to top"
         elif scroll == "bottom":
-            page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+            context.evaluate("window.scrollBy(0, document.body.scrollHeight)")
             result_message = "Scrolled to bottom"
+        else:
+            raise ValueError("scroll must be one of: up, down, top, bottom")
 
         logger.info("browser_action_scroll", direction=scroll, session_id=session_id)
 
@@ -218,7 +239,8 @@ def handle_act(
         action_performed = "type"
 
         try:
-            locator = _get_locator(page, ref, selector)
+            _validate_text_target(ref)
+            locator = _get_locator(context, ref, selector)
             element_descriptor = ref or selector
 
             if ref:
@@ -229,7 +251,12 @@ def handle_act(
                 result_message = f"Typed text into {selector}"
 
         except Exception as e:
-            raise RuntimeError(f"Failed to type into {element_descriptor}: {str(e)}")
+            diagnostics = _build_selector_failure_diagnostics(
+                page,
+                selector=selector,
+                active_frame_index=target_frame_index,
+            )
+            raise RuntimeError(f"Failed to type into {element_descriptor}: {str(e)}{diagnostics}")
 
         logger.info(
             "browser_action_type",
@@ -242,10 +269,10 @@ def handle_act(
     # Click action
     elif click:
         action_performed = "click"
+        element_descriptor = ref or selector
 
         try:
-            locator = _get_locator(page, ref, selector)
-            element_descriptor = ref or selector
+            locator = _get_locator(context, ref, selector)
 
             # Build click options
             click_options = {"timeout": config.DEFAULT_TIMEOUT}
@@ -282,7 +309,7 @@ def handle_act(
                 )
 
                 # 🔥 自动使用JavaScript重试
-                js_result = _try_js_click(page, selector, ref)
+                js_result = _try_js_click(context, selector, ref)
 
                 if js_result["success"]:
                     # JavaScript点击成功
@@ -334,6 +361,15 @@ def handle_act(
 
                     raise RuntimeError(error_message)
             else:
+                if "Unknown ref" in error_msg:
+                    raise RuntimeError(
+                        _format_browser_error(
+                            "UNKNOWN_REF",
+                            f"Failed to click {element_descriptor}: {error_msg}",
+                            required_action="snapshot",
+                            current_refs=_get_current_ref_keys(),
+                        )
+                    )
                 raise RuntimeError(f"Failed to click {element_descriptor}: {error_msg}")
 
         logger.info("browser_action_click", ref=ref, selector=selector, session_id=session_id)
@@ -346,6 +382,37 @@ def handle_act(
         "ref": ref or "N/A",
         "result": result_message
     }
+
+
+_EDITABLE_ROLES = {
+    "textbox",
+    "searchbox",
+    "combobox",
+    "spinbutton",
+    "slider",
+    "listbox",
+}
+
+
+def _validate_text_target(ref: str = None):
+    if not ref:
+        return
+
+    ref_info = get_global_resolver().get_ref_info(ref)
+    if not ref_info:
+        return
+
+    role = ref_info.get("role")
+    if role in _EDITABLE_ROLES:
+        return
+
+    name = ref_info.get("name", "")
+    raise RuntimeError(
+        f"Cannot type into non-editable ref {ref} (role={role}, name={name!r}). "
+        "The act parameter text fills editable controls only. "
+        "For links, buttons, menu items, or other action controls, call "
+        f'browser(action="act", ref="{ref}", click=True).'
+    )
 
 
 def _try_js_click(page, selector: str = None, ref: str = None) -> dict:
@@ -484,6 +551,83 @@ def _get_locator(page, ref: str = None, selector: str = None):
         raise ValueError("Either ref or selector is required for act action")
 
 
+def _format_browser_error(error_code: str, message: str, **fields) -> str:
+    parts = [f"error_code={error_code}", message]
+    for key, value in fields.items():
+        if value is not None:
+            parts.append(f"{key}={value}")
+    return " | ".join(parts)
+
+
+def _get_current_ref_keys(limit: int = 10) -> list:
+    resolver = get_global_resolver()
+    refs = getattr(resolver, "_refs", {})
+    return list(refs.keys())[:limit]
+
+
+def _build_selector_failure_diagnostics(page, selector: str = None, active_frame_index: int = None) -> str:
+    """Build actionable diagnostics for selector-based act failures."""
+    if not selector:
+        return ""
+
+    try:
+        frames = list(getattr(page, "frames", []) or [])
+    except Exception as e:
+        return f"\n\nDiagnostics unavailable: failed to inspect frames ({e})."
+
+    if not frames:
+        return "\n\nDiagnostics: no frames are available. Run browser(action=\"snapshot\", format=\"ai\", compact=True)."
+
+    matches = []
+    inspected = []
+    for index, frame in enumerate(frames):
+        frame_url = getattr(frame, "url", "") or ""
+        try:
+            count = frame.locator(selector).count()
+        except Exception as e:
+            inspected.append(f"f{index}: error inspecting selector ({e})")
+            continue
+
+        inspected.append(f"f{index}: {count} match(es), url={frame_url}")
+        if count:
+            matches.append((index, count, frame_url))
+
+    active_index = 0 if active_frame_index is None else active_frame_index
+    other_frame_matches = [match for match in matches if match[0] != active_index]
+
+    if other_frame_matches:
+        suggestions = []
+        for index, count, frame_url in other_frame_matches[:3]:
+            suggestions.append(
+                f'f{index} has {count} match(es), url={frame_url}. '
+                f'Use browser(action="act", frame_index={index}, selector="{selector}", text="...") '
+                f'or run browser(action="snapshot", format="ai", compact=True) and use an f{index}:eN ref.'
+            )
+        return (
+            "\n\n"
+            + _format_browser_error(
+                "SELECTOR_IN_OTHER_FRAME",
+                "Selector matched a different frame than the active target.",
+                required_action="snapshot",
+                diagnostics=" ".join(suggestions),
+            )
+        )
+
+    if matches:
+        return (
+            "\n\nSelector diagnostics: selector exists in the targeted frame but was not actionable. "
+            "Run browser(action=\"snapshot\", format=\"ai\", compact=True) or browser(action=\"screenshot\") "
+            "to check visibility, overlays, disabled state, or stale page state."
+        )
+
+    return (
+        "\n\nSelector diagnostics: selector was not found in any current frame. "
+        "Run browser(action=\"snapshot\", format=\"ai\", compact=True) to inspect the current page, "
+        "then use the returned ref. Inspected frames: "
+        + "; ".join(inspected[:5])
+    )
+
+
 def _detect_obstacles(page) -> dict:
     """检测页面上的障碍物（对话框、覆盖层等）
 
@@ -585,7 +729,14 @@ def _take_screenshot_for_analysis(page) -> dict:
         return None
 
 
-def _handle_fill(page, fields: list, default_ref: str = None, default_selector: str = None, session_id: str = "default") -> str:
+def _handle_fill(
+    page,
+    fields: list,
+    default_ref: str = None,
+    default_selector: str = None,
+    session_id: str = "default",
+    context=None
+) -> str:
     """Handle fill form action (batch operation)
 
     Args:
@@ -595,6 +746,7 @@ def _handle_fill(page, fields: list, default_ref: str = None, default_selector: 
         default_ref: Default ref if field doesn't specify one
         default_selector: Default selector if field doesn't specify ref
         session_id: Session identifier
+        context: Default Page/Frame context for selector-only fills
 
     Returns:
         Result message string
@@ -621,12 +773,16 @@ def _handle_fill(page, fields: list, default_ref: str = None, default_selector: 
                 field_value = str(field_value)
 
         try:
+            field_context = context or page
             if field_ref:
-                locator = _get_locator(page, field_ref, None)
+                field_target = FrameTarget.from_ref(field_ref)
+                if field_target.frame_index is not None:
+                    field_context = resolve_frame(page, frame_index=field_target.frame_index)
+                locator = _get_locator(field_context, field_ref, None)
             elif default_selector:
                 # For fill without ref, we need unique selectors per field
                 # This is a simplified approach - in real usage, each field should have ref
-                locator = page.locator(default_selector).nth(i)
+                locator = field_context.locator(default_selector).nth(i)
             else:
                 errors.append(f"Field {i}: no ref or selector provided")
                 continue

@@ -1123,8 +1123,9 @@ class SessionMemory:
         批量导入历史对话消息（用于会话恢复）
 
         Args:
-            messages: 历史消息列表，格式为 [{"type": "thought/action/observation/...", "data": {...}}]
-                     或标准格式 [{"role": "user/assistant", "content": "..."}]
+            messages: 历史消息列表。前端展示型 thought/tool_use/tool_result
+                     事件不会作为普通文本恢复到 LLM 上下文；只有用户消息、
+                     最终回复和原生 Anthropic content blocks 会被恢复。
         """
         if not messages:
             logger.warning("load_history_messages_empty", session_id=self.session_id)
@@ -1145,53 +1146,52 @@ class SessionMemory:
 
         for msg in messages:
             try:
+                msg_type = msg.get("type")
+                if "role" in msg and "content" in msg:
+                    content = msg["content"]
+                    role = msg["role"]
+
+                    # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
+                    if isinstance(content, list):
+                        content_types = {
+                            block.get("type")
+                            for block in content
+                            if isinstance(block, dict)
+                        }
+                        if "tool_result" in content_types:
+                            role = "user"
+                            msg_type = "tool_result"
+                        elif "tool_use" in content_types:
+                            role = "assistant"
+                            msg_type = "tool_use"
+                    elif msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
+                        # These rows are UI/display transcript events. Replaying
+                        # them as assistant/user text teaches the model to emit
+                        # pseudo tool calls such as "[思考] 准备调用工具...".
+                        skipped_count += 1
+                        continue
+
+                    self.conversation_history.append(
+                        ConversationTurn(
+                            role=role,
+                            content=content,
+                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
+                            type=msg_type,
+                            data=msg.get("data") if isinstance(msg.get("data"), dict) else None,
+                            tool_use_id=msg.get("tool_use_id"),
+                            is_error=msg.get("is_error"),
+                        )
+                    )
+                    loaded_count += 1
+                    continue
+
                 # 支持 ReAct 事件格式
                 if "type" in msg:
-                    msg_type = msg.get("type")
                     data = msg.get("data", {})
 
                     # 提取消息内容
-                    if msg_type == "thought":
-                        content = data.get("thought", "")
-                        if content:
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="assistant",
-                                    content=f"[思考] {content}",
-                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
-                    elif msg_type == "tool_use":
-                        tool_calls = data.get("tool_calls", [])
-                        if tool_calls:
-                            content = f"[工具调用] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="assistant",
-                                    content=content,
-                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
-                    elif msg_type == "tool_result":
-                        result = data.get("result", "")
-                        if result:
-                            summary = _safe_content_preview(result, 500)
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="user",
-                                    content=f"[工具结果] {summary}",
-                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
+                    if msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
+                        skipped_count += 1
                     elif msg_type == "complete":
                         answer = data.get("answer", "")
                         if answer:
@@ -1234,20 +1234,6 @@ class SessionMemory:
                             loaded_count += 1
                         else:
                             skipped_count += 1
-                    elif "role" in msg and "content" in msg:
-                        # 允许带自定义 type 的标准 role/content 消息恢复，例如 compact_memory。
-                        self.conversation_history.append(
-                            ConversationTurn(
-                                role=msg.get("role", "user"),
-                                content=msg.get("content", ""),
-                                timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
-                                type=msg_type,
-                                data=data if isinstance(data, dict) else None,
-                                tool_use_id=msg.get("tool_use_id"),
-                                is_error=msg.get("is_error"),
-                            )
-                        )
-                        loaded_count += 1
                     else:
                         logger.debug(
                             "load_history_messages_unknown_type",
@@ -1256,35 +1242,6 @@ class SessionMemory:
                             msg_keys=list(msg.keys())
                         )
                         skipped_count += 1
-                # 支持标准消息格式
-                elif "role" in msg and "content" in msg:
-                    content = msg["content"]
-                    role = msg["role"]
-                    msg_type = msg.get("type")
-
-                    # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
-                    if isinstance(content, list):
-                        content_types = {
-                            block.get("type")
-                            for block in content
-                            if isinstance(block, dict)
-                        }
-                        if "tool_result" in content_types:
-                            role = "user"
-                            msg_type = "tool_result"
-                        elif "tool_use" in content_types:
-                            role = "assistant"
-                            msg_type = "tool_use"
-
-                    self.conversation_history.append(
-                        ConversationTurn(
-                            role=role,
-                            content=content,
-                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
-                            type=msg_type,
-                        )
-                    )
-                    loaded_count += 1
                 else:
                     logger.debug(
                         "load_history_messages_unrecognized_format",

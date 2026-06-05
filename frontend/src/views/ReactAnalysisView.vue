@@ -87,6 +87,7 @@
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestore"
+      @toggle-session-case="handleToggleSessionCase"
       @toggle-viz-panel="toggleVizPanel"
     />
 
@@ -185,7 +186,8 @@ const {
   handleSessionRestore,
   handleLoadSession,
   refreshSessionHistory,
-  handleSessionCleanup
+  handleSessionCleanup,
+  handleToggleSessionCase
 } = useSessionManagement(store)
 
 // 知识库操作

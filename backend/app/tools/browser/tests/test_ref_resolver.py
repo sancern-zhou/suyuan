@@ -125,6 +125,35 @@ def test_playwright_locator_conversion():
         browser.close()
 
 
+def test_ref_resolver_falls_back_to_selector_when_role_name_stale():
+    """role/name失效时，应使用snapshot保存的selector继续定位。"""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("""
+            <html>
+                <body>
+                    <input id="WorkingOrderCode" name="WorkingOrderCode" placeholder="工单号" />
+                </body>
+            </html>
+        """)
+
+        resolver = RefResolver()
+        resolver.set_refs({
+            "e1": {
+                "role": "textbox",
+                "name": "旧的可访问名称",
+                "selector": "#WorkingOrderCode",
+                "html_attrs": {"id": "WorkingOrderCode", "name": "WorkingOrderCode"}
+            }
+        })
+
+        resolver.resolve(page, "e1").fill("CH2605271779891926742")
+
+        assert page.locator("#WorkingOrderCode").input_value() == "CH2605271779891926742"
+        browser.close()
+
+
 if __name__ == "__main__":
     print("运行Ref Resolver测试...")
     print("\n1. 基本ref解析测试...")

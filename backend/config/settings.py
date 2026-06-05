@@ -253,6 +253,10 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated Pro model priority chain, e.g. mimo/mimo-v2.5-pro,deepseek/deepseek-v4-pro"
     )
+    llm_multimodal_models: str = Field(
+        default="mimo/mimo-v2.5,minimax/MiniMax-M3",
+        description="Comma-separated Auto multimodal model priority chain"
+    )
     llm_failover_cooldown_seconds: int = Field(
         default=60,
         description="Cooldown seconds for transiently failing LLM providers"

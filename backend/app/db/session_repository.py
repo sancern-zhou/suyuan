@@ -12,6 +12,7 @@
 
 import json
 import structlog
+import time
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -46,6 +47,15 @@ class SessionRepository:
 
     def __init__(self):
         self.engine = engine
+
+    def _pool_status(self) -> dict:
+        pool = self.engine.pool
+        return {
+            "pool_status": pool.status(),
+            "pool_size": pool.size(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+        }
 
     @staticmethod
     def _convert_decimal_to_float(obj: Any) -> Any:
@@ -163,6 +173,10 @@ class SessionRepository:
 
         返回格式兼容 Session 模型（用于平滑迁移）
         """
+        started = time.monotonic()
+        metadata_ms = None
+        messages_query_ms = None
+        messages_convert_ms = None
         async with AsyncSession(self.engine) as session:
             # 获取会话
             stmt = select(SessionDB).where(SessionDB.session_id == session_id)
@@ -181,10 +195,22 @@ class SessionRepository:
                         SessionDB.error,
                     )
                 )
+            metadata_started = time.monotonic()
             result = await session.execute(stmt)
             db_session = result.scalar_one_or_none()
+            metadata_ms = round((time.monotonic() - metadata_started) * 1000, 2)
 
             if not db_session:
+                logger.info(
+                    "session_load_diagnostics",
+                    session_id=session_id,
+                    include_messages=include_messages,
+                    include_artifacts=include_artifacts,
+                    found=False,
+                    metadata_ms=metadata_ms,
+                    total_ms=round((time.monotonic() - started) * 1000, 2),
+                    **self._pool_status(),
+                )
                 return None
 
             # 转换为字典格式
@@ -211,13 +237,17 @@ class SessionRepository:
                     .where(SessionMessageDB.session_id == session_id)
                     .order_by(SessionMessageDB.sequence_number)
                 )
+                messages_query_started = time.monotonic()
                 result_msgs = await session.execute(stmt_msgs)
                 messages = result_msgs.scalars().all()
+                messages_query_ms = round((time.monotonic() - messages_query_started) * 1000, 2)
 
                 # 转换消息为前端格式
+                messages_convert_started = time.monotonic()
                 for msg in messages:
                     msg_dict = self._msg_to_dict(msg)
                     session_dict["conversation_history"].append(msg_dict)
+                messages_convert_ms = round((time.monotonic() - messages_convert_started) * 1000, 2)
 
                 logger.info(
                     "session_loaded_with_messages",
@@ -225,6 +255,19 @@ class SessionRepository:
                     message_count=len(messages)
                 )
 
+            logger.info(
+                "session_load_diagnostics",
+                session_id=session_id,
+                include_messages=include_messages,
+                include_artifacts=include_artifacts,
+                found=True,
+                message_count=len(session_dict["conversation_history"]),
+                metadata_ms=metadata_ms,
+                messages_query_ms=messages_query_ms,
+                messages_convert_ms=messages_convert_ms,
+                total_ms=round((time.monotonic() - started) * 1000, 2),
+                **self._pool_status(),
+            )
             return session_dict
 
     async def update_session(
@@ -233,6 +276,7 @@ class SessionRepository:
         **kwargs
     ) -> bool:
         """更新会话信息"""
+        started = time.monotonic()
         # 处理字段映射：metadata -> session_metadata
         if "metadata" in kwargs:
             kwargs["session_metadata"] = kwargs.pop("metadata")
@@ -255,7 +299,13 @@ class SessionRepository:
 
             success = result.rowcount > 0
             if success:
-                logger.info("session_updated_in_db", session_id=session_id, updated_fields=list(filtered_kwargs.keys()))
+                logger.info(
+                    "session_updated_in_db",
+                    session_id=session_id,
+                    updated_fields=list(filtered_kwargs.keys()),
+                    duration_ms=round((time.monotonic() - started) * 1000, 2),
+                    **self._pool_status(),
+                )
 
             return success
 
@@ -280,7 +330,17 @@ class SessionRepository:
     ) -> List[Dict[str, Any]]:
         """列出会话（返回摘要信息）"""
         async with AsyncSession(self.engine) as session:
-            stmt = select(SessionDB)
+            stmt = select(
+                SessionDB.session_id,
+                SessionDB.query,
+                SessionDB.created_at,
+                SessionDB.updated_at,
+                SessionDB.mode,
+                SessionDB.data_ids,
+                SessionDB.visual_ids,
+                SessionDB.error,
+                SessionDB.session_metadata,
+            )
 
             # 过滤条件
             if mode:
@@ -291,7 +351,7 @@ class SessionRepository:
             stmt = stmt.limit(limit).offset(offset)
 
             result = await session.execute(stmt)
-            sessions = result.scalars().all()
+            sessions = result.all()
 
             # 转换为摘要格式
             summaries = []
@@ -304,10 +364,50 @@ class SessionRepository:
                     "mode": s.mode,
                     "data_count": len(s.data_ids) if s.data_ids else 0,
                     "visual_count": len(s.visual_ids) if s.visual_ids else 0,
-                    "has_error": s.error is not None
+                    "has_error": s.error is not None,
+                    "metadata": self._session_summary_metadata(s.session_metadata)
                 })
 
             return summaries
+
+    def _session_summary_metadata(self, metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Keep list metadata lightweight while preserving fields used by list features."""
+        if not isinstance(metadata, dict):
+            return {}
+
+        summary_keys = {
+            "mode",
+            "is_case",
+            "case_marked_at",
+            "source",
+            "channel",
+        }
+        return {key: metadata[key] for key in summary_keys if key in metadata}
+
+    async def get_session_stats_summary(self) -> Dict[str, Any]:
+        """Return aggregate session stats without loading session rows into Python."""
+        async with AsyncSession(self.engine) as session:
+            stmt = select(
+                func.count().label("total"),
+                func.coalesce(
+                    func.sum(func.coalesce(func.json_array_length(SessionDB.data_ids), 0)),
+                    0,
+                ).label("total_data_count"),
+                func.coalesce(
+                    func.sum(func.coalesce(func.json_array_length(SessionDB.visual_ids), 0)),
+                    0,
+                ).label("total_visual_count"),
+                func.count(SessionDB.error).label("error_count"),
+            )
+            result = await session.execute(stmt)
+            row = result.one()
+
+            return {
+                "total": int(row.total or 0),
+                "total_data_count": int(row.total_data_count or 0),
+                "total_visual_count": int(row.total_visual_count or 0),
+                "error_count": int(row.error_count or 0),
+            }
 
     async def save_conversation_history(
         self,
@@ -423,8 +523,10 @@ class SessionRepository:
         if not conversation_history:
             return True
 
+        started = time.monotonic()
         try:
             async with AsyncSession(self.engine) as session:
+                count_started = time.monotonic()
                 stmt = (
                     select(func.max(SessionMessageDB.sequence_number))
                     .where(SessionMessageDB.session_id == session_id)
@@ -432,18 +534,23 @@ class SessionRepository:
                 result = await session.execute(stmt)
                 max_seq = result.scalar()
                 existing_count = (max_seq + 1) if max_seq is not None else 0
+                count_ms = round((time.monotonic() - count_started) * 1000, 2)
 
                 if existing_count >= len(conversation_history):
                     logger.debug(
                         "conversation_history_incremental_noop",
                         session_id=session_id,
                         existing_count=existing_count,
-                        incoming_count=len(conversation_history)
+                        incoming_count=len(conversation_history),
+                        count_ms=count_ms,
+                        total_ms=round((time.monotonic() - started) * 1000, 2),
+                        **self._pool_status(),
                     )
                     return True
 
                 new_messages = conversation_history[existing_count:]
 
+                rows_started = time.monotonic()
                 rows = []
                 for offset, msg in enumerate(new_messages, start=existing_count):
                     role, msg_type = self._resolve_role_and_type(msg)
@@ -476,17 +583,28 @@ class SessionRepository:
                             "sequence_number": offset,
                         }
                     )
+                rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
+                insert_started = time.monotonic()
                 await session.execute(SessionMessageDB.__table__.insert(), rows)
+                insert_ms = round((time.monotonic() - insert_started) * 1000, 2)
 
+                commit_started = time.monotonic()
                 await session.commit()
+                commit_ms = round((time.monotonic() - commit_started) * 1000, 2)
 
                 logger.info(
                     "conversation_history_incremental_saved",
                     session_id=session_id,
                     existing_count=existing_count,
                     appended_count=len(new_messages),
-                    incoming_count=len(conversation_history)
+                    incoming_count=len(conversation_history),
+                    count_ms=count_ms,
+                    rows_build_ms=rows_build_ms,
+                    insert_ms=insert_ms,
+                    commit_ms=commit_ms,
+                    total_ms=round((time.monotonic() - started) * 1000, 2),
+                    **self._pool_status(),
                 )
                 return True
 

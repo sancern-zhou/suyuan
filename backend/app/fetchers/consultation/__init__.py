@@ -985,6 +985,14 @@ class ConsultationFileFetcher(DataFetcher):
             return f"{end.month}月"
         return f"{start.month}-{end.month}月"
 
+    def _format_header_value(self, template: str, time_range: Dict[str, str]) -> str:
+        """Format Excel header text from a sheet header template."""
+        return template.format(
+            year=time_range["year"],
+            month=int(time_range["month"]),
+            last_year=time_range["last_year"],
+        )
+
     def _get_last_year_same_day(self, time_range: Dict[str, str], full_month: bool = False) -> str:
         """
         计算去年对应的日期
@@ -1425,12 +1433,7 @@ class ConsultationFileFetcher(DataFetcher):
 
         # 更新表头
         for cell_ref, template in config.get("headers", {}).items():
-            header_value = template.format(
-                year=time_range["year"],
-                month=int(time_range["month"]),
-                last_year=time_range["last_year"],
-            )
-            ws[cell_ref] = header_value
+            ws[cell_ref] = self._format_header_value(template, time_range)
 
 
     async def _fill_single_sheet_with_cache(
@@ -1575,12 +1578,7 @@ class ConsultationFileFetcher(DataFetcher):
         
         # 更新表头
         for cell_ref, template in config.get("headers", {}).items():
-            header_value = template.format(
-                year=time_range["year"],
-                month=int(time_range["month"]),
-                last_year=time_range["last_year"],
-            )
-            ws[cell_ref] = header_value
+            ws[cell_ref] = self._format_header_value(template, time_range)
 
     async def _fill_extra_sheets(self, wb, time_range: Dict[str, str], full_month: bool = False):
         """填充额外sheet（X月全国排名、全省同比、历年当月浓度）
@@ -1952,12 +1950,7 @@ class ConsultationFileFetcher(DataFetcher):
 
         # 更新表头
         for cell_ref, template in config.get("headers", {}).items():
-            header_value = template.format(
-                year=time_range["year"],
-                month=int(time_range["month"]),
-                last_year=time_range["last_year"],
-            )
-            ws[cell_ref] = header_value
+            ws[cell_ref] = self._format_header_value(template, time_range)
 
     async def _query_with_date_range(
         self,

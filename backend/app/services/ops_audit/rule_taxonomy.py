@@ -72,8 +72,6 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID",
     }:
         return "时间合理性问题"
-    if rule in {"RF_Q_MULTIPOINT_STEP_TIME_INVALID"}:
-        return "时间合理性问题"
     if rule in {
         "RF_UNIT_MISMATCH",
         "RF_VALUE_FORMULA_MISMATCH",

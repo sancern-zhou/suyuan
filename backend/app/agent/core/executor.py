@@ -317,9 +317,10 @@ class ToolExecutor:
             logger.info("="*80)
             # ========================================
 
-            # Inject context if available (tool will ignore if not needed)
+            # Inject runtime context under an internal name so tool schemas can
+            # still expose user-facing parameters named "context" (e.g. grep).
             if execution_context:
-                result = await tool_func(context=execution_context, **tool_args)
+                result = await tool_func(__execution_context=execution_context, **tool_args)
             else:
                 result = await tool_func(**tool_args)
 
@@ -364,11 +365,13 @@ class ToolExecutor:
                  "data_id" in observation["metadata"])
             )
 
+            execution_success = observation.get("success", False)
             logger.info(
-                "tool_execution_success",
+                "tool_execution_success" if execution_success else "tool_execution_failed",
                 tool_name=tool_name,
                 has_data="data" in observation,
-                has_data_id=has_data_id
+                has_data_id=has_data_id,
+                success=execution_success,
             )
 
             return observation

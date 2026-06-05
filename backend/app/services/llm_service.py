@@ -8,6 +8,7 @@ import asyncio
 import json
 import html
 import os
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Dict, Any, Optional, Tuple, AsyncGenerator, List
@@ -174,6 +175,10 @@ class LLMService:
 
         token = _llm_request_state.set({})
         try:
+            state = _llm_request_state.get()
+            if state is not None:
+                state["selection_source"] = "tier"
+                state["model_tier"] = tier
             if tier_config.strip():
                 candidates = parse_fallback_candidates("", "", tier_config)
                 candidates = [
@@ -203,6 +208,76 @@ class LLMService:
             logger.info(
                 "llm_request_model_tier_selected",
                 tier=tier,
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+                fallbacks=self.request_fallbacks,
+            )
+            yield
+        finally:
+            _llm_request_state.reset(token)
+
+    @contextmanager
+    def use_auto_profile(self, auto_profile: Optional[str]):
+        """Temporarily select a model chain for Auto based on capability profile.
+
+        Explicit provider/model calls and explicit Flash/Pro tier selections win
+        over Auto profile routing.
+        """
+        profile = (auto_profile or "").strip().lower()
+        if not profile or profile == "default":
+            yield
+            return
+
+        active_state = _llm_request_state.get()
+        if active_state is not None and (
+            active_state.get("selection_source") == "tier"
+            or active_state.get("provider")
+            or active_state.get("model")
+        ):
+            yield
+            return
+
+        profile_configs = {
+            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
+        }
+        profile_config = profile_configs.get(profile)
+        if profile_config is None:
+            logger.warning("llm_auto_profile_unsupported", auto_profile=profile)
+            yield
+            return
+        if not profile_config.strip():
+            logger.warning("llm_auto_profile_unconfigured", auto_profile=profile)
+            yield
+            return
+
+        candidates = [
+            candidate
+            for candidate in parse_fallback_candidates("", "", profile_config)
+            if candidate.provider
+        ]
+        if not candidates:
+            raise ValueError(f"No candidates configured for Auto profile: {profile}")
+
+        token = _llm_request_state.set({})
+        try:
+            state = _llm_request_state.get()
+            if state is not None:
+                state["selection_source"] = "auto_profile"
+                state["auto_profile"] = profile
+            primary = candidates[0]
+            self.provider = primary.provider
+            self._load_provider_config()
+            if primary.model:
+                self.model = primary.model
+            fallback_items = [
+                f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
+                for candidate in candidates[1:]
+            ]
+            self.request_fallbacks = ",".join(fallback_items)
+            logger.info(
+                "llm_request_auto_profile_selected",
+                auto_profile=profile,
                 provider=self.provider,
                 model=self.model,
                 base_url=self.base_url,
@@ -1047,6 +1122,7 @@ class LLMService:
 
     async def _run_llm_request_with_global_limit(self, operation: str, call):
         semaphore = get_llm_pool_semaphore(self.provider, self.model)
+        wait_started = time.monotonic()
         logger.debug(
             "llm_pool_concurrency_waiting",
             provider=self.provider,
@@ -1059,6 +1135,7 @@ class LLMService:
                 provider=self.provider,
                 model=self.model,
                 operation=operation,
+                wait_ms=round((time.monotonic() - wait_started) * 1000, 2),
             )
             return await call()
 
@@ -2555,6 +2632,7 @@ class LLMService:
         system: Optional[str] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -2586,6 +2664,16 @@ class LLMService:
                 )
             finally:
                 self._schedule_provider_override_service_close(override_service)
+
+        if auto_profile:
+            with self.use_auto_profile(auto_profile):
+                return await self.chat_anthropic(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
 
         try:
             if not self.anthropic_client:
@@ -2731,6 +2819,7 @@ class LLMService:
         system: Optional[str] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Anthropic 格式流式聊天，支持原生工具调用
 
@@ -2761,6 +2850,18 @@ class LLMService:
                     yield event
             finally:
                 self._schedule_provider_override_service_close(override_service)
+            return
+
+        if auto_profile:
+            with self.use_auto_profile(auto_profile):
+                async for event in self.chat_anthropic_streaming(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                ):
+                    yield event
             return
 
         if not self.anthropic_client:
@@ -2829,7 +2930,21 @@ class LLMService:
                         has_tools=bool(api_params.get("tools")),
                     )
                     semaphore = get_llm_pool_semaphore(self.provider, self.model)
+                    pool_wait_started = time.monotonic()
+                    logger.info(
+                        "llm_pool_concurrency_waiting",
+                        provider=self.provider,
+                        model=self.model,
+                        operation="anthropic_stream",
+                    )
                     async with semaphore:
+                        logger.info(
+                            "llm_pool_concurrency_acquired",
+                            provider=self.provider,
+                            model=self.model,
+                            operation="anthropic_stream",
+                            wait_ms=round((time.monotonic() - pool_wait_started) * 1000, 2),
+                        )
                         async with self.anthropic_client.messages.stream(**api_params) as stream:
                             async for event in stream:
                                 event_type = event.type

@@ -83,6 +83,7 @@
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestore"
+      @toggle-session-case="handleToggleSessionCase"
     />
 
     <!-- 知识库创建对话框 -->
@@ -181,7 +182,8 @@ const {
   handleSessionRestore,
   handleLoadSession,
   refreshSessionHistory,
-  handleSessionCleanup
+  handleSessionCleanup,
+  handleToggleSessionCase
 } = useSessionManagement(store)
 
 // 知识库操作

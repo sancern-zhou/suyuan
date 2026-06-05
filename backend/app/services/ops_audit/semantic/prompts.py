@@ -15,6 +15,9 @@ REMARK_REVIEW_PROMPT = (
 
 REMARK_SEMANTIC_JSON_PROMPT = (
     "请判断下列运维工单备注是否完整说明原因、措施、结果。"
+    "如果上下文的 semantic_focus 包含 RF_TW_REMARK_LOW_VALUE，表示双周切割头清洗未识别到清洗照片；"
+    "此时不要套用故障闭环三要素，也不要因为备注为空或低信息词直接判问题，"
+    "只判断备注是否合理说明了未提供清洗照片或证据不足的原因。"
     "problem_description 必须具体描述备注存在或不存在的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
     "{\"is_complete\":bool,\"has_cause\":bool,\"has_action\":bool,\"has_result\":bool,"
@@ -28,6 +31,10 @@ REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
     "应重点读取备注、异常时处理记录、处理记录或处置说明，判断该异常检查值是否已被合理解释。"
     "当异常时处理记录说明了异常原因、采取的处理措施，并能证明复测恢复正常或该异常值有合理业务原因时，"
     "不可直接判定为问题；如果只写已处理/正常、未说明为什么超出范围、未说明处置动作或未说明恢复正常，应判为不完整。"
+    "如果 semantic_focus 或证据中包含 RF_TW_REMARK_LOW_VALUE，表示双周切割头清洗未识别到清洗照片；"
+    "此时不要套用故障闭环的原因、措施、结果三要素，也不要因为备注为空、/、正常、清洗等固定低信息词直接判问题。"
+    "应只判断备注或上下文是否合理说明了未提供清洗照片、照片缺失、附件无法上传或其他证据不足的业务原因；"
+    "如果没有合理说明，应判为不完整；如果说明合理，应判为完整。"
     "problem_description 必须具体描述每个工单备注的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
     "{\"results\":[{\"working_order_code\":string,\"is_complete\":bool,\"has_cause\":bool,"

@@ -20,12 +20,10 @@
 - 内部委托给通用MemoryStore（mode="social"）
 """
 
-import asyncio
 import json
 import re
-import weakref
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Callable, Awaitable
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 import structlog
 
@@ -35,7 +33,6 @@ logger = structlog.get_logger(__name__)
 from app.agent.memory.memory_store import (
     MemoryStore as BaseMemoryStore,
     ImprovedMemoryStore as BaseImprovedMemoryStore,
-    MemoryConsolidator as BaseMemoryConsolidator
 )
 
 
@@ -190,101 +187,4 @@ class ImprovedMemoryStore(BaseImprovedMemoryStore):
             workspace=str(self.workspace)
         )
 
-
-class MemoryConsolidator(BaseMemoryConsolidator):
-    """
-    社交模式记忆合并器（兼容层）
-
-    ⚠️ 此类为兼容层，内部委托给通用MemoryConsolidator（mode="social"）
-
-    职责：
-    1. 合并策略管理
-    2. 会话锁定（避免并发冲突）
-    3. Token预算控制
-    4. 自动触发合并
-    """
-
-    def __init__(
-        self,
-        context_window_tokens: int = 200000,
-        max_completion_tokens: int = 4096,
-    ):
-        """
-        初始化社交模式记忆合并器（兼容层）
-
-        Args:
-            context_window_tokens: 上下文窗口大小（tokens）
-            max_completion_tokens: 最大完成tokens
-        """
-        # 调用父类构造函数
-        super().__init__(
-            context_window_tokens=context_window_tokens,
-            max_completion_tokens=max_completion_tokens
-        )
-
-        logger.debug(
-            "social_memory_consolidator_initialized",
-            context_window_tokens=context_window_tokens,
-            max_completion_tokens=max_completion_tokens
-        )
-
-    async def consolidate_messages(
-        self,
-        user_id: str,
-        messages: List[Dict[str, Any]],
-        llm_call: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,  # ⚠️ 已弃用
-        model: str = "mimo-v2.5",
-    ) -> bool:
-        """
-        合并消息到持久化存储（兼容层）
-
-        Args:
-            user_id: 用户ID
-            messages: 要合并的消息列表
-            llm_call: ⚠️ 已弃用：保留用于向后兼容（现在使用内部LLM服务）
-            model: 使用的模型
-
-        Returns:
-            是否成功
-        """
-        # 调用父类方法，传递 mode="social"
-        return await super().consolidate_messages(
-            user_id=user_id,
-            mode="social",
-            messages=messages,
-            model=model
-        )
-
-    async def maybe_consolidate_by_tokens(
-        self,
-        session_key: str,
-        current_tokens: int,
-        user_id: str,
-        messages: List[Dict[str, Any]],
-        llm_call: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,  # ⚠️ 已弃用
-        model: str = "mimo-v2.5",
-    ) -> bool:
-        """
-        根据 Token预算自动触发合并（兼容层）
-
-        Args:
-            session_key: 会话键
-            current_tokens: 当前使用的tokens
-            user_id: 用户ID
-            messages: 当前消息列表
-            llm_call: ⚠️ 已弃用：保留用于向后兼容（现在使用内部LLM服务）
-            model: 使用的模型
-
-        Returns:
-            是否执行了合并
-        """
-        # 调用父类方法，传递 mode="social"
-        return await super().maybe_consolidate_by_tokens(
-            session_key=session_key,
-            current_tokens=current_tokens,
-            user_id=user_id,
-            mode="social",
-            messages=messages,
-            model=model
-        )
 

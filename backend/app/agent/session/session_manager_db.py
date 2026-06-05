@@ -7,6 +7,7 @@
 
 import json
 import structlog
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -80,6 +81,7 @@ class SessionManagerDB:
             是否保存成功
         """
         import traceback
+        started = time.monotonic()
         try:
             # 更新时间戳（除非明确禁止）
             if update_timestamp:
@@ -140,7 +142,8 @@ class SessionManagerDB:
                 "session_saved_to_db",
                 session_id=session.session_id,
                 message_count=len(session.conversation_history),
-                save_messages=save_messages
+                save_messages=save_messages,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
             )
 
             return True
@@ -154,6 +157,44 @@ class SessionManagerDB:
                 traceback=traceback.format_exc()
             )
             return False
+
+    async def save_session_metadata(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+    ) -> bool:
+        """Persist only session metadata and artifact references."""
+        return await self.save_session(
+            session,
+            update_timestamp=update_timestamp,
+            save_messages=False,
+        )
+
+    async def append_session_transcript(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+    ) -> bool:
+        """Persist session metadata and append-only display transcript changes."""
+        return await self.save_session(
+            session,
+            update_timestamp=update_timestamp,
+            save_messages=True,
+            force_full_history_rewrite=False,
+        )
+
+    async def replace_session_transcript(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+    ) -> bool:
+        """Persist session metadata and explicitly replace the full transcript."""
+        return await self.save_session(
+            session,
+            update_timestamp=update_timestamp,
+            save_messages=True,
+            force_full_history_rewrite=True,
+        )
 
     async def load_session(
         self,
@@ -173,8 +214,14 @@ class SessionManagerDB:
         Returns:
             会话对象，如果不存在则返回None
         """
+        started = time.monotonic()
         # 先检查内存缓存
         if use_cache and self.enable_cache and session_id in self.sessions:
+            logger.info(
+                "session_loaded_from_cache",
+                session_id=session_id,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
             return self.sessions[session_id]
 
         # 从数据库加载
@@ -211,7 +258,9 @@ class SessionManagerDB:
             logger.info(
                 "session_loaded_from_db",
                 session_id=session_id,
-                message_count=len(session.conversation_history)
+                message_count=len(session.conversation_history),
+                include_messages=include_messages,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
             )
 
             return session
@@ -408,7 +457,8 @@ class SessionManagerDB:
                     updated_at=datetime.fromisoformat(summary["updated_at"]) if summary["updated_at"] else None,
                     data_count=summary["data_count"],
                     visual_count=summary["visual_count"],
-                    has_error=summary["has_error"]
+                    has_error=summary["has_error"],
+                    metadata=summary["metadata"]
                 ))
 
             return session_infos
@@ -424,22 +474,7 @@ class SessionManagerDB:
         Returns:
             统计信息字典
         """
-        all_sessions = await self.list_sessions(limit=10000)
-
-        stats: Dict[str, Any] = {
-            "total": len(all_sessions),
-            "total_data_count": 0,
-            "total_visual_count": 0,
-            "error_count": 0
-        }
-
-        for session_info in all_sessions:
-            stats["total_data_count"] += session_info.data_count
-            stats["total_visual_count"] += session_info.visual_count
-            if session_info.has_error:
-                stats["error_count"] += 1
-
-        return stats
+        return await self.repository.get_session_stats_summary()
 
     async def export_session(self, session_id: str, output_path: str) -> bool:
         """
@@ -493,8 +528,8 @@ class SessionManagerDB:
             session_data = json.loads(input_file.read_text(encoding='utf-8'))
             session = Session(**session_data)
 
-            # 保存到数据库
-            await self.save_session(session)
+            # Imported sessions are complete snapshots.
+            await self.replace_session_transcript(session)
 
             logger.info("session_imported", session_id=session.session_id)
             return session

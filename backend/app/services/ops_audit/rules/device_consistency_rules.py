@@ -240,6 +240,7 @@ def _previous_same_table_station_record(
     current_code = str(current_order.get("WORKINGORDERCODE") or "")
     history_days = int(DEVICE_PROFILE.get("history_days", 90))
     table_station_key = f"table_station|{current_table}|{station_id}"
+    current_discriminator = _form_identity_discriminator(current_table, current_form)
     previous: tuple[datetime, dict[str, Any], str, dict[str, Any]] | None = None
 
     for other_order in all_orders:
@@ -250,6 +251,9 @@ def _previous_same_table_station_record(
             if other_table != current_table or other_form.get("_query_error"):
                 continue
             if _form_station(other_order, other_form) != station_id:
+                continue
+            other_discriminator = _form_identity_discriminator(other_table, other_form)
+            if current_discriminator and other_discriminator != current_discriminator:
                 continue
             other_time = _form_reference_time(other_order, other_form)
             if current_time and other_time:
@@ -265,6 +269,24 @@ def _previous_same_table_station_record(
         return None
     _, other_order, other_table, other_form = previous
     return other_order, other_table, other_form, table_station_key
+
+
+def _form_identity_discriminator(table: str, form: dict[str, Any]) -> str:
+    """Return a row-level discriminator for tables containing multiple devices."""
+
+    if table == "RF_W_PMCHECK":
+        return _normalize_pollutant(form.get("POLLUTANTTYPE"))
+    return ""
+
+
+def _normalize_pollutant(value: Any) -> str:
+    text = _normalize_text(value).replace(" ", "").replace("_", ".")
+    aliases = {
+        "PM25": "PM2.5",
+        "PM2.5": "PM2.5",
+        "PM10": "PM10",
+    }
+    return aliases.get(text, text)
 
 
 def _form_station(order: dict[str, Any], form: dict[str, Any]) -> str:

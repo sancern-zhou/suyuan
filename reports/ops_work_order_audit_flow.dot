@@ -1,0 +1,147 @@
+digraph OpsWorkOrderAuditFlow {
+  graph [
+    rankdir=LR,
+    bgcolor="#ffffff",
+    pad="0.35",
+    nodesep="0.42",
+    ranksep="0.75",
+    splines=ortho,
+    fontname="Noto Sans CJK SC",
+    label="运维工单审核完整流程图：数据抓取 -> 确定性规则审核 -> 语义审核 -> 最终问题清单 -> 报告生成",
+    labelloc=t,
+    fontsize=24
+  ];
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fontname="Noto Sans CJK SC",
+    fontsize=12,
+    color="#5b6472",
+    fillcolor="#f8fafc",
+    margin="0.12,0.08"
+  ];
+
+  edge [
+    fontname="Noto Sans CJK SC",
+    fontsize=10,
+    color="#52606d",
+    arrowsize=0.7
+  ];
+
+  start [label="用户发起运维工单审核\nops_audit_fetch_dataset", fillcolor="#e0f2fe", color="#0284c7"];
+
+  subgraph cluster_fetch {
+    label="1. 数据抓取";
+    color="#93c5fd";
+    style="rounded";
+    fontname="Noto Sans CJK SC";
+    fontsize=16;
+
+    window [label="确定审核窗口\n默认 weekly_created\n按创建时间窗口 + Finish 状态"];
+    orders [label="working_orders\n工单主表\n状态/时间/站点/类型/维护类型/工单号过滤"];
+    details [label="working_order_details\n流程节点、处理人、开始/结束时间、备注"];
+    rf [label="RF_* 表单\n周检、两周、月度、季度、半年、年度、质控等"];
+    files [label="附件\nwo_commonfile_links\nWO_COMMONFILE"];
+    station [label="站点与运维单位\nbase_station + base_department_station + sys_department\n失败不阻断审核"];
+    devices [label="设备与历史同站点工单\nbase_device + previous same-station history"];
+    dataset [label="生成 dataset.json\norders/details/rf_forms/attachments/stations/devices/history", fillcolor="#dbeafe"];
+  }
+
+  subgraph cluster_rules {
+    label="2. 确定性规则审核 audit_dataset";
+    color="#86efac";
+    style="rounded";
+    fontname="Noto Sans CJK SC";
+    fontsize=16;
+
+    rule_start [label="ops_audit_run_rules\n执行 audit_dataset", fillcolor="#dcfce7", color="#16a34a"];
+
+    flow_rules [label="流程与生命周期规则\nFLOW_MISSING：无流程详情\nFLOW_NO_CREATE：缺创建/提交步骤\nFLOW_NO_CHECK：缺审核/复核/检查步骤\nFLOW_REMARK_LOW_VALUE：备注低信息量\nLIFECYCLE_FINISH_NEAR_DEADLINE：临近截止完成\nLIFECYCLE_FINISH_WITHOUT_EFFECTIVE_CLOSURE：缺有效闭环证据"];
+
+    rf_complete [label="RF 完整性与规范性\nRF_MISSING：检查/巡检/维护类无 RF 表\nRF_REQUIRED_FIELD_LOW_VALUE：关键字段为空或低价值\nRF_ENV_TEMP_HUMIDITY_EMPTY：温湿度未填\nRF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE：人员/车辆不规范\nRF_PM_TAPE_USAGE_INVALID：纸带使用量不规范"];
+
+    consistency [label="一致性规则\nRF_STATION_MISMATCH：RF 站点与工单站点不一致\nRF_TW_POLLUTANT_MISMATCH：污染物类型与设备类型不一致\nRF_POLLUTANT_TYPE_MISMATCH：污染物类型与表名不一致\nRF_DEVICE_IDENTITY_INCONSISTENT：跨工单设备身份疑似不一致\nRF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT：无设备说明与设备字段冲突"];
+
+    time_rules [label="时间合理性规则\nRF_CHECK_TIME_OUTSIDE_RANGE：检查时间越界\nRF_CALIBRATION_DATE_EXPIRED：校准有效期异常\nRF_CALIBRATION_PREV_DATE_MISMATCH：上次校准日期不一致\nRF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH：参考流量计证书日期不一致\nRF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID：湿度校准日期异常"];
+
+    numeric [label="数值/单位/公式/范围规则\nRF_RANGE_VALUE_MISSING：应检值为空\nRF_RANGE_OUT_OF_SPEC：超品牌/配置范围\nRF_RANGE_BY_GAS_TYPE_MISMATCH：气体类型与量程不匹配\nRF_UNIT_MISMATCH：单位与数值量级不匹配\nRF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE：月流量误差超 ±10%\nRF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH：季度气压真实值复算不一致\nRF_PM_*：校准膜/温度/气压误差复算或阈值异常\nRF_FIELD_POSITION_SUSPECT：字段位置疑似错填\nRF_MULTIPOINT_RANGE_INVALID：多点校准量程较历史变化"];
+
+    exception_rules [label="异常说明与特殊表规则\nRF_Q_PENDING_NO_REMARK：待定/不合格无说明\nRF_ABNORMAL_VALUE_NO_REMARK：异常值无说明\nRF_NO_DEVICE_WITHOUT_REMARK：无设备但说明不清\nRF_TW_REMARK_LOW_VALUE：切割头清洗缺照片且备注待复核\nRF_HY_ENV_HUMIDITY_SENSOR_VALUE_MISSING：湿度传感器读数未填\nRF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT：校准前后读数未变化且无说明\nRF_ENUM_VALUE_INVALID：枚举字段异常"];
+
+    attachment [label="附件与视觉读数规则\nATTACHMENT_REQUIRED_MISSING：必需报告/曲线/照片缺失\nATTACHMENT_REPORT_MISSING：应上传报告但仅上传照片\nATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH：O3 XLS 与表单不一致\nATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH：颗粒物流量校准照片与表单不一致\nATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH：气体流量显示值与表单不一致\nATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH：流量计测量值与表单不一致\nATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH：校准膜照片读数与表单不一致\nATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH：温压照片读数与表单不一致"];
+
+    scoring [label="命中问题去重、分类与评分\nconfirmed_issues / candidate_issues\n规则计数、问题工单数、代表样例", fillcolor="#dcfce7"];
+  }
+
+  subgraph cluster_stage {
+    label="3. 规则分阶段处理";
+    color="#facc15";
+    style="rounded";
+    fontname="Noto Sans CJK SC";
+    fontsize=16;
+
+    deterministic [label="deterministic\n直接进入确定性问题候选", fillcolor="#fef9c3"];
+    flow_visual [label="flow_visual\n已执行视觉/多模态读数比对\n通过则作为确定性附件读数问题", fillcolor="#fef9c3"];
+    semantic_stage [label="semantic_remark\n进入语义复核队列\n不直接进入最终清单", fillcolor="#fef3c7"];
+    future_ocr [label="future_ocr\n证书完整性、水印、目录、报告缺失等\n当前暂不进入最终清单", fillcolor="#f1f5f9"];
+    excluded [label="excluded\nMAIN_*、RF_AUDITOR_EMPTY、RF_REVIEW_EMPTY、RF_VALUE_FORMULA_MISMATCH 等\n当前排除", fillcolor="#f1f5f9"];
+  }
+
+  subgraph cluster_semantic {
+    label="4. 语义审核";
+    color="#c084fc";
+    style="rounded";
+    fontname="Noto Sans CJK SC";
+    fontsize=16;
+
+    candidates [label="build_semantic_candidates\n筛出需要语义判断的工单"];
+    tasks [label="build_semantic_review_tasks\n生成 evidence_summary、semantic_focus、prompt"];
+    semantic_batch [label="批量语义审核\n标题/内容是否泛化\n备注是否说明原因、措施、结果\n无设备说明是否合理\n纸带使用量是否可接受\n站点维护照片文件名是否覆盖颗粒物时钟、数采时钟、滤网清洗"];
+    semantic_result [label="semantic_review_results\ncan_promote_to_final_issue\nsupported_rule_ids", fillcolor="#f3e8ff"];
+  }
+
+  subgraph cluster_report {
+    label="5. 最终问题清单与报告生成";
+    color="#fb923c";
+    style="rounded";
+    fontname="Noto Sans CJK SC";
+    fontsize=16;
+
+    final_list [label="build_final_issue_list\n跳过 excluded / future_ocr / 未确认 semantic_remark\n合并确定性问题 + 语义确认问题\n按工单号、规则、字段、证据去重", fillcolor="#ffedd5"];
+    final_json [label="latest_finished_work_orders_final_issue_list.json\n问题条数、影响工单数、规则分布、问题明细"];
+    report [label="报告生成\n按运维单位分组\n未关联时归入“未关联运维单位”\n输出审核范围、数据覆盖、规则发现、语义发现、问题工单明细、整改建议", fillcolor="#fed7aa"];
+  }
+
+  start -> window -> orders;
+  orders -> details -> dataset;
+  orders -> rf -> dataset;
+  orders -> files -> dataset;
+  orders -> station -> dataset;
+  orders -> devices -> dataset;
+
+  dataset -> rule_start;
+  rule_start -> flow_rules -> scoring;
+  rule_start -> rf_complete -> scoring;
+  rule_start -> consistency -> scoring;
+  rule_start -> time_rules -> scoring;
+  rule_start -> numeric -> scoring;
+  rule_start -> exception_rules -> scoring;
+  rule_start -> attachment -> scoring;
+
+  scoring -> deterministic;
+  scoring -> flow_visual;
+  scoring -> semantic_stage;
+  scoring -> future_ocr;
+  scoring -> excluded;
+
+  semantic_stage -> candidates -> tasks -> semantic_batch -> semantic_result;
+
+  deterministic -> final_list;
+  flow_visual -> final_list;
+  semantic_result -> final_list;
+  future_ocr -> final_list [style=dashed, label="跳过"];
+  excluded -> final_list [style=dashed, label="排除"];
+
+  final_list -> final_json -> report;
+}

@@ -62,6 +62,16 @@
             <span></span>
             <span></span>
           </div>
+          <div
+            v-if="pendingSteeringDisplay.text"
+            class="pending-steering-text"
+            :title="pendingSteeringDisplay.text"
+          >
+            <span class="pending-steering-content">{{ pendingSteeringDisplay.text }}</span>
+            <span v-if="pendingSteeringDisplay.extraCount > 0" class="pending-steering-count">
+              +{{ pendingSteeringDisplay.extraCount }}
+            </span>
+          </div>
         </div>
 
         <textarea
@@ -177,6 +187,7 @@ import { useReactStore } from '@/stores/reactStore'
 import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
 import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
+import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
 
 const kbStore = useKnowledgeBaseStore()
 const reactStore = useReactStore()
@@ -265,6 +276,7 @@ const isDragOver = ref(false)  // 拖拽状态
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
 const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
+const pendingSteeringDisplay = computed(() => getPendingSteeringDisplay(props.pendingSteeringInputs))
 
 const actionButtonDisabled = computed(() => {
   if (props.isAnalyzing) {
@@ -823,8 +835,10 @@ defineExpose({
 .pending-steering-indicator {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 8px 14px 0;
   min-height: 18px;
+  min-width: 0;
 }
 
 .pending-steering-icon {
@@ -849,6 +863,30 @@ defineExpose({
       animation-delay: 0.32s;
     }
   }
+}
+
+.pending-steering-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  color: #475569;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pending-steering-content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-steering-count {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 12px;
 }
 
 @keyframes pending-steering-pulse {

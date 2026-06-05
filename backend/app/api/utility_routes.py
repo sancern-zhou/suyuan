@@ -13,6 +13,46 @@ logger = structlog.get_logger()
 router = APIRouter(tags=["utility"])
 
 
+MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".qmd": "text/markdown",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain",
+}
+
+INLINE_PREVIEW_EXTENSIONS = {
+    ".pdf",
+    ".html",
+    ".htm",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+}
+
+
+def get_file_media_type(suffix: str) -> str:
+    """Return a browser-friendly media type for known artifact files."""
+    return MEDIA_TYPES.get(suffix.lower(), "application/octet-stream")
+
+
 @router.get("/file/{file_path:path}")
 async def download_file(file_path: str):
     """
@@ -65,23 +105,9 @@ async def download_file(file_path: str):
         filename = path.name
 
         # 根据文件扩展名确定 media_type
-        media_type = 'application/octet-stream'
-        if path.suffix in ['.pdf']:
-            media_type = 'application/pdf'
-        elif path.suffix in ['.md', '.markdown']:
-            media_type = 'text/markdown'
-        elif path.suffix in ['.docx']:
-            media_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        elif path.suffix in ['.xlsx']:
-            media_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        elif path.suffix in ['.xls']:
-            media_type = 'application/vnd.ms-excel'
-        elif path.suffix in ['.pptx']:
-            media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-        elif path.suffix in ['.txt']:
-            media_type = 'text/plain'
+        media_type = get_file_media_type(path.suffix)
 
-        # 对于PDF文件，设置为inline预览（避免自动下载）
+        # 对于浏览器可直接展示的文件，设置为inline预览（避免 iframe 自动下载）
         # 其他文件保持attachment下载行为
         # 使用 RFC 5987 标准编码中文文件名
         # 注意：HTTP头必须用 latin-1 编码，所以 filename 参数只能包含 ASCII 字符
@@ -90,11 +116,9 @@ async def download_file(file_path: str):
         filename_encoded = quote(filename, safe='')
 
         headers = {}
-        if path.suffix in ['.pdf']:
-            # PDF使用inline预览
+        if path.suffix.lower() in INLINE_PREVIEW_EXTENSIONS:
             headers['Content-Disposition'] = f'inline; filename="{filename_ascii}"; filename*=UTF-8\'\'{filename_encoded}'
         else:
-            # 其他文件使用attachment下载
             headers['Content-Disposition'] = f'attachment; filename="{filename_ascii}"; filename*=UTF-8\'\'{filename_encoded}'
 
         # 返回文件

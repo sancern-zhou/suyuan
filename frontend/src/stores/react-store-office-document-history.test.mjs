@@ -1,0 +1,46 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import assert from 'node:assert/strict'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const storePath = resolve(__dirname, './reactStore.js')
+const sessionPath = resolve(__dirname, '../composables/reactAnalysis/useSessionManagement.js')
+const storeSource = readFileSync(storePath, 'utf8')
+const sessionSource = readFileSync(sessionPath, 'utf8')
+
+assert.match(
+  storeSource,
+  /officeDocumentHistory:\s*\[\]/,
+  'reactStore session state should keep full office document history'
+)
+
+assert.match(
+  storeSource,
+  /officeDocumentHistory\(\)\s*\{\s*return this\.currentState\?\.officeDocumentHistory \|\| \[\]/,
+  'reactStore should expose officeDocumentHistory to remounted panels'
+)
+
+assert.match(
+  storeSource,
+  /recordOfficeDocument\(doc,\s*targetState = this\.currentState\)/,
+  'reactStore should have one path for recording office document previews'
+)
+
+assert.match(
+  storeSource,
+  /targetState\.officeDocumentHistory\.push\(normalizedDoc\)/,
+  'recordOfficeDocument should append new preview files instead of replacing history'
+)
+
+assert.doesNotMatch(
+  storeSource,
+  /targetState\.lastOfficeDocument = \{\s*(?:pdf_preview|html_preview|markdown_preview)/,
+  'SSE handlers should not bypass officeDocumentHistory by writing lastOfficeDocument directly'
+)
+
+assert.match(
+  sessionSource,
+  /setOfficeDocumentHistory\(officeDocs\)/,
+  'session restore should hydrate the full document history, not only the latest document'
+)

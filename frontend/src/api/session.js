@@ -2,7 +2,7 @@
  * 会话管理API模块
  */
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const API_BASE_URL = ((import.meta.env && import.meta.env.VITE_API_BASE_URL) || '/api').replace(/\/$/, '')
 const BASE_URL = `${API_BASE_URL}/sessions`
 
 /**
@@ -41,8 +41,12 @@ async function request(url, options = {}) {
 /**
  * 获取会话列表
  */
-export async function listSessions() {
-  return await request(`${BASE_URL}/`)
+export async function listSessions(options = {}) {
+  const { limit = 50 } = options
+  const params = new URLSearchParams()
+  if (limit) params.set('limit', limit)
+  const query = params.toString()
+  return await request(`${BASE_URL}/${query ? `?${query}` : ''}`)
 }
 
 /**
@@ -128,6 +132,24 @@ export async function exportSession(sessionId) {
  */
 export async function deleteSession(sessionId) {
   return await request(`${BASE_URL}/${sessionId}`, {
+    method: 'DELETE'
+  })
+}
+
+/**
+ * 标记会话为案例
+ */
+export async function markSessionCase(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/case`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * 取消会话案例标记
+ */
+export async function unmarkSessionCase(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/case`, {
     method: 'DELETE'
   })
 }

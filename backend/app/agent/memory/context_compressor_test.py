@@ -155,3 +155,127 @@ def test_session_memory_load_history_messages_restores_compact_memory(tmp_path):
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     assert messages[0]["content"].startswith("Runtime memory summary from earlier turns.")
+
+
+def test_session_memory_load_history_messages_prefers_db_role_content(tmp_path):
+    session = SessionMemory(session_id="restore-db-role-content-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "type": "final",
+            "role": "assistant",
+            "content": "这是新的截图回复",
+            "data": {},
+            "timestamp": "2026-06-04T00:00:00",
+        }
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+
+    assert len(messages) == 1
+    assert messages[0] == {
+        "role": "assistant",
+        "content": "这是新的截图回复",
+    }
+
+
+def test_session_memory_load_history_messages_skips_display_only_react_events(tmp_path):
+    session = SessionMemory(session_id="restore-display-only-events-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "type": "user",
+            "content": "帮我查看目录",
+            "timestamp": "2026-06-04T00:00:00",
+        },
+        {
+            "type": "thought",
+            "content": "准备调用工具: list_directory",
+            "data": {"thought": "准备调用工具: list_directory"},
+            "timestamp": "2026-06-04T00:00:01",
+        },
+        {
+            "type": "tool_use",
+            "content": "调用工具: list_directory",
+            "data": {"tool_name": "list_directory", "input": {"path": "."}},
+            "timestamp": "2026-06-04T00:00:02",
+        },
+        {
+            "type": "tool_result",
+            "content": "Tool Result: 列出文件",
+            "data": {"tool_name": "list_directory", "result": {"summary": "列出文件"}},
+            "timestamp": "2026-06-04T00:00:03",
+        },
+        {
+            "type": "final",
+            "content": "目录里有 backend 和 frontend。",
+            "timestamp": "2026-06-04T00:00:04",
+        },
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+
+    assert messages == [
+        {"role": "user", "content": "帮我查看目录"},
+        {"role": "assistant", "content": "目录里有 backend 和 frontend。"},
+    ]
+
+
+def test_session_memory_load_history_messages_preserves_native_tool_blocks(tmp_path):
+    session = SessionMemory(session_id="restore-native-tool-blocks-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "role": "assistant",
+            "type": "tool_use",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "list_directory",
+                    "input": {"path": "."},
+                }
+            ],
+            "timestamp": "2026-06-04T00:00:00",
+        },
+        {
+            "role": "user",
+            "type": "tool_result",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": "{\"summary\":\"ok\"}",
+                    "is_error": False,
+                }
+            ],
+            "timestamp": "2026-06-04T00:00:01",
+        },
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+
+    assert messages == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "list_directory",
+                    "input": {"path": "."},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": "{\"summary\":\"ok\"}",
+                    "is_error": False,
+                }
+            ],
+        },
+    ]

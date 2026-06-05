@@ -1412,11 +1412,14 @@ def check_rf_forms(
     devices_by_id: dict[str, dict[str, Any]] | None = None,
     devices_by_code: dict[str, dict[str, Any]] | None = None,
     rf_attachment_typecodes: list[str] | None = None,
+    attachment_records: list[dict[str, Any]] | None = None,
 ) -> None:
     if order.get("DDWORKINGORDERTYPE") in {"Check", "SupCheck"} and not forms and not rf_attachment_typecodes:
         add_issue(issues, "RF_MISSING", "表单完整性", "高", "RF_*", "检查/巡检类完工工单未找到 RF 表单", "")
         return
 
+    has_tw_cleaning_photo = _has_tw_cleaning_photo(attachment_records or [])
+    tw_cleaning_candidate_added = False
     for table, form in forms:
         if form.get("_query_error"):
             continue
@@ -1431,9 +1434,26 @@ def check_rf_forms(
         if table == "RF_TW_CleanCuttingHead":
             if form.get("PollutantType") and form.get("PM_DeviceType") and str(form["PollutantType"]).upper() != str(form["PM_DeviceType"]).upper():
                 add_issue(issues, "RF_TW_POLLUTANT_MISMATCH", "一致性", "高", "PollutantType/PM_DeviceType", "污染物类型与设备类型不一致", f"{form['PollutantType']} vs {form['PM_DeviceType']}")
-            remark = form.get("CleaningRemark")
-            if is_blank(remark) or str(remark).strip() in LOW_VALUE_REMARKS:
-                add_issue(issues, "RF_TW_REMARK_LOW_VALUE", "填报规范性", "中", "CleaningRemark", "清洗备注为空或信息量低", str(remark))
+            if not has_tw_cleaning_photo and not tw_cleaning_candidate_added:
+                evidence = {
+                    "working_order_code": order.get("WORKINGORDERCODE"),
+                    "rf_table": table,
+                    "field": "CleaningRemark",
+                    "remark_candidates": _tw_cleaning_remarks(forms),
+                    "attachment_summary": _attachment_summary(attachment_records or []),
+                    "needs_semantic_review": True,
+                    "review_basis": "未识别到切割头清洗照片，需语义复核备注是否说明无照片或清洗证据不足的合理原因。",
+                }
+                add_issue(
+                    issues,
+                    "RF_TW_REMARK_LOW_VALUE",
+                    "填报规范性",
+                    "中",
+                    "rf.RF_TW_CleanCuttingHead.CleaningRemark",
+                    "双周切割头清洗未识别到清洗照片，需语义复核备注说明是否合理",
+                    json.dumps(evidence, ensure_ascii=False, default=str),
+                )
+                tw_cleaning_candidate_added = True
 
         if table.startswith("RF_Q_GASEOUSMULTIPOINT"):
             for field in ["XL", "JU", "XGXS"]:
@@ -1441,6 +1461,65 @@ def check_rf_forms(
                     add_issue(issues, "RF_Q_MULTIPOINT_METRIC_EMPTY", "表单完整性", "高", field, "多点校准关键指标为空", "")
             if str(form.get("XZJG")) in {"0", "0.0"} and is_blank(form.get("REMARKS")):
                 add_issue(issues, "RF_Q_PENDING_NO_REMARK", "结果合理性", "高", "XZJG/REMARKS", "校准结果待定/不合格但无说明", f"XZJG={form.get('XZJG')}")
+
+
+def _has_tw_cleaning_photo(records: list[dict[str, Any]]) -> bool:
+    for record in records:
+        typecode = str(record.get("TYPECODE") or record.get("typecode") or record.get("TypeCode") or "").strip().upper()
+        if not typecode.startswith("RF_TW_CLEANCUTTINGHEAD"):
+            continue
+        text = _attachment_text(record)
+        if _attachment_looks_like_image(text) or any(keyword in text for keyword in ("清洁", "清洗", "切割器", "切割头")):
+            return True
+    return False
+
+
+def _attachment_text(record: dict[str, Any]) -> str:
+    fields = (
+        "filename",
+        "FILENAME",
+        "FileName",
+        "filepath",
+        "FILEPATH",
+        "file_url",
+        "FILE_URL",
+        "TYPECODE",
+        "typecode",
+        "TypeCode",
+    )
+    return " ".join(str(record.get(field) or "") for field in fields).strip()
+
+
+def _attachment_looks_like_image(text: str) -> bool:
+    normalized = text.lower()
+    return any(ext in normalized for ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp"))
+
+
+def _tw_cleaning_remarks(forms: list[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
+    remarks: dict[str, list[str]] = {}
+    for table, form in forms:
+        if table != "RF_TW_CleanCuttingHead" or form.get("_query_error"):
+            continue
+        values = []
+        for field in ("CleaningRemark", "REMARK", "REMARKS", "SUBMITREMARK"):
+            if field in form:
+                values.append(f"{field}={str(form.get(field) or '').strip()}")
+        key = str(form.get("PollutantType") or form.get("PM_DeviceType") or "unknown")
+        remarks.setdefault(key, []).extend(value for value in values if value not in remarks.get(key, []))
+    return remarks
+
+
+def _attachment_summary(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary = []
+    for record in records[:20]:
+        summary.append(
+            {
+                "typecode": record.get("TYPECODE") or record.get("typecode") or record.get("TypeCode"),
+                "filename": record.get("FILENAME") or record.get("filename") or record.get("FileName"),
+                "createdate": record.get("CREATEDATE") or record.get("createdate"),
+            }
+        )
+    return summary
 
 
 def severity_score(issues: list[Issue] | list[dict[str, Any]]) -> int:
@@ -1611,7 +1690,15 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             forms_by_code=all_forms_by_code,
         )
 
-        check_rf_forms(order, forms, issues, devices_by_id, devices_by_code, attachment_rf_typecodes)
+        check_rf_forms(
+            order,
+            forms,
+            issues,
+            devices_by_id,
+            devices_by_code,
+            attachment_rf_typecodes,
+            attachments_by_code.get(str(code), []) + wo_commonfile_by_code.get(str(code), []),
+        )
         check_device_identity_consistency(
             order,
             forms,
