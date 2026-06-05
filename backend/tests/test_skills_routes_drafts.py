@@ -33,3 +33,22 @@ async def test_get_skill_draft_detail(monkeypatch, tmp_path: Path):
     assert result["success"] is True
     assert result["data"]["is_draft"] is True
     assert "草稿内容" in result["data"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_update_skill_draft_detail(monkeypatch, tmp_path: Path):
+    drafts_dir = tmp_path / "skills" / ".drafts"
+    drafts_dir.mkdir(parents=True)
+    draft_file = drafts_dir / "draft.md"
+    draft_file.write_text("# 草稿技能\n\n## 概述\n旧内容。", encoding="utf-8")
+
+    monkeypatch.setattr(skills_routes, "DRAFTS_DIR", drafts_dir)
+
+    result = await skills_routes.update_skill_draft_detail(
+        "draft",
+        {"content": "# 草稿技能\n\n## 概述\n新内容。"},
+    )
+
+    assert result["success"] is True
+    assert result["data"]["is_draft"] is True
+    assert draft_file.read_text(encoding="utf-8") == "# 草稿技能\n\n## 概述\n新内容。"

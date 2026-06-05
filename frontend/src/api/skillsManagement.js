@@ -31,6 +31,31 @@ export async function getSkillDetail(skillName) {
 }
 
 /**
+ * 获取待审核技能草稿列表
+ * @returns {Promise<Object>}
+ */
+export async function getSkillDraftsList() {
+  const response = await fetch(`${API_BASE}/skills/drafts`)
+  if (!response.ok) {
+    throw new Error(`获取待审核技能列表失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+/**
+ * 获取单个待审核技能草稿详情
+ * @param {string} draftName - 草稿文件名（如 "draft.md" 或 "draft"）
+ * @returns {Promise<Object>}
+ */
+export async function getSkillDraftDetail(draftName) {
+  const response = await fetch(`${API_BASE}/skills/drafts/${encodeURIComponent(draftName)}`)
+  if (!response.ok) {
+    throw new Error(`获取待审核技能详情失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+/**
  * 刷新技能索引
  * @returns {Promise<Object>}
  */
@@ -60,6 +85,26 @@ export async function saveSkillDetail(skillName, content) {
   })
   if (!response.ok) {
     throw new Error(`保存技能文档失败: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+/**
+ * 保存待审核技能草稿
+ * @param {string} draftName - 草稿文件名（如 "draft.md" 或 "draft"）
+ * @param {string} content - 新的文档内容
+ * @returns {Promise<Object>}
+ */
+export async function saveSkillDraftDetail(draftName, content) {
+  const response = await fetch(`${API_BASE}/skills/drafts/${encodeURIComponent(draftName)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ content })
+  })
+  if (!response.ok) {
+    throw new Error(`保存待审核技能草稿失败: ${response.statusText}`)
   }
   return response.json()
 }
