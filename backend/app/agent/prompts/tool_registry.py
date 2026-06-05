@@ -22,7 +22,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 文件操作
     "read_file", "edit_file", "grep", "write_file", "list_directory",
-    "search_files", "list_skills",
+    "search_files", "list_skills", "view_skill", "create_skill_draft",
 
     # Office工具
     "edit_word_document",
@@ -198,7 +198,7 @@ OPS_TOOL_NAMES = {
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files", "list_skills",
+    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files", "list_skills", "view_skill",
 }
 
 # ===== 社交模式工具（移动端助理） =====
@@ -208,7 +208,7 @@ SOCIAL_TOOL_NAMES = {
 
     # === 文件操作 ===
     "read_file", "edit_file", "edit_word_document", "grep", "write_file",
-    "list_directory", "search_files", "list_skills",
+    "list_directory", "search_files", "list_skills", "view_skill",
 
     # === 知识库检索 ===
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -300,7 +300,7 @@ ASSISTANT_TOOL_ORDER = [
     "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 任务管理
-    "TodoWrite", "create_scheduled_task", "wait_task", "list_skills",
+    "TodoWrite", "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
 
     # 模式互调
     "call_sub_agent"
@@ -400,6 +400,7 @@ REPORT_TOOL_ORDER = [
 OPS_TOOL_ORDER = [
     # 技能发现与按需读取
     "list_skills",
+    "view_skill",
     "read_file",
 
     # 工单查询
@@ -443,7 +444,7 @@ CHART_TOOL_ORDER = [
 
 SOCIAL_TOOL_ORDER = [
     "read_file", "edit_file", "edit_word_document", "grep", "write_file",
-    "list_directory", "search_files", "list_skills",
+    "list_directory", "search_files", "list_skills", "view_skill",
     "knowledge_qa_workflow", "knowledge_document_reader",
     "get_weather_forecast", "execute_python", "call_sub_agent",
     "web_search", "web_fetch", "browser",

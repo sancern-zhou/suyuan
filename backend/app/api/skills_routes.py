@@ -8,6 +8,11 @@ from fastapi import APIRouter, HTTPException
 from pathlib import Path
 import sys
 import subprocess
+from app.tools.utility.skill_management.skill_paths import (
+    DRAFTS_DIR,
+    parse_skill_metadata,
+    resolve_skill_file,
+)
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -50,6 +55,67 @@ async def list_skills(keyword: str = None):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list skills: {str(e)}")
+
+
+@router.get("/drafts")
+async def list_skill_drafts():
+    """列出候选技能草稿。"""
+    try:
+        if not DRAFTS_DIR.exists():
+            return {
+                "success": True,
+                "data": {"drafts": [], "count": 0, "drafts_dir": str(DRAFTS_DIR)},
+                "summary": "当前没有候选技能草稿",
+            }
+
+        drafts = []
+        for draft_file in sorted(DRAFTS_DIR.glob("*.md")):
+            content = draft_file.read_text(encoding="utf-8")
+            metadata = parse_skill_metadata(content, draft_file.name)
+            drafts.append({
+                "name": metadata["title"],
+                "description": metadata["description"],
+                "file": str(draft_file),
+                "is_draft": True,
+            })
+
+        return {
+            "success": True,
+            "data": {"drafts": drafts, "count": len(drafts), "drafts_dir": str(DRAFTS_DIR)},
+            "summary": f"找到 {len(drafts)} 个候选技能草稿",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list skill drafts: {str(e)}")
+
+
+@router.get("/drafts/{draft_name}")
+async def get_skill_draft_detail(draft_name: str):
+    """读取候选技能草稿详情。"""
+    try:
+        draft_file = resolve_skill_file(
+            draft_name,
+            include_drafts=True,
+            skills_dir=DRAFTS_DIR,
+            drafts_dir=DRAFTS_DIR,
+        )
+        content = draft_file.read_text(encoding="utf-8")
+        metadata = parse_skill_metadata(content, draft_file.name)
+        return {
+            "success": True,
+            "data": {
+                "name": metadata["title"],
+                "description": metadata["description"],
+                "file": str(draft_file),
+                "is_draft": True,
+                "content": content,
+            },
+        }
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_name}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get skill draft: {str(e)}")
 
 
 @router.get("/{skill_name}")
