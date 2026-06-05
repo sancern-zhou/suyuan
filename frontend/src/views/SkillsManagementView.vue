@@ -6,39 +6,61 @@
         <div class="header-left">
           <h2>技能管理</h2>
           <span class="stats" v-if="stats">
-            共 {{ stats.total }} 个技能
+            共 {{ stats.total }} 个{{ activeSkillType === 'draft' ? '待审核草稿' : '技能' }}
           </span>
         </div>
         <div class="header-actions">
-          <button class="btn-secondary" @click="refreshIndex">刷新索引</button>
+          <button v-if="activeSkillType === 'official'" class="btn-secondary" @click="refreshIndex">刷新索引</button>
           <button class="btn-secondary" @click="refreshList">刷新列表</button>
           <button class="btn-close" @click="$emit('close')">关闭</button>
           <div class="search-box">
             <input
               v-model="searchKeyword"
               type="text"
-              placeholder="搜索技能..."
+              :placeholder="activeSkillType === 'draft' ? '搜索待审核草稿...' : '搜索技能...'"
               @input="handleSearchDebounced"
             />
           </div>
         </div>
       </header>
 
+      <div class="type-tabs">
+        <button
+          type="button"
+          class="type-tab"
+          :class="{ active: activeSkillType === 'official' }"
+          @click="switchSkillType('official')"
+        >
+          正式技能
+        </button>
+        <button
+          type="button"
+          class="type-tab"
+          :class="{ active: activeSkillType === 'draft' }"
+          @click="switchSkillType('draft')"
+        >
+          待审核草稿
+        </button>
+      </div>
+
       <div class="main-content">
         <div v-if="loading" class="loading-state">加载中...</div>
 
         <div v-else-if="filteredSkills.length === 0" class="empty-state">
-          {{ searchKeyword ? '未找到匹配的技能' : '暂无技能文档' }}
+          {{ emptyStateText }}
         </div>
 
         <div v-else class="skills-list">
           <div
             v-for="skill in filteredSkills"
-            :key="skill.name"
+            :key="skill.file || skill.name"
             class="skill-list-item"
             @click="viewSkillDetail(skill)"
           >
-            <span class="skill-name">{{ skill.name }}</span>
+            <span class="skill-name">
+              {{ skill.name }}
+              <span v-if="skill.is_draft" class="draft-badge">待审核</span>
+            </span>
             <span class="skill-arrow">→</span>
           </div>
         </div>
@@ -53,6 +75,7 @@
             ← 返回列表
           </button>
           <h2>{{ currentSkill?.name }}</h2>
+          <span v-if="currentSkill?.is_draft" class="draft-badge">待审核草稿</span>
         </div>
         <div class="header-actions">
           <button v-if="!isEditing" class="btn-primary" @click="startEdit">
@@ -73,6 +96,10 @@
             <span class="info-label">技能名称</span>
             <span class="info-value">{{ currentSkill.name }}</span>
           </div>
+          <div class="info-row">
+            <span class="info-label">状态</span>
+            <span class="info-value">{{ currentSkill?.is_draft ? '待审核草稿' : '正式技能' }}</span>
+          </div>
         </div>
 
         <div class="editor-container">
@@ -86,7 +113,15 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getSkillsList, getSkillDetail, refreshSkillsIndex, saveSkillDetail } from '@/api/skillsManagement'
+import {
+  getSkillsList,
+  getSkillDetail,
+  getSkillDraftsList,
+  getSkillDraftDetail,
+  refreshSkillsIndex,
+  saveSkillDetail,
+  saveSkillDraftDetail
+} from '@/api/skillsManagement'
 import markdownIt from 'markdown-it'
 import markdownItKatex from '@traptitech/markdown-it-katex'
 import markdownItMultimdTable from 'markdown-it-multimd-table'
@@ -105,6 +140,7 @@ const md = markdownIt({
 const loading = ref(false)
 const searchKeyword = ref('')
 const skills = ref([])
+const activeSkillType = ref('official')
 const showDetailFullscreen = ref(false)
 const currentSkill = ref(null)
 const isEditing = ref(false)
@@ -120,12 +156,24 @@ const filteredSkills = computed(() => {
   return skills.value
 })
 
+const emptyStateText = computed(() => {
+  if (searchKeyword.value) {
+    return activeSkillType.value === 'draft' ? '未找到匹配的待审核草稿' : '未找到匹配的技能'
+  }
+  return activeSkillType.value === 'draft' ? '暂无待审核技能草稿' : '暂无技能文档'
+})
+
 const loadSkills = async () => {
   loading.value = true
   try {
-    const data = await getSkillsList(searchKeyword.value)
+    const data = activeSkillType.value === 'draft'
+      ? await getSkillDraftsList()
+      : await getSkillsList(searchKeyword.value)
     if (data.success) {
-      skills.value = data.data.skills
+      const loadedSkills = activeSkillType.value === 'draft'
+        ? data.data.drafts
+        : data.data.skills
+      skills.value = filterSkillsByKeyword(loadedSkills || [])
     }
   } catch (error) {
     console.error('加载技能列表失败:', error)
@@ -133,6 +181,22 @@ const loadSkills = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const filterSkillsByKeyword = (items) => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  if (!keyword || activeSkillType.value !== 'draft') return items
+  return items.filter((skill) => {
+    return skill.name?.toLowerCase().includes(keyword) ||
+      skill.description?.toLowerCase().includes(keyword)
+  })
+}
+
+const switchSkillType = (type) => {
+  if (activeSkillType.value === type) return
+  activeSkillType.value = type
+  searchKeyword.value = ''
+  loadSkills()
 }
 
 const handleSearchDebounced = () => {
@@ -151,7 +215,9 @@ const getFileName = (filePath) => {
 const viewSkillDetail = async (skill) => {
   try {
     const fileName = getFileName(skill.file).replace('.md', '')
-    const data = await getSkillDetail(fileName)
+    const data = skill.is_draft || activeSkillType.value === 'draft'
+      ? await getSkillDraftDetail(fileName)
+      : await getSkillDetail(fileName)
     if (data.success) {
       currentSkill.value = data.data
       editedContent.value = data.data.content
@@ -194,12 +260,19 @@ const saveSkill = async () => {
   saving.value = true
   try {
     const fileName = getFileName(currentSkill.value.file).replace('.md', '')
-    const data = await saveSkillDetail(fileName, editedContent.value)
+    const data = currentSkill.value.is_draft
+      ? await saveSkillDraftDetail(fileName, editedContent.value)
+      : await saveSkillDetail(fileName, editedContent.value)
 
     if (data.success) {
       alert('保存成功')
-      currentSkill.value.content = editedContent.value
+      currentSkill.value = {
+        ...currentSkill.value,
+        ...(data.data || {}),
+        content: editedContent.value
+      }
       isEditing.value = false
+      await loadSkills()
     }
   } catch (error) {
     console.error('保存技能文档失败:', error)
@@ -285,6 +358,47 @@ onMounted(() => {
 .header-actions {
   display: flex;
   gap: 10px;
+}
+
+.type-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+
+.type-tab {
+  min-width: 92px;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: #555;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.type-tab.active {
+  background: white;
+  color: #1976d2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.draft-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border: 1px solid #f0b429;
+  border-radius: 4px;
+  color: #8a5a00;
+  background: #fff8e6;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
 }
 
 .btn-secondary {
@@ -453,6 +567,8 @@ onMounted(() => {
 }
 
 .detail-info {
+  display: flex;
+  gap: 24px;
   padding: 16px;
   background: #f9f9f9;
   border-radius: 6px;

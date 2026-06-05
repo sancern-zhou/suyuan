@@ -118,6 +118,43 @@ async def get_skill_draft_detail(draft_name: str):
         raise HTTPException(status_code=500, detail=f"Failed to get skill draft: {str(e)}")
 
 
+@router.put("/drafts/{draft_name}")
+async def update_skill_draft_detail(draft_name: str, content: dict):
+    """更新候选技能草稿内容。"""
+    try:
+        new_content = content.get("content")
+        if not new_content:
+            raise HTTPException(status_code=400, detail="Content is required")
+
+        draft_file = resolve_skill_file(
+            draft_name,
+            include_drafts=True,
+            skills_dir=DRAFTS_DIR,
+            drafts_dir=DRAFTS_DIR,
+        )
+        draft_file.write_text(new_content, encoding="utf-8")
+        metadata = parse_skill_metadata(new_content, draft_file.name)
+        return {
+            "success": True,
+            "data": {
+                "name": metadata["title"],
+                "description": metadata["description"],
+                "file": str(draft_file),
+                "is_draft": True,
+                "content": new_content,
+            },
+            "message": "候选技能草稿保存成功",
+        }
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Draft not found: {draft_name}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update skill draft: {str(e)}")
+
+
 @router.get("/{skill_name}")
 async def get_skill_detail(skill_name: str):
     """
