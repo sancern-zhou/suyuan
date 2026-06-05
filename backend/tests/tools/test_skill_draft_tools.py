@@ -3,10 +3,19 @@ from pathlib import Path
 import pytest
 
 from app.tools.utility.skill_management.skill_paths import (
+    DRAFTS_DIR,
+    SKILLS_DIR,
     render_skill_draft_markdown,
     resolve_skill_file,
     sanitize_skill_filename,
 )
+
+
+def test_default_skill_paths_are_under_backend_directory():
+    backend_dir = Path(__file__).resolve().parents[2]
+
+    assert SKILLS_DIR == backend_dir / "docs" / "skills"
+    assert DRAFTS_DIR == backend_dir / "docs" / "skills" / ".drafts"
 
 
 def test_sanitize_skill_filename_blocks_path_traversal():
