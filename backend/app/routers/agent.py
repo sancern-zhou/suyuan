@@ -15,6 +15,7 @@ import structlog
 
 from app.agent import create_react_agent
 from app.agent.session import Session, get_session_manager
+from app.agent.session.conversation_persistence import ConversationPersistenceService
 from app.agent.runtime.cancellation import cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.session_advisory_lock import session_advisory_lock
@@ -331,6 +332,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
         session_manager = get_session_manager()
+        persistence = ConversationPersistenceService()
         actual_session_id = request.session_id
         conversation_history = []
         collected_data_ids = []
@@ -353,6 +355,11 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
             # 创建或加载会话
             if actual_session_id:
+                logger.info(
+                    "route_session_load_start",
+                    session_id=actual_session_id,
+                    include_messages=True,
+                )
                 session = await session_manager.load_session(actual_session_id)
                 if session:
                     session_already_exists = True
@@ -394,7 +401,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             if session_already_exists:
                 async def _save_initial_session_metadata() -> None:
                     try:
-                        await session_manager.save_session(session, save_messages=False)
+                        await session_manager.save_session_metadata(session)
                     except Exception as save_err:
                         logger.warning(
                             "initial_session_metadata_save_failed",
@@ -404,7 +411,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
                 asyncio.create_task(_save_initial_session_metadata())
             else:
-                await session_manager.save_session(session, save_messages=False)
+                await session_manager.save_session_metadata(session)
 
             # ✅ 添加用户消息到对话历史
             user_message = {
@@ -582,7 +589,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             if actual_session_id not in agent._session_store:
                                 agent._session_store[actual_session_id] = {}
 
-                            agent._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                            agent._session_store[actual_session_id]["collected_data_ids"] = list(dict.fromkeys(collected_data_ids))
                             agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                             logger.info(
                                 "collected_data_stored",
@@ -590,41 +597,51 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 data_ids_count=len(collected_data_ids),
                                 visuals_count=len(collected_visuals)
                             )
-                        elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
-                            # ✅ 优化：压缩中间过程，只保留必要信息
-                            compressed_history = []
-                            for msg in conversation_history:
-                                if msg.get("type") in ["user", "final"]:
-                                    compressed_history.append(msg)
-                                elif msg.get("type") in ["thought", "tool_use", "tool_result"]:
-                                    compressed_history.append({
-                                        "type": msg.get("type"),
-                                        "content": msg.get("content", "")[:200],
-                                        "timestamp": msg.get("timestamp")
-                                    })
-                            session.conversation_history = compressed_history
-                            session.data_ids = list(set(collected_data_ids))
-                            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
 
+                            persistence.apply_complete(
+                                session,
+                                display_history=conversation_history,
+                                collected_data_ids=collected_data_ids,
+                                collected_visuals=collected_visuals,
+                                office_documents=office_documents,
+                            )
+                            await session_manager.append_session_transcript(session)
+                            agent._session_store[actual_session_id]["display_history_persisted"] = True
+                        elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
                                 agent._session_store[actual_session_id] = {}
 
-                            agent._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
+                            agent._session_store[actual_session_id]["collected_data_ids"] = list(dict.fromkeys(collected_data_ids))
                             agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
-                            agent._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
-                            if "data" in event and "error" in event["data"]:
-                                agent._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
+                            event_data = event.get("data") or {}
+                            if "error" in event_data:
+                                agent._session_store[actual_session_id]["error_message"] = event_data.get("error", "Unknown error")
                             if event["type"] == "interrupted":
-                                event_data = event.get("data") or {}
-                                compressed_history.append({
-                                    "type": "interrupted",
-                                    "content": event_data.get("reason", "用户已暂停本轮分析"),
-                                    "timestamp": datetime.now().isoformat()
-                                })
-                            await session_manager.save_session(session)
+                                terminal_content = event_data.get("reason", "用户已暂停本轮分析")
+                            elif event["type"] == "incomplete":
+                                terminal_content = event_data.get(
+                                    "reason",
+                                    "分析任务较复杂，在限定步骤内未完成，是否继续？",
+                                )
+                            else:
+                                terminal_content = event_data.get("error") or event_data.get("message") or "分析失败"
+                            persistence.apply_terminal(
+                                session,
+                                display_history=conversation_history,
+                                terminal_message={
+                                    "type": event["type"],
+                                    "content": terminal_content,
+                                    "data": event_data,
+                                    "timestamp": event_data.get("timestamp") or datetime.now().isoformat(),
+                                },
+                                collected_data_ids=collected_data_ids,
+                                collected_visuals=collected_visuals,
+                            )
+                            await session_manager.append_session_transcript(session)
+                            agent._session_store[actual_session_id]["display_history_persisted"] = True
 
                             logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
@@ -639,14 +656,21 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             except asyncio.CancelledError:
                 if actual_session_id:
                     await cancellation_registry.cancel(actual_session_id)
-                    session.conversation_history = conversation_history + [{
-                        "type": "interrupted",
-                        "content": "客户端已断开，本轮分析已取消",
-                        "timestamp": datetime.now().isoformat()
-                    }]
-                    session.data_ids = list(set(collected_data_ids))
-                    session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-                    await session_manager.save_session(session)
+                    persistence.apply_terminal(
+                        session,
+                        display_history=conversation_history,
+                        terminal_message={
+                            "type": "interrupted",
+                            "content": "客户端已断开，本轮分析已取消",
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        collected_data_ids=collected_data_ids,
+                        collected_visuals=collected_visuals,
+                    )
+                    await session_manager.append_session_transcript(session)
+                    if actual_session_id not in agent._session_store:
+                        agent._session_store[actual_session_id] = {}
+                    agent._session_store[actual_session_id]["display_history_persisted"] = True
                 raise
             except Exception as e:
                 logger.error(
@@ -655,14 +679,27 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     exc_info=True
                 )
                 # 保存失败会话
-                session.conversation_history = conversation_history
-                session.data_ids = list(set(collected_data_ids))
+                persistence.apply_terminal(
+                    session,
+                    display_history=conversation_history,
+                    terminal_message={
+                        "type": "fatal_error",
+                        "content": str(e),
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                    collected_data_ids=collected_data_ids,
+                    collected_visuals=collected_visuals,
+                )
                 session.error = {
                     "type": "stream_error",
                     "message": str(e),
                     "timestamp": datetime.now().isoformat()
                 }
-                await session_manager.save_session(session)
+                await session_manager.append_session_transcript(session)
+                if actual_session_id:
+                    if actual_session_id not in agent._session_store:
+                        agent._session_store[actual_session_id] = {}
+                    agent._session_store[actual_session_id]["display_history_persisted"] = True
                 logger.info("session_saved_on_exception", session_id=actual_session_id)
 
                 error_event = {

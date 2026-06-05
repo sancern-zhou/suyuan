@@ -4,10 +4,13 @@
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
+  listSessions,
   restoreSession,
   getSessionMessages,
   getSessionVisualizations,
-  getSessionOfficeDocuments
+  getSessionOfficeDocuments,
+  markSessionCase,
+  unmarkSessionCase
 } from '@/api/session'
 
 export function useSessionManagement(store) {
@@ -78,7 +81,11 @@ export function useSessionManagement(store) {
             const officeDocs = response?.office_documents || []
             console.log('[会话恢复] 文档延迟加载完成:', officeDocs.length)
             if (officeDocs.length > 0) {
-              store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
+              if (typeof store.setOfficeDocumentHistory === 'function') {
+                store.setOfficeDocumentHistory(officeDocs)
+              } else {
+                store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
+              }
             }
             store.setLazyArtifacts({
               hasOfficeDocuments: officeDocs.length > 0,
@@ -141,6 +148,30 @@ export function useSessionManagement(store) {
       return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
     })
   })
+
+  const applySessionCaseState = (sessionId, isCase, metadataOverride = null) => {
+    const markedAt = new Date().toISOString()
+    persistedSessionHistoryData.value = persistedSessionHistoryData.value.map(session => {
+      if (session.session_id !== sessionId) return session
+
+      const metadata = metadataOverride
+        ? { ...metadataOverride }
+        : {
+            ...(session.metadata || {}),
+            is_case: isCase,
+            ...(isCase ? { case_marked_at: markedAt } : {})
+          }
+
+      if (!isCase) {
+        delete metadata.case_marked_at
+      }
+
+      return {
+        ...session,
+        metadata
+      }
+    })
+  }
 
   // ========== 计算属性 ==========
 
@@ -236,11 +267,6 @@ export function useSessionManagement(store) {
     } = options
 
     try {
-      if (store.sessionStates?.[sessionId]) {
-        store._activateSession(sessionId)
-        return { success: true, session: store.sessionStates[sessionId], local: true }
-      }
-
       // 1. 调用恢复API
       const restoreResult = await restoreSession(sessionId, { messageLimit, lazyArtifacts })
 
@@ -393,7 +419,11 @@ export function useSessionManagement(store) {
         }
 
         if (officeDocs.length > 0) {
-          store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
+          if (typeof store.setOfficeDocumentHistory === 'function') {
+            store.setOfficeDocumentHistory(officeDocs)
+          } else {
+            store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
+          }
         }
       }
 
@@ -416,6 +446,16 @@ export function useSessionManagement(store) {
 
     } catch (error) {
       console.error('[会话恢复] 恢复会话时出错:', error)
+      if (store.sessionStates?.[sessionId]) {
+        store._activateSession(sessionId)
+        return {
+          success: true,
+          session: store.sessionStates[sessionId],
+          local: true,
+          degraded: true,
+          error: error.message
+        }
+      }
       return {
         success: false,
         error: error.message
@@ -560,10 +600,7 @@ export function useSessionManagement(store) {
     if (!silent) sessionHistoryLoading.value = true
     try {
       refreshInFlight = (async () => {
-        const response = await fetch('/api/sessions')
-        if (!response.ok) throw new Error('Failed to fetch sessions')
-
-        const data = await response.json()
+        const data = await listSessions({ limit: 50 })
         persistedSessionHistoryData.value = data.sessions || []
         sessionHistoryStats.value = data.stats || null
       })()
@@ -640,6 +677,32 @@ export function useSessionManagement(store) {
     }
   }
 
+  const handleToggleSessionCase = async (session) => {
+    if (!session?.session_id) return false
+
+    const isCase = session.metadata?.is_case === true
+    const previousMetadata = { ...(session.metadata || {}) }
+    applySessionCaseState(session.session_id, !isCase)
+
+    try {
+      if (isCase) {
+        await unmarkSessionCase(session.session_id)
+      } else {
+        await markSessionCase(session.session_id)
+      }
+      refreshSessionHistory({ silent: true })
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('session-case-updated'))
+      }
+      return true
+    } catch (error) {
+      applySessionCaseState(session.session_id, isCase, previousMetadata)
+      console.error('Failed to toggle session case:', error)
+      alert('案例标记失败: ' + error.message)
+      return false
+    }
+  }
+
   // ========== 会话管理器控制 ==========
 
   /**
@@ -685,6 +748,7 @@ export function useSessionManagement(store) {
     refreshSessionHistory,
     handleSessionCleanup,
     deleteSession,
+    handleToggleSessionCase,
 
     // 会话管理器
     openSessionManager,

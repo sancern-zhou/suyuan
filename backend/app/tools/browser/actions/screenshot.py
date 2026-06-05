@@ -7,6 +7,7 @@ import base64
 from datetime import datetime
 
 from ..config import config
+from ..services.frame_target import resolve_frame
 from app.services.image_cache import get_image_cache
 
 logger = structlog.get_logger()
@@ -15,6 +16,9 @@ logger = structlog.get_logger()
 def handle_screenshot(
     manager,
     session_id: str = "default",
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Capture page screenshot with AI description (SYNC version)
@@ -36,16 +40,21 @@ def handle_screenshot(
         }
     """
     page = manager.get_active_page(session_id)
+    frame_targeted = frame_url or frame_name or frame_index is not None
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=frame_index)
 
     # Get page info
     url = page.url
     title = page.title()
 
     # Capture screenshot as bytes
-    screenshot_bytes = page.screenshot(
-        full_page=kwargs.get("full_page", False),
-        type="png"
-    )
+    if frame_targeted:
+        screenshot_bytes = context.frame_element().screenshot(type="png")
+    else:
+        screenshot_bytes = page.screenshot(
+            full_page=kwargs.get("full_page", False),
+            type="png"
+        )
 
     # Convert to base64
     base64_data = base64.b64encode(screenshot_bytes).decode("utf-8")
@@ -57,7 +66,7 @@ def handle_screenshot(
     save_result = image_cache.save(base64_data, chart_id=image_id)
 
     # Generate description from page content
-    description = _generate_page_description(page)
+    description = _generate_page_description(context)
 
     # 【修复】使用相对路径，让前端通过vite代理或同域访问
     image_url = save_result.get("url") or f"/api/image/{image_id}"

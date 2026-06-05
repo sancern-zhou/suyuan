@@ -133,6 +133,7 @@ class ReActPlanner:
         attachments: Optional[List[Dict[str, Any]]] = None,
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         """原生工具调用规划器（非流式）
 
@@ -181,6 +182,7 @@ class ReActPlanner:
                 system=system_prompt,
                 provider=llm_provider,
                 model=llm_model,
+                auto_profile=auto_profile,
             )
         except Exception as exc:
             retry_content = self._base64_retry_content(user_content, attachments)
@@ -202,6 +204,7 @@ class ReActPlanner:
                 system=system_prompt,
                 provider=llm_provider,
                 model=llm_model,
+                auto_profile=auto_profile,
             )
 
         return self._parse_anthropic_response(llm_response)
@@ -219,6 +222,7 @@ class ReActPlanner:
         attachments: Optional[List[Dict[str, Any]]] = None,
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式规划器（按模式过滤 tools schema）
 
@@ -272,6 +276,7 @@ class ReActPlanner:
                 system=system_prompt,
                 provider=llm_provider,
                 model=llm_model,
+                auto_profile=auto_profile,
             ):
                 event_type = event["type"]
                 event_data = event["data"]

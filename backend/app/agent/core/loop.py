@@ -46,6 +46,7 @@ class ReActLoop:
         attachments: Optional[List[Dict[str, Any]]] = None,
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ):
         self.memory = memory_manager
         self.planner = llm_planner
@@ -58,6 +59,7 @@ class ReActLoop:
         self.attachments = attachments
         self.llm_provider = llm_provider
         self.llm_model = llm_model
+        self.auto_profile = auto_profile
 
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = (
@@ -123,6 +125,7 @@ class ReActLoop:
             attachments=self.attachments,
             llm_provider=self.llm_provider,
             llm_model=self.llm_model,
+            auto_profile=self.auto_profile,
             runtime_mode=self.current_mode,
             user_identifier=getattr(self.executor, "user_identifier", None),
         ))

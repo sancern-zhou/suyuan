@@ -17,6 +17,8 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview"}
+SESSION_LIST_DEFAULT_LIMIT = 50
+SESSION_LIST_MAX_LIMIT = 100
 
 
 def _strip_lazy_artifacts(obj: Any) -> Any:
@@ -180,8 +182,10 @@ async def list_sessions(
     Returns:
         会话列表
     """
+    effective_limit = min(limit or SESSION_LIST_DEFAULT_LIMIT, SESSION_LIST_MAX_LIMIT)
+
     session_manager = get_session_manager()
-    sessions = await session_manager.list_sessions(limit=limit)
+    sessions = await session_manager.list_sessions(limit=effective_limit)
 
     return {
         "sessions": [s.model_dump(mode='json') for s in sessions],
@@ -257,12 +261,63 @@ async def save_session(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
 
-    success = await session_manager.save_session(session)
+    success = await session_manager.save_session_metadata(session)
 
     if not success:
         raise HTTPException(status_code=500, detail=f"Failed to save session: {session_id}")
 
     return {"message": f"Session {session_id} saved successfully"}
+
+
+@router.post("/{session_id}/case")
+async def mark_session_case(session_id: str):
+    """Mark a session as a demo case."""
+    session_manager = get_session_manager()
+    session = await session_manager.load_session(session_id, include_messages=False)
+
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    session.metadata = {
+        **(session.metadata or {}),
+        "is_case": True,
+        "case_marked_at": datetime.now().isoformat()
+    }
+
+    success = await session_manager.save_session_metadata(session, update_timestamp=False)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to mark session case: {session_id}")
+
+    logger.info("session_marked_as_case", session_id=session_id)
+    return {
+        "message": f"Session {session_id} marked as case",
+        "session": session.model_dump(mode='json')
+    }
+
+
+@router.delete("/{session_id}/case")
+async def unmark_session_case(session_id: str):
+    """Remove a session from the demo case library."""
+    session_manager = get_session_manager()
+    session = await session_manager.load_session(session_id, include_messages=False)
+
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    metadata = dict(session.metadata or {})
+    metadata["is_case"] = False
+    metadata.pop("case_marked_at", None)
+    session.metadata = metadata
+
+    success = await session_manager.save_session_metadata(session, update_timestamp=False)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to unmark session case: {session_id}")
+
+    logger.info("session_unmarked_as_case", session_id=session_id)
+    return {
+        "message": f"Session {session_id} removed from case library",
+        "session": session.model_dump(mode='json')
+    }
 
 
 @router.get("/{session_id}/messages")
@@ -574,8 +629,9 @@ async def auto_save_session(request: Request):
         session.conversation_history = messages
         session.updated_at = datetime.now()
 
-        # 保存到数据库
-        success = await session_manager.save_session(session)
+        # Frontend auto-save submits a full message snapshot, so replace the
+        # transcript explicitly instead of relying on append-only semantics.
+        success = await session_manager.replace_session_transcript(session)
 
         if success:
             logger.info(

@@ -21,7 +21,7 @@ ASSISTANT_TOOL_NAMES = {
     "bash",
 
     # 文件操作
-    "read_file", "edit_file", "grep", "write_file", "list_directory",
+    "read_file", "edit_file", "grep", "write_file", "present_artifact", "list_directory",
     "search_files", "list_skills", "view_skill", "create_skill_draft",
 
     # Office工具
@@ -30,7 +30,7 @@ ASSISTANT_TOOL_NAMES = {
     "edit_pptx", "create_pptx_from_deck", "validate_pptx",
 
     # 报告/展示产物
-    "create_report_package", "validate_report_package", "create_html_artifact",
+    "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
     "create_diagram_artifact", "create_report_chart",
 
     # 任务管理
@@ -74,7 +74,7 @@ EXPERT_TOOL_NAMES = {
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
 
 }
 
@@ -130,10 +130,11 @@ REPORT_TOOL_NAMES = {
     "read_data_registry",
 
     # === 文件操作 ===
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
     "bash",
 
     # === 报告/展示产物 ===
+    "present_artifact",            # 将任意已生成文件推送到右侧预览面板
     "create_report_package",       # 正式报告收口为标准 ReportPackage，并触发右侧预览
     "validate_report_package",     # 检查 report.qmd、图片引用和已生成格式
     "create_report_chart",         # 正式报告静态图表，优先于自由 execute_python 绘图
@@ -164,7 +165,7 @@ CHART_TOOL_NAMES = {
     "read_data_registry",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
     "bash",
 
     # 代码执行
@@ -182,6 +183,7 @@ OPS_TOOL_NAMES = {
     # 展示型流程图
     "create_diagram_artifact",
     "create_report_chart",
+    "present_artifact",
 
     # 报告产物
     "create_report_package",
@@ -198,7 +200,7 @@ OPS_TOOL_NAMES = {
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files", "list_skills", "view_skill",
+    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files", "list_skills", "view_skill",
 }
 
 # ===== 社交模式工具（移动端助理） =====
@@ -288,7 +290,7 @@ ASSISTANT_TOOL_ORDER = [
     "edit_pptx", "create_pptx_from_deck", "validate_pptx",
 
     # 报告/展示产物
-    "create_report_package", "validate_report_package", "create_html_artifact",
+    "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
 
     # 编辑
     "write_file", "edit_file", "grep",
@@ -383,6 +385,7 @@ REPORT_TOOL_ORDER = [
     # 文件和执行
     "read_file",
     "write_file",
+    "present_artifact",
     "edit_file",
     "edit_word_document",
     "grep",
@@ -412,6 +415,7 @@ OPS_TOOL_ORDER = [
     # 展示型流程图
     "create_diagram_artifact",
     "create_report_chart",
+    "present_artifact",
 
     # 报告产物收口
     "create_report_package",
@@ -428,11 +432,11 @@ OPS_TOOL_ORDER = [
     "execute_python",
 
     # 文件操作
-    "grep", "write_file", "edit_file", "edit_word_document", "list_directory", "search_files",
+    "grep", "write_file", "present_artifact", "edit_file", "edit_word_document", "list_directory", "search_files",
 ]
 
 CHART_TOOL_ORDER = [
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
     "bash", "create_report_chart", "execute_python", "execute_echarts_python",
     "read_data_registry",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",

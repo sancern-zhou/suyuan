@@ -5,6 +5,8 @@ Handler for file upload and download operations.
 import structlog
 
 from ..services.file_handler import FileHandler
+from ..refs.ref_resolver import get_global_resolver
+from ..services.frame_target import FrameTarget, resolve_frame
 
 logger = structlog.get_logger()
 
@@ -23,8 +25,12 @@ def get_file_handler() -> FileHandler:
 def handle_download(
     manager,
     selector: str = None,
+    ref: str = None,
     timeout: int = 30000,
     session_id: str = "default",
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Handle file download
@@ -44,12 +50,21 @@ def handle_download(
     """
     handler = get_file_handler()
     page = manager.get_active_page(session_id)
+    ref_target = FrameTarget.from_ref(ref)
+    target_frame_index = ref_target.frame_index if ref_target.frame_index is not None else frame_index
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=target_frame_index)
 
     # Setup download handling
     handler.setup_download(page, timeout)
 
     # Wait for download
-    result = handler.wait_for_download(page, selector=selector, timeout=timeout)
+    if ref and not selector:
+        ref_info = get_global_resolver().get_ref_info(ref)
+        selector = ref_info.get("selector") if ref_info else None
+        if not selector:
+            raise ValueError(f"Download ref '{ref}' does not have a selector")
+
+    result = handler.wait_for_download(page, selector=selector, click_context=context, timeout=timeout)
 
     logger.info(
         "[FILE_OPS] Download completed",
@@ -62,9 +77,13 @@ def handle_download(
 
 def handle_upload(
     manager,
-    selector: str,
-    file_path: str,
+    selector: str = None,
+    file_path: str = None,
     session_id: str = "default",
+    ref: str = None,
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Handle file upload
@@ -84,8 +103,21 @@ def handle_upload(
     """
     handler = get_file_handler()
     page = manager.get_active_page(session_id)
+    ref_target = FrameTarget.from_ref(ref)
+    target_frame_index = ref_target.frame_index if ref_target.frame_index is not None else frame_index
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=target_frame_index)
 
-    result = handler.upload_file(page, selector, file_path)
+    if ref and not selector:
+        ref_info = get_global_resolver().get_ref_info(ref)
+        selector = ref_info.get("selector") if ref_info else None
+        if not selector:
+            raise ValueError(f"Upload ref '{ref}' does not have a selector")
+    if not selector:
+        raise ValueError("selector or ref is required for upload action")
+    if not file_path:
+        raise ValueError("file_path is required for upload action")
+
+    result = handler.upload_file(page, selector, file_path, context=context)
 
     logger.info(
         "[FILE_OPS] Upload completed",

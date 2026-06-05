@@ -94,6 +94,7 @@
             @refresh-sessions="$emit('refresh-session-history')"
             @cleanup-sessions="$emit('cleanup-sessions')"
             @restore-session="$emit('restore-session', $event)"
+            @toggle-session-case="$emit('toggle-session-case', $event)"
           />
 
           <SocialPlatformPanel
@@ -371,7 +372,8 @@ const emit = defineEmits([
   'delete-scheduled-task',
   'refresh-session-history',
   'cleanup-sessions',
-  'restore-session'
+  'restore-session',
+  'toggle-session-case'
 ])
 
 const layoutRef = ref(null)

@@ -30,7 +30,14 @@ Excel → execute_python（使用 openpyxl、pandas 等库）
 基于模板生成PPT → create_pptx_from_template
 编辑现有PPT → edit_pptx
 创建PPT → create_pptx（PptxGenJS，可编辑PPTX）
-复杂自定义PPT处理 → execute_python（使用 python-pptx 库）
+复杂自定义PPT处理 → execute_python（仅用于前置数据/图片资产生成或专用工具无法覆盖的已有PPT局部处理）
+```
+
+**PPT工具调用硬规则**：
+```
+生成新PPT时，必须直接调用 create_pptx_from_deck / create_pptx_from_template / create_pptx 工具。
+禁止用 execute_python 手动 import CreatePptxFromDeckTool、CreatePptxTool 或直接调用 PptxGenJS renderer。
+业务型PPT优先使用 create_pptx_from_deck；图表和配图应作为 deck 的 chart 或 visual.asset 输入。
 ```
 
 **核心原则**：
@@ -451,6 +458,8 @@ reorder_slides → 重排全部页面，order 必须包含当前全部页码
 
 生成正式或业务型 PPT 时，优先使用 `create_pptx_from_deck`。Agent 应输出 `suyuan.deck.v1` 业务结构，描述标题、核心结论、指标、地图、图表和行动建议；代码负责版式、字体、颜色、位置、模板槽位和质量校验。
 
+生成新 PPT 必须通过正式工具调用入口完成。不要用 `execute_python` 手动 import `CreatePptxFromDeckTool`、`CreatePptxTool` 或直接调用 PptxGenJS renderer；这会绕过工具路由、日志记录和质量控制。`execute_python` 只用于前置数据处理、生成图片资产，或对已有 PPT 做专门工具无法覆盖的局部兼容处理。
+
 业务 slide 类型：
 
 ```text
@@ -575,7 +584,7 @@ quality="strict"   → 额外执行渲染级溢出检测
 
 ### 3.6 复杂自定义处理
 
-复杂的局部编辑、特殊模板处理、非常规版式可使用 `execute_python` 工具，配合 **python-pptx** 库：
+复杂的局部编辑、特殊模板处理、非常规版式可使用 `execute_python` 工具，配合 **python-pptx** 库。但该规则只适用于已有 PPT 的局部兼容处理，或生成前置数据/图片资产；生成新 PPT 不得用 `execute_python` 绕过 `create_pptx_from_deck`、`create_pptx_from_template` 或 `create_pptx` 的正式工具入口。
 
 ### 3.7 验证 PPT
 

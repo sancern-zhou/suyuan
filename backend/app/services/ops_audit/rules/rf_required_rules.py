@@ -57,6 +57,8 @@ def _check_low_value_fields(
     low_value_fields = []
 
     for group_name, field_candidates in low_value_groups.items():
+        if table == "RF_TW_CleanCuttingHead" and group_name == "备注":
+            continue
         for field in field_candidates:
             if field not in form:
                 continue

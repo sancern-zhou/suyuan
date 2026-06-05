@@ -72,11 +72,11 @@ rules:
     scope: working_orders/RF_*
     rationale: RF 表单站点必须与工单站点一致，否则可能关联错工单或错站点。
   - rule_id: RF_TW_REMARK_LOW_VALUE
-    name: 两周切割头清洗备注为空或低价值
+    name: 两周切割头清洗缺少照片且备注说明待复核
     category: 填报规范性
     default_severity: 中
     scope: RF_TW_CleanCuttingHead
-    rationale: 清洗类记录应说明清洗对象、动作和结果，仅填空值、/、清洗等不能支撑闭环。
+    rationale: 两周切割头清洗优先以清洗前后照片作为作业证据；已上传清洗照片时不因备注为空或低价值判问题，未识别到清洗照片时才对备注进行语义复核，判断是否存在无照片或证据不足的合理说明。
   - rule_id: RF_CHECK_TIME_OUTSIDE_RANGE
     name: RF 表单检查时间不在开始结束时间内
     category: 时间合理性
@@ -245,12 +245,6 @@ rules:
     default_severity: 高
     scope: RF_W_GASEOUSCHECK_*/RF_Q_GASEOUSMULTIPOINT_*
     rationale: 按污染物拆分的 RF 表单应与表内污染物类型字段一致，否则可能关联错表或复制错表。
-  - rule_id: RF_Q_MULTIPOINT_STEP_TIME_INVALID
-    name: 多点校准点位时间异常
-    category: 时间合理性
-    default_severity: 高
-    scope: RF_Q_GASEOUSMULTIPOINT_*
-    rationale: 多点校准零点和各浓度点的开始、结束时间应按顺序递增，不能跨异常日期或单点持续时间异常过长。
   - rule_id: RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH
     name: 季度气体流量检查气压真实值复算不一致
     category: 表单数值逻辑

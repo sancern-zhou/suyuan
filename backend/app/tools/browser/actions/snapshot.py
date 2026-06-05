@@ -22,6 +22,10 @@ def handle_snapshot(
     max_refs: int = 100,
     interactive_only: bool = False,
     compact: bool = True,  # Default to True for efficiency
+    include_frames: bool = True,
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Capture page snapshot with role-based refs
@@ -60,7 +64,11 @@ def handle_snapshot(
         format=format,
         max_refs=max_refs,
         interactive_only=interactive_only,
-        compact=compact
+        compact=compact,
+        include_frames=include_frames,
+        frame_url=frame_url,
+        frame_name=frame_name,
+        frame_index=frame_index
     )
 
     # Store refs in global resolver for later use by act operations

@@ -53,6 +53,80 @@ class ReActAgent:
 
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
 
+    @staticmethod
+    def _select_auto_profile(
+        manual_mode: Optional[str],
+    ) -> Optional[str]:
+        """Choose the Auto capability profile for this run.
+
+        Profiles describe required model capabilities; they do not name a
+        concrete provider/model.
+        """
+        if manual_mode == "social":
+            return "multimodal"
+        return None
+
+    @staticmethod
+    def _apply_session_store_entry_for_persistence(session, entry: Dict[str, Any]) -> None:
+        """Apply non-transcript runtime state to a persisted Session.
+
+        SessionMemory is an LLM runtime context and may be compacted or restored
+        from only part of the DB transcript. It can seed an empty transcript for
+        non-API callers, but it must not overwrite an existing persisted history.
+        """
+        from dataclasses import asdict, is_dataclass
+
+        display_history_persisted = bool(entry.get("display_history_persisted"))
+        memory_manager = entry.get("memory") if isinstance(entry, dict) else None
+        if memory_manager and hasattr(memory_manager, "session") and not display_history_persisted:
+            runtime_turns = getattr(memory_manager.session, "conversation_history", [])
+            runtime_history = [
+                asdict(turn) if is_dataclass(turn) else turn
+                for turn in runtime_turns
+            ]
+            if runtime_history and not session.conversation_history:
+                session.conversation_history = runtime_history
+                logger.debug(
+                    "conversation_history_seeded_from_runtime_memory",
+                    session_id=session.session_id,
+                    message_count=len(runtime_history),
+                )
+            elif runtime_history:
+                logger.info(
+                    "runtime_history_not_persisted_over_existing_db_history",
+                    session_id=session.session_id,
+                    runtime_count=len(runtime_history),
+                    persisted_count=len(session.conversation_history),
+                )
+
+        collected_data_ids = entry.get("collected_data_ids", [])
+        collected_visuals = entry.get("collected_visuals", [])
+
+        if collected_data_ids:
+            session.data_ids = collected_data_ids
+            logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
+
+        if collected_visuals:
+            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+            session.metadata["visualizations"] = collected_visuals
+            session.metadata["visuals_count"] = len(collected_visuals)
+            logger.info(
+                "visualizations_set_in_metadata",
+                session_id=session.session_id,
+                visuals_count=len(collected_visuals)
+            )
+
+        office_docs = entry.get("office_documents", [])
+        if office_docs:
+            session.office_documents = office_docs
+
+        if entry.get("has_error"):
+            session.error = {
+                "type": entry.get("error_type", "unknown"),
+                "message": entry.get("error_message", "Unknown error"),
+                "timestamp": datetime.now().isoformat()
+            }
+
     def __init__(
         self,
         max_iterations: int = 60,  # ✅ 默认60次（适应复杂分析任务）
@@ -300,7 +374,8 @@ class ReActAgent:
 
         actual_session_id, memory_manager, created_new = await self._get_or_create_session(
             session_id,
-            reset_session
+            reset_session,
+            manual_mode=manual_mode,
         )
 
         from .task.todo_models import TodoList
@@ -343,6 +418,7 @@ class ReActAgent:
         )
 
         try:
+            auto_profile = self._select_auto_profile(manual_mode)
             # 使用标准 ReAct 循环（LLM 自主决策调用工具）
             # 工具池包括：
             # - 原子工具（基础能力）
@@ -359,8 +435,7 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if manual_mode == "social" else None,
-                llm_provider="mimo" if manual_mode == "social" else None,
-                llm_model="mimo-v2.5" if manual_mode == "social" else None,
+                auto_profile=auto_profile,
             )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
@@ -486,80 +561,34 @@ class ReActAgent:
             # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
-                    from app.agent.session import get_session_manager
-                    from dataclasses import asdict
-                    session_manager = get_session_manager()
+                    from app.agent.session.session_resolver import (
+                        load_session_for_mode,
+                        save_session_metadata_for_mode,
+                    )
 
                     # ✅ 从数据库加载 session
-                    session = await session_manager.load_session(actual_session_id)
+                    session = await load_session_for_mode(
+                        actual_session_id,
+                        mode=manual_mode,
+                    )
 
                     if session:
-                        # 同步 memory.session.conversation_history 到 Session 对象
                         if actual_session_id in self._session_store:
                             entry = self._session_store[actual_session_id]
-                            memory_manager = entry.get("memory")
-                            if memory_manager and hasattr(memory_manager, "session"):
-                                # 将 ConversationTurn dataclass 转换为字典
-                                conversation_history_dicts = [
-                                    asdict(turn) for turn in memory_manager.session.conversation_history
-                                ]
-                                session.conversation_history = conversation_history_dicts
-                                logger.debug(
-                                    "conversation_history_converted",
-                                    session_id=actual_session_id,
-                                    message_count=len(conversation_history_dicts)
-                                )
+                            self._apply_session_store_entry_for_persistence(session, entry)
 
-                            # ✅ 从 _session_store 读取 agent.py 收集的数据
-                            collected_data_ids = entry.get("collected_data_ids", [])
-                            collected_visuals = entry.get("collected_visuals", [])
-                            conversation_history_compressed = entry.get("conversation_history_compressed")
-
-                            # 设置 data_ids 和 visual_ids
-                            if collected_data_ids:
-                                session.data_ids = collected_data_ids
-                                logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
-
-                            if collected_visuals:
-                                session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-                                # ✅ 保存完整的可视化数据到 metadata
-                                session.metadata["visualizations"] = collected_visuals
-                                session.metadata["visuals_count"] = len(collected_visuals)
-                                logger.info(
-                                    "visualizations_set_in_metadata",
-                                    session_id=actual_session_id,
-                                    visuals_count=len(collected_visuals)
-                                )
-
-                            # 如果有压缩的历史，使用压缩版本
-                            if conversation_history_compressed:
-                                session.conversation_history = conversation_history_compressed
-
-                            # 同步 office_documents 到会话对象
-                            office_docs = entry.get("office_documents", [])
-                            if office_docs:
-                                session.office_documents = office_docs
-
-                            # 处理错误信息
-                            if entry.get("has_error"):
-                                session.error = {
-                                    "type": entry.get("error_type", "unknown"),
-                                    "message": entry.get("error_message", "Unknown error"),
-                                    "timestamp": datetime.now().isoformat()
-                                }
-
-                        # 保存会话
-                        await session_manager.save_session(session)
+                        # Route handlers own transcript persistence. Agent
+                        # finalization only refreshes metadata collected by
+                        # runtime tools.
+                        await save_session_metadata_for_mode(
+                            session,
+                            mode=manual_mode,
+                        )
                         logger.info(
                             "session_saved_after_analysis",
                             session_id=actual_session_id,
                             message_count=len(session.conversation_history),
                             metadata_keys=list(session.metadata.keys()) if session.metadata else []
-                        )
-                        logger.info(
-                            "session_saved_after_analysis",
-                            session_id=actual_session_id,
-                            message_count=len(session.conversation_history)
                         )
                 except Exception as e:
                     logger.warning(
@@ -1029,7 +1058,8 @@ class ReActAgent:
     async def _get_or_create_session(
         self,
         session_id: Optional[str],
-        reset_session: bool = False
+        reset_session: bool = False,
+        manual_mode: Optional[str] = None,
     ) -> Tuple[str, HybridMemoryManager, bool]:
         """
         获取或创建会话记忆管理器
@@ -1059,9 +1089,18 @@ class ReActAgent:
             # 的数据库历史，不能作为会话真源。
             if session_id and not reset_session:
                 try:
-                    from app.agent.session import get_session_manager
-                    session_manager = get_session_manager()
-                    saved_session = await session_manager.load_session(session_id)
+                    from app.agent.session.session_resolver import load_session_for_mode
+
+                    logger.info(
+                        "react_session_restore_load_start",
+                        session_id=session_id,
+                        mode=manual_mode,
+                        include_messages=True,
+                    )
+                    saved_session = await load_session_for_mode(
+                        session_id,
+                        mode=manual_mode,
+                    )
 
                     if saved_session:
                         logger.info(

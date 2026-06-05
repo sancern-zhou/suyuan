@@ -8,8 +8,19 @@
 import pytest
 from playwright.sync_api import sync_playwright
 
+from app.tools.browser.actions.interaction import handle_act
+from app.tools.browser.actions.screenshot import handle_screenshot
+from app.tools.browser.actions.file_ops import handle_upload
 from app.tools.browser.refs.ref_resolver import get_global_resolver, set_global_refs
 from app.tools.browser.refs.role_ref import RoleRef
+
+
+class _Manager:
+    def __init__(self, page):
+        self.page = page
+
+    def get_active_page(self, session_id="default"):
+        return self.page
 
 
 def test_browser_ref_integration():
@@ -29,7 +40,7 @@ def test_browser_ref_integration():
                     <form>
                         <input type="text" placeholder="请输入用户名" id="username" />
                         <input type="password" placeholder="请输入密码" id="password" />
-                        <button id="login-btn">登录</button>
+                        <button type="button" id="login-btn">登录</button>
                     </form>
                 </body>
             </html>
@@ -102,6 +113,66 @@ def test_browser_ref_integration():
 
         browser.close()
         print("\n✅ 所有集成测试通过!")
+
+
+def test_scroll_into_view_reports_scroll_into_view_action():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("""
+            <button id="target" style="margin-top: 2000px">目标</button>
+        """)
+        set_global_refs({"e1": {"role": "button", "name": "目标", "selector": "#target"}})
+
+        result = handle_act(_Manager(page), ref="e1", scroll_into_view=True)
+
+        assert result["action"] == "scrollIntoView"
+        assert "Scrolled" in result["result"]
+        browser.close()
+
+
+def test_screenshot_description_can_target_iframe():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("""
+            <html><body>
+                <iframe name="workorder" srcdoc="<form><input id='WorkingOrderCode'></form>"></iframe>
+            </body></html>
+        """)
+        page.frame(name="workorder").wait_for_selector("#WorkingOrderCode")
+
+        result = handle_screenshot(_Manager(page), frame_index=1)
+
+        assert "1个表单" in result["description"]
+        browser.close()
+
+
+def test_upload_can_target_file_input_inside_iframe(tmp_path):
+    upload_file = tmp_path / "upload.txt"
+    upload_file.write_text("hello", encoding="utf-8")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("""
+            <html><body>
+                <iframe name="uploadFrame" srcdoc="<input id='fileInput' type='file'>"></iframe>
+            </body></html>
+        """)
+        frame = page.frame(name="uploadFrame")
+        frame.wait_for_selector("#fileInput")
+
+        result = handle_upload(
+            _Manager(page),
+            selector="#fileInput",
+            file_path=str(upload_file),
+            frame_index=1,
+        )
+
+        assert result["uploaded"] is True
+        assert frame.locator("#fileInput").evaluate("el => el.files[0].name") == "upload.txt"
+        browser.close()
 
 
 def test_role_ref_creation():

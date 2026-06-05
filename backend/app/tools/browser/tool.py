@@ -57,14 +57,20 @@ Supported actions (22 operations):
 - **File**: download (file download), upload (file upload), list_files
 - **Dialog**: dialog (handle alerts/confirms)
 
+FRAME SUPPORT:
+- snapshot returns refs for every frame by default, using frame-qualified refs like f0:e1 and f1:e3.
+- act accepts frame-qualified refs directly, e.g. ref="f1:e3".
+- act/extract/wait/execute_js/screenshot/upload/download also accept frame_index, frame_name, or frame_url to target a frame.
+- For iframe pages, search the snapshot for the frame that contains the form/table, then use its fN:eM refs.
+
 ACT OPERATIONS (v3.0 NEW):
 - click: Click element (supports double_click, button="left/right/middle", modifiers=["Alt","Control","Shift","Meta"])
-- type: Type text into element (ref="e1", text="username")
+- type: Type text into element (ref="f1:e3", text="username")
 - press: Press keyboard key (press="Enter" or "Tab" or "Escape" or "Backspace" or "ArrowUp" etc.)
 - hover: Hover over element (hover=True)
-- drag: Drag element to another element (ref="e1", drag_to_ref="e2")
-- select: Select dropdown options (ref="e1", select_values=["Option1", "Option2"])
-- fill: Fill form with multiple fields (fill_fields=[{"ref":"e1","type":"text","value":"..."}, ...])
+- drag: Drag element to another element (ref="f0:e1", drag_to_ref="f0:e2")
+- select: Select dropdown options (ref="f0:e1", select_values=["Option1", "Option2"])
+- fill: Fill form with multiple fields (fill_fields=[{"ref":"f0:e1","type":"text","value":"..."}, ...])
 - scrollIntoView: Scroll element into view (scroll_into_view=True)
 - scroll: Scroll page (scroll="up/down/top/bottom") - legacy
 
@@ -76,7 +82,7 @@ WAIT CONDITIONS:
 - url: Wait for URL change (e.g., url="*dashboard*", timeout=10000)
 - load_state: Wait for page load state (e.g., load_state="domcontentloaded")
 - fn: Wait for JavaScript function (e.g., fn="() => document.title.includes('Done')")
-- timeout: Maximum wait time in milliseconds (default: 20000)
+- timeout: Maximum wait time in milliseconds for conditions; if no other wait condition is provided, timeout=3 means fixed wait for 3 seconds
 
 SNAPSHOT FORMATS:
 - format="ai": LLM-optimized format with role-based refs (default, recommended)
@@ -99,21 +105,21 @@ Standard workflow:
 2. browser(action="navigate", url="https://example.com")
 3. browser(action="wait", selector=".login-btn", timeout=5000)
 4. browser(action="snapshot", format="ai")
-5. browser(action="act", ref="e1", click=True)
+5. browser(action="act", ref="f0:e1", click=True)
 6. browser(action="wait", text_gone="Logging in...", timeout=10000)
 7. browser(action="stop")
 
 ACT OPERATION EXAMPLES (v3.0):
-- Click: browser(action="act", ref="e1", click=True)
-- Double-click: browser(action="act", ref="e1", click=True, double_click=True)
-- Right-click: browser(action="act", ref="e1", click=True, button="right")
-- Type: browser(action="act", ref="e1", text="hello")
-- Press Enter: browser(action="act", ref="e1", press="Enter") or browser(action="act", press="Enter")
-- Hover: browser(action="act", ref="e1", hover=True)
-- Drag: browser(action="act", ref="e1", drag_to_ref="e2")
-- Select dropdown: browser(action="act", ref="e1", select_values=["Option1", "Option2"])
-- Fill form: browser(action="act", fill_fields=[{"ref":"e1","type":"text","value":"user"}, {"ref":"e2","type":"password","value":"pass"}])
-- Scroll into view: browser(action="act", ref="e1", scroll_into_view=True)
+- Click: browser(action="act", ref="f0:e1", click=True)
+- Double-click: browser(action="act", ref="f0:e1", click=True, double_click=True)
+- Right-click: browser(action="act", ref="f0:e1", click=True, button="right")
+- Type: browser(action="act", ref="f0:e1", text="hello")
+- Press Enter: browser(action="act", ref="f0:e1", press="Enter") or browser(action="act", press="Enter")
+- Hover: browser(action="act", ref="f0:e1", hover=True)
+- Drag: browser(action="act", ref="f0:e1", drag_to_ref="f0:e2")
+- Select dropdown: browser(action="act", ref="f0:e1", select_values=["Option1", "Option2"])
+- Fill form: browser(action="act", fill_fields=[{"ref":"f0:e1","type":"text","value":"user"}, {"ref":"f0:e2","type":"password","value":"pass"}])
+- Scroll into view: browser(action="act", ref="f0:e1", scroll_into_view=True)
 
 EXECUTE JS (JavaScript execution):
 Use execute_js when:
@@ -122,10 +128,16 @@ Use execute_js when:
 - Direct DOM manipulation required
 
 Examples:
-- Click blocked element: code='document.querySelector("a:has-text(\\"实时预览\\")").click()'
-- Remove blocking dialogs: code='document.querySelectorAll(".el-dialog").forEach(d=>d.remove())'
+- Click blocked element: code='() => { const a = document.querySelector("a"); a?.click(); return !!a; }'
+- Remove blocking dialogs: code='() => { document.querySelectorAll(".el-dialog").forEach(d=>d.remove()); return "removed"; }'
 - Get page info: code='document.title'
 - Scroll to bottom: code='window.scrollTo(0, document.body.scrollHeight)'
+- Iframe query: browser(action="execute_js", frame_index=1, code='document.querySelector("#WorkingOrderCode")?.value')
+
+EXECUTE JS RULES:
+- Plain code is evaluated as an expression and its value is returned, e.g. code='document.title'.
+- Multi-statement code must be an arrow function with explicit return, e.g. code='() => { const x = document.title; return x; }'.
+- Do not pass bare statement blocks such as code='const x = 1; x;' because they are intentionally not supported.
 
 IMPORTANT: If act(action="click") fails with timeout/blocking error, IMMEDIATELY try execute_js instead of retrying with different selectors!
 
@@ -185,6 +197,15 @@ If operation times out: selector is not unique. Use more specific attributes or 
                 result_type=type(result).__name__,
                 thread_id=executor.get_session_thread(session_id)
             )
+
+            if self._is_action_failure(result):
+                error = self._extract_action_error(result)
+                return {
+                    "success": False,
+                    "data": result,
+                    "error": error,
+                    "summary": f"Browser action '{action}' failed: {error[:120]}"
+                }
 
             return {
                 "success": True,
@@ -469,6 +490,23 @@ If operation times out: selector is not unique. Use more specific attributes or 
             logger.warning("playwright_not_installed")
             return False
 
+    @staticmethod
+    def _is_action_failure(result: Dict[str, Any]) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is False:
+            return True
+        if result.get("type") == "error":
+            return True
+        return False
+
+    @staticmethod
+    def _extract_action_error(result: Dict[str, Any]) -> str:
+        error = result.get("error")
+        if error:
+            return str(error)
+        return "action returned unsuccessful result"
+
     def get_function_schema(self) -> Dict[str, Any]:
         """Get Function Calling Schema
 
@@ -478,10 +516,9 @@ If operation times out: selector is not unique. Use more specific attributes or 
         return {
             "name": "browser",
             "description": (
-                "浏览器自动化工具。简单任务可直接调用；复杂浏览、表单、登录、下载上传、"
-                "多步骤页面操作或任何浏览器调用失败后，先阅读 "
+                "浏览器自动化工具。首次使用 browser 前必须阅读 "
                 "backend/app/tools/browser/browser_skills_guide.md。"
-                "陌生页面先snapshot，再优先用snapshot返回的ref执行act。"
+                "默认先snapshot，再用ref；iframe使用fN:eM或frame_*参数。"
             ),
             "parameters": {
                 "type": "object",
@@ -495,14 +532,33 @@ If operation times out: selector is not unique. Use more specific attributes or 
                             "console", "pdf", "download", "upload", "list_files",
                             "trace", "dialog", "wait"
                         ],
-                        "description": "浏览器动作；复杂参数见browser_skills_guide.md"
+                        "description": "浏览器动作；首次使用前必须先读browser_skills_guide.md"
                     },
                     "params": {
                         "type": "object",
                         "description": (
-                            "动作参数对象，如url/ref/text/selector/timeout/code等；"
-                            "复杂任务或出错后先读browser_skills_guide.md"
+                            "首次使用前已读指南后再传动作参数；常用：url/ref/selector/text/code/"
+                            "timeout/frame_index/frame_name/frame_url/file_path/fill_fields。"
                         ),
+                        "properties": {
+                            "url": {"type": "string"},
+                            "ref": {"type": "string"},
+                            "selector": {"type": "string"},
+                            "text": {"type": "string"},
+                            "code": {"type": "string"},
+                            "timeout": {"type": "integer"},
+                            "frame_index": {"type": "integer"},
+                            "frame_name": {"type": "string"},
+                            "frame_url": {"type": "string"},
+                            "full_page": {"type": "boolean"},
+                            "file_path": {"type": "string"},
+                            "click": {"type": "boolean"},
+                            "scroll_into_view": {"type": "boolean"},
+                            "fill_fields": {
+                                "type": "array",
+                                "items": {"type": "object", "additionalProperties": True}
+                            }
+                        },
                         "additionalProperties": True
                     },
                     "session_id": {

@@ -24,4 +24,10 @@ assert.doesNotMatch(
   'Session restore should not use a 30-message first page that can split the latest conversation turn'
 )
 
+assert.doesNotMatch(
+  source,
+  /if\s*\(store\.sessionStates\?\.\[sessionId\]\)\s*\{[\s\S]*?return\s*\{\s*success:\s*true,\s*session:\s*store\.sessionStates\[sessionId\],\s*local:\s*true\s*\}/,
+  'Session restore must be remote-first and must not short-circuit to local session state'
+)
+
 console.log('useSessionManagement recovery tests passed')

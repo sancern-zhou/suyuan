@@ -551,6 +551,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="write_file", error=str(e))
 
     try:
+        from app.tools.utility.present_artifact_tool import PresentArtifactTool
+        registry.register(PresentArtifactTool(), priority=306)
+        logger.info("tool_loaded", tool="present_artifact")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="present_artifact", error=str(e))
+
+    try:
         from app.tools.utility.glob_tool import GlobTool
         registry.register(GlobTool(), priority=307)  # 修复: 506->307
         logger.info("tool_loaded", tool="search_files")

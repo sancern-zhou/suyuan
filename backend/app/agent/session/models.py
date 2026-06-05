@@ -91,7 +91,8 @@ class Session(BaseModel):
             updated_at=self.updated_at,
             data_count=len(self.data_ids),
             visual_count=len(self.visual_ids),
-            has_error=self.error is not None
+            has_error=self.error is not None,
+            metadata=self.metadata
         )
 
     def get_duration(self) -> float:
@@ -112,6 +113,7 @@ class SessionInfo(BaseModel):
     data_count: int = Field(default=0, description="数据数量")
     visual_count: int = Field(default=0, description="可视化数量")
     has_error: bool = Field(default=False, description="是否有错误")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="会话元数据")
 
     class Config:
         json_encoders = {

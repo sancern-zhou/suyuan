@@ -68,6 +68,17 @@ class AnnualYtdConsultationFileFetcher(ConsultationFileFetcher):
         today_str = datetime.now().strftime("%Y%m%d")
         return month_dir / f"年度累计会商文件（{year}年1-{month}月）{today_str}.xlsx"
 
+    def _format_header_value(self, template: str, time_range: Dict[str, str]) -> str:
+        """年度累计表头使用 1-N 月累计口径。"""
+        month = int(time_range["month"])
+        replacements = {
+            "{year}年{month}月": f"{time_range['year']}年1-{month}月",
+            "{last_year}年{month}月": f"{time_range['last_year']}年1-{month}月",
+        }
+        if template in replacements:
+            return replacements[template]
+        return super()._format_header_value(template, time_range)
+
     def _get_last_year_same_day(self, time_range: Dict[str, str], full_month: bool = False) -> str:
         """去年同期结束日：去年同月月末（与年度累计时间范围一致）。
 

@@ -26,8 +26,11 @@ Excel操作说明：
 配合 openpyxl、pandas、xlsxwriter 等库实现。
 
 PPT操作说明：
-读取PPT请优先使用 read_pptx；创建PPT请优先使用 create_pptx（PptxGenJS）。
-复杂自定义处理可使用 execute_python 配合 python-pptx 库实现。
+读取PPT请优先使用 read_pptx。
+生成正式或业务型PPT请优先直接调用 create_pptx_from_deck，让Agent输出 suyuan.deck.v1 业务结构。
+基于模板生成PPT请使用 create_pptx_from_template；无业务deck且需要底层控制时才使用 create_pptx（PptxGenJS）。
+禁止通过 execute_python 手动 import PPT工具类或直接调用PptxGenJS renderer 来绕过正式工具入口。
+execute_python 仅用于复杂的局部编辑、特殊兼容处理或前置数据/图片资产生成。
 """
 
 # Phase 1: 跨平台工具（已完成）

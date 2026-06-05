@@ -3,20 +3,20 @@
     <!-- Empty state -->
     <div v-if="!hasOfficeDocuments || officeDocuments.length === 0" class="empty-state">
       <p class="empty-title">暂无文档</p>
-      <p class="empty-tip">编辑Word/PPT文档时，将在此处显示预览</p>
+      <p class="empty-tip">触发文件预览后，将在此处显示预览</p>
     </div>
 
     <!-- Panel content -->
     <template v-else>
-      <!-- Document list -->
+      <!-- Active document preview -->
       <div class="doc-list">
-        <div v-for="doc in officeDocuments" :key="doc.pdf_id || doc.file_path" class="doc-item">
+        <div v-for="doc in activeDocumentList" :key="getDocumentKey(doc)" class="doc-item">
           <!-- Preview mode: PDF preview (with transition animation) -->
           <div v-if="!isEditMode" class="doc-preview">
             <!-- Action buttons in top-right corner -->
             <div class="action-buttons">
               <button
-                v-if="!['report', 'html_artifact'].includes(doc.doc_type)"
+                v-if="isEditableDoc(doc)"
                 @click="toggleEditMode"
                 class="action-btn edit-btn"
                 title="编辑模式"
@@ -64,6 +64,9 @@
                   </button>
                   <button v-if="doc.doc_type === 'html_artifact'" @click="downloadHtmlArtifact(doc)" class="download-item">
                     下载 HTML 文件
+                  </button>
+                  <button v-if="doc.file_path && doc.generator === 'present_artifact'" @click="downloadOriginalFile(doc)" class="download-item">
+                    下载原文件
                   </button>
                   <button v-if="doc.doc_type === 'markdown'" @click="downloadMarkdown(doc)" class="download-item">
                     下载 Markdown 文件
@@ -115,8 +118,8 @@
               ></iframe>
             </div>
 
-            <!-- HTML preview (Quarto报告/HTML展示页使用iframe显示) -->
-            <div v-else-if="['report', 'html_artifact'].includes(doc.doc_type) && doc.html_url" class="html-wrapper">
+            <!-- HTML/Image preview (iframe displays HTML pages and browser-renderable media URLs) -->
+            <div v-else-if="doc.html_url" class="html-wrapper">
               <iframe
                 :src="doc.html_url"
                 :key="doc.html_url"
@@ -162,24 +165,30 @@
         </div>
       </div>
 
-      <!-- Edit history (默认隐藏) -->
-      <div class="edit-history-section">
-        <div class="edit-history-header" @click="toggleHistory">
-          <span class="section-title">编辑历史</span>
-          <span class="history-toggle-icon">{{ showHistory ? '▼' : '▶' }}</span>
+      <!-- File history (默认隐藏) -->
+      <div class="file-history-section">
+        <div class="file-history-header" @click="toggleFileHistory">
+          <span class="section-title">文件历史</span>
+          <span class="history-toggle-icon">{{ showFileHistory ? '▼' : '▶' }}</span>
         </div>
-        <div v-if="showHistory" class="history-list">
-          <div
-            v-for="(action, index) in editHistory.slice(-5)"
-            :key="index"
-            class="history-item"
+        <div v-if="showFileHistory" class="history-list">
+          <button
+            v-for="doc in fileHistory"
+            :key="getDocumentKey(doc)"
+            type="button"
+            class="history-item file-history-item"
+            :class="{ active: getDocumentKey(doc) === activeDocumentId }"
+            @click="selectDocument(doc)"
           >
-            <span class="history-icon">{{ getActionIcon(action.tool) }}</span>
-            <span class="history-text">{{ action.summary }}</span>
-            <span class="history-time">{{ formatTime(action.timestamp) }}</span>
-          </div>
-          <div v-if="editHistory.length === 0" class="history-empty">
-            暂无编辑历史
+            <span class="history-icon">{{ getDocIcon(doc.doc_type) }}</span>
+            <span class="history-text">
+              <span class="history-file-name">{{ doc.file_name || getFileName(doc.file_path) }}</span>
+              <span v-if="doc.last_action?.summary" class="history-file-summary">{{ doc.last_action.summary }}</span>
+            </span>
+            <span class="history-time">{{ formatTime(doc.last_action?.timestamp || doc.timestamp) }}</span>
+          </button>
+          <div v-if="fileHistory.length === 0" class="history-empty">
+            暂无文件历史
           </div>
         </div>
       </div>
@@ -233,10 +242,9 @@ const props = defineProps({
 // 状态
 const isEditMode = ref(false)
 const isExpanded = ref(true)
-const showHistory = ref(false)
+const showFileHistory = ref(false)
 const showDownloadMenu = ref(false)
-const officeDocuments = ref([])
-const editHistory = ref([])
+const activeDocumentId = ref(null)
 const refreshTimeouts = ref(new Map())
 const shareToast = ref({
   visible: false,
@@ -273,6 +281,67 @@ const hasOfficeDocuments = computed(() => {
   return officeDocuments.value.length > 0
 })
 
+const officeDocuments = computed(() => {
+  return (reactStore.officeDocumentHistory || [])
+    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.pdf_url || doc?.html_url || doc?.markdown_content)
+    .map(normalizeDocument)
+})
+
+const activeDocument = computed(() => {
+  if (officeDocuments.value.length === 0) {
+    return null
+  }
+  return officeDocuments.value.find(doc => getDocumentKey(doc) === activeDocumentId.value) || officeDocuments.value[officeDocuments.value.length - 1]
+})
+
+const activeDocumentList = computed(() => {
+  return activeDocument.value ? [activeDocument.value] : []
+})
+
+const fileHistory = computed(() => {
+  return officeDocuments.value.slice().reverse()
+})
+
+function getDocumentKey(doc) {
+  return doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.file_name || ''
+}
+
+function selectDocument(doc) {
+  const key = getDocumentKey(doc)
+  if (!key) return
+  activeDocumentId.value = key
+  isEditMode.value = false
+  showDownloadMenu.value = false
+}
+
+function normalizeDocument(doc) {
+  const filePath = doc.file_path || doc.path || doc.pdf_preview?.pdf_path
+  const fileName = doc.file_name || (filePath ? filePath.split(/[/\\]/).pop() : 'unknown')
+  return {
+    doc_type: doc.doc_type || getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
+    file_name: fileName,
+    file_path: filePath,
+    generator: doc.generator,
+    pdf_url: doc.pdf_url || doc.pdf_preview?.pdf_url,
+    pdf_id: doc.pdf_id || doc.pdf_preview?.pdf_id,
+    html_url: doc.html_url || withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
+    html_id: doc.html_id || doc.html_preview?.html_id,
+    preview_version: doc.preview_version || doc.html_preview?.preview_version,
+    markdown_content: doc.markdown_content || doc.markdown_preview?.content,
+    loading: doc.loading || false,
+    sharing: doc.sharing || false,
+    editContent: doc.editContent || '',
+    submitting: doc.submitting || false,
+    editMessage: doc.editMessage || null,
+    timestamp: doc.timestamp,
+    last_action: doc.last_action || {
+      tool: doc.generator,
+      summary: doc.summary,
+      timestamp: doc.timestamp || new Date()
+    }
+  }
+}
+
 function withPreviewVersion(url, version) {
   if (!url || !version) {
     return url
@@ -285,83 +354,15 @@ function withPreviewVersion(url, version) {
   }
 }
 
-// 监听 store.lastOfficeDocument，直接更新文档列表
-watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
-  if (!doc?.pdf_preview && !doc?.markdown_preview && !doc?.html_preview) {
+watch(officeDocuments, (docs, oldDocs = []) => {
+  if (docs.length === 0) {
+    activeDocumentId.value = null
     return
   }
-
-  const filePath = doc.file_path
-  const fileName = filePath ? filePath.split(/[/\\]/).pop() : 'unknown'
-
-  // 检测是否切换到了不同的文档（会话切换）
-  if (oldDoc?.file_path && oldDoc.file_path !== filePath) {
-    officeDocuments.value = []
-    editHistory.value = []
-    showHistory.value = false
-    isEditMode.value = false
+  const activeStillExists = docs.some(doc => getDocumentKey(doc) === activeDocumentId.value)
+  if (!activeStillExists || docs.length > oldDocs.length) {
+    activeDocumentId.value = getDocumentKey(docs[docs.length - 1])
   }
-
-  // 查找现有文档
-  const existingDoc = officeDocuments.value.find(d =>
-    d.file_path === filePath || d.file_name === fileName
-  )
-
-  if (existingDoc) {
-    // 更新现有文档
-    if (doc.pdf_preview && existingDoc.pdf_id !== doc.pdf_preview.pdf_id) {
-      existingDoc.pdf_url = doc.pdf_preview.pdf_url
-      existingDoc.pdf_id = doc.pdf_preview.pdf_id
-      existingDoc.file_path = filePath
-      triggerPdfRefresh(existingDoc)
-    }
-    // 更新markdown内容
-    if (doc.markdown_preview) {
-      existingDoc.markdown_content = doc.markdown_preview.content
-      existingDoc.file_path = filePath
-    }
-    // 更新 HTML 预览
-    if (doc.html_preview) {
-      existingDoc.html_url = withPreviewVersion(doc.html_preview.html_url, doc.html_preview.preview_version)
-      existingDoc.html_id = doc.html_preview.html_id
-      existingDoc.preview_version = doc.html_preview.preview_version
-      existingDoc.file_path = filePath
-      existingDoc.doc_type = getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type)
-      existingDoc.loading = false
-    }
-  } else {
-    // 添加新文档
-    const newDoc = {
-      doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
-      file_name: fileName,
-      file_path: filePath,
-      pdf_url: doc.pdf_preview?.pdf_url,
-      pdf_id: doc.pdf_preview?.pdf_id,
-      html_url: withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
-      html_id: doc.html_preview?.html_id,
-      preview_version: doc.html_preview?.preview_version,
-      markdown_content: doc.markdown_preview?.content,
-      loading: false,
-      sharing: false,
-      editContent: '',
-      submitting: false,
-      editMessage: null,
-      last_action: {
-        tool: doc.generator,
-        summary: doc.summary,
-        timestamp: doc.timestamp || new Date()
-      }
-    }
-
-    officeDocuments.value.push(newDoc)
-  }
-
-  // 添加到编辑历史
-  editHistory.value.push({
-    tool: doc.generator,
-    summary: doc.summary,
-    timestamp: doc.timestamp || new Date()
-  })
 }, { immediate: true })
 
 // 监听 sessionId 变化，切换会话时清空文档列表
@@ -370,9 +371,8 @@ watch(() => props.sessionId, (newSessionId, oldSessionId) => {
     // 如果store中没有新的office document，说明是切换到空会话，需要清空
     // 如果store中有新的office document，会在lastOfficeDocument的watch中处理，这里不清空
     if (!reactStore.lastOfficeDocument) {
-      officeDocuments.value = []
-      editHistory.value = []
-      showHistory.value = false
+      activeDocumentId.value = null
+      showFileHistory.value = false
       isEditMode.value = false
     }
   }
@@ -412,6 +412,10 @@ function toggleEditMode() {
 // Toggle download menu
 function toggleDownloadMenu() {
   showDownloadMenu.value = !showDownloadMenu.value
+}
+
+function isEditableDoc(doc) {
+  return doc.generator !== 'present_artifact' && !['report', 'html_artifact'].includes(doc.doc_type)
 }
 
 function getResponseFilename(response, fallback) {
@@ -692,6 +696,28 @@ async function downloadHtmlArtifact(doc) {
   }
 }
 
+function downloadOriginalFile(doc) {
+  if (!doc.file_path || doc.file_path === '') {
+    console.error('[OfficeDocumentPanel] Original file path not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = doc.file_name || 'artifact'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Original file download failed:', error)
+  }
+}
+
 // Download Markdown file
 function downloadMarkdown(doc) {
   if (!doc.file_path || doc.file_path === '') {
@@ -752,10 +778,8 @@ function downloadExcel(doc) {
 function cancelEdit() {
   isEditMode.value = false
   // Clear edit content
-  officeDocuments.value.forEach(doc => {
-    doc.editContent = ''
-    doc.editMessage = null
-  })
+  activeDocument.value && (activeDocument.value.editContent = '')
+  activeDocument.value && (activeDocument.value.editMessage = null)
 }
 
 // Edit content change
@@ -802,6 +826,12 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
   if (['report', 'html_report', 'quarto_report'].includes(explicitType)) {
     return 'report'
   }
+  if (['html', 'image'].includes(explicitType)) {
+    return explicitType
+  }
+  if (explicitType === 'pdf') {
+    return 'pdf'
+  }
   // 先根据 generator 判断
   if (generator === 'quarto_report' || filePath?.endsWith('report.qmd')) {
     return 'report'
@@ -826,6 +856,12 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
       return 'excel'
     } else if (['md', 'markdown', 'qmd'].includes(ext)) {
       return 'markdown'
+    } else if (['html', 'htm'].includes(ext)) {
+      return 'html'
+    } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) {
+      return 'image'
+    } else if (ext === 'pdf') {
+      return 'pdf'
     }
   }
 
@@ -837,27 +873,14 @@ function getDocIcon(docType) {
   return icons[docType] || icons.unknown
 }
 
-function getActionIcon(tool) {
-  const icons = {
-    word_edit: '✏️',
-    find_replace_word: '🔍',
-    accept_word_changes: '✅',
-    add_ppt_slide: '➕',
-    unpack_office: '📦',
-    pack_office: '📦',
-    recalc_excel: '📊'
-  }
-  return icons[tool] || '⚙️'
-}
-
 function formatTime(timestamp) {
   if (!timestamp) return ''
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-function toggleHistory() {
-  showHistory.value = !showHistory.value
+function toggleFileHistory() {
+  showFileHistory.value = !showFileHistory.value
 }
 
 // 【新增】从历史数据加载文档列表（用于历史对话恢复）
@@ -869,47 +892,9 @@ function loadDocuments(documents) {
 
   console.log('[OfficeDocumentPanel] 开始加载历史文档，数量:', documents.length)
 
-  documents.forEach((doc, index) => {
-    // 检查是否有有效的预览数据（PDF、Markdown或HTML）
-    if ((!doc.pdf_preview && !doc.markdown_preview && !doc.html_preview) || !doc.file_path) {
-      console.warn('[OfficeDocumentPanel] 跳过无效文档:', index, doc)
-      return
-    }
-
-    const filePath = doc.file_path
-    const fileName = filePath ? filePath.split(/[/\\]/).pop() : 'unknown'
-
-    // 检查是否已存在
-    const existingDoc = officeDocuments.value.find(d =>
-      d.file_path === filePath || d.file_name === fileName
-    )
-
-    if (!existingDoc) {
-      // 添加新文档（不触发动画，因为这是历史数据）
-      console.log('[OfficeDocumentPanel] 加载历史文档:', index + 1, fileName)
-      officeDocuments.value.push({
-        doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
-        file_name: fileName,
-        file_path: filePath,
-        pdf_url: doc.pdf_preview?.pdf_url,
-        pdf_id: doc.pdf_preview?.pdf_id,
-        html_url: withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
-        html_id: doc.html_preview?.html_id,
-        preview_version: doc.html_preview?.preview_version,
-        markdown_content: doc.markdown_preview?.content,
-        loading: false,
-        sharing: false,
-        editContent: '',
-        submitting: false,
-        editMessage: null,
-        last_action: {
-          tool: doc.generator,
-          summary: doc.summary,
-          timestamp: doc.timestamp || new Date()
-        }
-      })
-    }
-  })
+  if (typeof reactStore.setOfficeDocumentHistory === 'function') {
+    reactStore.setOfficeDocumentHistory(documents)
+  }
 
   console.log('[OfficeDocumentPanel] 历史文档加载完成，当前总数:', officeDocuments.value.length)
 }
@@ -1379,13 +1364,13 @@ defineExpose({
   }
 }
 
-.edit-history-section {
+.file-history-section {
   padding: 12px;
   border-top: 1px solid #f0f0f0;
   background: #fafafa;
 }
 
-.edit-history-header {
+.file-history-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1415,8 +1400,23 @@ defineExpose({
   gap: 8px;
   padding: 6px 8px;
   background: #fff;
+  border: 1px solid transparent;
   border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
   font-size: 12px;
+  text-align: left;
+  width: 100%;
+
+  &:hover {
+    background: #f8fbff;
+    border-color: #d8e8fb;
+  }
+
+  &.active {
+    background: #eef6ff;
+    border-color: #90caf9;
+  }
 }
 
 .history-empty {
@@ -1426,9 +1426,16 @@ defineExpose({
   font-size: 12px;
 }
 
-.history-icon { font-size: 14px; }
-.history-text { flex: 1; color: #333; }
-.history-time { color: #999; font-size: 11px; }
+.history-icon { flex: 0 0 auto; font-size: 14px; }
+.history-text { display: flex; flex: 1; flex-direction: column; min-width: 0; color: #333; }
+.history-file-name,
+.history-file-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-file-summary { margin-top: 2px; color: #7b8796; font-size: 11px; }
+.history-time { flex: 0 0 auto; color: #999; font-size: 11px; }
 
 .empty-state {
   flex: 1;

@@ -39,6 +39,8 @@ analyze_pptx_template(path="模板.pptx")
 
 生成正式或业务型 PPT 时，优先使用 `create_pptx_from_deck`，不要让 Agent 直接从零构造低层 PPT 元素。Agent 应输出 `suyuan.deck.v1` 业务结构，由工具转换成 `create_pptx` 可渲染结构，或根据 `template_manifest` 转换为模板物理 slot。
 
+**禁止绕过工具入口**：生成新 PPT 时，必须直接调用 `create_pptx_from_deck`、`create_pptx_from_template` 或 `create_pptx` 工具。不要使用 `execute_python` 手动 import `CreatePptxFromDeckTool`、`CreatePptxTool`，也不要在 `execute_python` 中直接调用 PptxGenJS renderer。`execute_python` 只能用于前置数据处理、生成图片资产，或对已有 PPT 做专门工具无法覆盖的局部兼容处理。
+
 支持的业务 slide 类型：
 
 ```text
@@ -233,6 +235,8 @@ create_pptx(
     output_file="新演示文稿.pptx"
 )
 ```
+
+> 注意：`create_pptx` 也必须通过正式工具调用入口执行。不要用 `execute_python` 拼接 `slides` 后手动调用工具类或 renderer；业务型 PPT 应优先上移为 `create_pptx_from_deck` 的 `suyuan.deck.v1` 结构。
 
 **支持的幻灯片类型**：
 - `title` - 标题页

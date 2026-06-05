@@ -695,7 +695,10 @@ def _check_pm_temp_pressure_visual(
             f"附件文件名：{item.get('filename') or ''}。"
             "请判断图片是否为颗粒物温度、压力校准或检查照片，并只读取PM10/PM2.5分析仪对应的温度和气压读数。"
             "temperature_display 只能填写仪器显示的气温/温度值，temperature_standard 只能填写标准值或实际值。"
+            "若屏幕上同时出现多个温度值，temperature_display 优先读取 AT 标签后的环境温度/气温读数。"
+            "不要把 Delta、Error、Diff、误差、差值、修正值或偏差对应的温度读数填入 temperature_display。"
             "pressure_display 只能填写仪器显示的气压/压力值，pressure_standard 只能填写标准值或实际值。"
+            "若屏幕上出现 BP 标签，pressure_display 优先读取 BP 标签后的气压读数；保留图片原始单位，例如 mmHg。"
             "不要读取日期水印、时间、站点编号、设备序列号、证书编号、误差值、校准情况或备注。"
             "如能从图片文字、文件名或上下文区分PM10、PM2.5，请分别返回；不能区分则保持对应项为null。"
             "只输出JSON，格式："
@@ -822,20 +825,31 @@ def _compare_pm_temp_pressure_value(
     field: str,
 ) -> list[dict[str, Any]]:
     visual_number = _parse_number(visual_value)
-    form_number = _parse_number(form.get(field))
+    form_value = form.get(field)
+    form_number = _parse_number(form_value)
     if visual_number is None or form_number is None:
         return []
-    tolerance = float(os.getenv("OPS_AUDIT_PM_TEMP_PRESSURE_VISUAL_VALUE_TOLERANCE", "0.1") or "0.1")
-    matched = abs(visual_number - form_number) <= tolerance
+    comparable_visual, visual_unit = _normalize_pm_temp_pressure_value_for_comparison(
+        label,
+        visual_number,
+        form_number,
+        form_value,
+    )
+    comparable_form = _normalize_pm_temp_pressure_form_value_for_comparison(
+        form_value,
+        form_number,
+    )
+    matched = comparable_visual == comparable_form
     return [
         {
             "label": label,
             "field": field,
-            "visual_value": visual_number,
+            "visual_value": round(comparable_visual, 6),
             "raw_visual_value": visual_number,
-            "visual_unit": "",
-            "form_value": form_number,
-            "difference": round(abs(visual_number - form_number), 6),
+            "visual_unit": visual_unit,
+            "form_value": comparable_form,
+            "raw_form_value": form_number,
+            "difference": round(abs(comparable_visual - comparable_form), 6),
             "status": "matched" if matched else "mismatch",
         }
     ]
@@ -911,6 +925,35 @@ def _normalize_flow_value_for_comparison(visual_number: float, visual_unit: Any,
     if unit == "ml/min" and abs(form_number) < 10 and abs(visual_number) >= 10:
         return visual_number / 1000
     return visual_number
+
+
+def _normalize_pm_temp_pressure_value_for_comparison(
+    label: str,
+    visual_number: float,
+    form_number: float,
+    form_value: Any,
+) -> tuple[float, str]:
+    lower_label = label.lower()
+    precision = _decimal_places(form_value)
+    if (
+        "pressure" in lower_label
+        and 600 <= abs(visual_number) <= 850
+        and 80 <= abs(form_number) <= 120
+    ):
+        return round(visual_number * 0.133322368, precision), "mmHg->kPa"
+    return round(visual_number, precision), ""
+
+
+def _normalize_pm_temp_pressure_form_value_for_comparison(form_value: Any, form_number: float) -> float:
+    return round(form_number, _decimal_places(form_value))
+
+
+def _decimal_places(value: Any) -> int:
+    text = str(value).strip()
+    match = re.search(r"-?\d+(?:\.(\d+))?", text)
+    if not match or match.group(1) is None:
+        return 0
+    return len(match.group(1))
 
 
 def _normalize_flow_unit(unit: Any) -> str | None:
