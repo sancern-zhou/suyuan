@@ -6,7 +6,7 @@ import re
 from typing import Any, Iterable
 
 
-BACKEND_DIR = Path(__file__).resolve().parents[5]
+BACKEND_DIR = Path(__file__).resolve().parents[4]
 SKILLS_DIR = BACKEND_DIR / "docs" / "skills"
 DRAFTS_DIR = SKILLS_DIR / ".drafts"
 
