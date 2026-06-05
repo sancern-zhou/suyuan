@@ -579,8 +579,22 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="list_skills", error=str(e))
 
     try:
+        from app.tools.utility.skill_management.view_skill_tool import ViewSkillTool
+        registry.register(ViewSkillTool(), priority=311)
+        logger.info("tool_loaded", tool="view_skill")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="view_skill", error=str(e))
+
+    try:
+        from app.tools.utility.skill_management.create_skill_draft_tool import CreateSkillDraftTool
+        registry.register(CreateSkillDraftTool(), priority=312)
+        logger.info("tool_loaded", tool="create_skill_draft")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_skill_draft", error=str(e))
+
+    try:
         from app.tools.utility.parse_pdf_tool import create_parse_pdf_tool
-        registry.register(create_parse_pdf_tool(), priority=311)  # 修复: 509->311
+        registry.register(create_parse_pdf_tool(), priority=313)  # 修复: 509->313
         logger.info("tool_loaded", tool="parse_pdf")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
