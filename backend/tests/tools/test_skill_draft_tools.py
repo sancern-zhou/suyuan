@@ -50,3 +50,55 @@ def test_resolve_skill_file_rejects_unsafe_name(tmp_path: Path):
 
     with pytest.raises(ValueError):
         resolve_skill_file("../secret", include_drafts=True, skills_dir=skills_dir, drafts_dir=drafts_dir)
+
+
+from app.tools.utility.skill_management.view_skill_tool import ViewSkillTool
+
+
+@pytest.mark.asyncio
+async def test_view_skill_reads_official_skill(monkeypatch, tmp_path: Path):
+    skills_dir = tmp_path / "skills"
+    drafts_dir = skills_dir / ".drafts"
+    skills_dir.mkdir()
+    drafts_dir.mkdir()
+    (skills_dir / "excel.md").write_text("# Excel 技能\n\n## 概述\n处理 Excel。", encoding="utf-8")
+
+    import app.tools.utility.skill_management.view_skill_tool as module
+
+    monkeypatch.setattr(module, "SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+
+    result = await ViewSkillTool().execute(name="excel")
+
+    assert result["success"] is True
+    assert result["data"]["name"] == "Excel 技能"
+    assert result["data"]["is_draft"] is False
+    assert "处理 Excel" in result["data"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_view_skill_reads_draft_when_requested(monkeypatch, tmp_path: Path):
+    skills_dir = tmp_path / "skills"
+    drafts_dir = skills_dir / ".drafts"
+    skills_dir.mkdir()
+    drafts_dir.mkdir()
+    (drafts_dir / "draft.md").write_text("# 草稿技能\n\n## 概述\n草稿内容。", encoding="utf-8")
+
+    import app.tools.utility.skill_management.view_skill_tool as module
+
+    monkeypatch.setattr(module, "SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(module, "DRAFTS_DIR", drafts_dir)
+
+    result = await ViewSkillTool().execute(name="draft", include_drafts=True)
+
+    assert result["success"] is True
+    assert result["data"]["is_draft"] is True
+    assert result["data"]["name"] == "草稿技能"
+
+
+@pytest.mark.asyncio
+async def test_view_skill_rejects_path_traversal():
+    result = await ViewSkillTool().execute(name="../secret", include_drafts=True)
+
+    assert result["success"] is False
+    assert "路径" in result["summary"] or "名称" in result["summary"]
