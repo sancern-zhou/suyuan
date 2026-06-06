@@ -456,53 +456,62 @@ reorder_slides → 重排全部页面，order 必须包含当前全部页码
 
 ### 3.5 创建 PPT
 
-生成正式或业务型 PPT 时，优先使用 `create_pptx_from_deck`。Agent 应输出 `suyuan.deck.v1` 业务结构，描述标题、核心结论、指标、地图、图表和行动建议；代码负责版式、字体、颜色、位置、模板槽位和质量校验。
+生成正式或业务型 PPT 时，优先使用 `create_pptx_from_deck`。Agent 应输出 `suyuan.deck.v2` 设计稿，先判断 `deck_type`，再为每页选择成熟 `archetype`，代码负责版式、字体、颜色、位置和质量校验。
+
+调用前必须先读取：
+
+- `backend/app/tools/office/deck/references/index.md`
+- `backend/app/tools/office/deck/references/archetypes.md`
+- `backend/app/tools/office/deck/references/checklist.md`
+- 与 `deck_type` 对应的参考文档
 
 生成新 PPT 必须通过正式工具调用入口完成。不要用 `execute_python` 手动 import `CreatePptxFromDeckTool`、`CreatePptxTool` 或直接调用 PptxGenJS renderer；这会绕过工具路由、日志记录和质量控制。`execute_python` 只用于前置数据处理、生成图片资产，或对已有 PPT 做专门工具无法覆盖的局部兼容处理。
 
-业务 slide 类型：
+`create_pptx_from_deck` 2.0 不兼容 `suyuan.deck.v1`，也不接受底层 `create_pptx` 的 `title`、`bullets`、`table`、`image_full` 等 slide type。低层绘图结构请直接使用 `create_pptx`。
+
+常用 slide archetype：
 
 ```text
-cover, toc, section, executive_summary, metric_dashboard, map_insight,
-chart_insight, city_ranking, pollution_process, forecast_warning,
-evidence_table, conclusion_actions
+cover, agenda, section_divider, executive_summary, key_message,
+three_column_points, metric_dashboard, comparison_matrix, timeline,
+roadmap, process_flow, architecture_overview, data_flow, map_story,
+chart_story, evidence_table, risk_matrix, budget_breakdown,
+implementation_plan, responsibility_matrix, closing_actions
 ```
 
-除 `cover`、`toc`、`section` 外，每页必须包含至少一种视觉证据：`visual`、`metrics`、`table`、`chart` 或业务可视化结构。
+除 `cover`、`agenda`、`section_divider`、`appendix` 外，每页必须包含至少一种视觉证据或结构化内容：`content.items`、`content.steps`、`metrics`、`table`、`chart` 或 `visual`。
 
-`chart_insight` 的 `chart` 字段可直接生成 PPT 内原生图表，当前支持 `bar`、`line`、`pie`、`doughnut`、`scatter`。模板替换模式不支持直接注入原生图表，若走模板路线，请先把图表导出成图片再通过 `visual.asset` 引用。
+`chart_story` 的 `chart` 字段可直接生成 PPT 内原生图表，当前支持底层 `create_pptx` 已支持的图表类型。模板生成请使用 `create_pptx_from_template`，不要把模板槽位参数传给 `create_pptx_from_deck`。
 
 `create_pptx_from_deck` 示例：
 
 ```json
 {
   "deck": {
-    "version": "suyuan.deck.v1",
-    "title": "广东省3月空气质量分析汇报",
-    "audience": "management",
-    "tone": "professional, evidence-led, concise",
+    "version": "suyuan.deck.v2",
+    "deck_type": "implementation_proposal",
+    "title": "濮阳市智慧环保建设项目二期实施方案",
+    "audience": "government_decision_makers",
+    "tone": "formal, evidence-led, implementation-focused",
     "slides": [
       {
         "id": "s01",
-        "type": "cover",
-        "title": "广东省3月空气质量分析汇报",
-        "subtitle": "污染特征与管控建议"
+        "archetype": "cover",
+        "title": "濮阳市智慧环保建设项目二期实施方案",
+        "subtitle": "智慧感知、平台协同与闭环治理能力建设"
       },
       {
         "id": "s02",
-        "type": "metric_dashboard",
-        "title": "全省核心指标概览",
-        "metrics": [
-          {"label": "PM2.5均值", "value": 38, "unit": "ug/m3", "tone": "warning"},
-          {"label": "O3最大8小时", "value": 172, "unit": "ug/m3", "tone": "danger"}
-        ]
-      },
-      {
-        "id": "s03",
-        "type": "map_insight",
-        "title": "珠三角北部污染累积明显",
-        "visual": {"kind": "map", "asset": "assets/maps/pm25_map.png"},
-        "insights": ["夜间静稳导致污染累积", "区域传输贡献明显"]
+        "archetype": "three_column_points",
+        "title": "二期建设聚焦三类能力",
+        "message": "围绕感知补强、平台升级、业务闭环和运营考核形成综合治理能力。",
+        "content": {
+          "items": [
+            {"title": "感知补强", "body": "完善空气、水、源、视频等多源监测能力"},
+            {"title": "平台升级", "body": "建设统一数据底座、预警研判和调度指挥能力"},
+            {"title": "闭环治理", "body": "形成发现、研判、派单、处置、复核全过程闭环"}
+          ]
+        }
       }
     ]
   },
@@ -511,7 +520,7 @@ evidence_table, conclusion_actions
 }
 ```
 
-有现成模板时，可同时提供 `template_path` 和 `template_manifest`，由工具将 `cover.title`、`map_insight.main_map` 等语义槽位转换为模板物理 slot。
+有现成模板时，使用 `create_pptx_from_template`；`create_pptx_from_deck` 2.0 不再负责模板槽位替换。
 
 无业务 deck 或需要底层控制时，使用 `create_pptx` 工具。该工具使用 PptxGenJS 生成可编辑的 `.pptx`，适合一步生成演示文稿。
 
