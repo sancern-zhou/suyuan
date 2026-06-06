@@ -1,213 +1,135 @@
 import pytest
 from pydantic import ValidationError
 
-from app.tools.office.deck.deck_tool import CreatePptxFromDeckTool, build_semantic_values_from_deck
-from app.tools.office.deck.models import DeckSpec
-from app.tools.office.deck.normalizer import normalize_deck_for_create_pptx
-from app.tools.office.deck.visual_rules import validate_visual_rules
+from app.tools.office.deck.models import DeckSpec, SlideArchetype
+from app.tools.office.deck.validators import validate_deck_design
 
 
-def test_deck_spec_accepts_business_slide():
+def test_deck_v2_accepts_archetype_slide():
     deck = DeckSpec.model_validate(
         {
-            "version": "suyuan.deck.v1",
-            "title": "广东省空气质量分析汇报",
-            "audience": "management",
-            "tone": "analytical",
+            "version": "suyuan.deck.v2",
+            "deck_type": "implementation_proposal",
+            "title": "濮阳市智慧环保建设项目二期实施方案",
+            "audience": "government_decision_makers",
+            "tone": "formal, evidence-led, implementation-focused",
             "slides": [
                 {
                     "id": "s01",
-                    "type": "metric_dashboard",
-                    "title": "全省核心指标概览",
-                    "metrics": [
-                        {"label": "PM2.5均值", "value": 38, "unit": "ug/m3", "tone": "warning"}
-                    ],
-                }
+                    "archetype": "cover",
+                    "title": "濮阳市智慧环保建设项目二期实施方案",
+                    "subtitle": "智慧感知、平台协同与闭环治理能力建设",
+                },
+                {
+                    "id": "s02",
+                    "archetype": "executive_summary",
+                    "title": "二期建设聚焦从看得见到管得住",
+                    "message": "围绕感知补强、平台升级、业务闭环和运营考核形成综合治理能力。",
+                    "content": {
+                        "items": [
+                            {"title": "感知补强", "body": "完善空气、水、源、视频等多源监测能力"},
+                            {"title": "平台升级", "body": "建设统一数据底座、预警研判和调度指挥能力"},
+                            {"title": "闭环治理", "body": "形成发现、研判、派单、处置、复核全过程闭环"},
+                        ]
+                    },
+                },
             ],
         }
     )
 
-    assert deck.version == "suyuan.deck.v1"
-    assert deck.slides[0].type == "metric_dashboard"
+    assert deck.version == "suyuan.deck.v2"
+    assert deck.deck_type == "implementation_proposal"
+    assert deck.slides[1].archetype == "executive_summary"
+    assert deck.slides[1].content.items[0].title == "感知补强"
 
 
-def test_deck_spec_requires_slide_id_and_type():
-    try:
+def test_deck_v2_rejects_v1_version():
+    with pytest.raises(ValidationError) as exc:
         DeckSpec.model_validate(
             {
                 "version": "suyuan.deck.v1",
-                "title": "缺少类型",
-                "slides": [{"title": "问题页"}],
+                "title": "旧版",
+                "slides": [{"id": "s01", "type": "cover", "title": "旧版封面"}],
             }
         )
-    except ValidationError as exc:
-        assert "id" in str(exc)
-        assert "type" in str(exc)
-    else:
-        raise AssertionError("Expected ValidationError")
+
+    assert "suyuan.deck.v2" in str(exc.value)
 
 
-def test_visual_rules_reject_text_only_business_slide():
+def test_deck_v2_rejects_low_level_type_field():
+    with pytest.raises(ValidationError) as exc:
+        DeckSpec.model_validate(
+            {
+                "version": "suyuan.deck.v2",
+                "deck_type": "implementation_proposal",
+                "title": "错误输入",
+                "slides": [{"id": "s01", "type": "title", "title": "低层类型"}],
+            }
+        )
+
+    message = str(exc.value)
+    assert "archetype" in message
+
+
+def test_slide_archetype_list_contains_core_proposal_types():
+    assert "implementation_plan" in SlideArchetype.__args__
+    assert "architecture_overview" in SlideArchetype.__args__
+    assert "closing_actions" in SlideArchetype.__args__
+
+
+def test_design_validator_rejects_text_only_content_slide():
     deck = DeckSpec.model_validate(
         {
-            "version": "suyuan.deck.v1",
+            "version": "suyuan.deck.v2",
+            "deck_type": "implementation_proposal",
             "title": "纯文字风险",
             "slides": [
                 {
                     "id": "s02",
-                    "type": "map_insight",
-                    "title": "珠三角污染分析",
-                    "insights": ["污染累积明显", "扩散条件较差"],
+                    "archetype": "key_message",
+                    "title": "平台能力建设",
+                    "message": "只写一句话没有视觉证据。",
                 }
             ],
         }
     )
 
-    issues = validate_visual_rules(deck)
+    issues = validate_deck_design(deck)
 
-    assert issues
-    assert issues[0]["type"] == "missing_visual_evidence"
+    assert issues[0]["type"] == "content_slide_without_visual_evidence"
     assert issues[0]["slide_id"] == "s02"
+    assert "suggested_archetypes" in issues[0]
 
 
-def test_visual_rules_allow_section_without_visual():
+def test_design_validator_allows_section_without_visual():
     deck = DeckSpec.model_validate(
         {
-            "version": "suyuan.deck.v1",
+            "version": "suyuan.deck.v2",
+            "deck_type": "implementation_proposal",
             "title": "章节页",
-            "slides": [{"id": "s01", "type": "section", "title": "一、总体情况"}],
+            "slides": [{"id": "s01", "archetype": "section_divider", "title": "一、建设背景"}],
         }
     )
 
-    assert validate_visual_rules(deck) == []
+    assert validate_deck_design(deck) == []
 
 
-def test_normalize_metric_dashboard_to_metrics_slide():
+def test_design_validator_rejects_long_title():
     deck = DeckSpec.model_validate(
         {
-            "version": "suyuan.deck.v1",
-            "title": "指标页",
+            "version": "suyuan.deck.v2",
+            "deck_type": "implementation_proposal",
+            "title": "标题过长",
             "slides": [
                 {
                     "id": "s01",
-                    "type": "metric_dashboard",
-                    "title": "核心指标",
-                    "metrics": [{"label": "AQI", "value": 85}],
+                    "archetype": "cover",
+                    "title": "这是一个明显超过二十四个中文字符并且不适合作为PPT页面标题的长标题",
                 }
             ],
         }
     )
 
-    result = normalize_deck_for_create_pptx(deck)
+    issues = validate_deck_design(deck)
 
-    assert result["title"] == "指标页"
-    assert result["slides"][0]["type"] == "metrics"
-    assert result["slides"][0]["metrics"][0]["label"] == "AQI"
-
-
-def test_normalize_map_insight_to_image_text_slide():
-    deck = DeckSpec.model_validate(
-        {
-            "version": "suyuan.deck.v1",
-            "title": "地图页",
-            "slides": [
-                {
-                    "id": "s02",
-                    "type": "map_insight",
-                    "title": "污染空间分布",
-                    "visual": {"kind": "map", "asset": "assets/maps/pm25.png"},
-                    "insights": ["北部污染较高", "沿海扩散较好"],
-                }
-            ],
-        }
-    )
-
-    result = normalize_deck_for_create_pptx(deck)
-
-    slide = result["slides"][0]
-    assert slide["type"] == "image_text"
-    assert slide["image"]["path"] == "assets/maps/pm25.png"
-    assert slide["bullets"] == ["北部污染较高", "沿海扩散较好"]
-
-
-def test_build_semantic_values_outputs_image_replacements():
-    deck = DeckSpec.model_validate(
-        {
-            "version": "suyuan.deck.v1",
-            "title": "地图和趋势图",
-            "slides": [
-                {
-                    "id": "s01",
-                    "type": "map_insight",
-                    "title": "污染空间分布",
-                    "visual": {"kind": "map", "asset": "assets/maps/pm25.png"},
-                    "insights": ["北部污染较高"],
-                },
-                {
-                    "id": "s02",
-                    "type": "chart_insight",
-                    "title": "趋势变化",
-                    "visual": {"kind": "chart", "asset": "assets/charts/trend.png"},
-                    "insights": ["夜间浓度抬升"],
-                },
-            ],
-        }
-    )
-
-    values = build_semantic_values_from_deck(deck)
-
-    assert values["map_insight.main_map"] == {"type": "image", "path": "assets/maps/pm25.png"}
-    assert values["chart_insight.main_visual"] == {"type": "image", "path": "assets/charts/trend.png"}
-
-
-def test_build_semantic_values_flattens_metric_cards():
-    deck = DeckSpec.model_validate(
-        {
-            "version": "suyuan.deck.v1",
-            "title": "指标页",
-            "slides": [
-                {
-                    "id": "s01",
-                    "type": "metric_dashboard",
-                    "title": "核心指标",
-                    "metrics": [
-                        {"label": "PM2.5均值", "value": 38, "unit": "ug/m3", "delta": "同比下降 6%"},
-                        {"label": "优良率", "value": "82%", "tone": "positive"},
-                    ],
-                }
-            ],
-        }
-    )
-
-    values = build_semantic_values_from_deck(deck)
-
-    assert values["metric_dashboard.metrics"] == "PM2.5均值: 38ug/m3\n优良率: 82%"
-    assert values["metric_1.label"] == "PM2.5均值"
-    assert values["metric_1.value"] == "38ug/m3"
-    assert values["metric_1.note"] == "同比下降 6%"
-    assert values["metric_2.label"] == "优良率"
-    assert values["metric_2.value"] == "82%"
-    assert values["metric_2.note"] == "positive"
-
-
-@pytest.mark.asyncio
-async def test_create_pptx_from_deck_rejects_missing_visual():
-    tool = CreatePptxFromDeckTool()
-
-    result = await tool.execute(
-        deck={
-            "version": "suyuan.deck.v1",
-            "title": "非法纯文字",
-            "slides": [
-                {
-                    "id": "s01",
-                    "type": "map_insight",
-                    "title": "空间分布",
-                    "insights": ["只有文字"],
-                }
-            ],
-        }
-    )
-
-    assert result["success"] is False
-    assert "missing_visual_evidence" in result["summary"]
+    assert issues[0]["type"] == "slide_title_too_long"

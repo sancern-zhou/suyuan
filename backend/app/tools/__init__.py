@@ -347,7 +347,7 @@ def create_global_tool_registry() -> ToolRegistry:
         from app.tools.analysis.analyze_upwind_enterprises.tool import AnalyzeUpwindEnterprisesTool
         registry.register(AnalyzeUpwindEnterprisesTool(), priority=100)
         logger.info("tool_loaded", tool="analyze_upwind_enterprises")
-    except ImportError as e:
+    except (ImportError, KeyError) as e:
         logger.warning("tool_import_failed", tool="analyze_upwind_enterprises", error=str(e))
 
     try:
