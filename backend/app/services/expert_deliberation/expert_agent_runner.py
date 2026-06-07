@@ -75,7 +75,12 @@ class LLMExpertAgentRunner:
             mode_tools = set(get_tools_by_mode(expert.deliberation_mode).keys())
         except Exception:
             mode_tools = set()
-        allowed = (set(expert.tool_whitelist) & mode_tools) | {"TodoWrite"}
+        allowed = (set(expert.tool_whitelist) & mode_tools) | {
+            "TaskCreate",
+            "TaskUpdate",
+            "TaskList",
+            "TaskGet",
+        }
         return {name: tool for name, tool in registry.items() if name in allowed}
 
     def _build_prompt(

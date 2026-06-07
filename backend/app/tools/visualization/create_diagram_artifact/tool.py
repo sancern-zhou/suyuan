@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import html
 import re
-import subprocess
 from datetime import datetime
+from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from app.tools.artifact_utils import attach_document_artifact
 from app.services.html_artifact_service import html_artifact_service
@@ -20,11 +20,15 @@ DOT_ID_PATTERN = re.compile(r"[^A-Za-z0-9_]")
 REFERENCE_ROOT = Path(__file__).resolve().parent / "references"
 COMPACT_LAYER_ITEM_THRESHOLD = 12
 COMPACT_GROUP_THRESHOLD = 6
+WORD_A4_ARCHITECTURE_ITEM_THRESHOLD = 20
 WORD_A4_PORTRAIT_SIZE = "6.4,9.2"
 WORD_A4_LANDSCAPE_SIZE = "9.2,6.4"
 WORD_A4_PORTRAIT_PX = (1240, 1754)
 WORD_A4_LANDSCAPE_PX = (1754, 1240)
 WORD_A4_LONG_PROCESS_THRESHOLD = 12
+WORD_A4_PROCESS_LAYER_THRESHOLD = 8
+WORD_A4_GANTT_TASK_THRESHOLD = 10
+WORD_A4_GANTT_LAYER_THRESHOLD = 6
 WORD_A4_PROCESS_ROW_SIZE = 5
 DIAGRAM_FONT_CANDIDATES = [
     {
@@ -124,6 +128,9 @@ ICON_TOKENS = {
     "trace",
     "workflow",
 }
+NODE_SHAPES = {"rectangle", "database", "cloud", "document", "queue"}
+DATABASE_ICON_TOKENS = {"database", "timeseries", "warehouse", "object-storage", "lake", "storage"}
+DEFAULT_DIAGRAM_FONT_SCALE = 2.0
 
 
 def diagram_design_reference_paths() -> Dict[str, str]:
@@ -134,6 +141,8 @@ def diagram_design_reference_paths() -> Dict[str, str]:
         "process": "create_diagram_artifact/references/process.md",
         "decision_tree": "create_diagram_artifact/references/decision-tree.md",
         "data_flow": "create_diagram_artifact/references/data-flow.md",
+        "mind_map": "create_diagram_artifact/references/mind-map.md",
+        "gantt": "create_diagram_artifact/references/gantt.md",
         "layered_system": "create_diagram_artifact/references/layered-system.md",
         "icon_catalog": "create_diagram_artifact/references/icon-catalog.md",
         "checklist": "create_diagram_artifact/references/checklist.md",
@@ -146,6 +155,10 @@ def _normalise_diagram_type(diagram_type: str | None) -> str:
         "architecture": "layered_architecture",
         "system_architecture": "layered_architecture",
         "flowchart": "process",
+        "mindmap": "mind_map",
+        "mind-map": "mind_map",
+        "gantt_chart": "gantt",
+        "gantt-chart": "gantt",
     }
     value = (diagram_type or "auto").strip().lower()
     return mapping.get(value, value)
@@ -153,6 +166,12 @@ def _normalise_diagram_type(diagram_type: str | None) -> str:
 
 def _scaled_int(value: int, font_scale: FontScale = None) -> int:
     return int(round(value * resolve_font_scale(font_scale)))
+
+
+def resolve_diagram_font_scale(font_scale: FontScale = None) -> float:
+    if font_scale is None:
+        return DEFAULT_DIAGRAM_FONT_SCALE
+    return resolve_font_scale(font_scale)
 
 
 def select_diagram_font_path(bold: bool = False) -> str | None:
@@ -175,6 +194,23 @@ def diagram_css_font_stack() -> str:
     return '"FZXiaoBiaoSong-B05S", "Noto Sans CJK SC", "Droid Sans", Inter, "PingFang SC", sans-serif'
 
 
+def diagram_css_font_face() -> str:
+    font_path = select_diagram_font_path(bold=False)
+    if not font_path:
+        return ""
+    font_uri = Path(font_path).resolve().as_uri()
+    font_family = select_diagram_font_family()
+    return (
+        "@font-face { "
+        f"font-family: \"{font_family}\"; "
+        f"src: url(\"{font_uri}\"); "
+        "font-weight: 400 800; "
+        "font-style: normal; "
+        "font-display: swap; "
+        "}"
+    )
+
+
 def _sanitize_dot_id(raw_id: Any, index: int) -> str:
     text = DOT_ID_PATTERN.sub("_", str(raw_id or "")).strip("_")
     if not text:
@@ -184,33 +220,9 @@ def _sanitize_dot_id(raw_id: Any, index: int) -> str:
     return text
 
 
-def _escape_dot_label(value: Any) -> str:
-    text = str(value or "")
-    text = text.replace("\\", "\\\\").replace('"', '\\"')
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return text
-
-
-def _shape_to_graphviz(shape: str) -> str:
-    mapping = {
-        "rect": "box",
-        "rounded": "box",
-        "diamond": "diamond",
-        "circle": "circle",
-        "stadium": "oval",
-        "subroutine": "box3d",
-    }
-    return mapping.get(shape, "box")
-
-
 def _safe_asset_name(value: str, suffix: str = ".png") -> str:
     name = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value or "").strip()).strip("_")
     return f"{name or 'diagram'}{suffix}"
-
-
-def _normalise_output_target(value: Any) -> str:
-    text = str(value or "word_a4").strip().lower()
-    return text if text in {"word_a4", "html"} else "word_a4"
 
 
 def _normalise_page_orientation(value: Any, steps: List[Dict[str, Any]]) -> str:
@@ -228,12 +240,33 @@ def _word_a4_layout_warnings(
     warnings: List[str] = []
     if diagram_type in {"process", "decision_tree", "data_flow", "auto"} and len(steps or []) > WORD_A4_LONG_PROCESS_THRESHOLD:
         warnings.append("long_process_split_recommended")
+    if diagram_type in {"process", "decision_tree", "data_flow", "auto"} and len(steps or []) > WORD_A4_PROCESS_LAYER_THRESHOLD:
+        warnings.append("process_layers_exceed_a4_recommended")
+    if diagram_type == "gantt":
+        phases = {
+            str(step.get("phase") or step.get("group") or "计划")
+            for step in steps or []
+        }
+        if len(steps or []) > WORD_A4_GANTT_TASK_THRESHOLD:
+            warnings.append("gantt_tasks_exceed_a4_recommended")
+        if len(phases) > WORD_A4_GANTT_LAYER_THRESHOLD:
+            warnings.append("gantt_layers_exceed_a4_recommended")
+    total_layer_items = 0
     for layer in layers or []:
         item_count = sum(len(group.get("items") or []) for group in layer.get("groups") or [])
+        total_layer_items += item_count
         if item_count > COMPACT_LAYER_ITEM_THRESHOLD:
             warnings.append("dense_layer_split_recommended")
             break
+    if diagram_type in {"layered_architecture", "architecture", "layered_system"} and total_layer_items > WORD_A4_ARCHITECTURE_ITEM_THRESHOLD:
+        warnings.append("architecture_modules_exceed_a4_recommended")
     return warnings
+
+
+def _layout_warning_summary(warnings: List[str]) -> str:
+    if not warnings:
+        return ""
+    return "布局告警：" + "、".join(warnings) + "。建议 Agent 调整层级或减少同图模块后重新绘制。"
 
 
 def _static_direction_for_word_a4(
@@ -331,6 +364,65 @@ def _normalise_icon_policy(value: Any) -> str:
     return _normalise_semantic(value, {"auto", "show", "hide"}, "auto")
 
 
+def _normalise_node_shape(value: Any, icon: str = "") -> str:
+    text = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "rect": "rectangle",
+        "box": "rectangle",
+        "cylinder": "database",
+        "db": "database",
+        "data-store": "database",
+        "file": "document",
+        "page": "document",
+        "message": "queue",
+        "mq": "queue",
+    }
+    shape = aliases.get(text, text)
+    if shape in NODE_SHAPES:
+        return shape
+    if icon in DATABASE_ICON_TOKENS:
+        return "database"
+    if icon == "cloud":
+        return "cloud"
+    if icon in {"file", "report"}:
+        return "document"
+    if icon == "message":
+        return "queue"
+    return "rectangle"
+
+
+def _normalise_process_shape(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "rect": "rectangle",
+        "box": "rectangle",
+        "rounded": "rectangle",
+        "start": "stadium",
+        "end": "stadium",
+        "terminator": "stadium",
+        "decision": "diamond",
+        "database": "database",
+        "cylinder": "database",
+        "document": "document",
+        "file": "document",
+        "queue": "queue",
+        "message": "queue",
+        "cloud": "cloud",
+    }
+    shape = aliases.get(text, text)
+    return shape if shape in {"rectangle", "stadium", "diamond", "database", "document", "queue", "cloud"} else "rectangle"
+
+
+def _parse_gantt_date(value: Any, fallback: date_cls) -> date_cls:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return fallback
+
+
 def _diagram_icon_svg(icon: str) -> str:
     common = 'class="diagram-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"'
     icons = {
@@ -412,8 +504,10 @@ class CreateDiagramArtifactTool(LLMTool):
         super().__init__(
             name=name,
             description=(
-                "创建流程/架构/决策图；报告/Word/QMD插图默认用 word_a4，明确要网页展示才用 html。"
-                "不要空参调用。先读 create_diagram_artifact/references/index.md 和 checklist.md。"
+                "双输出HTML+WordA4。先判断图表类型，调用本工具前必须先读取 "
+                "create_diagram_artifact/references/index.md "
+                "create_diagram_artifact/references/architecture.md "
+                "create_diagram_artifact/references/checklist.md。"
             ),
             category=ToolCategory.VISUALIZATION,
             version="3.0.0",
@@ -434,19 +528,6 @@ class CreateDiagramArtifactTool(LLMTool):
                         "type": "string",
                         "enum": ["TB", "BT", "LR", "RL"],
                     },
-                    "layout_engine": {
-                        "type": "string",
-                        "enum": ["graphviz", "mermaid", "auto"],
-                    },
-                    "output_target": {
-                        "type": "string",
-                        "enum": ["word_a4", "html"],
-                        "default": "word_a4",
-                        "description": (
-                            "正式报告、Word、QMD、文档插图必须用 word_a4；"
-                            "只有用户明确要求 HTML/网页展示/交互预览时才用 html。"
-                        ),
-                    },
                     "page_orientation": {
                         "type": "string",
                         "enum": ["auto", "portrait", "landscape"],
@@ -465,39 +546,26 @@ class CreateDiagramArtifactTool(LLMTool):
                             "process",
                             "decision_tree",
                             "data_flow",
+                            "mind_map",
+                            "gantt",
                         ],
-                    },
-                    "mermaid": {
-                        "type": "string",
                     },
                     "layers": {
                         "type": "array",
-                        "description": "分层架构结构；支持 role、variant、emphasis、icon_policy，模板不根据 label 关键词推断。",
+                        "description": "Layered groups/items. Item shape: rectangle/database/cloud/document/queue; database=cylinder.",
                         "items": {
                             "type": "object",
-                            "properties": {
-                                "role": {"type": "string"},
-                                "variant": {"type": "string"},
-                                "emphasis": {"type": "string"},
-                                "icon_policy": {"type": "string"},
-                            },
+                            "properties": {},
                             "additionalProperties": True,
                         },
                     },
                     "steps": {
                         "type": "array",
+                        "description": "Nodes/tasks/tree. Fields: id,label,shape,group,children,parent_id,parent,start,end,duration,phase,owner,progress.",
                         "items": {
                             "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
-                                "label": {"type": "string"},
-                                "shape": {
-                                    "type": "string",
-                                    "enum": ["rect", "rounded", "diamond", "circle", "stadium", "subroutine"],
-                                },
-                                "group": {"type": "string"},
-                            },
-                            "required": ["label"],
+                            "properties": {},
+                            "additionalProperties": True,
                         },
                     },
                     "edges": {
@@ -524,7 +592,6 @@ class CreateDiagramArtifactTool(LLMTool):
                         "type": "string",
                     },
                     "font_scale": {
-                        "description": "字号。",
                         "oneOf": [
                             {"type": "string", "enum": ["small", "normal", "large", "xlarge"]},
                             {"type": "number", "minimum": 0.8, "maximum": 1.6},
@@ -536,140 +603,6 @@ class CreateDiagramArtifactTool(LLMTool):
                 },
                 "required": ["artifact_id", "title"],
             },
-        }
-
-    def _build_dot_from_steps(
-        self,
-        steps: List[Dict[str, Any]],
-        edges: Optional[List[Dict[str, Any]]],
-        direction: str,
-        title: str,
-        font_scale: FontScale = None,
-        output_target: str = "html",
-        page_orientation: str = "portrait",
-    ) -> str:
-        rankdir = direction if direction in {"TB", "BT", "LR", "RL"} else "TB"
-        node_font_size = _scaled_int(12, font_scale)
-        edge_font_size = _scaled_int(10, font_scale)
-        title_font_size = _scaled_int(18, font_scale)
-        graphviz_font = select_diagram_font_path() or select_diagram_font_family()
-        graph_attrs = [
-            f'rankdir="{rankdir}"',
-            'bgcolor="transparent"',
-            'pad="0.25"',
-            'nodesep="0.45"',
-            'ranksep="0.8"',
-            'splines="ortho"',
-            "concentrate=true",
-        ]
-        if output_target == "word_a4":
-            graph_attrs.extend([
-                f'size="{WORD_A4_LANDSCAPE_SIZE if page_orientation == "landscape" else WORD_A4_PORTRAIT_SIZE}"',
-                'ratio="compress"',
-                'margin="0.08"',
-            ])
-        dot_lines = [
-            "digraph G {",
-            f"  graph [{', '.join(graph_attrs)}];",
-            f'  node [shape=box, style="rounded,filled", fontname="{graphviz_font}", fontsize={node_font_size}, margin="0.12,0.08", color="#9aa9c3", fillcolor="#ffffff", fontcolor="#18202f"];',
-            f'  edge [color="#5b6b82", penwidth=1.8, arrowsize=0.8, fontname="{graphviz_font}", fontsize={edge_font_size}];',
-            f'  label="{_escape_dot_label(title)}";',
-            '  labelloc="t";',
-            f'  fontsize={title_font_size};',
-            f'  fontname="{graphviz_font}";',
-        ]
-
-        if not steps:
-            dot_lines.extend([
-                '  empty [label="无步骤数据", shape=box, style="rounded,filled", fillcolor="#f6f7fb"];',
-                '  hint [label="请提供 steps / edges 或 mermaid", shape=box, style="dashed", color="#c0cad8"];',
-                "  empty -> hint;",
-            ])
-            dot_lines.append("}")
-            return "\n".join(dot_lines)
-
-        node_ids: Dict[str, str] = {}
-        for idx, step in enumerate(steps):
-            node_id = _sanitize_dot_id(step.get("id") or step.get("label"), idx)
-            node_ids[str(step.get("id") or step.get("label") or node_id)] = node_id
-            label = _escape_dot_label(step.get("label", node_id))
-            shape = _shape_to_graphviz((step.get("shape") or "rect").lower())
-            style = "rounded,filled" if shape in {"box", "oval", "box3d"} else "filled"
-            fillcolor = step.get("fillcolor") or "#ffffff"
-            color = step.get("color") or "#9aa9c3"
-            if shape == "diamond":
-                style = "filled"
-                fillcolor = step.get("fillcolor") or "#fff8ec"
-                color = step.get("color") or "#f0b44c"
-
-            dot_lines.append(
-                f'  {node_id} [label="{label}", shape="{shape}", style="{style}", fillcolor="{fillcolor}", color="{color}"];'
-            )
-
-        if edges:
-            for edge in edges:
-                src_key = str(edge.get("from") or "")
-                dst_key = str(edge.get("to") or "")
-                src = node_ids.get(src_key) or _sanitize_dot_id(src_key, 0)
-                dst = node_ids.get(dst_key) or _sanitize_dot_id(dst_key, 0)
-                label = _escape_dot_label(edge.get("label", ""))
-                style = "dashed" if edge.get("style") == "dashed" else "solid"
-                attrs = [f'style="{style}"']
-                if label:
-                    attrs.append(f'label="{label}"')
-                    attrs.append('fontcolor="#6b7280"')
-                dot_lines.append(f"  {src} -> {dst} [{', '.join(attrs)}];")
-        else:
-            ordered_ids = list(node_ids.values())
-            for left, right in zip(ordered_ids, ordered_ids[1:]):
-                dot_lines.append(f"  {left} -> {right};")
-
-        dot_lines.append("}")
-        return "\n".join(dot_lines)
-
-    def _render_graphviz_svg(self, dot_source: str) -> str:
-        result = subprocess.run(
-            ["dot", "-Tsvg"],
-            input=dot_source,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        svg = result.stdout.strip()
-        svg_start = svg.find("<svg")
-        if svg_start >= 0:
-            svg = svg[svg_start:]
-        return svg
-
-    def _render_graphviz_png(
-        self,
-        dot_source: str,
-        output_path: Path,
-        page_orientation: str = "portrait",
-        output_target: str = "word_a4",
-    ) -> Dict[str, Any]:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_output_path = output_path.with_name(f"{output_path.stem}.raw.png")
-        subprocess.run(
-            ["dot", "-Tpng", "-o", str(raw_output_path)],
-            input=dot_source,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        if output_target == "word_a4":
-            self._compose_word_a4_png(raw_output_path, output_path, page_orientation)
-            try:
-                raw_output_path.unlink()
-            except OSError:
-                pass
-        else:
-            raw_output_path.replace(output_path)
-        return {
-            "path": str(output_path),
-            "relative_path": str(output_path.name),
-            "format": "png",
-            "size_kb": round(output_path.stat().st_size / 1024, 2),
         }
 
     async def _render_html_word_a4_screenshot(
@@ -695,7 +628,7 @@ class CreateDiagramArtifactTool(LLMTool):
             try:
                 page = await browser.new_page(
                     viewport={"width": viewport_width, "height": viewport_height},
-                    device_scale_factor=1,
+                    device_scale_factor=2,
                 )
                 await page.goto(Path(index_path).resolve().as_uri(), wait_until="networkidle")
                 await page.evaluate(
@@ -709,7 +642,33 @@ class CreateDiagramArtifactTool(LLMTool):
                     """
                 )
                 await page.wait_for_timeout(250)
-                await page.screenshot(path=str(output_path), type="png", full_page=False)
+                raw_output_path = output_path.with_name(f"{output_path.stem}.raw.png")
+                content_locator = page.locator(".wrap")
+                content_size = await content_locator.evaluate(
+                    """
+                    element => {
+                        const rect = element.getBoundingClientRect();
+                        return {
+                            width: Math.ceil(Math.max(rect.width, element.scrollWidth || 0)),
+                            height: Math.ceil(Math.max(rect.height, element.scrollHeight || 0))
+                        };
+                    }
+                    """
+                )
+                if isinstance(content_size, dict):
+                    content_width = int(content_size.get("width") or viewport_width)
+                    content_height = int(content_size.get("height") or viewport_height)
+                    await page.set_viewport_size({
+                        "width": max(320, content_width),
+                        "height": max(240, content_height),
+                    })
+                    await page.wait_for_timeout(100)
+                await content_locator.screenshot(path=str(raw_output_path), type="png")
+                self._compose_word_a4_png(raw_output_path, output_path, page_orientation)
+                try:
+                    raw_output_path.unlink()
+                except OSError:
+                    pass
             finally:
                 await browser.close()
 
@@ -724,12 +683,14 @@ class CreateDiagramArtifactTool(LLMTool):
         canvas_size = WORD_A4_LANDSCAPE_PX if page_orientation == "landscape" else WORD_A4_PORTRAIT_PX
         canvas = Image.new("RGB", canvas_size, "white")
         image = Image.open(source_path).convert("RGBA")
-        content_bbox = image.getbbox()
+        rgb_image = image.convert("RGB")
+        white_background = Image.new("RGB", rgb_image.size, "white")
+        content_bbox = ImageChops.difference(rgb_image, white_background).getbbox()
         if content_bbox:
             image = image.crop(content_bbox)
 
-        max_width = int(canvas_size[0] * 0.9)
-        max_height = int(canvas_size[1] * 0.84)
+        max_width = int(canvas_size[0] * 0.99)
+        max_height = int(canvas_size[1] * 0.99)
         scale = min(max_width / max(1, image.width), max_height / max(1, image.height))
         if scale > 0:
             resized_size = (
@@ -741,6 +702,9 @@ class CreateDiagramArtifactTool(LLMTool):
 
         offset = ((canvas_size[0] - image.width) // 2, (canvas_size[1] - image.height) // 2)
         canvas.paste(image, offset, image)
+        final_bbox = ImageChops.difference(canvas, Image.new("RGB", canvas.size, "white")).getbbox()
+        if final_bbox:
+            canvas = canvas.crop(final_bbox)
         canvas.save(output_path, format="PNG")
 
     def _render_wrapped_process_png(
@@ -902,14 +866,50 @@ class CreateDiagramArtifactTool(LLMTool):
         ]
 
     def _normalise_layer_item(self, item: Dict[str, Any]) -> Dict[str, str]:
+        icon = _normalise_icon(item.get("icon"))
         return {
             "label": str(item.get("label") or item.get("name") or "").strip(),
             "detail": str(item.get("detail") or item.get("description") or "").strip(),
-            "icon": _normalise_icon(item.get("icon")),
+            "icon": icon,
+            "shape": _normalise_node_shape(item.get("shape"), icon),
             "role": _normalise_role(item.get("role")),
             "emphasis": _normalise_emphasis(item.get("emphasis")),
             "variant": _normalise_variant(item.get("variant")),
         }
+
+    def _render_drawio_node_html(
+        self,
+        item: Dict[str, Any],
+        *,
+        icon_visible: bool,
+        extra_classes: Optional[List[str]] = None,
+    ) -> str:
+        detail = str(item.get("detail") or "").strip()
+        detail_html = f"<p>{html.escape(detail)}</p>" if detail else ""
+        icon_html = _diagram_icon_svg(str(item.get("icon") or "")) if icon_visible else ""
+        icon_symbol_html = f"<span class=\"module-symbol\">{icon_html}</span>" if icon_html else ""
+        shape = _normalise_node_shape(item.get("shape"), str(item.get("icon") or ""))
+        item_classes = ["drawio-node", "module-item", f"drawio-shape-{shape}"]
+        item_classes.extend(extra_classes or [])
+        if not icon_symbol_html:
+            item_classes.append("drawio-node-no-icon")
+        emphasis = _normalise_emphasis(item.get("emphasis"))
+        variant = _normalise_variant(item.get("variant"))
+        role = _normalise_role(item.get("role"))
+        if emphasis != "normal":
+            item_classes.append(f"drawio-node-emphasis-{emphasis}")
+        if variant != "default":
+            item_classes.append(f"drawio-node-variant-{variant}")
+        if role:
+            item_classes.append(f"drawio-node-role-{role}")
+        label = html.escape(str(item.get("label") or ""))
+        return (
+            f"<article data-label=\"{label}\" data-shape=\"{html.escape(shape)}\" class=\"{html.escape(' '.join(item_classes))}\">"
+            f"{icon_symbol_html}"
+            f"<strong class=\"drawio-node-label module-label\">{label}</strong>"
+            f"{detail_html}"
+            "</article>"
+        )
 
     def _normalise_layers(
         self,
@@ -955,6 +955,506 @@ class CreateDiagramArtifactTool(LLMTool):
 
         return normalised
 
+    def _build_drawio_shell_html(
+        self,
+        *,
+        title: str,
+        meta: str,
+        body_html: str,
+        component_css: str,
+        notes: str | None = None,
+        font_scale: FontScale = None,
+    ) -> str:
+        safe_title = html.escape(title)
+        safe_font_scale = f"{resolve_diagram_font_scale(font_scale):.3f}"
+        css_font_stack = diagram_css_font_stack()
+        css_font_face = diagram_css_font_face()
+
+        return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{safe_title}</title>
+  <style>
+    {css_font_face}
+    :root {{
+      color-scheme: light;
+      --paper: #ffffff;
+      --text: #202124;
+      --muted: #4b5563;
+      --line: #333333;
+      --node-border: #5f6368;
+      --font-scale: {safe_font_scale};
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: {css_font_stack}; background: #ffffff; color: var(--text); }}
+    .wrap {{ width: 1440px; margin: 0 auto; padding: 16px; background: var(--paper); }}
+    .header {{ display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #d6dbe3; padding-bottom: 8px; }}
+    h1 {{ margin: 0; font-size: calc(24px * var(--font-scale)); line-height: 1.2; font-weight: 700; letter-spacing: 0; color: var(--text); }}
+    .canvas {{ position: relative; border: 1px solid #c9cdd3; background: var(--paper); padding: 18px; min-height: 720px; }}
+    {component_css}
+    @media (max-width: 760px) {{
+      .wrap {{ width: 100%; padding: 10px; }}
+      .header {{ display: block; }}
+      .canvas {{ padding: 12px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="header">
+      <h1>{safe_title}</h1>
+    </header>
+    <main class="canvas">
+      {body_html}
+    </main>
+  </div>
+</body>
+</html>
+"""
+
+    def _build_process_html(
+        self,
+        title: str,
+        steps: List[Dict[str, Any]],
+        edges: Optional[List[Dict[str, Any]]] = None,
+        notes: str | None = None,
+        direction: str = "TB",
+        diagram_type: str = "process",
+        font_scale: FontScale = None,
+    ) -> str:
+        ordered_steps = steps or [{"id": "empty", "label": "请提供步骤", "shape": "stadium"}]
+        edge_by_pair = {
+            (str(edge.get("from") or ""), str(edge.get("to") or "")): edge
+            for edge in edges or []
+        }
+        step_keys = [
+            str(step.get("id") or step.get("label") or f"s{index}")
+            for index, step in enumerate(ordered_steps)
+        ]
+        rendered_pairs = set()
+        items_html: List[str] = []
+        is_lr = direction in {"LR", "RL"}
+        should_wrap = (
+            diagram_type in {"auto", "process"}
+            and not is_lr
+            and len(ordered_steps) > WORD_A4_PROCESS_LAYER_THRESHOLD
+        )
+
+        def render_node(step: Dict[str, Any], index: int) -> str:
+            key = str(step.get("id") or step.get("label") or f"s{index}")
+            label = html.escape(str(step.get("label") or key))
+            detail = str(step.get("detail") or step.get("description") or "").strip()
+            detail_html = f"<p>{html.escape(detail)}</p>" if detail else ""
+            shape = _normalise_process_shape(step.get("shape"))
+            emphasis = _normalise_emphasis(step.get("emphasis"))
+            classes = [
+                "drawio-process-node",
+                "drawio-node",
+                f"drawio-process-shape-{shape}",
+            ]
+            if emphasis != "normal":
+                classes.append(f"drawio-node-emphasis-{emphasis}")
+            return (
+                f"<article data-node-id=\"{html.escape(key)}\" data-shape=\"{html.escape(shape)}\" "
+                f"class=\"{html.escape(' '.join(classes))}\">"
+                f"<div class=\"drawio-process-node-inner\">"
+                f"<strong class=\"drawio-node-label module-label\">{label}</strong>"
+                f"{detail_html}"
+                f"</div>"
+                "</article>"
+            )
+
+        def render_link(edge: Dict[str, Any] | None = None) -> str:
+            edge = edge or {}
+            label = str(edge.get("label") or "").strip()
+            style = "dashed" if edge.get("style") == "dashed" else "solid"
+            strength = _normalise_flow_strength(edge.get("flow_strength"))
+            classes = ["drawio-process-link", f"drawio-process-link-{style}"]
+            if strength == "strong":
+                classes.append("drawio-process-link-strong")
+            label_html = (
+                f"<span class=\"drawio-process-edge-label\">{html.escape(label)}</span>"
+                if label
+                else ""
+            )
+            return f"<div class=\"{html.escape(' '.join(classes))}\" aria-hidden=\"true\"><i></i>{label_html}</div>"
+
+        if should_wrap:
+            row_html = []
+            rows = _chunked(ordered_steps, WORD_A4_PROCESS_ROW_SIZE)
+            for row_index, row in enumerate(rows):
+                row_start = row_index * WORD_A4_PROCESS_ROW_SIZE
+                indexed_row = list(enumerate(row, start=row_start))
+                visual_row = list(reversed(indexed_row)) if row_index % 2 else indexed_row
+                row_items = []
+                for visual_index, (source_index, step) in enumerate(visual_row):
+                    row_items.append(render_node(step, source_index))
+                    if visual_index >= len(visual_row) - 1:
+                        continue
+                    current_key = str(step.get("id") or step.get("label") or f"s{source_index}")
+                    next_index, next_step = visual_row[visual_index + 1]
+                    next_key = str(next_step.get("id") or next_step.get("label") or f"s{next_index}")
+                    pair = (current_key, next_key) if row_index % 2 == 0 else (next_key, current_key)
+                    rendered_pairs.add(pair)
+                    row_items.append(render_link(edge_by_pair.get(pair)))
+                row_direction = "reverse" if row_index % 2 else "forward"
+                row_html.append(
+                    f"<div class=\"drawio-process-row drawio-process-row-{row_direction}\">{''.join(row_items)}</div>"
+                )
+                if row_index < len(rows) - 1:
+                    row_html.append("<div class=\"drawio-process-row-connector\" aria-hidden=\"true\"><i></i></div>")
+            items_html.append(f"<div class=\"drawio-process-wrap-grid\">{''.join(row_html)}</div>")
+        else:
+            for index, step in enumerate(ordered_steps):
+                items_html.append(render_node(step, index))
+                if index >= len(ordered_steps) - 1:
+                    continue
+                pair = (step_keys[index], step_keys[index + 1])
+                rendered_pairs.add(pair)
+                items_html.append(render_link(edge_by_pair.get(pair)))
+
+        extra_edges = [
+            edge
+            for edge in edges or []
+            if (str(edge.get("from") or ""), str(edge.get("to") or "")) not in rendered_pairs
+        ]
+        extra_links_html = ""
+        if extra_edges:
+            chips = []
+            for edge in extra_edges:
+                src = html.escape(str(edge.get("from") or ""))
+                dst = html.escape(str(edge.get("to") or ""))
+                label = html.escape(str(edge.get("label") or "关联"))
+                style = " drawio-extra-edge-dashed" if edge.get("style") == "dashed" else ""
+                chips.append(
+                    f"<li class=\"drawio-extra-edge{style}\"><span>{src}</span><i></i><span>{dst}</span><b>{label}</b></li>"
+                )
+            extra_links_html = f"<ol class=\"drawio-process-extra-edges\">{''.join(chips)}</ol>"
+
+        orientation_class = "drawio-process-wrapped" if should_wrap else ("drawio-process-lr" if is_lr else "drawio-process-tb")
+        body_html = (
+            f"<section class=\"drawio-process {orientation_class}\" data-diagram-type=\"{html.escape(diagram_type)}\">"
+            f"<div class=\"drawio-process-main\">{''.join(items_html)}</div>"
+            f"{extra_links_html}"
+            "</section>"
+        )
+        component_css = """
+    .drawio-process { min-height: 650px; display: flex; align-items: center; justify-content: center; }
+    .drawio-process-main { display: flex; align-items: center; justify-content: center; gap: 0; width: 100%; }
+    .drawio-process-tb .drawio-process-main { flex-direction: column; }
+    .drawio-process-lr .drawio-process-main { flex-direction: row; overflow: hidden; }
+    .drawio-process-wrapped { min-height: 650px; align-items: center; }
+    .drawio-process-wrapped .drawio-process-main { display: block; width: 100%; }
+    .drawio-process-wrap-grid { display: grid; gap: 12px; width: 100%; align-content: center; }
+    .drawio-process-row { display: flex; align-items: center; justify-content: center; gap: 0; min-height: 92px; }
+    .drawio-process-row-connector { position: relative; height: 28px; }
+    .drawio-process-row-connector i { position: absolute; left: 50%; top: 0; width: 1.5px; height: 24px; background: var(--line); }
+    .drawio-process-row-connector i::after { content: ""; position: absolute; left: -5px; bottom: -1px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid var(--line); }
+    .drawio-process-node { position: relative; width: 184px; min-height: 58px; border: 1.4px solid var(--node-border); background: #ffffff; color: #1f2937; display: flex; align-items: center; justify-content: center; text-align: center; padding: 9px 14px; overflow: hidden; }
+    .drawio-process-node-inner { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
+    .drawio-process-node p { margin: 0; font-size: calc(10px * var(--font-scale)); line-height: 1.2; color: #4b5563; }
+    .drawio-process-shape-rectangle { border-radius: 5px; }
+    .drawio-process-shape-stadium, .drawio-process-shape-queue { border-radius: 999px; }
+    .drawio-process-shape-diamond { width: 128px; height: 128px; padding: 0; transform: rotate(45deg); }
+    .drawio-process-shape-diamond .drawio-process-node-inner { width: 88px; transform: rotate(-45deg); }
+    .drawio-process-shape-database { min-height: 68px; padding-top: 20px; border-radius: 50% / 13px; }
+    .drawio-process-shape-database::before { content: ""; position: absolute; left: -1.4px; right: -1.4px; top: -1.4px; height: 21px; border: 1.4px solid var(--node-border); border-radius: 50%; background: inherit; }
+    .drawio-process-shape-cloud { border-radius: 999px 999px 820px 820px; min-height: 66px; }
+    .drawio-process-shape-document { border-radius: 3px; }
+    .drawio-process-shape-document::after { content: ""; position: absolute; right: -1px; top: -1px; width: 20px; height: 20px; border-left: 1.4px solid var(--node-border); border-bottom: 1.4px solid var(--node-border); background: #f3f4f6; }
+    .drawio-process-link { position: relative; flex: 0 0 56px; height: 56px; color: #374151; font-size: calc(11px * var(--font-scale)); }
+    .drawio-process-tb .drawio-process-link i { position: absolute; left: 50%; top: 4px; width: 1.5px; height: 46px; background: var(--line); }
+    .drawio-process-tb .drawio-process-link i::after { content: ""; position: absolute; left: -5px; bottom: -1px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid var(--line); }
+    .drawio-process-lr .drawio-process-link i { position: absolute; left: 4px; top: 50%; width: 46px; height: 1.5px; background: var(--line); }
+    .drawio-process-lr .drawio-process-link i::after { content: ""; position: absolute; right: -1px; top: -5px; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 8px solid var(--line); }
+    .drawio-process-wrapped .drawio-process-link i { position: absolute; left: 4px; top: 50%; width: 46px; height: 1.5px; background: var(--line); }
+    .drawio-process-wrapped .drawio-process-link i::after { content: ""; position: absolute; right: -1px; top: -5px; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 8px solid var(--line); }
+    .drawio-process-row-reverse .drawio-process-link i::after { left: -1px; right: auto; border-left: 0; border-right: 8px solid var(--line); }
+    .drawio-process-link-dashed i { background: repeating-linear-gradient(to bottom, var(--line) 0 6px, transparent 6px 10px); }
+    .drawio-process-lr .drawio-process-link-dashed i { background: repeating-linear-gradient(to right, var(--line) 0 6px, transparent 6px 10px); }
+    .drawio-process-link-strong i { width: 2px; }
+    .drawio-process-edge-label { position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); padding: 1px 6px; background: #ffffff; border: 1px solid #c9cdd3; white-space: nowrap; color: #374151; }
+    .drawio-process-lr .drawio-process-edge-label { left: 50%; top: calc(50% - 18px); transform: translateX(-50%); }
+    .drawio-process-extra-edges { position: absolute; right: 20px; bottom: 18px; margin: 0; padding: 8px 10px; border: 1px dashed #c9cdd3; background: #ffffff; list-style: none; display: grid; gap: 5px; font-size: calc(11px * var(--font-scale)); color: #4b5563; }
+    .drawio-extra-edge { display: flex; align-items: center; gap: 6px; }
+    .drawio-extra-edge i { width: 28px; border-top: 1px solid #333333; }
+    .drawio-extra-edge-dashed i { border-top-style: dashed; }
+    .drawio-extra-edge b { font-weight: 600; color: #374151; }
+    @media (max-width: 760px) {
+      .drawio-process-main { transform: scale(0.86); transform-origin: top center; }
+      .drawio-process-lr .drawio-process-main { flex-direction: column; }
+    }
+"""
+        return self._build_drawio_shell_html(
+            title=title,
+            meta=f"Process Diagram · draw.io style · 总层数：{len(ordered_steps)}层",
+            body_html=body_html,
+            component_css=component_css,
+            notes=notes,
+            font_scale=font_scale,
+        )
+
+    def _build_mind_map_html(
+        self,
+        title: str,
+        steps: List[Dict[str, Any]],
+        notes: str | None = None,
+        font_scale: FontScale = None,
+    ) -> str:
+        def nested_children(step: Dict[str, Any]) -> List[Dict[str, Any]]:
+            for child_key in ("children", "branches", "topics", "items"):
+                children = step.get(child_key)
+                if isinstance(children, list):
+                    return [child for child in children if isinstance(child, dict)]
+            return []
+
+        source_steps: List[Dict[str, Any]] = []
+
+        def append_step(step: Dict[str, Any], parent_key: str = "", index_path: str = "0") -> None:
+            children = nested_children(step)
+            node = {key: value for key, value in step.items() if key not in {"children", "branches", "topics", "items"}}
+            key = str(node.get("id") or node.get("label") or f"n{index_path}").strip() or f"n{index_path}"
+            if parent_key and not (node.get("parent_id") or node.get("parent")):
+                node["parent_id"] = parent_key
+            source_steps.append(node)
+            for child_index, child in enumerate(children):
+                append_step(child, key, f"{index_path}_{child_index}")
+
+        for index, step in enumerate(steps or [{"id": "root", "label": title}]):
+            append_step(step, index_path=str(index))
+
+        node_by_key: Dict[str, Dict[str, Any]] = {}
+        ordered_keys: List[str] = []
+        for index, step in enumerate(source_steps):
+            key = str(step.get("id") or step.get("label") or f"n{index}")
+            if key in node_by_key:
+                key = f"{key}_{index}"
+            node_by_key[key] = {**step, "_key": key}
+            ordered_keys.append(key)
+
+        root_key = ""
+        for key in ordered_keys:
+            parent = str(node_by_key[key].get("parent_id") or node_by_key[key].get("parent") or "").strip()
+            if not parent:
+                root_key = key
+                break
+        if not root_key and ordered_keys:
+            root_key = ordered_keys[0]
+
+        children_by_parent: Dict[str, List[str]] = {key: [] for key in ordered_keys}
+        for key in ordered_keys:
+            if key == root_key:
+                continue
+            parent = str(node_by_key[key].get("parent_id") or node_by_key[key].get("parent") or "").strip()
+            if parent and parent in node_by_key:
+                children_by_parent.setdefault(parent, []).append(key)
+            else:
+                children_by_parent.setdefault(root_key, []).append(key)
+
+        def render_topic(key: str, depth: int = 0) -> str:
+            node = node_by_key[key]
+            label = html.escape(str(node.get("label") or key))
+            detail = str(node.get("detail") or node.get("description") or "").strip()
+            detail_html = f"<p>{html.escape(detail)}</p>" if detail else ""
+            child_html = "".join(render_topic(child_key, depth + 1) for child_key in children_by_parent.get(key, []))
+            children_html = f"<div class=\"drawio-mind-children\">{child_html}</div>" if child_html else ""
+            return (
+                f"<section class=\"drawio-mind-child\" data-depth=\"{depth}\" data-node-id=\"{html.escape(key)}\">"
+                "<i class=\"drawio-mind-connector\" aria-hidden=\"true\"></i>"
+                "<div class=\"drawio-mind-topic\">"
+                f"<strong class=\"drawio-node-label module-label\">{label}</strong>"
+                f"{detail_html}"
+                "</div>"
+                f"{children_html}"
+                "</section>"
+            )
+
+        root_label = html.escape(str(node_by_key.get(root_key, {}).get("label") or title))
+        root_detail = str(node_by_key.get(root_key, {}).get("detail") or node_by_key.get(root_key, {}).get("description") or "").strip()
+        root_detail_html = f"<p>{html.escape(root_detail)}</p>" if root_detail else ""
+        root_children = children_by_parent.get(root_key, [])
+        left_keys = [key for index, key in enumerate(root_children) if index % 2 == 0]
+        right_keys = [key for index, key in enumerate(root_children) if index % 2 == 1]
+        left_html = "".join(render_topic(key, 1) for key in left_keys)
+        right_html = "".join(render_topic(key, 1) for key in right_keys)
+        body_html = (
+            "<section class=\"drawio-mind-map\">"
+            f"<div class=\"drawio-mind-side drawio-mind-left\">{left_html}</div>"
+            "<article class=\"drawio-mind-center drawio-node\">"
+            f"<strong class=\"drawio-node-label module-label\">{root_label}</strong>"
+            f"{root_detail_html}"
+            "</article>"
+            f"<div class=\"drawio-mind-side drawio-mind-right\">{right_html}</div>"
+            "</section>"
+        )
+        component_css = """
+    .drawio-mind-map { min-height: 650px; display: grid; grid-template-columns: 1fr 230px 1fr; gap: 28px; align-items: center; }
+    .drawio-mind-center { min-height: 92px; border: 1.6px solid #315f87; background: #e8f3fb; border-radius: 6px; padding: 16px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #123047; }
+    .drawio-mind-center p, .drawio-mind-topic p { margin: 4px 0 0; font-size: calc(10px * var(--font-scale)); line-height: 1.2; color: #4b5563; }
+    .drawio-mind-side { display: grid; gap: 16px; align-content: center; }
+    .drawio-mind-left { justify-items: end; }
+    .drawio-mind-right { justify-items: start; }
+    .drawio-mind-child { position: relative; display: grid; gap: 8px; max-width: 310px; overflow: visible; }
+    .drawio-mind-branch, .drawio-mind-topic { position: relative; min-width: 142px; max-width: 260px; min-height: 44px; border: 1.4px solid var(--node-border); background: #ffffff; border-radius: 5px; padding: 8px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #1f2937; }
+    .drawio-mind-connector { position: absolute; top: 22px; width: 34px; border-top: 1.6px solid var(--line); z-index: 0; }
+    .drawio-mind-left .drawio-mind-connector { right: -35px; }
+    .drawio-mind-right .drawio-mind-connector { left: -35px; }
+    .drawio-mind-children { display: grid; gap: 7px; margin-top: 1px; }
+    .drawio-mind-left .drawio-mind-children { justify-items: end; padding-right: 24px; border-right: 1px solid #c9cdd3; }
+    .drawio-mind-right .drawio-mind-children { justify-items: start; padding-left: 24px; border-left: 1px solid #c9cdd3; }
+    .drawio-mind-children .drawio-mind-topic { min-width: 118px; min-height: 38px; background: #fbfbfc; }
+    @media (max-width: 760px) {
+      .drawio-mind-map { grid-template-columns: 1fr; gap: 14px; }
+      .drawio-mind-left, .drawio-mind-right { justify-items: center; }
+      .drawio-mind-center { order: -1; }
+      .drawio-mind-connector { display: none; }
+    }
+"""
+        return self._build_drawio_shell_html(
+            title=title,
+            meta="Mind Map · draw.io style",
+            body_html=body_html,
+            component_css=component_css,
+            notes=notes,
+            font_scale=font_scale,
+        )
+
+    def _build_gantt_html(
+        self,
+        title: str,
+        steps: List[Dict[str, Any]],
+        notes: str | None = None,
+        font_scale: FontScale = None,
+    ) -> str:
+        fallback_start = datetime.now().date()
+        tasks = []
+        cursor = fallback_start
+        for index, step in enumerate(steps or []):
+            start = _parse_gantt_date(step.get("start"), cursor)
+            duration_value = step.get("duration")
+            try:
+                duration_days = max(1, int(float(duration_value))) if duration_value not in {None, ""} else 1
+            except (TypeError, ValueError):
+                duration_days = 1
+            end_fallback = date_cls.fromordinal(start.toordinal() + duration_days - 1)
+            end = _parse_gantt_date(step.get("end"), end_fallback)
+            if end < start:
+                end = start
+            cursor = date_cls.fromordinal(end.toordinal() + 1)
+            try:
+                progress = max(0, min(100, int(float(step.get("progress") or 0))))
+            except (TypeError, ValueError):
+                progress = 0
+            tasks.append({
+                "id": str(step.get("id") or step.get("label") or f"task-{index}"),
+                "label": str(step.get("label") or f"任务 {index + 1}"),
+                "phase": str(step.get("phase") or step.get("group") or "计划"),
+                "owner": str(step.get("owner") or ""),
+                "start": start,
+                "end": end,
+                "progress": progress,
+            })
+
+        if not tasks:
+            tasks.append({
+                "id": "task-1",
+                "label": "待补充任务",
+                "phase": "计划",
+                "owner": "",
+                "start": fallback_start,
+                "end": fallback_start,
+                "progress": 0,
+            })
+
+        min_date = min(task["start"] for task in tasks)
+        max_date = max(task["end"] for task in tasks)
+        total_days = max(1, max_date.toordinal() - min_date.toordinal() + 1)
+        tick_count = min(6, total_days)
+        ticks = []
+        for index in range(tick_count):
+            offset = round(index * (total_days - 1) / max(1, tick_count - 1))
+            tick_date = date_cls.fromordinal(min_date.toordinal() + offset)
+            left = (offset / total_days) * 100
+            ticks.append(
+                f"<span class=\"drawio-gantt-tick\" style=\"left:{left:.2f}%\">{html.escape(tick_date.isoformat())}</span>"
+            )
+
+        rows = []
+        phase_order: List[str] = []
+        for task in tasks:
+            if task["phase"] not in phase_order:
+                phase_order.append(task["phase"])
+        phase_classes = {phase: f"phase-{index % 6}" for index, phase in enumerate(phase_order)}
+        for task in tasks:
+            start_offset = task["start"].toordinal() - min_date.toordinal()
+            task_days = max(1, task["end"].toordinal() - task["start"].toordinal() + 1)
+            left = (start_offset / total_days) * 100
+            width = max(3.5, (task_days / total_days) * 100)
+            owner_html = f"<small>{html.escape(task['owner'])}</small>" if task["owner"] else ""
+            rows.append(
+                "<div class=\"drawio-gantt-row\">"
+                "<div class=\"drawio-gantt-task\">"
+                f"<strong>{html.escape(task['label'])}</strong>"
+                f"<span>{html.escape(task['phase'])}</span>"
+                f"{owner_html}"
+                "</div>"
+                "<div class=\"drawio-gantt-lane\">"
+                f"<div class=\"drawio-gantt-bar {phase_classes[task['phase']]}\" "
+                f"style=\"left:{left:.2f}%; width:{width:.2f}%\" "
+                f"data-start=\"{html.escape(task['start'].isoformat())}\" data-end=\"{html.escape(task['end'].isoformat())}\">"
+                f"<i class=\"drawio-gantt-progress\" style=\"width:{task['progress']}%\"></i>"
+                f"<b>{task['progress']}%</b>"
+                "</div>"
+                "</div>"
+                "</div>"
+            )
+
+        body_html = (
+            "<section class=\"drawio-gantt\">"
+            "<div class=\"drawio-gantt-header\">"
+            "<div class=\"drawio-gantt-task-head\">任务</div>"
+            f"<div class=\"drawio-gantt-timeline\">{''.join(ticks)}</div>"
+            "</div>"
+            f"<div class=\"drawio-gantt-rows\">{''.join(rows)}</div>"
+            "</section>"
+        )
+        component_css = """
+    .drawio-gantt { min-height: 650px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+    .drawio-gantt-header, .drawio-gantt-row { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 12px; align-items: stretch; }
+    .drawio-gantt-task-head { border: 1px solid #c9cdd3; background: #eef1f5; padding: 8px 10px; font-size: calc(12px * var(--font-scale)); font-weight: 700; color: #374151; }
+    .drawio-gantt-timeline { position: relative; border: 1px solid #c9cdd3; background: #ffffff; min-height: 38px; overflow: hidden; }
+    .drawio-gantt-timeline::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(to right, transparent 0, transparent calc(16.66% - 1px), #e5e7eb calc(16.66% - 1px), #e5e7eb 16.66%); }
+    .drawio-gantt-tick { position: absolute; top: 10px; transform: translateX(-50%); white-space: nowrap; font-size: calc(10px * var(--font-scale)); color: #4b5563; background: #ffffff; padding: 0 3px; }
+    .drawio-gantt-rows { display: grid; gap: 8px; }
+    .drawio-gantt-task { border: 1px solid #c9cdd3; background: #ffffff; min-height: 48px; padding: 7px 10px; display: grid; align-content: center; gap: 2px; }
+    .drawio-gantt-task strong { font-size: calc(12px * var(--font-scale)); line-height: 1.18; color: #1f2937; }
+    .drawio-gantt-task span, .drawio-gantt-task small { font-size: calc(10px * var(--font-scale)); color: #6b7280; }
+    .drawio-gantt-lane { position: relative; min-height: 48px; border: 1px solid #d6dbe3; background: repeating-linear-gradient(to right, #ffffff 0, #ffffff calc(16.66% - 1px), #f3f4f6 calc(16.66% - 1px), #f3f4f6 16.66%); }
+    .drawio-gantt-bar { position: absolute; top: 9px; height: 28px; border: 1.4px solid #5f6368; border-radius: 4px; background: #e7f0fb; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; color: #1f2937; }
+    .drawio-gantt-progress { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(49, 95, 135, 0.28); }
+    .drawio-gantt-bar b { position: relative; z-index: 1; padding: 0 6px; font-size: calc(10px * var(--font-scale)); font-weight: 650; }
+    .phase-0 { background: #e7f0fb; }
+    .phase-1 { background: #e5f2e5; }
+    .phase-2 { background: #fff3cf; }
+    .phase-3 { background: #eee4f4; }
+    .phase-4 { background: #e8f6f9; }
+    .phase-5 { background: #eef1f5; }
+    @media (max-width: 760px) {
+      .drawio-gantt-header, .drawio-gantt-row { grid-template-columns: 150px minmax(0, 1fr); }
+      .drawio-gantt-tick { font-size: 9px; }
+    }
+"""
+        return self._build_drawio_shell_html(
+            title=title,
+            meta=f"Gantt Chart · draw.io style · 总层数：{len(phase_order)}层 · 总任务：{len(tasks)}项",
+            body_html=body_html,
+            component_css=component_css,
+            notes=notes,
+            font_scale=font_scale,
+        )
+
     def _build_layered_architecture_html(
         self,
         title: str,
@@ -964,10 +1464,27 @@ class CreateDiagramArtifactTool(LLMTool):
         font_scale: FontScale = None,
     ) -> str:
         safe_title = html.escape(title)
-        safe_font_scale = f"{resolve_font_scale(font_scale):.3f}"
+        safe_font_scale = f"{resolve_diagram_font_scale(font_scale):.3f}"
         css_font_stack = diagram_css_font_stack()
+        css_font_face = diagram_css_font_face()
         palette = ["cyan", "blue", "green", "amber", "purple", "slate"]
         layer_id_to_label = {str(layer.get("id") or ""): str(layer.get("label") or "") for layer in layers}
+
+        main_layers = [
+            layer
+            for layer in layers
+            if _normalise_role(layer.get("role")) != "external"
+            and _normalise_variant(layer.get("variant")) != "external"
+        ]
+        external_layers = [
+            layer
+            for layer in layers
+            if _normalise_role(layer.get("role")) == "external"
+            or _normalise_variant(layer.get("variant")) == "external"
+        ]
+        if not main_layers:
+            main_layers = layers
+            external_layers = []
 
         edge_labels: Dict[str, str] = {}
         edge_strengths: Dict[str, str] = {}
@@ -981,8 +1498,8 @@ class CreateDiagramArtifactTool(LLMTool):
             edge_strengths[f"{src}->{dst}"] = _normalise_flow_strength(edge.get("flow_strength"))
 
         band_html = []
-        layer_count = len(layers)
-        for index, layer in enumerate(layers):
+        layer_count = len(main_layers)
+        for index, layer in enumerate(main_layers):
             theme = layer.get("theme") or palette[index % len(palette)]
             groups_html = []
             layer_item_count = sum(len(group.get("items") or []) for group in layer.get("groups") or [])
@@ -992,279 +1509,200 @@ class CreateDiagramArtifactTool(LLMTool):
             elif icon_policy == "hide":
                 layer_icons_visible = False
             else:
-                layer_icons_visible = index >= max(0, layer_count - 2)
+                layer_items = [
+                    item
+                    for group in layer.get("groups") or []
+                    for item in group.get("items") or []
+                ]
+                all_items_have_icons = bool(layer_items) and all(str(item.get("icon") or "") for item in layer_items)
+                layer_icons_visible = index >= max(0, layer_count - 2) or all_items_have_icons
             for group in layer.get("groups") or []:
                 cards = []
                 for item in group.get("items") or []:
-                    detail = str(item.get("detail") or "").strip()
-                    detail_html = f"<p>{html.escape(detail)}</p>" if detail else ""
-                    icon_html = _diagram_icon_svg(str(item.get("icon") or "")) if layer_icons_visible else ""
-                    icon_symbol_html = f"<span class=\"module-symbol\">{icon_html}</span>" if icon_html else ""
-                    item_classes = ["module-item"]
-                    if not icon_symbol_html:
-                        item_classes.append("module-item-no-icon")
-                    emphasis = _normalise_emphasis(item.get("emphasis"))
-                    variant = _normalise_variant(item.get("variant"))
-                    role = _normalise_role(item.get("role"))
-                    if emphasis != "normal":
-                        item_classes.append(f"module-emphasis-{emphasis}")
-                    if variant != "default":
-                        item_classes.append(f"module-variant-{variant}")
-                    if role:
-                        item_classes.append(f"module-role-{role}")
-                    cards.append(
-                        f"<article data-label=\"{html.escape(str(item.get('label') or ''))}\" class=\"{html.escape(' '.join(item_classes))}\">"
-                        f"{icon_symbol_html}"
-                        f"<strong class=\"module-label\">{html.escape(str(item.get('label') or ''))}</strong>"
-                        f"{detail_html}"
-                        "</article>"
-                    )
-                group_classes = ["module-group"]
+                    cards.append(self._render_drawio_node_html(item, icon_visible=layer_icons_visible))
+                group_classes = ["drawio-group"]
                 if (
                     layer_item_count > COMPACT_LAYER_ITEM_THRESHOLD
                     or len(group.get("items") or []) > COMPACT_GROUP_THRESHOLD
                 ):
-                    group_classes.append("group-density-compact")
+                    group_classes.append("drawio-group-compact")
                 groups_html.append(
                     f"<section class=\"{html.escape(' '.join(group_classes))}\">"
                     f"<h2>{html.escape(str(group.get('label') or '模块组'))}</h2>"
-                    f"<div class=\"module-grid centered-grid\">{''.join(cards)}</div>"
+                    f"<div class=\"drawio-node-grid module-grid centered-grid\">{''.join(cards)}</div>"
                     "</section>"
                 )
 
             connector = ""
-            if index < len(layers) - 1:
+            if index < len(main_layers) - 1:
                 current_id = str(layer.get("id") or "")
-                next_id = str(layers[index + 1].get("id") or "")
+                next_id = str(main_layers[index + 1].get("id") or "")
                 forward_key = f"{current_id}->{next_id}"
                 reverse_key = f"{next_id}->{current_id}"
                 is_reverse_transition = reverse_key in edge_labels and forward_key not in edge_labels
                 edge_key = reverse_key if is_reverse_transition else forward_key
                 transition_label = edge_labels.get(edge_key) or ""
                 transition_strength = edge_strengths.get(edge_key) or "normal"
-                transition_classes = ["layer-transition"]
+                transition_classes = ["drawio-layer-link", "layer-transition"]
                 if transition_strength == "strong":
-                    transition_classes.append("layer-transition-strong")
+                    transition_classes.append("drawio-layer-link-strong")
                 if is_reverse_transition:
-                    transition_classes.append("layer-transition-reverse")
+                    transition_classes.append("drawio-layer-link-reverse")
                 label_html = f"<span>{html.escape(transition_label)}</span>" if transition_label else ""
                 connector = (
                     f"<div data-edge=\"{html.escape(edge_key)}\" class=\"{html.escape(' '.join(transition_classes))}\" "
                     f"aria-hidden=\"true\"><i></i>{label_html}</div>"
                 )
-            layer_classes = ["layer-band", f"theme-{str(theme)}"]
+            layer_classes = ["drawio-layer", "layer-band", f"theme-{str(theme)}"]
             layer_variant = _normalise_variant(layer.get("variant"))
             layer_role = _normalise_role(layer.get("role"))
             if layer_variant != "default":
-                layer_classes.append(f"layer-variant-{layer_variant}")
+                layer_classes.append(f"drawio-layer-variant-{layer_variant}")
             if layer_role:
-                layer_classes.append(f"layer-role-{layer_role}")
+                layer_classes.append(f"drawio-layer-role-{layer_role}")
             if layer_item_count > COMPACT_LAYER_ITEM_THRESHOLD or len(layer.get("groups") or []) > 3:
-                layer_classes.append("layer-density-compact")
+                layer_classes.append("drawio-layer-compact")
             band_html.append(
                 f"<section data-layer-id=\"{html.escape(str(layer.get('id') or ''))}\" class=\"{html.escape(' '.join(layer_classes))}\">"
-                "<aside class=\"layer-label\">"
-                f"<span class=\"layer-index\">{index + 1:02d}</span>"
+                "<aside class=\"drawio-layer-title\">"
                 f"<strong>{html.escape(str(layer.get('label') or ''))}</strong>"
                 "</aside>"
-                f"<div class=\"layer-content\">{''.join(groups_html)}</div>"
+                f"<div class=\"drawio-layer-content\">{''.join(groups_html)}</div>"
                 f"</section>{connector}"
             )
 
+        external_html = []
+        for layer in external_layers:
+            items_html = []
+            for group in layer.get("groups") or []:
+                for item in group.get("items") or []:
+                    items_html.append(
+                        self._render_drawio_node_html(
+                            item,
+                            icon_visible=False,
+                            extra_classes=["drawio-external-node"],
+                        )
+                    )
+            if not items_html:
+                items_html.append(
+                    self._render_drawio_node_html(
+                        {"label": "外部系统", "shape": "rectangle"},
+                        icon_visible=False,
+                        extra_classes=["drawio-external-node"],
+                    )
+                )
+            external_html.append(
+                "<section class=\"drawio-external-panel\">"
+                f"<h2>{html.escape(str(layer.get('label') or '外部系统'))}</h2>"
+                f"<div class=\"drawio-external-items\">{''.join(items_html)}</div>"
+                "</section>"
+            )
+        external_rail_html = (
+            f"<aside class=\"drawio-external-rail\">{''.join(external_html)}</aside>"
+            if external_html
+            else ""
+        )
+
         return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{safe_title}</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f3f6fb;
-      --panel: #ffffff;
-      --text: #101828;
-	      --muted: #475467;
-	      --border: #cfd9e8;
-	      --shadow: 0 14px 34px rgba(15, 23, 42, 0.13);
+	  <title>{safe_title}</title>
+	  <style>
+	    {css_font_face}
+	    :root {{
+	      color-scheme: light;
+	      --bg: #f7f8fb;
+	      --paper: #ffffff;
+	      --text: #202124;
+	      --muted: #4b5563;
+	      --line: #333333;
+	      --node-border: #5f6368;
 	      --font-scale: {safe_font_scale};
 	    }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: {css_font_stack}; background: var(--bg); color: var(--text); }}
-    .wrap {{ max-width: 1440px; margin: 0 auto; padding: 24px; }}
-    .header {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }}
-	    h1 {{ margin: 0; font-size: calc(32px * var(--font-scale)); line-height: 1.16; font-weight: 850; letter-spacing: 0; color: var(--text); }}
-	    .meta {{ color: var(--muted); font-size: calc(13px * var(--font-scale)); font-weight: 650; }}
-    .canvas {{ background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; box-shadow: var(--shadow); }}
-    .layered-diagram {{ display: grid; gap: 9px; }}
-    .layer-band {{ display: grid; grid-template-columns: 154px minmax(0, 1fr); gap: 14px; min-height: 86px; border: 1px solid var(--layer-border); border-left: 5px solid var(--layer-strong); background: var(--layer-bg); border-radius: 8px; padding: 10px 12px; }}
-    .layer-variant-foundation {{ box-shadow: inset 0 -4px 0 color-mix(in srgb, var(--layer-strong) 18%, transparent), 0 8px 18px rgba(15, 23, 42, 0.09); }}
-    .layer-variant-external {{ border-style: dashed; background: #ffffff; }}
-    .layer-variant-critical {{ border-left-width: 7px; box-shadow: 0 12px 26px rgba(185, 28, 28, 0.13); }}
-    .layer-label {{ display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-height: 100%; border-right: 1px solid var(--layer-border); padding-right: 12px; text-align: center; }}
-	    .layer-index {{ display: inline-flex; align-items: center; justify-content: center; min-width: 38px; height: 26px; border-radius: 999px; background: var(--layer-strong); color: #fff; font-size: calc(14px * var(--font-scale)); font-weight: 850; letter-spacing: 0; box-shadow: 0 4px 10px rgba(15, 23, 42, 0.14); }}
-	    .layer-label strong {{ max-width: 120px; font-size: calc(26px * var(--font-scale)); line-height: 1.08; color: var(--layer-strong); font-weight: 850; overflow-wrap: anywhere; }}
-    .layer-content {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 9px; align-items: stretch; min-width: 0; }}
-    .layer-density-compact {{ gap: 12px; padding: 9px 11px; }}
-    .layer-density-compact .layer-content {{ grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 8px; }}
-	    .layer-density-compact .layer-label strong {{ font-size: calc(24px * var(--font-scale)); }}
-    .module-group {{ border: 1px solid color-mix(in srgb, var(--layer-border) 78%, #7f8ea3); border-radius: 8px; padding: 8px 10px; background: rgba(255,255,255,0.72); min-width: 0; }}
-    .group-density-compact {{ padding: 7px 8px; }}
-	    .module-group h2 {{ margin: 0 0 7px; font-size: calc(15px * var(--font-scale)); font-weight: 820; color: var(--layer-strong); line-height: 1.2; text-align: center; }}
-	    .group-density-compact h2 {{ margin-bottom: 6px; font-size: calc(14px * var(--font-scale)); }}
-    .module-grid {{ display: flex; flex-wrap: wrap; justify-content: center; align-content: center; gap: 8px 14px; }}
-    .layer-density-compact .module-grid {{ gap: 7px 10px; }}
-    .centered-grid {{ justify-content: center; }}
-    .module-item {{ flex: 0 1 132px; max-width: 176px; min-width: 112px; min-height: 42px; border-radius: 7px; padding: 7px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; overflow: hidden; text-align: center; border: 1px solid transparent; }}
-    .module-item-no-icon {{ min-height: 36px; padding-top: 5px; padding-bottom: 5px; }}
-    .layer-density-compact .module-item {{ flex-basis: 116px; min-width: 96px; min-height: 36px; padding: 5px 6px; gap: 4px; }}
-    .module-item:hover {{ background: rgba(255,255,255,0.72); }}
-    .module-emphasis-high {{ background: var(--layer-strong); color: #fff; border-color: var(--layer-strong); box-shadow: 0 12px 22px color-mix(in srgb, var(--layer-strong) 24%, transparent); }}
-    .module-emphasis-muted {{ opacity: 0.72; }}
-    .module-variant-critical {{ background: #b42318; color: #fff; border-color: #b42318; }}
-    .module-variant-external {{ border-style: dashed; background: #fff; }}
-	    .module-symbol {{ width: calc(30px * var(--font-scale)); height: calc(30px * var(--font-scale)); display: inline-flex; align-items: center; justify-content: center; color: var(--layer-strong); flex: 0 0 auto; }}
-	    .layer-density-compact .module-symbol {{ width: calc(26px * var(--font-scale)); height: calc(26px * var(--font-scale)); }}
-	    .module-emphasis-high .module-symbol, .module-variant-critical .module-symbol {{ color: #fff; }}
-	    .diagram-icon {{ width: calc(28px * var(--font-scale)); height: calc(28px * var(--font-scale)); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }}
-	    .layer-density-compact .diagram-icon {{ width: calc(24px * var(--font-scale)); height: calc(24px * var(--font-scale)); }}
-	    .module-label {{ font-size: 17px; font-size: calc(17px * var(--font-scale)); line-height: 1.18; color: #182230; font-weight: 800; overflow-wrap: anywhere; }}
-	    .layer-density-compact .module-label {{ font-size: calc(15px * var(--font-scale)); line-height: 1.16; }}
-	    .module-emphasis-high .module-label, .module-variant-critical .module-label {{ color: #fff; }}
-	    .module-item p {{ margin: -1px 0 0; color: var(--muted); font-size: calc(12px * var(--font-scale)); line-height: 1.28; font-weight: 520; overflow-wrap: anywhere; }}
-	    .module-emphasis-high p, .module-variant-critical p {{ color: rgba(255,255,255,0.84); }}
-	    .layer-transition {{ display: flex; align-items: center; gap: 9px; height: 22px; margin-left: 76px; color: #344054; font-size: calc(12px * var(--font-scale)); font-weight: 650; }}
-    .layer-transition i {{ width: 3px; height: 18px; background: #64748b; position: relative; display: inline-block; border-radius: 999px; }}
-    .layer-transition i::after {{ content: ""; position: absolute; left: -5px; bottom: -1px; border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 9px solid #64748b; }}
-    .layer-transition-reverse i::after {{ top: -1px; bottom: auto; border-top: 0; border-bottom: 9px solid #64748b; }}
-    .layer-transition-strong {{ color: #1d4ed8; font-weight: 820; }}
-    .layer-transition-strong i {{ width: 4px; height: 20px; background: #2563eb; }}
-    .layer-transition-strong i::after {{ border-left-width: 8px; border-right-width: 8px; border-top: 10px solid #2563eb; left: -6px; }}
-    .layer-transition-reverse.layer-transition-strong i::after {{ border-top: 0; border-bottom: 10px solid #2563eb; }}
-    .layer-transition span {{ border: 1px solid #c9d4e4; background: #fff; border-radius: 999px; padding: 4px 10px; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.07); }}
-    .theme-cyan {{ --layer-bg: #e6fbff; --layer-border: #67d4e7; --layer-strong: #0e7490; }}
-    .theme-blue {{ --layer-bg: #eaf4ff; --layer-border: #8ec5f6; --layer-strong: #1d4ed8; }}
-    .theme-green {{ --layer-bg: #ebfbee; --layer-border: #86d69a; --layer-strong: #15803d; }}
-    .theme-amber {{ --layer-bg: #fff7dc; --layer-border: #f4c84f; --layer-strong: #b45309; }}
-    .theme-purple {{ --layer-bg: #f7edff; --layer-border: #c99aee; --layer-strong: #7e22ce; }}
-    .theme-slate {{ --layer-bg: #f4f7fb; --layer-border: #a9b7ca; --layer-strong: #334155; }}
-    @media (max-width: 760px) {{
-      .wrap {{ padding: 14px; }}
-      .header {{ display: block; }}
-      .canvas {{ padding: 12px; }}
-      .layer-band {{ grid-template-columns: 1fr; gap: 10px; }}
-      .layer-label {{ border-right: 0; border-bottom: 1px solid var(--layer-border); padding: 0 0 10px; }}
-      .layer-content {{ grid-template-columns: 1fr; }}
-      .layer-transition {{ margin-left: 50%; }}
-    }}
+	    * {{ box-sizing: border-box; }}
+	    body {{ margin: 0; font-family: {css_font_stack}; background: var(--bg); color: var(--text); }}
+	    .wrap {{ width: 1440px; margin: 0 auto; padding: 16px; background: var(--paper); }}
+	    .header {{ display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #d6dbe3; padding-bottom: 8px; }}
+	    h1 {{ margin: 0; font-size: calc(24px * var(--font-scale)); line-height: 1.2; font-weight: 700; letter-spacing: 0; color: var(--text); }}
+	    .canvas {{ position: relative; border: 1px solid #c9cdd3; background: var(--paper); padding: 12px; min-height: 720px; }}
+	    .drawio-architecture {{ position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 16px; align-items: stretch; }}
+	    .drawio-architecture-no-external {{ grid-template-columns: minmax(0, 1fr); }}
+	    .drawio-main-stack, .layered-diagram {{ display: grid; gap: 14px; min-width: 0; }}
+	    .drawio-layer, .layer-band {{ display: grid; grid-template-columns: 178px minmax(0, 1fr); gap: 14px; min-height: 104px; border: 1.5px solid var(--layer-border); background: var(--layer-bg); padding: 12px; }}
+	    .drawio-layer-title {{ display: flex; align-items: flex-start; justify-content: flex-start; border-right: 1px solid color-mix(in srgb, var(--layer-border) 72%, #ffffff); padding: 4px 12px 4px 2px; }}
+	    .drawio-layer-title strong {{ font-size: calc(15px * var(--font-scale)); line-height: 1.25; font-weight: 700; color: #111827; overflow-wrap: anywhere; }}
+	    .drawio-layer-content {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; align-items: stretch; min-width: 0; }}
+	    .drawio-layer-compact .drawio-layer-content {{ grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 8px; }}
+	    .drawio-group {{ min-width: 0; display: flex; flex-direction: column; justify-content: center; border: 1px dashed color-mix(in srgb, var(--layer-border) 72%, #6b7280); background: rgba(255,255,255,0.38); padding: 9px; }}
+	    .drawio-group h2 {{ margin: 0 0 8px; text-align: center; color: #374151; font-size: calc(12px * var(--font-scale)); font-weight: 650; line-height: 1.2; }}
+	    .drawio-group-compact {{ padding: 7px; }}
+	    .drawio-node-grid {{ flex: 1; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: center; gap: 12px 18px; }}
+	    .drawio-node {{ position: relative; flex: 0 1 148px; min-width: 122px; min-height: 44px; border: 1.4px solid var(--node-border); border-radius: 5px; background: #ffffff; padding: 8px 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #1f2937; overflow: hidden; }}
+	    .drawio-node-label {{ font-size: calc(13px * var(--font-scale)); line-height: 1.18; font-weight: 650; overflow-wrap: anywhere; }}
+	    .drawio-node p {{ margin: 4px 0 0; font-size: calc(10px * var(--font-scale)); line-height: 1.2; color: #4b5563; }}
+	    .drawio-shape-database {{ min-height: 58px; padding-top: 17px; border-radius: 50% / 12px; }}
+	    .drawio-shape-database::before {{ content: ""; position: absolute; left: -1.4px; right: -1.4px; top: -1.4px; height: 19px; border: 1.4px solid var(--node-border); border-radius: 50%; background: inherit; }}
+	    .drawio-shape-database .drawio-node-label, .drawio-shape-database p {{ position: relative; z-index: 1; }}
+	    .drawio-shape-cloud {{ border-radius: 999px 999px 820px 820px; min-height: 54px; }}
+	    .drawio-shape-document {{ border-radius: 3px; }}
+	    .drawio-shape-document::after {{ content: ""; position: absolute; right: -1px; top: -1px; width: 18px; height: 18px; border-left: 1.4px solid var(--node-border); border-bottom: 1.4px solid var(--node-border); background: #f3f4f6; }}
+	    .drawio-shape-queue {{ border-radius: 999px; }}
+	    .drawio-node-emphasis-high {{ background: #fff2bf; border-color: #d89b00; }}
+	    .drawio-node-emphasis-muted {{ color: #6b7280; background: #f9fafb; }}
+	    .drawio-node-variant-critical {{ background: #fde2e2; border-color: #b42318; color: #7f1d1d; }}
+	    .drawio-node-variant-external {{ border-style: dashed; }}
+	    .module-symbol {{ display: none; }}
+	    .drawio-layer-link {{ position: relative; height: 24px; color: #374151; font-size: calc(11px * var(--font-scale)); text-align: center; }}
+	    .drawio-layer-link i {{ position: absolute; left: 50%; top: -2px; width: 1.5px; height: 20px; background: var(--line); }}
+	    .drawio-layer-link i::after {{ content: ""; position: absolute; left: -5px; bottom: -1px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid var(--line); }}
+	    .drawio-layer-link-reverse i::after {{ top: -1px; bottom: auto; border-top: 0; border-bottom: 8px solid var(--line); }}
+	    .drawio-layer-link span {{ position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); display: inline-block; margin-top: 0; padding: 1px 6px; background: #ffffff; border: 1px solid #c9cdd3; color: #374151; white-space: nowrap; }}
+	    .drawio-layer-link-strong i {{ width: 2px; background: #111827; }}
+	    .drawio-external-rail {{ display: grid; align-content: stretch; gap: 12px; }}
+	    .drawio-external-panel {{ border: 1.5px solid #e0a03f; background: #fde8cb; padding: 14px 10px; display: flex; flex-direction: column; justify-content: center; gap: 18px; min-height: 100%; }}
+	    .drawio-external-panel h2 {{ margin: 0; text-align: center; font-size: calc(14px * var(--font-scale)); font-weight: 700; color: #3f2f18; }}
+	    .drawio-external-items {{ display: grid; gap: 12px; justify-items: center; }}
+	    .drawio-external-node {{ width: 150px; flex-basis: auto; }}
+	    .drawio-connector-overlay {{ position: absolute; inset: 0; pointer-events: none; }}
+	    .theme-cyan {{ --layer-bg: #e8f6f9; --layer-border: #7bbdcc; }}
+	    .theme-blue {{ --layer-bg: #e7f0fb; --layer-border: #82aad8; }}
+	    .theme-green {{ --layer-bg: #e5f2e5; --layer-border: #8fbd8c; }}
+	    .theme-amber {{ --layer-bg: #fff3cf; --layer-border: #e2bf63; }}
+	    .theme-purple {{ --layer-bg: #eee4f4; --layer-border: #b59ac6; }}
+	    .theme-slate {{ --layer-bg: #eef1f5; --layer-border: #a9b0bb; }}
+	    @media (max-width: 760px) {{
+	      .wrap {{ width: 100%; padding: 10px; }}
+	      .header {{ display: block; }}
+	      .drawio-architecture {{ grid-template-columns: 1fr; }}
+	      .drawio-layer, .layer-band {{ grid-template-columns: 1fr; }}
+	      .drawio-layer-title {{ border-right: 0; border-bottom: 1px solid var(--layer-border); }}
+	      .drawio-external-panel {{ min-height: 160px; }}
+	    }}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header class="header">
-      <h1>{safe_title}</h1>
-      <div class="meta">分层架构图 · 确定性布局</div>
-    </header>
-    <main class="canvas">
-      <div class="layered-diagram">
-        {''.join(band_html)}
-      </div>
-    </main>
-  </div>
-</body>
-</html>
-"""
-
-    def _build_mermaid_html(self, title: str, mermaid: str, notes: str | None = None) -> str:
-        notes_html = ""
-        if notes:
-            notes_html = f"<section class=\"notes\"><pre>{html.escape(str(notes))}</pre></section>"
-
-        safe_mermaid = html.escape(mermaid)
-        safe_title = html.escape(title)
-        css_font_stack = diagram_css_font_stack()
-        return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{safe_title}</title>
-  <style>
-    body {{ margin: 0; font-family: {css_font_stack}; background: #f6f7fb; color: #18202f; }}
-    .wrap {{ max-width: 1280px; margin: 0 auto; padding: 24px; }}
-    .panel {{ background: #fff; border: 1px solid #d9e0ee; border-radius: 8px; padding: 20px; overflow: auto; }}
-    .notes {{ margin-top: 16px; border-top: 1px solid #d9e0ee; padding-top: 12px; color: #5d677b; font-size: 13px; }}
-    .notes pre {{ margin: 0; white-space: pre-wrap; word-break: break-word; }}
-    .mermaid {{ min-height: 220px; }}
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-  <script>
-    window.addEventListener('DOMContentLoaded', () => {{
-      mermaid.initialize({{
-        startOnLoad: true,
-        securityLevel: 'loose',
-        theme: 'default',
-        flowchart: {{ useMaxWidth: true, htmlLabels: true }}
-      }});
-    }});
-  </script>
-</head>
-<body>
-  <div class="wrap">
-    <h1>{safe_title}</h1>
-    <div class="panel">
-      <div class="mermaid">{safe_mermaid}</div>
-      {notes_html}
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-    def _build_graphviz_html(self, title: str, svg: str, notes: str | None = None) -> str:
-        notes_html = ""
-        if notes:
-            notes_html = f"<section class=\"notes\"><pre>{html.escape(str(notes))}</pre></section>"
-
-        safe_title = html.escape(title)
-        css_font_stack = diagram_css_font_stack()
-        return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{safe_title}</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f6f7fb;
-      --panel: #ffffff;
-      --text: #18202f;
-      --muted: #5d677b;
-      --border: #d9e0ee;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: {css_font_stack}; background: var(--bg); color: var(--text); }}
-    .wrap {{ max-width: 1600px; margin: 0 auto; padding: 24px; }}
-    h1 {{ margin: 0 0 12px; font-size: 24px; line-height: 1.2; }}
-    .hint {{ color: var(--muted); font-size: 13px; margin-bottom: 16px; }}
-    .panel {{ background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow: auto; }}
-    .svg-wrap {{ width: 100%; overflow: auto; }}
-    .svg-wrap svg {{ width: 100%; height: auto; display: block; }}
-    .notes {{ margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; color: var(--muted); font-size: 13px; }}
-    .notes pre {{ margin: 0; white-space: pre-wrap; word-break: break-word; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>{safe_title}</h1>
-    <div class="hint">由助手模式自动生成的静态流程图</div>
-    <div class="panel">
-      <div class="svg-wrap">
-        {svg}
-      </div>
-      {notes_html}
-    </div>
-  </div>
+	  <div class="wrap">
+	    <header class="header">
+	      <h1>{safe_title}</h1>
+	    </header>
+	    <main class="canvas">
+	      <div class="drawio-architecture {'drawio-architecture-no-external' if not external_rail_html else ''}">
+	        <svg class="drawio-connector-overlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+	          <defs>
+	            <marker id="drawio-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+	              <path d="M0,0 L6,3 L0,6 Z" fill="#333333"></path>
+	            </marker>
+	          </defs>
+	        </svg>
+	        <div class="drawio-main-stack layered-diagram">
+	          {''.join(band_html)}
+	        </div>
+	        {external_rail_html}
+	      </div>
+	    </main>
+	  </div>
 </body>
 </html>
 """
@@ -1274,15 +1712,12 @@ class CreateDiagramArtifactTool(LLMTool):
         artifact_id: Optional[str] = None,
         title: Optional[str] = None,
         direction: str = "TB",
-        layout_engine: str = "graphviz",
         diagram_type: str = "auto",
-        mermaid: Optional[str] = None,
         layers: Optional[List[Dict[str, Any]]] = None,
         steps: Optional[List[Dict[str, Any]]] = None,
         edges: Optional[List[Dict[str, Any]]] = None,
         notes: Optional[str] = None,
         font_scale: FontScale = None,
-        output_target: str = "word_a4",
         page_orientation: str = "auto",
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -1308,7 +1743,6 @@ class CreateDiagramArtifactTool(LLMTool):
                 }
 
             direction = direction if direction in {"TB", "BT", "LR", "RL"} else "TB"
-            layout_engine = (layout_engine or "graphviz").lower()
             diagram_type = _normalise_diagram_type(diagram_type)
             diagram_type = diagram_type if diagram_type in {
                 "auto",
@@ -1320,15 +1754,18 @@ class CreateDiagramArtifactTool(LLMTool):
                 "process",
                 "decision_tree",
                 "data_flow",
+                "mind_map",
+                "gantt",
             } else "auto"
             steps = steps or []
+            if diagram_type == "mind_map" and not steps:
+                alternate_steps = kwargs.get("nodes") or kwargs.get("topics")
+                if isinstance(alternate_steps, list):
+                    steps = [step for step in alternate_steps if isinstance(step, dict)]
             edges = edges or []
-            output_target = _normalise_output_target(output_target)
             page_orientation = _normalise_page_orientation(page_orientation, steps)
-            static_direction = _static_direction_for_word_a4(diagram_type, direction, page_orientation, steps)
             layout_warnings: List[str] = []
-            static_dot_source: Optional[str] = None
-            static_image_from_html = False
+            static_image_from_html = True
 
             if diagram_type == "layered_architecture":
                 normalised_layers = self._normalise_layers(layers, steps)
@@ -1340,62 +1777,41 @@ class CreateDiagramArtifactTool(LLMTool):
                     notes,
                     font_scale=font_scale,
                 )
-                static_image_from_html = output_target == "word_a4"
+                static_image_from_html = True
                 page_orientation = "landscape"
                 render_engine = "layered_html"
-            elif layout_engine == "mermaid" or (layout_engine == "auto" and mermaid and not steps):
+            elif diagram_type == "mind_map":
                 layout_warnings = _word_a4_layout_warnings(diagram_type, steps)
-                mermaid_body = mermaid.strip() if mermaid else "flowchart TB\n  A[无步骤数据] --> B[请提供 steps 或 mermaid]"
-                if not mermaid_body.startswith("flowchart "):
-                    mermaid_body = f"flowchart {direction}\n{mermaid_body}"
-                html_content = self._build_mermaid_html(title, mermaid_body, notes)
-                static_dot_source = self._build_dot_from_steps(
-                    steps,
-                    edges,
-                    static_direction,
+                html_content = self._build_mind_map_html(
                     title,
+                    steps,
+                    notes=notes,
                     font_scale=font_scale,
-                    output_target=output_target,
-                    page_orientation=page_orientation,
                 )
-                render_engine = "mermaid"
+                page_orientation = "landscape"
+                render_engine = "drawio_mind_map_html"
+            elif diagram_type == "gantt":
+                layout_warnings = _word_a4_layout_warnings(diagram_type, steps)
+                html_content = self._build_gantt_html(
+                    title,
+                    steps,
+                    notes=notes,
+                    font_scale=font_scale,
+                )
+                page_orientation = "landscape"
+                render_engine = "drawio_gantt_html"
             else:
                 layout_warnings = _word_a4_layout_warnings(diagram_type, steps)
-                dot_source = self._build_dot_from_steps(
+                html_content = self._build_process_html(
+                    title,
                     steps,
                     edges,
-                    direction,
-                    title,
+                    direction=direction,
+                    diagram_type=diagram_type,
+                    notes=notes,
                     font_scale=font_scale,
-                    output_target="html",
-                    page_orientation=page_orientation,
                 )
-                static_dot_source = self._build_dot_from_steps(
-                    steps,
-                    edges,
-                    static_direction,
-                    title,
-                    font_scale=font_scale,
-                    output_target=output_target,
-                    page_orientation=page_orientation,
-                )
-                try:
-                    svg = self._render_graphviz_svg(dot_source)
-                    html_content = self._build_graphviz_html(title, svg, notes)
-                    render_engine = "graphviz"
-                except Exception as graphviz_exc:
-                    if mermaid:
-                        mermaid_body = mermaid.strip()
-                    else:
-                        mermaid_body = "flowchart TB\n  A[Graphviz 渲染失败] --> B[请检查输入数据]"
-                    if not mermaid_body.startswith("flowchart "):
-                        mermaid_body = f"flowchart {direction}\n{mermaid_body}"
-                    html_content = self._build_mermaid_html(
-                        title,
-                        mermaid_body + f"\n%% Graphviz fallback: {html.escape(str(graphviz_exc))}",
-                        notes,
-                    )
-                    render_engine = "mermaid"
+                render_engine = "drawio_process_html" if diagram_type in {"auto", "process"} else "drawio_steps_html"
 
             data = html_artifact_service.create_artifact(
                 artifact_id,
@@ -1406,7 +1822,7 @@ class CreateDiagramArtifactTool(LLMTool):
                     "diagram_type": diagram_type,
                     "direction": direction,
                     "layout_engine": render_engine,
-                    "output_target": output_target,
+                    "output_targets": ["html", "word_a4"],
                     "page_orientation": page_orientation,
                     "layout_warnings": layout_warnings,
                     "font_family": select_diagram_font_family(),
@@ -1416,32 +1832,18 @@ class CreateDiagramArtifactTool(LLMTool):
                 },
             )
             static_image = None
-            if output_target == "word_a4" and (static_image_from_html or static_dot_source):
+            if static_image_from_html:
                 image_path = (
                     Path(data["artifact_dir"])
                     / "assets"
                     / _safe_asset_name(f"{data.get('artifact_id')}_word_a4")
                 )
                 try:
-                    if static_image_from_html:
-                        static_image = await self._render_html_word_a4_screenshot(
-                            Path(data["file_path"]),
-                            image_path,
-                            page_orientation=page_orientation,
-                        )
-                    elif (
-                        diagram_type in {"auto", "process"}
-	                        and len(steps) > WORD_A4_LONG_PROCESS_THRESHOLD
-	                        and page_orientation == "landscape"
-	                    ):
-	                        static_image = self._render_wrapped_process_png(steps, edges, title, image_path)
-                    else:
-                        static_image = self._render_graphviz_png(
-                            static_dot_source,
-                            image_path,
-                            page_orientation=page_orientation,
-                            output_target=output_target,
-                        )
+                    static_image = await self._render_html_word_a4_screenshot(
+                        Path(data["file_path"]),
+                        image_path,
+                        page_orientation=page_orientation,
+                    )
                     static_image["relative_path"] = str(image_path.relative_to(Path(data["artifact_dir"])))
                     image_url = f"/api/html-artifacts/{data.get('artifact_id')}/{static_image['relative_path']}"
                     data["static_image_path"] = static_image["path"]
@@ -1462,7 +1864,7 @@ class CreateDiagramArtifactTool(LLMTool):
                             "markdown_image": f"![{title}]({image_url})",
                             "local_path": static_image["path"],
                             "format": "png",
-                            "output_target": output_target,
+                            "output_target": "word_a4",
                             "page_orientation": page_orientation,
                         }
                     ]
@@ -1483,7 +1885,7 @@ class CreateDiagramArtifactTool(LLMTool):
                     "artifact_id": data.get("artifact_id"),
                     "artifact_kind": "diagram",
                     "layout_engine": render_engine,
-                    "output_target": output_target,
+                    "output_targets": ["html", "word_a4"],
                 },
             )
             if static_image:
@@ -1506,7 +1908,7 @@ class CreateDiagramArtifactTool(LLMTool):
                     "diagram_type": diagram_type,
                     "direction": direction,
                     "layout_engine": render_engine,
-                    "output_target": output_target,
+                    "output_targets": ["html", "word_a4"],
                     "page_orientation": page_orientation,
                     "layout_warnings": layout_warnings,
                     "static_image_path": data.get("static_image_path"),
@@ -1517,6 +1919,7 @@ class CreateDiagramArtifactTool(LLMTool):
                 "summary": (
                     f"图表已生成：{data['artifact_id']}。"
                     + (f"Word A4 静态图路径：{data['static_image_path']}。" if data.get("static_image_path") else "右侧预览已可用。")
+                    + _layout_warning_summary(layout_warnings)
                 ),
             }
         except Exception as exc:

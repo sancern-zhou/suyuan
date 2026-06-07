@@ -49,6 +49,19 @@ async def load_session_for_mode(
     )
 
 
+async def load_session_for_llm_mode(
+    session_id: str,
+    *,
+    mode: Optional[str] = None,
+) -> Optional[Session]:
+    manager = get_session_manager_for_mode(mode)
+    if isinstance(manager, SessionManager):
+        return await _maybe_await(manager.load_session(session_id))
+    if hasattr(manager, "load_session_for_llm"):
+        return await _maybe_await(manager.load_session_for_llm(session_id))
+    return await _maybe_await(manager.load_session(session_id, include_messages=True))
+
+
 async def save_session_metadata_for_mode(
     session: Session,
     *,

@@ -2,54 +2,23 @@ from pathlib import Path
 
 import pytest
 
-from app.tools.office.create_pptx_tool import CreatePptxTool
+from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
 from app.tools.office.validate_pptx_tool import ValidatePptxTool
 
 
-def test_create_pptx_auto_design_rewrites_dense_text_and_bullets():
-    tool = CreatePptxTool()
-    theme = tool._normalize_theme({})
-    brief = tool._normalize_design_brief(None, "污染分析报告", [])
-    slides = [
+def test_ppt_master_theme_normalizes_color_aliases():
+    palette = CreatePptxWithPptMasterTool()._palette(
+        "business_clean",
         {
-            "type": "text",
-            "title": "核心结论",
-            "text": "臭氧污染过程受高温、低湿、弱风和VOCs活性组分共同影响。" * 12,
+            "primary_color": "#1E88E5",
+            "secondary_color": "#43A047",
+            "accent_color": "#FFA726",
         },
-        {
-            "type": "bullets",
-            "title": "治理建议",
-            "bullets": [
-                "强化VOCs重点行业错峰管控",
-                "午后加强臭氧前体物协同削峰",
-                "关注交通源NOx排放变化",
-                "结合气象扩散条件动态调整预警",
-                "对高值站点开展走航溯源",
-            ],
-        },
-    ]
+    )
 
-    normalized, slide_plan, density_report = tool._normalize_slides(slides, theme, brief)
-
-    assert normalized[0]["type"] == "key_message"
-    assert normalized[0]["message"]
-    assert normalized[0]["items"]
-    assert normalized[1]["type"] == "card_grid"
-    assert len(normalized[1]["items"]) == 5
-    assert [item["type"] for item in slide_plan] == ["key_message", "card_grid"]
-    assert len(density_report["rewritten_slides"]) == 2
-
-
-def test_create_pptx_auto_design_can_be_disabled():
-    tool = CreatePptxTool()
-    theme = tool._normalize_theme({})
-    brief = tool._normalize_design_brief(None, "普通汇报", [])
-    slides = [{"type": "bullets", "title": "列表", "bullets": [f"项目 {idx}" for idx in range(6)]}]
-
-    normalized, _, density_report = tool._normalize_slides(slides, theme, brief, auto_design=False)
-
-    assert normalized[0]["type"] == "bullets"
-    assert density_report["rewritten_slides"] == []
+    assert palette["primary"] == "1E88E5"
+    assert palette["secondary"] == "43A047"
+    assert palette["accent"] == "FFA726"
 
 
 def test_validate_pptx_design_quality_report(tmp_path: Path):
@@ -108,27 +77,59 @@ def test_validate_pptx_rendered_visual_quality_flags_overcrowding(tmp_path: Path
     assert any(issue["type"] == "rendered_visual_overcrowding" for issue in report["issues"])
 
 
-def test_create_pptx_quality_gate_returns_rewrite_pages():
-    report = {
-        "design_quality": {
-            "score": 72,
-            "recommendations": ["拆分高文字密度页面。"],
-            "slides": [{"slide": 2, "score": 70}],
-        },
-        "visual_quality": {
-            "score": 76,
-            "recommendations": ["增加页边距。"],
-            "slides": [{"slide": 3, "score": 74}],
-        },
-        "issues": [
-            {"type": "high_text_density", "slide": 2},
-            {"type": "rendered_low_margin", "slide": 3},
+def test_ppt_master_quality_gate_returns_rewrite_when_validation_fails():
+    gate = CreatePptxWithPptMasterTool()._workflow_quality_gate(
+        [
+            {"slide": 1, "layout": "cover_statement", "role": "cover"},
+            {"slide": 2, "layout": "card_grid", "role": "content"},
         ],
-    }
-
-    gate = CreatePptxTool()._quality_gate(report)
+        {
+            "success": False,
+            "design_quality": {"issues": [{"type": "text_only_slide", "slide": 2}]},
+            "overflow_issues": [{"type": "rendered_low_margin", "slide": 3}],
+        },
+    )
 
     assert gate["status"] == "rewrite_required"
     assert gate["rewrite_required"] is True
-    assert [item["slide"] for item in gate["rewrite_pages"]] == [2, 3]
-    assert gate["recommendations"] == ["拆分高文字密度页面。", "增加页边距。"]
+    assert gate["qa_status"] == "needs_revision"
+    assert gate["affected_slides"] == [2, 3]
+    assert gate["issue_summary"]["validation_failed"] == 1
+    assert any(issue["type"] == "validation_failed" for issue in gate["issues"])
+    assert any(issue["type"] == "text_only_slide" for issue in gate["issues"])
+    assert any(task["slide"] == 2 and task["action"] for task in gate["revision_tasks"])
+    assert any(task["slide"] == 3 and task["priority"] == "high" for task in gate["revision_tasks"])
+
+
+def test_ppt_master_quality_gate_distinguishes_qa_failed_from_revision_needed():
+    gate = CreatePptxWithPptMasterTool()._workflow_quality_gate(
+        [{"slide": 1, "layout": "cover_statement", "role": "cover"}],
+        {
+            "success": False,
+            "issues": [{"type": "validation_error", "message": "render failed"}],
+        },
+    )
+
+    assert gate["status"] == "qa_failed"
+    assert gate["qa_status"] == "qa_failed"
+    assert gate["rewrite_required"] is False
+    assert gate["revision_tasks"] == []
+
+
+def test_ppt_master_quality_summary_promotes_revision_loop():
+    tool = CreatePptxWithPptMasterTool()
+    summary = tool._build_summary(
+        output_name="demo.pptx",
+        slide_count=5,
+        quality_gate={
+            "qa_status": "needs_revision",
+            "revision_tasks": [
+                {"slide": 2, "type": "text_only_slide", "action": "补充视觉元素。"},
+                {"slide": 4, "type": "rendered_low_margin", "action": "增加页边距。"},
+            ],
+        },
+    )
+
+    assert "已生成PPT初稿" in summary
+    assert "QA发现 2 项需优化任务" in summary
+    assert "继续迭代" in summary

@@ -26,7 +26,7 @@
 ## 推荐参数
 
 - `diagram_type`: `decision_tree`
-- `layout_engine`: `graphviz`
+- 渲染采用工具内置 draw.io 风格模板，不需要指定布局引擎。
 - `direction`: `TB`
 - `steps`: 判断 `diamond`，结论 `rect`，人工复核 `stadium`
 - `edges`: 全部带 `label`

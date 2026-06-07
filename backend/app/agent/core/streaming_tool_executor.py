@@ -258,6 +258,30 @@ class StreamingToolExecutor:
             total_executions=len(self._executions),
         )
 
+    def addCompletedTool(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> None:
+        """Record a tool result without executing the tool body."""
+        execution = ToolExecution(
+            tool_use_id=tool_use_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            is_concurrency_safe=True,
+        )
+        execution.mark_completed(result)
+        self._executions.append(execution)
+        logger.info(
+            "streaming_tool_short_circuited",
+            tool_name=tool_name,
+            tool_use_id=tool_use_id[:12],
+            status=result.get("status") if isinstance(result, dict) else None,
+            total_executions=len(self._executions),
+        )
+
     async def _execute_with_semaphore(
         self,
         execution: ToolExecution,

@@ -129,7 +129,7 @@ class ReActAgent:
 
     def __init__(
         self,
-        max_iterations: int = 60,  # ✅ 默认60次（适应复杂分析任务）
+        max_iterations: int = 120,  # ✅ 默认120次（适应复杂分析任务）
         max_working_memory: int = 20,
         working_context_limit: int = 50000,
         large_data_threshold: int = 1000,
@@ -170,9 +170,9 @@ class ReActAgent:
             self.memory_manager = UnifiedMemoryManager()
             logger.info("unified_memory_manager_created")
 
-        # 初始化任务列表（用于 TodoWrite 工具）
-        from .task.todo_models import TodoList
-        self.task_list = TodoList()
+        # 初始化任务列表（用于 TaskCreate/TaskUpdate/TaskList/TaskGet 工具）
+        from .task.task_models import TaskList
+        self.task_list = TaskList()
 
         # 初始化工具执行器
         self.executor = ToolExecutor(tool_registry=tool_registry)
@@ -204,7 +204,7 @@ class ReActAgent:
         """
         # 工作流工具现在通过 app.tools.workflow 模块自动注册
         # 复杂的工作流（standard_analysis_workflow、quick_tracing_workflow）已删除
-        # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + TodoWrite）
+        # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + Task 工具）
         pass
 
     async def analyze(
@@ -378,9 +378,9 @@ class ReActAgent:
             manual_mode=manual_mode,
         )
 
-        from .task.todo_models import TodoList
+        from .task.task_models import TaskList
 
-        run_task_list = TodoList()
+        run_task_list = TaskList()
         run_planner = ReActPlanner(
             tool_registry=self.planner.tool_registry,
             llm_client=self.planner.llm_service,
@@ -423,7 +423,7 @@ class ReActAgent:
             # 工具池包括：
             # - 原子工具（基础能力）
             # - 工作流工具（高级能力）
-            # - 任务清单驱动流程（Agent 读取 md 模板 + TodoWrite）
+            # - 任务清单驱动流程（Agent 读取 md 模板 + Task 工具）
             react_loop = ReActLoop(
                 memory_manager=memory_manager,
                 llm_planner=run_planner,
@@ -570,6 +570,7 @@ class ReActAgent:
                     session = await load_session_for_mode(
                         actual_session_id,
                         mode=manual_mode,
+                        include_messages=False,
                     )
 
                     if session:
@@ -1089,15 +1090,15 @@ class ReActAgent:
             # 的数据库历史，不能作为会话真源。
             if session_id and not reset_session:
                 try:
-                    from app.agent.session.session_resolver import load_session_for_mode
+                    from app.agent.session.session_resolver import load_session_for_llm_mode
 
                     logger.info(
                         "react_session_restore_load_start",
                         session_id=session_id,
                         mode=manual_mode,
-                        include_messages=True,
+                        include_messages="llm_light",
                     )
-                    saved_session = await load_session_for_mode(
+                    saved_session = await load_session_for_llm_mode(
                         session_id,
                         mode=manual_mode,
                     )

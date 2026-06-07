@@ -39,11 +39,9 @@ class EditFileTool(LLMTool):
 
 ⚠️ 重要限制：
 - ❌ 不适用于编辑 Word 文档（.docx）！
-  - 简单替换 → 使用 find_replace_word 工具
-  - 复杂编辑 → 使用 word_edit 工具
+  - 当前助手模式不暴露 Word 编辑工具；请读取内容后说明无法直接编辑既有 Word 文档
 - ❌ 不适用于编辑 Word XML 文件（document.xml）！
-  - 简单替换 → 使用 find_replace_word 工具
-  - 复杂编辑 → 使用 word_edit 工具
+  - 不要手动编辑 Office XML
 - ✅ 适用于：代码文件（.py, .js, .ts 等）、配置文件（.json, .yaml, .xml 等）、文本文件（.txt, .md 等）
 
 功能：
@@ -55,7 +53,7 @@ class EditFileTool(LLMTool):
 - ✅ 修改代码（函数体、变量值、导入语句）
 - ✅ 更新配置文件（端口、路径、参数）
 - ✅ 编辑文本文件（Markdown、TXT、JSON、YAML 等）
-- ❌ 编辑 Word 文档（简单替换用 find_replace_word，复杂编辑用 word_edit）
+- ❌ 编辑 Word 文档或 Office XML
 
 示例：
 - edit_file(path="D:/work/config.py", old_string="PORT = 8000", new_string="PORT = 9000")
@@ -79,7 +77,7 @@ class EditFileTool(LLMTool):
 - old_string 在文件中不存在时会提供详细诊断信息
 - old_string 在文件中出现多次且 replace_all=False 时报错
 - 工作目录限制：D:/溯源/ 及其子目录
-- 编辑 Word 文档请使用 find_replace_word 工具（直接操作 .docx 文件，保留格式）
+- Word 文档读取使用 read_file/read_docx；当前不暴露 Word 编辑工具
 """,
             category=ToolCategory.QUERY,
             version="1.0.0",
@@ -179,9 +177,7 @@ class EditFileTool(LLMTool):
                 # 如果是 Word XML，添加特殊提示
                 if is_word_xml:
                     hints.insert(0, "⚠️ 检测到这是 Word XML 文件！")
-                    hints.insert(1, "   简单文本替换：使用 find_replace_word 工具（直接操作 .docx 文件）")
-                    hints.insert(2, "   复杂结构编辑：使用 word_edit 工具（自动解包/编辑/打包）")
-                    hints.insert(3, "   如果坚持编辑 XML，必须使用 read_file(path=..., raw_mode=True) 读取原始 XML")
+                    hints.insert(1, "   不要手动编辑 Office XML；当前助手模式不暴露 Word 编辑工具")
 
                 # 如果文件包含 XML 标签但 old_string 不包含，可能是格式不匹配
                 if "<w:" in content or "<w:p" in content or "<w:t" in content:
@@ -287,8 +283,7 @@ class EditFileTool(LLMTool):
             "description": """精确编辑文件内容（通过字符串替换）
 
 ⚠️ 不适用于编辑 Word 文档！
-- 简单文本替换 → 使用 find_replace_word 工具
-- 复杂结构编辑 → 使用 word_edit 工具
+- 当前助手模式不暴露 Word 编辑工具
 
 找到文件中精确匹配 old_string 的内容，替换为 new_string。
 old_string 必须与文件内容完全一致（包括空格、缩进、换行）。

@@ -16,7 +16,7 @@ from .finalizer import Finalizer
 from .observation_processor import ObservationProcessor
 from .session_queue import SessionRunQueue
 from .tool_coordinator import ToolCoordinator
-from .tool_classification import all_housekeeping_tools
+from .tool_classification import HOUSEKEEPING_TOOL_NAMES, all_housekeeping_tools
 from .transcript_repairer import TranscriptRepairer
 from .types import PlannerResult, RunState, ToolCall
 from .cancellation import AgentRunCancelled, cancellation_registry
@@ -33,7 +33,7 @@ class AgentRuntimeConfig:
     tool_executor: Any
     context_builder: Any
     task_completion_guard: Any
-    max_iterations: int = 60
+    max_iterations: int = 120
     enhance_with_history: bool = True
     enable_reasoning: bool = False
     is_interruption: bool = False
@@ -206,7 +206,21 @@ class AgentRuntime:
 
         if action_type in ("TOOL_CALL", "TOOL_CALLS"):
             self._raise_if_cancelled()
-            observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
+            suppressed_observation = self._suppressed_housekeeping_observation(state, action)
+            if suppressed_observation is not None:
+                tool_call_id = action.get("tool_call_id", f"fallback_{action.get('tool', '')}")
+                tool_name = action.get("tool", "")
+                observation = suppressed_observation
+                records = [{
+                    "tool_name": tool_name,
+                    "tool_use_id": tool_call_id,
+                    "tool_input": action.get("args", {}),
+                    "result": observation,
+                    "is_error": False,
+                }]
+                tool_events = [self.events.tool_result(state, tool_call_id, observation, False, tool_name)]
+            else:
+                observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
             self._capture_multimodal_attachments(state, observation)
             self._apply_housekeeping_policy(state, action, observation)
             self._ensure_user_message_written(state)
@@ -303,6 +317,7 @@ class AgentRuntime:
         # 按模式过滤工具 schema（节省 token）
         tool_schemas = get_tool_schemas(mode=state.mode)
         suppressed_tool_names = self._tool_names_to_suppress(state)
+        state.suppress_tool_names_current_turn = suppressed_tool_names
         if suppressed_tool_names:
             original_count = len(tool_schemas)
             tool_schemas = [
@@ -411,12 +426,27 @@ class AgentRuntime:
                 state.has_seen_tool_use = True
                 buffer.note_tool_use()
                 planner_result.tool_calls.append(ToolCall(tool_name, tool_input, tool_use_id))
-                streaming_tool_executor.addTool(
-                    tool_use_id=tool_use_id,
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    iteration=state.iteration,
-                )
+                tool_action = {
+                    "type": "TOOL_CALL",
+                    "tool": tool_name,
+                    "tool_call_id": tool_use_id,
+                    "args": tool_input,
+                }
+                suppressed_observation = self._suppressed_housekeeping_observation(state, tool_action)
+                if suppressed_observation is not None:
+                    streaming_tool_executor.addCompletedTool(
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        result=suppressed_observation,
+                    )
+                else:
+                    streaming_tool_executor.addTool(
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        iteration=state.iteration,
+                    )
                 yield self.events.tool_use(state, tool_use_id, tool_name, tool_input)
                 for completed_result in streaming_tool_executor.getCompletedResults():
                     yield completed_result["message"]
@@ -452,11 +482,17 @@ class AgentRuntime:
 
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""
-        # ✅ 修复：删除 TodoWrite 抑制策略
-        # 原因：抑制会导致 LLM 无法正常调用 TodoWrite，反而输出文本格式的伪调用
         suppressed = set(state.suppress_tool_names_next_turn)
         state.suppress_tool_names_next_turn.clear()
         return suppressed
+
+    def _suppressed_housekeeping_observation(
+        self,
+        state: RunState,
+        action: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Task tools are not short-circuited; they return their own no-op result."""
+        return None
 
     def _apply_housekeeping_policy(
         self,
@@ -481,29 +517,8 @@ class AgentRuntime:
         if not housekeeping_only:
             return
 
-        should_suppress_todo = False
-        if action.get("type") == "TOOL_CALL" and action.get("tool") == "TodoWrite":
-            should_suppress_todo = bool(
-                isinstance(observation, dict)
-                and (observation.get("no_op") or observation.get("all_completed"))
-            )
-        elif action.get("type") == "TOOL_CALLS" and isinstance(observation, dict):
-            for item in observation.get("tool_results", []):
-                if item.get("tool_name") != "TodoWrite":
-                    continue
-                result = item.get("result", {})
-                if isinstance(result, dict) and (result.get("no_op") or result.get("all_completed")):
-                    should_suppress_todo = True
-                    break
-
-        if should_suppress_todo:
-            state.suppress_tool_names_next_turn.add("TodoWrite")
-            logger.info(
-                "housekeeping_tool_suppressed_next_turn",
-                tool_name="TodoWrite",
-                iteration=state.iteration,
-                reason="no_op_or_all_completed",
-            )
+        state.suppress_tool_names_next_turn.update(HOUSEKEEPING_TOOL_NAMES)
+        return
 
     async def _fallback_non_streaming(
         self,

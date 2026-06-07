@@ -3097,12 +3097,16 @@ def execute_query_gd_suncere_district_report(
     ns_type: int = 2,
     sand_type: int = 1,
     skip_count: int = 0,
-    max_result_count: int = 20,
+    max_result_count: int = 24,  # 恢复默认值为24
+    return_all: bool = False,  # 新增参数：是否返回所有数据
 ) -> Dict[str, Any]:
     """
     执行区县统计报表查询。
 
     支持月度(time_type=4)、年度(time_type=7)和任意时段(time_type=8，默认)。
+
+    Args:
+        return_all: 是否循环分页获取所有数据。True=获取全部，False=只取前24条（默认）。
     """
     logger.info(
         "query_gd_suncere_district_report_start",
@@ -3117,6 +3121,7 @@ def execute_query_gd_suncere_district_report(
         data_source=data_source,
         ns_type=ns_type,
         sand_type=sand_type,
+        max_result_count=max_result_count,
     )
 
     try:
@@ -3151,45 +3156,112 @@ def execute_query_gd_suncere_district_report(
 
         api_client = get_gd_suncere_api_client()
         endpoint = "/api/airprovinceproduct/dataanalysis/ReportDataQuery/GetReportForRangeListFilterAsync"
-        payload = {
-            "skipCount": skip_count,
-            "maxResultCount": max_result_count,
-            "areaType": area_type,
-            "timeType": time_type,
-            "stationCode": resolved_codes,
-            "timePoint": [start_time, end_time],
-            "calAreaType": cal_area_type,
-            "dataSource": data_source,
-            "nsType": ns_type,
-            "sandType": sand_type,
-        }
-
-        logger.info(
-            "query_district_report_calling_api",
-            endpoint=endpoint,
-            payload=payload,
-        )
-
-        response_data = api_client._make_request(endpoint, payload, method="POST", timeout=60)
-        if not response_data.get("success"):
-            error_msg = response_data.get("msg", "Unknown error")
-            raise Exception(f"API 查询失败: {error_msg}")
-
-        result_payload = response_data.get("result", [])
-        api_total_count = None
-        if isinstance(result_payload, dict):
-            api_total_count = result_payload.get("totalCount")
-            raw_records = result_payload.get("items", [])
-        elif isinstance(result_payload, list):
-            raw_records = result_payload
-            api_total_count = len(raw_records)
-        else:
-            raw_records = []
 
         district_names = [
             QueryGDSuncereDataTool.geo_resolver.get_district_name(code)
             for code in resolved_codes
         ]
+
+        # 根据return_all参数决定是否分页获取所有数据
+        if return_all:
+            # 循环分页获取所有数据
+            all_raw_records = []
+            current_skip = 0
+            page_size = 500  # 每页500条
+            has_more_data = True
+
+            while has_more_data:
+                payload = {
+                    "skipCount": current_skip,
+                    "maxResultCount": page_size,
+                    "areaType": area_type,
+                    "timeType": time_type,
+                    "stationCode": resolved_codes,
+                "timePoint": [start_time, end_time],
+                "calAreaType": cal_area_type,
+                "dataSource": data_source,
+                "nsType": ns_type,
+                "sandType": sand_type,
+                }
+
+                logger.info(
+                    "query_district_report_page",
+                    page=current_skip // page_size + 1,
+                    skip_count=current_skip,
+                    page_size=page_size,
+                )
+
+                response_data = api_client._make_request(endpoint, payload, method="POST", timeout=60)
+                if not response_data.get("success"):
+                    error_msg = response_data.get("msg", "Unknown error")
+                    logger.error("api_page_failed", page=current_skip // page_size + 1, error=error_msg)
+                    if current_skip == 0:
+                        # 第一页就失败，抛出异常
+                        raise Exception(f"API 查询失败: {error_msg}")
+                    else:
+                        # 非第一页失败，使用已获取的数据
+                        logger.warning("partial_data", page=current_skip // page_size + 1, records=len(all_raw_records))
+                        break
+
+                result_payload = response_data.get("result", [])
+                page_records = []
+                if isinstance(result_payload, dict):
+                    page_total_count = result_payload.get("totalCount")
+                    page_records = result_payload.get("items", [])
+                elif isinstance(result_payload, list):
+                    page_records = result_payload
+
+                if not page_records:
+                    # 没有更多数据
+                    has_more_data = False
+                    logger.info("page_no_more_data", page=current_skip // page_size + 1)
+                    break
+
+                all_raw_records.extend(page_records)
+                logger.info("page_success", page=current_skip // page_size + 1, records=len(page_records), total=len(all_raw_records))
+
+                # 检查是否还有更多数据
+                if len(page_records) < page_size:
+                    # 返回的数据少于页大小，说明是最后一页
+                    has_more_data = False
+                else:
+                    # 继续下一页
+                    current_skip += page_size
+
+            raw_records = all_raw_records
+            api_total_count = len(raw_records)
+
+        else:
+            # 不分页：只获取单页数据（使用原始max_result_count）
+            payload = {
+                "skipCount": skip_count,
+                "maxResultCount": max_result_count,
+                "areaType": area_type,
+                "timeType": time_type,
+                "stationCode": resolved_codes,
+                "timePoint": [start_time, end_time],
+                "calAreaType": cal_area_type,
+                "dataSource": data_source,
+                "nsType": ns_type,
+                "sandType": sand_type,
+            }
+
+            response_data = api_client._make_request(endpoint, payload, method="POST", timeout=60)
+            if not response_data.get("success"):
+                error_msg = response_data.get("msg", "Unknown error")
+                logger.error("api_request_failed", error=error_msg)
+                raise Exception(f"API 查询失败: {error_msg}")
+
+            result_payload = response_data.get("result", [])
+            if isinstance(result_payload, dict):
+                raw_records = result_payload.get("items", [])
+                api_total_count = result_payload.get("totalCount", len(raw_records))
+            elif isinstance(result_payload, list):
+                raw_records = result_payload
+                api_total_count = len(raw_records)
+            else:
+                raw_records = []
+                api_total_count = 0
 
         if not raw_records:
             return {
@@ -3240,20 +3312,20 @@ def execute_query_gd_suncere_district_report(
             )
 
         total_count = len(standardized_records)
-        sample_count = min(24, total_count)
+        sample_count = total_count  # 返回全部数据，不再限制24条
         is_externalized = total_count > 24
 
         return {
             "status": "success",
             "success": True,
-            "data": standardized_records[:sample_count],
+            "data": standardized_records,  # 返回全部数据
             "data_id": data_id,
             "metadata": {
                 "tool_name": "query_gd_suncere_district_report",
                 "total_records": total_count,
                 "returned_records": sample_count,
                 "externalized": is_externalized,
-                "externalization_note": "完整数据已外部化存储，当前仅返回前24条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
+                "externalization_note": f"完整数据已外部化存储，当前仅返回前{sample_count}条样本。完整数据可通过 data_id 访问。" if is_externalized else "数据量小，未触发外部化。",
                 "api_total_count": api_total_count,
                 "district_codes": resolved_codes,
                 "district_names": district_names,
@@ -3266,7 +3338,7 @@ def execute_query_gd_suncere_district_report(
                 "sand_type": sand_type,
                 "source": "gd_suncere_api",
             },
-            "summary": f"成功获取区县统计报表数据共 {total_count} 条，区县数量 {len(resolved_codes)}，已保存为 {data_id}。{'（完整数据已外部化存储，当前仅返回前24条样本）' if is_externalized else ''}",
+            "summary": f"成功获取区县统计报表数据共 {total_count} 条，区县数量 {len(resolved_codes)}，已保存为 {data_id}。",
         }
 
     except Exception as e:

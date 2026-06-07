@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.agent.memory.context_compressor import ContextCompressor
@@ -219,6 +221,225 @@ def test_session_memory_load_history_messages_skips_display_only_react_events(tm
         {"role": "user", "content": "帮我查看目录"},
         {"role": "assistant", "content": "目录里有 backend 和 frontend。"},
     ]
+
+
+def test_session_memory_load_history_messages_rebuilds_tool_blocks_from_display_data(tmp_path):
+    session = SessionMemory(session_id="restore-display-tool-data-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "type": "user",
+            "role": "user",
+            "content": "继续分析",
+            "timestamp": "2026-06-04T00:00:00",
+        },
+        {
+            "type": "tool_use",
+            "role": "assistant",
+            "content": "调用工具: execute_ops_sql_query",
+            "data": {
+                "tool_use_id": "toolu_query_1",
+                "tool_name": "execute_ops_sql_query",
+                "input": {"sql": "SELECT 1"},
+            },
+            "timestamp": "2026-06-04T00:00:01",
+        },
+        {
+            "type": "thought",
+            "role": "assistant",
+            "content": "准备调用工具: execute_ops_sql_query",
+            "data": {"thought": "准备调用工具"},
+            "timestamp": "2026-06-04T00:00:02",
+        },
+        {
+            "type": "tool_result",
+            "role": "user",
+            "content": "查询到1条记录",
+            "data": {
+                "tool_use_id": "toolu_query_1",
+                "tool_name": "execute_ops_sql_query",
+                "result": {"summary": "查询到1条记录", "rows": [{"value": 1}]},
+                "is_error": False,
+            },
+            "timestamp": "2026-06-04T00:00:03",
+        },
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+
+    assert messages[0] == {"role": "user", "content": "继续分析"}
+    assert messages[1] == {
+        "role": "assistant",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_query_1",
+                "name": "execute_ops_sql_query",
+                "input": {"sql": "SELECT 1"},
+            }
+        ],
+    }
+    assert messages[2]["role"] == "user"
+    assert messages[2]["content"][0]["type"] == "tool_result"
+    assert messages[2]["content"][0]["tool_use_id"] == "toolu_query_1"
+    assert messages[2]["content"][0]["is_error"] is False
+    assert "\"summary\": \"查询到1条记录\"" in messages[2]["content"][0]["content"]
+
+
+def test_session_memory_load_history_messages_restores_only_lightweight_tool_result_fields(tmp_path):
+    session = SessionMemory(session_id="restore-light-tool-result-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "type": "tool_use",
+            "role": "assistant",
+            "content": "调用工具: render_chart",
+            "data": {
+                "tool_use_id": "toolu_chart_1",
+                "tool_name": "render_chart",
+                "input": {"chart_type": "line"},
+            },
+            "timestamp": "2026-06-04T00:00:01",
+        },
+        {
+            "type": "tool_result",
+            "role": "user",
+            "content": "已生成图表",
+            "data": {
+                "tool_use_id": "toolu_chart_1",
+                "tool_name": "render_chart",
+                "result": {
+                    "status": "success",
+                    "summary_text": "已生成趋势图",
+                    "data_id": "chart_data:v1:abc",
+                    "data_ids": ["chart_data:v1:abc"],
+                    "visuals": [
+                        {"id": "visual_1", "title": "趋势图", "spec": {"large": "payload"}},
+                        {"id": "visual_2"},
+                    ],
+                    "data": [{"large": "row"}],
+                    "rows": [{"large": "row"}],
+                    "html": "<div>large</div>",
+                },
+                "is_error": False,
+            },
+            "timestamp": "2026-06-04T00:00:02",
+        },
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+    restored = json.loads(messages[1]["content"][0]["content"])
+
+    assert restored == {
+        "tool_name": "render_chart",
+        "tool_use_id": "toolu_chart_1",
+        "status": "success",
+        "is_error": False,
+        "summary_text": "已生成趋势图",
+        "data_id": "chart_data:v1:abc",
+        "data_ids": ["chart_data:v1:abc"],
+        "visual_ids": ["visual_1", "visual_2"],
+        "result_truncated": True,
+    }
+
+
+def test_session_memory_load_history_messages_uses_data_id_reference_when_summary_missing(tmp_path):
+    session = SessionMemory(session_id="restore-data-id-reference-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "type": "tool_use",
+            "role": "assistant",
+            "content": "调用工具: query_data",
+            "data": {
+                "tool_use_id": "toolu_data_1",
+                "tool_name": "query_data",
+                "input": {"table": "events"},
+            },
+            "timestamp": "2026-06-04T00:00:01",
+        },
+        {
+            "type": "tool_result",
+            "role": "user",
+            "content": "查询完成",
+            "data": {
+                "tool_use_id": "toolu_data_1",
+                "tool_name": "query_data",
+                "result": {
+                    "data_id": "sql_query_result:v1:abc",
+                    "data": [{"large": "payload"}],
+                },
+                "is_error": False,
+            },
+            "timestamp": "2026-06-04T00:00:02",
+        },
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+    restored = json.loads(messages[1]["content"][0]["content"])
+
+    assert restored["summary"] == "结果已保存为 data_id=sql_query_result:v1:abc，可用 read_data_registry 读取。"
+    assert restored["data_id"] == "sql_query_result:v1:abc"
+    assert restored["result_truncated"] is True
+
+
+def test_session_memory_load_history_messages_drops_orphan_tool_protocol_blocks(tmp_path):
+    session = SessionMemory(session_id="restore-drop-orphan-tool-test", base_dir=tmp_path)
+    saved_messages = [
+        {
+            "type": "tool_use",
+            "role": "assistant",
+            "content": "调用工具: missing_result",
+            "data": {
+                "tool_use_id": "toolu_orphan_use",
+                "tool_name": "missing_result",
+                "input": {},
+            },
+            "timestamp": "2026-06-04T00:00:01",
+        },
+        {
+            "type": "tool_result",
+            "role": "user",
+            "content": "孤儿结果",
+            "data": {
+                "tool_use_id": "toolu_orphan_result",
+                "tool_name": "missing_use",
+                "result": {"summary": "orphan"},
+                "is_error": False,
+            },
+            "timestamp": "2026-06-04T00:00:02",
+        },
+        {
+            "type": "tool_use",
+            "role": "assistant",
+            "content": "调用工具: valid_tool",
+            "data": {
+                "tool_use_id": "toolu_valid",
+                "tool_name": "valid_tool",
+                "input": {"x": 1},
+            },
+            "timestamp": "2026-06-04T00:00:03",
+        },
+        {
+            "type": "tool_result",
+            "role": "user",
+            "content": "有效结果",
+            "data": {
+                "tool_use_id": "toolu_valid",
+                "tool_name": "valid_tool",
+                "result": {"summary": "valid"},
+                "is_error": False,
+            },
+            "timestamp": "2026-06-04T00:00:04",
+        },
+    ]
+
+    session.load_history_messages(saved_messages)
+    messages = session.get_messages_for_llm()
+
+    assert len(messages) == 2
+    assert messages[0]["content"][0]["id"] == "toolu_valid"
+    assert messages[1]["content"][0]["tool_use_id"] == "toolu_valid"
 
 
 def test_session_memory_load_history_messages_preserves_native_tool_blocks(tmp_path):

@@ -31,7 +31,7 @@ LLM Tools
    - generate_map - 生成高德地图配置
 
 4. Task Management Tools - 任务管理工具（housekeeping状态管理）
-   - TodoWrite - 完整替换当前会话任务清单，仅用于复杂任务的计划可视化
+   - TaskCreate / TaskUpdate / TaskList / TaskGet - 增量管理当前会话任务清单
 
 **工具选择决策：**
 - 有data_id → smart_chart_generator
@@ -607,52 +607,8 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="parse_pdf", error=str(e))
 
     # ========================================
-    # Office Automation Tools（Cross-Platform - Phase 1-4）
+    # Office Automation Tools
     # ========================================
-
-    # Phase 1: XML 解包/打包工具（跨平台）
-    try:
-        from app.tools.office.unpack_tool import UnpackOfficeTool
-        registry.register(UnpackOfficeTool(), priority=340)  # 修复: 598->340
-        logger.info("tool_loaded", tool="unpack_office")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="unpack_office", error=str(e))
-
-    try:
-        from app.tools.office.pack_tool import PackOfficeTool
-        registry.register(PackOfficeTool(), priority=341)  # 修复: 599->341
-        logger.info("tool_loaded", tool="pack_office")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="pack_office", error=str(e))
-
-    # Phase 2: Word 高级编辑（跨平台）
-    try:
-        from app.tools.office.edit_word_document_tool import EditWordDocumentTool
-        registry.register(EditWordDocumentTool(), priority=342)  # Agent-facing Word wrapper
-        logger.info("tool_loaded", tool="edit_word_document")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="edit_word_document", error=str(e))
-
-    try:
-        from app.tools.office.word_edit_tool import WordEditTool
-        registry.register(WordEditTool(), priority=342)  # 修复: 593->342
-        logger.info("tool_loaded", tool="word_edit")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="word_edit", error=str(e))
-
-    try:
-        from app.tools.office.accept_changes_tool import AcceptChangesTool
-        registry.register(AcceptChangesTool(), priority=343)  # 修复: 596->343
-        logger.info("tool_loaded", tool="accept_word_changes")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="accept_word_changes", error=str(e))
-
-    try:
-        from app.tools.office.find_replace_tool import FindReplaceTool
-        registry.register(FindReplaceTool(), priority=344)  # 修复: 597->344
-        logger.info("tool_loaded", tool="find_replace_word")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="find_replace_word", error=str(e))
 
     try:
         from app.tools.office.read_pptx_tool import ReadPptxTool
@@ -660,13 +616,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="read_pptx")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="read_pptx", error=str(e))
-
-    try:
-        from app.tools.office.create_pptx_tool import CreatePptxTool
-        registry.register(CreatePptxTool(), priority=346)  # 修复: 595->346
-        logger.info("tool_loaded", tool="create_pptx")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_pptx", error=str(e))
 
     try:
         from app.tools.office.analyze_pptx_template_tool import AnalyzePptxTemplateTool
@@ -697,11 +646,11 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="validate_pptx", error=str(e))
 
     try:
-        from app.tools.office.deck.deck_tool import CreatePptxFromDeckTool
-        registry.register(CreatePptxFromDeckTool(), priority=351)
-        logger.info("tool_loaded", tool="create_pptx_from_deck")
+        from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
+        registry.register(CreatePptxWithPptMasterTool(), priority=352)
+        logger.info("tool_loaded", tool="create_pptx_with_ppt_master")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_pptx_from_deck", error=str(e))
+        logger.warning("tool_import_failed", tool="create_pptx_with_ppt_master", error=str(e))
 
 
     # ========================================
@@ -826,11 +775,22 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
 
     try:
-        from app.tools.task_management.todo_write import todo_write_tool
-        registry.register(todo_write_tool, priority=381)  # 修复: 800->381
-        logger.info("tool_loaded", tool="TodoWrite")
+        from app.tools.task_management.task_tools import (
+            task_create_tool,
+            task_get_tool,
+            task_list_tool,
+            task_update_tool,
+        )
+        registry.register(task_create_tool, priority=381)
+        registry.register(task_update_tool, priority=382)
+        registry.register(task_list_tool, priority=383)
+        registry.register(task_get_tool, priority=384)
+        logger.info("tool_loaded", tool="TaskCreate")
+        logger.info("tool_loaded", tool="TaskUpdate")
+        logger.info("tool_loaded", tool="TaskList")
+        logger.info("tool_loaded", tool="TaskGet")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="TodoWrite", error=str(e))
+        logger.warning("tool_import_failed", tool="task_management", error=str(e))
 
     # ========================================
     # Browser Tools（浏览器工具 - Office Assistant Pattern）

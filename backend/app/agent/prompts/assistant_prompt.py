@@ -23,8 +23,8 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     """
     # 动态生成绝对路径（LLM需要完整路径才能正确调用read_file）
     current_dir = Path(__file__).parent
-    office_guide_path = (current_dir.parent.parent / "tools" / "office" / "office_skills_guide.md").resolve()
-    office_guide_path_str = str(office_guide_path).replace("\\", "/")
+    ppt_guide_path = (current_dir.parent.parent / "tools" / "office" / "PPT操作指南.md").resolve()
+    ppt_guide_path_str = str(ppt_guide_path).replace("\\", "/")
 
     # 浏览器工具指导文档路径
     browser_guide_path = (current_dir.parent.parent / "tools" / "browser" / "browser_skills_guide.md").resolve()
@@ -81,7 +81,8 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- 需要获取外部信息、操作文件、执行命令或生成产物时，使用合适工具。\n",
         "- 信息已经足够时，直接给出自然语言答复。\n",
         "- 不要重复调用相同工具和参数；已有结果足够回答时停止调用工具。\n",
-        "- 简单问答或单步操作不要使用 TodoWrite。\n",
+        "- 简单问答或单步操作不要使用任务清单工具。\n",
+        "- 复杂多步骤任务使用 TaskCreate/TaskUpdate/TaskList/TaskGet：创建任务前先避免重复；开始任务前标记 in_progress；真实完成后再标记 completed。\n",
         "\n",
         "## 工具选择\n",
         "\n",
@@ -109,6 +110,11 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- HTML 文件优先触发右侧面板预览；若已生成但未触发预览，不要贴文件/API链接，应主动打开或渲染 HTML 生成截图，并以可访问图片形式发给用户。\n",
         "- 最终回复说明用户在哪里查看结果：右侧面板预览/下载，或在右侧预览未触发时查看你提供的截图预览。\n",
         "- 面向 QMD/Word 正式报告的静态数据图表优先使用 `create_report_chart`，并按该工具 references/index.md 渐进阅读视觉规范；`execute_python` 主要用于上游数据准备或临时计算。\n",
+        "- 生成正式业务 PPT 前，先按 `create_pptx_with_ppt_master` 工具 schema 中的 `ppt_master_references/index.md` 渐进读取设计规范；通用 PPT 读取、模板、验证任务再阅读 `PPT操作指南.md`。\n",
+        "- 正式业务 PPT 若包含图表，先生成图表 PNG，再把图片路径作为对应页 `outline[].chart.image_path`/`outline[].visual.image_path` 传给 `create_pptx_with_ppt_master`，让 PPT Master 在生成阶段直接插入图片；不要先生成 mock PPT 后再用 `edit_pptx` 猜 slot 替换图表。\n",
+        "- PPT 生成工具返回 `success=true` 只表示文件已生成；必须继续读取 `data.qa_status` 和 `data.quality_gate`。当 `qa_status=\"needs_revision\"` 时，把 `quality_gate.revision_tasks` 当作下一轮编辑清单，继续优化或明确告知用户当前是初稿且 QA 要求继续迭代；不要把 QA 未通过的初稿描述为最终满意交付。\n",
+        "- PPT 验证生成 `validation.montage_path` 后，必须调用 `analyze_image` 分析 montage 总览图，检查整体视觉质量、页面拥挤、图表可读性、标题层级、留白和是否存在明显错位；把视觉分析发现的问题纳入下一轮 PPT 优化。\n",
+        "- 当 PPT `qa_status=\"qa_failed\"` 时，优先检查 `validation_error`、渲染/字体/LibreOffice 环境和 `report_path`，先恢复 QA 链路，再判断 PPT 质量。\n",
         "- 流程图、架构图、步骤图、决策树优先使用 `create_diagram_artifact` 生成 HTML 展示页。\n",
         "- 使用 `create_diagram_artifact` 前，必须先判断图表类型（架构图、分层系统图、流程图、决策树、数据流图），先阅读 `" + diagram_reference_index_path_str + "`（create_diagram_artifact/references/index.md），再读取对应类型模板和 checklist。\n",
         "- 架构图/分层系统图必须按模板设计 `layers/groups/items`；旧 `steps + group` 仅作为兼容格式，避免把所有模块平铺成一条长图。\n",
@@ -131,8 +137,8 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "\n",
         "## 专项指南\n",
         "\n",
-        f"- Office 编辑任务：先阅读 `{office_guide_path_str}`\n",
         f"- Excel 操作任务：先阅读 `{excel_guide_path_str}`\n",
+        f"- PPT 操作任务：先阅读 `{ppt_guide_path_str}`\n",
         f"- 浏览器自动化任务：先阅读 `{browser_guide_path_str}`\n",
         "\n",
         "## 工作原则\n",
@@ -143,8 +149,9 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "\n",
         "2. **文件类型识别**：根据扩展名选择工具\n",
         "   - 文本文件 → `read_file` / `edit_file`\n",
-        "   - Word 文档：读取统一用 `read_file`，编辑统一用 `edit_word_document`\n",
-        "   - Excel/PPT → 对应工具或查看技能文档\n",
+        "   - Word 文档：读取统一用 `read_file`；当前助手模式不再暴露 Word 编辑工具\n",
+        "   - Excel → `execute_python` 或 Excel 技能文档\n",
+        "   - PPT → PPT 专用工具；正式业务 PPT 先读 `ppt_master_references/index.md`，通用操作再读 `PPT操作指南.md`\n",
         "   - 图片 → `read_file` / `analyze_image`\n",
         "   - PDF → `read_file`\n",
         "\n",

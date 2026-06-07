@@ -29,7 +29,7 @@
 ## 推荐参数
 
 - `diagram_type`: `data_flow`
-- `layout_engine`: `graphviz`
+- 渲染采用工具内置 draw.io 风格模板，不需要指定布局引擎。
 - `direction`: `LR`
 - `steps`: 所有节点带 `group`
 - `edges`: 每条边带数据/动作标签

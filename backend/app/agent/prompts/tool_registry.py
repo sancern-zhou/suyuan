@@ -25,16 +25,15 @@ ASSISTANT_TOOL_NAMES = {
     "search_files", "list_skills", "view_skill", "create_skill_draft",
 
     # Office工具
-    "edit_word_document",
     "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx_from_deck", "validate_pptx",
+    "edit_pptx", "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
     "create_diagram_artifact", "create_report_chart",
 
     # 任务管理
-    "TodoWrite",
+    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 
     # 代码执行
     "execute_python",
@@ -74,7 +73,7 @@ EXPERT_TOOL_NAMES = {
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
 
 }
 
@@ -130,7 +129,7 @@ REPORT_TOOL_NAMES = {
     "read_data_registry",
 
     # === 文件操作 ===
-    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
     # === 报告/展示产物 ===
@@ -165,7 +164,7 @@ CHART_TOOL_NAMES = {
     "read_data_registry",
 
     # 文件操作
-    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
     # 代码执行
@@ -200,7 +199,7 @@ OPS_TOOL_NAMES = {
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files", "list_skills", "view_skill",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files", "list_skills", "view_skill",
 }
 
 # ===== 社交模式工具（移动端助理） =====
@@ -209,7 +208,7 @@ SOCIAL_TOOL_NAMES = {
     "bash",
 
     # === 文件操作 ===
-    "read_file", "edit_file", "edit_word_document", "grep", "write_file",
+    "read_file", "edit_file", "grep", "write_file",
     "list_directory", "search_files", "list_skills", "view_skill",
 
     # === 知识库检索 ===
@@ -252,7 +251,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = {
     "get_weather_forecast", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
-    "read_data_registry", "TodoWrite",
+    "read_data_registry", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 DELIBERATION_MONITORING_TOOL_NAMES = {
@@ -260,7 +259,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = {
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
     "query_city_standard_report", "query_city_standard_yoy_report",
-    "read_data_registry", "execute_python", "TodoWrite",
+    "read_data_registry", "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = {
@@ -268,12 +267,12 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = {
     "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
     "calculate_crustal", "calculate_trace", "read_data_registry",
-    "execute_python", "TodoWrite",
+    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 DELIBERATION_REVIEWER_TOOL_NAMES = {
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "execute_python",
-    "list_directory", "search_files", "TodoWrite",
+    "read_file", "write_file", "edit_file", "grep", "execute_python",
+    "list_directory", "search_files", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 # ========================================
@@ -285,9 +284,8 @@ ASSISTANT_TOOL_ORDER = [
     "list_directory", "search_files", "read_file",
 
     # Office
-    "edit_word_document",
     "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx_from_deck", "validate_pptx",
+    "edit_pptx", "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
@@ -302,7 +300,8 @@ ASSISTANT_TOOL_ORDER = [
     "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 任务管理
-    "TodoWrite", "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
+    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
 
     # 模式互调
     "call_sub_agent"
@@ -333,7 +332,7 @@ EXPERT_TOOL_ORDER = [
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
 ]
 
@@ -387,7 +386,6 @@ REPORT_TOOL_ORDER = [
     "write_file",
     "present_artifact",
     "edit_file",
-    "edit_word_document",
     "grep",
     "list_directory",
     "search_files",
@@ -432,11 +430,11 @@ OPS_TOOL_ORDER = [
     "execute_python",
 
     # 文件操作
-    "grep", "write_file", "present_artifact", "edit_file", "edit_word_document", "list_directory", "search_files",
+    "grep", "write_file", "present_artifact", "edit_file", "list_directory", "search_files",
 ]
 
 CHART_TOOL_ORDER = [
-    "read_file", "write_file", "present_artifact", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
     "bash", "create_report_chart", "execute_python", "execute_echarts_python",
     "read_data_registry",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
@@ -447,7 +445,7 @@ CHART_TOOL_ORDER = [
 ]
 
 SOCIAL_TOOL_ORDER = [
-    "read_file", "edit_file", "edit_word_document", "grep", "write_file",
+    "read_file", "edit_file", "grep", "write_file",
     "list_directory", "search_files", "list_skills", "view_skill",
     "knowledge_qa_workflow", "knowledge_document_reader",
     "get_weather_forecast", "execute_python", "call_sub_agent",
@@ -466,8 +464,9 @@ MEMORY_CONSOLIDATOR_TOOL_ORDER = [
 ]
 
 DELIBERATION_REVIEWER_TOOL_ORDER = [
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep",
-    "list_directory", "search_files", "execute_python", "TodoWrite",
+    "read_file", "write_file", "edit_file", "grep",
+    "list_directory", "search_files", "execute_python",
+    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
 # ========================================

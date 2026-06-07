@@ -23,7 +23,7 @@ class ReactAgentAPI {
     const {
       sessionId = null,
       enhanceWithHistory = true,
-      maxIterations = 30,
+      maxIterations = 120,
       debugMode = false,
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert

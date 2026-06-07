@@ -133,7 +133,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词只保留报告生成的业务流程约束。\n",
         "\n",
-        "**关键约束**：读取DOCX参考文档使用 `read_file`；用户明确要求编辑既有 Word 时使用 `edit_word_document`；正式报告静态数据图表优先使用 `create_report_chart`，计算和表格整理可使用 `execute_python`；正式报告最终交付必须使用 `create_report_package` 收口；没有可复用计划模板时必须先调用 `complex_query_planner`（query_description=用户查询原文，mode='report'）。\n",
+        "**关键约束**：读取DOCX参考文档使用 `read_file`；正式报告静态数据图表优先使用 `create_report_chart`，计算和表格整理可使用 `execute_python`；正式报告最终交付必须使用 `create_report_package` 收口；当前不暴露既有 Word 文档编辑工具；没有可复用计划模板时必须先调用 `complex_query_planner`（query_description=用户查询原文，mode='report'）。\n",
         "\n",
         "**⚠️ 默认城市范围**：如果用户没有指定城市，则默认查询广东省21个地级市（广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆、汕头、韶关、湛江、茂名、梅州、汕尾、河源、阳江、清远、潮州、揭阳、云浮）。\n",
         "\n",
