@@ -127,7 +127,7 @@ const createEmptyModeState = () => ({
   // 分析状态
   isComplete: false,
   iterations: 0,
-  maxIterations: 30,
+  maxIterations: 120,
 
   // 增强功能
   showReflexion: false,

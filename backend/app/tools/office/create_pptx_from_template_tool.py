@@ -29,7 +29,7 @@ class CreatePptxFromTemplateTool(LLMTool):
                 "- ✅ 需要保持统一的设计风格\n"
                 "- ✅ 批量生成相似结构的PPT\n"
                 "- ✅ 公司标准模板\n\n"
-                "注意：当前模板替换只支持文本、表格和图片；原生图表请在非模板模式下通过 create_pptx_from_deck / create_pptx 生成，或先导出为图片再引用。\n\n"
+                "注意：当前模板替换只支持文本、表格和图片；正式非模板业务PPT请使用 create_pptx_with_ppt_master。\n\n"
                 "使用流程：\n"
                 "1. 先用 analyze_pptx_template 分析模板获取 slot_id\n"
                 "2. 用本工具替换内容\n\n"
@@ -173,6 +173,7 @@ class CreatePptxFromTemplateTool(LLMTool):
         replacement_type = self._replacement_type(slot, value)
 
         if replacement_type == "image":
+            self._validate_image_replacement_slot(slot)
             image_path = self._image_path(value)
             if not image_path or not image_path.exists():
                 raise ValueError(f"图片不存在: {image_path}")
@@ -198,6 +199,18 @@ class CreatePptxFromTemplateTool(LLMTool):
             "shape_index": slot["shape_index"],
             "type": replacement_type,
         }
+
+    def _validate_image_replacement_slot(self, slot: Dict[str, Any]) -> None:
+        slot_type = str(slot.get("type") or "").lower()
+        role = str(slot.get("role") or "").lower()
+        if slot_type in {"image", "picture", "chart"}:
+            return
+        if slot_type == "placeholder" and role in {"image", "picture", "chart"}:
+            return
+        raise ValueError(
+            "不能用图片替换非图片/图表槽位："
+            f"slot_id={slot.get('slot_id')}, type={slot.get('type')}, role={slot.get('role')}"
+        )
 
     def _replace_table(self, shape, rows: List[Any]) -> None:
         table = shape.table

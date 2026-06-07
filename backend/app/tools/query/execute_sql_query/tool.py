@@ -164,7 +164,7 @@ class BaseSQLQueryTool(LLMTool):
     - 只允许SELECT查询
     - 禁止DROP/DELETE/UPDATE/INSERT等操作
     - 表名白名单验证
-    - 最大返回200条记录
+    - 最大返回1000条记录
     """
 
     # 默认返回记录数限制
@@ -185,7 +185,7 @@ class BaseSQLQueryTool(LLMTool):
         self.tool_name = tool_name
         self.default_database = default_database
         self.allow_information_schema_sql = allow_information_schema_sql
-        self.sql_validator = SQLValidator(max_limit=200, allowed_tables=allowed_tables)
+        self.sql_validator = SQLValidator(max_limit=1000, allowed_tables=allowed_tables)
 
         function_schema = {
             "name": tool_name,
@@ -208,7 +208,7 @@ class BaseSQLQueryTool(LLMTool):
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "返回记录数限制（默认50，最大200，仅用于sql查询）",
+                        "description": "返回记录数限制（默认50，最大1000，仅用于sql查询）",
                         "default": 50
                     }
                 }
@@ -466,6 +466,8 @@ class BaseSQLQueryTool(LLMTool):
         )
 
         try:
+            sql = self.sql_validator.normalize_sql(sql)
+
             # 运维模式不允许通过 information_schema 做表名发现式查询。
             # 查看单表字段请走 describe_table，表名必须来自工具说明中的白名单。
             if not self.allow_information_schema_sql:
@@ -770,7 +772,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
         schema_description = (
             "监测数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
             "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的表清单。"
-            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
+            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
             "database默认为XcAiDb；质控/站点基础信息通常用AirPollutionAnalysis。"
             "\n\n常用表说明（按数据库分类）："
@@ -810,7 +812,7 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的字段名。"
             "只能查询下方列出的运维白名单表单；禁止通过information_schema.tables、information_schema.columns等元数据表做表名发现式查询。"
             "如果不知道中文业务表单对应哪个白名单表名，不要猜表名或模糊搜索系统表，应说明映射不明确。"
-            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回200条。"
+            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'完成'；分页/限制用TOP，不支持LIMIT。"
             "database默认为AirPollutionAnalysis。"
             "\n\n常用表说明："

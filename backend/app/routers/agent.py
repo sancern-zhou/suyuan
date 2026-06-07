@@ -37,16 +37,54 @@ def _safe_preview(value: Any, max_chars: int = 100) -> str:
         return repr(value)[:max_chars]
 
 
+def _append_attachment_text_for_history(
+    query: str,
+    attachments: Optional[List[dict]],
+) -> str:
+    """Append lightweight attachment path text for restored display history."""
+    if not attachments:
+        return query
+
+    lines = ["", "", "**用户上传的附件**："]
+    for index, attachment in enumerate(attachments, start=1):
+        if not isinstance(attachment, dict):
+            continue
+
+        attachment_type = attachment.get("type", "file")
+        name = attachment.get("name") or attachment.get("filename") or "unknown"
+        path = (
+            attachment.get("local_path")
+            or attachment.get("file_path")
+            or attachment.get("path")
+            or attachment.get("url")
+            or attachment.get("file_id")
+            or ""
+        )
+
+        label = "图片" if attachment_type == "image" else "文件"
+        lines.append(f"{index}. {label}: {name}")
+        if path:
+            lines.append(f"   路径: {path}")
+
+    if len(lines) <= 3:
+        return query
+    return query + "\n".join(lines)
+
+
 # ========================================
 # Request/Response Models
 # ========================================
+
+DEFAULT_MAX_ITERATIONS = 120
+MAX_ITERATIONS_CAP = 200
+
 
 class AgentAnalyzeRequest(BaseModel):
     """Agent 分析请求"""
     query: str = Field(..., description="用户自然语言查询")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
-    max_iterations: int = Field(60, ge=1, le=60, description="最大迭代次数")
+    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
         description="✅ Agent模式：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化），'ops' - 运维管理模式（工单审核、异常分析）"
@@ -107,7 +145,7 @@ class AgentAnalyzeRequest(BaseModel):
 class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
     query: str = Field(..., description="用户查询")
-    max_iterations: int = Field(60, ge=1, le=60, description="最大迭代次数")
+    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于保持会话连续性和记忆）")
     user_identifier: Optional[str] = Field(None, description="用户标识（可选，用于跨会话记忆共享）")
     assistant_mode: Optional[str] = Field(
@@ -169,12 +207,12 @@ class ToolListResponse(BaseModel):
 # Global Agent Instances
 # ========================================
 
-# 通用Agent实例（使用默认 max_iterations=60）
+# 通用Agent实例（使用默认 max_iterations=120）
 multi_expert_agent_instance = create_react_agent(
     with_test_tools=False
 )
 
-# 气象专家模式全局实例（使用默认 max_iterations=30）
+# 气象专家模式全局实例（使用默认 max_iterations=120）
 meteorology_expert_agent_instance = create_react_agent(
     with_test_tools=False,
     max_working_memory=25
@@ -358,9 +396,12 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 logger.info(
                     "route_session_load_start",
                     session_id=actual_session_id,
-                    include_messages=True,
+                    include_messages="display_light",
                 )
-                session = await session_manager.load_session(actual_session_id)
+                if hasattr(session_manager, "load_session_light"):
+                    session = await session_manager.load_session_light(actual_session_id)
+                else:
+                    session = await session_manager.load_session(actual_session_id)
                 if session:
                     session_already_exists = True
                     logger.info(
@@ -416,7 +457,10 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             # ✅ 添加用户消息到对话历史
             user_message = {
                 "type": "user",
-                "content": request.query,
+                "content": _append_attachment_text_for_history(
+                    request.query,
+                    request.attachments,
+                ),
                 "timestamp": datetime.now().isoformat()
             }
             conversation_history.append(user_message)

@@ -273,6 +273,99 @@ class SessionManagerDB:
             )
             return None
 
+    def _session_from_dict(
+        self,
+        session_dict: Dict[str, Any],
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> Session:
+        return Session(
+            session_id=session_dict["session_id"],
+            query=session_dict["query"],
+            created_at=datetime.fromisoformat(session_dict["created_at"]) if session_dict["created_at"] else None,
+            updated_at=datetime.fromisoformat(session_dict["updated_at"]) if session_dict["updated_at"] else None,
+            conversation_history=(
+                conversation_history
+                if conversation_history is not None
+                else session_dict["conversation_history"]
+            ),
+            data_ids=session_dict["data_ids"],
+            visual_ids=session_dict["visual_ids"],
+            office_documents=session_dict.get("office_documents", []),
+            metadata=session_dict["metadata"],
+            error=session_dict["error"],
+            current_step=session_dict.get("current_step"),
+            current_expert=session_dict.get("current_expert")
+        )
+
+    async def load_session_for_llm(self, session_id: str) -> Optional[Session]:
+        """Load session metadata plus lightweight transcript for LLM continuation."""
+        started = time.monotonic()
+        try:
+            session_dict = await self.repository.get_session_with_messages(
+                session_id,
+                include_messages=False,
+            )
+            if not session_dict:
+                logger.debug("session_not_found_in_db", session_id=session_id)
+                return None
+
+            raw_history = await self.repository.get_llm_history_messages(session_id)
+            from app.agent.memory.session_memory import SessionMemory
+
+            history = SessionMemory.project_history_messages_for_llm(
+                raw_history,
+                session_id=session_id,
+            )
+            session = self._session_from_dict(session_dict, history)
+
+            logger.info(
+                "session_loaded_for_llm",
+                session_id=session_id,
+                message_count=len(history),
+                raw_message_count=len(raw_history),
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
+            return session
+
+        except Exception as e:
+            logger.error(
+                "failed_to_load_session_for_llm",
+                session_id=session_id,
+                error=str(e)
+            )
+            return None
+
+    async def load_session_light(self, session_id: str) -> Optional[Session]:
+        """Load session metadata plus full-length lightweight display transcript."""
+        started = time.monotonic()
+        try:
+            session_dict = await self.repository.get_session_with_messages(
+                session_id,
+                include_messages=False,
+            )
+            if not session_dict:
+                logger.debug("session_not_found_in_db", session_id=session_id)
+                return None
+
+            history = await self.repository.get_display_history_messages_light(session_id)
+            session = self._session_from_dict(session_dict, history)
+
+            logger.info(
+                "session_loaded_light",
+                session_id=session_id,
+                message_count=len(history),
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
+            return session
+
+        except Exception as e:
+            logger.error(
+                "failed_to_load_session_light",
+                session_id=session_id,
+                error=str(e)
+            )
+            return None
+
     async def load_session_with_pagination(
         self,
         session_id: str,

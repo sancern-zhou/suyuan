@@ -40,7 +40,7 @@ def build_query_prompt(
         "- 需要数据或证据时调用工具；信息足够时直接回答查询结果。",
         "- 避免重复查询同一口径数据；工具结果已覆盖用户范围时，直接基于结果作答。",
         "- 工具参数以本次请求提供的 tool schema 为准，不在文本中伪造工具调用。",
-        "- 文件读取统一使用 `read_file`；用户明确要求编辑 Word 时，使用 `edit_word_document`。",
+        "- 文件读取统一使用 `read_file`；当前不暴露 Word 编辑工具，用户要求编辑 Word 时说明该能力暂不在本模式工具范围内。",
         "- 数据读取只能使用查询工具或 `read_data_registry`；禁止在 `execute_python` 中绕过 `read_data_registry` 直接访问 DataRegistry 底层接口。",
         "- 使用工具返回的 data_id/report_data_id 做计算前，必须先调用 `read_data_registry` 读取所需视图/字段；读取完成后才能在 `execute_python` 中基于已读取快照计算。",
         "- DataRegistry 简单筛选、取列、别名映射优先使用 `read_data_registry` 的 `where`/`select` 结构化参数；只有结构化参数无法表达聚合或复杂变换时，才使用 `jq_filter`。",

@@ -4,7 +4,7 @@
 
 本指南介绍 PowerPoint 演示文稿（.pptx）的读取、分析和创建方法。
 
-**核心理念**：优先使用基于模板的方式创建PPT，保持设计风格一致性。
+**核心理念**：正式业务 PPT 优先使用 PPT Master 工作流，先锁定目标、结构、风格和版式，再逐页绘制并质检。
 
 ---
 
@@ -14,9 +14,8 @@
 
 | 任务类型 | 推荐工具 | 理由 |
 |---------|---------|------|
-| **业务型PPT生成** | `create_pptx_from_deck` | Agent 只写业务结构，代码负责版式和质量 |
+| **业务型PPT生成** | `create_pptx_with_ppt_master` | 按目标、大纲、风格、版式锁定、逐页绘制、QA 的生产流程生成 |
 | **基于模板创建PPT** | `create_pptx_from_template` | 保持设计风格，推荐 |
-| 从头创建PPT | `create_pptx` | 无模板时使用 |
 | 读取PPT内容 | `read_pptx` | 了解幻灯片内容 |
 | 分析模板结构 | `analyze_pptx_template` | 获取可替换槽位 |
 | 验证PPT质量 | `validate_pptx` | 检查设计质量 |
@@ -35,67 +34,55 @@ analyze_pptx_template(path="模板.pptx")
 
 ## 工具详解
 
-### Deck Spec 优先原则
+### PPT Master 优先原则
 
-生成正式或业务型 PPT 时，优先使用 `create_pptx_from_deck`，不要让 Agent 直接从零构造低层 PPT 元素。Agent 应输出 `suyuan.deck.v2` 设计稿，由工具转换成 `create_pptx` 可渲染结构。
+生成正式或业务型 PPT 时，优先使用 `create_pptx_with_ppt_master`。不要再使用旧 deck 结构或底层 PptxGenJS 管线。Agent 应先把需求整理为用途、受众、风格和结构化大纲，由工具创建 project、设计规格、版式锁定、逐页 SVG 草稿和可编辑 PPTX。
 
 调用前必须先读取：
 
-- `backend/app/tools/office/deck/references/index.md`
-- `backend/app/tools/office/deck/references/archetypes.md`
-- `backend/app/tools/office/deck/references/checklist.md`
-- 与 `deck_type` 对应的参考文档
+- `backend/app/tools/office/ppt_master_references/index.md`
 
-**禁止绕过工具入口**：生成新 PPT 时，必须直接调用 `create_pptx_from_deck`、`create_pptx_from_template` 或 `create_pptx` 工具。不要使用 `execute_python` 手动 import `CreatePptxFromDeckTool`、`CreatePptxTool`，也不要在 `execute_python` 中直接调用 PptxGenJS renderer。`execute_python` 只能用于前置数据处理、生成图片资产，或对已有 PPT 做专门工具无法覆盖的局部兼容处理。
+再按任务渐进读取所需规则：
 
-`create_pptx_from_deck` 2.0 不兼容 `suyuan.deck.v1`，也不接受底层 `create_pptx` 的 `title`、`bullets`、`table`、`image_full` slide type。低层绘图结构请直接使用 `create_pptx`。
+- `workflow.md`：正式业务 PPT 工作流
+- `layout-rules.md`：封面、目录、版式序列和内容密度
+- `chart-rules.md`：图表图片、原生图表和数据页规则
+- `qa-rules.md`：验证、质量门禁和字体规则
+- `output-contract.md`：返回字段和 project 产物检查
 
-支持的 slide archetype：
+**禁止绕过工具入口**：生成新业务 PPT 时，必须直接调用 `create_pptx_with_ppt_master` 或 `create_pptx_from_template`。不要使用 `execute_python` 手动 import PPT 工具类，也不要直接调用旧 renderer。`execute_python` 只能用于前置数据处理、生成图片资产，或对已有 PPT 做专门工具无法覆盖的局部兼容处理。
 
-```text
-cover, agenda, section_divider, executive_summary, key_message,
-three_column_points, metric_dashboard, comparison_matrix, timeline,
-roadmap, process_flow, architecture_overview, data_flow, map_story,
-chart_story, evidence_table, risk_matrix, budget_breakdown,
-implementation_plan, responsibility_matrix, closing_actions
-```
+`create_pptx_with_ppt_master` 的输入是业务目标和大纲，不接收 `suyuan.deck.v2`。输出会包含：
 
-除 `cover`、`agenda`、`section_divider`、`appendix` 外，每页必须包含至少一种视觉证据或结构化内容：`content.items`、`content.steps`、`metrics`、`table`、`chart` 或 `visual`。
+- `file_path`：生成的 `.pptx`
+- `project_dir`：PPT Master project 目录
+- `design_spec_path`：设计规格
+- `spec_lock_path`：母版/版式锁定
+- `page_plan_path`：逐页计划
+- `svg_pages`：逐页 SVG 草稿
+- `quality_gate`：工作流质量门禁
+- `qa_status`：`passed | needs_revision | qa_failed`
+- `revision_tasks`：QA 生成的下一轮编辑任务
 
-`chart_story` 的 `chart` 字段用于生成 PPT 内原生图表。模板填充请使用 `create_pptx_from_template`。
+具体硬性约束统一维护在 `ppt_master_references/`，不要在技能文档中复制工具约束。
 
 示例：
 
 ```json
 {
-  "deck": {
-    "version": "suyuan.deck.v2",
-    "deck_type": "implementation_proposal",
-    "title": "濮阳市智慧环保建设项目二期实施方案",
-    "audience": "government_decision_makers",
-    "tone": "formal, evidence-led, implementation-focused",
-    "slides": [
-      {
-        "id": "s01",
-        "archetype": "cover",
-        "title": "濮阳市智慧环保建设项目二期实施方案",
-        "subtitle": "智慧感知、平台协同与闭环治理能力建设"
-      },
-      {
-        "id": "s02",
-        "archetype": "three_column_points",
-        "title": "二期建设聚焦三类能力",
-        "message": "围绕感知补强、平台升级、业务闭环和运营考核形成综合治理能力。",
-        "content": {
-          "items": [
-            {"title": "感知补强", "body": "完善空气、水、源、视频等多源监测能力"},
-            {"title": "平台升级", "body": "建设统一数据底座、预警研判和调度指挥能力"},
-            {"title": "闭环治理", "body": "形成发现、研判、派单、处置、复核全过程闭环"}
-          ]
-        }
-      }
-    ]
-  },
+  "title": "濮阳市智慧环保建设项目二期实施方案",
+  "purpose": "government_briefing",
+  "audience": "政府决策部门",
+  "style": "government_consulting",
+  "outline": [
+    {"title": "建设目标", "points": ["补强感知能力", "升级平台能力", "形成闭环治理"]},
+    {
+      "title": "能力架构",
+      "chart": {"type": "image", "image_path": "/home/xckj/suyuan/backend/backend_data_registry/images/能力架构.png"},
+      "points": ["数据底座", "预警研判", "调度指挥"]
+    },
+    {"title": "实施路径", "points": ["一期梳理", "二期建设", "运营考核"]}
+  ],
   "quality": "standard",
   "run_validation": true
 }
@@ -211,64 +198,16 @@ create_pptx_from_template(
 
 ---
 
-### 4. create_pptx - 从头创建（不推荐）
+### 4. validate_pptx - 验证PPT质量
 
-**功能**：使用 PptxGenJS 从结构化JSON一步生成可编辑PPTX
-
-**适用场景**：
-- ⚠️ 仅在**没有模板**时使用
-- ⚠️ 需要完全自定义设计
-- ⚠️ 快速原型制作
-
-**用法**：
-```python
-create_pptx(
-    title="演示文稿标题",
-    slides=[
-        {
-            "type": "title",
-            "title": "主标题",
-            "subtitle": "副标题"
-        },
-        {
-            "type": "bullets",
-            "title": "要点列表",
-            "items": ["要点1", "要点2", "要点3"]
-        },
-        {
-            "type": "image",
-            "title": "配图说明",
-            "image_path": "/path/to/image.png"
-        }
-    ],
-    output_file="新演示文稿.pptx"
-)
-```
-
-> 注意：`create_pptx` 也必须通过正式工具调用入口执行。不要用 `execute_python` 拼接 `slides` 后手动调用工具类或 renderer；业务型 PPT 应优先上移为 `create_pptx_from_deck` 的 `suyuan.deck.v2` 设计稿。
-
-**支持的幻灯片类型**：
-- `title` - 标题页
-- `bullets` - 要点列表
-- `key_message` - 核心信息
-- `image` - 图片页
-- `chart` - 图表页
-- `table` - 表格页
-- `comparison` - 对比页
-- `timeline` - 时间线
-- `process` - 流程图
-
----
-
-### 5. validate_pptx - 验证PPT质量
-
-**功能**：检查PPT的设计质量（字体、颜色、布局等）
+**功能**：渲染 PPTX，生成 PDF/PNG、montage 总览图和 QA 报告，检查字体、空白页、形状越界、渲染溢出、规则型视觉质量等问题。
 
 **用法**：
 ```python
 validate_pptx(
     path="演示文稿.pptx",
-    quality_level="standard"  # basic | standard | professional
+    expected_fonts=["Microsoft YaHei"],
+    render_overflow_check=True
 )
 ```
 
@@ -277,17 +216,26 @@ validate_pptx(
 {
   "success": true,
   "data": {
-    "score": 85,
+    "success": false,
+    "montage_path": "backend/backend_data_registry/presentations/qa/report_xxx/montage.png",
+    "report_path": "backend/backend_data_registry/presentations/qa/report_xxx/report.json",
+    "issue_count": 2,
     "issues": [
       {
-        "type": "font",
-        "message": "幻灯片3使用了过多字体（5种）"
+        "type": "rendered_low_margin",
+        "slide": 4
       }
     ]
   },
-  "summary": "质量评分：85/100，发现 2 个问题"
+  "summary": "PPT验证完成：演示文稿.pptx，发现 2 个问题"
 }
 ```
+
+**视觉分析流程约束**：
+
+- 只要 `validate_pptx` 返回了 `data.montage_path`，必须继续调用 `analyze_image(path=data.montage_path, operation="analyze", prompt="...")`。
+- 视觉分析重点检查：整体观感、页面拥挤、图表可读性、标题层级、留白、页面是否错位、图片是否压缩变形、是否存在明显模板残留。
+- `analyze_image` 发现的问题要进入下一轮 PPT 优化任务；不要把只通过规则 QA、但视觉分析明显不佳的 PPT 当作最终交付。
 
 ---
 
@@ -316,31 +264,18 @@ validate_pptx(path="项目汇报.pptx")
 
 ---
 
-### 场景 2：从头创建PPT（无模板）
+### 场景 2：正式业务PPT（无模板）
 
 ```python
-create_pptx(
+create_pptx_with_ppt_master(
     title="产品介绍",
-    slides=[
-        {
-            "type": "title",
-            "title": "新产品发布",
-            "subtitle": "2026年度旗舰产品"
-        },
-        {
-            "type": "bullets",
-            "title": "核心特性",
-            "items": [
-                "特性1：高性能处理器",
-                "特性2：超长续航",
-                "特性3：创新设计"
-            ]
-        },
-        {
-            "type": "image",
-            "title": "产品外观",
-            "image_path": "/path/to/product.png"
-        }
+    purpose="product_launch",
+    audience="客户与销售团队",
+    style="business_clean",
+    outline=[
+        {"title": "发布目标", "points": ["明确产品定位", "突出核心价值"]},
+        {"title": "核心特性", "points": ["高性能处理器", "超长续航", "创新设计"]},
+        {"title": "上市计划", "points": ["渠道准备", "客户触达", "售后保障"]}
     ],
     output_file="产品介绍.pptx"
 )
@@ -375,13 +310,13 @@ for month in ["1月", "2月", "3月"]:
 
 ### 错误 1：工具选择不当
 
-❌ **错误**：有模板但用 `create_pptx` 从头创建
+❌ **错误**：有模板或正式汇报需求但试图走旧 `create_pptx` 从头创建
 ```python
-# 浪费时间，设计风格不一致
+# 旧工具已删除，设计风格也不可控
 create_pptx(title="...", slides=[...])
 ```
 
-✅ **正确**：使用 `create_pptx_from_template`
+✅ **正确**：有模板用 `create_pptx_from_template`；无模板的正式业务 PPT 用 `create_pptx_with_ppt_master`
 ```python
 # 保持设计风格，更高效
 create_pptx_from_template(
@@ -514,16 +449,17 @@ FileNotFoundError: 模板文件不存在
 
 ### 问题：生成的PPT设计混乱
 
-**原因**：使用 `create_pptx` 从头创建，未指定主题
+**原因**：使用旧一步式渲染或缺少目标、风格、版式锁定和逐页 QA。
 
 **解决**：
-1. 使用 `create_pptx_from_template` 基于模板创建
-2. 或在 `create_pptx` 中指定 `theme` 参数
+1. 正式业务 PPT 使用 `create_pptx_with_ppt_master`
+2. 有模板时使用 `create_pptx_from_template`
+3. 生成后使用 `validate_pptx` 检查 PDF/PNG 预览、字体、溢出和版式问题
+4. 对 `montage_path` 调用 `analyze_image` 做视觉质量检查，并按结果继续迭代
 
 ---
 
 ## 相关资源
 
 - [python-pptx 文档](https://python-pptx.readthedocs.io/)
-- [PptxGenJS 文档](https://gitbrent.github.io/PptxGenJS/)
-- Anthropic PPT Skill: https://github.com/anthropics/skills/tree/main/skills/ppt
+- [PPT Master Reference Index](ppt_master_references/index.md)

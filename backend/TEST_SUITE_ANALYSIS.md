@@ -67,16 +67,13 @@ The project contains a comprehensive test suite with **184 test files** covering
 - `test_particulate_api_data.py` - Particulate data API
 - `test_query_gd_suncere.py` - Query operations
 
-### 4. **Office Tools Tests** (~15 files)
-**Purpose**: Test Office document processing (Word, Excel, PDF)
+### 4. **Office Tools Tests**
+**Purpose**: Test current Office document processing paths (PPT, reports, PDF/DOCX reading)
 **Key Files**:
-- `test_office_phase1.py` - Office tools phase 1
-- `test_office_phase2.py` - Office tools phase 2
-- `test_office_phase3.py` - Office tools phase 3
-- `test_office_phase4.py` - Office tools phase 4
 - `test_office_pdf.py` - PDF processing
-- `test_word_edit_integration.py` - Word editing integration
 - `test_docx_table_conversion.py` - DOCX table handling
+- `test_assistant_ppt_tool_exposure.py` - Assistant PPT tool exposure
+- `test_pptx_design_quality.py` - PPT QA and design quality checks
 
 ### 5. **Chart and Visualization Tests** (~20 files)
 **Purpose**: Test chart generation and data visualization

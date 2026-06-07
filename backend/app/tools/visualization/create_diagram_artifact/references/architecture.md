@@ -29,6 +29,12 @@
 - 组之间形成 2-4 条主干路径，不要生成网状蜘蛛图。
 - `edges.from/to` 必须表达真实语义方向；如果展示顺序与数据流方向相反，也要按真实流向填写，模板会尊重反向连接器。
 
+## draw.io 视觉语言
+
+- 架构图默认采用传统 draw.io 风格，画布保持白底，不采用网页 dashboard 或营销页风格。
+- 字体与 Python 报告图表工具保持一致，优先 `FZXiaoBiaoSong-B05S`。
+- 外部系统、人工服务、第三方接口放在边界或右侧独立容器，不混在内部主干层里。
+
 ## 节点文案
 
 - 节点标题：2-8 个字，最多 12 个中文字符。
@@ -38,13 +44,13 @@
 ## 推荐参数
 
 - `diagram_type`: `layered_architecture`
-- `layout_engine`: `auto` 或省略
 - `direction`: 默认 `TB`，集成链路用 `LR`
 - `layers`: 按展示顺序组织区域和模块
 - `edges`: 只连接跨区域主关系或关键依赖
 - `emphasis`: 模块级视觉强调，取值 `normal`、`high`、`muted`；只有确认为核心能力时才写 `high`
 - `variant`: 层或模块视觉变体，取值 `default`、`foundation`、`external`、`critical`
 - `role`: 层或模块语义角色，取值 `entry`、`business`、`platform`、`data`、`infrastructure`、`external`、`support`
+- `shape`: 模块形状，常用 `database` 表示数据存储；未明确时保持默认矩形。
 - `flow_strength`: 边的主干强度，取值 `normal`、`strong`；核心数据流或能力支撑链路可写 `strong`
 - `edges.from/to`: 真实流向或依赖方向；不要为了展示顺序反写。
 
@@ -57,7 +63,7 @@
     {"id": "entry", "label": "入口层", "role": "entry", "items": [{"label": "统一门户"}, {"label": "移动端"}, {"label": "API Gateway"}]},
     {"id": "business", "label": "业务层", "role": "business", "items": [{"label": "工单管理"}, {"label": "报表中心"}, {"label": "监控工作台", "emphasis": "high"}]},
     {"id": "platform", "label": "平台层", "role": "platform", "items": [{"label": "认证权限"}, {"label": "消息服务"}, {"label": "规则引擎"}]},
-    {"id": "data", "label": "数据层", "role": "data", "items": [{"label": "指标库"}, {"label": "文件存储"}, {"label": "知识库"}]},
+    {"id": "data", "label": "数据层", "role": "data", "items": [{"label": "指标库", "shape": "database"}, {"label": "文件存储", "shape": "database"}, {"label": "知识库", "shape": "database"}]},
     {"id": "infra", "label": "基础设施", "role": "infrastructure", "variant": "foundation", "items": [{"label": "计算"}, {"label": "存储"}, {"label": "网络"}]}
   ],
   "edges": [
@@ -77,7 +83,8 @@
 - 外部系统应放边界位置，不与内部模块混排。
 - 分层架构图优先压缩层高并放大节点文字，适配方案/PPT 中的缩放阅读。
 - 分层架构图上层业务/支撑模块默认不展示图标；底部传输、数据存储、感知等固定类型层可保留图标。
-- 模板默认保证标题、层级编号、层名、模块标题、模块说明和边标签有清晰字号/字重梯度；Agent 不要用长文本弥补视觉层级。
+- 数据库、存储、队列、文档、云服务等明确组件类型应使用对应 draw.io 形状或语义 `icon`，不要把所有组件都画成同一种方框。
+- 模板默认保证标题、层名、模块标题、模块说明和边标签有清晰字号/字重梯度；Agent 不要用长文本弥补视觉层级。
 - 需要高亮核心模块时，Agent 必须显式给该 item 写 `emphasis="high"`；需要基座感时，显式给该 layer 写 `variant="foundation"`。
 - 单层最多 1-3 个高亮模块；如果高亮太多，先重新判断核心对象。
 
@@ -86,5 +93,6 @@
 - 不要把架构图画成普通步骤流程。
 - 不要把部署节点、业务功能、代码组件混在同一层级。
 - 不要让节点横向无限扩展；宁可合并节点，也不要依赖横向滚动阅读。
+- 不要使用网页组件语言：浮动卡片、厚阴影、渐变背景、hover 效果、胶囊编号。
 - 不要通过业务词、行业词或中文关键词触发模板样式；模板只能消费显式语义字段。
 - 不要依赖底部说明弥补主图方向、分组或语义不清。

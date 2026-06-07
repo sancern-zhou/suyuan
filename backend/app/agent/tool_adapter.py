@@ -643,7 +643,6 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     logger.info(
         "get_react_agent_tool_registry_debug",
         total_global_tools=len(global_tools),
-        has_unpack_office="unpack_office" in global_tools,
         all_tools=global_tools
     )
 
@@ -763,7 +762,6 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     logger.info(
         "react_agent_tool_registry_created",
         total_tools=len(tool_registry),
-        has_unpack_office="unpack_office" in final_tools,
         tools=final_tools
     )
 

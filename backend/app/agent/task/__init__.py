@@ -1,13 +1,13 @@
 """
 任务管理模块
 
-提供 TodoWrite 工具使用的 TodoList 类。
+提供 TaskCreate/TaskUpdate/TaskList/TaskGet 工具使用的 TaskList 类。
 """
 
-from .todo_models import TodoList, TodoItem, TodoStatus
+from .task_models import TaskItem, TaskList, TaskStatus
 
 __all__ = [
-    "TodoList",
-    "TodoItem",
-    "TodoStatus",
+    "TaskList",
+    "TaskItem",
+    "TaskStatus",
 ]

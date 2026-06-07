@@ -133,8 +133,7 @@ class ToolExecutor:
             logger.info(
                 "builtin_tools_registered",
                 tools=registered_tools,
-                count=len(real_tools),
-                has_unpack_office="unpack_office" in registered_tools
+                count=len(real_tools)
             )
 
             self._register_special_tools()
@@ -287,7 +286,6 @@ class ToolExecutor:
                 "tool_not_found",
                 tool_name=tool_name,
                 available_tools=available_tools,
-                has_unpack_office="unpack_office" in available_tools,
                 registry_size=len(self.tool_registry)
             )
 
@@ -837,24 +835,6 @@ class ToolExecutor:
                 "valid_values": ["end", "start", ...]
             }
         """
-        # 定义常见工具的参数提示信息
-        tool_hints = {
-            "word_edit": {
-                "insert": {
-                    "position": {
-                        "hint": "⚠️ position 参数说明:\n  - end: 文档末尾\n  - start: 文档开头\n  - after: 在目标文本之后（需提供target参数）\n  - before: 在目标文本之前（需提供target参数）",
-                        "valid_values": ["end", "start", "after", "before"]
-                    }
-                }
-            }
-        }
-
-        # 尝试从错误消息中推断参数类型
-        if result and isinstance(result, dict):
-            error = result.get("error", "")
-            if "position" in error and tool_name in tool_hints:
-                return tool_hints[tool_name].get("insert", {}).get("position", {})
-
         return {}
 
         return f"✅ {tool_name} 成功"

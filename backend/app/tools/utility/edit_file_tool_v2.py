@@ -19,8 +19,8 @@ EditFile 工具 V2 - 完整对标 Claude Code 官方实现
 - 替换文档内容（.txt, .md 等）
 
 ⚠️ 不适用于：
-- Word 文档（.docx）→ 使用 find_replace_word 或 word_edit
-- Word XML（document.xml）→ 使用 find_replace_word 或 word_edit
+- Word 文档（.docx）→ 当前助手模式不暴露 Word 编辑工具
+- Word XML（document.xml）→ 不要手动编辑 Office XML
 
 参考：
 - Claude Code: src/tools/FileEditTool/FileEditTool.ts
@@ -275,11 +275,9 @@ class EditFileToolV2(LLMTool):
 
 ⚠️ 重要限制：
 - ❌ 不适用于编辑 Word 文档（.docx）！
-  - 简单替换 → 使用 find_replace_word 工具
-  - 复杂编辑 → 使用 word_edit 工具
+  - 当前助手模式不暴露 Word 编辑工具
 - ❌ 不适用于编辑 Word XML 文件（document.xml）！
-  - 简单替换 → 使用 find_replace_word 工具
-  - 复杂编辑 → 使用 word_edit 工具
+  - 不要手动编辑 Office XML
 - ✅ 适用于：代码文件（.py, .js, .ts 等）、配置文件（.json, .yaml, .xml 等）、文本文件（.txt, .md 等）
 
 核心功能：
@@ -294,7 +292,7 @@ class EditFileToolV2(LLMTool):
 - ✅ 修改代码（函数体、变量值、导入语句）
 - ✅ 更新配置文件（端口、路径、参数）
 - ✅ 编辑文本文件（Markdown、TXT、JSON、YAML 等）
-- ❌ 编辑 Word 文档（简单替换用 find_replace_word，复杂编辑用 word_edit）
+- ❌ 编辑 Word 文档或 Office XML
 
 示例：
 - edit_file(path="D:/work/config.py", old_string="PORT = 8000", new_string="PORT = 9000")
@@ -737,8 +735,7 @@ class EditFileToolV2(LLMTool):
         # 如果是 Word XML，添加特殊提示
         if is_word_xml:
             hints.insert(0, "⚠️ 检测到这是 Word XML 文件！")
-            hints.insert(1, "   简单文本替换：使用 find_replace_word 工具（直接操作 .docx 文件）")
-            hints.insert(2, "   复杂结构编辑：使用 word_edit 工具（自动解包/编辑/打包）")
+            hints.insert(1, "   不要手动编辑 Office XML；当前助手模式不暴露 Word 编辑工具")
 
         # 尝试引号规范化后的匹配
         normalized_old = normalize_quotes(old_string)

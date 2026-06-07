@@ -19,6 +19,7 @@ import structlog
 
 from app.schemas.common import DataQualityReport, FieldStats, ValidationIssue, ValidationSeverity
 from app.services.data_registry import data_registry
+from app.agent.memory.tool_protocol_repair import repair_tool_result_pairing
 
 logger = structlog.get_logger()
 
@@ -105,16 +106,18 @@ def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, A
     summary = result.get("summary")
     if not summary:
         if all_completed:
-            summary = "TodoWrite completed; active todo list cleared. Continue with final answer, not TodoWrite."
+            summary = "Legacy task list completed; active task list cleared."
         elif no_op:
-            summary = "TodoWrite no-op; continue business work, not TodoWrite."
+            summary = "Legacy task list unchanged; continue business work."
         else:
-            summary = "TodoWrite updated active todo list."
+            summary = "Legacy task list updated."
+    else:
+        summary = str(summary).replace("TodoWrite", "legacy task list")
 
     return {
         "status": result.get("status", "success"),
         "success": bool(result.get("success", True)),
-        "tool_name": "TodoWrite",
+        "tool_name": "LegacyTaskState",
         "housekeeping": True,
         "no_op": no_op,
         "all_completed": all_completed,
@@ -123,7 +126,7 @@ def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, A
         "active_items": active_summary,
         "summary": summary,
         "metadata": {
-            "generator": "TodoWrite",
+            "generator": "legacy_task_state",
             "history_compacted": True,
             "omitted_fields": ["rendered", "items", "old_items", "new_items"],
         },
@@ -1118,6 +1121,190 @@ class SessionMemory:
             history_length=len(self.conversation_history),
         )
 
+    def _display_tool_use_block(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = msg.get("data")
+        if not isinstance(data, dict):
+            return None
+
+        tool_use_id = data.get("tool_use_id")
+        tool_name = data.get("tool_name")
+        tool_input = data.get("input")
+
+        if tool_input is None:
+            tool_use = data.get("tool_use")
+            tools = tool_use.get("tools") if isinstance(tool_use, dict) else None
+            if isinstance(tools, list) and tools:
+                first_tool = tools[0] if isinstance(tools[0], dict) else {}
+                tool_use_id = tool_use_id or first_tool.get("tool_call_id")
+                tool_name = tool_name or first_tool.get("tool")
+                tool_input = first_tool.get("args")
+
+        if not tool_use_id or not tool_name:
+            return None
+
+        return {
+            "type": "tool_use",
+            "id": tool_use_id,
+            "name": tool_name,
+            "input": _prepare_tool_input_for_history(tool_name, tool_input or {}),
+        }
+
+    def _display_tool_use_id(self, msg: Dict[str, Any]) -> Optional[str]:
+        block = self._display_tool_use_block(msg)
+        if not block:
+            return None
+        return block.get("id")
+
+    def _display_tool_result_id(self, msg: Dict[str, Any]) -> Optional[str]:
+        data = msg.get("data")
+        if not isinstance(data, dict):
+            return None
+        if "result" not in data and not isinstance(data.get("results"), list):
+            return None
+        tool_use_id = data.get("tool_use_id")
+        return tool_use_id if isinstance(tool_use_id, str) and tool_use_id else None
+
+    def _paired_display_tool_ids(self, messages: List[Dict[str, Any]]) -> set[str]:
+        tool_use_ids = {
+            tool_use_id
+            for tool_use_id in (
+                self._display_tool_use_id(msg)
+                for msg in messages
+                if msg.get("type") == "tool_use"
+            )
+            if tool_use_id
+        }
+        tool_result_ids = {
+            tool_result_id
+            for tool_result_id in (
+                self._display_tool_result_id(msg)
+                for msg in messages
+                if msg.get("type") == "tool_result"
+            )
+            if tool_result_id
+        }
+        return tool_use_ids & tool_result_ids
+
+    def _lightweight_tool_result_for_restore(
+        self,
+        data: Dict[str, Any],
+        result: Any,
+    ) -> Dict[str, Any]:
+        result_dict = result if isinstance(result, dict) else {}
+        tool_name = data.get("tool_name") or result_dict.get("tool_name")
+        tool_use_id = data.get("tool_use_id")
+        is_error = bool(data.get("is_error", False))
+
+        lightweight: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "tool_use_id": tool_use_id,
+            "status": result_dict.get("status") or ("error" if is_error else "success"),
+            "is_error": is_error,
+        }
+
+        summary_text = (
+            result_dict.get("summary_text")
+            or result_dict.get("summary")
+            or result_dict.get("message")
+            or result_dict.get("error")
+        )
+        if summary_text:
+            summary_key = "summary_text" if result_dict.get("summary_text") else "summary"
+            lightweight[summary_key] = _truncate_string(str(summary_text), 2_000)
+
+        for key in ("data_id", "data_ids", "report_data_id", "report_data_ids"):
+            value = result_dict.get(key) or data.get(key)
+            if value:
+                lightweight[key] = value
+
+        visual_ids = []
+        visuals = result_dict.get("visuals") or data.get("visuals")
+        if isinstance(visuals, list):
+            visual_ids = [
+                visual.get("id")
+                for visual in visuals
+                if isinstance(visual, dict) and visual.get("id")
+            ]
+        if visual_ids:
+            lightweight["visual_ids"] = visual_ids
+
+        has_reference = any(
+            lightweight.get(key)
+            for key in ("data_id", "data_ids", "report_data_id", "report_data_ids", "visual_ids")
+        )
+        if "summary" not in lightweight and "summary_text" not in lightweight:
+            if lightweight.get("data_id"):
+                lightweight["summary"] = (
+                    f"结果已保存为 data_id={lightweight['data_id']}，可用 read_data_registry 读取。"
+                )
+            elif lightweight.get("data_ids"):
+                lightweight["summary"] = (
+                    f"结果已保存为 data_ids={lightweight['data_ids']}，可用 read_data_registry 读取。"
+                )
+            elif lightweight.get("visual_ids"):
+                lightweight["summary"] = f"结果包含 visual_ids={lightweight['visual_ids']}，可在前端查看。"
+            elif result:
+                lightweight["summary"] = _safe_content_preview(result, 800)
+            else:
+                lightweight["summary"] = "工具结果已恢复为轻量摘要；原始结果未包含可提取摘要。"
+
+        keep_keys = {
+            "status", "summary", "summary_text", "message", "error",
+            "data_id", "data_ids", "report_data_id", "report_data_ids",
+            "tool_name", "tool_use_id", "is_error", "visuals",
+        }
+        result_keys = set(result_dict.keys()) if isinstance(result, dict) else set()
+        if result_keys - keep_keys or visual_ids or not has_reference:
+            lightweight["result_truncated"] = True
+
+        return {key: value for key, value in lightweight.items() if value is not None}
+
+    def _display_tool_result_blocks(self, msg: Dict[str, Any]) -> List[Dict[str, Any]]:
+        data = msg.get("data")
+        if not isinstance(data, dict):
+            return []
+
+        tool_use_id = data.get("tool_use_id")
+        result_values: List[Any]
+        if isinstance(data.get("results"), list):
+            result_values = data["results"]
+        elif "result" in data:
+            result_values = [data.get("result")]
+        else:
+            result_values = []
+
+        if not tool_use_id or not result_values:
+            return []
+
+        blocks: List[Dict[str, Any]] = []
+        for result in result_values:
+            history_result = self._lightweight_tool_result_for_restore(data, result)
+            blocks.append({
+                "type": "tool_result",
+                "content": json.dumps(history_result, ensure_ascii=False, indent=2, default=str),
+                "is_error": bool(data.get("is_error", False)),
+                "tool_use_id": tool_use_id,
+            })
+        return blocks
+
+    @classmethod
+    def project_history_messages_for_llm(
+        cls,
+        messages: List[Dict[str, Any]],
+        *,
+        session_id: str = "llm_history_projection",
+    ) -> List[Dict[str, Any]]:
+        """Project persisted transcript rows into LLM-native message format."""
+        projector = cls.__new__(cls)
+        projector.session_id = session_id
+        projector.use_llm_compression = False
+        projector.compressed_iterations = []
+        projector.data_files = {}
+        projector.data_registry_refs = {}
+        projector.conversation_history = []
+        projector.load_history_messages(messages)
+        return projector.get_messages_for_llm(repair_strategy="conservative")
+
     def load_history_messages(self, messages: List[Dict[str, Any]]) -> None:
         """
         批量导入历史对话消息（用于会话恢复）
@@ -1143,10 +1330,76 @@ class SessionMemory:
         loaded_count = 0
         skipped_count = 0
         error_count = 0
+        paired_display_tool_ids = self._paired_display_tool_ids(messages)
+        pending_tool_uses: List[Dict[str, Any]] = []
+        pending_tool_results: List[Dict[str, Any]] = []
+
+        def flush_tool_uses(timestamp: Optional[str] = None) -> None:
+            nonlocal loaded_count
+            if not pending_tool_uses:
+                return
+            self.conversation_history.append(
+                ConversationTurn(
+                    role="assistant",
+                    content=list(pending_tool_uses),
+                    timestamp=timestamp or datetime.utcnow().isoformat(),
+                    type="tool_use",
+                    tool_use_id=pending_tool_uses[0].get("id") if len(pending_tool_uses) == 1 else None,
+                    data={"restored_from_display_transcript": True},
+                )
+            )
+            pending_tool_uses.clear()
+            loaded_count += 1
+
+        def flush_tool_results(timestamp: Optional[str] = None) -> None:
+            nonlocal loaded_count
+            if not pending_tool_results:
+                return
+            self.conversation_history.append(
+                ConversationTurn(
+                    role="user",
+                    content=list(pending_tool_results),
+                    timestamp=timestamp or datetime.utcnow().isoformat(),
+                    type="tool_result",
+                    tool_use_id=pending_tool_results[0].get("tool_use_id") if len(pending_tool_results) == 1 else None,
+                    is_error=any(bool(block.get("is_error")) for block in pending_tool_results),
+                    data={"restored_from_display_transcript": True},
+                )
+            )
+            pending_tool_results.clear()
+            loaded_count += 1
 
         for msg in messages:
             try:
                 msg_type = msg.get("type")
+                timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
+
+                is_native_content_blocks = isinstance(msg.get("content"), list)
+
+                if msg_type == "tool_use" and not is_native_content_blocks:
+                    tool_use_block = self._display_tool_use_block(msg)
+                    if tool_use_block:
+                        if tool_use_block.get("id") not in paired_display_tool_ids:
+                            skipped_count += 1
+                            continue
+                        flush_tool_results(timestamp)
+                        pending_tool_uses.append(tool_use_block)
+                        continue
+
+                if msg_type == "tool_result" and not is_native_content_blocks:
+                    tool_result_id = self._display_tool_result_id(msg)
+                    if tool_result_id not in paired_display_tool_ids:
+                        skipped_count += 1
+                        continue
+                    tool_result_blocks = self._display_tool_result_blocks(msg)
+                    if tool_result_blocks:
+                        flush_tool_uses(timestamp)
+                        pending_tool_results.extend(tool_result_blocks)
+                        continue
+
+                flush_tool_uses(timestamp)
+                flush_tool_results(timestamp)
+
                 if "role" in msg and "content" in msg:
                     content = msg["content"]
                     role = msg["role"]
@@ -1175,7 +1428,7 @@ class SessionMemory:
                         ConversationTurn(
                             role=role,
                             content=content,
-                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
+                            timestamp=timestamp,
                             type=msg_type,
                             data=msg.get("data") if isinstance(msg.get("data"), dict) else None,
                             tool_use_id=msg.get("tool_use_id"),
@@ -1228,7 +1481,7 @@ class SessionMemory:
                                 ConversationTurn(
                                     role="user",
                                     content=content,
-                                    timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                                    timestamp=timestamp
                                 )
                             )
                             loaded_count += 1
@@ -1258,6 +1511,9 @@ class SessionMemory:
                     message=msg,
                     error=str(e)
                 )
+
+        flush_tool_uses()
+        flush_tool_results()
 
         logger.info(
             "history_messages_loaded",
@@ -1291,7 +1547,7 @@ class SessionMemory:
         selected = self.conversation_history[-last_n_turns * 2 :]
         return "\n".join(f"{turn.role}: {turn.content}" for turn in selected)
 
-    def get_messages_for_llm(self) -> List[Dict[str, Any]]:
+    def get_messages_for_llm(self, *, repair_strategy: str = "api_safe") -> List[Dict[str, Any]]:
         """
         Return conversation history in Anthropic Messages API format.
 
@@ -1359,6 +1615,8 @@ class SessionMemory:
                 "role": turn.role,
                 "content": turn.content,
             })
+
+        messages = repair_tool_result_pairing(messages, strategy=repair_strategy)
 
         logger.info(
             "get_messages_for_llm_success",

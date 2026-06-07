@@ -929,18 +929,20 @@ Older history to compress:
             if not all(isinstance(value, int) for value in counts.values()):
                 counts = todo_counts(submitted_items)
 
+            summary = payload.get("summary", "Legacy task housekeeping result compacted.")
+            summary = str(summary).replace("TodoWrite", "legacy task list")
             return {
                 "status": payload.get("status", "success"),
                 "success": bool(payload.get("success", True)),
-                "tool_name": "TodoWrite",
+                "tool_name": "LegacyTaskState",
                 "housekeeping": True,
                 "no_op": bool(payload.get("no_op") or data.get("no_op")),
                 "all_completed": bool(payload.get("all_completed") or data.get("all_completed")),
                 **counts,
                 "active_items": compact_todo_items(active_items),
-                "summary": payload.get("summary", "TodoWrite housekeeping result compacted."),
+                "summary": summary,
                 "metadata": {
-                    "generator": "TodoWrite",
+                    "generator": "legacy_task_state",
                     "history_compacted": True,
                     "omitted_fields": ["rendered", "items", "old_items", "new_items"],
                 },
@@ -970,18 +972,8 @@ Older history to compress:
                     blocks.append(block)
                     continue
                 block_copy = dict(block)
-                tool_input = block_copy.get("input") if isinstance(block_copy.get("input"), dict) else {}
-                items = tool_input.get("items")
-                if isinstance(items, str):
-                    try:
-                        parsed_items = json.loads(items)
-                        items = parsed_items if isinstance(parsed_items, list) else []
-                    except Exception:
-                        items = []
-                # ✅ 修复：保留 items 参数（符合TodoWriteTool.execute()签名），只压缩其内容
-                block_copy["input"] = {
-                    "items": compact_todo_items(items),  # 保留 items 字段，压缩内容
-                }
+                block_copy["name"] = "TaskList"
+                block_copy["input"] = {}
                 blocks.append(block_copy)
                 changed = True
             return blocks, changed

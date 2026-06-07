@@ -308,7 +308,7 @@ class CallSubAgentTool(LLMTool):
 
             # 所有模式统一使用 ReActAgent；专家模式通过工具注册表中的原子工具/工作流工具完成分析。
             sub_agent = ReActAgent(
-                max_iterations=30,  # 子Agent默认30次迭代
+                max_iterations=120,  # 子Agent默认120次迭代
                 enable_memory=True,  # ✅ 启用记忆（子Agent会自动创建 UnifiedMemoryManager）
                 tool_registry=tool_executor.tool_registry if tool_executor else None  # ✅ 传递工具注册表
             )

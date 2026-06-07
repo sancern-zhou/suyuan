@@ -128,36 +128,39 @@ class ReadFileTool(LLMTool):
 - 不涉及数据管理，不应连续重复调用
 
 **架构要求**：
-- ✅ `requires_context=True`，通过 `ExecutionContext.get_task_list()` 访问 TodoList
-- ✅ 完整替换模式，输入为 `items=[{"content": "...", "status": "..."}]`
-- ✅ 返回 `old_items/new_items/active_items/no_op/all_completed` 等结构化状态
-- ❌ 不支持 `activeForm`
+- ✅ `requires_context=True`，通过 `ExecutionContext.get_task_list()` 访问 TaskList
+- ✅ 增量更新模式，TaskCreate 创建任务，TaskUpdate 更新单个任务
+- ✅ 返回 `taskId/updatedFields/statusChange/no_op` 等结构化状态
+- ✅ 支持 `activeForm`
 
 **工具列表**：
-- `TodoWrite` - 完整替换当前任务清单，仅在计划或任务状态实质变化时调用
+- `TaskCreate` - 创建当前会话任务
+- `TaskUpdate` - 更新单个任务字段或状态
+- `TaskList` - 列出当前会话任务
+- `TaskGet` - 按 ID 获取单个任务
 
 **代码示例**：
 ```python
-class TodoWriteTool(LLMTool):
+class TaskUpdateTool(LLMTool):
     def __init__(self):
         super().__init__(
-            name="TodoWrite",
-            description="更新任务清单（housekeeping状态管理，完整替换模式）",
+            name="TaskUpdate",
+            description="更新单个任务（housekeeping状态管理，增量模式）",
             category=ToolCategory.TASK_MANAGEMENT,
             requires_context=True,
         )
-        self.requires_task_list = True
 
     async def execute(
         self,
         context: ExecutionContext,
-        items: list[dict[str, str]],
+        taskId: str,
+        status: str | None = None,
     ) -> Dict[str, Any]:
-        todo_list = context.get_task_list()
-        rendered = todo_list.update(items)
+        task_list = context.get_task_list()
+        task = task_list.update(taskId, status=status)
         return {
             "status": "success",
-            "data": {"rendered": rendered, "items": items},
+            "data": {"task": task.to_dict()},
             "summary": "..."
         }
 ```

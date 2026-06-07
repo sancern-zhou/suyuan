@@ -19,6 +19,8 @@
 | `process` | 审批、作业、任务执行、业务流转 | 事情按什么顺序发生？ | `process.md` |
 | `decision_tree` | 规则判断、诊断、风险分级、条件路径 | 根据什么条件走向哪个结论？ | `decision-tree.md` |
 | `data_flow` | 数据采集、处理、存储、分析、输出 | 数据从哪里来、如何变换、到哪里去？ | `data-flow.md` |
+| `mind_map` | 知识梳理、方案拆解、复盘总结、要点归类 | 中心主题向外发散出哪些分支？ | `mind-map.md` |
+| `gantt` | 实施计划、项目排期、里程碑、版本路线 | 任务何时开始、何时结束、进度如何？ | `gantt.md` |
 
 ## 渐进读取流程
 
@@ -35,6 +37,8 @@
 - 用户描述“一步一步、先后、审批、执行”，优先 `process`。
 - 用户描述“如果、是否、满足条件、否则”，优先 `decision_tree`。
 - 用户描述“采集、清洗、入库、计算、输出、同步”，优先 `data_flow`。
+- 用户描述“梳理、拆解、要点、脑图、思维导图、复盘”，优先 `mind_map`。
+- 用户描述“排期、计划、里程碑、时间轴、甘特图、进度”，优先 `gantt`。
 
 ## 输出前的最小设计稿
 
@@ -43,7 +47,7 @@
 - 类型：`diagram_type=...`
 - 主阅读方向：`TB` / `LR`
 - 分组：架构图列出每个 `layer/group` 及模块数；流程图列出关键节点数
-- 主干：列出 3-8 条关键 `edges`
+- 主干：流程/数据图列出 3-8 条关键 `edges`；思维导图列出中心主题和 3-8 个一阶分支；甘特图列出任务、起止时间和进度。
 
 如果这 4 行写不清，说明还不能调用工具。
 
@@ -59,6 +63,8 @@ Schema 只保留轻量参数骨架。复杂图表必须按本节和对应模板�
 - `emphasis`: 模块强调，可用 `normal`、`high`、`muted`。核心模块用 `high`，辅助模块用 `muted`；不要高亮过多节点。
 - `icon_policy`: 层内图标策略，可用 `auto`、`show`、`hide`。需要图例时先读取 `icon-catalog.md`。
 - `edges`: 连线列表，包含 `from`、`to`，可包含短 `label`、`style`、`flow_strength`。
+- `parent_id` / `parent`: 思维导图分支节点使用，指向父节点 `id`；没有父节点的第一个 step 作为中心主题。
+- `start` / `end` / `duration` / `progress`: 甘特图任务字段；日期使用 `YYYY-MM-DD`，`duration` 单位为天，`progress` 为 0-100。
 - `flow_strength`: 主干流向强度，可用 `normal`、`strong`；`strong` 只用于核心数据流或能力支撑链路。
 
 `role`、`variant`、`emphasis`、`flow_strength`、`icon_policy` 必须由 Agent 显式判断后填写。渲染器不会根据 `label` 关键词自动推断视觉强调、核心模块、外部依赖或主干流向。

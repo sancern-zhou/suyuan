@@ -28,6 +28,23 @@ logger = structlog.get_logger()
 # 有效的语义类型集合
 VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
 
+MESSAGE_METADATA_EXCLUDED_KEYS = {
+    "type",
+    "role",
+    "content",
+    "data",
+    "metadata",
+    "timestamp",
+    "thought",
+    "reasoning",
+    "id",
+    "message_id",
+    "visuals",
+    "tool_use_id",
+    "tool_name",
+    "is_error",
+}
+
 # type -> role 映射表（确定每条消息的 Anthropic 角色）
 TYPE_TO_ROLE = {
     "user": "user",
@@ -125,6 +142,34 @@ class SessionRepository:
             return content
         # 其他类型（Decimal 等）转换为字符串
         return str(content)
+
+    @staticmethod
+    def _message_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Return only small custom metadata fields for message persistence."""
+        metadata = {
+            k: v
+            for k, v in msg.items()
+            if k not in MESSAGE_METADATA_EXCLUDED_KEYS
+        }
+        return SessionRepository._convert_decimal_to_float(metadata)
+
+    @staticmethod
+    def _message_data(msg: Dict[str, Any]) -> Any:
+        """Return message data with tool runtime fields preserved in one place."""
+        msg_data = SessionRepository._convert_decimal_to_float(msg.get("data"))
+        tool_fields = {
+            key: msg[key]
+            for key in ("tool_use_id", "tool_name", "is_error")
+            if key in msg
+        }
+        if not tool_fields:
+            return msg_data
+        if msg_data is None:
+            msg_data = {}
+        if isinstance(msg_data, dict):
+            for key, value in tool_fields.items():
+                msg_data.setdefault(key, value)
+        return SessionRepository._convert_decimal_to_float(msg_data)
 
     async def create_session(
         self,
@@ -443,24 +488,8 @@ class SessionRepository:
                                 session_id=session_id,
                             )
 
-                            # 提取元数据（排除已知字段）
-                            # ✅ 修复：tool_use_id 和 is_error 需要保存到 data 中，不要排除
-                            # ✅ 修复：id 字段也要排除，避免污染 metadata（DB会自动生成唯一id）
-                            known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning", "id"}
-                            msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
-
-                            # ✅ 修复：将 tool_use_id、tool_name、is_error 合并到 data 中
-                            msg_data = self._convert_decimal_to_float(msg.get("data"))
-                            if msg_data and isinstance(msg_data, dict):
-                                # 确保 data 是字典
-                                if "tool_use_id" in msg and "tool_use_id" not in msg_data:
-                                    msg_data["tool_use_id"] = msg["tool_use_id"]
-                                if "tool_name" in msg and "tool_name" not in msg_data:
-                                    msg_data["tool_name"] = msg["tool_name"]
-                                if "is_error" in msg and "is_error" not in msg_data:
-                                    msg_data["is_error"] = msg["is_error"]
-
-                            msg_metadata_converted = self._convert_decimal_to_float(msg_metadata)
+                            msg_data = self._message_data(msg)
+                            msg_metadata_converted = self._message_metadata(msg)
                             content = self._serialize_content(msg.get("content"))
 
                             # 使用 Core insert（注意：使用数据库列名）
@@ -559,17 +588,7 @@ class SessionRepository:
                         session_id=session_id,
                     )
 
-                    known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning", "id"}
-                    msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
-
-                    msg_data = self._convert_decimal_to_float(msg.get("data"))
-                    if msg_data and isinstance(msg_data, dict):
-                        if "tool_use_id" in msg and "tool_use_id" not in msg_data:
-                            msg_data["tool_use_id"] = msg["tool_use_id"]
-                        if "tool_name" in msg and "tool_name" not in msg_data:
-                            msg_data["tool_name"] = msg["tool_name"]
-                        if "is_error" in msg and "is_error" not in msg_data:
-                            msg_data["is_error"] = msg["is_error"]
+                    msg_data = self._message_data(msg)
 
                     rows.append(
                         {
@@ -579,7 +598,7 @@ class SessionRepository:
                             "content": self._serialize_content(msg.get("content")),
                             "data": msg_data,
                             "timestamp": timestamp,
-                            "metadata": self._convert_decimal_to_float(msg_metadata),
+                            "metadata": self._message_metadata(msg),
                             "sequence_number": offset,
                         }
                     )
@@ -639,14 +658,8 @@ class SessionRepository:
                 # 解析 role 和 msg_type
                 role, msg_type = self._resolve_role_and_type(message)
 
-                # 转换 Decimal 为 float
-                msg_data = self._convert_decimal_to_float(message.get("data"))
-                # ✅ 修复：添加 "id" 到 known_keys，避免污染 metadata
-                known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
-                              "tool_use_id", "is_error", "id"}
-                msg_metadata = self._convert_decimal_to_float(
-                    {k: v for k, v in message.items() if k not in known_keys}
-                )
+                msg_data = self._message_data(message)
+                msg_metadata = self._message_metadata(message)
                 content = self._serialize_content(message.get("content"))
 
                 db_msg = SessionMessageDB(
@@ -736,6 +749,62 @@ class SessionRepository:
             if metadata_without_id:  # 只有在有内容时才update
                 msg_dict.update(metadata_without_id)
         return msg_dict
+
+    def _message_row_to_context_dict(self, row: Any, include_data: bool = True) -> Dict[str, Any]:
+        message = {
+            "role": row.role,
+            "type": row.msg_type,
+            "content": row.content,
+            "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+            "id": f"msg_{row.id}",
+            "sequence_number": row.sequence_number,
+        }
+        if include_data and getattr(row, "data", None):
+            message["data"] = row.data
+        return message
+
+    async def get_llm_history_messages(self, session_id: str) -> List[Dict[str, Any]]:
+        """Load transcript fields needed to rebuild LLM continuation context."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(
+                    SessionMessageDB.id,
+                    SessionMessageDB.role,
+                    SessionMessageDB.msg_type,
+                    SessionMessageDB.content,
+                    SessionMessageDB.data,
+                    SessionMessageDB.timestamp,
+                    SessionMessageDB.sequence_number,
+                )
+                .where(SessionMessageDB.session_id == session_id)
+                .order_by(SessionMessageDB.sequence_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                self._message_row_to_context_dict(row)
+                for row in result.all()
+            ]
+
+    async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
+        """Load a full-length display transcript stub without data/metadata JSON."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(
+                    SessionMessageDB.id,
+                    SessionMessageDB.role,
+                    SessionMessageDB.msg_type,
+                    SessionMessageDB.content,
+                    SessionMessageDB.timestamp,
+                    SessionMessageDB.sequence_number,
+                )
+                .where(SessionMessageDB.session_id == session_id)
+                .order_by(SessionMessageDB.sequence_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                self._message_row_to_context_dict(row, include_data=False)
+                for row in result.all()
+            ]
 
     def _message_row_to_light_dict(self, row: Any) -> Dict[str, Any]:
         """

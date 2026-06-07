@@ -35,7 +35,7 @@ class ReActLoop:
         memory_manager: HybridMemoryManager,
         llm_planner,
         tool_executor,
-        max_iterations: int = 60,
+        max_iterations: int = 120,
         stream_enabled: bool = True,
         enable_agent_logging: bool = True,
         log_dir: str = "./logs/agent_runs",

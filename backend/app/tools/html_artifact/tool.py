@@ -154,7 +154,7 @@ class CreateHtmlArtifactTool(LLMTool):
             artifact_metadata["deck_asset_paths"] = guizang_deck_asset_paths()
             artifact_metadata["deck_generation_rules"] = {
                 "route": "visual_priority_html_deck",
-                "data_dense_alternative": "create_pptx_from_deck",
+                "data_dense_alternative": "create_pptx_with_ppt_master",
                 "style": presentation_style or "magazine",
                 "required_preread": _guizang_required_preread(presentation_style),
             }
