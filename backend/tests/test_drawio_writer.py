@@ -119,3 +119,78 @@ def test_build_drawio_xml_emits_groups_and_filters_unsafe_style_text():
     assert "<script>" not in xml_text
     assert "onclick" not in xml_text
     assert "image=data" not in xml_text
+
+
+def test_build_drawio_xml_strips_active_html_from_cell_values():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="<IMG SRC=x onError=alert(1)>",
+        canvas={},
+        shapes=[
+            {
+                "id": "malicious",
+                "type": "rounded_rect",
+                "label": "<IMG SRC=x onError=alert(1)>",
+                "x": 0,
+                "y": 0,
+            }
+        ],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio"],
+        diagram_intent="custom",
+    )
+
+    xml_text = build_drawio_xml(diagram)
+    root = ET.fromstring(xml_text)
+    cell = root.find(".//mxCell[@id='malicious']")
+
+    assert "<IMG" not in xml_text
+    assert cell is not None
+    assert "<IMG" not in cell.attrib["value"]
+    assert "onError" not in cell.attrib["value"]
+
+
+def test_drawio_shape_passthrough_strips_mixed_case_url_protocol_and_events():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[
+            {
+                "id": "native",
+                "type": "drawio_shape",
+                "label": "Native",
+                "x": 0,
+                "y": 0,
+                "drawio_shape_name": "process",
+                "drawio_style": (
+                    "whiteSpace=wrap;html=1;Href=JaVaScRiPt:alert(1);"
+                    "Image=HTTPS://example.test/a.png;fillColor=#fff;"
+                    "label=<IMG SRC=x onError=alert(1)>;onClick=alert(1);"
+                    "tooltip=&quot;bad&quot;;strokeColor=#000000;"
+                ),
+            }
+        ],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio"],
+        diagram_intent="custom",
+    )
+
+    xml_text = build_drawio_xml(diagram)
+    root = ET.fromstring(xml_text)
+    cell = root.find(".//mxCell[@id='native']")
+
+    assert cell is not None
+    style = cell.attrib["style"]
+    assert "whiteSpace=wrap" in style
+    assert "fillColor=#fff" in style
+    assert "strokeColor=#000000" in style
+    assert "Href=" not in style
+    assert "Image=" not in style
+    assert "javascript:" not in style.lower()
+    assert "onClick" not in style
+    assert "<IMG" not in style
+    assert "onError" not in style
+    assert "quot" not in style
