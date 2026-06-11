@@ -145,6 +145,36 @@ def test_collection_size_limits_prevent_unbounded_payloads():
             diagram_intent=None,
         )
 
+    with pytest.raises(FreeformValidationError, match="connectors must contain <="):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+            connectors=[
+                {"id": f"edge_{index}", "from": "node", "to": "node"}
+                for index in range(1001)
+            ],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+    with pytest.raises(FreeformValidationError, match="groups must contain <="):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+            connectors=[],
+            groups=[
+                {"id": f"group_{index}", "children": ["node"]}
+                for index in range(201)
+            ],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
 
 def test_empty_shapes_fail():
     with pytest.raises(FreeformValidationError, match="freeform diagram requires at least one shape"):

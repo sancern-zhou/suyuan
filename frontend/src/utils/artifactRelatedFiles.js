@@ -6,6 +6,16 @@ const getFileName = (filePath = '') => {
 
 const asArray = (value) => Array.isArray(value) ? value : []
 
+const hasStandaloneFileSignal = (artifact = {}) => {
+  return Boolean(
+    artifact.format ||
+    artifact.file_type ||
+    artifact.file_name ||
+    artifact.title ||
+    artifact.downloadLabel
+  )
+}
+
 const getRelatedFileCandidates = ({ artifact = {}, refs = {} } = {}) => {
   const candidates = [
     ...asArray(artifact.related_files),
@@ -14,7 +24,7 @@ const getRelatedFileCandidates = ({ artifact = {}, refs = {} } = {}) => {
     ...asArray(refs.artifacts)
   ]
 
-  if (artifact.file_path || artifact.path) {
+  if ((artifact.file_path || artifact.path) && hasStandaloneFileSignal(artifact)) {
     candidates.push(artifact)
   }
 
