@@ -15,7 +15,10 @@ _SAFE_ID_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]+")
 _SAFE_STYLE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]+")
 _SAFE_STYLE_KEY_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 _SAFE_STYLE_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9#.,_ ./:%()+-]{0,256}$")
-_BLOCKED_STYLE_KEYS = {"image", "link", "src", "url"}
+_HTML_TAG_PATTERN = re.compile(r"<[^>]*>")
+_EVENT_HANDLER_PATTERN = re.compile(r"\bon[a-z]+\s*=", re.IGNORECASE)
+_BLOCKED_STYLE_KEYS = {"image", "link", "src", "url", "href"}
+_BLOCKED_VALUE_TOKENS = ("javascript:", "data:", "vbscript:")
 _DANGEROUS_TEXT_TOKENS = (
     "<script",
     "</script",
@@ -267,11 +270,12 @@ def _filter_drawio_style(style: str) -> str:
             key, value = part.split("=", 1)
             key = key.strip()
             value = value.strip()
+        key_lower = key.lower()
         if not _SAFE_STYLE_KEY_PATTERN.fullmatch(key):
             continue
-        if key.lower() in _BLOCKED_STYLE_KEYS:
+        if key_lower in _BLOCKED_STYLE_KEYS or key_lower.startswith("on"):
             continue
-        if value and not _SAFE_STYLE_VALUE_PATTERN.fullmatch(value):
+        if value and not _is_safe_style_value(value):
             continue
         safe_parts.append(f"{key}={value}" if value else key)
     return ";".join(safe_parts) + (";" if safe_parts else "")
@@ -279,8 +283,7 @@ def _filter_drawio_style(style: str) -> str:
 
 def _safe_identifier(value: str, fallback: str) -> str:
     cleaned = str(value)
-    for token in _DANGEROUS_TEXT_TOKENS:
-        cleaned = cleaned.replace(token, "")
+    cleaned = _strip_dangerous_text(cleaned)
     cleaned = _SAFE_ID_PATTERN.sub("_", cleaned).strip("_.:-")
     if not cleaned:
         cleaned = fallback
@@ -290,22 +293,41 @@ def _safe_identifier(value: str, fallback: str) -> str:
 
 
 def _safe_style_name(value: str) -> str:
-    cleaned = _SAFE_STYLE_NAME_PATTERN.sub("", str(value))
+    cleaned = _strip_dangerous_text(str(value))
+    cleaned = _SAFE_STYLE_NAME_PATTERN.sub("", cleaned)
     return cleaned[:96] or "process"
 
 
 def _safe_style_value(value: str) -> str:
     value = value.strip()
-    if _SAFE_STYLE_VALUE_PATTERN.fullmatch(value):
+    if _is_safe_style_value(value):
         return value
     return ""
 
 
 def _safe_text(value: str) -> str:
-    text = str(value)
+    return _strip_dangerous_text(str(value))[:1000]
+
+
+def _strip_dangerous_text(value: str) -> str:
+    text = _HTML_TAG_PATTERN.sub("", value)
+    text = _EVENT_HANDLER_PATTERN.sub("", text)
     for token in _DANGEROUS_TEXT_TOKENS:
-        text = text.replace(token, "")
-    return text[:1000]
+        text = re.sub(re.escape(token), "", text, flags=re.IGNORECASE)
+    return text
+
+
+def _is_safe_style_value(value: str) -> bool:
+    if not _SAFE_STYLE_VALUE_PATTERN.fullmatch(value):
+        return False
+    lowered = value.lower()
+    if any(token in lowered for token in _BLOCKED_VALUE_TOKENS):
+        return False
+    if "://" in value or _EVENT_HANDLER_PATTERN.search(value):
+        return False
+    if any(char in value for char in ("<", ">", '"', "'", "&")):
+        return False
+    return True
 
 
 def _format_number(value: float | int) -> str:
