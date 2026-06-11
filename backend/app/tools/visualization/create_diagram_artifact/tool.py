@@ -1897,10 +1897,23 @@ class CreateDiagramArtifactTool(LLMTool):
                 **(metadata or {}),
             },
         )
+        index_path = Path(data["file_path"])
+        index_path.write_text(
+            self._build_freeform_preview_html(title, data["artifact_id"]),
+            encoding="utf-8",
+        )
+        html_artifact_service.record_update(data["artifact_id"], source="freeform_preview_rewrite")
+        data["html_preview"] = html_artifact_service.build_html_preview(data["artifact_id"])
+
         export_result = export_freeform_diagram(diagram, Path(data["artifact_dir"]))
         drawio_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio"
         png_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.png"
-        svg_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio.svg"
+        svg_exists = export_result.preview_svg_path.exists()
+        svg_url = (
+            f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio.svg"
+            if svg_exists
+            else None
+        )
         export_warnings = list(export_result.warnings)
 
         metadata_out = {
@@ -1936,8 +1949,10 @@ class CreateDiagramArtifactTool(LLMTool):
             "drawio": str(export_result.drawio_path),
             "source_json": str(export_result.source_json_path),
             "png": str(export_result.preview_png_path),
-            "drawio_svg": str(export_result.preview_svg_path),
         }
+        if svg_exists:
+            refs["drawio_svg"] = str(export_result.preview_svg_path)
+
         artifacts = [
             build_document_artifact(
                 export_result.drawio_path,
@@ -1965,7 +1980,7 @@ class CreateDiagramArtifactTool(LLMTool):
                 metadata={"diagram_mode": "freeform"},
             ),
         ]
-        if "drawio_svg" in diagram.output_formats:
+        if svg_exists:
             artifacts.append(
                 build_document_artifact(
                     export_result.preview_svg_path,
@@ -1976,6 +1991,7 @@ class CreateDiagramArtifactTool(LLMTool):
                     metadata={"url": svg_url, "diagram_mode": "freeform"},
                 )
             )
+
         related_files = [
             {
                 "path": str(export_result.drawio_path),
@@ -1994,13 +2010,14 @@ class CreateDiagramArtifactTool(LLMTool):
                 "url": png_url,
                 "format": "png",
             },
-            {
+        ]
+        if svg_exists:
+            related_files.append({
                 "path": str(export_result.preview_svg_path),
                 "relative_path": "assets/diagram.drawio.svg",
                 "url": svg_url,
                 "format": "drawio_svg",
-            },
-        ]
+            })
 
         data.pop("download_url", None)
         data.pop("share_endpoint", None)
@@ -2011,8 +2028,6 @@ class CreateDiagramArtifactTool(LLMTool):
                 "source_json_path": str(export_result.source_json_path),
                 "static_image_path": str(export_result.preview_png_path),
                 "static_image_url": png_url,
-                "preview_svg_path": str(export_result.preview_svg_path),
-                "preview_svg_url": svg_url,
                 "metadata": metadata_out,
                 "assets": [
                     {
@@ -2029,6 +2044,9 @@ class CreateDiagramArtifactTool(LLMTool):
                 "related_files": related_files,
             }
         )
+        if svg_exists:
+            data["preview_svg_path"] = str(export_result.preview_svg_path)
+            data["preview_svg_url"] = svg_url
 
         return {
             "status": "success",
