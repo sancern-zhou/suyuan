@@ -540,6 +540,7 @@ class CreateDiagramArtifactTool(LLMTool):
                     "diagram_mode": {
                         "type": "string",
                         "enum": ["template", "freeform"],
+                        "description": "Defaults to freeform. Use template only when explicitly requesting the built-in layered/process/data-flow templates.",
                     },
                     "diagram_intent": {
                         "type": "string",
@@ -2072,7 +2073,7 @@ class CreateDiagramArtifactTool(LLMTool):
         artifact_id: Optional[str] = None,
         title: Optional[str] = None,
         direction: str = "TB",
-        diagram_mode: str = "template",
+        diagram_mode: str = "freeform",
         diagram_intent: Optional[str] = None,
         canvas: Optional[Dict[str, Any]] = None,
         shapes: Optional[List[Dict[str, Any]]] = None,
@@ -2109,7 +2110,13 @@ class CreateDiagramArtifactTool(LLMTool):
                     "summary": f"图表生成失败：缺少必填参数 {', '.join(missing)}。不要空参调用 create_diagram_artifact。",
                 }
 
-            diagram_mode = str(diagram_mode or "template").strip().lower()
+            diagram_mode = str(diagram_mode or "freeform").strip().lower()
+            if (
+                diagram_mode == "freeform"
+                and not shapes
+                and (layers or steps)
+            ):
+                diagram_mode = "template"
             if diagram_mode == "freeform":
                 return await self._execute_freeform_diagram(
                     artifact_id=artifact_id,
