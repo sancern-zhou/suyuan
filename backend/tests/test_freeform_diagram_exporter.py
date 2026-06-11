@@ -111,3 +111,93 @@ def test_fallback_svg_contains_group_and_shape_labels(tmp_path, monkeypatch):
     fallback_svg = result.preview_svg_path.read_text(encoding="utf-8")
     assert "Group Label" in fallback_svg
     assert "Shape Label" in fallback_svg
+
+
+def test_failed_cli_zero_byte_outputs_are_overwritten_by_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(freeform_exporter, "_find_drawio_exporter", lambda: "drawio")
+
+    def failed_export(_exporter, _drawio_path, output_path, _output_format):
+        output_path.write_bytes(b"")
+        return False
+
+    monkeypatch.setattr(freeform_exporter, "_run_drawio_export", failed_export)
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={"width": 800, "height": 500},
+        shapes=[{"id": "a", "type": "rounded_rect", "label": "A", "x": 20, "y": 30}],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio", "drawio_svg"],
+        diagram_intent="custom",
+    )
+
+    result = export_freeform_diagram(diagram, tmp_path)
+
+    assert "exporter_unavailable" in result.warnings
+    assert result.preview_png_path.stat().st_size > 0
+    assert result.preview_svg_path.stat().st_size > 0
+
+
+def test_fallback_svg_renders_connector_from_group_to_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(freeform_exporter, "_find_drawio_exporter", lambda: None)
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={"width": 800, "height": 500},
+        shapes=[
+            {
+                "id": "shape",
+                "type": "rounded_rect",
+                "label": "Shape",
+                "x": 300,
+                "y": 80,
+            }
+        ],
+        connectors=[
+            {
+                "id": "edge_group_shape",
+                "from": "group",
+                "to": "shape",
+                "label": "Group to shape",
+            }
+        ],
+        groups=[
+            {
+                "id": "group",
+                "label": "Group",
+                "children": ["shape"],
+                "x": 20,
+                "y": 30,
+                "width": 180,
+                "height": 120,
+            }
+        ],
+        output_formats=["drawio_svg"],
+        diagram_intent="custom",
+    )
+
+    result = export_freeform_diagram(diagram, tmp_path)
+
+    fallback_svg = result.preview_svg_path.read_text(encoding="utf-8")
+    assert result.preview_svg_path.stat().st_size > 0
+    assert 'data-connector-id="edge_group_shape"' in fallback_svg
+
+
+def test_drawio_export_discards_subprocess_output(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+
+    monkeypatch.setattr(freeform_exporter.subprocess, "run", fake_run)
+
+    freeform_exporter._run_drawio_export(
+        "drawio",
+        tmp_path / "diagram.drawio",
+        tmp_path / "diagram.png",
+        "png",
+    )
+
+    assert calls[0][1]["stdout"] == freeform_exporter.subprocess.DEVNULL
+    assert calls[0][1]["stderr"] == freeform_exporter.subprocess.DEVNULL
