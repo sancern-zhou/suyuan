@@ -230,6 +230,9 @@ def _normalize_shape(source: dict[str, Any]) -> FreeformShape:
         "id",
         "type",
         "label",
+        "text",
+        "name",
+        "title",
         "x",
         "y",
         "width",
@@ -244,7 +247,7 @@ def _normalize_shape(source: dict[str, Any]) -> FreeformShape:
     return FreeformShape(
         id=_required_str(source, "id", "shape"),
         type=shape_type,
-        label=str(source.get("label", "")),
+        label=_first_text(source, ("label", "text", "name", "title")),
         x=_number(source.get("x", 0), "shape.x"),
         y=_number(source.get("y", 0), "shape.y"),
         width=_positive_number(source.get("width", 120), "shape.width"),
@@ -258,13 +261,29 @@ def _normalize_shape(source: dict[str, Any]) -> FreeformShape:
 def _normalize_connector(
     source: dict[str, Any], known_endpoint_ids: set[str]
 ) -> FreeformConnector:
-    known = {"id", "from", "to", "label", "type"}
+    known = {
+        "id",
+        "from",
+        "to",
+        "source",
+        "target",
+        "source_id",
+        "target_id",
+        "label",
+        "text",
+        "type",
+        "style",
+    }
     connector = FreeformConnector(
         id=_required_str(source, "id", "connector"),
-        source_id=_required_str(source, "from", "connector"),
-        target_id=_required_str(source, "to", "connector"),
-        label=str(source.get("label", "")),
-        type=str(source.get("type") or "orthogonal"),
+        source_id=_first_required_str(
+            source, ("from", "source", "source_id"), "connector source"
+        ),
+        target_id=_first_required_str(
+            source, ("to", "target", "target_id"), "connector target"
+        ),
+        label=_first_text(source, ("label", "text")),
+        type=str(source.get("type") or source.get("style") or "orthogonal"),
         extras=_extras(source, known),
     )
 
@@ -337,7 +356,9 @@ def _normalize_output_formats(output_formats: list[str] | None) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for output_format in output_formats:
-        value = str(output_format).strip().lower().replace(".", "_")
+        value = str(output_format).strip().lower().strip("._").replace(".", "_")
+        if value in {"svg", "_svg", "drawio_svg"}:
+            value = "drawio_svg"
         if not value or value in seen:
             continue
         normalized.append(value)
@@ -370,6 +391,24 @@ def _required_str(source: dict[str, Any], key: str, context: str) -> str:
     if value is None or str(value) == "":
         raise FreeformValidationError(f"Missing {context} {key}")
     return str(value)
+
+
+def _first_required_str(
+    source: dict[str, Any], keys: tuple[str, ...], context: str
+) -> str:
+    for key in keys:
+        value = source.get(key)
+        if value is not None and str(value) != "":
+            return str(value)
+    raise FreeformValidationError(f"Missing {context}")
+
+
+def _first_text(source: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return str(value)
+    return ""
 
 
 def _optional_str(value: Any) -> str | None:

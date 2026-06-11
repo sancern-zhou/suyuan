@@ -34,6 +34,52 @@ def test_normalize_freeform_diagram_accepts_basic_canvas():
     assert diagram.diagram_intent == "process"
 
 
+def test_output_format_aliases_are_normalized():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo Diagram",
+        canvas={},
+        shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio", ".drawio.svg", "svg", "png"],
+        diagram_intent=None,
+    )
+
+    assert diagram.output_formats == ["drawio", "drawio_svg", "png"]
+
+
+def test_common_agent_field_aliases_are_normalized():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo Diagram",
+        canvas={},
+        shapes=[
+            {"id": "a", "type": "rectangle", "text": "Client", "x": 0, "y": 0},
+            {"id": "b", "type": "cylinder", "name": "Store", "x": 200, "y": 0},
+        ],
+        connectors=[
+            {
+                "id": "edge",
+                "source": "a",
+                "target": "b",
+                "text": "query",
+                "style": "orthogonal",
+            }
+        ],
+        groups=[],
+        output_formats=[],
+        diagram_intent=None,
+    )
+
+    assert diagram.shapes[0].label == "Client"
+    assert diagram.shapes[1].label == "Store"
+    assert diagram.connectors[0].source_id == "a"
+    assert diagram.connectors[0].target_id == "b"
+    assert diagram.connectors[0].label == "query"
+    assert diagram.connectors[0].type == "orthogonal"
+
+
 def test_empty_shapes_fail():
     with pytest.raises(FreeformValidationError, match="freeform diagram requires at least one shape"):
         normalize_freeform_diagram(
