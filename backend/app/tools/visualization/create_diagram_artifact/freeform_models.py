@@ -180,20 +180,23 @@ def normalize_freeform_diagram(
     diagram_intent: str | None,
 ) -> FreeformDiagram:
     normalized_canvas = _normalize_canvas(_optional_mapping(canvas, "canvas"))
+    shape_sources = _optional_object_list(shapes, "shapes")
+    connector_sources = _optional_object_list(connectors, "connectors")
+    group_sources = _optional_object_list(groups, "groups")
     normalized_shapes = [
-        _normalize_shape(_require_mapping(shape, "shape")) for shape in shapes or []
+        _normalize_shape(_require_mapping(shape, "shape")) for shape in shape_sources
     ]
     if not normalized_shapes:
         raise FreeformValidationError("freeform diagram requires at least one shape")
 
-    normalized_groups = [_normalize_group(_require_mapping(group, "group")) for group in groups or []]
+    normalized_groups = [_normalize_group(_require_mapping(group, "group")) for group in group_sources]
 
     known_endpoint_ids = {shape.id for shape in normalized_shapes}
     known_endpoint_ids.update(group.id for group in normalized_groups)
     _validate_group_children(normalized_groups, known_endpoint_ids)
     normalized_connectors = [
         _normalize_connector(_require_mapping(connector, "connector"), known_endpoint_ids)
-        for connector in connectors or []
+        for connector in connector_sources
     ]
     _validate_unique_ids(normalized_shapes, normalized_groups, normalized_connectors)
 
@@ -344,6 +347,14 @@ def _optional_mapping(source: Any, context: str) -> dict[str, Any]:
     if source is None:
         return {}
     return _require_mapping(source, context)
+
+
+def _optional_object_list(source: Any, context: str) -> list[Any]:
+    if source is None:
+        return []
+    if not isinstance(source, list):
+        raise FreeformValidationError(f"{context} must be a list")
+    return source
 
 
 def _require_mapping(source: Any, context: str) -> dict[str, Any]:
