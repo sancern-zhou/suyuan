@@ -258,6 +258,48 @@ def test_connector_endpoints_may_reference_group_ids():
     assert diagram.connectors[1].target_id == "group"
 
 
+def test_group_children_must_reference_known_shape_or_group_ids():
+    with pytest.raises(
+        FreeformValidationError, match="Group group references unknown child id missing"
+    ):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+            connectors=[],
+            groups=[{"id": "group", "label": "Group", "children": ["missing"]}],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("canvas", "bad", "canvas must be an object"),
+        ("shapes", ["bad"], "shape must be an object"),
+        ("connectors", ["bad"], "connector must be an object"),
+        ("groups", ["bad"], "group must be an object"),
+    ],
+)
+def test_malformed_json_source_sections_raise_validation_error(field, value, match):
+    payload = {
+        "artifact_id": "demo",
+        "title": "Demo",
+        "canvas": {},
+        "shapes": [{"id": "node", "label": "A", "x": 0, "y": 0}],
+        "connectors": [],
+        "groups": [],
+        "output_formats": [],
+        "diagram_intent": None,
+    }
+    payload[field] = value
+
+    with pytest.raises(FreeformValidationError, match=match):
+        normalize_freeform_diagram(**payload)
+
+
 def test_duplicate_connector_ids_fail():
     with pytest.raises(FreeformValidationError, match="Duplicate connector id"):
         normalize_freeform_diagram(

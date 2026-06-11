@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -178,17 +179,21 @@ def normalize_freeform_diagram(
     output_formats: list[str] | None,
     diagram_intent: str | None,
 ) -> FreeformDiagram:
-    normalized_canvas = _normalize_canvas(canvas or {})
-    normalized_shapes = [_normalize_shape(shape) for shape in shapes or []]
+    normalized_canvas = _normalize_canvas(_optional_mapping(canvas, "canvas"))
+    normalized_shapes = [
+        _normalize_shape(_require_mapping(shape, "shape")) for shape in shapes or []
+    ]
     if not normalized_shapes:
         raise FreeformValidationError("freeform diagram requires at least one shape")
 
-    normalized_groups = [_normalize_group(group) for group in groups or []]
+    normalized_groups = [_normalize_group(_require_mapping(group, "group")) for group in groups or []]
 
     known_endpoint_ids = {shape.id for shape in normalized_shapes}
     known_endpoint_ids.update(group.id for group in normalized_groups)
+    _validate_group_children(normalized_groups, known_endpoint_ids)
     normalized_connectors = [
-        _normalize_connector(connector, known_endpoint_ids) for connector in connectors or []
+        _normalize_connector(_require_mapping(connector, "connector"), known_endpoint_ids)
+        for connector in connectors or []
     ]
     _validate_unique_ids(normalized_shapes, normalized_groups, normalized_connectors)
 
@@ -311,6 +316,15 @@ def _validate_unique_ids(
         seen.add(connector.id)
 
 
+def _validate_group_children(groups: list[FreeformGroup], known_ids: set[str]) -> None:
+    for group in groups:
+        for child_id in group.children:
+            if child_id not in known_ids:
+                raise FreeformValidationError(
+                    f"Group {group.id} references unknown child id {child_id}"
+                )
+
+
 def _normalize_output_formats(output_formats: list[str] | None) -> list[str]:
     if not output_formats:
         return list(DEFAULT_OUTPUT_FORMATS)
@@ -324,6 +338,18 @@ def _normalize_output_formats(output_formats: list[str] | None) -> list[str]:
         normalized.append(value)
         seen.add(value)
     return normalized or list(DEFAULT_OUTPUT_FORMATS)
+
+
+def _optional_mapping(source: Any, context: str) -> dict[str, Any]:
+    if source is None:
+        return {}
+    return _require_mapping(source, context)
+
+
+def _require_mapping(source: Any, context: str) -> dict[str, Any]:
+    if not isinstance(source, Mapping):
+        raise FreeformValidationError(f"{context} must be an object")
+    return dict(source)
 
 
 def _required_str(source: dict[str, Any], key: str, context: str) -> str:
