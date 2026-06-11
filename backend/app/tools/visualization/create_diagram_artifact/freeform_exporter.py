@@ -60,13 +60,17 @@ def export_freeform_diagram(
     if exporter is None or not exporter_ok:
         warnings.append("exporter_unavailable")
 
-    if needs_svg and not preview_svg_path.exists():
+    if needs_svg and not _is_usable_file(preview_svg_path):
         _write_fallback_svg(diagram, preview_svg_path)
 
-    if needs_png and not preview_png_path.exists():
+    if needs_png and not _is_usable_file(preview_png_path):
         _write_fallback_png(diagram, preview_png_path, warnings)
 
-    if needs_png and not preview_svg_path.exists() and (exporter is None or not exporter_ok):
+    if (
+        needs_png
+        and not _is_usable_file(preview_svg_path)
+        and (exporter is None or not exporter_ok)
+    ):
         _write_fallback_svg(diagram, preview_svg_path)
 
     return FreeformExportResult(
@@ -98,10 +102,20 @@ def _run_drawio_export(
         str(drawio_path),
     ]
     try:
-        subprocess.run(command, check=True, capture_output=True, timeout=30)
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+        )
     except (OSError, subprocess.SubprocessError):
         return False
-    return output_path.exists() and output_path.stat().st_size > 0
+    return _is_usable_file(output_path)
+
+
+def _is_usable_file(path: Path) -> bool:
+    return path.exists() and path.stat().st_size > 0
 
 
 def _write_fallback_svg(diagram: FreeformDiagram, output_path: Path) -> None:
@@ -134,16 +148,14 @@ def _write_fallback_svg(diagram: FreeformDiagram, output_path: Path) -> None:
             )
         )
 
-    shape_by_id = {shape.id: shape for shape in diagram.shapes}
+    endpoint_centers = _endpoint_centers(diagram)
     for connector in diagram.connectors:
-        source = shape_by_id.get(connector.source_id)
-        target = shape_by_id.get(connector.target_id)
+        source = endpoint_centers.get(connector.source_id)
+        target = endpoint_centers.get(connector.target_id)
         if source is None or target is None:
             continue
-        x1 = source.x + source.width / 2
-        y1 = source.y + source.height / 2
-        x2 = target.x + target.width / 2
-        y2 = target.y + target.height / 2
+        x1, y1 = source
+        x2, y2 = target
         parts.append(
             (
                 f'<line data-connector-id="{html.escape(connector.id, quote=True)}" '
@@ -239,20 +251,24 @@ def _write_fallback_png(
         )
         draw.text((x + 10, y + 8), group.label or group.id, fill="#424852")
 
-    shape_by_id = {shape.id: shape for shape in diagram.shapes}
+    endpoint_centers = _endpoint_centers(diagram)
     for connector in diagram.connectors:
-        source = shape_by_id.get(connector.source_id)
-        target = shape_by_id.get(connector.target_id)
+        source = endpoint_centers.get(connector.source_id)
+        target = endpoint_centers.get(connector.target_id)
         if source is None or target is None:
             continue
+        x1, y1 = source
+        x2, y2 = target
         draw.line(
             [
-                (source.x + source.width / 2, source.y + source.height / 2),
-                (target.x + target.width / 2, target.y + target.height / 2),
+                (x1, y1),
+                (x2, y2),
             ],
             fill="#4b5563",
             width=2,
         )
+        if connector.label:
+            draw.text(((x1 + x2) / 2 + 4, (y1 + y2) / 2 + 4), connector.label, fill="#4b5563")
 
     for shape in diagram.shapes:
         box = [shape.x, shape.y, shape.x + shape.width, shape.y + shape.height]
@@ -278,6 +294,23 @@ def _write_fallback_png(
 
 def _number(value: float | None, default: float) -> float:
     return default if value is None else value
+
+
+def _endpoint_centers(diagram: FreeformDiagram) -> dict[str, tuple[float, float]]:
+    centers = {
+        shape.id: (shape.x + shape.width / 2, shape.y + shape.height / 2)
+        for shape in diagram.shapes
+    }
+    centers.update(
+        {
+            group.id: (
+                _number(group.x, 0) + _number(group.width, 240) / 2,
+                _number(group.y, 0) + _number(group.height, 160) / 2,
+            )
+            for group in diagram.groups
+        }
+    )
+    return centers
 
 
 def _fmt(value: float) -> str:
