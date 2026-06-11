@@ -2,6 +2,9 @@ import xml.etree.ElementTree as ET
 
 from app.tools.visualization.create_diagram_artifact.drawio_writer import build_drawio_xml
 from app.tools.visualization.create_diagram_artifact.freeform_models import (
+    FreeformCanvas,
+    FreeformDiagram,
+    FreeformShape,
     normalize_freeform_diagram,
 )
 
@@ -194,3 +197,112 @@ def test_drawio_shape_passthrough_strips_mixed_case_url_protocol_and_events():
     assert "<IMG" not in style
     assert "onError" not in style
     assert "quot" not in style
+
+
+def test_grouped_child_geometry_is_relative_to_parent_group():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[
+            {
+                "id": "child",
+                "type": "rounded_rect",
+                "label": "Child",
+                "x": 130,
+                "y": 240,
+                "width": 80,
+                "height": 40,
+                "parent_id": "group_1",
+            }
+        ],
+        connectors=[],
+        groups=[
+            {
+                "id": "group_1",
+                "label": "Group",
+                "children": ["child"],
+                "x": 100,
+                "y": 200,
+                "width": 300,
+                "height": 200,
+            }
+        ],
+        output_formats=["drawio"],
+        diagram_intent="custom",
+    )
+
+    xml_text = build_drawio_xml(diagram)
+    root = ET.fromstring(xml_text)
+    child = root.find(".//mxCell[@id='child']")
+
+    assert child is not None
+    assert child.attrib["parent"] == "group_1"
+    geometry = child.find("mxGeometry")
+    assert geometry is not None
+    assert geometry.attrib["x"] == "30"
+    assert geometry.attrib["y"] == "40"
+    assert geometry.attrib["width"] == "80"
+    assert geometry.attrib["height"] == "40"
+
+
+def test_rectangle_and_stadium_shape_aliases_use_specific_styles():
+    diagram = FreeformDiagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas=FreeformCanvas(),
+        shapes=[
+            FreeformShape(id="rectangle", type="rectangle", label="Rectangle"),
+            FreeformShape(id="stadium", type="stadium", label="Stadium", y=100),
+        ],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio"],
+        diagram_intent="custom",
+    )
+
+    xml_text = build_drawio_xml(diagram)
+    root = ET.fromstring(xml_text)
+    cells = {cell.attrib.get("id"): cell for cell in root.findall(".//mxCell")}
+
+    assert "rounded=0" in cells["rectangle"].attrib["style"]
+    assert "arcSize=10" not in cells["rectangle"].attrib["style"]
+    assert "absoluteArcSize=1" in cells["stadium"].attrib["style"]
+    assert "arcSize=10" not in cells["stadium"].attrib["style"]
+
+
+def test_drawio_shape_passthrough_preserves_benign_numeric_and_bracketed_values():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[
+            {
+                "id": "native",
+                "type": "drawio_shape",
+                "label": "Native",
+                "x": 0,
+                "y": 0,
+                "drawio_shape_name": "process",
+                "drawio_style": (
+                    "whiteSpace=wrap;html=1;3d=1;points=[[0,0],[1,0],[1,1]];"
+                    "href=javascript:alert(1);onClick=alert(1);"
+                ),
+            }
+        ],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio"],
+        diagram_intent="custom",
+    )
+
+    xml_text = build_drawio_xml(diagram)
+    root = ET.fromstring(xml_text)
+    cell = root.find(".//mxCell[@id='native']")
+
+    assert cell is not None
+    style = cell.attrib["style"]
+    assert "3d=1" in style
+    assert "points=[[0,0],[1,0],[1,1]]" in style
+    assert "javascript:" not in style.lower()
+    assert "onClick" not in style

@@ -13,8 +13,8 @@ from .freeform_models import (
 
 _SAFE_ID_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]+")
 _SAFE_STYLE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]+")
-_SAFE_STYLE_KEY_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
-_SAFE_STYLE_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9#.,_ ./:%()+-]{0,256}$")
+_SAFE_STYLE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_SAFE_STYLE_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9#.,_ ./:%()+\-\[\]]{0,256}$")
 _HTML_TAG_PATTERN = re.compile(r"<[^>]*>")
 _EVENT_HANDLER_PATTERN = re.compile(r"\bon[a-z]+\s*=", re.IGNORECASE)
 _BLOCKED_STYLE_KEYS = {"image", "link", "src", "url", "href"}
@@ -37,7 +37,9 @@ _BASE_EDGE_STYLE = (
 
 _SHAPE_STYLES = {
     "rect": "rounded=0;",
+    "rectangle": "rounded=0;",
     "rounded_rect": "rounded=1;arcSize=10;",
+    "stadium": "rounded=1;absoluteArcSize=1;arcSize=60;",
     "text": "text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;",
     "container": "rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;",
     "swimlane": "swimlane;html=1;startSize=24;",
@@ -73,7 +75,8 @@ _CONNECTOR_STYLES = {
 def build_drawio_xml(diagram: FreeformDiagram) -> str:
     """Build Draw.io XML for a normalized freeform diagram."""
     id_map = _build_id_map(diagram)
-    parent_by_child = _parent_by_child(diagram.groups, id_map)
+    group_by_id = {group.id: group for group in diagram.groups}
+    parent_by_child = _parent_by_child(diagram.groups, diagram.shapes, group_by_id)
 
     mxfile = ET.Element(
         "mxfile",
@@ -124,7 +127,7 @@ def build_drawio_xml(diagram: FreeformDiagram) -> str:
         _append_group(root, group, id_map)
 
     for shape in diagram.shapes:
-        _append_shape(root, shape, id_map, parent_by_child)
+        _append_shape(root, shape, id_map, parent_by_child, group_by_id)
 
     for connector in diagram.connectors:
         _append_connector(root, connector, id_map)
@@ -168,8 +171,19 @@ def _append_shape(
     shape: FreeformShape,
     id_map: dict[str, str],
     parent_by_child: dict[str, str],
+    group_by_id: dict[str, FreeformGroup],
 ) -> None:
     shape_id = id_map[shape.id]
+    parent_id = parent_by_child.get(shape.id)
+    parent = id_map[parent_id] if parent_id else "1"
+    x = shape.x
+    y = shape.y
+    if parent_id:
+        parent_group = group_by_id.get(parent_id)
+        if parent_group is not None:
+            x -= parent_group.x or 0
+            y -= parent_group.y or 0
+
     cell = ET.SubElement(
         root,
         "mxCell",
@@ -178,15 +192,15 @@ def _append_shape(
             "value": _safe_text(shape.label),
             "style": _shape_style(shape),
             "vertex": "1",
-            "parent": parent_by_child.get(shape.id, "1"),
+            "parent": parent,
         },
     )
     ET.SubElement(
         cell,
         "mxGeometry",
         {
-            "x": _format_number(shape.x),
-            "y": _format_number(shape.y),
+            "x": _format_number(x),
+            "y": _format_number(y),
             "width": _format_number(shape.width),
             "height": _format_number(shape.height),
             "as": "geometry",
@@ -248,12 +262,21 @@ def _build_id_map(diagram: FreeformDiagram) -> dict[str, str]:
     return id_map
 
 
-def _parent_by_child(groups: list[FreeformGroup], id_map: dict[str, str]) -> dict[str, str]:
+def _parent_by_child(
+    groups: list[FreeformGroup],
+    shapes: list[FreeformShape],
+    group_by_id: dict[str, FreeformGroup],
+) -> dict[str, str]:
     parents: dict[str, str] = {}
+    for shape in shapes:
+        parent_id = str(shape.extras.get("parent_id") or shape.extras.get("parent") or "")
+        if parent_id in group_by_id:
+            parents[shape.id] = parent_id
+
     for group in groups:
         for child_id in group.children:
-            if child_id not in parents and group.id in id_map:
-                parents[child_id] = id_map[group.id]
+            if child_id not in parents:
+                parents[child_id] = group.id
     return parents
 
 
