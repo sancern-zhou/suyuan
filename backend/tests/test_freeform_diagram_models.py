@@ -32,6 +32,20 @@ def test_normalize_freeform_diagram_accepts_basic_canvas():
     assert diagram.diagram_intent == "process"
 
 
+def test_empty_shapes_fail():
+    with pytest.raises(FreeformValidationError, match="freeform diagram requires at least one shape"):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[],
+            connectors=[],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
 def test_duplicate_shape_ids_fail():
     with pytest.raises(FreeformValidationError, match="Duplicate shape id"):
         normalize_freeform_diagram(
@@ -91,6 +105,21 @@ def test_drawio_shape_passthrough_is_preserved():
     assert shape.type == "drawio_shape"
     assert shape.drawio_shape_name == "mxgraph.aws4.lambda_function"
     assert "aspect=fixed" in shape.drawio_style
+
+
+def test_source_dict_includes_diagram_mode():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+        connectors=[],
+        groups=[],
+        output_formats=[],
+        diagram_intent=None,
+    )
+
+    assert diagram.to_source_dict()["diagram_mode"] == "freeform"
 
 
 def test_duplicate_connector_ids_fail():

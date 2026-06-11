@@ -154,6 +154,7 @@ class FreeformDiagram:
     def to_source_dict(self) -> dict[str, Any]:
         return _json_safe(
             {
+                "diagram_mode": "freeform",
                 "artifact_id": self.artifact_id,
                 "title": self.title,
                 "canvas": self.canvas.to_source_dict(),
@@ -179,6 +180,9 @@ def normalize_freeform_diagram(
 ) -> FreeformDiagram:
     normalized_canvas = _normalize_canvas(canvas or {})
     normalized_shapes = [_normalize_shape(shape) for shape in shapes or []]
+    if not normalized_shapes:
+        raise FreeformValidationError("freeform diagram requires at least one shape")
+
     normalized_groups = [_normalize_group(group) for group in groups or []]
 
     known_endpoint_ids = {shape.id for shape in normalized_shapes}
