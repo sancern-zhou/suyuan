@@ -80,6 +80,72 @@ def test_common_agent_field_aliases_are_normalized():
     assert diagram.connectors[0].type == "orthogonal"
 
 
+def test_shape_type_aliases_are_normalized():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo Diagram",
+        canvas={},
+        shapes=[
+            {"id": "box", "type": "Box", "label": "Box", "x": 0, "y": 0},
+            {"id": "db", "type": "data-store", "label": "DB", "x": 180, "y": 0},
+            {"id": "term", "type": "rounded rectangle", "label": "End", "x": 360, "y": 0},
+        ],
+        connectors=[],
+        groups=[],
+        output_formats=[],
+        diagram_intent=None,
+    )
+
+    assert [shape.type for shape in diagram.shapes] == [
+        "rectangle",
+        "database",
+        "rounded_rect",
+    ]
+
+
+def test_canvas_size_limits_prevent_huge_preview_allocations():
+    with pytest.raises(FreeformValidationError, match="canvas.width must be <="):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={"width": 100001, "height": 1000},
+            shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+            connectors=[],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+    with pytest.raises(FreeformValidationError, match="canvas area must be <="):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={"width": 8000, "height": 8000},
+            shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+            connectors=[],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
+def test_collection_size_limits_prevent_unbounded_payloads():
+    with pytest.raises(FreeformValidationError, match="shapes must contain <="):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[
+                {"id": f"node_{index}", "label": "A", "x": 0, "y": 0}
+                for index in range(501)
+            ],
+            connectors=[],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
 def test_empty_shapes_fail():
     with pytest.raises(FreeformValidationError, match="freeform diagram requires at least one shape"):
         normalize_freeform_diagram(

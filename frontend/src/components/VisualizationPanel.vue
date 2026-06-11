@@ -1,7 +1,7 @@
 ﻿<template>
-  <div class="viz-panel" :class="{ 'has-content': visualizations.length }">
+  <div class="viz-panel" :class="{ 'has-content': hasPanelContent }">
     <!-- 可视化内容 -->
-    <div v-if="visualizations.length > 0" class="viz-content-section">
+    <div v-if="hasPanelContent" class="viz-content-section">
       <div class="panel-header">
         <div class="panel-title-group">
           <h3>{{ visualizationPanelTitle }}</h3>
@@ -22,7 +22,7 @@
       </div>
 
       <!-- 可视化内容列表 -->
-      <div class="panel-body">
+      <div v-if="visualizations.length > 0" class="panel-body">
         <div
           v-for="(viz, index) in visualizations"
           :key="viz.id || `${viz.type || 'viz'}_${index}`"
@@ -102,7 +102,7 @@
     </div>
 
     <!-- 空状态 -->
-    <div v-if="visualizations.length === 0" class="empty-state">
+    <div v-if="!hasPanelContent" class="empty-state">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M3 9h18" />
@@ -661,13 +661,16 @@ const relatedFiles = computed(() => normalizeRelatedArtifactFiles({
   refs: currentArtifactRefs.value
 }))
 
+const hasPanelContent = computed(() => {
+  return visualizations.value.length > 0 || relatedFiles.value.length > 0
+})
+
 const panelTitle = computed(() => {
-  return latestVisualization.value?.title || '可视化内容'
+  return latestVisualization.value?.title || currentArtifactPayload.value?.title || '可视化内容'
 })
 
 const visualizationPanelTitle = computed(() => {
-  // 可视化部分标题（仅当有可视化时显示）
-  return latestVisualization.value?.title || '可视化内容'
+  return latestVisualization.value?.title || currentArtifactPayload.value?.title || '可视化内容'
 })
 
 const typeLabelMap = {

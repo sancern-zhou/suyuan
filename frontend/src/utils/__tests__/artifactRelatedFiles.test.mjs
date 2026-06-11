@@ -30,6 +30,19 @@ const refsOnly = normalizeRelatedArtifactFiles({
 assert.equal(refsOnly.length, 1)
 assert.equal(refsOnly[0].format, 'drawio')
 
+const singleArtifact = normalizeRelatedArtifactFiles({
+  artifact: {
+    kind: 'editable_diagram',
+    format: 'drawio',
+    file_path: '/tmp/standalone.drawio',
+    file_name: 'standalone.drawio'
+  }
+})
+
+assert.equal(singleArtifact.length, 1)
+assert.equal(singleArtifact[0].format, 'drawio')
+assert.equal(singleArtifact[0].downloadLabel, 'standalone.drawio')
+
 assert.equal(
   hasRelatedArtifactFiles({
     refs: {

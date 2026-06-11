@@ -55,6 +55,40 @@ def test_export_freeform_diagram_always_writes_png_preview(tmp_path, monkeypatch
     assert result.preview_png_path.stat().st_size > 0
 
 
+def test_export_freeform_diagram_removes_stale_svg_when_not_requested(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(freeform_exporter, "_find_drawio_exporter", lambda: None)
+    diagram_with_svg = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={"width": 800, "height": 500},
+        shapes=[{"id": "a", "type": "rounded_rect", "label": "A", "x": 20, "y": 30}],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio_svg"],
+        diagram_intent="custom",
+    )
+    export_freeform_diagram(diagram_with_svg, tmp_path)
+    stale_svg = tmp_path / "assets" / "diagram.drawio.svg"
+    assert stale_svg.exists()
+
+    diagram_without_svg = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={"width": 800, "height": 500},
+        shapes=[{"id": "a", "type": "rounded_rect", "label": "A", "x": 20, "y": 30}],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio", "png"],
+        diagram_intent="custom",
+    )
+    result = export_freeform_diagram(diagram_without_svg, tmp_path)
+
+    assert not result.preview_svg_path.exists()
+    assert result.preview_png_path.exists()
+
+
 def test_export_freeform_diagram_records_warning_when_exporter_unavailable(
     tmp_path, monkeypatch
 ):

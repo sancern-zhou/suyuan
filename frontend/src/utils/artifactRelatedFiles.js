@@ -6,12 +6,20 @@ const getFileName = (filePath = '') => {
 
 const asArray = (value) => Array.isArray(value) ? value : []
 
-const getRelatedFileCandidates = ({ artifact = {}, refs = {} } = {}) => [
-  ...asArray(artifact.related_files),
-  ...asArray(artifact.relatedFiles),
-  ...asArray(artifact.artifacts),
-  ...asArray(refs.artifacts)
-]
+const getRelatedFileCandidates = ({ artifact = {}, refs = {} } = {}) => {
+  const candidates = [
+    ...asArray(artifact.related_files),
+    ...asArray(artifact.relatedFiles),
+    ...asArray(artifact.artifacts),
+    ...asArray(refs.artifacts)
+  ]
+
+  if (artifact.file_path || artifact.path) {
+    candidates.push(artifact)
+  }
+
+  return candidates
+}
 
 const normalizeEntry = (entry) => {
   if (!entry || typeof entry !== 'object') return null
@@ -49,5 +57,5 @@ export function normalizeRelatedArtifactFiles({ artifact = {}, refs = {} } = {})
 }
 
 export function hasRelatedArtifactFiles({ artifact = {}, refs = {} } = {}) {
-  return getRelatedFileCandidates({ artifact, refs }).length > 0
+  return normalizeRelatedArtifactFiles({ artifact, refs }).length > 0
 }

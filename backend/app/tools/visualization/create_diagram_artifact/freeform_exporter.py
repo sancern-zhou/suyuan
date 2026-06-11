@@ -44,6 +44,8 @@ def export_freeform_diagram(
     output_formats = set(diagram.output_formats)
     needs_png = True
     needs_svg = "drawio_svg" in output_formats
+    if not needs_svg and preview_svg_path.exists():
+        preview_svg_path.unlink()
     exporter = _find_drawio_exporter()
     exporter_ok = False
     png_export_ok = False
@@ -68,13 +70,6 @@ def export_freeform_diagram(
 
     if needs_png and (not png_export_ok or not _is_usable_file(preview_png_path)):
         _write_fallback_png(diagram, preview_png_path, warnings)
-
-    if (
-        needs_png
-        and not _is_usable_file(preview_svg_path)
-        and (exporter is None or not exporter_ok)
-    ):
-        _write_fallback_svg(diagram, preview_svg_path)
 
     return FreeformExportResult(
         drawio_path=drawio_path,
