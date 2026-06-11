@@ -42,7 +42,7 @@ def export_freeform_diagram(
     )
 
     output_formats = set(diagram.output_formats)
-    needs_png = "png" in output_formats
+    needs_png = True
     needs_svg = "drawio_svg" in output_formats
     exporter = _find_drawio_exporter()
     exporter_ok = False
