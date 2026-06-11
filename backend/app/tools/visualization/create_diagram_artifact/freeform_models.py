@@ -1,0 +1,360 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+
+class FreeformValidationError(ValueError):
+    """Raised when a freeform diagram source model is invalid."""
+
+
+KNOWN_SHAPE_TYPES = {
+    "rect",
+    "rounded_rect",
+    "text",
+    "container",
+    "swimlane",
+    "database",
+    "cloud",
+    "queue",
+    "document",
+    "circle",
+    "ellipse",
+    "hexagon",
+    "diamond",
+    "triangle",
+    "parallelogram",
+    "cylinder",
+    "actor",
+    "note",
+    "callout",
+    "brace",
+    "bracket",
+    "line",
+    "arrow",
+    "image",
+    "drawio_shape",
+}
+
+DEFAULT_OUTPUT_FORMATS = ["drawio", "png"]
+
+
+@dataclass(frozen=True)
+class FreeformCanvas:
+    width: float = 1000
+    height: float = 700
+    grid: float | None = None
+    background: str | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    def to_source_dict(self) -> dict[str, Any]:
+        source = {
+            "width": self.width,
+            "height": self.height,
+            **self.extras,
+        }
+        if self.grid is not None:
+            source["grid"] = self.grid
+        if self.background is not None:
+            source["background"] = self.background
+        return _json_safe(source)
+
+
+@dataclass(frozen=True)
+class FreeformShape:
+    id: str
+    type: str = "rounded_rect"
+    label: str = ""
+    x: float = 0
+    y: float = 0
+    width: float = 120
+    height: float = 60
+    drawio_shape_name: str | None = None
+    drawio_style: str | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    def to_source_dict(self) -> dict[str, Any]:
+        source = {
+            "id": self.id,
+            "type": self.type,
+            "label": self.label,
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            **self.extras,
+        }
+        if self.drawio_shape_name is not None:
+            source["drawio_shape_name"] = self.drawio_shape_name
+        if self.drawio_style is not None:
+            source["drawio_style"] = self.drawio_style
+        return _json_safe(source)
+
+
+@dataclass(frozen=True)
+class FreeformConnector:
+    id: str
+    source_id: str
+    target_id: str
+    label: str = ""
+    type: str = "orthogonal"
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    def to_source_dict(self) -> dict[str, Any]:
+        return _json_safe(
+            {
+                "id": self.id,
+                "from": self.source_id,
+                "to": self.target_id,
+                "label": self.label,
+                "type": self.type,
+                **self.extras,
+            }
+        )
+
+
+@dataclass(frozen=True)
+class FreeformGroup:
+    id: str
+    label: str = ""
+    children: list[str] = field(default_factory=list)
+    x: float | None = None
+    y: float | None = None
+    width: float | None = None
+    height: float | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    def to_source_dict(self) -> dict[str, Any]:
+        source = {
+            "id": self.id,
+            "label": self.label,
+            "children": list(self.children),
+            **self.extras,
+        }
+        for key in ("x", "y", "width", "height"):
+            value = getattr(self, key)
+            if value is not None:
+                source[key] = value
+        return _json_safe(source)
+
+
+@dataclass(frozen=True)
+class FreeformDiagram:
+    artifact_id: str
+    title: str
+    canvas: FreeformCanvas
+    shapes: list[FreeformShape]
+    connectors: list[FreeformConnector]
+    groups: list[FreeformGroup]
+    output_formats: list[str]
+    diagram_intent: str | None = None
+
+    def to_source_dict(self) -> dict[str, Any]:
+        return _json_safe(
+            {
+                "artifact_id": self.artifact_id,
+                "title": self.title,
+                "canvas": self.canvas.to_source_dict(),
+                "shapes": [shape.to_source_dict() for shape in self.shapes],
+                "connectors": [connector.to_source_dict() for connector in self.connectors],
+                "groups": [group.to_source_dict() for group in self.groups],
+                "output_formats": list(self.output_formats),
+                "diagram_intent": self.diagram_intent,
+            }
+        )
+
+
+def normalize_freeform_diagram(
+    *,
+    artifact_id: str,
+    title: str,
+    canvas: dict[str, Any] | None,
+    shapes: list[dict[str, Any]] | None,
+    connectors: list[dict[str, Any]] | None,
+    groups: list[dict[str, Any]] | None,
+    output_formats: list[str] | None,
+    diagram_intent: str | None,
+) -> FreeformDiagram:
+    normalized_canvas = _normalize_canvas(canvas or {})
+    normalized_shapes = [_normalize_shape(shape) for shape in shapes or []]
+    normalized_groups = [_normalize_group(group) for group in groups or []]
+    _validate_unique_ids(normalized_shapes, normalized_groups)
+
+    known_endpoint_ids = {shape.id for shape in normalized_shapes}
+    known_endpoint_ids.update(group.id for group in normalized_groups)
+    normalized_connectors = [
+        _normalize_connector(connector, known_endpoint_ids) for connector in connectors or []
+    ]
+
+    return FreeformDiagram(
+        artifact_id=str(artifact_id),
+        title=str(title),
+        canvas=normalized_canvas,
+        shapes=normalized_shapes,
+        connectors=normalized_connectors,
+        groups=normalized_groups,
+        output_formats=_normalize_output_formats(output_formats),
+        diagram_intent=diagram_intent,
+    )
+
+
+def _normalize_canvas(source: dict[str, Any]) -> FreeformCanvas:
+    known = {"width", "height", "grid", "background"}
+    return FreeformCanvas(
+        width=_number(source.get("width", 1000), "canvas.width"),
+        height=_number(source.get("height", 700), "canvas.height"),
+        grid=_optional_number(source.get("grid"), "canvas.grid"),
+        background=_optional_str(source.get("background")),
+        extras=_extras(source, known),
+    )
+
+
+def _normalize_shape(source: dict[str, Any]) -> FreeformShape:
+    known = {
+        "id",
+        "type",
+        "label",
+        "x",
+        "y",
+        "width",
+        "height",
+        "drawio_shape_name",
+        "drawio_style",
+    }
+    shape_type = str(source.get("type") or "rounded_rect")
+    if shape_type not in KNOWN_SHAPE_TYPES:
+        shape_type = "rounded_rect"
+
+    return FreeformShape(
+        id=_required_str(source, "id", "shape"),
+        type=shape_type,
+        label=str(source.get("label", "")),
+        x=_number(source.get("x", 0), "shape.x"),
+        y=_number(source.get("y", 0), "shape.y"),
+        width=_number(source.get("width", 120), "shape.width"),
+        height=_number(source.get("height", 60), "shape.height"),
+        drawio_shape_name=_optional_str(source.get("drawio_shape_name")),
+        drawio_style=_optional_str(source.get("drawio_style")),
+        extras=_extras(source, known),
+    )
+
+
+def _normalize_connector(
+    source: dict[str, Any], known_endpoint_ids: set[str]
+) -> FreeformConnector:
+    known = {"id", "from", "to", "label", "type"}
+    connector = FreeformConnector(
+        id=_required_str(source, "id", "connector"),
+        source_id=_required_str(source, "from", "connector"),
+        target_id=_required_str(source, "to", "connector"),
+        label=str(source.get("label", "")),
+        type=str(source.get("type") or "orthogonal"),
+        extras=_extras(source, known),
+    )
+
+    if connector.source_id not in known_endpoint_ids:
+        raise FreeformValidationError(
+            f"Connector {connector.id} references unknown source id {connector.source_id}"
+        )
+    if connector.target_id not in known_endpoint_ids:
+        raise FreeformValidationError(
+            f"Connector {connector.id} references unknown target id {connector.target_id}"
+        )
+    return connector
+
+
+def _normalize_group(source: dict[str, Any]) -> FreeformGroup:
+    known = {"id", "label", "children", "x", "y", "width", "height"}
+    children = source.get("children", [])
+    if children is None:
+        children = []
+    if not isinstance(children, list):
+        raise FreeformValidationError("group.children must be a list")
+
+    return FreeformGroup(
+        id=_required_str(source, "id", "group"),
+        label=str(source.get("label", "")),
+        children=[str(child) for child in children],
+        x=_optional_number(source.get("x"), "group.x"),
+        y=_optional_number(source.get("y"), "group.y"),
+        width=_optional_number(source.get("width"), "group.width"),
+        height=_optional_number(source.get("height"), "group.height"),
+        extras=_extras(source, known),
+    )
+
+
+def _validate_unique_ids(shapes: list[FreeformShape], groups: list[FreeformGroup]) -> None:
+    seen: set[str] = set()
+    for shape in shapes:
+        if shape.id in seen:
+            raise FreeformValidationError(f"Duplicate shape id {shape.id}")
+        seen.add(shape.id)
+
+    for group in groups:
+        if group.id in seen:
+            raise FreeformValidationError(f"Duplicate group id {group.id}")
+        seen.add(group.id)
+
+
+def _normalize_output_formats(output_formats: list[str] | None) -> list[str]:
+    if not output_formats:
+        return list(DEFAULT_OUTPUT_FORMATS)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for output_format in output_formats:
+        value = str(output_format).strip().lower().replace(".", "_")
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized or list(DEFAULT_OUTPUT_FORMATS)
+
+
+def _required_str(source: dict[str, Any], key: str, context: str) -> str:
+    value = source.get(key)
+    if value is None or str(value) == "":
+        raise FreeformValidationError(f"Missing {context} {key}")
+    return str(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _number(value: Any, field_name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise FreeformValidationError(f"{field_name} must be a number") from exc
+
+
+def _optional_number(value: Any, field_name: str) -> float | None:
+    if value is None:
+        return None
+    return _number(value, field_name)
+
+
+def _extras(source: dict[str, Any], known_keys: set[str]) -> dict[str, Any]:
+    return _json_safe({key: value for key, value in source.items() if key not in known_keys})
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    except (TypeError, ValueError) as exc:
+        raise FreeformValidationError("Freeform source model must be JSON-serializable") from exc
+
+
+__all__ = [
+    "FreeformValidationError",
+    "FreeformCanvas",
+    "FreeformShape",
+    "FreeformConnector",
+    "FreeformGroup",
+    "FreeformDiagram",
+    "normalize_freeform_diagram",
+]
