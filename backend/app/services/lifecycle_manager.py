@@ -17,6 +17,7 @@ from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultati
 from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
 from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyDistrictPollutantRankingFetcher,
+    MonthlyMeteorologySupportFetcher,
     MonthlyPollutionEventsComponentsFetcher,
     MonthlyStationHighValuesFetcher,
 )
@@ -70,6 +71,7 @@ def initialize_fetchers():
         fetcher_scheduler.register(MonthlyDistrictPollutantRankingFetcher())
         fetcher_scheduler.register(MonthlyStationHighValuesFetcher())
         fetcher_scheduler.register(MonthlyPollutionEventsComponentsFetcher())
+        fetcher_scheduler.register(MonthlyMeteorologySupportFetcher())
 
         logger.info(
             "fetchers_registered",

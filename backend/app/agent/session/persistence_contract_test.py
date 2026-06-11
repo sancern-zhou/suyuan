@@ -55,6 +55,53 @@ def test_complete_conversation_persistence_uses_display_history_as_truth():
     ]
 
 
+def test_capture_office_document_updates_existing_report_preview():
+    agent = ReActAgent.__new__(ReActAgent)
+    agent._session_store = {}
+    session_id = "assistant_session_existing"
+    file_path = "/tmp/reports/ops_audit/report.qmd"
+
+    agent._capture_office_document(
+        session_id,
+        {
+            "type": "office_document",
+            "data": {
+                "file_path": file_path,
+                "file_type": "report",
+                "generator": "create_report_package",
+                "html_preview": {
+                    "html_id": "ops_audit",
+                    "html_url": "/api/reports/ops_audit/html",
+                    "file_type": "report",
+                    "preview_version": "old",
+                },
+            },
+        },
+    )
+    agent._capture_office_document(
+        session_id,
+        {
+            "type": "office_document",
+            "data": {
+                "file_path": file_path,
+                "file_type": "report",
+                "generator": "edit_file",
+                "html_preview": {
+                    "html_id": "ops_audit",
+                    "html_url": "/api/reports/ops_audit/html",
+                    "file_type": "report",
+                    "preview_version": "new",
+                },
+            },
+        },
+    )
+
+    office_documents = agent._session_store[session_id]["office_documents"]
+    assert len(office_documents) == 1
+    assert office_documents[0]["generator"] == "edit_file"
+    assert office_documents[0]["html_preview"]["preview_version"] == "new"
+
+
 def test_terminal_persistence_preserves_display_history_and_adds_status():
     session = Session(
         session_id="assistant_session_existing",

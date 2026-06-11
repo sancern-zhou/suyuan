@@ -306,6 +306,17 @@ function getDocumentKey(doc) {
   return doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.file_name || ''
 }
 
+function getDocumentSignature(doc) {
+  if (!doc) return ''
+  return [
+    getDocumentKey(doc),
+    doc.html_url,
+    doc.pdf_url,
+    doc.preview_version,
+    doc.timestamp
+  ].filter(Boolean).join('|')
+}
+
 function selectDocument(doc) {
   const key = getDocumentKey(doc)
   if (!key) return
@@ -359,9 +370,12 @@ watch(officeDocuments, (docs, oldDocs = []) => {
     activeDocumentId.value = null
     return
   }
+  const latestDoc = docs[docs.length - 1]
+  const previousLatestDoc = oldDocs[oldDocs.length - 1]
+  const latestChanged = getDocumentSignature(latestDoc) !== getDocumentSignature(previousLatestDoc)
   const activeStillExists = docs.some(doc => getDocumentKey(doc) === activeDocumentId.value)
-  if (!activeStillExists || docs.length > oldDocs.length) {
-    activeDocumentId.value = getDocumentKey(docs[docs.length - 1])
+  if (!activeStillExists || docs.length > oldDocs.length || latestChanged) {
+    activeDocumentId.value = getDocumentKey(latestDoc)
   }
 }, { immediate: true })
 

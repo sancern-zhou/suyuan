@@ -54,6 +54,22 @@ async def test_read_text_allows_large_file_when_limit_is_explicit(tmp_path):
     assert result["data"]["line_range"] == [2, 3]
     assert result["data"]["total_lines"] == 4
     assert result["data"]["is_truncated"] is True
+    assert result["refs"]["files"] == [
+        {
+            "path": str(file_path),
+            "type": "text",
+            "format": "txt",
+            "size": file_path.stat().st_size,
+            "line_range": [2, 3],
+            "total_lines": 4,
+            "is_truncated": True,
+            "usage": "read_file",
+        }
+    ]
+    assert result["llm_resume"]["content_preview"] == "line 2\nline 3"
+    assert result["llm_resume"]["tool_hint"] == (
+        f"Use read_file(path='{file_path}', offset=3, limit=2) to continue reading."
+    )
 
 
 @pytest.mark.asyncio

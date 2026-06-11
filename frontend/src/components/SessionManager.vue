@@ -110,7 +110,7 @@ const emptyMessage = computed(() => '暂无会话记录')
 const fetchSessions = async () => {
   loading.value = true
   try {
-    const response = await listSessions()
+    const response = await listSessions({ limit: 200 })
     sessions.value = response.sessions
   } catch (error) {
     console.error('Failed to fetch sessions:', error)

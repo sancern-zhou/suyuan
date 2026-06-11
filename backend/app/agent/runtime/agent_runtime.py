@@ -491,8 +491,41 @@ class AgentRuntime:
         state: RunState,
         action: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        """Task tools are not short-circuited; they return their own no-op result."""
-        return None
+        """Short-circuit housekeeping tools that were hidden for the current LLM turn."""
+        tool_names: list[str] = []
+        if action.get("type") == "TOOL_CALLS":
+            tool_names = [
+                tool.get("tool", "")
+                for tool in action.get("tools", [])
+                if isinstance(tool, dict)
+            ]
+        elif action.get("type") == "TOOL_CALL":
+            tool_names = [action.get("tool", "")]
+
+        suppressed = [
+            tool_name
+            for tool_name in tool_names
+            if tool_name in state.suppress_tool_names_current_turn
+            and tool_name in HOUSEKEEPING_TOOL_NAMES
+        ]
+        if not suppressed:
+            return None
+
+        return {
+            "status": "blocked",
+            "success": False,
+            "suppressed_tool_call": True,
+            "error": "suppressed_housekeeping_tool_call",
+            "data": {
+                "tool_name": suppressed[0],
+                "suppressed_tools": suppressed,
+                "iteration": state.iteration,
+            },
+            "summary": (
+                f"状态管理工具 {suppressed[0]} 本轮已被系统抑制，"
+                "不要重复更新任务状态；请执行真实业务工具，或直接给出最终回答。"
+            ),
+        }
 
     def _apply_housekeeping_policy(
         self,

@@ -1,6 +1,7 @@
 import pytest
 
 from app.agent.core.executor import ToolExecutor
+from app.agent.core.planner import ReActPlanner
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.agent.tool_adapter import call_llm_tool, get_react_agent_tool_registry
 
@@ -123,3 +124,79 @@ async def test_call_llm_tool_keeps_context_keyword_for_context_aware_tools(monke
     assert captured["execution_context"] is runtime_context
     assert captured["pattern"] == "case.*image"
     assert "context" not in captured["kwargs"]
+
+
+@pytest.mark.asyncio
+async def test_planner_preserves_tool_input_from_streaming_start_block():
+    class ToolBlock:
+        type = "tool_use"
+        id = "toolu_ppt"
+        name = "create_pptx_with_ppt_master"
+        input = {"title": "测试PPT", "slide_plan": [{"title": "第一页"}]}
+
+    class FakeLLMService:
+        provider = "deepseek"
+        model = "deepseek-v4-pro"
+
+        async def chat_anthropic_streaming(self, **kwargs):
+            yield {"type": "content_block_start", "data": {"index": 0, "block": ToolBlock()}}
+            yield {"type": "content_block_stop", "data": {"index": 0}}
+            yield {"type": "message_stop", "data": {}}
+
+    planner = ReActPlanner(llm_client=FakeLLMService())
+
+    tool_inputs = []
+    actions = []
+    async for event in planner.think_and_action_streaming(
+        query="生成PPT",
+        system_prompt="system",
+        user_conversation="user",
+        tools=[],
+        iteration=1,
+        mode="assistant",
+    ):
+        if event["type"] == "tool_use":
+            tool_inputs.append(event["data"]["input"])
+        if event["type"] == "action":
+            actions.append(event["data"]["action"])
+
+    assert tool_inputs == [{"title": "测试PPT", "slide_plan": [{"title": "第一页"}]}]
+    assert actions[0]["args"]["title"] == "测试PPT"
+
+
+@pytest.mark.asyncio
+async def test_planner_preserves_tool_input_from_streaming_json_delta():
+    class ToolBlock:
+        type = "tool_use"
+        id = "toolu_read"
+        name = "read_file"
+
+    class Delta:
+        type = "input_json_delta"
+        partial_json = '{"path": "/tmp/a.txt"}'
+
+    class FakeLLMService:
+        provider = "anthropic"
+        model = "claude"
+
+        async def chat_anthropic_streaming(self, **kwargs):
+            yield {"type": "content_block_start", "data": {"index": 0, "block": ToolBlock()}}
+            yield {"type": "content_block_delta", "data": {"index": 0, "delta": Delta()}}
+            yield {"type": "content_block_stop", "data": {"index": 0}}
+            yield {"type": "message_stop", "data": {}}
+
+    planner = ReActPlanner(llm_client=FakeLLMService())
+
+    tool_inputs = []
+    async for event in planner.think_and_action_streaming(
+        query="读文件",
+        system_prompt="system",
+        user_conversation="user",
+        tools=[],
+        iteration=1,
+        mode="assistant",
+    ):
+        if event["type"] == "tool_use":
+            tool_inputs.append(event["data"]["input"])
+
+    assert tool_inputs == [{"path": "/tmp/a.txt"}]

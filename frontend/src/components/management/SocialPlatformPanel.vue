@@ -60,4 +60,5 @@ defineEmits(['close'])
   height: calc(100% - 60px);
   overflow-y: auto;
 }
+
 </style>

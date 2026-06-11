@@ -568,6 +568,14 @@ def _review_no_device_tasks_batch(
     for candidate in candidates:
         item_id = str(candidate["item_id"])
         parsed = parsed_by_item.get(item_id, {})
+        if _is_plain_no_device_situation(candidate.get("situation_value")):
+            parsed = {
+                **parsed,
+                "is_explained": True,
+                "reason": "运行情况填写无，按当前口径视为无对应设备。",
+                "problem_description": "",
+                "confidence": max(_bounded_confidence(parsed.get("confidence"), default=0.0), 0.95),
+            }
         confidence = _bounded_confidence(parsed.get("confidence"), default=0.0)
         reviewed = {**candidate, **parsed, "confidence": confidence}
         code = str(candidate.get("working_order_code") or "")
@@ -620,6 +628,26 @@ def _review_no_device_tasks_batch(
         results[code] = result
         _limit_supported_rule_ids(results[code], "RF_NO_DEVICE_WITHOUT_REMARK")
     return results
+
+
+def _is_plain_no_device_situation(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    normalized = text.replace(" ", "")
+    return normalized in {
+        "无",
+        "无设备",
+        "无此设备",
+        "无该设备",
+        "无对应设备",
+        "无能见度设备",
+        "无能见度仪",
+        "无能见度仪器",
+        "未配置",
+        "未安装",
+        "不适用",
+    }
 
 
 def _attach_no_device_rf_context(result: dict[str, Any], items: list[dict[str, Any]]) -> None:

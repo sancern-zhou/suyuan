@@ -36,3 +36,15 @@ assert.match(
   /reactStore\.officeDocumentHistory/,
   'OfficeDocumentPanel should source file history from session store so tab remounts do not drop older files'
 )
+
+assert.match(
+  source,
+  /function getDocumentSignature\(doc\)[\s\S]*doc\.preview_version[\s\S]*doc\.timestamp/,
+  'OfficeDocumentPanel should detect same-file preview updates via versioned document signatures'
+)
+
+assert.match(
+  source,
+  /latestChanged[\s\S]*activeDocumentId\.value = getDocumentKey\(latestDoc\)/,
+  'OfficeDocumentPanel should switch active preview when the latest document is updated in place'
+)

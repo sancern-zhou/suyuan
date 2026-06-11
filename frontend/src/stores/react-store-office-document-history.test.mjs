@@ -40,6 +40,24 @@ assert.doesNotMatch(
 )
 
 assert.match(
+  storeSource,
+  /case 'complete':[\s\S]*data\?\.office_documents[\s\S]*recordOfficeDocument\(/,
+  'complete events should merge office_documents into history so missed live preview events still refresh the file panel'
+)
+
+assert.match(
+  storeSource,
+  /targetState\.officeDocumentHistory\.splice\(existingIndex,\s*1\)[\s\S]*targetState\.officeDocumentHistory\.push\(updatedDoc\)/,
+  'updated office documents should move to the end so the latest preview becomes active'
+)
+
+assert.match(
+  storeSource,
+  /setOfficeDocumentHistory\(documents\)[\s\S]*\.slice\(\)[\s\S]*\.sort\(\(a,\s*b\)[\s\S]*new Date\(a\?\.timestamp \|\| 0\)[\s\S]*new Date\(b\?\.timestamp \|\| 0\)[\s\S]*\.forEach\(doc => this\.recordOfficeDocument\(doc,\s*this\.currentState\)\)/,
+  'session restore should sort office documents oldest-first so the newest preview remains active'
+)
+
+assert.match(
   sessionSource,
   /setOfficeDocumentHistory\(officeDocs\)/,
   'session restore should hydrate the full document history, not only the latest document'

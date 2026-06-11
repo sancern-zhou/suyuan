@@ -765,7 +765,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
         attachments = rows(
             cursor,
             f"""
-            SELECT TOP 3000 *
+            SELECT TOP 6000 *
             FROM dbo.wo_commonfile_links
             WHERE refid IN ({code_placeholders}) OR remark IN ({code_placeholders})
             ORDER BY createdate DESC
@@ -776,7 +776,7 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
         wo_commonfile = rows(
             cursor,
             f"""
-            SELECT TOP 3000 *
+            SELECT TOP 6000 *
             FROM dbo.WO_COMMONFILE
             WHERE REFID IN ({code_placeholders})
             ORDER BY CREATEDATE DESC

@@ -139,7 +139,7 @@ async def close_db():
         logger.warning("database_close_timeout", message="Database close timed out, forcing disposal")
         # 超时后尝试强制关闭（忽略错误）
         try:
-            engine.dispose(close_wake_up=True)
+            engine.dispose(close=True)  # ✅ 修复：使用正确的参数名
         except Exception as e:
             logger.warning("database_force_close_failed", error=str(e))
     except Exception as e:

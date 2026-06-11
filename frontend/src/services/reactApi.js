@@ -1,7 +1,7 @@
 // ReAct Agent API客户端
 // 处理与ReAct Agent的SSE流式通信
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 class ReactAgentAPI {
   constructor() {
@@ -209,16 +209,6 @@ class ReactAgentAPI {
   // 取消请求
   async cancel(requestKey = null) {
     if (requestKey) {
-      try {
-        await fetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
-          method: 'POST'
-        })
-      } catch (error) {
-        console.warn('Failed to cancel backend analysis:', error)
-      }
-    }
-
-    if (requestKey) {
       const controller = this.controllers.get(requestKey)
       if (controller) {
         controller.abort()
@@ -227,6 +217,12 @@ class ReactAgentAPI {
       if (this.controller === controller) {
         this.controller = null
       }
+      const backendCancelPromise = fetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
+        method: 'POST'
+      }).catch((error) => {
+        console.warn('Failed to cancel backend analysis:', error)
+      })
+      void backendCancelPromise
       return
     }
 

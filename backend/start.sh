@@ -3,6 +3,9 @@
 
 set -e  # Exit on error
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 echo "=========================================="
 echo "Air Pollution Traceability Backend"
 echo "=========================================="
@@ -51,4 +54,4 @@ APP_ROLE="${APP_ROLE:-web}"
 export APP_ROLE
 WORKERS="${WORKERS:-4}"
 echo "[INFO] Starting role=${APP_ROLE} with ${WORKERS} worker(s)"
-"${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "${WORKERS}"
+"${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "${WORKERS}" --env-file .env

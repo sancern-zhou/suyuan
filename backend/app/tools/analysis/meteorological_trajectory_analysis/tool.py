@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_resume_context, merge_refs
 from app.external_apis.noaa_hysplit_api import NOAAHysplitAPI
 
 if TYPE_CHECKING:
@@ -375,7 +376,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                 dominant_direction=dominant_direction
             )
 
-            return {
+            response = {
                 "data_id": trajectory_data_id,
                 "trajectory_data": {
                     "endpoints": endpoints,
@@ -423,6 +424,8 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                     f"主导方向: {dominant_direction}。"
                 )
             }
+            self._attach_resume_context(response)
+            return response
 
         except Exception as e:
             logger.error(
@@ -444,6 +447,14 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                 },
                 "summary": f"轨迹分析异常: {str(e)[:50]}"
             }
+
+    def _attach_resume_context(self, result: Dict[str, Any]) -> None:
+        data_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        context = build_data_resume_context(
+            generated_data_ids=[data_id] if data_id else [],
+        )
+        result["refs"] = merge_refs(result.get("refs"), context["refs"])
+        result["llm_resume"] = context["llm_resume"]
 
     def _format_trajectory_for_llm(
         self,

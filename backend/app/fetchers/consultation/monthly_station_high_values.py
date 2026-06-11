@@ -15,7 +15,9 @@ from typing import Dict, List, Optional, Any, Set, Tuple
 import structlog
 
 from app.tools.query.query_station_standard_report.tool import execute_query_station_standard_report
+from app.fetchers.consultation.city_mapping import normalize_city_identity
 from app.fetchers.consultation.field_normalizer import StationFieldNormalizer
+from app.fetchers.consultation.output_paths import get_monthly_consultation_dir
 
 logger = structlog.get_logger()
 
@@ -52,7 +54,7 @@ class MonthlyStationHighValues:
             self.last_year_end = datetime(year - 1, month + 1, 1) - timedelta(days=1)
 
         # 输出目录
-        self.output_dir = Path(f"backend_data_registry/月度补充数据/{year}年{month:02d}月")
+        self.output_dir = get_monthly_consultation_dir(year, month)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _format_date(self, date: datetime) -> str:
@@ -238,8 +240,12 @@ class MonthlyStationHighValues:
 
             row = {
                 "station": station,
-                "city": curr_vals.get("city", ""),
             }
+            city_name, city_code = normalize_city_identity(
+                curr_vals.get("city") or curr_vals.get("city_code") or last_vals.get("city") or last_vals.get("city_code")
+            )
+            row["city"] = city_name
+            row["city_code"] = city_code
 
             # 添加污染物浓度和同比
             for pollutant in self.POLLUTANTS:
@@ -331,7 +337,7 @@ class MonthlyStationHighValues:
             return
 
         # 构建字段名
-        fieldnames = ["station", "city", "high_value_reason"]
+        fieldnames = ["station", "city", "city_code", "high_value_reason"]
         for pollutant in self.POLLUTANTS:
             fieldnames.extend([pollutant, f"{pollutant}_yoy"])
 

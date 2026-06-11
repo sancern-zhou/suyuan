@@ -6,6 +6,9 @@
   deck is ready for delivery.
 - After generation, always inspect `qa_status`, `quality_gate`, and
   `revision_tasks`.
+- QA output describes facts only: issue type, severity, slide, location,
+  evidence metrics, and preview artifacts. QA must not decide how to rewrite
+  the deck.
 - If validation is enabled, inspect `validation` and the rendered preview
   artifacts.
 
@@ -15,8 +18,9 @@
   `rewrite_required`.
 - Key QA issues must be copied into `quality_gate.issues`.
 - `qa_status=passed` means the deck can be delivered.
-- `qa_status=needs_revision` means follow `revision_tasks` and revise before
-  delivery.
+- `qa_status=needs_revision` means use `revision_tasks` as structured issue
+  inputs, inspect the previous `slide_plan`, and let the Agent decide the local
+  `plan_patch`.
 - `qa_status=qa_failed` means fix validation, rendering, or font problems
   before judging quality.
 

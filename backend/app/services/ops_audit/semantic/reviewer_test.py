@@ -138,3 +138,49 @@ def test_no_device_review_cleared_conclusion_uses_placeholder_reason_language(mo
 
     assert result["judgment"] == "cleared"
     assert result["conclusion"] == "运行情况已能合理解释型号字段缺失或占位原因。"
+
+
+def test_no_device_review_clears_plain_none_even_when_model_marks_insufficient(monkeypatch):
+    def fake_call(prompt, text, *, context=None):
+        return {
+            "results": [
+                {
+                    "item_id": "WO-1::0",
+                    "is_explained": False,
+                    "reason": "模拟模型仍按旧口径认为无是低信息内容。",
+                    "problem_description": "能见度设备型号为/，运行情况为无，未说明原因。",
+                    "confidence": 0.95,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", fake_call)
+    evidence = {
+        "violations": [
+            {
+                "label": "能见度设备",
+                "model_field": "VISIBILITYDEVICEMODEL",
+                "model_value": "/",
+                "situation_field": "VISIBILITYSITUATION",
+                "situation_value": "无",
+            }
+        ]
+    }
+    task = {
+        "working_order_code": "WO-1",
+        "semantic_focus": ["RF_NO_DEVICE_WITHOUT_REMARK"],
+        "evidence_summary": {
+            "sample_issues": [
+                {
+                    "rule_id": "RF_NO_DEVICE_WITHOUT_REMARK",
+                    "evidence": json.dumps(evidence, ensure_ascii=False),
+                }
+            ]
+        },
+    }
+
+    result = reviewer._review_no_device_tasks_batch([task], {}, {}, {}, {})["WO-1"]
+
+    assert result["judgment"] == "cleared"
+    assert result["can_promote_to_final_issue"] is False
+    assert result["remark_review"]["problem_description"] == ""

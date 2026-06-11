@@ -19,7 +19,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.tools.utility.grep_tool import GrepTool
-from app.tools.utility.edit_file_tool import EditFileTool
+from app.tools.utility.edit_file_tool_v2 import EditFileToolV2
+from app.tools.utility.file_read_state import reset_file_read_state
 
 
 class TestFileFormatSupport:
@@ -30,7 +31,8 @@ class TestFileFormatSupport:
 
     @pytest.fixture
     def edit_tool(self):
-        return EditFileTool()
+        reset_file_read_state()
+        return EditFileToolV2()
 
     @pytest.fixture
     def test_dir(self):
@@ -153,7 +155,8 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] >= 1
+        assert result["data"]["numLines"] >= 1
+        assert "功能特性" in result["data"]["content"]
 
     @pytest.mark.asyncio
     async def test_grep_json(self, grep_tool, test_dir):
@@ -163,7 +166,8 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] >= 1
+        assert result["data"]["numLines"] >= 1
+        assert '"port"' in result["data"]["content"]
 
     @pytest.mark.asyncio
     async def test_grep_yaml(self, grep_tool, test_dir):
@@ -173,7 +177,8 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] >= 1
+        assert result["data"]["numLines"] >= 1
+        assert "database:" in result["data"]["content"]
 
     @pytest.mark.asyncio
     async def test_grep_xml(self, grep_tool, test_dir):
@@ -183,7 +188,7 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] == 2
+        assert result["data"]["numLines"] == 2
 
     @pytest.mark.asyncio
     async def test_grep_html(self, grep_tool, test_dir):
@@ -193,7 +198,8 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] >= 1
+        assert result["data"]["numLines"] >= 1
+        assert "<h1>" in result["data"]["content"]
 
     @pytest.mark.asyncio
     async def test_grep_css(self, grep_tool, test_dir):
@@ -203,7 +209,8 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] >= 1
+        assert result["data"]["numLines"] >= 1
+        assert "background-color" in result["data"]["content"]
 
     @pytest.mark.asyncio
     async def test_grep_sql(self, grep_tool, test_dir):
@@ -213,7 +220,8 @@ DEBUG=true
             output_mode="content"
         )
         assert result["success"] is True
-        assert result["data"]["total_matches"] >= 1
+        assert result["data"]["numLines"] >= 1
+        assert "CREATE TABLE" in result["data"]["content"]
 
     @pytest.mark.asyncio
     async def test_grep_type_filter_md(self, grep_tool, test_dir):
@@ -225,8 +233,8 @@ DEBUG=true
             output_mode="files_with_matches"
         )
         assert result["success"] is True
-        assert result["data"]["files_matched"] >= 1
-        assert any("README.md" in f for f in result["data"]["results"])
+        assert result["data"]["numFiles"] >= 1
+        assert any("README.md" in f for f in result["data"]["filenames"])
 
     # ========================================
     # Edit 工具测试
@@ -235,8 +243,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_markdown(self, edit_tool, test_dir):
         file_path = test_dir / "README.md"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string="# 项目标题",
             new_string="# 新项目标题"
         )
@@ -246,8 +255,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_json(self, edit_tool, test_dir):
         file_path = test_dir / "config.json"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string='"port": 8000',
             new_string='"port": 9000'
         )
@@ -257,8 +267,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_yaml(self, edit_tool, test_dir):
         file_path = test_dir / "config.yaml"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string="host: localhost",
             new_string="host: 127.0.0.1"
         )
@@ -268,8 +279,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_xml(self, edit_tool, test_dir):
         file_path = test_dir / "data.xml"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string='<item id="1">Item One</item>',
             new_string='<item id="1">Updated Item</item>'
         )
@@ -279,8 +291,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_html(self, edit_tool, test_dir):
         file_path = test_dir / "index.html"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string="<h1>Welcome</h1>",
             new_string="<h1>Hello World</h1>"
         )
@@ -290,8 +303,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_css(self, edit_tool, test_dir):
         file_path = test_dir / "style.css"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string="background-color: blue;",
             new_string="background-color: red;"
         )
@@ -301,8 +315,9 @@ DEBUG=true
     @pytest.mark.asyncio
     async def test_edit_sql(self, edit_tool, test_dir):
         file_path = test_dir / "schema.sql"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string="VARCHAR(100)",
             new_string="VARCHAR(200)"
         )
@@ -313,8 +328,9 @@ DEBUG=true
     async def test_edit_multiline_markdown(self, edit_tool, test_dir):
         """测试多行 Markdown 编辑"""
         file_path = test_dir / "README.md"
+        _mark_file_read(edit_tool, file_path)
         result = await edit_tool.execute(
-            file_path=str(file_path),
+            path=str(file_path),
             old_string="""## 功能特性
 
 - 特性1：数据分析
@@ -330,6 +346,17 @@ DEBUG=true
         content = file_path.read_text(encoding="utf-8")
         assert "核心功能" in content
         assert "智能分析" in content
+
+
+def _mark_file_read(edit_tool: EditFileToolV2, file_path: Path) -> None:
+    """Record the full file read required by EditFileToolV2."""
+    content = file_path.read_text(encoding="utf-8")
+    edit_tool.read_state.set(
+        str(file_path.resolve()),
+        content=content,
+        file_size=len(content),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

@@ -25,8 +25,7 @@ ASSISTANT_TOOL_NAMES = {
     "search_files", "list_skills", "view_skill", "create_skill_draft",
 
     # Office工具
-    "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx_with_ppt_master", "validate_pptx",
+    "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
@@ -40,7 +39,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 其他工具
     "create_scheduled_task", "broadcast_social_users", "analyze_image", "browser", "call_sub_agent",
-    "web_search", "web_fetch", "wait_task",
+    "web_search", "web_fetch", "wait_task", "get_platform_weather_image",
 
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -53,7 +52,7 @@ ASSISTANT_TOOL_NAMES = {
 EXPERT_TOOL_NAMES = {
     # 数据查询工具
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
+    "get_weather_forecast", "get_platform_weather_image", "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day",
     "query_gd_suncere_district_report",
@@ -91,6 +90,7 @@ QUERY_TOOL_NAMES = {
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
     "query_gd_suncere_district_report",
+    "analyze_city_pollutant_rankings",
 
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
@@ -124,6 +124,7 @@ REPORT_TOOL_NAMES = {
     "query_gd_suncere_district_report",    # 区县统计报表（月度/年度/任意时段）
     "query_station_standard_report",       # 站点新/旧国标统计报表
     "query_station_standard_yoy_report",   # 站点新/旧国标同比/环比统计报表
+    "analyze_city_pollutant_rankings",     # 城市污染物较低/较高排名确定性分析
 
     # === 数据读取 ===
     "read_data_registry",
@@ -284,8 +285,7 @@ ASSISTANT_TOOL_ORDER = [
     "list_directory", "search_files", "read_file",
 
     # Office
-    "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx_with_ppt_master", "validate_pptx",
+    "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
@@ -294,7 +294,8 @@ ASSISTANT_TOOL_ORDER = [
     "write_file", "edit_file", "grep",
 
     # 执行
-    "bash", "create_diagram_artifact", "create_report_chart", "execute_python", "analyze_image", "browser",
+    "bash", "create_diagram_artifact", "create_report_chart", "execute_python",
+    "get_platform_weather_image", "analyze_image", "browser",
 
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -311,7 +312,7 @@ EXPERT_TOOL_ORDER = [
     # 数据查询
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast",
+    "get_weather_forecast", "get_platform_weather_image",
     "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",

@@ -18,7 +18,7 @@ class BaseChannel(ABC):
     """
     Abstract base class for chat channel implementations.
 
-    Each channel (QQ, WeChat, DingTalk, WeCom) should implement this interface
+    Each channel (QQ, WeChat, DingTalk) should implement this interface
     to integrate with the message bus.
     """
 

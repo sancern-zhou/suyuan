@@ -36,6 +36,7 @@ from typing import Dict, Any, Optional, List
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
 from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir
 from app.tools.system.data_registry_read_state import get_data_registry_read_state
 
@@ -698,6 +699,7 @@ class ExecutePythonTool(LLMTool):
                 if not chart_data.get("paths") and not chart_data.get("base64_data"):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
+            self._attach_resume_context(result)
             return result
 
         except Exception as e:
@@ -890,6 +892,93 @@ class ExecutePythonTool(LLMTool):
                     if os.path.isfile(file_path):
                         generated_files.append(file_path)
         return generated_files
+
+    def _attach_resume_context(self, result: Dict[str, Any]) -> None:
+        if not isinstance(result, dict) or not result.get("success"):
+            return
+
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        file_paths = []
+        for path in data.get("files") or []:
+            if path:
+                file_paths.append(str(path))
+        if data.get("file_path"):
+            file_paths.insert(0, str(data["file_path"]))
+        file_paths = list(dict.fromkeys(file_paths))
+
+        file_refs = []
+        for path in file_paths:
+            path_obj = Path(path)
+            file_refs.append(
+                build_file_ref(
+                    path,
+                    type=self._resource_type_for_path(path_obj),
+                    format=path_obj.suffix.lstrip(".").lower() or None,
+                    size=path_obj.stat().st_size if path_obj.exists() else None,
+                    usage="generated_file",
+                    preferred_for=["present_artifact", "read_file"],
+                )
+            )
+
+        data_refs = [
+            build_data_ref(data_id, usage="generated")
+            for data_id in (result.get("data_ids") or data.get("data_ids") or [])
+            if data_id
+        ]
+
+        visual_refs = []
+        for visual in result.get("visuals") or []:
+            if not isinstance(visual, dict):
+                continue
+            visual_data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
+            visual_meta = visual.get("meta") if isinstance(visual.get("meta"), dict) else {}
+            image_url = visual.get("image_url") or visual_data.get("url") or visual_data.get("image_url") or visual_meta.get("image_url")
+            local_path = visual.get("local_path") or visual_data.get("local_path") or visual_meta.get("local_path")
+            file_path = visual.get("file_path") or visual_data.get("source_file_path") or visual_data.get("file_path") or visual_meta.get("file_path")
+            visual_refs.append(
+                build_visual_ref(
+                    id=visual.get("id"),
+                    type=visual.get("type"),
+                    title=visual.get("title"),
+                    image_url=image_url,
+                    local_path=local_path,
+                    file_path=file_path,
+                )
+            )
+
+        refs = {}
+        if file_refs:
+            refs["files"] = file_refs
+        if data_refs:
+            refs["data"] = data_refs
+        visual_refs = [ref for ref in visual_refs if ref]
+        if visual_refs:
+            refs["visuals"] = visual_refs
+        if refs:
+            result["refs"] = merge_refs(result.get("refs"), refs)
+
+        llm_resume: Dict[str, Any] = {}
+        if file_paths:
+            llm_resume["generated_files"] = file_paths
+            llm_resume["tool_hint"] = f"Use present_artifact(file_path='{file_paths[0]}') to preview the primary generated file."
+        if data_refs:
+            llm_resume["data_ids"] = [ref["data_id"] for ref in data_refs]
+        if visual_refs and "tool_hint" not in llm_resume:
+            first_visual_path = visual_refs[0].get("tool_path")
+            if first_visual_path:
+                llm_resume["tool_hint"] = f"Use analyze_image(path='{first_visual_path}') for image analysis."
+        if llm_resume:
+            result["llm_resume"] = llm_resume
+
+    def _resource_type_for_path(self, path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}:
+            return "image"
+        if suffix in {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".qmd", ".md", ".html", ".htm"}:
+            return "document"
+        if suffix in {".json", ".csv", ".parquet", ".xlsx", ".xls"}:
+            return "data"
+        return "file"
 
     def _move_to_permanent_dir(self, files: list) -> list:
         """移动文件到永久目录"""
@@ -2345,12 +2434,110 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             result["metadata"]["actual_charts"] = len(echarts_visuals)
             return result
 
+        await self._attach_static_preview_urls(echarts_visuals)
+
         result["visuals"] = echarts_visuals
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
+        markdown_images = [
+            visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
+            for visual in echarts_visuals
+            if visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
+        ]
         result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
+        if markdown_images:
+            result["summary"] = f"{result['summary']}\n\n" + "\n".join(markdown_images)
         return result
+
+    async def _attach_static_preview_urls(self, visuals: List[Dict[str, Any]]) -> None:
+        """Attach /api/image previews while preserving the interactive ECharts payload."""
+        for visual in visuals:
+            echarts_data = visual.get("data")
+            if not isinstance(echarts_data, dict):
+                continue
+
+            image_info = await self._render_echarts_preview_to_cache(visual)
+            if not image_info:
+                continue
+
+            image_url = image_info["url"]
+            title = visual.get("title") or "ECharts 图表"
+            markdown_image = f"![{title}]({image_url})"
+
+            visual["image_url"] = image_url
+            visual["markdown_image"] = markdown_image
+            visual.setdefault("data", {})
+            visual["data"]["image_url"] = image_url
+            visual["data"]["markdown_image"] = markdown_image
+            visual["data"]["image_id"] = image_info.get("image_id")
+            visual["data"]["local_path"] = image_info.get("local_path")
+            visual.setdefault("meta", {})
+            visual["meta"]["image_url"] = image_url
+            visual["meta"]["markdown_image"] = markdown_image
+            visual["meta"]["image_id"] = image_info.get("image_id")
+            visual["meta"]["static_preview"] = {
+                "url": image_url,
+                "image_id": image_info.get("image_id"),
+                "local_path": image_info.get("local_path"),
+                "size_kb": image_info.get("size_kb"),
+            }
+
+    async def _render_echarts_preview_to_cache(self, visual: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        echarts_data = visual.get("data")
+        if not isinstance(echarts_data, dict):
+            return None
+
+        temp_path = None
+        try:
+            from app.services.image_cache import get_image_cache
+            from app.tools.visualization.chart_image_renderer.tool import ChartImageRenderer
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                temp_path = tmp_file.name
+
+            renderer = ChartImageRenderer()
+            success = await renderer._render_with_playwright(
+                echarts_option=echarts_data,
+                output_path=temp_path,
+                width=1000,
+                height=650,
+            )
+            if not success or not os.path.exists(temp_path):
+                logger.warning(
+                    "echarts_static_preview_render_failed",
+                    visual_id=visual.get("id"),
+                    chart_type=visual.get("type"),
+                )
+                return None
+
+            with open(temp_path, "rb") as image_file:
+                encoded = base64.b64encode(image_file.read()).decode("utf-8")
+
+            image_id = f"{visual.get('id', f'echarts_{time.time_ns()}')}_preview"
+            image_info = get_image_cache().save(encoded, chart_id=image_id)
+            logger.info(
+                "echarts_static_preview_cached",
+                visual_id=visual.get("id"),
+                image_id=image_info.get("image_id"),
+                image_url=image_info.get("url"),
+            )
+            return image_info
+        except Exception as e:
+            logger.warning(
+                "echarts_static_preview_failed",
+                visual_id=visual.get("id"),
+                chart_type=visual.get("type"),
+                error=str(e),
+                exc_info=True,
+            )
+            return None
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
 
     def get_function_schema(self) -> Dict[str, Any]:
         """获取 ECharts 专用 Function Calling Schema"""
@@ -2360,6 +2547,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                 "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
+                "工具会同时生成静态预览 image_url/markdown_image，聊天正文必须直接使用该 /api/image/{image_id} 链接。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),

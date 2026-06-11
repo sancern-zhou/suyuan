@@ -4,7 +4,7 @@
 
 ## 工具路由
 
-- PPT 读取、模板分析、生成、编辑、验证：阅读 `backend/app/tools/office/PPT操作指南.md`，使用 `read_pptx`、`analyze_pptx_template`、`create_pptx_from_template`、`edit_pptx`、`validate_pptx`、`create_pptx_with_ppt_master`。
+- PPT 读取、生成、续改、验证：阅读 `backend/app/tools/office/PPT操作指南.md`，使用 `read_pptx`、`create_pptx_with_ppt_master`、`validate_pptx`。
 - 正式业务 PPT：先读 `backend/app/tools/office/ppt_master_references/index.md`，再按任务渐进读取所需设计规则。
 - Excel 读取、创建、修改、公式和图表：阅读 `backend/app/tools/office/Excel操作指南.md`，使用 `execute_python` 配合 `openpyxl`、`pandas`、`xlsxwriter`。
 - Word 读取：使用 `read_file` 或 `read_docx`。当前助手模式不暴露既有 Word 文档编辑工具。
@@ -12,6 +12,7 @@
 ## 硬性约束
 
 - 生成正式业务 PPT 时优先使用 `create_pptx_with_ppt_master`。
+- 续改 PPT Master 生成物时，读取上一版 `slide_plan.v*.json`，由 Agent 编写局部 `plan_patch`，继续调用 `create_pptx_with_ppt_master` 合并并重绘。
 - PPT 图表图片必须在创建 PPT 时通过 `outline[].chart.image_path`、`outline[].chart.path` 或 `outline[].visual.image_path` 传入，不要先生成 mock PPT 再猜槽位替换。
 - PPT 生成后必须读取 `qa_status`、`quality_gate` 和 `validation.montage_path`；如生成了 montage，总览图必须再调用 `analyze_image` 做视觉质量检查。
 - 工具约束统一维护在 `backend/app/tools/office/ppt_master_references/`，不要从 `backend/docs/skills/` 复制或扩展 PPT Master 规则。

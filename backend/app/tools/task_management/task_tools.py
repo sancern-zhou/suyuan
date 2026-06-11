@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.task.task_models import TaskList, TaskStatus
@@ -22,23 +22,41 @@ class TaskCreateTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="TaskCreate",
-            description="创建一个新任务。用于复杂多步骤任务的增量任务管理。",
+            description=(
+                "创建一个新任务。仅用于需要拆分为 8 个以上任务节点的复杂多步骤任务。"
+            ),
             category=ToolCategory.TASK_MANAGEMENT,
             requires_context=True,
             function_schema={
                 "name": "TaskCreate",
-                "description": "Create a task in the current session task list.",
+                "description": (
+                    "Create multiple tasks in the current session task list in one call. "
+                    "Only use task-list tools for complex multi-step work that requires "
+                    "more than 8 task nodes; do not use them for 8 or fewer task nodes."
+                    " 复杂多步骤任务指需要拆分为 8 个以上任务节点的任务。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "subject": {"type": "string", "description": "简短、可执行的任务标题"},
-                        "description": {"type": "string", "description": "任务需要完成的具体内容"},
-                        "activeForm": {
-                            "type": "string",
-                            "description": "任务执行中显示的现在进行时描述，可选",
+                        "tasks": {
+                            "type": "array",
+                            "description": "一次性创建的任务数组；仅复杂多步骤任务规划使用。",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "subject": {"type": "string", "description": "简短、可执行的任务标题"},
+                                    "description": {"type": "string", "description": "任务需要完成的具体内容"},
+                                    "activeForm": {
+                                        "type": "string",
+                                        "description": "任务执行中显示的现在进行时描述，可选",
+                                    },
+                                },
+                                "required": ["subject", "description"],
+                            },
+                            "minItems": 1,
                         },
                     },
-                    "required": ["subject", "description"],
+                    "required": ["tasks"],
                 },
             },
         )
@@ -47,30 +65,45 @@ class TaskCreateTool(LLMTool):
     async def execute(
         self,
         context: ExecutionContext,
-        subject: str,
-        description: str,
-        activeForm: Optional[str] = None,
+        tasks: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         task_list = _task_list(context)
-        existing = task_list.find_by_content(subject, description)
-        if existing is not None:
+        if not tasks:
             return {
-                "status": "no_op",
-                "success": True,
-                "no_op": True,
-                "data": {
-                    "task": existing.to_dict(),
-                    "existingTaskId": existing.id,
-                },
-                "summary": f"Task #{existing.id} already exists: {existing.subject}",
+                "status": "failed",
+                "success": False,
+                "data": {"createdTasks": [], "existingTasks": [], "createdCount": 0, "existingCount": 0},
+                "summary": "TaskCreate requires at least one task in tasks.",
             }
 
-        task = task_list.create(subject, description, activeForm)
+        created_tasks = []
+        existing_tasks = []
+        for item in tasks:
+            subject = item.get("subject", "")
+            description = item.get("description", "")
+            active_form = item.get("activeForm")
+            existing = task_list.find_by_content(subject, description)
+            if existing is not None:
+                existing_tasks.append(existing.to_dict())
+                continue
+            task = task_list.create(subject, description, active_form)
+            created_tasks.append(task.to_dict())
+
+        status = "success" if created_tasks else "no_op"
         return {
-            "status": "success",
+            "status": status,
             "success": True,
-            "data": {"task": {"id": task.id, "subject": task.subject}},
-            "summary": f"Task #{task.id} created successfully: {task.subject}",
+            **({"no_op": True} if not created_tasks else {}),
+            "data": {
+                "createdTasks": created_tasks,
+                "existingTasks": existing_tasks,
+                "createdCount": len(created_tasks),
+                "existingCount": len(existing_tasks),
+            },
+            "summary": (
+                f"Created {len(created_tasks)} task(s); "
+                f"{len(existing_tasks)} already existed."
+            ),
         }
 
 

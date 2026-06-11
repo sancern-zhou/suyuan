@@ -11,6 +11,7 @@
 import asyncio
 import csv
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
@@ -25,12 +26,14 @@ from app.tools.query.query_gd_suncere.tool import (
 from app.tools.query.get_pm25_carbon.tool import GetPM25CarbonTool
 from app.tools.query.get_pm25_crustal.tool import GetPM25CrustalTool
 from app.tools.query.get_pm25_ionic.tool import GetPM25IonicTool
+from app.tools.query.get_platform_weather_image.tool import GetPlatformWeatherImageTool
 from app.tools.query.get_vocs_data.tool_api import GetVOCsDataTool
 from app.agent.context.data_context_manager import DataContextManager
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.services.data_registry import data_registry
 from app.fetchers.consultation.field_normalizer import CityDayFieldNormalizer
+from app.fetchers.consultation.output_paths import get_monthly_consultation_dir
 
 logger = structlog.get_logger()
 
@@ -57,7 +60,7 @@ class MonthlyPollutionEventsComponents:
             self.end_date = datetime(year, month + 1, 1) - timedelta(days=1)
 
         # 输出目录
-        self.output_dir = Path(f"backend_data_registry/月度补充数据/{year}年{month:02d}月")
+        self.output_dir = get_monthly_consultation_dir(year, month)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.context = self._create_context()
@@ -65,6 +68,9 @@ class MonthlyPollutionEventsComponents:
         self.pm25_ionic_tool = GetPM25IonicTool()
         self.pm25_carbon_tool = GetPM25CarbonTool()
         self.pm25_crustal_tool = GetPM25CrustalTool()
+        self.weather_image_tool = GetPlatformWeatherImageTool(
+            output_root=self.output_dir / "platform_weather_images"
+        )
         self.guangdong_cities = [
             "广州", "深圳", "珠海", "汕头", "佛山", "韶关", "湛江", "肇庆", "江门", "茂名",
             "惠州", "梅州", "汕尾", "河源", "阳江", "清远", "东莞", "中山", "潮州", "揭阳", "云浮"
@@ -280,11 +286,16 @@ class MonthlyPollutionEventsComponents:
             pollution_events: 污染过程列表
 
         Returns:
-            输出文件路径，无污染过程时返回None
+            输出文件路径。无污染过程时写出只有表头的空文件。
         """
         if not pollution_events:
-            print(f"[污染过程] 未发现AQI>100的污染过程，不生成文件")
-            return None
+            output_file = self.output_dir / f"pollution_events_{self.year}{self.month:02d}.csv"
+            with open(output_file, "w", newline="", encoding="utf-8-sig") as f:
+                fieldnames = ["city", "station", "date", "aqi", "primary_pollutant"]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+            print(f"[污染过程] 未发现AQI>100的污染过程，已生成空事件文件：{output_file}")
+            return output_file
 
         # 按城市、日期、站点排序
         pollution_events.sort(key=lambda x: (x["city"], x["date"], x["station"]))
@@ -326,9 +337,6 @@ class MonthlyPollutionEventsComponents:
     def _extract_records(self, result: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not result:
             return []
-        data = result.get("data")
-        if isinstance(data, list) and data:
-            return data
         data_id = result.get("data_id") or result.get("report_data_id")
         if data_id:
             try:
@@ -348,6 +356,9 @@ class MonthlyPollutionEventsComponents:
                                 return value
             except Exception as exc:
                 logger.warning("component_data_id_load_failed", data_id=data_id, error=str(exc))
+        data = result.get("data")
+        if isinstance(data, list) and data:
+            return data
         return []
 
     def _write_csv(self, rows: List[Dict[str, Any]], output_file: Path) -> Optional[Path]:
@@ -426,21 +437,25 @@ class MonthlyPollutionEventsComponents:
                 )
             return {"success": False, "error": f"unknown component type: {component_type}"}
 
+        return self._extract_records(self._run_async_query(_run))
+
+    def _run_async_query(self, query_factory):
         try:
-            return self._extract_records(asyncio.run(_run()))
+            asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                return self._extract_records(loop.run_until_complete(_run()))
-            finally:
-                loop.close()
+            return asyncio.run(query_factory())
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(lambda: asyncio.run(query_factory())).result()
 
     def generate_component_files(self, pollution_events: List[Dict[str, Any]]) -> Path:
         manifest: Dict[str, Any] = {
             "year": self.year,
             "month": self.month,
+            "status": "success" if pollution_events else "no_pollution_events",
             "event_count": len(pollution_events),
             "files": [],
+            "weather_images": self.generate_weather_image_manifest(pollution_events),
             "errors": [],
         }
         component_types = ["vocs", "pm25_ionic", "pm25_carbon", "pm25_crustal"]
@@ -487,6 +502,167 @@ class MonthlyPollutionEventsComponents:
         print(f"[组分数据] 已生成清单：{manifest_file}")
         return manifest_file
 
+    def generate_weather_image_manifest(self, pollution_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate sparse weather-platform image assets for PPT evidence."""
+        process_items: List[Dict[str, Any]] = []
+        for event in self._unique_event_days(pollution_events):
+            event_date = self._compact_event_date(event)
+            city = str(event.get("city") or "").strip()
+            if city and event_date:
+                process_items.append(self._fetch_weather_image_item(
+                    product="backward_trajectory",
+                    date=event_date,
+                    time=f"{city},{event_date}",
+                    usage="污染过程城市后向轨迹",
+                    event=event,
+                ))
+                process_items.append(self._fetch_weather_image_item(
+                    product="rainfall_24h",
+                    date=event_date,
+                    time="12",
+                    usage="污染过程日累计降水背景",
+                    event=event,
+                ))
+                for hour in ("00", "06"):
+                    process_items.append(self._fetch_weather_image_item(
+                        product="hourly_wind_field",
+                        date=event_date,
+                        time=hour,
+                        usage=f"污染过程{hour}时风场扩散背景",
+                        event=event,
+                    ))
+
+        outlook_base_date = self._next_month_first_day_compact()
+        outlook_items = []
+        for product, times, usage in (
+            ("national_max_temperature_forecast", ("024", "072"), "下月气温高值风险研判"),
+            ("national_precip_forecast", ("024", "072"), "下月降水清除条件研判"),
+            ("***REMOVED***", ("024", "072"), "下月风场扩散条件研判"),
+        ):
+            for forecast_hour in times:
+                outlook_items.append(self._fetch_weather_image_item(
+                    product=product,
+                    date=outlook_base_date,
+                    time=forecast_hour,
+                    usage=usage,
+                    event=None,
+                ))
+
+        return {
+            "source": "环境大数据管理云平台",
+            "pollution_process_images": {
+                "usage_stage": "污染过程气象背景",
+                "selection_rule": (
+                    "按污染过程城市-日期去重；每个事件日抓取1张后向轨迹、1张12时24小时降水、"
+                    "00时和06时逐小时风场，避免逐小时全量下载。"
+                ),
+                "items": process_items,
+            },
+            "next_month_outlook_images": {
+                "usage_stage": "下月污染形势研判",
+                "forecast_base_date": outlook_base_date,
+                "selection_rule": "按024和072时效抓取气温、降水、最大风速预报图，用于短期风险研判。",
+                "items": outlook_items,
+            },
+        }
+
+    def _unique_event_days(self, pollution_events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        unique: Dict[tuple[str, str], Dict[str, Any]] = {}
+        for event in pollution_events:
+            city = str(event.get("city") or "").strip()
+            event_date = self._compact_event_date(event)
+            if not city or not event_date:
+                continue
+            key = (city, event_date)
+            current = unique.get(key)
+            if current is None or float(event.get("aqi") or 0) > float(current.get("aqi") or 0):
+                unique[key] = event
+        return [unique[key] for key in sorted(unique)]
+
+    def _compact_event_date(self, event: Dict[str, Any]) -> str:
+        raw = str(event.get("date") or "").split(" ")[0].strip()
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                return datetime.strptime(raw, fmt).strftime("%Y%m%d")
+            except ValueError:
+                continue
+        return raw.replace("-", "")
+
+    def _next_month_first_day_compact(self) -> str:
+        if self.month == 12:
+            return f"{self.year + 1}0101"
+        return f"{self.year}{self.month + 1:02d}01"
+
+    def _fetch_weather_image_item(
+        self,
+        *,
+        product: str,
+        date: str,
+        time: str,
+        usage: str,
+        event: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        try:
+            result = self._run_weather_image_tool(product=product, date=date, time=time)
+            data = result.get("data") if isinstance(result, dict) else None
+            if not result or not result.get("success") or not isinstance(data, dict):
+                return {
+                    "product": product,
+                    "date": date,
+                    "time": time,
+                    "usage": usage,
+                    "event": event,
+                    "available": False,
+                    "missing_reason": result.get("error") if isinstance(result, dict) else "工具未返回有效结果",
+                }
+            return {
+                "product": data.get("product") or product,
+                "product_name": data.get("product_name") or product,
+                "date": data.get("date") or date,
+                "time_key": data.get("time_key") or str(time),
+                "usage": usage,
+                "event": event,
+                "available": bool(data.get("downloaded")),
+                "local_path": data.get("local_path"),
+                "source_url": data.get("source_url"),
+                "image_url": data.get("image_url"),
+                "missing_reason": "" if data.get("downloaded") else "图片未下载",
+            }
+        except Exception as exc:
+            logger.warning(
+                "monthly_pollution_weather_image_failed",
+                product=product,
+                date=date,
+                time=time,
+                error=str(exc),
+            )
+            return {
+                "product": product,
+                "date": date,
+                "time": time,
+                "usage": usage,
+                "event": event,
+                "available": False,
+                "missing_reason": str(exc),
+            }
+
+    def _run_weather_image_tool(self, *, product: str, date: str, time: str) -> Dict[str, Any]:
+        async def _run() -> Dict[str, Any]:
+            return await self.weather_image_tool.execute(
+                product=product,
+                date=date,
+                time=time,
+                download=True,
+            )
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(_run())
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(lambda: asyncio.run(_run())).result()
+
     def generate(self) -> Optional[Path]:
         """
         生成污染过程数据
@@ -509,7 +685,9 @@ class MonthlyPollutionEventsComponents:
 
         if not pollution_events:
             print(f"[污染过程] 未发现AQI>100的污染过程")
-            return None
+            output_file = self.generate_pollution_events_file([])
+            self.generate_component_files([])
+            return output_file
 
         # 生成污染过程文件
         output_file = self.generate_pollution_events_file(pollution_events)

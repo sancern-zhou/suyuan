@@ -8,6 +8,8 @@ rules live in these progressive reference files.
 
 - `workflow.md`: required before creating formal or business PPT files with
   `create_pptx_with_ppt_master`.
+- `slide-plan-rules.md`: required before using `slide_plan` for from-scratch
+  formal business PPT generation.
 - `output-contract.md`: required when checking the tool result, generated
   project files, QA status, or delivery readiness.
 
@@ -23,8 +25,9 @@ rules live in these progressive reference files.
 ## Routing Rules
 
 - Formal or business PPT generation uses `create_pptx_with_ppt_master`.
-- Template-based PPT generation uses `create_pptx_from_template` after
-  `analyze_pptx_template`.
+- From-scratch formal business PPT should prefer Agent-planned
+  `slide_plan[].shapes` when page quality matters, especially for chart,
+  diagram, metric, roadmap, or mixed-content slides.
 - Use `execute_python` only for upstream data preparation, chart/image asset
   generation, or narrow compatibility work that the PPT tools cannot cover.
 - Do not use old deck structures, the PptxGenJS renderer, or direct manual

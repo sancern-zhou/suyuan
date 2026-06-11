@@ -28,6 +28,16 @@ _llm_service = None
 MAX_TOOL_RESULT_RECORDS = 24
 MAX_TOOL_RESULT_STRING_CHARS = 8_000
 MAX_TOOL_RESULT_JSON_CHARS = 200_000  # 支持完整的21城市统计对比结果
+MAX_RESTORED_CONTENT_PREVIEW_CHARS = 2_000
+
+CONTENT_PREVIEW_TOOL_NAMES = {
+    "read_file",
+    "parse_pdf",
+    "read_docx",
+    "read_pptx",
+    "knowledge_document_reader",
+    "web_fetch",
+}
 
 
 def _todo_status_counts(items: Any) -> Dict[str, int]:
@@ -240,6 +250,7 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         "data_ids", "report_data_id", "report_data_ids", "file_path", "count", "total_count", "sample_count",
         "original_count", "metadata", "has_chart", "chart_summary",
         "source_data_ids", "source_report_data_ids",
+        "refs", "context_refs", "llm_resume", "content_preview", "visual_ids",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
     if "summary" not in minimal:
@@ -247,6 +258,138 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
     minimal["tool_result_truncated"] = True
     minimal["truncation_reason"] = "serialized tool_result exceeded history budget"
     return minimal
+
+
+def _append_unique(items: List[Dict[str, Any]], item: Dict[str, Any], key: str) -> None:
+    value = item.get(key)
+    if not value:
+        return
+    if any(existing.get(key) == value for existing in items):
+        return
+    items.append({k: v for k, v in item.items() if v is not None})
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return value
+    if value:
+        return [value]
+    return []
+
+
+def _compact_data_ref(data_id: Any, usage: str) -> Dict[str, Any]:
+    return {
+        "data_id": str(data_id),
+        "usage": usage,
+        "tool": "read_data_registry",
+    }
+
+
+def _explicit_refs(value: Any) -> Dict[str, Any]:
+    """Return only tool-declared refs with list-of-dict buckets."""
+    if not isinstance(value, dict):
+        return {}
+    refs: Dict[str, Any] = {}
+    for key, items in value.items():
+        if not isinstance(items, list):
+            continue
+        compacted = [item for item in items if isinstance(item, dict)]
+        if compacted:
+            refs[key] = compacted
+    return refs
+
+
+def _merge_context_refs(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for refs in (base, extra):
+        if not isinstance(refs, dict):
+            continue
+        for key, items in refs.items():
+            if not isinstance(items, list):
+                continue
+            bucket = merged.setdefault(key, [])
+            for item in items:
+                if isinstance(item, dict) and item not in bucket:
+                    bucket.append(item)
+    return merged
+
+
+def _collect_visuals(result_dict: Dict[str, Any], data_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    visuals: List[Dict[str, Any]] = []
+    for candidate in [result_dict.get("visuals"), data_payload.get("visuals")]:
+        if isinstance(candidate, list):
+            for visual in candidate:
+                if isinstance(visual, dict):
+                    _append_unique(visuals, visual, "id")
+    return visuals
+
+
+def _extract_context_refs(result_dict: Dict[str, Any]) -> Dict[str, Any]:
+    data_payload = _as_dict(result_dict.get("data"))
+    refs: Dict[str, Any] = _merge_context_refs(
+        _explicit_refs(result_dict.get("refs")),
+        _explicit_refs(data_payload.get("refs")),
+    )
+
+    data_refs: List[Dict[str, Any]] = []
+    for key, usage in (
+        ("data_id", "primary"),
+        ("report_data_id", "report"),
+    ):
+        value = result_dict.get(key) or data_payload.get(key)
+        if value:
+            _append_unique(data_refs, _compact_data_ref(value, usage), "data_id")
+    for key, usage in (
+        ("data_ids", "primary"),
+        ("report_data_ids", "report"),
+        ("source_data_ids", "source"),
+    ):
+        for value in _as_list(result_dict.get(key) or data_payload.get(key)):
+            if value:
+                _append_unique(data_refs, _compact_data_ref(value, usage), "data_id")
+    if data_refs:
+        refs = _merge_context_refs(refs, {"data": data_refs})
+
+    return refs
+
+
+def _llm_resume_for_restore(result_dict: Dict[str, Any]) -> Dict[str, Any]:
+    resume = result_dict.get("llm_resume")
+    if not isinstance(resume, dict):
+        return {}
+    compacted: Dict[str, Any] = {}
+    for key, value in resume.items():
+        if isinstance(value, str):
+            compacted[key] = _truncate_string(value, MAX_RESTORED_CONTENT_PREVIEW_CHARS)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            compacted[key] = value
+        elif isinstance(value, list):
+            compacted[key] = _compact_tool_result_value(value)
+        elif isinstance(value, dict):
+            compacted[key] = _compact_tool_result_value(value)
+        else:
+            compacted[key] = str(value)
+    return compacted
+
+
+def _content_preview_for_restore(tool_name: str | None, result_dict: Dict[str, Any]) -> str | None:
+    llm_resume = _llm_resume_for_restore(result_dict)
+    resume_preview = llm_resume.get("content_preview")
+    if isinstance(resume_preview, str) and resume_preview:
+        return resume_preview
+
+    if tool_name not in CONTENT_PREVIEW_TOOL_NAMES:
+        return None
+
+    data_payload = _as_dict(result_dict.get("data"))
+    content = data_payload.get("content") or result_dict.get("content")
+    if not isinstance(content, str) or not content:
+        return None
+    return _truncate_string(content, MAX_RESTORED_CONTENT_PREVIEW_CHARS)
 
 
 def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -386,6 +529,7 @@ class SessionMemory:
         self.data_files: Dict[str, str] = {}
         self.data_registry_refs: Dict[str, str] = {}
         self.conversation_history: List[ConversationTurn] = []
+        self.llm_source_until_sequence: Optional[int] = None
 
         # ✅ 修复：初始化 data_registry 引用（溯源模式需要）
         # 使用全局单例，确保所有模式兼容
@@ -1217,9 +1361,22 @@ class SessionMemory:
             if value:
                 lightweight[key] = value
 
+        context_refs = _extract_context_refs(result_dict)
+        if context_refs:
+            lightweight["context_refs"] = context_refs
+
+        llm_resume = _llm_resume_for_restore(result_dict)
+        if llm_resume:
+            lightweight["llm_resume"] = llm_resume
+
+        content_preview = _content_preview_for_restore(tool_name, result_dict)
+        if content_preview:
+            lightweight["content_preview"] = content_preview
+
         visual_ids = []
-        visuals = result_dict.get("visuals") or data.get("visuals")
-        if isinstance(visuals, list):
+        data_payload = _as_dict(result_dict.get("data"))
+        visuals = _collect_visuals(result_dict, data_payload)
+        if visuals:
             visual_ids = [
                 visual.get("id")
                 for visual in visuals
@@ -1252,6 +1409,7 @@ class SessionMemory:
             "status", "summary", "summary_text", "message", "error",
             "data_id", "data_ids", "report_data_id", "report_data_ids",
             "tool_name", "tool_use_id", "is_error", "visuals",
+            "context_refs", "content_preview", "llm_resume",
         }
         result_keys = set(result_dict.keys()) if isinstance(result, dict) else set()
         if result_keys - keep_keys or visual_ids or not has_reference:
@@ -1326,6 +1484,17 @@ class SessionMemory:
             first_message_keys=list(messages[0].keys()) if messages else None,
             current_history_length=len(self.conversation_history)
         )
+
+        max_source_sequence = max(
+            (
+                msg.get("sequence_number")
+                for msg in messages
+                if isinstance(msg.get("sequence_number"), int)
+            ),
+            default=None,
+        )
+        if max_source_sequence is not None:
+            self.llm_source_until_sequence = max_source_sequence
 
         loaded_count = 0
         skipped_count = 0

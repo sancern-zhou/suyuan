@@ -77,7 +77,9 @@ backend/app/
 
 **技能管理** (2026-04-19): 采用"MD文档即技能"的轻量级设计，Agent通过 `list_skills()` 工具主动发现和阅读 `backend/docs/skills/` 目录下的技能文档，修改MD文档即生效，无需注册机制，支持动态更新和关键词过滤。
 
-**上下文压缩机制** (2026-05-02): 三层渐进式压缩 - ①工具输出预截断（observation 3000字符/action 1000字符）→ ②Snip Compact（保留头部2条+尾部4轮，中间直接裁剪）→ ③LLM全量压缩（消息数>30时调用LLM摘要）；保护段机制保留最近2轮对话不压缩；Reactive Compact：当API返回prompt-too-long错误时自动触发压缩并重试（`llm_service.py:_is_context_overflow_error`），通过`_reactive_compact_attempted`标志防无限循环。
+**上下文、工具输出与记忆统一架构** (2026-06-10): Agent 上下文不是聊天记录的简单回放，而是任务状态的可恢复表示。工具输出、会话恢复、压缩和长期记忆必须统一遵循“摘要 + 可操作引用 + 有界内容预览”的原则。工具应显式返回 `refs`（`files`/`visuals`/`artifacts`/`urls`/`data`）和可选 `llm_resume`；会话恢复通过 `context_refs` 保留 `file_path`/`local_path`/`data_id` 等高价值小字段，长文本只保留有界 `content_preview`。前端展示 URL（如 `/api/image/...`）不能替代后端工具输入路径（如 `local_path`）。详细规范见 `docs/agent_context_memory_architecture.md`。
+
+**上下文压缩机制** (2026-05-02，2026-06-10更新): 三层渐进式压缩 - ①工具输出预截断（observation 3000字符/action 1000字符）→ ②Snip Compact（保留头部2条+尾部4轮，中间直接裁剪）→ ③LLM全量压缩（消息数>30时调用LLM摘要）；保护段机制保留最近2轮对话不压缩；Reactive Compact：当API返回prompt-too-long错误时自动触发压缩并重试（`llm_service.py:_is_context_overflow_error`），通过`_reactive_compact_attempted`标志防无限循环。压缩不得破坏资源可恢复性：优先删除大 payload，保留 `refs`、`llm_resume`、`data_id`、`file_path`、`local_path` 和读取范围。
 
 **站点映射分离** (2026-04-26): 系统使用两个独立的站点映射器 - `GeoMatcher` 用于常规空气质量/气象站点（数据源：`station_district_results_with_type_id.json`），`ParticulateGeoMatcher` 用于超站组分站点（数据源：`geo_mappings.json` 的 `stations` 字段），服务PM2.5组分和VOCs组分查询工具。两类站点使用同一套编码系统（格式如 1025b）。
 
@@ -171,6 +173,13 @@ async for event in agent.analyze("综合分析广州O3污染溯源"):
 - **PDF预览机制**：Office工具返回 `pdf_preview` 字段后，后端通过 `office_document` 事件自动触发前端文档预览面板更新
 - 96%测试覆盖率，1,964行代码
 - 定时任务：`create_scheduled_task`
+
+**工具输出与会话恢复要求**：
+- 所有会产生文件、图片、HTML、报告、外部 URL 或数据引用的工具，必须返回可恢复引用：`refs.files`、`refs.visuals`、`refs.artifacts`、`refs.urls` 或 `refs.data`。
+- 工具可返回 `llm_resume`，用于跨轮恢复时保留有界关键摘录和后续工具调用提示。
+- 大型正文、rows、records、图表 spec、HTML 全文和 base64 不应作为跨轮恢复依赖；必须通过 `refs` 或 `data_id` 可重新获取。
+- `image_url`/`html_url` 等前端展示 URL 只用于前端，后端分析工具应使用 `local_path`/`file_path`。
+- 新工具开发时先阅读 `docs/agent_context_memory_architecture.md`，并为跨轮恢复字段补测试。
 
 **新增通用工具（2026-02-19）**：
 系统新增 6 个文件操作和搜索工具，完全对标 Claude Code 官方实现（100% 兼容性）。详细说明见 `backend/docs/tool_comparison_report.md` 和 `backend/docs/read_pdf_implementation.md`。

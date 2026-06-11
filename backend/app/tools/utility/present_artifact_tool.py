@@ -11,8 +11,13 @@ from urllib.parse import quote
 import structlog
 
 from app.services.pdf_converter import pdf_converter
-from app.services.report_preview_refresh import refresh_report_preview_for_qmd_path
+from app.services.html_artifact_service import html_artifact_service
+from app.services.report_preview_refresh import (
+    create_report_preview_for_source_qmd_path,
+    refresh_report_preview_for_qmd_path,
+)
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_artifact_ref, build_file_ref, merge_refs
 
 logger = structlog.get_logger()
 
@@ -81,8 +86,22 @@ class PresentArtifactTool(LLMTool):
                 "size": file_size,
             }
 
-            if suffix == ".qmd":
-                report_preview = refresh_report_preview_for_qmd_path(resolved_path)
+            html_artifact_id = None
+            if resolved_type == "html":
+                html_artifact_id = html_artifact_service.get_artifact_id_from_index_path(resolved_path)
+
+            if html_artifact_id:
+                html_preview = html_artifact_service.build_html_preview(html_artifact_id)
+                resolved_type = "html_artifact"
+                data["file_type"] = "html_artifact"
+                data["html_preview"] = html_preview
+                data["download_url"] = f"/api/html-artifacts/{html_artifact_id}/download/html"
+                data["share_endpoint"] = f"/api/html-artifacts/{html_artifact_id}/share"
+            elif suffix == ".qmd":
+                report_preview = (
+                    refresh_report_preview_for_qmd_path(resolved_path)
+                    or create_report_preview_for_source_qmd_path(resolved_path)
+                )
                 if report_preview:
                     if not report_preview.get("html_preview"):
                         error = report_preview.get("render_error") or report_preview.get("report_preview_refresh", {}).get("error")
@@ -90,7 +109,7 @@ class PresentArtifactTool(LLMTool):
                     resolved_type = "report"
                     data.update(report_preview)
                     data["file_type"] = "report"
-            if resolved_type == "report":
+            if resolved_type in {"report", "html_artifact"}:
                 pass
             elif resolved_type == "markdown":
                 data["markdown_preview"] = {
@@ -124,6 +143,41 @@ class PresentArtifactTool(LLMTool):
             else:
                 return self._failure(f"不支持预览的文件类型: {suffix or '无扩展名'}")
 
+            artifact_format = suffix.lstrip(".") or resolved_type
+            if artifact is None:
+                artifact = {
+                    "type": "document",
+                    "kind": resolved_type,
+                    "format": artifact_format,
+                    "file_path": str(resolved_path),
+                    "file_name": resolved_path.name,
+                    "title": html_artifact_id or resolved_path.stem,
+                }
+            else:
+                artifact.setdefault("type", "document")
+                artifact.setdefault("kind", resolved_type)
+                artifact.setdefault("format", artifact_format)
+                artifact.setdefault("file_path", str(resolved_path))
+                artifact.setdefault("file_name", resolved_path.name)
+                artifact.setdefault("title", html_artifact_id or resolved_path.stem)
+            preview = data.get("html_preview") or data.get("pdf_preview") or data.get("markdown_preview")
+            if isinstance(preview, dict):
+                artifact["preview"] = preview
+            data["refs"] = merge_refs(
+                data.get("refs"),
+                {
+                    "files": [
+                        build_file_ref(
+                            resolved_path,
+                            type="document",
+                            format=artifact_format,
+                            usage="artifact",
+                        )
+                    ],
+                    "artifacts": [build_artifact_ref(artifact)],
+                },
+            )
+
             logger.info(
                 "artifact_presented",
                 path=str(resolved_path),
@@ -135,11 +189,17 @@ class PresentArtifactTool(LLMTool):
                 if artifact and artifact.get("preview_panel") is False
                 else f"已推送到右侧预览面板: {resolved_path.name}"
             )
+            refs = data.get("refs", {})
             return {
                 "status": "success",
                 "success": True,
                 "data": data,
                 **({"artifact": artifact, "artifacts": [artifact]} if artifact else {}),
+                "refs": refs,
+                "llm_resume": {
+                    "file_path": str(resolved_path),
+                    "tool_hint": f"Use present_artifact(file_path='{resolved_path}') to preview this artifact.",
+                },
                 "metadata": {
                     "schema_version": "v1.0",
                     "generator": "present_artifact",

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
 from app.services.html_artifact_service import html_artifact_service
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -42,7 +42,8 @@ class CreateHtmlArtifactTool(LLMTool):
             name="create_html_artifact",
             description=(
                 "创建 HTML 展示；正式报告用 create_report_package。"
-                f"guizang 先读 {guizang_paths['index']}，再按 style 读模板/layouts/themes/checklist.md。"
+                f"guizang 先用 read_file 读取 {guizang_paths['index']}，"
+                "再按 style 读模板/layouts/themes/checklist.md。"
             ),
             category=ToolCategory.REPORTING,
             version="1.0.0",
@@ -60,7 +61,8 @@ class CreateHtmlArtifactTool(LLMTool):
                     "html_content": {
                         "type": "string",
                         "description": (
-                            "完整 HTML。guizang 基于模板和 layouts。"
+                            "完整 HTML。guizang 调用本工具前先读取模板、layouts、themes、checklist；"
+                            "不要凭空编写新的 deck 框架。"
                         ),
                     },
                     "title": {"type": "string", "description": "展示页标题，可选。"},
@@ -79,6 +81,8 @@ class CreateHtmlArtifactTool(LLMTool):
                         "enum": ["guizang", "custom"],
                         "description": (
                             "guizang 先读 guizang_references/index.md 和 checklist.md。"
+                            f"template_magazine={guizang_paths['template_magazine']}; "
+                            f"template_swiss={guizang_paths['template_swiss']}"
                         ),
                     },
                     "presentation_style": {
@@ -178,9 +182,15 @@ class CreateHtmlArtifactTool(LLMTool):
             generator=self.name,
             metadata={"artifact_id": data.get("artifact_id")},
         )
+        resume_context = build_artifact_resume_context(
+            data,
+            data["file_path"],
+            extra_resume={"artifact_id": data.get("artifact_id")},
+        )
         return {
             "success": True,
             "data": data,
+            **resume_context,
             "metadata": {"generator": "create_html_artifact", "schema_version": "html_artifact.v1"},
             "summary": (
                 f"HTML展示页已生成：{data['artifact_id']}。"

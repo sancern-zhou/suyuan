@@ -32,7 +32,7 @@ class GetWeatherSituationMapTool(LLMTool):
     QWEN_VL_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")
 
     # 天气形势图URL模板
-    WEATHER_MAP_BASE_URL = "http://data.suncereltd.cn:8313/1001"
+    WEATHER_MAP_BASE_URL = "http://10.10.10.112:8313/1001"
     WEATHER_MAP_SUFFIX = "--%2B00%2B--%2B--%2B--%2B00%2B--.png"
 
     def __init__(self):

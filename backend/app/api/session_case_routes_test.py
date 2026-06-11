@@ -28,7 +28,7 @@ def test_session_list_preserves_metadata_for_case_filtering():
 
 def test_session_list_uses_bounded_default_limit():
     assert "SESSION_LIST_DEFAULT_LIMIT = 50" in SESSION_ROUTES
-    assert "SESSION_LIST_MAX_LIMIT = 100" in SESSION_ROUTES
+    assert "SESSION_LIST_MAX_LIMIT = 200" in SESSION_ROUTES
     assert "effective_limit = min(limit or SESSION_LIST_DEFAULT_LIMIT, SESSION_LIST_MAX_LIMIT)" in SESSION_ROUTES
 
 

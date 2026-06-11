@@ -47,7 +47,7 @@ class ListSkillsTool(LLMTool):
 - 读取自动生成的技能索引
 
 参数说明：
-- keyword: 可选，过滤关键词（不区分大小写）
+- keyword: 可选，过滤关键词（不区分大小写；多个词任一命中即可，顺序无关）
 - category: 可选，分类过滤（预留字段，当前为扁平结构）
 
 返回格式：
@@ -90,7 +90,7 @@ class ListSkillsTool(LLMTool):
         列出可用技能文档
 
         Args:
-            keyword: 可选，过滤关键词（不区分大小写）
+            keyword: 可选，过滤关键词（不区分大小写；多个词任一命中即可，顺序无关）
             category: 可选，分类过滤（预留字段）
 
         Returns:
@@ -133,12 +133,7 @@ class ListSkillsTool(LLMTool):
 
             # 4. 关键词过滤
             if keyword:
-                keyword_lower = keyword.lower()
-                skills = [
-                    s for s in skills
-                    if keyword_lower in s["name"].lower() or
-                       keyword_lower in s.get("description", "").lower()
-                ]
+                skills = self._filter_skills_by_keyword(skills, keyword)
 
             logger.info(
                 "list_skills_success",
@@ -221,6 +216,32 @@ class ListSkillsTool(LLMTool):
 
         return skills
 
+    def _filter_skills_by_keyword(
+        self,
+        skills: List[Dict[str, str]],
+        keyword: str,
+    ) -> List[Dict[str, str]]:
+        """按关键词过滤技能；多个关键词任一命中即可，顺序无关。"""
+        tokens = [
+            token.lower()
+            for token in re.split(r"[\s,，;；、]+", keyword.strip())
+            if token.strip()
+        ]
+        if not tokens:
+            return skills
+
+        filtered = []
+        for skill in skills:
+            searchable_text = (
+                f"{skill.get('name', '')}\n"
+                f"{skill.get('description', '')}\n"
+                f"{Path(skill.get('file', '')).name}"
+            ).lower()
+            if any(token in searchable_text for token in tokens):
+                filtered.append(skill)
+
+        return filtered
+
     def _parse_skill_file(self, file_path: Path) -> tuple[str, str]:
         """解析技能文件，提取名称和描述"""
         try:
@@ -264,7 +285,7 @@ class ListSkillsTool(LLMTool):
                 "properties": {
                     "keyword": {
                         "type": "string",
-                        "description": "过滤关键词。"
+                        "description": "过滤关键词；多个词任一命中即可，顺序无关。"
                     },
                     "category": {
                         "type": "string",

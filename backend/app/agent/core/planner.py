@@ -291,11 +291,15 @@ class ReActPlanner:
                     elif block.type == "text":
                         current_text_block = {"index": index, "text": ""}
                     elif block.type == "tool_use":
+                        initial_input = getattr(block, "input", None)
+                        if not isinstance(initial_input, dict):
+                            initial_input = {}
                         current_tool_block = {
                             "index": index,
                             "id": block.id,
                             "name": block.name,
-                            "input_json": ""
+                            "input_json": "",
+                            "input": initial_input,
                         }
 
                 elif event_type == "content_block_delta":
@@ -389,7 +393,7 @@ class ReActPlanner:
 
                     elif current_tool_block and current_tool_block["index"] == index:
                         # 解析完整的 tool_use input JSON
-                        tool_input = {}
+                        tool_input = current_tool_block.get("input", {})
                         if current_tool_block["input_json"]:
                             try:
                                 tool_input = json.loads(current_tool_block["input_json"])

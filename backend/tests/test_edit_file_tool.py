@@ -8,7 +8,6 @@
 4. 错误处理（文件不存在、old_string不存在、多次出现等）
 """
 import pytest
-import tempfile
 from pathlib import Path
 import sys
 
@@ -16,7 +15,8 @@ import sys
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.tools.utility.edit_file_tool import EditFileTool
+from app.tools.utility.edit_file_tool_v2 import EditFileToolV2
+from app.tools.utility.file_read_state import reset_file_read_state
 
 
 class TestEditFileTool:
@@ -25,7 +25,8 @@ class TestEditFileTool:
     @pytest.fixture
     def edit_tool(self):
         """创建 EditFileTool 实例"""
-        return EditFileTool()
+        reset_file_read_state()
+        return EditFileToolV2()
 
     @pytest.fixture
     def temp_file(self):
@@ -41,8 +42,9 @@ class TestEditFileTool:
     @pytest.mark.asyncio
     async def test_basic_replace(self, edit_tool, temp_file):
         """测试基础替换功能"""
+        _mark_file_read(edit_tool, temp_file)
         result = await edit_tool.execute(
-            file_path=str(temp_file),
+            path=str(temp_file),
             old_string="Hello World",
             new_string="Hi Universe"
         )
@@ -59,8 +61,9 @@ class TestEditFileTool:
     @pytest.mark.asyncio
     async def test_multiline_replace(self, edit_tool, temp_file):
         """测试多行替换"""
+        _mark_file_read(edit_tool, temp_file)
         result = await edit_tool.execute(
-            file_path=str(temp_file),
+            path=str(temp_file),
             old_string="Hello World\nThis is a test.",
             new_string="Greetings\nThis is a TEST."
         )
@@ -74,8 +77,9 @@ class TestEditFileTool:
     async def test_uniqueness_check(self, edit_tool, temp_file):
         """测试唯一性检查（多次出现时应该失败）"""
         # 文件中有两个 "Hello"
+        _mark_file_read(edit_tool, temp_file)
         result = await edit_tool.execute(
-            file_path=str(temp_file),
+            path=str(temp_file),
             old_string="Hello",
             new_string="Hi"
         )
@@ -87,8 +91,9 @@ class TestEditFileTool:
     @pytest.mark.asyncio
     async def test_replace_all(self, edit_tool, temp_file):
         """测试全量替换"""
+        _mark_file_read(edit_tool, temp_file)
         result = await edit_tool.execute(
-            file_path=str(temp_file),
+            path=str(temp_file),
             old_string="Hello",
             new_string="Hi",
             replace_all=True
@@ -104,8 +109,9 @@ class TestEditFileTool:
     @pytest.mark.asyncio
     async def test_old_string_not_found(self, edit_tool, temp_file):
         """测试 old_string 不存在的情况"""
+        _mark_file_read(edit_tool, temp_file)
         result = await edit_tool.execute(
-            file_path=str(temp_file),
+            path=str(temp_file),
             old_string="NonExistent",
             new_string="Something"
         )
@@ -117,8 +123,9 @@ class TestEditFileTool:
     @pytest.mark.asyncio
     async def test_file_not_found(self, edit_tool):
         """测试文件不存在"""
+        missing_file = project_root / "tests" / "missing_edit_target.txt"
         result = await edit_tool.execute(
-            file_path="/nonexistent/file.txt",
+            path=str(missing_file),
             old_string="old",
             new_string="new"
         )
@@ -139,8 +146,9 @@ def main():
 """)
 
         try:
+            _mark_file_read(edit_tool, code_file)
             result = await edit_tool.execute(
-                file_path=str(code_file),
+                path=str(code_file),
                 old_string='def old_function():\n    return "old"',
                 new_string='def new_function():\n    return "new"'
             )
@@ -153,6 +161,17 @@ def main():
         finally:
             if code_file.exists():
                 code_file.unlink()
+
+
+def _mark_file_read(edit_tool: EditFileToolV2, file_path: Path) -> None:
+    """Record the full file read required by EditFileToolV2."""
+    content = file_path.read_text(encoding="utf-8")
+    edit_tool.read_state.set(
+        str(file_path.resolve()),
+        content=content,
+        file_size=len(content),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

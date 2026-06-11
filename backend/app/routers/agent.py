@@ -434,6 +434,9 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 analyze_kwargs["session_id"] = actual_session_id
 
             cancel_event = await cancellation_registry.register(actual_session_id)
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                await cancellation_registry.attach_run_task(actual_session_id, current_task)
             analyze_kwargs["cancel_event"] = cancel_event
 
             # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。

@@ -47,3 +47,22 @@ def test_build_image_payload_renders_url_pdf_first_page(tmp_path, monkeypatch):
     assert payload["url"].startswith("data:image/png;base64,")
     image_bytes = base64.b64decode(payload["url"].split(",", 1)[1])
     assert image_bytes.startswith(b"\x89PNG")
+
+
+def test_flow_visual_defaults_to_qwen_only(monkeypatch):
+    monkeypatch.delenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", raising=False)
+    monkeypatch.setenv("QWEN_VISION_MODEL", "qwen-vl-max")
+
+    providers = ocr_adapter._flow_visual_providers()
+
+    assert [provider["provider"] for provider in providers] == ["qwen"]
+    assert providers[0]["model"] == "qwen-vl-max"
+
+
+def test_qwen_ocr_and_flow_visual_use_separate_model_settings(monkeypatch):
+    monkeypatch.setenv("OCR_MODEL", "qwen-vl-ocr")
+    monkeypatch.setenv("QWEN_VISION_MODEL", "qwen-vl-max")
+
+    assert ocr_adapter._qwen_target("document")["model"] == "qwen-vl-ocr"
+    assert ocr_adapter._qwen_target("general")["model"] == "qwen-vl-ocr"
+    assert ocr_adapter._qwen_target("flow_visual")["model"] == "qwen-vl-max"

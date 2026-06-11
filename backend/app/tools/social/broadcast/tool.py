@@ -38,7 +38,7 @@ class BroadcastSocialUsersTool(LLMTool):
                     "channels": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "可选目标渠道，例如 ['weixin', 'qq', 'dingtalk', 'wecom']；不传则广播给所有已知社交用户",
+                        "description": "可选目标渠道，例如 ['weixin', 'qq', 'dingtalk']；不传则广播给所有已知社交用户",
                         "default": []
                     }
                 },

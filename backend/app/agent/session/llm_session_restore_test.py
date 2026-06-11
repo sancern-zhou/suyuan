@@ -3,12 +3,15 @@ from datetime import datetime
 import pytest
 
 from app.agent.session.session_manager_db import SessionManagerDB
+from app.agent.session.models import Session
 
 
 class _Repository:
-    def __init__(self, llm_history=None):
+    def __init__(self, llm_history=None, compact_state=None, llm_history_after=None):
         self.calls = []
         self.llm_history = llm_history
+        self.compact_state = compact_state
+        self.llm_history_after = llm_history_after
 
     async def get_session_with_messages(
         self,
@@ -48,6 +51,14 @@ class _Repository:
             }
         ]
 
+    async def get_active_llm_compact_state(self, session_id):
+        self.calls.append(("get_active_llm_compact_state",))
+        return self.compact_state
+
+    async def get_llm_history_messages_after(self, session_id, after_sequence):
+        self.calls.append(("get_llm_history_messages_after", after_sequence))
+        return self.llm_history_after or []
+
     async def get_display_history_messages_light(self, session_id):
         self.calls.append(("get_display_history_messages_light",))
         return [
@@ -63,6 +74,39 @@ class _Repository:
         ]
 
 
+class _SaveRepository:
+    def __init__(self):
+        self.calls = []
+        self.existing = type(
+            "ExistingSession",
+            (),
+            {
+                "session_metadata": {
+                    "mode": "assistant",
+                    "llm_compact_state": {
+                        "active": True,
+                        "source_until_sequence": 10,
+                        "messages": [{"role": "user", "content": "compact"}],
+                    },
+                }
+            },
+        )()
+        self.updated_metadata = None
+
+    async def get_session(self, session_id):
+        self.calls.append(("get_session", session_id))
+        return self.existing
+
+    async def update_session(self, session_id, **kwargs):
+        self.calls.append(("update_session", session_id))
+        self.updated_metadata = kwargs.get("metadata")
+        return True
+
+    async def sync_conversation_history_incremental(self, session_id, conversation_history):
+        self.calls.append(("sync_conversation_history_incremental", session_id))
+        return True
+
+
 @pytest.mark.asyncio
 async def test_load_session_for_llm_uses_lightweight_history():
     manager = SessionManagerDB(enable_cache=False)
@@ -74,8 +118,71 @@ async def test_load_session_for_llm_uses_lightweight_history():
     assert session.conversation_history[0]["content"] == "hello"
     assert repository.calls == [
         ("get_session_with_messages", False, True),
+        ("get_active_llm_compact_state",),
         ("get_llm_history_messages",),
     ]
+
+
+@pytest.mark.asyncio
+async def test_load_session_for_llm_prefers_compact_state_and_appends_new_messages():
+    manager = SessionManagerDB(enable_cache=False)
+    compact_message = {
+        "role": "user",
+        "content": "Previous turns were compacted. Keep the report constraints.",
+    }
+    repository = _Repository(
+        compact_state={
+            "active": True,
+            "source_until_sequence": 3,
+            "messages": [compact_message],
+        },
+        llm_history_after=[
+            {
+                "role": "user",
+                "type": "user",
+                "content": "continue from the latest result",
+                "timestamp": "2026-06-05T07:00:05",
+                "id": "msg_5",
+                "sequence_number": 4,
+            }
+        ],
+    )
+    manager.repository = repository
+
+    session = await manager.load_session_for_llm("session-1")
+
+    assert session.conversation_history == [
+        compact_message,
+        {"role": "user", "content": "continue from the latest result"},
+    ]
+    assert repository.calls == [
+        ("get_session_with_messages", False, True),
+        ("get_active_llm_compact_state",),
+        ("get_llm_history_messages_after", 3),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_save_session_preserves_existing_llm_compact_state_metadata():
+    manager = SessionManagerDB(enable_cache=False)
+    repository = _SaveRepository()
+    manager.repository = repository
+    session = Session(
+        session_id="session-1",
+        query="current query",
+        metadata={"mode": "assistant", "visualizations": [{"id": "viz-1"}]},
+        conversation_history=[{"type": "user", "content": "new message"}],
+    )
+
+    saved = await manager.save_session(session)
+
+    assert saved is True
+    assert repository.updated_metadata["visualizations"] == [{"id": "viz-1"}]
+    assert repository.updated_metadata["llm_compact_state"] == {
+        "active": True,
+        "source_until_sequence": 10,
+        "messages": [{"role": "user", "content": "compact"}],
+    }
 
 
 @pytest.mark.asyncio
@@ -143,6 +250,11 @@ async def test_load_session_for_llm_returns_rebuilt_tool_blocks():
                 }
             ],
         },
+    ]
+    assert repository.calls == [
+        ("get_session_with_messages", False, True),
+        ("get_active_llm_compact_state",),
+        ("get_llm_history_messages",),
     ]
 
 

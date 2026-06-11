@@ -67,3 +67,50 @@ async def test_read_data_registry_allows_large_aggregate_result(tmp_path, monkey
     assert result["data"] == 250
     assert result["metadata"]["data_type"] == "scalar"
     assert result["metadata"]["returned_records"] == 1
+
+
+@pytest.mark.asyncio
+async def test_read_data_registry_execute_returns_refs_and_llm_resume(tmp_path, monkeypatch):
+    file_path = tmp_path / "dataset.json"
+    _write_records(file_path, 3)
+
+    tool = ReadDataRegistryTool()
+    monkeypatch.setattr(tool, "_resolve_registry_path", lambda data_id: file_path)
+
+    result = await tool.execute(
+        data_id="dataset:v1:test",
+        time_range="2025-01-01 00:00:00,2025-01-02 00:00:00",
+        fields=["timestamp", "station_name"],
+    )
+
+    assert result["success"] is True
+    assert result["refs"] == {
+        "data": [
+            {
+                "data_id": "dataset:v1:test",
+                "usage": "read",
+                "tool": "read_data_registry",
+            }
+        ],
+        "files": [
+            {
+                "path": str(file_path),
+                "type": "data",
+                "format": "json",
+                "size": file_path.stat().st_size,
+                "usage": "data_registry",
+                "data_id": "dataset:v1:test",
+            }
+        ],
+    }
+    assert result["llm_resume"]["read_args"] == {
+        "data_id": "dataset:v1:test",
+        "time_range": "2025-01-01 00:00:00,2025-01-02 00:00:00",
+        "fields": ["timestamp", "station_name"],
+    }
+    assert result["llm_resume"]["tool_hint"] == (
+        "Use read_data_registry(data_id='dataset:v1:test', "
+        "time_range='2025-01-01 00:00:00,2025-01-02 00:00:00', "
+        "fields=['timestamp', 'station_name']) to reread this data."
+    )
+    assert "station_name" in result["llm_resume"]["content_preview"]

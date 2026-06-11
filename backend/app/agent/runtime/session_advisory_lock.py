@@ -41,7 +41,8 @@ async def session_advisory_lock(session_id: str) -> AsyncIterator[None]:
     """
     key = _session_lock_key(session_id)
     wait_started = time.monotonic()
-    async with engine.connect() as conn:
+    async with engine.connect() as raw_conn:
+        conn = await raw_conn.execution_options(isolation_level="AUTOCOMMIT")
         logger.info("session_advisory_lock_waiting", session_id=session_id, **_pool_status())
         await conn.execute(text("SELECT pg_advisory_lock(:key)"), {"key": key})
         acquired_at = time.monotonic()
@@ -54,7 +55,18 @@ async def session_advisory_lock(session_id: str) -> AsyncIterator[None]:
         try:
             yield
         finally:
-            await conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+            unlock_result = await conn.execute(
+                text("SELECT pg_advisory_unlock(:key) AS unlocked"),
+                {"key": key},
+            )
+            unlocked = bool(unlock_result.scalar())
+            if not unlocked:
+                logger.warning(
+                    "session_advisory_lock_unlock_failed",
+                    session_id=session_id,
+                    **_pool_status(),
+                )
+                await conn.invalidate()
             logger.info(
                 "session_advisory_lock_released",
                 session_id=session_id,

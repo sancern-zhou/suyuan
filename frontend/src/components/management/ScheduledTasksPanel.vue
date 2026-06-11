@@ -234,8 +234,7 @@ const creatingTask = ref(false)
 const channelOptions = [
   { label: '微信', value: 'weixin' },
   { label: 'QQ', value: 'qq' },
-  { label: '钉钉', value: 'dingtalk' },
-  { label: '企微', value: 'wecom' }
+  { label: '钉钉', value: 'dingtalk' }
 ]
 
 const createForm = ref({
