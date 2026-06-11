@@ -42,6 +42,54 @@ async def test_create_diagram_artifact_freeform_returns_editable_files():
 
 
 @pytest.mark.asyncio
+async def test_create_diagram_artifact_defaults_to_freeform_for_canvas_payload():
+    tool = CreateDiagramArtifactTool()
+
+    result = await tool.execute(
+        artifact_id="test_freeform_default_mode",
+        title="默认自由画布测试",
+        canvas={"width": 900, "height": 500},
+        shapes=[
+            {"id": "client", "type": "rounded rectangle", "text": "Client", "x": 80, "y": 100},
+            {"id": "api", "type": "box", "text": "API", "x": 320, "y": 100},
+        ],
+        connectors=[{"id": "edge", "source": "client", "target": "api", "text": "HTTPS"}],
+        output_formats=["drawio", "png"],
+    )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["metadata"]["diagram_mode"] == "freeform"
+    assert Path(data["drawio_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_create_diagram_artifact_keeps_legacy_template_payload_compatible():
+    tool = CreateDiagramArtifactTool()
+
+    result = await tool.execute(
+        artifact_id="test_template_compat_without_mode",
+        title="模板兼容测试",
+        diagram_type="layered_architecture",
+        layers=[
+            {
+                "id": "layer",
+                "label": "业务层",
+                "items": [
+                    {"id": "module", "label": "模块", "shape": "rectangle"},
+                ],
+            }
+        ],
+        output_formats=["html"],
+    )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert result["metadata"]["layout_engine"] != "freeform_drawio"
+    assert "drawio_path" not in data
+
+
+@pytest.mark.asyncio
 async def test_create_diagram_artifact_freeform_validation_failure_is_structured():
     tool = CreateDiagramArtifactTool()
 
