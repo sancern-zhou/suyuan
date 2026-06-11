@@ -279,8 +279,11 @@ def test_group_children_must_reference_known_shape_or_group_ids():
     [
         ("canvas", "bad", "canvas must be an object"),
         ("shapes", ["bad"], "shape must be an object"),
+        ("shapes", 123, "shapes must be a list"),
         ("connectors", ["bad"], "connector must be an object"),
+        ("connectors", 123, "connectors must be a list"),
         ("groups", ["bad"], "group must be an object"),
+        ("groups", 123, "groups must be a list"),
     ],
 )
 def test_malformed_json_source_sections_raise_validation_error(field, value, match):
