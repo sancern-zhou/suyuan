@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.tools.visualization.create_diagram_artifact.freeform_models import (
@@ -120,6 +122,140 @@ def test_source_dict_includes_diagram_mode():
     )
 
     assert diagram.to_source_dict()["diagram_mode"] == "freeform"
+
+
+def test_output_formats_are_normalized_with_first_seen_order():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+        connectors=[],
+        groups=[],
+        output_formats=["drawio", "drawio.svg", "drawio_svg", "png"],
+        diagram_intent=None,
+    )
+
+    assert diagram.output_formats == ["drawio", "drawio_svg", "png"]
+
+
+@pytest.mark.parametrize("output_formats", [None, []])
+def test_empty_output_formats_default_to_drawio_and_png(output_formats):
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[{"id": "node", "label": "A", "x": 0, "y": 0}],
+        connectors=[],
+        groups=[],
+        output_formats=output_formats,
+        diagram_intent=None,
+    )
+
+    assert diagram.output_formats == ["drawio", "png"]
+
+
+def test_unknown_shape_type_normalizes_to_rounded_rect():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[{"id": "node", "type": "unknown_widget", "label": "A", "x": 0, "y": 0}],
+        connectors=[],
+        groups=[],
+        output_formats=[],
+        diagram_intent=None,
+    )
+
+    assert diagram.shapes[0].type == "rounded_rect"
+
+
+def test_all_known_shape_types_are_accepted():
+    known_shape_types = [
+        "rect",
+        "rounded_rect",
+        "text",
+        "container",
+        "swimlane",
+        "database",
+        "cloud",
+        "queue",
+        "document",
+        "circle",
+        "ellipse",
+        "hexagon",
+        "diamond",
+        "triangle",
+        "parallelogram",
+        "cylinder",
+        "actor",
+        "note",
+        "callout",
+        "brace",
+        "bracket",
+        "line",
+        "arrow",
+        "image",
+        "drawio_shape",
+    ]
+    shapes = [
+        {"id": f"shape_{index}", "type": shape_type, "label": shape_type, "x": index * 10, "y": 0}
+        for index, shape_type in enumerate(known_shape_types)
+    ]
+
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=shapes,
+        connectors=[],
+        groups=[],
+        output_formats=[],
+        diagram_intent=None,
+    )
+
+    assert [shape.type for shape in diagram.shapes] == known_shape_types
+
+
+def test_to_source_dict_is_strict_json_serializable():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={"width": 1200, "height": 800, "grid": 20, "background": "#ffffff"},
+        shapes=[
+            {"id": "source", "label": "A", "x": 0, "y": 0},
+            {"id": "target", "label": "B", "x": 160, "y": 0},
+        ],
+        connectors=[{"id": "edge", "from": "source", "to": "target"}],
+        groups=[{"id": "group", "label": "Group", "children": ["source", "target"]}],
+        output_formats=["drawio"],
+        diagram_intent="process",
+    )
+    source = diagram.to_source_dict()
+
+    json.dumps(source, allow_nan=False)
+
+
+def test_connector_endpoints_may_reference_group_ids():
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={},
+        shapes=[
+            {"id": "source", "label": "A", "x": 0, "y": 0},
+            {"id": "target", "label": "B", "x": 160, "y": 0},
+        ],
+        connectors=[
+            {"id": "edge_from_group", "from": "group", "to": "target"},
+            {"id": "edge_to_group", "from": "source", "to": "group"},
+        ],
+        groups=[{"id": "group", "label": "Group", "children": ["source"]}],
+        output_formats=[],
+        diagram_intent=None,
+    )
+
+    assert diagram.connectors[0].source_id == "group"
+    assert diagram.connectors[1].target_id == "group"
 
 
 def test_duplicate_connector_ids_fail():
