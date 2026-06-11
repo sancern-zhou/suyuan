@@ -139,6 +139,58 @@ def test_failed_cli_zero_byte_outputs_are_overwritten_by_fallback(tmp_path, monk
     assert result.preview_svg_path.stat().st_size > 0
 
 
+def test_failed_cli_non_empty_outputs_are_overwritten_by_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(freeform_exporter, "_find_drawio_exporter", lambda: "drawio")
+    bogus_png = b"not a png"
+    bogus_svg = "<svg>bogus partial output</svg>"
+
+    def failed_export(_exporter, _drawio_path, output_path, output_format):
+        if output_format == "png":
+            output_path.write_bytes(bogus_png)
+        else:
+            output_path.write_text(bogus_svg, encoding="utf-8")
+        return False
+
+    monkeypatch.setattr(freeform_exporter, "_run_drawio_export", failed_export)
+    diagram = normalize_freeform_diagram(
+        artifact_id="demo",
+        title="Demo",
+        canvas={"width": 800, "height": 500},
+        shapes=[
+            {
+                "id": "shape",
+                "type": "rounded_rect",
+                "label": "Fallback Shape",
+                "x": 20,
+                "y": 30,
+            }
+        ],
+        connectors=[],
+        groups=[
+            {
+                "id": "group",
+                "label": "Fallback Group",
+                "children": ["shape"],
+                "x": 10,
+                "y": 10,
+                "width": 200,
+                "height": 120,
+            }
+        ],
+        output_formats=["drawio", "drawio_svg"],
+        diagram_intent="custom",
+    )
+
+    result = export_freeform_diagram(diagram, tmp_path)
+
+    assert "exporter_unavailable" in result.warnings
+    assert result.preview_png_path.read_bytes() != bogus_png
+    fallback_svg = result.preview_svg_path.read_text(encoding="utf-8")
+    assert "bogus partial output" not in fallback_svg
+    assert "Fallback Shape" in fallback_svg
+    assert "Fallback Group" in fallback_svg
+
+
 def test_fallback_svg_renders_connector_from_group_to_shape(tmp_path, monkeypatch):
     monkeypatch.setattr(freeform_exporter, "_find_drawio_exporter", lambda: None)
     diagram = normalize_freeform_diagram(
