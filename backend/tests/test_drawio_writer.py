@@ -2,9 +2,6 @@ import xml.etree.ElementTree as ET
 
 from app.tools.visualization.create_diagram_artifact.drawio_writer import build_drawio_xml
 from app.tools.visualization.create_diagram_artifact.freeform_models import (
-    FreeformCanvas,
-    FreeformDiagram,
-    FreeformShape,
     normalize_freeform_diagram,
 )
 
@@ -247,13 +244,13 @@ def test_grouped_child_geometry_is_relative_to_parent_group():
 
 
 def test_rectangle_and_stadium_shape_aliases_use_specific_styles():
-    diagram = FreeformDiagram(
+    diagram = normalize_freeform_diagram(
         artifact_id="demo",
         title="Demo",
-        canvas=FreeformCanvas(),
+        canvas={},
         shapes=[
-            FreeformShape(id="rectangle", type="rectangle", label="Rectangle"),
-            FreeformShape(id="stadium", type="stadium", label="Stadium", y=100),
+            {"id": "rectangle", "type": "rectangle", "label": "Rectangle", "x": 0, "y": 0},
+            {"id": "stadium", "type": "stadium", "label": "Stadium", "x": 0, "y": 100},
         ],
         connectors=[],
         groups=[],

@@ -13,7 +13,9 @@ class FreeformValidationError(ValueError):
 
 KNOWN_SHAPE_TYPES = {
     "rect",
+    "rectangle",
     "rounded_rect",
+    "stadium",
     "text",
     "container",
     "swimlane",
