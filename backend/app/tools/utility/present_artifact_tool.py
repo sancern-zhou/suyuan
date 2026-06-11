@@ -24,6 +24,7 @@ PDF_EXTENSIONS = {".pdf"}
 WORD_EXTENSIONS = {".doc", ".docx"}
 PRESENTATION_EXTENSIONS = {".ppt", ".pptx"}
 SPREADSHEET_EXTENSIONS = {".xls", ".xlsx"}
+DRAWIO_EXTENSIONS = {".drawio"}
 MAX_ARTIFACT_SIZE = 50 * 1024 * 1024
 
 
@@ -36,7 +37,7 @@ class PresentArtifactTool(LLMTool):
             description=(
                 "将已生成的文件推送到前端右侧预览面板，并允许用户下载原文件。"
                 "仅接收已存在的文件路径，不负责生成文件。支持 PDF、Word、PPT、Excel、"
-                "Markdown/QMD、HTML 和图片。"
+                "Markdown/QMD、HTML、图片和 Draw.io 图表。"
             ),
             category=ToolCategory.VISUALIZATION,
             version="1.0.0",
@@ -72,6 +73,7 @@ class PresentArtifactTool(LLMTool):
             return self._failure(f"不支持预览的文件类型: {suffix or '无扩展名'}")
 
         try:
+            artifact: Optional[Dict[str, Any]] = None
             data: Dict[str, Any] = {
                 "file_path": str(resolved_path),
                 "file_name": resolved_path.name,
@@ -110,6 +112,15 @@ class PresentArtifactTool(LLMTool):
                 }
             elif resolved_type in {"document", "presentation", "spreadsheet"}:
                 data["pdf_preview"] = await pdf_converter.convert_to_pdf(str(resolved_path))
+            elif resolved_type == "editable_diagram" and suffix in DRAWIO_EXTENSIONS:
+                artifact = {
+                    "type": "document",
+                    "kind": "editable_diagram",
+                    "format": "drawio",
+                    "file_path": str(resolved_path),
+                    "file_name": resolved_path.name,
+                    "preview_panel": False,
+                }
             else:
                 return self._failure(f"不支持预览的文件类型: {suffix or '无扩展名'}")
 
@@ -119,16 +130,22 @@ class PresentArtifactTool(LLMTool):
                 artifact_type=resolved_type,
                 size=file_size,
             )
+            summary = (
+                f"已作为可下载产物提供: {resolved_path.name}"
+                if artifact and artifact.get("preview_panel") is False
+                else f"已推送到右侧预览面板: {resolved_path.name}"
+            )
             return {
                 "status": "success",
                 "success": True,
                 "data": data,
+                **({"artifact": artifact, "artifacts": [artifact]} if artifact else {}),
                 "metadata": {
                     "schema_version": "v1.0",
                     "generator": "present_artifact",
                     "file_type": resolved_type,
                 },
-                "summary": f"已推送到右侧预览面板: {resolved_path.name}",
+                "summary": summary,
             }
         except UnicodeDecodeError:
             return self._failure(f"无法按文本读取文件: {resolved_path.name}")
@@ -169,6 +186,7 @@ class PresentArtifactTool(LLMTool):
                 "excel": "spreadsheet",
                 "md": "markdown",
                 "qmd": "markdown",
+                "drawio": "editable_diagram",
             }
             return aliases.get(normalized, normalized)
 
@@ -186,6 +204,8 @@ class PresentArtifactTool(LLMTool):
             return "presentation"
         if suffix in SPREADSHEET_EXTENSIONS:
             return "spreadsheet"
+        if suffix in DRAWIO_EXTENSIONS:
+            return "editable_diagram"
         return "unsupported"
 
     def _file_url(self, path: Path) -> str:
@@ -231,6 +251,7 @@ class PresentArtifactTool(LLMTool):
                             "markdown",
                             "html",
                             "image",
+                            "editable_diagram",
                         ],
                         "default": "auto",
                         "description": "产物类型提示。默认 auto 根据扩展名判断。",
