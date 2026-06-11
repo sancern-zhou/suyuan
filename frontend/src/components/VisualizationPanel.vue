@@ -1,19 +1,28 @@
 ﻿<template>
-  <div class="viz-panel" :class="{ 'has-content': visualizations.length }">
+  <div class="viz-panel" :class="{ 'has-content': hasPanelContent }">
     <!-- 可视化内容 -->
-    <div v-if="visualizations.length > 0" class="viz-content-section">
+    <div v-if="hasPanelContent" class="viz-content-section">
       <div class="panel-header">
         <div class="panel-title-group">
           <h3>{{ visualizationPanelTitle }}</h3>
           <span v-if="visualizations.length" class="viz-count">共 {{ visualizations.length }} 个结果</span>
         </div>
         <div class="header-actions">
-          <!-- 右侧面板不需要操作按钮 -->
+          <button
+            v-for="file in relatedFiles"
+            :key="file.key"
+            type="button"
+            class="related-file-btn"
+            :title="file.downloadLabel"
+            @click="downloadRelatedFile(file)"
+          >
+            {{ file.downloadLabel }}
+          </button>
         </div>
       </div>
 
       <!-- 可视化内容列表 -->
-      <div class="panel-body">
+      <div v-if="visualizations.length > 0" class="panel-body">
         <div
           v-for="(viz, index) in visualizations"
           :key="viz.id || `${viz.type || 'viz'}_${index}`"
@@ -93,7 +102,7 @@
     </div>
 
     <!-- 空状态 -->
-    <div v-if="visualizations.length === 0" class="empty-state">
+    <div v-if="!hasPanelContent" class="empty-state">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M3 9h18" />
@@ -114,6 +123,10 @@ import ChartPanel from './visualization/ChartPanel.vue'
 import DataTable from './visualization/DataTable.vue'
 import ImagePanel from './visualization/ImagePanel.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import {
+  hasRelatedArtifactFiles,
+  normalizeRelatedArtifactFiles
+} from '@/utils/artifactRelatedFiles'
 
 const store = useReactStore()
 
@@ -594,13 +607,70 @@ const latestVisualization = computed(() => {
   return list[list.length - 1]
 })
 
+const selectedMessage = computed(() => {
+  if (!props.selectedMessageId || !Array.isArray(props.history)) return null
+  return props.history.find(msg => msg?.id === props.selectedMessageId) || null
+})
+
+const latestArtifactMessage = computed(() => {
+  if (!Array.isArray(props.history)) return null
+
+  for (let index = props.history.length - 1; index >= 0; index -= 1) {
+    const msg = props.history[index]
+    const result = msg?.data?.result
+    const data = result?.data || {}
+    if (hasRelatedArtifactFiles({
+      artifact: {
+        ...data,
+        ...result
+      },
+      refs: data.refs || result?.refs
+    })) {
+      return msg
+    }
+  }
+
+  return null
+})
+
+const artifactSourceMessage = computed(() => selectedMessage.value || latestArtifactMessage.value)
+
+const currentArtifactPayload = computed(() => {
+  const result = artifactSourceMessage.value?.data?.result
+  const data = result?.data || {}
+  const artifact = data.artifact || result?.artifact || {}
+
+  return {
+    ...data,
+    ...result,
+    ...artifact,
+    related_files: artifact.related_files || data.related_files || result?.related_files,
+    relatedFiles: artifact.relatedFiles || data.relatedFiles || result?.relatedFiles,
+    artifacts: artifact.artifacts || data.artifacts || result?.artifacts || latestVisualization.value?.artifacts || props.content?.artifacts
+  }
+})
+
+const currentArtifactRefs = computed(() => {
+  const result = artifactSourceMessage.value?.data?.result
+  const data = result?.data || {}
+  return data.refs || result?.refs || props.content?.refs || {}
+})
+
+const relatedFiles = computed(() => normalizeRelatedArtifactFiles({
+  artifact: currentArtifactPayload.value,
+  refs: currentArtifactRefs.value
+}))
+
+const hasPanelContent = computed(() => {
+  return visualizations.value.length > 0 || relatedFiles.value.length > 0
+})
+
 const panelTitle = computed(() => {
-  return latestVisualization.value?.title || '可视化内容'
+  return latestVisualization.value?.title || currentArtifactPayload.value?.title || '可视化内容'
 })
 
 const visualizationPanelTitle = computed(() => {
-  // 可视化部分标题（仅当有可视化时显示）
-  return latestVisualization.value?.title || '可视化内容'
+  return latestVisualization.value?.title || currentArtifactPayload.value?.title || '可视化内容'
 })
 
 const typeLabelMap = {
@@ -804,6 +874,26 @@ const triggerRegenerate = async (query, options) => {
   console.log('触发重新生成:', { query, options })
 }
 
+const downloadRelatedFile = (file) => {
+  if (!file?.file_path) {
+    console.error('[VisualizationPanel] Related file path not available')
+    return
+  }
+
+  try {
+    const fileUrl = `/api/file/${encodeURIComponent(file.file_path)}`
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = file.file_path.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  } catch (error) {
+    console.error('[VisualizationPanel] Related file download failed:', error)
+  }
+}
+
 // 复制到剪贴板
 const copyToClipboard = async (text) => {
   try {
@@ -898,7 +988,30 @@ const debugUnknownViz = (viz) => {
 .header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+}
+
+.related-file-btn {
+  max-width: 180px;
+  padding: 5px 10px;
+  border: 1px solid #d5e3f6;
+  background: #fff;
+  color: #1976d2;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1976d2;
+    background: #f3f8ff;
+  }
 }
 
 .expand-btn {
