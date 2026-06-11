@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { normalizeRelatedArtifactFiles } from '../artifactRelatedFiles.js'
+import {
+  hasRelatedArtifactFiles,
+  normalizeRelatedArtifactFiles
+} from '../artifactRelatedFiles.js'
 
 const artifact = {
   title: '自由画布测试',
@@ -26,3 +29,14 @@ const refsOnly = normalizeRelatedArtifactFiles({
 
 assert.equal(refsOnly.length, 1)
 assert.equal(refsOnly[0].format, 'drawio')
+
+assert.equal(
+  hasRelatedArtifactFiles({
+    refs: {
+      artifacts: [
+        { title: '源文件', format: 'drawio', file_path: '/tmp/source.drawio' }
+      ]
+    }
+  }),
+  true
+)

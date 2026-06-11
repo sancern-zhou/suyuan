@@ -123,7 +123,10 @@ import ChartPanel from './visualization/ChartPanel.vue'
 import DataTable from './visualization/DataTable.vue'
 import ImagePanel from './visualization/ImagePanel.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import { normalizeRelatedArtifactFiles } from '@/utils/artifactRelatedFiles'
+import {
+  hasRelatedArtifactFiles,
+  normalizeRelatedArtifactFiles
+} from '@/utils/artifactRelatedFiles'
 
 const store = useReactStore()
 
@@ -616,7 +619,13 @@ const latestArtifactMessage = computed(() => {
     const msg = props.history[index]
     const result = msg?.data?.result
     const data = result?.data || {}
-    if (data.related_files || data.relatedFiles || data.artifacts || result?.related_files || result?.artifacts) {
+    if (hasRelatedArtifactFiles({
+      artifact: {
+        ...data,
+        ...result
+      },
+      refs: data.refs || result?.refs
+    })) {
       return msg
     }
   }
