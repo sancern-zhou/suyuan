@@ -17,7 +17,9 @@ import structlog
 from app.tools.query.query_gd_suncere.tool import execute_query_gd_suncere_district_report
 from app.agent.context.data_context_manager import DataContextManager
 from app.db.session_repository import SessionRepository
+from app.fetchers.consultation.city_mapping import normalize_city_identity
 from app.fetchers.consultation.field_normalizer import DistrictFieldNormalizer
+from app.fetchers.consultation.output_paths import get_monthly_consultation_dir
 
 logger = structlog.get_logger()
 
@@ -54,7 +56,7 @@ class MonthlyDistrictPollutantRanking:
             self.last_year_end = datetime(year - 1, month + 1, 1) - timedelta(days=1)
 
         # 输出目录
-        self.output_dir = Path(f"backend_data_registry/月度补充数据/{year}年{month:02d}月")
+        self.output_dir = get_monthly_consultation_dir(year, month)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # 广东省21个地级市
@@ -199,8 +201,12 @@ class MonthlyDistrictPollutantRanking:
 
             row = {
                 "district": district,
-                "city": curr_vals.get("city", ""),
             }
+            city_name, city_code = normalize_city_identity(
+                curr_vals.get("city") or curr_vals.get("city_code") or last_vals.get("city") or last_vals.get("city_code")
+            )
+            row["city"] = city_name
+            row["city_code"] = city_code
 
             # 添加污染物浓度和同比
             for pollutant in self.POLLUTANTS:
@@ -233,7 +239,7 @@ class MonthlyDistrictPollutantRanking:
             return
 
         # 构建字段名
-        fieldnames = ["district", "city"]
+        fieldnames = ["district", "city", "city_code"]
         for pollutant in self.POLLUTANTS:
             fieldnames.extend([pollutant, f"{pollutant}_yoy"])
 

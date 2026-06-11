@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.tools.resource_refs import build_artifact_ref, build_file_ref, merge_refs
+
 
 OFFICE_MIME_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -71,4 +73,40 @@ def attach_document_artifact(
     )
     result_data["artifact"] = artifact
     result_data["artifacts"] = [artifact]
+    result_data["refs"] = merge_refs(
+        result_data.get("refs"),
+        {
+            "files": [
+                build_file_ref(
+                    file_path,
+                    type="document",
+                    format=artifact.get("format"),
+                    usage="artifact",
+                )
+            ],
+            "artifacts": [build_artifact_ref(artifact)],
+        },
+    )
     return result_data
+
+
+def build_artifact_resume_context(
+    result_data: Dict[str, Any],
+    file_path: str | Path,
+    *,
+    extra_resume: Optional[Dict[str, Any]] = None,
+    tool_hint: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return top-level Agent resume fields for an explicit artifact result."""
+    artifact = result_data.get("artifact") if isinstance(result_data.get("artifact"), dict) else {}
+    resume = {
+        "artifact_path": str(Path(file_path)),
+        "artifact_format": artifact.get("format") or Path(file_path).suffix.lstrip(".") or None,
+        "tool_hint": tool_hint or f"Use present_artifact(file_path='{Path(file_path)}') to preview this artifact.",
+    }
+    if extra_resume:
+        resume.update({key: value for key, value in extra_resume.items() if value is not None})
+    return {
+        "refs": result_data.get("refs", {}),
+        "llm_resume": resume,
+    }

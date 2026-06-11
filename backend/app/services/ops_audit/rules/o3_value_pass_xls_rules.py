@@ -18,13 +18,12 @@ from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
 RF_TABLE = "RF_HY_O3VALUEPASS"
-TYPECODE = "RF_HY_O3ValuePass"
 TOLERANCE = 1e-6
 
 COMPARISONS = [
-    {"field": "DEVICEDELIVERMODEL", "label": "斜率", "cell": "G26", "fallback_cells": ["F26"]},
-    {"field": "DELIVERFC", "label": "截距(ppb)", "cell": "G27", "fallback_cells": ["F27"]},
-    {"field": "DENSITY1VALUE", "label": "相对于前一次传递的改变(%)", "cell": "G29", "fallback_cells": ["F29"]},
+    {"field": "DEVICEDELIVERMODEL", "label": "斜率", "cell": "F25", "candidate_cells": ["F25", "F24"]},
+    {"field": "DELIVERFC", "label": "截距(ppb)", "cell": "F26", "candidate_cells": ["F26", "F25"]},
+    {"field": "DENSITY1VALUE", "label": "相对于前一次传递的改变(%)", "cell": "F28", "candidate_cells": ["F28", "F26"]},
 ]
 
 
@@ -62,18 +61,21 @@ def check_o3_value_pass_xls_values(
 def _xls_items(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items = []
     for record in records:
-        typecode = _first_present(record, ["TYPECODE", "typecode", "TypeCode", "FUNCTIONCODE", "functioncode"])
         name = _first_present(record, ["FILENAME", "filename", "FileName", "NAME", "name", "TITLE", "title"])
         sources = _source_candidates(record)
         source = sources[0] if sources else None
-        text = f"{typecode or ''} {name or ''} {' '.join(sources)}"
-        if TYPECODE.lower() not in text.lower():
-            continue
-        suffix_text = str(name or source or "").lower()
-        if not suffix_text.endswith((".xls", ".xlsx")):
+        if not _is_xls_attachment(name, sources):
             continue
         items.append({"filename": name, "source_path": source, "source_paths": sources, "raw": record})
     return items
+
+
+def _is_xls_attachment(name: Any, sources: list[str]) -> bool:
+    for value in [name, *sources]:
+        suffix = Path(urlparse(str(value or "")).path).suffix.lower()
+        if suffix in {".xls", ".xlsx"}:
+            return True
+    return False
 
 
 def _select_item(items: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -106,7 +108,7 @@ def _read_cells_from_path(path: Path) -> dict[str, Any]:
 
             wb = load_workbook(path, data_only=True, read_only=True)
             ws = wb.worksheets[0]
-            cells = {comparison["cell"]: _worksheet_cell_value(ws, comparison) for comparison in COMPARISONS}
+            cells = {comparison["cell"]: _worksheet_cell_values(ws, comparison) for comparison in COMPARISONS}
             wb.close()
             return {"status": "success", "cells": cells}
         if suffix == ".xls":
@@ -114,7 +116,7 @@ def _read_cells_from_path(path: Path) -> dict[str, Any]:
 
             book = xlrd.open_workbook(str(path))
             sheet = book.sheet_by_index(0)
-            cells = {comparison["cell"]: _xls_sheet_cell_value(sheet, comparison) for comparison in COMPARISONS}
+            cells = {comparison["cell"]: _xls_sheet_cell_values(sheet, comparison) for comparison in COMPARISONS}
             return {"status": "success", "cells": cells}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
@@ -145,25 +147,23 @@ def _source_candidates(record: dict[str, Any]) -> list[str]:
 
 
 def _comparison_cells(comparison: dict[str, Any]) -> list[str]:
+    configured = comparison.get("candidate_cells")
+    if configured:
+        return [str(cell) for cell in configured]
     cells = [str(comparison["cell"])]
     cells.extend(str(cell) for cell in comparison.get("fallback_cells", []))
     return cells
 
 
-def _worksheet_cell_value(ws: Any, comparison: dict[str, Any]) -> Any:
-    for cell in _comparison_cells(comparison):
-        value = ws[cell].value
-        if not _is_blank(value):
-            return {"cell": cell, "value": value}
-    return {"cell": comparison["cell"], "value": None}
+def _worksheet_cell_values(ws: Any, comparison: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"cell": cell, "value": ws[cell].value} for cell in _comparison_cells(comparison)]
 
 
-def _xls_sheet_cell_value(sheet: Any, comparison: dict[str, Any]) -> Any:
-    for cell in _comparison_cells(comparison):
-        value = sheet.cell_value(*_xls_cell_indexes(cell))
-        if not _is_blank(value):
-            return {"cell": cell, "value": value}
-    return {"cell": comparison["cell"], "value": None}
+def _xls_sheet_cell_values(sheet: Any, comparison: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"cell": cell, "value": sheet.cell_value(*_xls_cell_indexes(cell))}
+        for cell in _comparison_cells(comparison)
+    ]
 
 
 def _resolve_source(source: str) -> dict[str, Any]:
@@ -212,36 +212,99 @@ def _compare_values(form: dict[str, Any], cells: dict[str, Any]) -> list[dict[st
         field = comparison["field"]
         cell = comparison["cell"]
         form_raw = form.get(field)
-        cell_data = cells.get(cell)
-        used_cell = cell
-        if isinstance(cell_data, dict):
-            used_cell = str(cell_data.get("cell") or cell)
-            cell_raw = cell_data.get("value")
-        else:
-            cell_raw = cell_data
         form_value = _number(form_raw)
-        cell_value = _number(cell_raw)
+        form_precision = _decimal_places(form_raw)
+        cell_candidates = _cell_candidates(cells.get(cell), comparison)
+        matched_cell = _matched_cell(form_value, form_precision, cell_candidates, field)
+        first_numeric_cell = next((item for item in cell_candidates if item["number"] is not None), None)
+        used_cell = first_numeric_cell or (
+            cell_candidates[0] if cell_candidates else {"cell": cell, "value": None, "number": None}
+        )
         if form_value is None:
             status = "missing_form_value"
-        elif cell_value is None:
-            status = "missing_xls_value"
-        elif abs(form_value - cell_value) <= TOLERANCE:
+        elif matched_cell is not None:
             status = "match"
+            used_cell = matched_cell
+        elif first_numeric_cell is None:
+            status = "missing_xls_value"
         else:
             status = "mismatch"
         comparisons.append(
             {
                 **comparison,
                 "configured_cell": cell,
-                "cell": used_cell,
+                "candidate_cells": [item["cell"] for item in cell_candidates],
+                "cell_candidates": [
+                    {"cell": item["cell"], "value": item["value"], "number": item["number"]}
+                    for item in cell_candidates
+                ],
+                "cell": used_cell["cell"],
                 "form_value": form_raw,
-                "xls_value": cell_raw,
+                "xls_value": used_cell["value"],
                 "form_number": form_value,
-                "xls_number": cell_value,
+                "xls_number": used_cell["number"],
+                "comparison_number": used_cell.get("comparison_number"),
+                "comparison_transform": used_cell.get("comparison_transform", ""),
+                "form_precision": form_precision,
                 "status": status,
             }
         )
     return comparisons
+
+
+def _cell_candidates(cell_data: Any, comparison: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(cell_data, list):
+        raw_items = cell_data
+    elif isinstance(cell_data, dict):
+        raw_items = [cell_data]
+    else:
+        raw_items = [{"cell": comparison["cell"], "value": cell_data}]
+
+    candidates = []
+    for item in raw_items:
+        if isinstance(item, dict):
+            cell = str(item.get("cell") or comparison["cell"])
+            value = item.get("value")
+        else:
+            cell = str(comparison["cell"])
+            value = item
+        candidates.append({"cell": cell, "value": value, "number": _number(value)})
+    return candidates
+
+
+def _matched_cell(
+    form_value: float | None,
+    form_precision: int,
+    candidates: list[dict[str, Any]],
+    field: str,
+) -> dict[str, Any] | None:
+    if form_value is None:
+        return None
+    for candidate in candidates:
+        for comparison_number, transform in _comparison_numbers(candidate.get("number"), field):
+            if round(comparison_number, form_precision) == round(form_value, form_precision):
+                matched = dict(candidate)
+                matched["comparison_number"] = comparison_number
+                matched["comparison_transform"] = transform
+                return matched
+    return None
+
+
+def _comparison_numbers(value: float | None, field: str) -> list[tuple[float, str]]:
+    if value is None:
+        return []
+    values = [(value, "")]
+    if field == "DENSITY1VALUE":
+        values.append((value * 100, "percent_scale"))
+    return values
+
+
+def _decimal_places(value: Any) -> int:
+    text = str(value or "").strip()
+    match = re.search(r"[-+]?\d+(?:\.(\d+))?", text)
+    if not match or match.group(1) is None:
+        return 0
+    return len(match.group(1))
 
 
 def _add_issue(

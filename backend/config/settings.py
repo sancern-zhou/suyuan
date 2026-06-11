@@ -8,11 +8,14 @@ import yaml
 from pathlib import Path
 
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
 class Settings(BaseSettings):
     """Application configuration settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(BACKEND_DIR / ".env", Path.cwd() / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -272,6 +275,23 @@ class Settings(BaseSettings):
         default="qwen3",
         description="Qwen3 model name"
     )
+    qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
+    qwen_vl_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        description="Qwen VL OpenAI-compatible API base URL"
+    )
+    qwen_vl_model: str = Field(default="qwen-vl-ocr", description="Qwen OCR model name")
+    qwen_vision_model: str = Field(default="qwen-vl-max", description="Qwen model for visual understanding tasks")
+    mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
+    mimo_vl_base_url: Optional[str] = Field(
+        default=None,
+        description="Mimo VL OpenAI-compatible API base URL"
+    )
+    mimo_vl_model: str = Field(default="mimo-v2.5", description="Mimo VL model name")
+    ops_attachment_root: Optional[str] = Field(default=None, description="Local root used to resolve /WebFiles attachments")
+    attachment_root: Optional[str] = Field(default=None, description="Fallback local attachment root")
+    ops_attachment_base_url: Optional[str] = Field(default=None, description="Base URL used to resolve /WebFiles attachments")
+    attachment_base_url: Optional[str] = Field(default=None, description="Fallback attachment base URL")
 
     # 阿里云OCR配置
     aliyun_ocr_access_key_id: Optional[str] = Field(
@@ -514,7 +534,6 @@ class Settings(BaseSettings):
                 "qq": {"enabled": False, "allow_from": ["*"]},
                 "weixin": {"enabled": False, "allow_from": ["*"]},
                 "dingtalk": {"enabled": False, "allow_from": ["*"]},
-                "wecom": {"enabled": False, "allow_from": ["*"]},
                 "channels": {
                     "send_progress": True,
                     "send_tool_hints": False,

@@ -96,18 +96,22 @@ class SessionManagerDB:
             exists = await self.repository.get_session(session.session_id)
 
             if exists:
+                metadata = self._merge_preserved_metadata(
+                    getattr(exists, "session_metadata", None),
+                    session.metadata,
+                )
                 # 更新现有会话
                 await self.repository.update_session(
                     session.session_id,
                     query=session.query,
-                    mode=session.metadata.get("mode"),
+                    mode=metadata.get("mode"),
                     current_step=session.current_step,
                     current_expert=session.current_expert,
                     data_ids=session.data_ids,
                     visual_ids=session.visual_ids,
                     office_documents=session.office_documents,
                     error=session.error,
-                    metadata=session.metadata
+                    metadata=metadata
                 )
             else:
                 # 创建新会话
@@ -196,6 +200,22 @@ class SessionManagerDB:
             force_full_history_rewrite=True,
         )
 
+    @staticmethod
+    def _merge_preserved_metadata(
+        existing_metadata: Optional[Dict[str, Any]],
+        incoming_metadata: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Merge DB-owned runtime metadata that ordinary session saves must not erase."""
+        merged = dict(incoming_metadata or {})
+        if not isinstance(existing_metadata, dict):
+            return merged
+
+        for key in ("llm_compact_state",):
+            if key in existing_metadata and key not in merged:
+                merged[key] = existing_metadata[key]
+
+        return merged
+
     async def load_session(
         self,
         session_id: str,
@@ -277,7 +297,12 @@ class SessionManagerDB:
         self,
         session_dict: Dict[str, Any],
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        metadata_updates: Optional[Dict[str, Any]] = None,
     ) -> Session:
+        metadata = dict(session_dict["metadata"] or {})
+        if metadata_updates:
+            metadata.update(metadata_updates)
+
         return Session(
             session_id=session_dict["session_id"],
             query=session_dict["query"],
@@ -291,10 +316,69 @@ class SessionManagerDB:
             data_ids=session_dict["data_ids"],
             visual_ids=session_dict["visual_ids"],
             office_documents=session_dict.get("office_documents", []),
-            metadata=session_dict["metadata"],
+            metadata=metadata,
             error=session_dict["error"],
             current_step=session_dict.get("current_step"),
             current_expert=session_dict.get("current_expert")
+        )
+
+    @staticmethod
+    def _max_sequence(messages: List[Dict[str, Any]]) -> Optional[int]:
+        sequence_numbers = [
+            msg.get("sequence_number")
+            for msg in messages
+            if isinstance(msg.get("sequence_number"), int)
+        ]
+        if not sequence_numbers:
+            return None
+        return max(sequence_numbers)
+
+    @staticmethod
+    def _compact_messages_for_restore(
+        compact_state: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        messages = compact_state.get("messages")
+        if not isinstance(messages, list):
+            return []
+        restored: List[Dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            if role not in {"user", "assistant"} or "content" not in msg:
+                continue
+            restored.append({
+                "role": role,
+                "content": msg.get("content"),
+            })
+        return restored
+
+    async def save_llm_compact_state(
+        self,
+        session_id: str,
+        messages: List[Dict[str, Any]],
+        *,
+        source_until_sequence: int,
+        token_estimate: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Persist compact LLM-only state without rewriting display transcript rows."""
+        compact_state = {
+            "active": True,
+            "version": 1,
+            "source_until_sequence": source_until_sequence,
+            "messages": messages,
+            "message_count": len(messages),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        if token_estimate is not None:
+            compact_state["token_estimate"] = token_estimate
+        if reason:
+            compact_state["reason"] = reason
+
+        return await self.repository.save_llm_compact_state(
+            session_id,
+            compact_state,
         )
 
     async def load_session_for_llm(self, session_id: str) -> Optional[Session]:
@@ -309,20 +393,58 @@ class SessionManagerDB:
                 logger.debug("session_not_found_in_db", session_id=session_id)
                 return None
 
-            raw_history = await self.repository.get_llm_history_messages(session_id)
             from app.agent.memory.session_memory import SessionMemory
 
-            history = SessionMemory.project_history_messages_for_llm(
-                raw_history,
-                session_id=session_id,
+            compact_state = await self.repository.get_active_llm_compact_state(session_id)
+            compact_source_sequence = None
+            if compact_state:
+                compact_source_sequence = compact_state.get("source_until_sequence")
+
+            if isinstance(compact_source_sequence, int):
+                raw_history = await self.repository.get_llm_history_messages_after(
+                    session_id,
+                    compact_source_sequence,
+                )
+                projected_incremental_history = SessionMemory.project_history_messages_for_llm(
+                    raw_history,
+                    session_id=session_id,
+                )
+                history = (
+                    self._compact_messages_for_restore(compact_state)
+                    + projected_incremental_history
+                )
+                max_incremental_sequence = self._max_sequence(raw_history)
+                source_until_sequence = (
+                    max_incremental_sequence
+                    if max_incremental_sequence is not None
+                    else compact_source_sequence
+                )
+                used_compact_state = True
+            else:
+                raw_history = await self.repository.get_llm_history_messages(session_id)
+                history = SessionMemory.project_history_messages_for_llm(
+                    raw_history,
+                    session_id=session_id,
+                )
+                source_until_sequence = self._max_sequence(raw_history)
+                used_compact_state = False
+
+            session = self._session_from_dict(
+                session_dict,
+                history,
+                metadata_updates={
+                    "llm_source_until_sequence": source_until_sequence,
+                    "llm_restored_from_compact_state": used_compact_state,
+                },
             )
-            session = self._session_from_dict(session_dict, history)
 
             logger.info(
                 "session_loaded_for_llm",
                 session_id=session_id,
                 message_count=len(history),
                 raw_message_count=len(raw_history),
+                compact_state_used=used_compact_state,
+                source_until_sequence=source_until_sequence,
                 duration_ms=round((time.monotonic() - started) * 1000, 2),
             )
             return session

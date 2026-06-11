@@ -10,6 +10,7 @@ from app.fetchers.consultation.monthly import MonthlyConsultationFileFetcher
 from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher
 from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyDistrictPollutantRankingFetcher,
+    MonthlyMeteorologySupportFetcher,
     MonthlyPollutionEventsComponentsFetcher,
     MonthlyStationHighValuesFetcher,
 )
@@ -32,6 +33,7 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(MonthlyDistrictPollutantRankingFetcher())  # 月度区县污染物排名补充数据
     scheduler.register(MonthlyStationHighValuesFetcher())  # 月度高值站点补充数据
     scheduler.register(MonthlyPollutionEventsComponentsFetcher())  # 月度污染时段及组分补充数据
+    scheduler.register(MonthlyMeteorologySupportFetcher())  # 月度气象支撑补充数据
     scheduler.register(AirQualityDataQualityFetcher())  # 空气质量数据质量巡检
     scheduler.register(CityPollutionEventFetcher())  # 城市污染过程告警
 

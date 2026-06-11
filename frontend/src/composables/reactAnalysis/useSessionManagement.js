@@ -600,7 +600,7 @@ export function useSessionManagement(store) {
     if (!silent) sessionHistoryLoading.value = true
     try {
       refreshInFlight = (async () => {
-        const data = await listSessions({ limit: 50 })
+        const data = await listSessions({ limit: 200 })
         persistedSessionHistoryData.value = data.sessions || []
         sessionHistoryStats.value = data.stats || null
       })()

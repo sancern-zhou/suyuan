@@ -25,3 +25,5 @@
 - Add chart, metric card, process, matrix, domain diagram, or action component
   when a page would otherwise be text-only.
 - Split dense pages instead of shrinking text until it becomes unreadable.
+- When using `slide_plan`, follow `slide-plan-rules.md` for the input
+  contract, renderer limits, image fit behavior, and QA handoff fields.

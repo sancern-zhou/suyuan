@@ -9,6 +9,11 @@ def test_assistant_mode_exposes_ppt_master_tool_not_deck_or_low_level_renderer()
     assert "analyze_image" in ASSISTANT_TOOL_NAMES
     assert "analyze_image" in ASSISTANT_TOOL_ORDER
 
+    assert "analyze_pptx_template" not in ASSISTANT_TOOL_NAMES
+    assert "analyze_pptx_template" not in ASSISTANT_TOOL_ORDER
+    assert "create_pptx_from_template" not in ASSISTANT_TOOL_NAMES
+    assert "create_pptx_from_template" not in ASSISTANT_TOOL_ORDER
+
     assert "create_pptx_from_deck" not in ASSISTANT_TOOL_NAMES
     assert "create_pptx_from_deck" not in ASSISTANT_TOOL_ORDER
     assert "create_pptx" not in ASSISTANT_TOOL_NAMES
@@ -44,3 +49,18 @@ def test_ppt_master_schema_requires_reading_ppt_guide_before_generation():
     assert "PPT操作指南.md" in serialized
     assert "生成 PPT 前" in serialized
     assert "必须先阅读" in serialized
+
+
+def test_ppt_master_schema_exposes_agent_shape_plan():
+    schema = CreatePptxWithPptMasterTool().get_function_schema()
+
+    properties = schema["parameters"]["properties"]
+    assert "slide_plan" in properties
+    assert "Agent 自行规划" in properties["slide_plan"]["description"]
+    assert "shape" in properties["slide_plan"]["description"].lower()
+
+
+def test_ppt_master_schema_requires_title_to_prevent_empty_tool_calls():
+    schema = CreatePptxWithPptMasterTool().get_function_schema()
+
+    assert schema["parameters"]["required"] == ["title"]

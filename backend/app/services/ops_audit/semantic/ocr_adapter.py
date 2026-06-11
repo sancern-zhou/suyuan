@@ -22,7 +22,7 @@ QWEN_VL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 MIMO_VL_BASE_URL = "https://api.xiaomimimo.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_PROMPT = "请识别图片中的所有文字内容，按原文输出，不要添加任何解释。"
-DEFAULT_MODEL = "qwen-vl-plus"
+DEFAULT_MODEL = "qwen-vl-ocr"
 DEFAULT_MIMO_MODEL = "mimo-v2.5"
 PDF_FIRST_PAGE_RENDER_DPI = 180
 _OCR_CACHE: dict[tuple[str, str, int, int], dict[str, Any]] = {}
@@ -175,12 +175,12 @@ def _select_flow_visual_target() -> dict[str, str]:
 
 
 def _flow_visual_providers() -> list[dict[str, str]]:
-    raw = os.getenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", "qwen,mimo")
+    raw = os.getenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", "qwen")
     names = [item.strip().lower() for item in raw.split(",") if item.strip()]
     targets: list[dict[str, str]] = []
     for name in names:
         if name in {"qwen", "qwen_vl", "qwen-vl"}:
-            targets.append(_qwen_target("general"))
+            targets.append(_qwen_target("flow_visual"))
         elif name in {"mimo", "mimo_vl", "mimo-vl"}:
             targets.append(_mimo_target())
     return targets
@@ -213,30 +213,59 @@ def _qwen_target(mode: str) -> dict[str, str]:
 def _mimo_target() -> dict[str, str]:
     return {
         "provider": "mimo",
-        "model": str(os.getenv("MIMO_VL_MODEL") or os.getenv("OPS_AUDIT_FLOW_VISUAL_MIMO_MODEL") or DEFAULT_MIMO_MODEL).strip(),
+        "model": str(
+            os.getenv("MIMO_VL_MODEL")
+            or os.getenv("OPS_AUDIT_FLOW_VISUAL_MIMO_MODEL")
+            or getattr(settings, "mimo_vl_model", "")
+            or DEFAULT_MIMO_MODEL
+        ).strip(),
         "base_url": _normalize_openai_base_url(
-            str(os.getenv("MIMO_VL_BASE_URL") or getattr(settings, "mimo_base_url", "") or MIMO_VL_BASE_URL).strip()
+            str(
+                os.getenv("MIMO_VL_BASE_URL")
+                or getattr(settings, "mimo_vl_base_url", "")
+                or getattr(settings, "mimo_base_url", "")
+                or MIMO_VL_BASE_URL
+            ).strip()
         ),
-        "api_key": str(os.getenv("MIMO_VL_API_KEY") or getattr(settings, "mimo_api_key", "") or "").strip(),
+        "api_key": str(
+            os.getenv("MIMO_VL_API_KEY")
+            or getattr(settings, "mimo_vl_api_key", "")
+            or getattr(settings, "mimo_api_key", "")
+            or ""
+        ).strip(),
     }
 
 
 def _resolve_qwen_model(mode: str) -> str:
+    if mode == "flow_visual":
+        return str(
+            os.getenv("QWEN_VISION_MODEL")
+            or os.getenv("OPS_AUDIT_FLOW_VISUAL_QWEN_MODEL")
+            or getattr(settings, "qwen_vision_model", "")
+            or getattr(settings, "qwen_vl_model", "")
+            or DEFAULT_MODEL
+        ).strip()
     if mode == "document":
         return str(os.getenv("OCR_DOCUMENT_MODEL") or os.getenv("OCR_MODEL") or DEFAULT_MODEL).strip()
     if mode == "table":
         return str(os.getenv("OCR_TABLE_MODEL") or os.getenv("OCR_MODEL") or DEFAULT_MODEL).strip()
-    return str(os.getenv("OCR_GENERAL_MODEL") or os.getenv("OCR_MODEL") or DEFAULT_MODEL).strip()
+    return str(
+        os.getenv("OCR_GENERAL_MODEL")
+        or os.getenv("OCR_MODEL")
+        or getattr(settings, "qwen_vl_model", "")
+        or DEFAULT_MODEL
+    ).strip()
 
 
 def _resolve_qwen_base_url() -> str:
-    return str(os.getenv("QWEN_VL_BASE_URL") or QWEN_VL_BASE_URL).strip()
+    return str(os.getenv("QWEN_VL_BASE_URL") or getattr(settings, "qwen_vl_base_url", "") or QWEN_VL_BASE_URL).strip()
 
 
 def _resolve_qwen_api_key() -> str:
     key = (
         os.getenv("QWEN_VL_API_KEY")
         or os.getenv("OCR_API_KEY")
+        or getattr(settings, "qwen_vl_api_key", "")
         or getattr(settings, "qwen_api_key", "")
         or getattr(settings, "aliyun_ocr_access_key_id", "")
     )
@@ -263,13 +292,23 @@ def _resolve_source(source: str) -> dict[str, Any]:
     if path.exists():
         return {"status": "success", "kind": "file", "path": str(path)}
 
-    attachment_root = os.getenv("OPS_ATTACHMENT_ROOT") or os.getenv("ATTACHMENT_ROOT")
+    attachment_root = (
+        os.getenv("OPS_ATTACHMENT_ROOT")
+        or os.getenv("ATTACHMENT_ROOT")
+        or getattr(settings, "ops_attachment_root", "")
+        or getattr(settings, "attachment_root", "")
+    )
     if attachment_root:
         rooted = Path(attachment_root).expanduser() / text.lstrip("/")
         if rooted.exists():
             return {"status": "success", "kind": "file", "path": str(rooted)}
 
-    attachment_base_url = os.getenv("OPS_ATTACHMENT_BASE_URL") or os.getenv("ATTACHMENT_BASE_URL")
+    attachment_base_url = (
+        os.getenv("OPS_ATTACHMENT_BASE_URL")
+        or os.getenv("ATTACHMENT_BASE_URL")
+        or getattr(settings, "ops_attachment_base_url", "")
+        or getattr(settings, "attachment_base_url", "")
+    )
     if attachment_base_url and text.startswith("/"):
         full_url = urljoin(attachment_base_url.rstrip("/") + "/", text.lstrip("/"))
         return {"status": "success", "kind": "url", "url": full_url}

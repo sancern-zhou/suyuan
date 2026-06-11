@@ -20,6 +20,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.analysis.trajectory_source_analysis.trajectory_runner import TrajectoryRunner
 from app.tools.analysis.trajectory_source_analysis.enterprise_matcher import EnterpriseMatcher
 from app.tools.analysis.trajectory_source_analysis.visualization_generator import VisualizationGenerator
+from app.tools.resource_refs import build_data_resume_context, merge_refs
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -349,6 +350,7 @@ class TrajectorySourceAnalysisTool(LLMTool):
                     error=str(save_error)
                 )
 
+            self._attach_resume_context(result_payload)
             return result_payload
             
         except Exception as e:
@@ -411,3 +413,11 @@ class TrajectorySourceAnalysisTool(LLMTool):
             },
             "summary": f"轨迹源清单分析失败: {error_msg}"
         }
+
+    def _attach_resume_context(self, result: Dict[str, Any]) -> None:
+        data_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        context = build_data_resume_context(
+            generated_data_ids=[data_id] if data_id else [],
+        )
+        result["refs"] = merge_refs(result.get("refs"), context["refs"])
+        result["llm_resume"] = context["llm_resume"]

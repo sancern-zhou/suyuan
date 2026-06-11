@@ -64,12 +64,12 @@ def _extract_qmd_title(qmd_path: Path) -> str | None:
     return None
 
 
-def _report_download_filename(report_dir: Path, stored_filename: str, report_id: str) -> str:
+def _report_download_filename(qmd_path: Path, stored_filename: str, report_id: str) -> str:
     extension = Path(stored_filename).suffix
     if stored_filename == "report.qmd":
-        title = _extract_qmd_title(report_dir / "report.qmd")
+        title = _extract_qmd_title(qmd_path)
     elif stored_filename == "report.docx":
-        title = _extract_qmd_title(report_dir / "report.qmd")
+        title = _extract_qmd_title(qmd_path)
     else:
         title = None
 
@@ -91,6 +91,22 @@ def _content_disposition(disposition: str, filename: str) -> str:
     return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
 
 
+def _refresh_report_html_if_stale(report_id: str, html_path: Path) -> Path:
+    qmd_path = quarto_report_renderer.get_qmd_path(report_id)
+    html_missing = not html_path.exists()
+    html_stale = (
+        not html_missing
+        and qmd_path.exists()
+        and qmd_path.stat().st_mtime_ns > html_path.stat().st_mtime_ns
+    )
+    if not html_missing and not html_stale:
+        return html_path
+
+    refreshed_html_path = quarto_report_renderer.render_preview_html(report_id)
+    record_report_update(report_id, source="api_html_auto_refresh", html_path=refreshed_html_path)
+    return refreshed_html_path
+
+
 @router.post("/{report_id}/render/html")
 async def render_report_html(report_id: str):
     try:
@@ -99,7 +115,7 @@ async def render_report_html(report_id: str):
         return {
             "success": True,
             "report_id": report_id,
-            "file_path": str(quarto_report_renderer.get_report_dir(report_id) / "report.qmd"),
+            "file_path": str(quarto_report_renderer.get_qmd_path(report_id)),
             "html_preview": build_html_preview(report_id, html_path),
             "path": str(html_path),
             "version": meta.get("version"),
@@ -134,6 +150,13 @@ async def get_report_html(report_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     html_path = report_dir / "report.html"
+    try:
+        html_path = _refresh_report_html_if_stale(report_id, html_path)
+    except FileNotFoundError as exc:
+        if not html_path.exists():
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ReportRenderError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="report.html not found")
     return FileResponse(
@@ -197,10 +220,16 @@ async def download_report(report_id: str, format_name: str):
         report_dir = quarto_report_renderer.get_report_dir(report_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    file_path = report_dir / stored_filename
+    try:
+        qmd_path = quarto_report_renderer.get_qmd_path(report_id)
+    except FileNotFoundError as exc:
+        if format_name == "qmd":
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        qmd_path = report_dir / "report.qmd"
+    file_path = qmd_path if format_name == "qmd" else report_dir / stored_filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"{stored_filename} not found")
-    download_filename = _report_download_filename(report_dir, stored_filename, report_id)
+    download_filename = _report_download_filename(qmd_path, stored_filename, report_id)
     return FileResponse(
         path=str(file_path),
         media_type=media_type,

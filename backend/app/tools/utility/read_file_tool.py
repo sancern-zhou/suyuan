@@ -32,6 +32,7 @@ from urllib.parse import quote
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.tools.resource_refs import build_file_ref
 from app.utils.path_config import BACKEND_ROOT
 import structlog
 
@@ -322,6 +323,26 @@ class ReadFileTool(LLMTool):
                 "total_lines": total_lines,
                 "is_truncated": is_truncated
             }
+            file_ref = build_file_ref(
+                file_path,
+                type="text",
+                format=data["format"],
+                size=file_size,
+                usage="read_file",
+                line_range=data["line_range"],
+                total_lines=total_lines,
+                is_truncated=is_truncated,
+            )
+            llm_resume = {
+                "content_preview": content[:2000],
+            }
+            if is_truncated:
+                llm_resume["tool_hint"] = (
+                    f"Use read_file(path='{file_path}', offset={end_line}, limit={effective_limit}) "
+                    "to continue reading."
+                )
+            else:
+                llm_resume["tool_hint"] = f"Use read_file(path='{file_path}') to reread this file."
 
             # Markdown文件添加预览字段
             if file_path.suffix.lower() in self.MARKDOWN_EXTENSIONS:
@@ -359,6 +380,8 @@ class ReadFileTool(LLMTool):
             return {
                 "success": True,
                 "data": data,
+                "refs": {"files": [file_ref]},
+                "llm_resume": llm_resume,
                 "summary": summary
             }
 

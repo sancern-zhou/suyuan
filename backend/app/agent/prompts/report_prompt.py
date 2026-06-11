@@ -39,6 +39,18 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
             "\n",
         ])
 
+    city_pollutant_ranking_guidance = []
+    if "analyze_city_pollutant_rankings" in available_tools:
+        city_pollutant_ranking_guidance = [
+            "**⚠️ 城市空气质量/污染物排名分析**：报告中涉及空气质量较好/较差各5市，或 PM2.5/PM10/O3 单项污染物浓度较低/较高排名、前5市/后5市、城市排名边界或并列处理时，必须优先调用 `analyze_city_pollutant_rankings`，不要使用模型自行排序，也不要用 `execute_python` 临时复刻规则。\n",
+            "- 数据来源：优先把上游查询工具返回的 `data_id` / `report_data_id` 传给 `analyze_city_pollutant_rankings`；报表包排名分析应使用 `cities` 视图（可显式传 `view='cities'`，不传时工具默认优先读取 `cities`）；只有没有 data_id 且用户直接提供了完整表格数据时，才传 `records`。\n",
+            "- 调用粒度：默认一次调用完成 PM2.5、PM10、O3 全部污染物的较低/较高排名；除非用户只要求单个污染物，否则不要分多次调用。\n",
+            "- 空气质量排名规则：较好按 AQI达标率从高到低，并列时 PM2.5、O3、NO2 从低到高；较差按 AQI达标率从低到高，并列时 PM2.5、O3、NO2 从高到低。\n",
+            "- 字段口径：PM2.5 只能使用阶段均值字段（报表包 `pM2_5_Decimal`）；PM10、O3、NO2 等其他污染物指标只能使用修约均值字段（报表包 `pM10`、`o3_8h`、`nO2`），不要改用对应 `*_Decimal` 字段排名；缺少指定字段时必须判定数据不足，不能回退到其他字段。\n",
+            "- 报告撰写：排名城市、并列边界和排序依据以该工具返回结果为准；正文可引用工具返回的排序字段值说明原因。\n",
+            "\n",
+        ]
+
     prompt_parts.extend([
         "你是报告生成专家，擅长基于模板和数据生成专业标准报告包（report.qmd + HTML预览 + Word/QMD下载 + 分享链接）。展示型 HTML 使用 create_html_artifact。\n",
         "## 报告模板系统\n",
@@ -68,7 +80,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "报告审核任务流程：\n",
         "1. 使用 `read_file` 读取用户上传的报告或参考文档\n",
         "2. 根据报告中的时间、城市、指标和口径调用必要查询工具核对数据\n",
-        "3. 必要时使用 `execute_python` 进行排名、同比/环比、并列名次、比例和单位换算校验\n",
+        "3. 涉及空气质量较好/较差或 PM2.5/PM10/O3 较低/较高城市排名、并列名次和Top N边界时，必须使用 `analyze_city_pollutant_rankings` 进行排名分析；同比/环比、比例和单位换算等非排名计算必要时可使用 `execute_python` 校验\n",
         "4. 直接输出审核结论、发现的问题和建议修正内容\n",
         "5. 审核任务完成后直接结束，不要要求用户确认查询计划，不要生成报告包，不要询问是否保存模板\n",
         "\n",
@@ -135,6 +147,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "\n",
         "**关键约束**：读取DOCX参考文档使用 `read_file`；正式报告静态数据图表优先使用 `create_report_chart`，计算和表格整理可使用 `execute_python`；正式报告最终交付必须使用 `create_report_package` 收口；当前不暴露既有 Word 文档编辑工具；没有可复用计划模板时必须先调用 `complex_query_planner`（query_description=用户查询原文，mode='report'）。\n",
         "\n",
+        *city_pollutant_ranking_guidance,
         "**⚠️ 默认城市范围**：如果用户没有指定城市，则默认查询广东省21个地级市（广州、深圳、珠海、佛山、惠州、东莞、中山、江门、肇庆、汕头、韶关、湛江、茂名、梅州、汕尾、河源、阳江、清远、潮州、揭阳、云浮）。\n",
         "\n",
         "**⚠️ 区域查询支持**：`全省`、`珠三角`、`非珠三角`、`粤东西北`、`粤东`、`粤西`、`粤北` 可直接作为 `cities` 参数使用，系统会自动展开为对应城市列表。\n",
@@ -192,8 +205,6 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "11. **主动保存新模板**：报告生成成功后，如果使用了新的报告结构，主动询问用户是否将查询计划和报告生成计划保存为新模板\n",
         "\n",
         "## 数值计算规范\n",
-        "\n",
-        "报告中的数值计算（达标率、变化率、综合指数等）必须使用 `execute_python` 工具进行计算，确保准确性。\n",
         "\n",
         "**常见报告计算场景**：\n",
         "- 综合指数计算（6个项目单项指数之和）\n",

@@ -10,7 +10,11 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from app.tools.artifact_utils import attach_document_artifact, build_document_artifact
+from app.tools.artifact_utils import (
+    attach_document_artifact,
+    build_artifact_resume_context,
+    build_document_artifact,
+)
 from app.services.html_artifact_service import html_artifact_service
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.visualization.create_diagram_artifact.freeform_exporter import export_freeform_diagram
@@ -1174,29 +1178,10 @@ class CreateDiagramArtifactTool(LLMTool):
                 rendered_pairs.add(pair)
                 items_html.append(render_link(edge_by_pair.get(pair)))
 
-        extra_edges = [
-            edge
-            for edge in edges or []
-            if (str(edge.get("from") or ""), str(edge.get("to") or "")) not in rendered_pairs
-        ]
-        extra_links_html = ""
-        if extra_edges:
-            chips = []
-            for edge in extra_edges:
-                src = html.escape(str(edge.get("from") or ""))
-                dst = html.escape(str(edge.get("to") or ""))
-                label = html.escape(str(edge.get("label") or "关联"))
-                style = " drawio-extra-edge-dashed" if edge.get("style") == "dashed" else ""
-                chips.append(
-                    f"<li class=\"drawio-extra-edge{style}\"><span>{src}</span><i></i><span>{dst}</span><b>{label}</b></li>"
-                )
-            extra_links_html = f"<ol class=\"drawio-process-extra-edges\">{''.join(chips)}</ol>"
-
         orientation_class = "drawio-process-wrapped" if should_wrap else ("drawio-process-lr" if is_lr else "drawio-process-tb")
         body_html = (
             f"<section class=\"drawio-process {orientation_class}\" data-diagram-type=\"{html.escape(diagram_type)}\">"
             f"<div class=\"drawio-process-main\">{''.join(items_html)}</div>"
-            f"{extra_links_html}"
             "</section>"
         )
         component_css = """
@@ -1234,13 +1219,8 @@ class CreateDiagramArtifactTool(LLMTool):
     .drawio-process-link-dashed i { background: repeating-linear-gradient(to bottom, var(--line) 0 6px, transparent 6px 10px); }
     .drawio-process-lr .drawio-process-link-dashed i { background: repeating-linear-gradient(to right, var(--line) 0 6px, transparent 6px 10px); }
     .drawio-process-link-strong i { width: 2px; }
-    .drawio-process-edge-label { position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); padding: 1px 6px; background: #ffffff; border: 1px solid #c9cdd3; white-space: nowrap; color: #374151; }
-    .drawio-process-lr .drawio-process-edge-label { left: 50%; top: calc(50% - 18px); transform: translateX(-50%); }
-    .drawio-process-extra-edges { position: absolute; right: 20px; bottom: 18px; margin: 0; padding: 8px 10px; border: 1px dashed #c9cdd3; background: #ffffff; list-style: none; display: grid; gap: 5px; font-size: calc(11px * var(--font-scale)); color: #4b5563; }
-    .drawio-extra-edge { display: flex; align-items: center; gap: 6px; }
-    .drawio-extra-edge i { width: 28px; border-top: 1px solid #333333; }
-    .drawio-extra-edge-dashed i { border-top-style: dashed; }
-    .drawio-extra-edge b { font-weight: 600; color: #374151; }
+    .drawio-process-edge-label { position: absolute; left: calc(50% + 14px); top: 50%; transform: translateY(-50%); max-width: 112px; padding: 1px 5px; background: #ffffff; border: 1px solid #c9cdd3; white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.15; font-size: calc(8px * var(--font-scale)); color: #374151; }
+    .drawio-process-lr .drawio-process-edge-label { left: 50%; top: calc(50% - 24px); transform: translateX(-50%); }
     @media (max-width: 760px) {
       .drawio-process-main { transform: scale(0.86); transform-origin: top center; }
       .drawio-process-lr .drawio-process-main { flex-direction: column; }
@@ -2279,11 +2259,23 @@ class CreateDiagramArtifactTool(LLMTool):
             if static_image:
                 data["artifact"]["html_file_path"] = data["file_path"]
                 data["artifact"]["html_preview"] = data.get("html_preview")
+            resume_context = build_artifact_resume_context(
+                data,
+                data.get("static_image_path") or data["file_path"],
+                tool_hint=(
+                    f"Use present_artifact(file_path='{data.get('static_image_path')}') to preview the Word A4 image, "
+                    f"or present_artifact(file_path='{data['file_path']}') to preview the interactive HTML."
+                )
+                if static_image
+                else None,
+                extra_resume={"html_file_path": data["file_path"]} if static_image else None,
+            )
             html_preview = data.get("html_preview")
             return {
                 "status": "success",
                 "success": True,
                 "data": data,
+                **resume_context,
                 "visuals": data.get("visuals", []),
                 "html_preview": html_preview,
                 "file_path": data.get("file_path"),

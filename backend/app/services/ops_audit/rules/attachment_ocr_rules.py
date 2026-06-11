@@ -151,7 +151,7 @@ def _check_flow_visual_values(
     item: dict[str, Any],
     issues: list[Issue],
 ) -> None:
-    for table, form in forms:
+    for table, form in _forms_for_attachment(forms, item):
         if form.get("_query_error"):
             continue
         if table == "RF_TW_PmFlowCalibrate":
@@ -495,6 +495,7 @@ def _check_pm_flow_calibration_visual(
         ),
     )
     if result.get("status") != "success":
+        _add_visual_diagnostic_issue(issues, order, table, item, result)
         return
     data = result.get("data") or {}
     if not data.get("is_flow_calibration_photo"):
@@ -538,9 +539,12 @@ def _check_gas_flow_display_visual(
             "严禁把污染物浓度读数填入 display_values；凡是带 PPM、PPB、ug/m3、mg/m3 或标注为浓度/CONC 的数值都不是流量，应忽略。"
             "不要读取日期水印、时间、站点编号、设备序列号、证书编号、量程或百分比误差。"
             "如能从图片文字、文件名或上下文区分污染物对应的流量，请按 SO2、NO2、CO、O3 返回；不能区分则只放入 visible_flow_values，对应项保持 null。"
+            "热电/THERMO 臭氧(O3)分析仪比较特殊，仪器显示值可能由图片中的流量A/Flow A 与流量B/Flow B 相加得到；"
+            "如图片中明确出现这两个 O3 流量分量，请在 display_components.O3 中分别返回流量A和流量B，不要把单个分量当作合计。"
             "只输出JSON，格式："
             "{\"is_gas_flow_panel_photo\": true/false, "
             "\"display_values\": {\"SO2\": 数值或null, \"NO2\": 数值或null, \"CO\": 数值或null, \"O3\": 数值或null}, "
+            "\"display_components\": {\"O3\": [{\"label\":\"流量A或Flow A\", \"value\":数值, \"unit\":\"单位\"}, {\"label\":\"流量B或Flow B\", \"value\":数值, \"unit\":\"单位\"}]}, "
             "\"measured_values\": {\"SO2\": 数值或null, \"NO2\": 数值或null, \"CO\": 数值或null, \"O3\": 数值或null}, "
             "\"display_units\": {\"SO2\": \"单位或空\", \"NO2\": \"单位或空\", \"CO\": \"单位或空\", \"O3\": \"单位或空\"}, "
             "\"measured_units\": {\"SO2\": \"单位或空\", \"NO2\": \"单位或空\", \"CO\": \"单位或空\", \"O3\": \"单位或空\"}, "
@@ -550,6 +554,7 @@ def _check_gas_flow_display_visual(
         ),
     )
     if result.get("status") != "success":
+        _add_visual_diagnostic_issue(issues, order, table, item, result)
         return
     data = result.get("data") or {}
     if not data.get("is_gas_flow_panel_photo"):
@@ -557,6 +562,7 @@ def _check_gas_flow_display_visual(
 
     display_values = data.get("display_values") if isinstance(data.get("display_values"), dict) else {}
     measured_values = data.get("measured_values") if isinstance(data.get("measured_values"), dict) else {}
+    display_components = data.get("display_components") if isinstance(data.get("display_components"), dict) else {}
     display_units = data.get("display_units") if isinstance(data.get("display_units"), dict) else {}
     measured_units = data.get("measured_units") if isinstance(data.get("measured_units"), dict) else {}
     fallback_unit = data.get("unit")
@@ -564,10 +570,17 @@ def _check_gas_flow_display_visual(
     measured_comparisons = []
     if table == "RF_M_GASEOUSFLOWCHECK":
         for gas in ("SO2", "NO2", "CO", "O3"):
+            display_value = _monthly_gas_flow_display_value(
+                table,
+                form,
+                gas,
+                display_values.get(gas),
+                display_components.get(gas),
+            )
             display_comparisons.extend(
                 _compare_visual_value(
                     gas,
-                    display_values.get(gas),
+                    display_value,
                     form,
                     [f"DISPLAYVALUE{gas}"],
                     visual_unit=display_units.get(gas) or fallback_unit,
@@ -591,6 +604,15 @@ def _check_gas_flow_display_visual(
                     form,
                     [f"DF_Valuve_{point}"],
                     visual_unit=display_units.get(point) or fallback_unit,
+                )
+            )
+            measured_comparisons.extend(
+                _compare_visual_value(
+                    f"RF_{point}",
+                    measured_values.get(point),
+                    form,
+                    [f"RF_Valuve_{point}"],
+                    visual_unit=measured_units.get(point) or fallback_unit,
                 )
             )
 
@@ -650,6 +672,7 @@ def _check_pm_membrane_visual(
         ),
     )
     if result.get("status") != "success":
+        _add_visual_diagnostic_issue(issues, order, table, item, result)
         return
     data = result.get("data") or {}
     if not data.get("is_pm_membrane_photo"):
@@ -713,6 +736,7 @@ def _check_pm_temp_pressure_visual(
         ),
     )
     if result.get("status") != "success":
+        _add_visual_diagnostic_issue(issues, order, table, item, result)
         return
     data = result.get("data") or {}
     if not data.get("is_pm_temp_pressure_photo"):
@@ -790,6 +814,51 @@ def _compare_visual_value(
     if any(item["status"] == "matched" for item in comparisons):
         return [item for item in comparisons if item["status"] == "matched"]
     return comparisons
+
+
+def _monthly_gas_flow_display_value(
+    table: str,
+    form: dict[str, Any],
+    gas: str,
+    display_value: Any,
+    display_components: Any,
+) -> Any:
+    if table != "RF_M_GASEOUSFLOWCHECK" or gas != "O3" or not _is_thermo_brand(form):
+        return display_value
+    component_sum = _sum_flow_a_b_components(display_components)
+    if component_sum is None:
+        return display_value
+    return component_sum
+
+
+def _is_thermo_brand(form: dict[str, Any]) -> bool:
+    brand_text = str(form.get("DEVICEBRAND") or form.get("BRAND") or "").strip()
+    if not brand_text:
+        return False
+    brand_upper = brand_text.upper()
+    return "THERMO" in brand_upper or brand_upper in {"TE", "热电"}
+
+
+def _sum_flow_a_b_components(components: Any) -> float | None:
+    if not isinstance(components, list):
+        return None
+    flow_a = None
+    flow_b = None
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        label = str(component.get("label") or "")
+        value = _parse_number(component.get("value"))
+        if value is None:
+            continue
+        normalized_label = label.upper().replace(" ", "")
+        if "流量A" in label or "FLOWA" in normalized_label:
+            flow_a = value
+        elif "流量B" in label or "FLOWB" in normalized_label:
+            flow_b = value
+    if flow_a is None or flow_b is None:
+        return None
+    return round(flow_a + flow_b, 6)
 
 
 def _compare_pm_membrane_value(
@@ -1024,6 +1093,34 @@ def _add_visual_value_issue(
     )
 
 
+def _add_visual_diagnostic_issue(
+    issues: list[Issue],
+    order: dict[str, Any],
+    rf_table: str,
+    item: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": rf_table,
+        "filename": item.get("filename"),
+        "source": item.get("source_path"),
+        "types": item.get("types", []),
+        "vision_provider": result.get("provider"),
+        "vision_status": result.get("status"),
+        "vision_error": result.get("error"),
+    }
+    add_issue(
+        issues,
+        "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
+        "附件读数一致性",
+        "低",
+        f"attachment.vision.diagnostic.{rf_table}",
+        f"流量照片视觉识别未执行成功: {item.get('filename') or item.get('source_path')}",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
 def _add_attachment_issue(
     issues: list[Issue],
     rule_id: str,
@@ -1079,10 +1176,41 @@ def _attachment_items(attachments: list[dict[str, Any]], wo_commonfiles: list[di
                 "filename": filename,
                 "source_path": source_path,
                 "descriptor": descriptor,
+                "typecode": _first_present(record, ["TYPECODE", "typecode", "TypeCode"]),
                 "types": classified.get("types", []),
             }
         )
     return items
+
+
+def _forms_for_attachment(
+    forms: list[tuple[str, dict[str, Any]]],
+    item: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    matched = [(table, form) for table, form in forms if _attachment_matches_table(item, table)]
+    return matched or forms
+
+
+def _attachment_matches_table(item: dict[str, Any], table: str) -> bool:
+    attachment_table = _attachment_table_hint(item)
+    if not attachment_table:
+        return False
+    return _normalize_table_name(attachment_table) == _normalize_table_name(table)
+
+
+def _attachment_table_hint(item: dict[str, Any]) -> str:
+    typecode = str(item.get("typecode") or "").strip()
+    if typecode:
+        return typecode
+    text = _attachment_search_text(item)
+    for table in FLOW_VISUAL_RULE_TABLES:
+        if _normalize_table_name(table) in _normalize_table_name(text):
+            return table
+    return ""
+
+
+def _normalize_table_name(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
 
 def _prioritized_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

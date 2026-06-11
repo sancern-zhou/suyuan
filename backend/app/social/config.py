@@ -16,11 +16,9 @@ class SocialChannelConfig:
 
     # Platform-specific fields
     app_id: Optional[str] = None  # QQ
-    secret: Optional[str] = None  # QQ, DingTalk, WeCom
+    secret: Optional[str] = None  # QQ, DingTalk
     app_key: Optional[str] = None  # DingTalk
     app_secret: Optional[str] = None  # DingTalk
-    corp_id: Optional[str] = None  # WeCom
-    agent_id: Optional[str] = None  # WeCom
 
     # WeChat multi-instance accounts
     accounts: List[Any] = None  # List of WeixinAccountConfig objects
@@ -53,8 +51,6 @@ class SocialChannelConfig:
             secret=data.get('secret'),
             app_key=data.get('app_key'),
             app_secret=data.get('app_secret'),
-            corp_id=data.get('corp_id'),
-            agent_id=data.get('agent_id'),
             accounts=accounts
         )
 
@@ -84,7 +80,6 @@ class SocialConfig:
     qq: SocialChannelConfig = None
     weixin: SocialChannelConfig = None
     dingtalk: SocialChannelConfig = None
-    wecom: SocialChannelConfig = None
     channels: SocialGlobalConfig = None
 
     def __post_init__(self):
@@ -94,8 +89,6 @@ class SocialConfig:
             self.weixin = SocialChannelConfig()
         if self.dingtalk is None:
             self.dingtalk = SocialChannelConfig()
-        if self.wecom is None:
-            self.wecom = SocialChannelConfig()
         if self.channels is None:
             self.channels = SocialGlobalConfig()
 
@@ -123,11 +116,16 @@ class SocialConfig:
             if data is None:
                 data = {}
 
+            try:
+                from config.social_config import _decrypt_config_data
+                data = _decrypt_config_data(data)
+            except Exception:
+                pass
+
             return cls(
                 qq=SocialChannelConfig.from_dict(data.get('qq', {})),
                 weixin=SocialChannelConfig.from_dict(data.get('weixin', {})),
                 dingtalk=SocialChannelConfig.from_dict(data.get('dingtalk', {})),
-                wecom=SocialChannelConfig.from_dict(data.get('wecom', {})),
                 channels=SocialGlobalConfig.from_dict(data.get('channels', {}))
             )
         except Exception as e:
@@ -142,6 +140,5 @@ class SocialConfig:
             'qq': self.qq.__dict__,
             'weixin': self.weixin.__dict__,
             'dingtalk': self.dingtalk.__dict__,
-            'wecom': self.wecom.__dict__,
             'channels': self.channels.__dict__
         }

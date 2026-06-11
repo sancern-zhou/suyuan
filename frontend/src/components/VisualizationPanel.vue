@@ -689,6 +689,7 @@ const typeLabelMap = {
   table: '表格',
   image: '图片',
   text: '文本',
+  graph: '关系图',
   // 颗粒物分析图表类型
   ternary_SNA: '三元图',
   sor_nor_scatter: 'SOR/NOR散点图',
@@ -717,6 +718,7 @@ const isChartType = (viz) => {
     'chart', 'pie', 'bar', 'polar_bar', 'line', 'timeseries',
     'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries',
     'facet_timeseries', 'radar', 'wind_rose', 'scatter',
+    'graph',
     'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d',
     'profile', 'heatmap', 'polar_line', 'polar_heatmap'
   ]

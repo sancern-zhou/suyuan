@@ -485,6 +485,10 @@ class SimplifiedContextBuilder:
 
             # ✅ 关键修复：将压缩后的消息写回 session
             self.memory.session.update_messages(compressed_messages)
+            await self._save_llm_compact_state(
+                compressed_messages,
+                reason="context_tokens_exceeded",
+            )
 
             logger.info(
                 "conversation_history_persisted",
@@ -503,6 +507,10 @@ class SimplifiedContextBuilder:
 
             # 即使降级也要写回 session
             self.memory.session.update_messages(truncated)
+            await self._save_llm_compact_state(
+                truncated,
+                reason="context_tokens_exceeded_fallback_truncate",
+            )
 
             logger.warning(
                 "conversation_history_truncated_fallback",
@@ -511,6 +519,53 @@ class SimplifiedContextBuilder:
             )
 
             return truncated
+
+    async def _save_llm_compact_state(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        reason: str,
+    ) -> None:
+        source_until_sequence = getattr(
+            self.memory.session,
+            "llm_source_until_sequence",
+            None,
+        )
+        if not isinstance(source_until_sequence, int):
+            logger.warning(
+                "llm_compact_state_not_persisted_missing_source_boundary",
+                session_id=self.memory.session_id,
+                mode=self.current_mode,
+                reason=reason,
+            )
+            return
+
+        try:
+            from app.agent.session.session_resolver import save_llm_compact_state_for_mode
+
+            persisted = await save_llm_compact_state_for_mode(
+                self.memory.session_id,
+                messages,
+                mode=self.current_mode,
+                source_until_sequence=source_until_sequence,
+                token_estimate=self._estimate_messages_tokens(messages),
+                reason=reason,
+            )
+            logger.info(
+                "llm_compact_state_persisted",
+                session_id=self.memory.session_id,
+                mode=self.current_mode,
+                source_until_sequence=source_until_sequence,
+                message_count=len(messages),
+                persisted=persisted,
+            )
+        except Exception as exc:
+            logger.error(
+                "llm_compact_state_persist_failed",
+                session_id=self.memory.session_id,
+                mode=self.current_mode,
+                error=str(exc),
+            )
 
     def _simple_truncate(self, text: str) -> str:
         """

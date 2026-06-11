@@ -159,20 +159,24 @@ class QuartoReportRenderer:
         return report_dir
 
     def get_qmd_path(self, report_id: str) -> Path:
-        qmd_path = self.get_report_dir(report_id) / "report.qmd"
+        report_dir = self.get_report_dir(report_id)
+        source_qmd = self._get_source_qmd_path(report_dir)
+        qmd_path = source_qmd or report_dir / "report.qmd"
         if not qmd_path.exists():
             raise FileNotFoundError(f"report.qmd not found for report_id={report_id}")
-        return qmd_path
+        return qmd_path.resolve()
 
     def render_preview_html(self, report_id: str) -> Path:
         """Render lightweight preview HTML with external assets."""
         report_dir = self.get_report_dir(report_id)
+        self._snapshot_source_qmd(report_dir)
+        output_path = report_dir / "report.html"
         self.get_qmd_path(report_id)
         self._run_quarto(
             report_dir,
             ["render", "report.qmd", "--to", "html", "--output", "report.html"],
         )
-        return report_dir / "report.html"
+        return output_path
 
     def render_docx(self, report_id: str) -> Path:
         report_dir = self.get_report_dir(report_id)
@@ -229,6 +233,7 @@ class QuartoReportRenderer:
         """Render standalone HTML and persist a share token in meta.json."""
         report_dir = self.get_report_dir(report_id)
         try:
+            self._snapshot_source_qmd(report_dir)
             self.get_qmd_path(report_id)
             self._run_quarto(
                 report_dir,
@@ -414,6 +419,58 @@ class QuartoReportRenderer:
     def _write_meta(self, report_dir: Path, meta: Dict[str, Any]) -> None:
         meta_path = report_dir / "meta.json"
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _get_source_qmd_path(self, report_dir: Path) -> Path | None:
+        meta = self._read_meta(report_dir)
+        files = meta.get("files") if isinstance(meta.get("files"), dict) else {}
+        raw_path = files.get("source_qmd") or meta.get("source_qmd")
+        if not raw_path:
+            return None
+        source_qmd = Path(raw_path).expanduser().resolve()
+        if source_qmd == (report_dir / "report.qmd").resolve():
+            return None
+        return source_qmd
+
+    def _snapshot_source_qmd(self, report_dir: Path) -> Path | None:
+        source_qmd = self._get_source_qmd_path(report_dir)
+        if not source_qmd:
+            return None
+        if not source_qmd.exists():
+            raise FileNotFoundError(f"source_qmd not found: {source_qmd}")
+        snapshot_qmd = report_dir / "report.qmd"
+        text = source_qmd.read_text(encoding="utf-8", errors="replace")
+        snapshot_qmd.write_text(text, encoding="utf-8")
+        self._copy_source_qmd_local_assets(source_qmd, report_dir, text)
+        logger.info(
+            "report_source_qmd_snapshotted",
+            source_qmd=str(source_qmd),
+            snapshot_qmd=str(snapshot_qmd),
+        )
+        return snapshot_qmd
+
+    def _copy_source_qmd_local_assets(self, source_qmd: Path, report_dir: Path, qmd_text: str) -> None:
+        source_dir = source_qmd.parent
+        for match in MARKDOWN_IMAGE_PATTERN.finditer(qmd_text or ""):
+            src = match.group("src").strip().split("#", 1)[0].split("?", 1)[0]
+            if not src or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", src) or src.startswith("/api/"):
+                continue
+            source_asset = Path(src)
+            if source_asset.is_absolute():
+                continue
+            source_asset = (source_dir / source_asset).resolve()
+            try:
+                source_asset.relative_to(source_dir.resolve())
+            except ValueError:
+                continue
+            if not source_asset.exists() or not source_asset.is_file():
+                continue
+            target_asset = (report_dir / Path(src)).resolve()
+            try:
+                target_asset.relative_to(report_dir.resolve())
+            except ValueError:
+                continue
+            target_asset.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_asset, target_asset)
 
 
 quarto_report_renderer = QuartoReportRenderer()

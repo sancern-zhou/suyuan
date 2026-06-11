@@ -1,9 +1,33 @@
 from pathlib import Path
+import json
 
 import pytest
+from PIL import Image
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
+from app.agent.tool_adapter import call_llm_tool
 from app.tools.office.ppt_master_tool import CreatePptxWithPptMasterTool
 from app.tools.office.validate_pptx_tool import ValidatePptxTool
+
+
+@pytest.mark.asyncio
+async def test_ppt_master_tool_returns_structured_error_when_title_missing():
+    result = await CreatePptxWithPptMasterTool().execute()
+
+    assert result["success"] is False
+    assert result["data"]["error"] == "title_required"
+    assert "title 参数缺失" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_ppt_master_llm_tool_call_handles_empty_args_without_type_error():
+    result = await call_llm_tool("create_pptx_with_ppt_master")
+
+    assert result["status"] == "failed"
+    assert result["success"] is False
+    assert result["data"]["error"] == "title_required"
+    assert "missing 1 required positional argument" not in result.get("error", "")
 
 
 def test_ppt_master_theme_normalizes_color_aliases():
@@ -19,6 +43,211 @@ def test_ppt_master_theme_normalizes_color_aliases():
     assert palette["primary"] == "1E88E5"
     assert palette["secondary"] == "43A047"
     assert palette["accent"] == "FFA726"
+
+
+@pytest.mark.asyncio
+async def test_ppt_master_tool_renders_agent_shape_plan_with_contained_image(tmp_path: Path):
+    image_path = tmp_path / "wide_chart.png"
+    Image.new("RGB", (800, 200), "#2f6fed").save(image_path)
+
+    result = await CreatePptxWithPptMasterTool().execute(
+        title="Agent绘制计划测试",
+        slide_plan=[
+            {
+                "title": "动态图表页",
+                "message": "Agent 自行决定图表和文本区域",
+                "shapes": [
+                    {
+                        "type": "text",
+                        "text": "动态图表页",
+                        "x": 0.06,
+                        "y": 0.06,
+                        "w": 0.88,
+                        "h": 0.08,
+                        "unit": "relative",
+                        "font_size": 26,
+                        "bold": True,
+                    },
+                    {
+                        "type": "image",
+                        "path": str(image_path),
+                        "x": 0.08,
+                        "y": 0.22,
+                        "w": 0.64,
+                        "h": 0.42,
+                        "unit": "relative",
+                        "fit": "contain",
+                    },
+                    {
+                        "type": "textbox",
+                        "text": "图表保持比例，右侧洞察由 Agent 控制坐标。",
+                        "x": 0.76,
+                        "y": 0.24,
+                        "w": 0.18,
+                        "h": 0.24,
+                        "unit": "relative",
+                        "font_size": 14,
+                    },
+                ],
+            }
+        ],
+        output_file=str(tmp_path / "agent_plan.pptx"),
+        project_dir=str(tmp_path / "project_agent_plan"),
+        enable_preview=False,
+        run_validation=False,
+    )
+
+    assert result["success"] is True
+    assert result["data"]["page_plan"][1]["layout"] == "agent_shape_plan"
+    prs = Presentation(result["data"]["file_path"])
+    slide = prs.slides[1]
+    pictures = [shape for shape in slide.shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    assert len(pictures) == 1
+    assert pictures[0].width > pictures[0].height
+    assert any(getattr(shape, "has_text_frame", False) and "动态图表页" in shape.text for shape in slide.shapes)
+
+
+@pytest.mark.asyncio
+async def test_ppt_master_shape_plan_cover_crops_image_inside_box(tmp_path: Path):
+    image_path = tmp_path / "wide_chart.png"
+    Image.new("RGB", (800, 200), "#2f6fed").save(image_path)
+
+    result = await CreatePptxWithPptMasterTool().execute(
+        title="Cover裁剪测试",
+        slide_plan=[
+            {
+                "title": "封面图",
+                "shapes": [
+                    {
+                        "type": "image",
+                        "path": str(image_path),
+                        "x": 0.1,
+                        "y": 0.2,
+                        "w": 0.3,
+                        "h": 0.4,
+                        "unit": "relative",
+                        "fit": "cover",
+                    }
+                ],
+            }
+        ],
+        output_file=str(tmp_path / "cover_crop.pptx"),
+        project_dir=str(tmp_path / "project_cover_crop"),
+        enable_preview=False,
+        run_validation=False,
+    )
+
+    assert result["success"] is True
+    prs = Presentation(result["data"]["file_path"])
+    picture = next(shape for shape in prs.slides[1].shapes if shape.shape_type == MSO_SHAPE_TYPE.PICTURE)
+    expected_width = int(round(0.3 * 13.333 * 914400))
+    expected_height = int(round(0.4 * 7.5 * 914400))
+    assert abs(picture.width - expected_width) < 4
+    assert abs(picture.height - expected_height) < 4
+    assert picture.crop_left > 0
+    assert picture.crop_right > 0
+
+
+@pytest.mark.asyncio
+async def test_ppt_master_applies_plan_patch_without_rewriting_untouched_slides(tmp_path: Path):
+    base_plan = [
+        {
+            "slide": 1,
+            "layout": "cover_statement",
+            "role": "cover",
+            "title": "基线PPT",
+            "message": "面向决策的结构化汇报",
+            "points": [],
+        },
+        {
+            "slide": 2,
+            "layout": "agent_shape_plan",
+            "role": "content",
+            "title": "保留页面",
+            "message": "这页不应该被 Agent 重写",
+            "points": [],
+            "shapes": [
+                {
+                    "type": "text",
+                    "text": "原始保留内容",
+                    "x": 0.1,
+                    "y": 0.2,
+                    "w": 0.8,
+                    "h": 0.1,
+                    "unit": "relative",
+                }
+            ],
+        },
+        {
+            "slide": 3,
+            "layout": "agent_shape_plan",
+            "role": "content",
+            "title": "待拆分页",
+            "message": "文字太密",
+            "points": [],
+            "shapes": [],
+        },
+    ]
+    base_plan_path = tmp_path / "slide_plan.v1.json"
+    base_plan_path.write_text(json.dumps(base_plan, ensure_ascii=False), encoding="utf-8")
+
+    result = await CreatePptxWithPptMasterTool().execute(
+        base_plan_path=str(base_plan_path),
+        plan_patch={
+            "replace_slides": [
+                {
+                    "slide": 3,
+                    "slides": [
+                        {
+                            "title": "拆分后一",
+                            "message": "保留原结论，降低密度",
+                            "shapes": [
+                                {
+                                    "type": "text",
+                                    "text": "拆分后一",
+                                    "x": 0.1,
+                                    "y": 0.2,
+                                    "w": 0.8,
+                                    "h": 0.1,
+                                    "unit": "relative",
+                                }
+                            ],
+                        },
+                        {
+                            "title": "拆分后二",
+                            "message": "新增承接页",
+                            "shapes": [
+                                {
+                                    "type": "text",
+                                    "text": "拆分后二",
+                                    "x": 0.1,
+                                    "y": 0.2,
+                                    "w": 0.8,
+                                    "h": 0.1,
+                                    "unit": "relative",
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ]
+        },
+        output_file=str(tmp_path / "patched.pptx"),
+        project_dir=str(tmp_path / "project_patched"),
+        enable_preview=False,
+        run_validation=False,
+    )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["revision"]["base_plan_path"] == str(base_plan_path.resolve())
+    assert data["slide_plan_path"].endswith("slide_plan.v2.json")
+    revised_plan = json.loads(Path(data["slide_plan_path"]).read_text(encoding="utf-8"))
+    assert [page["slide"] for page in revised_plan] == [1, 2, 3, 4]
+    assert revised_plan[1]["title"] == "保留页面"
+    assert revised_plan[1]["shapes"][0]["text"] == "原始保留内容"
+    assert revised_plan[2]["title"] == "拆分后一"
+    assert revised_plan[3]["title"] == "拆分后二"
 
 
 def test_validate_pptx_design_quality_report(tmp_path: Path):
@@ -39,6 +268,99 @@ def test_validate_pptx_design_quality_report(tmp_path: Path):
     assert report["grade"] in {"excellent", "good", "acceptable", "needs_improvement"}
     assert report["slides"][0]["text_lines"] >= 16
     assert any(issue["type"] == "high_text_density" for issue in report["issues"])
+
+
+def test_validate_pptx_builds_structured_factual_issues():
+    tool = ValidatePptxTool()
+    report = {
+        "pages": [{"slide": 2, "png_path": "/tmp/page-002.png"}],
+        "geometry": {"issues": [{"type": "shape_out_of_bounds", "slide": 2, "shape": 3}]},
+        "rendered_overflow": {
+            "issues": [
+                {
+                    "type": "rendered_content_overflow",
+                    "slide": 2,
+                    "edges": [{"edge": "right", "mismatch_fraction": 0.12}],
+                }
+            ]
+        },
+        "design_quality": {
+            "score": 72.5,
+            "grade": "acceptable",
+            "issues": [{"type": "high_text_density", "slide": 2, "chars": 920, "lines": 18}],
+        },
+        "visual_quality": {"score": 91.0, "grade": "excellent", "issues": []},
+        "fonts": {"issues": [{"type": "expected_font_missing", "font": "Microsoft YaHei"}]},
+        "issues": [
+            {"type": "shape_out_of_bounds", "slide": 2, "shape": 3},
+            {"type": "rendered_content_overflow", "slide": 2, "edges": [{"edge": "right", "mismatch_fraction": 0.12}]},
+            {"type": "high_text_density", "slide": 2, "chars": 920, "lines": 18},
+            {"type": "expected_font_missing", "font": "Microsoft YaHei"},
+        ],
+    }
+
+    sections = tool._build_structured_quality_sections(report)
+
+    assert sections["gate"]["status"] == "needs_revision"
+    assert sections["gate"]["blocking_issue_count"] == 3
+    assert sections["gate"]["affected_slides"] == [2]
+    assert sections["metrics"]["design_score"] == 72.5
+    assert sections["metrics"]["visual_score"] == 91.0
+    assert sections["issue_summary"] == {
+        "expected_font_missing": 1,
+        "high_text_density": 1,
+        "rendered_content_overflow": 1,
+        "shape_out_of_bounds": 1,
+    }
+
+    issue = sections["structured_issues"][0]
+    assert {"id", "type", "category", "severity", "message", "slide", "location", "evidence", "artifacts"}.issubset(issue)
+    assert issue["severity"] == "high"
+    assert issue["message"]
+    assert issue["location"]["shape_index"] == 3
+    assert issue["artifacts"]["page_png"] == "/tmp/page-002.png"
+    assert "action" not in issue
+    assert "recommendation" not in issue
+
+
+@pytest.mark.asyncio
+async def test_ppt_master_shape_plan_ids_are_reported_by_geometry_qa(tmp_path: Path):
+    result = await CreatePptxWithPptMasterTool().execute(
+        title="Shape ID 定位测试",
+        slide_plan=[
+            {
+                "title": "越界页",
+                "shapes": [
+                    {
+                        "id": "s2_title",
+                        "type": "text",
+                        "text": "越界标题",
+                        "x": 12.8,
+                        "y": 0.2,
+                        "w": 1.2,
+                        "h": 0.4,
+                        "font_size": 18,
+                    }
+                ],
+            }
+        ],
+        output_file=str(tmp_path / "shape_id.pptx"),
+        project_dir=str(tmp_path / "shape_id_project"),
+        enable_preview=False,
+        run_validation=False,
+    )
+
+    assert result["success"] is True
+    validation = await ValidatePptxTool().execute(
+        result["data"]["file_path"],
+        render_png=False,
+    )
+
+    assert validation["success"] is True
+    issues = validation["data"]["structured_issues"]
+    out_of_bounds = next(issue for issue in issues if issue["type"] == "shape_out_of_bounds")
+    assert out_of_bounds["location"]["shape_id"] == "s2_title"
+    assert out_of_bounds["location"]["shape_name"] == "pptm:s2_title"
 
 
 def test_validate_pptx_toc_like_slide_is_not_flagged_text_only(tmp_path: Path):
@@ -97,8 +419,44 @@ def test_ppt_master_quality_gate_returns_rewrite_when_validation_fails():
     assert gate["issue_summary"]["validation_failed"] == 1
     assert any(issue["type"] == "validation_failed" for issue in gate["issues"])
     assert any(issue["type"] == "text_only_slide" for issue in gate["issues"])
-    assert any(task["slide"] == 2 and task["action"] for task in gate["revision_tasks"])
+    assert any(task["slide"] == 2 and task["message"] for task in gate["revision_tasks"])
+    assert all("action" not in task for task in gate["revision_tasks"])
     assert any(task["slide"] == 3 and task["priority"] == "high" for task in gate["revision_tasks"])
+
+
+def test_ppt_master_quality_gate_preserves_structured_issue_context():
+    gate = CreatePptxWithPptMasterTool()._workflow_quality_gate(
+        [
+            {"slide": 1, "layout": "cover_statement", "role": "cover"},
+            {"slide": 2, "layout": "agent_shape_plan", "role": "content"},
+        ],
+        {
+            "success": False,
+            "structured_issues": [
+                {
+                    "id": "pptqa-001",
+                    "type": "shape_out_of_bounds",
+                    "category": "geometry",
+                    "severity": "high",
+                    "message": "形状边界超出幻灯片画布。",
+                    "slide": 2,
+                    "location": {"shape_id": "s2_title", "shape_index": 3},
+                    "evidence": {"bounds": {"left": 100}},
+                    "artifacts": {"page_png": "/tmp/page-002.png"},
+                }
+            ],
+        },
+    )
+
+    task = gate["revision_tasks"][0]
+    assert task["type"] == "shape_out_of_bounds"
+    assert task["priority"] == "high"
+    assert task["category"] == "geometry"
+    assert task["message"] == "形状边界超出幻灯片画布。"
+    assert task["location"]["shape_id"] == "s2_title"
+    assert task["evidence"]["bounds"]["left"] == 100
+    assert task["artifacts"]["page_png"] == "/tmp/page-002.png"
+    assert "action" not in task
 
 
 def test_ppt_master_quality_gate_distinguishes_qa_failed_from_revision_needed():
@@ -124,8 +482,8 @@ def test_ppt_master_quality_summary_promotes_revision_loop():
         quality_gate={
             "qa_status": "needs_revision",
             "revision_tasks": [
-                {"slide": 2, "type": "text_only_slide", "action": "补充视觉元素。"},
-                {"slide": 4, "type": "rendered_low_margin", "action": "增加页边距。"},
+                {"slide": 2, "type": "text_only_slide", "message": "页面主要由文本框组成。"},
+                {"slide": 4, "type": "rendered_low_margin", "message": "渲染内容距离页面边缘过近。"},
             ],
         },
     )

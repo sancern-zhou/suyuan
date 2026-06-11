@@ -46,6 +46,9 @@ class ReActAgent:
         "例如排名并列、Top N截取规则、时间范围、统计口径、新旧标准、同比环比方向、"
         "缺失值处理、单位和表文一致性等。新标准需要使用报告视图的 "
         "pM2_5_Decimal、pM2_5_Decimal_Compare、o3_8h / O3_8h、AQI达标率字段。"
+        "涉及空气质量较好/较差或 PM2.5/PM10/O3 较低/较高城市排名、排名并列、Top N截取规则时，"
+        "必须使用 `analyze_city_pollutant_rankings` 进行排名分析，不要用模型自行排序，也不要用 "
+        "`execute_python` 临时复刻排名规则。"
         "如发现问题，请指出需要修正的地方；"
         "如无明显问题，请简要说明复核通过。"
         "这是自动复核轮，回复中不要输出 `<!-- report_final_complete -->` 标记，不要再次触发自动复核。"
@@ -670,7 +673,23 @@ class ReActAgent:
         if file_path:
             doc_entry["file_path"] = file_path
         existing = self._session_store[session_id]["office_documents"]
-        if not any(d.get("file_path") == file_path for d in existing):
+        existing_index = next(
+            (index for index, item in enumerate(existing) if item.get("file_path") == file_path),
+            -1,
+        )
+        if existing_index >= 0:
+            existing[existing_index] = {
+                **existing[existing_index],
+                **doc_entry,
+            }
+            logger.info(
+                "office_document_updated_in_session",
+                session_id=session_id,
+                file_path=file_path,
+                generator=doc_entry["generator"],
+                total_documents=len(existing),
+            )
+        else:
             existing.append(doc_entry)
             logger.info(
                 "office_document_saved_to_session",
@@ -1125,10 +1144,19 @@ class ReActAgent:
                         # ✅ 立即加载历史消息到 memory_manager.session
                         if saved_session.conversation_history:
                             memory_manager.session.load_history_messages(saved_session.conversation_history)
+                            if isinstance(saved_session.metadata, dict):
+                                source_until_sequence = saved_session.metadata.get("llm_source_until_sequence")
+                                if isinstance(source_until_sequence, int):
+                                    memory_manager.session.llm_source_until_sequence = source_until_sequence
                             logger.info(
                                 "react_session_history_loaded",
                                 session_id=session_id,
-                                message_count=len(saved_session.conversation_history)
+                                message_count=len(saved_session.conversation_history),
+                                llm_source_until_sequence=getattr(
+                                    memory_manager.session,
+                                    "llm_source_until_sequence",
+                                    None,
+                                ),
                             )
 
                         saved_visualizations = []

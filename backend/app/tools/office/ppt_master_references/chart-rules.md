@@ -21,7 +21,7 @@ area.
 
 ## Prohibited
 
-- Do not first generate a mock PPT and then use `edit_pptx` or `replace_slot`
+- Do not first generate a mock PPT and then use another slot-replacement flow
   to guess and replace chart slots.
 - Do not hide missing data behind decorative mock charts when real data is
   available upstream.

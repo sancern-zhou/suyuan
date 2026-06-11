@@ -102,6 +102,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="get_weather_situation_map", error=str(e))
 
     try:
+        from app.tools.query.get_platform_weather_image.tool import GetPlatformWeatherImageTool
+        registry.register(GetPlatformWeatherImageTool(), priority=17)
+        logger.info("tool_loaded", tool="get_platform_weather_image")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_platform_weather_image", error=str(e))
+
+    try:
         from app.tools.query.get_fire_hotspots.tool import GetFireHotspotsTool
         registry.register(GetFireHotspotsTool(), priority=40)
         logger.info("tool_loaded", tool="get_fire_hotspots")
@@ -257,6 +264,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="query_station_standard_yoy_report")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_station_standard_yoy_report", error=str(e))
+
+    try:
+        from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool
+        registry.register(CityPollutantRankingsTool(), priority=45)
+        logger.info("tool_loaded", tool="analyze_city_pollutant_rankings")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="analyze_city_pollutant_rankings", error=str(e))
 
     # 全国省份/城市空气质量查询工具（GDQFWS参考项目）
     try:
@@ -618,27 +632,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="read_pptx", error=str(e))
 
     try:
-        from app.tools.office.analyze_pptx_template_tool import AnalyzePptxTemplateTool
-        registry.register(AnalyzePptxTemplateTool(), priority=347)  # 修复: 591->347
-        logger.info("tool_loaded", tool="analyze_pptx_template")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="analyze_pptx_template", error=str(e))
-
-    try:
-        from app.tools.office.create_pptx_from_template_tool import CreatePptxFromTemplateTool
-        registry.register(CreatePptxFromTemplateTool(), priority=348)  # 修复: 590->348
-        logger.info("tool_loaded", tool="create_pptx_from_template")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_pptx_from_template", error=str(e))
-
-    try:
-        from app.tools.office.edit_pptx_tool import EditPptxTool
-        registry.register(EditPptxTool(), priority=349)  # 修复: 589->349
-        logger.info("tool_loaded", tool="edit_pptx")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="edit_pptx", error=str(e))
-
-    try:
         from app.tools.office.validate_pptx_tool import ValidatePptxTool
         registry.register(ValidatePptxTool(), priority=350)  # 修复: 592->350
         logger.info("tool_loaded", tool="validate_pptx")
@@ -651,6 +644,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="create_pptx_with_ppt_master")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_pptx_with_ppt_master", error=str(e))
+
+    try:
+        from app.tools.office.wecom_cli import WeComCliTool
+        registry.register(WeComCliTool(), priority=353)
+        logger.info("tool_loaded", tool="wecom_cli")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="wecom_cli", error=str(e))
 
 
     # ========================================

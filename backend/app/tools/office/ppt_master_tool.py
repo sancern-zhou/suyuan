@@ -18,7 +18,7 @@ from urllib.parse import unquote
 
 import structlog
 
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import get_data_registry, get_images_dir
 
@@ -109,42 +109,79 @@ class CreatePptxWithPptMasterTool(LLMTool):
 
     async def execute(
         self,
-        title: str,
+        title: Optional[str] = None,
         purpose: str = "business_report",
         outline: Optional[List[Dict[str, Any]]] = None,
+        slide_plan: Optional[List[Dict[str, Any]]] = None,
         audience: str = "",
         style: str = "business_clean",
         output_file: Optional[str] = None,
         project_dir: Optional[str] = None,
+        base_plan_path: Optional[str] = None,
+        base_project_dir: Optional[str] = None,
+        plan_patch: Optional[Dict[str, Any]] = None,
         enable_preview: bool = True,
         run_validation: bool = True,
         quality: str = "standard",
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        if not title or not str(title).strip():
+        is_revision = bool(base_plan_path or base_project_dir or plan_patch)
+        if not title and not is_revision:
             return {"success": False, "data": {"error": "title_required"}, "summary": "创建PPT失败：title 参数缺失"}
         if outline is not None and not isinstance(outline, list):
             return {"success": False, "data": {"error": "outline_must_be_array"}, "summary": "创建PPT失败：outline 必须是数组"}
+        if slide_plan is not None and not isinstance(slide_plan, list):
+            return {"success": False, "data": {"error": "slide_plan_must_be_array"}, "summary": "创建PPT失败：slide_plan 必须是数组"}
+        if plan_patch is not None and not isinstance(plan_patch, dict):
+            return {"success": False, "data": {"error": "plan_patch_must_be_object"}, "summary": "创建PPT失败：plan_patch 必须是对象"}
 
-        outline_items = self._normalize_outline(outline or [], title)
         palette = self._palette(style, kwargs.get("theme"))
         palette["font"] = self._resolve_font(palette["font"])
+
+        revision_info: Optional[Dict[str, Any]] = None
+        if is_revision:
+            try:
+                resolved_base_plan_path = self._resolve_base_plan_path(base_plan_path, base_project_dir)
+                base_page_plan = self._load_page_plan(resolved_base_plan_path)
+                page_plan = self._apply_plan_patch(base_page_plan, plan_patch or {})
+                title = str(title or self._title_from_page_plan(page_plan) or "revised_presentation")
+                revision_info = {
+                    "base_plan_path": str(resolved_base_plan_path),
+                    "patch_operation_count": self._plan_patch_operation_count(plan_patch or {}),
+                }
+            except ValueError as exc:
+                return {"success": False, "data": {"error": str(exc)}, "summary": f"创建PPT失败：{str(exc)[:80]}"}
+        else:
+            title = str(title).strip()
+            outline_items = self._normalize_outline(outline or [], title)
+            page_plan = self._build_agent_page_plan(title, slide_plan) if slide_plan else self._build_page_plan(title, outline_items)
+
         output_path = self._resolve_output_file(output_file, title)
         project_path = self._resolve_project_dir(project_dir, title)
         pages_dir = project_path / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
 
-        design_spec = self._build_design_spec(title, purpose, audience, style, palette, outline_items)
-        page_plan = self._build_page_plan(title, outline_items)
+        design_outline = [
+            {
+                "title": page.get("title", f"页面 {index}"),
+                "points": page.get("points", []),
+                "message": page.get("message", ""),
+                "role": page.get("role", "content"),
+            }
+            for index, page in enumerate(page_plan[1:], start=1)
+        ]
+        design_spec = self._build_design_spec(title, purpose, audience, style, palette, design_outline)
         self._enrich_page_plan_visuals(page_plan)
         spec_lock = self._build_spec_lock(design_spec, page_plan)
 
         design_spec_path = project_path / "design_spec.md"
         spec_lock_path = project_path / "spec_lock.json"
         page_plan_path = project_path / "page_plan.json"
+        slide_plan_path = project_path / ("slide_plan.v2.json" if revision_info else "slide_plan.v1.json")
         design_spec_path.write_text(design_spec, encoding="utf-8")
         spec_lock_path.write_text(json.dumps(spec_lock, ensure_ascii=False, indent=2), encoding="utf-8")
         page_plan_path.write_text(json.dumps(page_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        slide_plan_path.write_text(json.dumps(page_plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
         svg_paths = []
         for page in page_plan:
@@ -165,11 +202,14 @@ class CreatePptxWithPptMasterTool(LLMTool):
             "design_spec_path": str(design_spec_path),
             "spec_lock_path": str(spec_lock_path),
             "page_plan_path": str(page_plan_path),
+            "slide_plan_path": str(slide_plan_path),
             "svg_pages": svg_paths,
             "page_plan": page_plan,
             "quality_gate": self._workflow_quality_gate(page_plan),
             "quality": quality,
         }
+        if revision_info:
+            result_data["revision"] = revision_info
 
         if enable_preview:
             try:
@@ -213,9 +253,20 @@ class CreatePptxWithPptMasterTool(LLMTool):
             generator=self.name,
             metadata={"workflow": "ppt_master", "project_dir": str(project_path)},
         )
+        resume_context = build_artifact_resume_context(
+            result_data,
+            output_path,
+            extra_resume={
+                "project_dir": str(project_path),
+                "design_spec_path": str(design_spec_path),
+                "page_plan_path": str(page_plan_path),
+                "slide_plan_path": str(slide_plan_path),
+            },
+        )
         return {
             "success": True,
             "data": result_data,
+            **resume_context,
             "summary": self._build_summary(output_path.name, len(page_plan), final_quality_gate),
         }
 
@@ -286,6 +337,174 @@ class CreatePptxWithPptMasterTool(LLMTool):
                 }
             )
         return pages
+
+    def _build_agent_page_plan(self, title: str, slide_plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        pages = [
+            {
+                "slide": 1,
+                "layout": "cover_statement",
+                "role": "cover",
+                "title": title,
+                "message": "面向决策的结构化汇报",
+                "points": [],
+            }
+        ]
+        for index, item in enumerate(slide_plan, start=2):
+            if not isinstance(item, dict):
+                item = {"title": f"{title}页面 {index - 1}", "shapes": []}
+            shapes = item.get("shapes") or item.get("shape_plan") or []
+            if not isinstance(shapes, list):
+                shapes = []
+            pages.append(
+                {
+                    "slide": index,
+                    "layout": "agent_shape_plan",
+                    "role": item.get("role") or "content",
+                    "title": str(item.get("title") or f"{title}页面 {index - 1}"),
+                    "message": str(item.get("message") or ""),
+                    "points": [self._point_text(point) for point in (item.get("points") or [])],
+                    "chart": item.get("chart"),
+                    "visual": item.get("visual"),
+                    "shapes": shapes,
+                }
+            )
+        return pages
+
+    def _resolve_base_plan_path(self, base_plan_path: Optional[str], base_project_dir: Optional[str]) -> Path:
+        if base_plan_path:
+            path = Path(base_plan_path)
+            if not path.is_absolute():
+                path = (Path.cwd() / path).resolve()
+            if not path.exists():
+                raise ValueError(f"base_plan_path_not_found: {path}")
+            return path
+        if not base_project_dir:
+            raise ValueError("base_plan_path_required")
+        project = Path(base_project_dir)
+        if not project.is_absolute():
+            project = (Path.cwd() / project).resolve()
+        if not project.exists():
+            raise ValueError(f"base_project_dir_not_found: {project}")
+        candidates = sorted(project.glob("slide_plan.v*.json"), key=lambda item: item.name)
+        if candidates:
+            return candidates[-1].resolve()
+        fallback = project / "page_plan.json"
+        if fallback.exists():
+            return fallback.resolve()
+        raise ValueError(f"base_project_plan_not_found: {project}")
+
+    def _load_page_plan(self, path: Path) -> List[Dict[str, Any]]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"base_plan_invalid_json: {exc}") from exc
+        if not isinstance(data, list):
+            raise ValueError("base_plan_must_be_array")
+        pages = []
+        for index, item in enumerate(data, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"base_plan_page_must_be_object: {index}")
+            page = dict(item)
+            page["slide"] = index
+            pages.append(page)
+        if not pages:
+            raise ValueError("base_plan_empty")
+        return pages
+
+    def _apply_plan_patch(self, base_page_plan: List[Dict[str, Any]], plan_patch: Dict[str, Any]) -> List[Dict[str, Any]]:
+        pages = [dict(page) for page in base_page_plan]
+        replace_slides = plan_patch.get("replace_slides") or []
+        if replace_slides and not isinstance(replace_slides, list):
+            raise ValueError("plan_patch.replace_slides_must_be_array")
+        for operation in replace_slides:
+            if not isinstance(operation, dict):
+                raise ValueError("plan_patch.replace_slides_item_must_be_object")
+            slide_number = self._patch_slide_number(operation)
+            replacement_items = operation.get("slides")
+            if replacement_items is None:
+                replacement_items = operation.get("slide_plan")
+            if isinstance(replacement_items, dict):
+                replacement_items = [replacement_items]
+            if not isinstance(replacement_items, list) or not replacement_items:
+                raise ValueError("plan_patch.replace_slides_requires_slides")
+            replacements = [self._normalize_patch_page(item) for item in replacement_items]
+            index = self._page_index_for_slide(pages, slide_number)
+            pages = pages[:index] + replacements + pages[index + 1 :]
+
+        insertions = plan_patch.get("insert_slide_after") or []
+        if isinstance(insertions, dict):
+            insertions = [insertions]
+        if insertions and not isinstance(insertions, list):
+            raise ValueError("plan_patch.insert_slide_after_must_be_array")
+        for operation in insertions:
+            if not isinstance(operation, dict):
+                raise ValueError("plan_patch.insert_slide_after_item_must_be_object")
+            slide_number = self._patch_slide_number(operation)
+            slide_item = operation.get("slide_plan") or operation.get("page")
+            if not isinstance(slide_item, dict):
+                raise ValueError("plan_patch.insert_slide_after_requires_slide")
+            index = self._page_index_for_slide(pages, slide_number)
+            pages = pages[: index + 1] + [self._normalize_patch_page(slide_item)] + pages[index + 1 :]
+
+        return self._renumber_page_plan(pages)
+
+    def _patch_slide_number(self, operation: Dict[str, Any]) -> int:
+        slide = operation.get("slide")
+        if slide is None:
+            slide = operation.get("after_slide")
+        try:
+            slide_number = int(slide)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("plan_patch_slide_required") from exc
+        if slide_number < 1:
+            raise ValueError("plan_patch_slide_must_be_positive")
+        return slide_number
+
+    def _page_index_for_slide(self, pages: List[Dict[str, Any]], slide_number: int) -> int:
+        for index, page in enumerate(pages):
+            if int(page.get("slide") or index + 1) == slide_number:
+                return index
+        raise ValueError(f"plan_patch_slide_not_found: {slide_number}")
+
+    def _normalize_patch_page(self, item: Any) -> Dict[str, Any]:
+        if not isinstance(item, dict):
+            raise ValueError("plan_patch_page_must_be_object")
+        page = dict(item)
+        shapes = page.get("shapes") or page.get("shape_plan") or []
+        if not isinstance(shapes, list):
+            shapes = []
+        page["layout"] = str(page.get("layout") or "agent_shape_plan")
+        page["role"] = str(page.get("role") or ("cover" if page["layout"] == "cover_statement" else "content"))
+        page["title"] = str(page.get("title") or "未命名页面")
+        page["message"] = str(page.get("message") or "")
+        page["points"] = [self._point_text(point) for point in (page.get("points") or [])]
+        page["shapes"] = shapes
+        return page
+
+    def _renumber_page_plan(self, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        renumbered = []
+        for index, page in enumerate(pages, start=1):
+            updated = dict(page)
+            updated["slide"] = index
+            renumbered.append(updated)
+        return renumbered
+
+    def _title_from_page_plan(self, page_plan: List[Dict[str, Any]]) -> str:
+        if page_plan:
+            title = page_plan[0].get("title")
+            if title:
+                return str(title)
+        return ""
+
+    def _plan_patch_operation_count(self, plan_patch: Dict[str, Any]) -> int:
+        total = 0
+        for key in ("replace_slides", "insert_slide_after"):
+            value = plan_patch.get(key)
+            if isinstance(value, list):
+                total += len(value)
+            elif isinstance(value, dict):
+                total += 1
+        return total
 
     def _enrich_page_plan_visuals(self, page_plan: List[Dict[str, Any]]) -> None:
         for page in page_plan:
@@ -421,6 +640,9 @@ class CreatePptxWithPptMasterTool(LLMTool):
 
     def _validation_gate_issues(self, validation: Dict[str, Any]) -> List[Dict[str, Any]]:
         issues: List[Dict[str, Any]] = []
+        if isinstance(validation.get("structured_issues"), list):
+            issues.extend(item for item in validation["structured_issues"] if isinstance(item, dict))
+            return issues
         for key in ("overflow_issues", "rendered_issues", "geometry_issues"):
             value = validation.get(key)
             if isinstance(value, list):
@@ -450,20 +672,47 @@ class CreatePptxWithPptMasterTool(LLMTool):
             task = {
                 "slide": slide if isinstance(slide, int) else None,
                 "type": issue_type,
-                "priority": self._revision_priority(issue_type),
-                "action": self._revision_action(issue_type),
+                "priority": self._revision_priority(issue_type, issue),
+                "message": self._revision_issue_message(issue_type, issue),
+                "category": issue.get("category"),
+                "location": issue.get("location") if isinstance(issue.get("location"), dict) else {},
+                "evidence": issue.get("evidence") if isinstance(issue.get("evidence"), dict) else self._revision_issue_evidence(issue),
+                "artifacts": issue.get("artifacts") if isinstance(issue.get("artifacts"), dict) else {},
                 "issue": issue,
             }
             tasks.append(task)
         priority_order = {"high": 0, "medium": 1, "low": 2}
         return sorted(tasks, key=lambda item: (priority_order.get(item["priority"], 9), item["slide"] or 9999, item["type"]))
 
-    def _revision_priority(self, issue_type: str) -> str:
+    def _revision_priority(self, issue_type: str, issue: Optional[Dict[str, Any]] = None) -> str:
+        if isinstance(issue, dict) and issue.get("severity") in {"high", "medium", "low"}:
+            return str(issue["severity"])
         if issue_type in {"shape_out_of_bounds", "rendered_content_overflow", "rendered_low_margin", "rendered_visual_overcrowding", "high_text_density"}:
             return "high"
         if issue_type in {"text_only_slide", "repeated_layout_pattern", "low_layout_diversity", "tiny_text"}:
             return "medium"
         return "low"
+
+    def _revision_issue_message(self, issue_type: str, issue: Dict[str, Any]) -> str:
+        if issue.get("message"):
+            return str(issue["message"])
+        messages = {
+            "shape_out_of_bounds": "形状边界超出幻灯片画布。",
+            "rendered_content_overflow": "渲染后页面边缘检测到非背景内容。",
+            "rendered_low_margin": "渲染内容距离页面边缘过近。",
+            "rendered_visual_overcrowding": "渲染视觉占用过高。",
+            "high_text_density": "页面文字行数或字符数超过高密度阈值。",
+            "text_only_slide": "页面主要由文本框组成，缺少图表、图片、表格或形状等视觉元素。",
+            "repeated_layout_pattern": "连续页面版式重复度过高。",
+            "low_layout_diversity": "整份 PPT 的内容版式多样性不足。",
+            "tiny_text": "页面存在小于可读阈值的字号。",
+            "expected_font_missing": "PDF 字体检测未发现期望字体。",
+        }
+        return messages.get(issue_type, "检测到 PPT 质量问题。")
+
+    def _revision_issue_evidence(self, issue: Dict[str, Any]) -> Dict[str, Any]:
+        excluded = {"type", "slide", "message", "category", "severity", "location", "artifacts", "raw_issue"}
+        return {key: value for key, value in issue.items() if key not in excluded}
 
     def _revision_action(self, issue_type: str) -> str:
         actions = {
@@ -530,6 +779,8 @@ class CreatePptxWithPptMasterTool(LLMTool):
             layout = page["layout"]
             if layout == "cover_statement":
                 self._draw_cover(slide, page, palette, RGBColor, Inches, Pt, PP_ALIGN)
+            elif layout == "agent_shape_plan":
+                self._draw_agent_shape_plan(slide, page, palette, RGBColor, Inches, Pt)
             elif layout in set(CHART_LAYOUT_SEQUENCE):
                 self._draw_chart_story(slide, page, palette, RGBColor, Inches, Pt)
             elif layout == "agenda":
@@ -549,6 +800,219 @@ class CreatePptxWithPptMasterTool(LLMTool):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         prs.save(output_path)
 
+    def _draw_agent_shape_plan(self, slide: Any, page: Dict[str, Any], palette: Dict[str, str], RGBColor: Any, Inches: Any, Pt: Any) -> None:
+        self._add_band(slide, 0.0, 0.0, 13.333, 7.5, "FFFFFF", RGBColor, Inches)
+        shapes = page.get("shapes") or []
+        if not isinstance(shapes, list):
+            shapes = []
+        for shape in shapes:
+            if not isinstance(shape, dict):
+                continue
+            shape_type = str(shape.get("type") or shape.get("kind") or "").lower()
+            x, y, w, h = self._shape_bounds(shape)
+            if w <= 0 or h <= 0:
+                continue
+            rendered_shape = None
+            if shape_type in {"text", "textbox", "title", "body"}:
+                rendered_shape = self._draw_plan_text(slide, shape, x, y, w, h, palette)
+            elif shape_type in {"image", "picture"}:
+                rendered_shape = self._draw_plan_image(slide, shape, x, y, w, h, RGBColor, Inches)
+            elif shape_type in {"table"}:
+                rendered_shape = self._draw_plan_table(slide, shape, x, y, w, h, palette, RGBColor, Inches, Pt)
+            elif shape_type in {"rect", "rectangle", "card"}:
+                fill = str(shape.get("fill") or shape.get("fill_color") or palette["surface"])
+                line = shape.get("line") or shape.get("line_color") or palette["line"]
+                rendered_shape = self._add_band(slide, x, y, w, h, fill, RGBColor, Inches, line=str(line) if line else None)
+            self._apply_plan_shape_identity(rendered_shape, shape)
+
+    def _draw_plan_text(self, slide: Any, shape: Dict[str, Any], x: float, y: float, w: float, h: float, palette: Dict[str, str]) -> Any:
+        from pptx.enum.text import PP_ALIGN
+
+        align_value = str(shape.get("align") or shape.get("alignment") or "").lower()
+        align = {
+            "center": PP_ALIGN.CENTER,
+            "right": PP_ALIGN.RIGHT,
+            "left": PP_ALIGN.LEFT,
+        }.get(align_value)
+        return self._add_text(
+            slide,
+            str(shape.get("text") or ""),
+            x,
+            y,
+            w,
+            h,
+            font_size=int(shape.get("font_size") or 14),
+            color=str(shape.get("color") or palette["text"]),
+            bold=bool(shape.get("bold")),
+            align=align,
+        )
+
+    def _draw_plan_image(self, slide: Any, shape: Dict[str, Any], x: float, y: float, w: float, h: float, RGBColor: Any, Inches: Any) -> Any:
+        path = self._resolve_asset_path(str(shape.get("path") or shape.get("image_path") or shape.get("asset") or ""))
+        if not path:
+            return None
+        fit = str(shape.get("fit") or "contain").lower()
+        if fit == "stretch":
+            return slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+
+        image_w, image_h = self._image_size(path)
+        if image_w <= 0 or image_h <= 0:
+            return slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+        image_ratio = image_w / image_h
+        box_ratio = w / h
+        if fit == "cover":
+            picture = slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+            crop_left, crop_top, crop_right, crop_bottom = self._cover_crop(image_w, image_h, w, h)
+            picture.crop_left = crop_left
+            picture.crop_top = crop_top
+            picture.crop_right = crop_right
+            picture.crop_bottom = crop_bottom
+            return picture
+        else:
+            draw_w, draw_h = (w, w / image_ratio) if image_ratio > box_ratio else (h * image_ratio, h)
+        draw_x = x + (w - draw_w) / 2
+        draw_y = y + (h - draw_h) / 2
+        return slide.shapes.add_picture(str(path), Inches(draw_x), Inches(draw_y), width=Inches(draw_w), height=Inches(draw_h))
+
+    def _draw_plan_table(
+        self,
+        slide: Any,
+        shape: Dict[str, Any],
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        palette: Dict[str, str],
+        RGBColor: Any,
+        Inches: Any,
+        Pt: Any,
+    ) -> Any:
+        rows = self._normalize_table_rows(shape.get("rows") or shape.get("data") or [])
+        if not rows:
+            return None
+
+        row_count = len(rows)
+        column_count = max(len(row) for row in rows)
+        graphic_frame = slide.shapes.add_table(
+            row_count,
+            column_count,
+            Inches(x),
+            Inches(y),
+            Inches(w),
+            Inches(h),
+        )
+        table = graphic_frame.table
+        font_size = int(shape.get("font_size") or 11)
+        header_fill = str(shape.get("header_fill") or shape.get("header_fill_color") or palette["primary"])
+        header_color = str(shape.get("header_color") or "FFFFFF")
+        cell_fill = str(shape.get("cell_fill") or shape.get("cell_fill_color") or "FFFFFF")
+        text_color = str(shape.get("text_color") or shape.get("color") or palette["text"])
+
+        for column in table.columns:
+            column.width = Inches(w / column_count)
+        for row in table.rows:
+            row.height = Inches(h / row_count)
+
+        for row_index, row_values in enumerate(rows):
+            for column_index in range(column_count):
+                cell = table.cell(row_index, column_index)
+                text = row_values[column_index] if column_index < len(row_values) else ""
+                fill_color = header_fill if row_index == 0 else cell_fill
+                font_color = header_color if row_index == 0 else text_color
+                self._format_table_cell(
+                    cell,
+                    text,
+                    font_size=font_size,
+                    color=font_color,
+                    fill=fill_color,
+                    bold=row_index == 0,
+                    RGBColor=RGBColor,
+                    Pt=Pt,
+                )
+        return graphic_frame
+
+    def _normalize_table_rows(self, rows: Any) -> List[List[str]]:
+        if not isinstance(rows, list):
+            return []
+        normalized: List[List[str]] = []
+        for row in rows:
+            if isinstance(row, (list, tuple)):
+                normalized.append(["" if value is None else str(value) for value in row])
+            elif isinstance(row, dict):
+                normalized.append(["" if value is None else str(value) for value in row.values()])
+            else:
+                normalized.append(["" if row is None else str(row)])
+        return [row for row in normalized if row]
+
+    def _format_table_cell(
+        self,
+        cell: Any,
+        text: str,
+        *,
+        font_size: int,
+        color: str,
+        fill: str,
+        bold: bool,
+        RGBColor: Any,
+        Pt: Any,
+    ) -> None:
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = self._rgb(fill, RGBColor)
+        text_frame = cell.text_frame
+        text_frame.clear()
+        text_frame.word_wrap = True
+        paragraph = text_frame.paragraphs[0]
+        run = paragraph.add_run()
+        run.text = text
+        run.font.name = "Microsoft YaHei"
+        run.font.size = Pt(font_size)
+        run.font.bold = bold
+        run.font.color.rgb = self._rgb(color, RGBColor)
+
+    def _apply_plan_shape_identity(self, rendered_shape: Any, plan_shape: Dict[str, Any]) -> None:
+        if rendered_shape is None:
+            return
+        shape_id = str(plan_shape.get("id") or plan_shape.get("shape_id") or "").strip()
+        if not shape_id:
+            return
+        try:
+            rendered_shape.name = f"pptm:{shape_id}"
+        except Exception:
+            logger.debug("ppt_master_shape_name_failed", shape_id=shape_id)
+
+    def _cover_crop(self, image_w: int, image_h: int, box_w: float, box_h: float) -> tuple[float, float, float, float]:
+        image_ratio = image_w / image_h
+        box_ratio = box_w / box_h
+        if box_ratio < image_ratio:
+            crop = (1.0 - (box_ratio / image_ratio)) / 2.0
+            return crop, 0.0, crop, 0.0
+        if box_ratio > image_ratio:
+            crop = (1.0 - (image_ratio / box_ratio)) / 2.0
+            return 0.0, crop, 0.0, crop
+        return 0.0, 0.0, 0.0, 0.0
+
+    def _shape_bounds(self, shape: Dict[str, Any]) -> tuple[float, float, float, float]:
+        bounds = shape.get("position") if isinstance(shape.get("position"), dict) else shape
+        unit = str(bounds.get("unit") or shape.get("unit") or "in").lower()
+        x = float(bounds.get("x") or bounds.get("left") or 0)
+        y = float(bounds.get("y") or bounds.get("top") or 0)
+        w = float(bounds.get("w") or bounds.get("width") or 0)
+        h = float(bounds.get("h") or bounds.get("height") or 0)
+        if unit == "relative":
+            return x * 13.333, y * 7.5, w * 13.333, h * 7.5
+        if unit == "emu":
+            return x / 914400, y / 914400, w / 914400, h / 914400
+        return x, y, w, h
+
+    def _image_size(self, path: Path) -> tuple[int, int]:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                return image.size
+        except Exception:
+            return 0, 0
+
     def _add_text(self, slide: Any, text: str, x: float, y: float, w: float, h: float, *, font_size: int, color: str, bold: bool = False, align: Any = None) -> Any:
         from pptx.dml.color import RGBColor
         from pptx.util import Inches, Pt
@@ -556,6 +1020,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
         frame = box.text_frame
         frame.clear()
+        frame.word_wrap = True
         paragraph = frame.paragraphs[0]
         if align is not None:
             paragraph.alignment = align
@@ -852,7 +1317,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         except (TypeError, ValueError):
             return None
 
-    def _add_band(self, slide: Any, x: float, y: float, w: float, h: float, fill: str, RGBColor: Any, Inches: Any, *, line: Optional[str] = None) -> None:
+    def _add_band(self, slide: Any, x: float, y: float, w: float, h: float, fill: str, RGBColor: Any, Inches: Any, *, line: Optional[str] = None) -> Any:
         from pptx.enum.shapes import MSO_SHAPE
 
         shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -863,6 +1328,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
             shape.line.width = 1
         else:
             shape.line.fill.background()
+        return shape
 
     def _add_footer(self, slide: Any, idx: int, palette: Dict[str, str]) -> None:
         self._add_text(slide, str(idx), 12.1, 7.08, 0.6, 0.18, font_size=8, color=palette["muted"])
@@ -908,6 +1374,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
             "description": (
                 self.description
                 + " 生成 PPT 前必须先阅读 backend/app/tools/office/ppt_master_references/index.md；"
+                "通用 PPT 操作约束见 backend/app/tools/office/PPT操作指南.md，必须先阅读；"
                 "生成后必须检查 qa_status/quality_gate，并对 validation.montage_path 调用 analyze_image 做视觉质量检查。"
             ),
             "parameters": {
@@ -934,9 +1401,42 @@ class CreatePptxWithPptMasterTool(LLMTool):
                             "结构化大纲，每项可包含 title/message/points/chart/visual。"
                             "图表图片必须在生成时直接插入：在对应页传 "
                             "chart.image_path/path/asset/image_url 或 visual.image_path/path/asset。"
-                            "不要先生成 mock PPT 后再用 edit_pptx 替换图表。"
+                            "不要先生成 mock PPT 后再用另一套局部编辑逻辑替换图表。"
                         ),
                         "items": {"type": "object"},
+                    },
+                    "slide_plan": {
+                        "type": "array",
+                        "description": (
+                            "Agent 自行规划的细粒度页面绘制计划。使用前必须阅读 "
+                            "backend/app/tools/office/ppt_master_references/slide-plan-rules.md。"
+                            "适合从零生成正式业务 PPT 时发挥 Agent 的 python-pptx "
+                            "布局判断能力：每页可提供 title/message/shapes，shapes 支持 text/textbox/title、image/picture、"
+                            "table、rect/card；坐标支持 unit=relative|in|emu，relative 按 16:9 页面比例计算；图片 fit 支持 "
+                            "contain/cover/stretch。提供 slide_plan 时，工具只做确定性绘制、产物登记和 QA，不做模板槽位套版。"
+                        ),
+                        "items": {"type": "object"},
+                    },
+                    "base_plan_path": {
+                        "type": "string",
+                        "description": (
+                            "续改上一版 PPT Master 项目时使用的基线 plan 路径，通常来自上一次返回的 "
+                            "data.slide_plan_path 或 data.page_plan_path。续改时 Agent 读取该 plan，"
+                            "只输出局部 plan_patch，未涉及页面由工具原样保留。"
+                        ),
+                    },
+                    "base_project_dir": {
+                        "type": "string",
+                        "description": "续改上一版 PPT Master 项目目录；未提供 base_plan_path 时，工具从目录中选择最新 slide_plan.v*.json。",
+                    },
+                    "plan_patch": {
+                        "type": "object",
+                        "description": (
+                            "Agent 编写的局部结构化修改，不接收自然语言。支持 "
+                            "{replace_slides:[{slide,slides:[...]}]} 替换某页为一页或多页，"
+                            "以及 {insert_slide_after:[{after_slide,slide_plan:{...}}]} 插入新页。"
+                            "工具只校验、合并、保存新版本 plan，并用同一 renderer 重绘。"
+                        ),
                     },
                     "output_file": {"type": "string"},
                     "quality": {"type": "string", "enum": ["draft", "standard", "strict"], "default": "standard"},

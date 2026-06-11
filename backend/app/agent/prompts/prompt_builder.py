@@ -31,6 +31,7 @@ AgentMode = Literal[
     "social",
     "chart",
     "ops",
+    "memory_consolidator",
     "deliberation_meteorology",
     "deliberation_monitoring",
     "deliberation_chemistry",
@@ -75,13 +76,9 @@ def build_react_system_prompt(
         tools_dict = get_tools_by_mode(mode)
         available_tools = list(tools_dict.keys())
 
-    # ⚠️ memory_consolidator模式不过滤工具，使用完整工具列表
-    if mode == "memory_consolidator":
-        filtered_tools = available_tools
-    else:
-        # 过滤：只保留该模式支持的工具
-        mode_tools = get_tools_by_mode(mode)
-        filtered_tools = [t for t in available_tools if t in mode_tools]
+    # 过滤：只保留该模式支持的工具
+    mode_tools = get_tools_by_mode(mode)
+    filtered_tools = [t for t in available_tools if t in mode_tools]
 
     logger.info(
         "building_prompt",

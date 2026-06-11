@@ -21,8 +21,9 @@ from app.services.report_preview_refresh import (
     build_html_preview as build_report_html_preview,
     record_report_update,
 )
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_file_ref, build_url_ref, merge_refs
 from app.utils.path_config import get_images_dir
 
 logger = structlog.get_logger()
@@ -416,6 +417,10 @@ class CreateReportPackageTool(LLMTool):
                         "type": "string",
                         "description": "完整 report.qmd；规则见 references/index.md。",
                     },
+                    "source_qmd_path": {
+                        "type": "string",
+                        "description": "原始 QMD 文件路径。提供后，HTML 预览和 QMD 下载以该原始文件为准，报告目录只作为渲染输出缓存。",
+                    },
                     "title": {"type": "string", "description": "报告标题，可选。"},
                     "report_type": {
                         "type": "string",
@@ -477,6 +482,7 @@ class CreateReportPackageTool(LLMTool):
         self,
         report_id: str,
         qmd_content: str,
+        source_qmd_path: str | None = None,
         title: str | None = None,
         report_type: str | None = None,
         design_profile: str | None = None,
@@ -541,6 +547,15 @@ format:
         qmd_content = _disable_quarto_docx_auto_structure(qmd_content)
         qmd_content = _normalize_static_qmd(qmd_content)
         qmd_path = report_dir / "report.qmd"
+        source_qmd = None
+        if source_qmd_path:
+            try:
+                candidate = Path(source_qmd_path).expanduser().resolve()
+                if candidate.exists() and candidate.is_file() and candidate != qmd_path.resolve():
+                    source_qmd = candidate
+            except OSError:
+                source_qmd = None
+
         qmd_path.write_text(qmd_content, encoding="utf-8")
 
         if report_data is not None:
@@ -569,17 +584,21 @@ format:
                 "qmd_size": qmd_path.stat().st_size,
             }
         )
+        files = {
+            "qmd": str(qmd_path),
+            "html": str(report_dir / "report.html"),
+            "docx": str(report_dir / "report.docx"),
+        }
+        if source_qmd:
+            files["source_qmd"] = str(source_qmd)
+
         meta = {
             "report_id": safe_id,
             "title": title or metadata.get("title") if isinstance(metadata, dict) else title,
             "created_at": existing_meta.get("created_at") or now,
             "updated_at": now,
             "source": "create_report_package",
-            "files": {
-                "qmd": str(qmd_path),
-                "html": str(report_dir / "report.html"),
-                "docx": str(report_dir / "report.docx"),
-            },
+            "files": files,
             "assets": copied_assets,
             "validation": validation,
             "version": version,
@@ -627,7 +646,7 @@ format:
 
         data = {
             "report_id": safe_id,
-            "file_path": str(qmd_path),
+            "file_path": str(source_qmd or qmd_path),
             "report_dir": str(report_dir),
             "file_type": "report",
             "generator": "create_report_package",
@@ -656,10 +675,55 @@ format:
             generator="create_report_package",
             metadata={"report_id": safe_id},
         )
+        extra_refs = {}
+        extra_file_refs = []
+        if source_qmd:
+            extra_file_refs.append(
+                build_file_ref(
+                    source_qmd,
+                    type="document",
+                    format=source_qmd.suffix.lstrip(".") or "qmd",
+                    usage="source",
+                )
+            )
+        if html_preview and html_path:
+            extra_file_refs.append(
+                build_file_ref(
+                    html_path,
+                    type="document",
+                    format="html",
+                    usage="preview",
+                    report_id=safe_id,
+                )
+            )
+            html_url = html_preview.get("html_url") if isinstance(html_preview, dict) else None
+            if html_url:
+                extra_refs["urls"] = [build_url_ref(html_url, usage="display", source="html_preview")]
+        if extra_file_refs:
+            extra_refs["files"] = extra_file_refs
+        if extra_refs:
+            data["refs"] = merge_refs(data.get("refs"), extra_refs)
+
+        primary_artifact_path = str(html_path) if html_preview and html_path else str(qmd_path)
+        resume_context = build_artifact_resume_context(
+            data,
+            qmd_path,
+            tool_hint=(
+                f"Use read_file(path='{qmd_path}') to inspect the report source, "
+                f"or present_artifact(file_path='{primary_artifact_path}') to preview it."
+            ),
+            extra_resume={
+                "report_id": safe_id,
+                "report_dir": str(report_dir),
+                "source_qmd_path": str(source_qmd) if source_qmd else None,
+                "primary_artifact_path": primary_artifact_path,
+            },
+        )
 
         return {
             "success": True,
             "data": data,
+            **resume_context,
             "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
             "summary": (
                 f"报告包已创建：{safe_id}。右侧预览已生成，预览和下载由右侧文档面板处理。"

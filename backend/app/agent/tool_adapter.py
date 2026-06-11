@@ -403,6 +403,22 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         if data_id:
             standard_result["data_id"] = data_id
 
+        passthrough_fields = (
+            "refs",
+            "llm_resume",
+            "context_refs",
+            "content_preview",
+            "data_ids",
+            "report_data_id",
+            "report_data_ids",
+            "source_data_ids",
+            "source_report_data_ids",
+            "visual_ids",
+        )
+        for key in passthrough_fields:
+            if key in result:
+                standard_result[key] = result[key]
+
         # 添加数据字段（优先使用visuals，如果不存在则使用data）
         if visuals is not None:
             standard_result["visuals"] = visuals

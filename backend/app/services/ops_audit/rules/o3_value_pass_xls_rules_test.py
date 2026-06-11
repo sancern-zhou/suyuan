@@ -9,9 +9,9 @@ from app.services.ops_audit.rules import o3_value_pass_xls_rules
 def _xlsx(path, *, slope="0.999", intercept="-0.079", change="-0.07"):
     wb = Workbook()
     ws = wb.active
-    ws["G26"] = slope
-    ws["G27"] = intercept
-    ws["G29"] = change
+    ws["F25"] = slope
+    ws["F26"] = intercept
+    ws["F28"] = change
     wb.save(path)
 
 
@@ -19,9 +19,9 @@ def _xlsx_bytes(*, slope="0.999", intercept="-0.079", change="-0.07"):
     buffer = BytesIO()
     wb = Workbook()
     ws = wb.active
-    ws["G26"] = slope
-    ws["G27"] = intercept
-    ws["G29"] = change
+    ws["F25"] = slope
+    ws["F26"] = intercept
+    ws["F28"] = change
     wb.save(buffer)
     return buffer.getvalue()
 
@@ -62,6 +62,29 @@ def test_o3_value_pass_xls_matching_values_adds_no_issue(tmp_path):
     assert issues == []
 
 
+def test_o3_value_pass_xls_accepts_any_xls_attachment_by_format(tmp_path):
+    xls_path = tmp_path / "daily-record.xlsx"
+    _xlsx(xls_path)
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [("RF_HY_O3VALUEPASS", _form())],
+        [
+            {
+                "REFID": "WO-001",
+                "TYPECODE": "UNRELATED_ATTACHMENT",
+                "FILENAME": "daily-record.xlsx",
+                "FILEPATH": str(xls_path),
+            }
+        ],
+        [],
+        issues,
+    )
+
+    assert issues == []
+
+
 def test_o3_value_pass_xls_mismatch_adds_issue(tmp_path):
     xls_path = tmp_path / "o3-transfer.xlsx"
     _xlsx(xls_path, slope="1.001")
@@ -80,10 +103,10 @@ def test_o3_value_pass_xls_mismatch_adds_issue(tmp_path):
     assert "斜率" in issues[0].message
     assert "DEVICEDELIVERMODEL" in issues[0].message
     assert "表单值0.999" in issues[0].message
-    assert "XLS G26值1.001" in issues[0].message
+    assert "XLS F25值1.001" in issues[0].message
     evidence = json.loads(issues[0].evidence)
     assert evidence["comparisons"][0]["field"] == "DEVICEDELIVERMODEL"
-    assert evidence["comparisons"][0]["cell"] == "G26"
+    assert evidence["comparisons"][0]["cell"] == "F25"
     assert evidence["comparisons"][0]["status"] == "mismatch"
 
 
@@ -103,7 +126,7 @@ def test_o3_value_pass_xls_missing_form_field_adds_issue(tmp_path):
     assert len(issues) == 1
     evidence = json.loads(issues[0].evidence)
     assert evidence["comparisons"][0]["field"] == "DENSITY1VALUE"
-    assert evidence["comparisons"][0]["cell"] == "G29"
+    assert evidence["comparisons"][0]["cell"] == "F28"
     assert evidence["comparisons"][0]["status"] == "missing_form_value"
 
 
@@ -147,15 +170,76 @@ def test_o3_value_pass_xls_accepts_values_in_actual_template_cells(tmp_path):
     xls_path = tmp_path / "o3-transfer.xlsx"
     wb = Workbook()
     ws = wb.active
-    ws["F26"] = "0.999"
-    ws["F27"] = "-0.079"
-    ws["F29"] = "-0.07"
+    ws["F25"] = "0.999"
+    ws["F26"] = "-0.079"
+    ws["F28"] = "-0.07"
     wb.save(xls_path)
     issues = []
 
     o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
         {"WORKINGORDERCODE": "WO-001"},
         [("RF_HY_O3VALUEPASS", _form())],
+        [],
+        [_attachment(xls_path)],
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_o3_value_pass_xls_accepts_any_candidate_cell_match(tmp_path):
+    xls_path = tmp_path / "o3-transfer.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["F24"] = "1.002"
+    ws["F25"] = "0.110"
+    ws["F26"] = "not-the-change"
+    ws["F28"] = "-0.5"
+    wb.save(xls_path)
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [
+            (
+                "RF_HY_O3VALUEPASS",
+                _form(
+                    DEVICEDELIVERMODEL="1.002",
+                    DELIVERFC="0.110",
+                    DENSITY1VALUE="-0.5",
+                ),
+            )
+        ],
+        [],
+        [_attachment(xls_path)],
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_o3_value_pass_xls_matches_using_form_precision_and_percent_scale(tmp_path):
+    xls_path = tmp_path / "o3-transfer.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["F24"] = 0.9994584484828917
+    ws["F25"] = -0.11881566910229442
+    ws["F26"] = -0.010978043912175658
+    wb.save(xls_path)
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [
+            (
+                "RF_HY_O3VALUEPASS",
+                _form(
+                    DEVICEDELIVERMODEL="0.999",
+                    DELIVERFC="-0.119",
+                    DENSITY1VALUE="-1.10",
+                ),
+            )
+        ],
         [],
         [_attachment(xls_path)],
         issues,

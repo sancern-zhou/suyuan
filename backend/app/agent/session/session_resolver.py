@@ -85,6 +85,31 @@ async def save_session_metadata_for_mode(
     )
 
 
+async def save_llm_compact_state_for_mode(
+    session_id: str,
+    messages: list[dict[str, Any]],
+    *,
+    source_until_sequence: int,
+    mode: Optional[str] = None,
+    token_estimate: Optional[int] = None,
+    reason: Optional[str] = None,
+) -> bool:
+    manager = get_session_manager_for_mode(mode)
+    if not hasattr(manager, "save_llm_compact_state"):
+        return False
+    return bool(
+        await _maybe_await(
+            manager.save_llm_compact_state(
+                session_id,
+                messages,
+                source_until_sequence=source_until_sequence,
+                token_estimate=token_estimate,
+                reason=reason,
+            )
+        )
+    )
+
+
 async def append_session_transcript_for_mode(
     session: Session,
     *,

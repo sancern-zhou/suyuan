@@ -12,6 +12,9 @@ from app.fetchers.base.fetcher_interface import DataFetcher
 from app.fetchers.consultation.monthly_district_pollutant_ranking import (
     generate_district_pollutant_ranking,
 )
+from app.fetchers.consultation.monthly_meteorology_support import (
+    generate_meteorology_support,
+)
 from app.fetchers.consultation.monthly_pollution_events_components import (
     generate_pollution_events_components,
 )
@@ -89,6 +92,28 @@ class MonthlyPollutionEventsComponentsFetcher(DataFetcher):
         output_path = generate_pollution_events_components(year, month)
         logger.info(
             "monthly_pollution_events_components_generated",
+            year=year,
+            month=month,
+            output_path=str(output_path) if output_path else None,
+        )
+
+
+class MonthlyMeteorologySupportFetcher(DataFetcher):
+    """Generate monthly CMA meteorology support data."""
+
+    def __init__(self):
+        super().__init__(
+            name="monthly_meteorology_support_fetcher",
+            description="月度气象支撑数据 - 每月1号12点30分抓取上个月完整窗口的气温距平图、降水距平百分率图和6项同比统计",
+            schedule="30 12 1 * *",
+            version="1.0.0",
+        )
+
+    async def fetch_and_store(self):
+        year, month = get_previous_month()
+        output_path = generate_meteorology_support(year, month)
+        logger.info(
+            "monthly_meteorology_support_generated",
             year=year,
             month=month,
             output_path=str(output_path) if output_path else None,

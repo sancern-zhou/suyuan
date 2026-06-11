@@ -1,11 +1,12 @@
 import asyncio
 
 import pytest
+from sqlalchemy import text
 
 from app.agent.core.executor import ToolExecutor
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.agent.react_agent import ReActAgent
-from app.agent.runtime.session_advisory_lock import _session_lock_key
+from app.agent.runtime.session_advisory_lock import _session_lock_key, session_advisory_lock
 from app.agent.session.models import Session
 from app.agent.session.session_manager_db import SessionManagerDB
 from app.social.message_bus_singleton import (
@@ -49,6 +50,134 @@ def test_social_context_is_isolated_between_async_tasks():
 def test_session_advisory_lock_key_is_session_scoped():
     assert _session_lock_key("session_a") == _session_lock_key("session_a")
     assert _session_lock_key("session_a") != _session_lock_key("session_b")
+
+
+@pytest.mark.asyncio
+async def test_session_advisory_lock_uses_autocommit_connection(monkeypatch):
+    class FakeResult:
+        def scalar(self):
+            return True
+
+    class FakeConnection:
+        def __init__(self):
+            self.execution_options_calls = []
+            self.statements = []
+            self.invalidated = False
+
+        async def execution_options(self, **kwargs):
+            self.execution_options_calls.append(kwargs)
+            return self
+
+        async def execute(self, statement, params):
+            self.statements.append((str(statement), params))
+            return FakeResult()
+
+        async def invalidate(self):
+            self.invalidated = True
+
+    class FakeConnectContext:
+        def __init__(self, connection):
+            self.connection = connection
+
+        async def __aenter__(self):
+            return self.connection
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def __init__(self, connection):
+            self.connection = connection
+            self.pool = type(
+                "Pool",
+                (),
+                {
+                    "status": lambda self: "fake",
+                    "size": lambda self: 1,
+                    "checkedout": lambda self: 0,
+                    "overflow": lambda self: 0,
+                },
+            )()
+
+        def connect(self):
+            return FakeConnectContext(self.connection)
+
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        "app.agent.runtime.session_advisory_lock.engine",
+        FakeEngine(connection),
+    )
+
+    async with session_advisory_lock("session_a"):
+        pass
+
+    assert connection.execution_options_calls == [{"isolation_level": "AUTOCOMMIT"}]
+    assert connection.statements[0][0] == str(text("SELECT pg_advisory_lock(:key)"))
+    assert connection.statements[1][0] == str(text("SELECT pg_advisory_unlock(:key) AS unlocked"))
+    assert connection.invalidated is False
+
+
+@pytest.mark.asyncio
+async def test_session_advisory_lock_invalidates_connection_when_unlock_fails(monkeypatch):
+    class FakeResult:
+        def __init__(self, unlocked):
+            self.unlocked = unlocked
+
+        def scalar(self):
+            return self.unlocked
+
+    class FakeConnection:
+        def __init__(self):
+            self.execute_count = 0
+            self.invalidated = False
+
+        async def execution_options(self, **kwargs):
+            return self
+
+        async def execute(self, statement, params):
+            self.execute_count += 1
+            return FakeResult(unlocked=self.execute_count == 1)
+
+        async def invalidate(self):
+            self.invalidated = True
+
+    class FakeConnectContext:
+        def __init__(self, connection):
+            self.connection = connection
+
+        async def __aenter__(self):
+            return self.connection
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def __init__(self, connection):
+            self.connection = connection
+            self.pool = type(
+                "Pool",
+                (),
+                {
+                    "status": lambda self: "fake",
+                    "size": lambda self: 1,
+                    "checkedout": lambda self: 0,
+                    "overflow": lambda self: 0,
+                },
+            )()
+
+        def connect(self):
+            return FakeConnectContext(self.connection)
+
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        "app.agent.runtime.session_advisory_lock.engine",
+        FakeEngine(connection),
+    )
+
+    async with session_advisory_lock("session_a"):
+        pass
+
+    assert connection.invalidated is True
 
 
 @pytest.mark.asyncio

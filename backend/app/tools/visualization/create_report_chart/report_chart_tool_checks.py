@@ -108,6 +108,16 @@ def test_renderer_selects_existing_chinese_font_file_when_available():
     assert font_path == "/home/xckj/.local/share/fonts/方正小标宋简.TTF"
 
 
+def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_mathtext():
+    from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+
+    assert (
+        normalize_matplotlib_label_text("各城市PM2.5中SO₄²⁻/NO₃⁻比值对比")
+        == "各城市PM2.5中SO$_4^{2-}$/NO$_3^-$比值对比"
+    )
+    assert normalize_matplotlib_label_text("NH₄⁺贡献占比") == "NH$_4^+$贡献占比"
+
+
 @pytest.mark.asyncio
 async def test_specialized_chart_type_routes_through_unified_tool_metadata():
     result = await CreateReportChartTool().execute(
@@ -121,6 +131,36 @@ async def test_specialized_chart_type_routes_through_unified_tool_metadata():
     assert result["metadata"]["tool_name"] == "create_report_chart"
     assert result["metadata"]["chart_type"] == "aqi_calendar"
     assert result["data"]["render_mode"] == "dry_run"
+
+
+@pytest.mark.asyncio
+async def test_report_chart_returns_resource_refs_and_resume_hints():
+    result = await CreateReportChartTool().execute(
+        chart_id="resource_refs_case",
+        chart_type="bar",
+        title="资源协议测试图",
+        data={"labels": ["A"], "values": [1]},
+        data_id="chart_data:v1:resource_refs",
+    )
+
+    image_path = Path(result["visuals"][0]["local_path"])
+
+    assert result["success"] is True
+    assert image_path.exists()
+    assert result["refs"]["data"] == [
+        {
+            "data_id": "chart_data:v1:resource_refs",
+            "usage": "source",
+            "tool": "read_data_registry",
+        }
+    ]
+    assert result["refs"]["files"][0]["path"] == str(image_path)
+    assert result["refs"]["files"][0]["type"] == "image"
+    assert result["refs"]["files"][0]["usage"] == "report_chart"
+    assert result["refs"]["visuals"][0]["tool_path"] == str(image_path)
+    assert result["llm_resume"]["source_data_id"] == "chart_data:v1:resource_refs"
+    assert result["llm_resume"]["generated_visuals"][0]["tool_path"] == str(image_path)
+    assert str(image_path) in result["llm_resume"]["tool_hint"]
 
 
 @pytest.mark.asyncio

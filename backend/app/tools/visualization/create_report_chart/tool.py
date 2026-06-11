@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
 from app.tools.visualization.create_report_chart.renderer import ChartDataError
 
 
@@ -152,7 +153,7 @@ class CreateReportChartTool(LLMTool):
             "reference_paths": report_chart_reference_paths(),
         }
         if opts.get("dry_run"):
-            return {
+            result = {
                 "success": True,
                 "status": "success",
                 "metadata": metadata,
@@ -167,6 +168,8 @@ class CreateReportChartTool(LLMTool):
                 },
                 "summary": "报告图表请求已按 create_report_chart 统一入口解析；dry_run 未生成图片。",
             }
+            self._attach_resume_context(result, data_id=data_id)
+            return result
 
         try:
             chart_data = self._resolve_chart_data(data=data, data_id=data_id, context=context)
@@ -185,7 +188,7 @@ class CreateReportChartTool(LLMTool):
             metadata.update(rendered.get("metadata", {}))
             if data_id:
                 metadata["source_data_id"] = data_id
-            return {
+            result = {
                 "success": True,
                 "status": "success",
                 "metadata": metadata,
@@ -193,6 +196,8 @@ class CreateReportChartTool(LLMTool):
                 "visuals": rendered.get("visuals", []),
                 "summary": rendered.get("summary", "报告图表已生成。"),
             }
+            self._attach_resume_context(result, data_id=data_id)
+            return result
         except ChartDataError as exc:
             return self._failed_result(str(exc), metadata, chart_type, title, data_id)
         except (KeyError, ValueError, TypeError) as exc:
@@ -259,3 +264,80 @@ class CreateReportChartTool(LLMTool):
             "visuals": [],
             "summary": f"报告图表生成失败：{error}",
         }
+
+    def _attach_resume_context(
+        self,
+        result: Dict[str, Any],
+        data_id: Optional[str],
+    ) -> None:
+        refs: Dict[str, Any] = {}
+        if data_id:
+            refs = merge_refs(refs, {"data": [build_data_ref(data_id, usage="source")]})
+
+        file_refs = []
+        visual_refs = []
+        generated_visuals = []
+        for visual in result.get("visuals") or []:
+            if not isinstance(visual, dict):
+                continue
+            local_path = visual.get("local_path")
+            file_path = visual.get("file_path")
+            image_url = visual.get("image_url")
+            visual_id = visual.get("id")
+            visual_title = visual.get("title")
+            tool_path = local_path or file_path
+
+            visual_ref = build_visual_ref(
+                id=visual_id,
+                type=visual.get("type") or "image",
+                title=visual_title,
+                image_url=image_url,
+                local_path=local_path,
+                file_path=file_path,
+                chart_type=result.get("metadata", {}).get("chart_type"),
+            )
+            if visual_ref:
+                visual_refs.append(visual_ref)
+
+            if tool_path:
+                path = Path(tool_path)
+                file_refs.append(
+                    build_file_ref(
+                        path,
+                        type="image",
+                        format=path.suffix.lstrip(".") or None,
+                        size=path.stat().st_size if path.exists() else None,
+                        usage="report_chart",
+                        preferred_for=["analyze_image", "present_artifact", "read_file"],
+                        visual_id=visual_id,
+                    )
+                )
+                generated_visuals.append(
+                    {
+                        "id": visual_id,
+                        "title": visual_title,
+                        "tool_path": str(path),
+                        "image_url": image_url,
+                    }
+                )
+
+        refs = merge_refs(
+            refs,
+            {"files": file_refs} if file_refs else None,
+            {"visuals": visual_refs} if visual_refs else None,
+        )
+        if refs:
+            result["refs"] = refs
+
+        llm_resume: Dict[str, Any] = {}
+        if data_id:
+            llm_resume["source_data_id"] = data_id
+        if generated_visuals:
+            llm_resume["generated_visuals"] = generated_visuals
+            first_path = generated_visuals[0].get("tool_path")
+            if first_path:
+                llm_resume["tool_hint"] = f"Use analyze_image(path='{first_path}') for image analysis."
+        elif data_id:
+            llm_resume["tool_hint"] = f"Use read_data_registry(data_id='{data_id}') to reread the source data."
+        if llm_resume:
+            result["llm_resume"] = llm_resume

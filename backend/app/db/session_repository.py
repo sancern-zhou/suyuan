@@ -785,6 +785,82 @@ class SessionRepository:
                 for row in result.all()
             ]
 
+    async def get_llm_history_messages_after(
+        self,
+        session_id: str,
+        after_sequence: int,
+    ) -> List[Dict[str, Any]]:
+        """Load LLM transcript rows appended after a compacted-history boundary."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(
+                    SessionMessageDB.id,
+                    SessionMessageDB.role,
+                    SessionMessageDB.msg_type,
+                    SessionMessageDB.content,
+                    SessionMessageDB.data,
+                    SessionMessageDB.timestamp,
+                    SessionMessageDB.sequence_number,
+                )
+                .where(SessionMessageDB.session_id == session_id)
+                .where(SessionMessageDB.sequence_number > after_sequence)
+                .order_by(SessionMessageDB.sequence_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                self._message_row_to_context_dict(row)
+                for row in result.all()
+            ]
+
+    async def get_active_llm_compact_state(
+        self,
+        session_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return persisted compact LLM state stored separately from display transcript."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionDB.session_metadata)
+                .where(SessionDB.session_id == session_id)
+            )
+            result = await session.execute(stmt)
+            metadata = result.scalar_one_or_none() or {}
+
+        if not isinstance(metadata, dict):
+            return None
+
+        compact_state = metadata.get("llm_compact_state")
+        if not isinstance(compact_state, dict):
+            return None
+        if compact_state.get("active") is False:
+            return None
+        if not isinstance(compact_state.get("messages"), list):
+            return None
+        if not isinstance(compact_state.get("source_until_sequence"), int):
+            return None
+
+        return compact_state
+
+    async def save_llm_compact_state(
+        self,
+        session_id: str,
+        compact_state: Dict[str, Any],
+    ) -> bool:
+        """Persist compact LLM state in session metadata without touching transcript rows."""
+        db_session = await self.get_session(session_id)
+        if not db_session:
+            return False
+
+        metadata = db_session.session_metadata or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["llm_compact_state"] = compact_state
+
+        return await self.update_session(
+            session_id,
+            metadata=metadata,
+        )
+
     async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
         """Load a full-length display transcript stub without data/metadata JSON."""
         async with AsyncSession(self.engine) as session:

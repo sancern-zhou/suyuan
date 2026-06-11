@@ -42,6 +42,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
+import { cloneEChartsOption, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
 
 const props = defineProps({
   data: {
@@ -356,7 +357,7 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
   // 如果是完整配置，返回它（会在 buildOption 最后通过 optimizeChartLayout 统一优化）
   if (isCompleteConfig) {
     console.log('[detectAndOptimizeEChartsConfig] 识别为完整配置')
-    return chartData
+    return chartType === 'radar' ? sanitizeCompleteRadarOption(chartData) : chartData
   }
 
   // 标准图表检测
@@ -405,7 +406,7 @@ const detectAndOptimizeEChartsConfig = (chartData, chartType = null) => {
  * @returns {Object} 优化后的配置
  */
 const optimizeChartLayout = (option) => {
-  const optimized = { ...option }
+  const optimized = cloneEChartsOption(option)
 
   console.log('[optimizeChartLayout] 开始优化，图表类型:', option.series?.[0]?.type || 'unknown', '有极坐标:', !!option.polar)
 

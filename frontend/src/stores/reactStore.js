@@ -748,7 +748,14 @@ export const useReactStore = defineStore('react', {
         return
       }
       this.currentState.officeDocumentHistory = []
-      documents.forEach(doc => this.recordOfficeDocument(doc, this.currentState))
+      documents
+        .slice()
+        .sort((a, b) => {
+          const aTime = new Date(a?.timestamp || 0).getTime()
+          const bTime = new Date(b?.timestamp || 0).getTime()
+          return aTime - bTime
+        })
+        .forEach(doc => this.recordOfficeDocument(doc, this.currentState))
       console.log(`[setOfficeDocumentHistory] Set ${documents.length} office documents for mode ${this.currentMode}`)
     },
 
@@ -769,10 +776,12 @@ export const useReactStore = defineStore('react', {
         getOfficeDocumentIdentity(item) === identity
       )
       if (existingIndex >= 0) {
-        targetState.officeDocumentHistory.splice(existingIndex, 1, {
+        const updatedDoc = {
           ...targetState.officeDocumentHistory[existingIndex],
           ...normalizedDoc
-        })
+        }
+        targetState.officeDocumentHistory.splice(existingIndex, 1)
+        targetState.officeDocumentHistory.push(updatedDoc)
       } else {
         targetState.officeDocumentHistory.push(normalizedDoc)
       }
@@ -1637,6 +1646,19 @@ export const useReactStore = defineStore('react', {
             }
           } else {
             console.log('[event:complete] 没有sources字段或为空')
+          }
+
+          if (Array.isArray(data?.office_documents)) {
+            data.office_documents.forEach(doc => this.recordOfficeDocument(doc, targetState))
+            targetState.lazyArtifacts = {
+              ...(targetState.lazyArtifacts || createEmptyModeState().lazyArtifacts),
+              hasOfficeDocuments: data.office_documents.length > 0,
+              officeDocumentCount: targetState.officeDocumentHistory?.length || data.office_documents.length,
+              officeDocumentsLoaded: true,
+              loadingOfficeDocuments: false
+            }
+          } else if (data?.last_office_document) {
+            this.recordOfficeDocument(data.last_office_document, targetState)
           }
 
           // 流式最终答案结束，重置状态

@@ -233,3 +233,293 @@ def test_reference_flowmeter_certificate_task_uses_monthly_attachments_only():
     assert [item["source_path"] for item in task["certificate_items"]] == [
         "http://example.test/Check/RF_M_GaseousFlowCheck/m-cert.pdf"
     ]
+
+
+def test_flow_visual_task_reports_vision_error_instead_of_silent_success(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "provider": "qwen-vl-max",
+            "status": "error",
+            "source": source,
+            "error": "文件不存在且未配置附件根路径/基础URL：/WebFiles/NewFiles/flow.jpg",
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-005"},
+            "forms": [("RF_TW_PmFlowCalibrate", {"Prev_A": "16.7", "Next_A": "16.8"})],
+            "item": {
+                "filename": "流量校准前.jpg",
+                "source_path": "/WebFiles/NewFiles/flow.jpg",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC"
+    assert issues[0].severity == "低"
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["working_order_code"] == "WO-005"
+    assert evidence["vision_status"] == "error"
+    assert "附件根路径/基础URL" in evidence["vision_error"]
+
+
+def test_monthly_thermo_o3_display_uses_flow_a_plus_b(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        assert "流量A" in prompt
+        assert "流量B" in prompt
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"O3": 0.572},
+                "display_components": {
+                    "O3": [
+                        {"label": "流量A", "value": 0.572, "unit": "L/min"},
+                        {"label": "流量B", "value": 0.566, "unit": "L/min"},
+                    ]
+                },
+                "measured_values": {},
+                "display_units": {"O3": "L/min"},
+                "measured_units": {},
+                "unit": "L/min",
+                "confidence": 0.95,
+                "reason": "热电臭氧照片包含流量A和流量B",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-M-THERMO"},
+            "forms": [
+                (
+                    "RF_M_GASEOUSFLOWCHECK",
+                    {"DEVICEBRAND": "热电", "DISPLAYVALUEO3": "1.138"},
+                )
+            ],
+            "item": {
+                "filename": "O3流量检查照片.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/o3.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_monthly_non_thermo_o3_display_does_not_sum_flow_a_plus_b(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"O3": 0.572},
+                "display_components": {
+                    "O3": [
+                        {"label": "流量A", "value": 0.572, "unit": "L/min"},
+                        {"label": "流量B", "value": 0.566, "unit": "L/min"},
+                    ]
+                },
+                "measured_values": {},
+                "display_units": {"O3": "L/min"},
+                "measured_units": {},
+                "unit": "L/min",
+                "confidence": 0.95,
+                "reason": "非热电品牌不应把A和B相加",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-M-FPI"},
+            "forms": [
+                (
+                    "RF_M_GASEOUSFLOWCHECK",
+                    {"DEVICEBRAND": "FPI", "DISPLAYVALUEO3": "1.138"},
+                )
+            ],
+            "item": {
+                "filename": "O3流量检查照片.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/o3.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH"
+    assert "O3 图片值 0.572" in issues[0].message
+
+
+def test_quarter_gas_flow_attachment_does_not_compare_monthly_form(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {},
+                "measured_values": {"SO2": 6.105},
+                "display_units": {},
+                "measured_units": {"SO2": "LPM"},
+                "unit": "L/min",
+                "confidence": 0.95,
+                "reason": "季度6L实测流量照片",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-Q"},
+            "forms": [
+                ("RF_M_GASEOUSFLOWCHECK", {"MEASUREDVALUESO2": "0.442"}),
+                ("RF_Q_GaseousFlowCheck", {"RF_Valuve_60": "6105"}),
+            ],
+            "item": {
+                "filename": "6L实测流量.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_Q_GaseousFlowCheck/6l.jpg",
+                "typecode": "RF_Q_GaseousFlowCheck",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_quarter_gas_flow_measured_photo_compares_rf_value(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {},
+                "measured_values": {"60": 6200},
+                "display_units": {},
+                "measured_units": {"60": "ml/min"},
+                "unit": "ml/min",
+                "confidence": 0.95,
+                "reason": "季度6L实测流量照片",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-Q"},
+            "forms": [("RF_Q_GaseousFlowCheck", {"RF_Valuve_60": "6105"})],
+            "item": {
+                "filename": "6L实测流量.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_Q_GaseousFlowCheck/6l.jpg",
+                "typecode": "RF_Q_GaseousFlowCheck",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH"
+    assert "RF_Valuve_60=6105.0" in issues[0].message
+
+
+def test_pm_membrane_attachment_matches_pm10_form_by_typecode(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_pm_membrane_photo": True,
+                "original_value": None,
+                "check_value": 0.812,
+                "visible_values": [{"label": "CAL MASS m", "value": 0.812}],
+                "confidence": 0.95,
+                "reason": "pm10膜片实测",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-PM"},
+            "forms": [
+                ("RF_Q_PM25RUNSTATUSCHECK", {"PM25CHECKTEMP2VALUE": "0.807"}),
+                ("RF_Q_PM10RUNSTATUSCHECK", {"PM10CHECKTEMP2VALUE": "0.812"}),
+            ],
+            "item": {
+                "filename": "pm10膜片实测.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_Q_Pm10RunStatusCheck/pm10.jpg",
+                "typecode": "RF_Q_Pm10RunStatusCheck",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_pm_membrane_attachment_matches_pm25_form_by_typecode(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_pm_membrane_photo": True,
+                "original_value": None,
+                "check_value": 0.807,
+                "visible_values": [{"label": "CAL MASS m", "value": 0.807}],
+                "confidence": 0.95,
+                "reason": "pm2.5膜片实测",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-PM"},
+            "forms": [
+                ("RF_Q_PM25RUNSTATUSCHECK", {"PM25CHECKTEMP2VALUE": "0.807"}),
+                ("RF_Q_PM10RUNSTATUSCHECK", {"PM10CHECKTEMP2VALUE": "0.812"}),
+            ],
+            "item": {
+                "filename": "pm2.5膜片实测.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_Q_Pm25RunStatusCheck/pm25.jpg",
+                "typecode": "RF_Q_Pm25RunStatusCheck",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []

@@ -200,8 +200,7 @@ async def list_channels(
         return {
             "qq": {"enabled": False, "running": False},
             "weixin": {"enabled": False, "running": False},
-            "dingtalk": {"enabled": False, "running": False},
-            "wecom": {"enabled": False, "running": False}
+            "dingtalk": {"enabled": False, "running": False}
         }
     except Exception as e:
         logger.error("Failed to list channels", error=str(e))
@@ -530,4 +529,50 @@ async def refresh_weixin_qrcode(
         raise
     except Exception as e:
         logger.error("Failed to refresh QR code", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/channels/reload")
+async def reload_channels(
+    channel_manager: ChannelManager = Depends(get_channel_manager)
+) -> Dict[str, Any]:
+    """
+    Reload channel configuration.
+
+    This triggers a hot-reload of channel configuration without restarting the service.
+    - Stops deleted channels
+    - Starts new channels
+    - Keeps running channels unchanged
+
+    Returns:
+        Reload result with statistics
+    """
+    try:
+        if not channel_manager:
+            raise HTTPException(status_code=503, detail="Channel manager not available")
+
+        old_count = len(channel_manager.channels)
+        old_channels = list(channel_manager.channels.keys())
+
+        # Reload configuration and restart channels
+        await channel_manager.reload_channels()
+
+        new_count = len(channel_manager.channels)
+        new_channels = list(channel_manager.channels.keys())
+
+        return {
+            "success": True,
+            "message": "Channel configuration reloaded successfully",
+            "old_channels": old_channels,
+            "new_channels": new_channels,
+            "old_count": old_count,
+            "new_count": new_count,
+            "added": len(set(new_channels) - set(old_channels)),
+            "removed": len(set(old_channels) - set(new_channels))
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to reload channels", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

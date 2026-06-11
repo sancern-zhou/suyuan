@@ -52,7 +52,7 @@ class ScheduleTaskTool(LLMTool):
                     "channels": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "目标通道列表（支持: 'weixin'(微信)|'qq'(QQ)|'dingtalk'(钉钉)|'wecom'(企业微信)，默认['weixin']）",
+                        "description": "目标通道列表（支持: 'weixin'(微信)|'qq'(QQ)|'dingtalk'(钉钉)，默认['weixin']）",
                         "default": ["weixin"]
                     }
                 },
@@ -158,10 +158,6 @@ class ScheduleTaskTool(LLMTool):
                 # 钉钉
                 "钉钉": "dingtalk",
                 "dingtalk": "dingtalk",  # 标准写法
-                # 企业微信
-                "企业微信": "wecom",
-                "企微": "wecom",
-                "wecom": "wecom",        # 标准写法
             }
 
             # 标准化通道名称

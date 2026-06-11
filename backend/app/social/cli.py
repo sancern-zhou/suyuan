@@ -67,7 +67,7 @@ async def main():
     social_config = SocialConfig.load_from_yaml(settings.social_config_path)
 
     if not any([social_config.qq.enabled, social_config.weixin.enabled,
-                social_config.dingtalk.enabled, social_config.wecom.enabled]):
+                social_config.dingtalk.enabled]):
         logger.warning("No social platforms enabled. Please enable at least one platform in config/social_config.yaml")
         return
 

@@ -314,7 +314,7 @@ DEFAULT_RULE_CATALOG = [
         "category": "附件读数一致性",
         "default_severity": "高",
         "scope": "RF_HY_O3VALUEPASS/WO_COMMONFILE",
-        "rationale": "臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的 G26、G27、G29 单元格一致。",
+        "rationale": "臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的候选单元格一致；斜率比对 F25/F24，截距比对 F26/F25，改变率比对 F28/F26，任一候选单元格匹配即视为一致。",
     },
     {
         "rule_id": "RF_PM_TEMP_ERROR_MISMATCH",

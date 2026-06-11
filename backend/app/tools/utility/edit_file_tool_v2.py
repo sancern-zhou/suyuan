@@ -317,7 +317,7 @@ class EditFileToolV2(LLMTool):
 - old_string 在文件中不存在时会提供详细诊断信息
 - old_string 在文件中出现多次且 replace_all=False 时报错
 - 自动处理引号规范化和trailing空格
-- 工作目录限制：D:/溯源/ 及其子目录
+- 路径限制：项目后端目录及 /tmp 目录
 """,
             category=ToolCategory.QUERY,
             version="2.0.0",
@@ -325,7 +325,8 @@ class EditFileToolV2(LLMTool):
         )
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
-        self.working_dir = BACKEND_ROOT
+        self.working_dir = BACKEND_ROOT.resolve()
+        self.allowed_dirs = [self.working_dir, Path("/tmp").resolve()]
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()
@@ -539,7 +540,7 @@ class EditFileToolV2(LLMTool):
     # ========================================================================
 
     def _resolve_path(self, path: str) -> Optional[Path]:
-        """解析文件路径，确保在工作目录范围内"""
+        """解析文件路径，确保在允许目录范围内"""
         try:
             file_path = Path(path)
 
@@ -548,11 +549,11 @@ class EditFileToolV2(LLMTool):
 
             file_path = file_path.resolve()
 
-            if not file_path.is_relative_to(self.working_dir):
+            if not any(file_path.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs):
                 logger.warning(
                     "edit_file_v2_path_escape",
                     requested_path=path,
-                    allowed_dir=str(self.working_dir)
+                    allowed_dirs=", ".join(str(allowed_dir) for allowed_dir in self.allowed_dirs)
                 )
                 return None
 
@@ -775,6 +776,7 @@ class EditFileToolV2(LLMTool):
                 "精确替换代码、配置、文本文件内容；必须先read_file。"
                 "不用于docx或Word XML；多行old_string/new_string在JSON中用\\n转义。"
                 "会检查文件是否被修改，并支持引号规范化容错匹配。"
+                "允许编辑项目后端目录和/tmp目录下的文件。"
                 "如果编辑的是标准报告包 reports/{report_id}/report.qmd 或 HTML展示页 html_artifacts/{artifact_id}/index.html，后端会自动刷新右侧预览并返回html_preview。"
             ),
             "parameters": {

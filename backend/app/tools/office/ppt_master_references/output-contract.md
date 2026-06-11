@@ -31,4 +31,9 @@ rules.
 ## Delivery Rule
 
 Deliver the PPT only when `qa_status` is `passed`, or clearly state that it is
-an initial draft and list the returned revision tasks.
+an initial draft and list the returned structured QA issues.
+
+`data.revision_tasks` is a compatibility field name for the Agent revision
+loop. It contains factual issue records: slide, type, severity/priority,
+message, location, evidence, and preview artifacts. It must not be treated as a
+tool-authored modification plan; the Agent decides the `plan_patch`.
