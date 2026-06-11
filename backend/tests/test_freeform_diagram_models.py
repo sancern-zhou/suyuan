@@ -173,7 +173,9 @@ def test_unknown_shape_type_normalizes_to_rounded_rect():
 def test_all_known_shape_types_are_accepted():
     known_shape_types = [
         "rect",
+        "rectangle",
         "rounded_rect",
+        "stadium",
         "text",
         "container",
         "swimlane",
