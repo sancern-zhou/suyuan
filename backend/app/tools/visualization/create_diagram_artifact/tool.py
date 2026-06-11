@@ -10,9 +10,14 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_artifact, build_document_artifact
 from app.services.html_artifact_service import html_artifact_service
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.visualization.create_diagram_artifact.freeform_exporter import export_freeform_diagram
+from app.tools.visualization.create_diagram_artifact.freeform_models import (
+    FreeformValidationError,
+    normalize_freeform_diagram,
+)
 from app.tools.visualization.font_sizing import FontScale, resolve_font_scale
 
 
@@ -532,6 +537,22 @@ class CreateDiagramArtifactTool(LLMTool):
                         "type": "string",
                         "enum": ["auto", "portrait", "landscape"],
                     },
+                    "diagram_mode": {
+                        "type": "string",
+                        "enum": ["template", "freeform"],
+                    },
+                    "diagram_intent": {
+                        "type": "string",
+                        "enum": [
+                            "architecture",
+                            "process",
+                            "mind_map",
+                            "data_flow",
+                            "topology",
+                            "org_chart",
+                            "custom",
+                        ],
+                    },
                     "diagram_type": {
                         "type": "string",
                         "enum": [
@@ -599,6 +620,43 @@ class CreateDiagramArtifactTool(LLMTool):
                     },
                     "metadata": {
                         "type": "object",
+                    },
+                    "canvas": {
+                        "type": "object",
+                        "description": "Freeform canvas settings, including width, height, grid, and background.",
+                        "additionalProperties": True,
+                    },
+                    "shapes": {
+                        "type": "array",
+                        "description": "Freeform shapes with id, type, label, x, y, width, height, and optional Draw.io fields.",
+                        "items": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": True,
+                        },
+                    },
+                    "connectors": {
+                        "type": "array",
+                        "description": "Freeform connectors with id, from, to, label, and type.",
+                        "items": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": True,
+                        },
+                    },
+                    "groups": {
+                        "type": "array",
+                        "description": "Freeform grouping containers with id, label, children, x, y, width, and height.",
+                        "items": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": True,
+                        },
+                    },
+                    "output_formats": {
+                        "type": "array",
+                        "description": "Freeform output formats, such as drawio, png, and drawio_svg.",
+                        "items": {"type": "string"},
                     },
                 },
                 "required": ["artifact_id", "title"],
@@ -1707,11 +1765,299 @@ class CreateDiagramArtifactTool(LLMTool):
 </html>
 """
 
+    def _build_freeform_preview_html(self, title: str, artifact_id: str) -> str:
+        safe_title = html.escape(title or artifact_id)
+        safe_drawio_url = html.escape(f"/api/html-artifacts/{artifact_id}/assets/diagram.drawio", quote=True)
+        safe_png_url = html.escape(f"/api/html-artifacts/{artifact_id}/assets/diagram.png", quote=True)
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{safe_title}</title>
+  <style>
+    body {{
+      margin: 0;
+      background: #f6f7f9;
+      color: #1f2937;
+      font-family: {diagram_css_font_stack()};
+    }}
+    .wrap {{
+      min-height: 100vh;
+      padding: 24px;
+      box-sizing: border-box;
+    }}
+    header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 0 auto 16px;
+      max-width: 1200px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.25;
+    }}
+    .actions {{
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }}
+    a {{
+      color: #1d4ed8;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+    }}
+    main {{
+      max-width: 1200px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #d7dce3;
+      overflow: auto;
+    }}
+    img {{
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto;
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>{safe_title}</h1>
+      <nav class="actions" aria-label="diagram downloads">
+        <a href="{safe_drawio_url}" download>Draw.io</a>
+        <a href="{safe_png_url}" download>PNG</a>
+      </nav>
+    </header>
+    <main>
+      <img src="assets/diagram.png" alt="{safe_title}" />
+    </main>
+  </div>
+</body>
+</html>
+"""
+
+    async def _execute_freeform_diagram(
+        self,
+        *,
+        artifact_id: str,
+        title: str,
+        diagram_intent: Optional[str],
+        canvas: Optional[Dict[str, Any]],
+        shapes: Optional[List[Dict[str, Any]]],
+        connectors: Optional[List[Dict[str, Any]]],
+        groups: Optional[List[Dict[str, Any]]],
+        output_formats: Optional[List[str]],
+        metadata: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        try:
+            diagram = normalize_freeform_diagram(
+                artifact_id=artifact_id,
+                title=title,
+                canvas=canvas,
+                shapes=shapes,
+                connectors=connectors,
+                groups=groups,
+                output_formats=output_formats,
+                diagram_intent=diagram_intent,
+            )
+        except FreeformValidationError as validation_exc:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": None,
+                "metadata": {
+                    "generator": self.name,
+                    "schema_version": "diagram_html.v3",
+                    "diagram_mode": "freeform",
+                    "diagram_intent": diagram_intent,
+                    "validation_error": str(validation_exc),
+                },
+                "summary": f"自由画布图表生成失败：{validation_exc}",
+            }
+
+        data = html_artifact_service.create_artifact(
+            artifact_id,
+            self._build_freeform_preview_html(title, artifact_id),
+            title=title,
+            metadata={
+                "artifact_kind": "diagram",
+                "diagram_mode": "freeform",
+                "diagram_intent": diagram.diagram_intent,
+                "layout_engine": "freeform_drawio",
+                "output_targets": list(diagram.output_formats),
+                "generated_at": datetime.now().isoformat(),
+                **(metadata or {}),
+            },
+        )
+        export_result = export_freeform_diagram(diagram, Path(data["artifact_dir"]))
+        drawio_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio"
+        png_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.png"
+        svg_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio.svg"
+        export_warnings = list(export_result.warnings)
+
+        metadata_out = {
+            "generator": self.name,
+            "schema_version": "diagram_html.v3",
+            "artifact_kind": "diagram",
+            "diagram_mode": "freeform",
+            "diagram_intent": diagram.diagram_intent,
+            "layout_engine": "freeform_drawio",
+            "output_targets": list(diagram.output_formats),
+            "export_warnings": export_warnings,
+        }
+        visuals = [
+            {
+                "id": f"{data['artifact_id']}_freeform_png",
+                "image_id": f"{data['artifact_id']}_freeform_png",
+                "title": title,
+                "type": "image",
+                "image_url": png_url,
+                "url": png_url,
+                "data": {
+                    "url": png_url,
+                    "local_path": str(export_result.preview_png_path),
+                },
+                "markdown_image": f"![{title}]({png_url})",
+                "local_path": str(export_result.preview_png_path),
+                "format": "png",
+                "output_target": "freeform",
+            }
+        ]
+        refs = {
+            "html": data.get("file_path"),
+            "drawio": str(export_result.drawio_path),
+            "source_json": str(export_result.source_json_path),
+            "png": str(export_result.preview_png_path),
+            "drawio_svg": str(export_result.preview_svg_path),
+        }
+        artifacts = [
+            build_document_artifact(
+                export_result.drawio_path,
+                kind="drawio",
+                format="drawio",
+                title=f"{title} Draw.io",
+                generator=self.name,
+                metadata={"url": drawio_url, "diagram_mode": "freeform"},
+            ),
+            build_document_artifact(
+                export_result.preview_png_path,
+                kind="image",
+                format="png",
+                title=f"{title} PNG",
+                preview=data.get("html_preview"),
+                generator=self.name,
+                metadata={"url": png_url, "diagram_mode": "freeform"},
+            ),
+            build_document_artifact(
+                export_result.source_json_path,
+                kind="source",
+                format="json",
+                title=f"{title} Source JSON",
+                generator=self.name,
+                metadata={"diagram_mode": "freeform"},
+            ),
+        ]
+        if "drawio_svg" in diagram.output_formats:
+            artifacts.append(
+                build_document_artifact(
+                    export_result.preview_svg_path,
+                    kind="image",
+                    format="svg",
+                    title=f"{title} Draw.io SVG",
+                    generator=self.name,
+                    metadata={"url": svg_url, "diagram_mode": "freeform"},
+                )
+            )
+        related_files = [
+            {
+                "path": str(export_result.drawio_path),
+                "relative_path": "assets/diagram.drawio",
+                "url": drawio_url,
+                "format": "drawio",
+            },
+            {
+                "path": str(export_result.source_json_path),
+                "relative_path": "diagram.source.json",
+                "format": "json",
+            },
+            {
+                "path": str(export_result.preview_png_path),
+                "relative_path": "assets/diagram.png",
+                "url": png_url,
+                "format": "png",
+            },
+            {
+                "path": str(export_result.preview_svg_path),
+                "relative_path": "assets/diagram.drawio.svg",
+                "url": svg_url,
+                "format": "drawio_svg",
+            },
+        ]
+
+        data.pop("download_url", None)
+        data.pop("share_endpoint", None)
+        data.update(
+            {
+                "drawio_path": str(export_result.drawio_path),
+                "drawio_url": drawio_url,
+                "source_json_path": str(export_result.source_json_path),
+                "static_image_path": str(export_result.preview_png_path),
+                "static_image_url": png_url,
+                "preview_svg_path": str(export_result.preview_svg_path),
+                "preview_svg_url": svg_url,
+                "metadata": metadata_out,
+                "assets": [
+                    {
+                        "path": str(export_result.preview_png_path),
+                        "relative_path": "assets/diagram.png",
+                        "format": "png",
+                        "size_kb": round(export_result.preview_png_path.stat().st_size / 1024, 2),
+                    }
+                ],
+                "visuals": visuals,
+                "refs": refs,
+                "artifact": artifacts[0],
+                "artifacts": artifacts,
+                "related_files": related_files,
+            }
+        )
+
+        return {
+            "status": "success",
+            "success": True,
+            "data": data,
+            "visuals": visuals,
+            "refs": refs,
+            "html_preview": data.get("html_preview"),
+            "file_path": data.get("file_path"),
+            "file_type": data.get("file_type", "html_artifact"),
+            "artifact": data.get("artifact"),
+            "artifacts": artifacts,
+            "related_files": related_files,
+            "metadata": metadata_out,
+            "summary": f"自由画布图表已生成：{data['artifact_id']}。Draw.io 路径：{data['drawio_path']}。",
+        }
+
     async def execute(
         self,
         artifact_id: Optional[str] = None,
         title: Optional[str] = None,
         direction: str = "TB",
+        diagram_mode: str = "template",
+        diagram_intent: Optional[str] = None,
+        canvas: Optional[Dict[str, Any]] = None,
+        shapes: Optional[List[Dict[str, Any]]] = None,
+        connectors: Optional[List[Dict[str, Any]]] = None,
+        groups: Optional[List[Dict[str, Any]]] = None,
+        output_formats: Optional[List[str]] = None,
         diagram_type: str = "auto",
         layers: Optional[List[Dict[str, Any]]] = None,
         steps: Optional[List[Dict[str, Any]]] = None,
@@ -1741,6 +2087,20 @@ class CreateDiagramArtifactTool(LLMTool):
                     },
                     "summary": f"图表生成失败：缺少必填参数 {', '.join(missing)}。不要空参调用 create_diagram_artifact。",
                 }
+
+            diagram_mode = str(diagram_mode or "template").strip().lower()
+            if diagram_mode == "freeform":
+                return await self._execute_freeform_diagram(
+                    artifact_id=artifact_id,
+                    title=title,
+                    diagram_intent=diagram_intent,
+                    canvas=canvas,
+                    shapes=shapes,
+                    connectors=connectors,
+                    groups=groups,
+                    output_formats=output_formats,
+                    metadata=metadata,
+                )
 
             direction = direction if direction in {"TB", "BT", "LR", "RL"} else "TB"
             diagram_type = _normalise_diagram_type(diagram_type)
