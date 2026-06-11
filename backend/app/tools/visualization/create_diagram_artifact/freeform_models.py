@@ -42,6 +42,27 @@ KNOWN_SHAPE_TYPES = {
 }
 
 DEFAULT_OUTPUT_FORMATS = ["drawio", "png"]
+MAX_CANVAS_WIDTH = 10000
+MAX_CANVAS_HEIGHT = 10000
+MAX_CANVAS_PIXELS = 25_000_000
+MAX_SHAPES = 500
+MAX_CONNECTORS = 1000
+MAX_GROUPS = 200
+
+SHAPE_TYPE_ALIASES = {
+    "box": "rectangle",
+    "rounded": "rounded_rect",
+    "rounded_rectangle": "rounded_rect",
+    "rounded_rect": "rounded_rect",
+    "roundrect": "rounded_rect",
+    "round_rect": "rounded_rect",
+    "data_store": "database",
+    "datastore": "database",
+    "db": "database",
+    "text_box": "text",
+    "textbox": "text",
+    "terminator": "stadium",
+}
 
 
 @dataclass(frozen=True)
@@ -185,6 +206,9 @@ def normalize_freeform_diagram(
     shape_sources = _optional_object_list(shapes, "shapes")
     connector_sources = _optional_object_list(connectors, "connectors")
     group_sources = _optional_object_list(groups, "groups")
+    _validate_collection_size(shape_sources, MAX_SHAPES, "shapes")
+    _validate_collection_size(connector_sources, MAX_CONNECTORS, "connectors")
+    _validate_collection_size(group_sources, MAX_GROUPS, "groups")
     normalized_shapes = [
         _normalize_shape(_require_mapping(shape, "shape")) for shape in shape_sources
     ]
@@ -216,9 +240,19 @@ def normalize_freeform_diagram(
 
 def _normalize_canvas(source: dict[str, Any]) -> FreeformCanvas:
     known = {"width", "height", "grid", "background"}
+    width = _bounded_positive_number(
+        source.get("width", 1000), "canvas.width", MAX_CANVAS_WIDTH
+    )
+    height = _bounded_positive_number(
+        source.get("height", 700), "canvas.height", MAX_CANVAS_HEIGHT
+    )
+    if width * height > MAX_CANVAS_PIXELS:
+        raise FreeformValidationError(
+            f"canvas area must be <= {MAX_CANVAS_PIXELS} pixels"
+        )
     return FreeformCanvas(
-        width=_positive_number(source.get("width", 1000), "canvas.width"),
-        height=_positive_number(source.get("height", 700), "canvas.height"),
+        width=width,
+        height=height,
         grid=_optional_positive_number(source.get("grid"), "canvas.grid"),
         background=_optional_str(source.get("background")),
         extras=_extras(source, known),
@@ -240,7 +274,7 @@ def _normalize_shape(source: dict[str, Any]) -> FreeformShape:
         "drawio_shape_name",
         "drawio_style",
     }
-    shape_type = str(source.get("type") or "rounded_rect")
+    shape_type = _normalize_shape_type(source.get("type") or "rounded_rect")
     if shape_type not in KNOWN_SHAPE_TYPES:
         shape_type = "rounded_rect"
 
@@ -366,6 +400,26 @@ def _normalize_output_formats(output_formats: list[str] | None) -> list[str]:
     return normalized or list(DEFAULT_OUTPUT_FORMATS)
 
 
+def _validate_collection_size(source: list[Any], maximum: int, context: str) -> None:
+    if len(source) > maximum:
+        raise FreeformValidationError(f"{context} must contain <= {maximum} items")
+
+
+def _normalize_shape_type(value: Any) -> str:
+    normalized = (
+        str(value)
+        .strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+        .replace(".", "_")
+    )
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    normalized = normalized.strip("_")
+    return SHAPE_TYPE_ALIASES.get(normalized, normalized)
+
+
 def _optional_mapping(source: Any, context: str) -> dict[str, Any]:
     if source is None:
         return {}
@@ -437,6 +491,13 @@ def _positive_number(value: Any, field_name: str) -> float:
     number = _number(value, field_name)
     if number <= 0:
         raise FreeformValidationError(f"{field_name} must be positive")
+    return number
+
+
+def _bounded_positive_number(value: Any, field_name: str, maximum: float) -> float:
+    number = _positive_number(value, field_name)
+    if number > maximum:
+        raise FreeformValidationError(f"{field_name} must be <= {maximum:g}")
     return number
 
 

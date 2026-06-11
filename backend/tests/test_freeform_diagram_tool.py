@@ -83,3 +83,35 @@ async def test_create_diagram_artifact_freeform_uses_sanitized_artifact_id_in_ur
     assert "/api/html-artifacts/foo_bar_canvas/assets/diagram.drawio" in html
     assert "/api/html-artifacts/foo_bar_canvas/assets/diagram.png" in html
     assert "/api/html-artifacts/foo/bar canvas/assets" not in html
+
+
+@pytest.mark.asyncio
+async def test_create_diagram_artifact_freeform_does_not_return_stale_svg_for_reused_id():
+    tool = CreateDiagramArtifactTool()
+    artifact_id = "test_freeform_reused_svg_contract"
+
+    first = await tool.execute(
+        artifact_id=artifact_id,
+        title="自由画布 SVG",
+        diagram_mode="freeform",
+        shapes=[{"id": "start", "type": "rounded_rect", "label": "开始", "x": 80, "y": 100}],
+        output_formats=["drawio", "png", "drawio_svg"],
+    )
+    assert first["success"] is True
+    assert "preview_svg_path" in first["data"]
+    assert Path(first["data"]["preview_svg_path"]).exists()
+
+    second = await tool.execute(
+        artifact_id=artifact_id,
+        title="自由画布 无 SVG",
+        diagram_mode="freeform",
+        shapes=[{"id": "start", "type": "rounded_rect", "label": "开始", "x": 80, "y": 100}],
+        output_formats=["drawio", "png"],
+    )
+
+    assert second["success"] is True
+    data = second["data"]
+    assert "preview_svg_path" not in data
+    assert "preview_svg_url" not in data
+    assert not Path(data["artifact_dir"], "assets", "diagram.drawio.svg").exists()
+    assert "drawio_svg" not in {artifact["format"] for artifact in data["artifacts"]}

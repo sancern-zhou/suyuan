@@ -1908,7 +1908,10 @@ class CreateDiagramArtifactTool(LLMTool):
         export_result = export_freeform_diagram(diagram, Path(data["artifact_dir"]))
         drawio_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio"
         png_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.png"
-        svg_exists = export_result.preview_svg_path.exists()
+        svg_exists = (
+            "drawio_svg" in diagram.output_formats
+            and export_result.preview_svg_path.exists()
+        )
         svg_url = (
             f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio.svg"
             if svg_exists
