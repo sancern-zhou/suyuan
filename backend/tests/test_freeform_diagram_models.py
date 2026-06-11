@@ -91,3 +91,73 @@ def test_drawio_shape_passthrough_is_preserved():
     assert shape.type == "drawio_shape"
     assert shape.drawio_shape_name == "mxgraph.aws4.lambda_function"
     assert "aspect=fixed" in shape.drawio_style
+
+
+def test_duplicate_connector_ids_fail():
+    with pytest.raises(FreeformValidationError, match="Duplicate connector id"):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[
+                {"id": "source", "label": "A", "x": 0, "y": 0},
+                {"id": "target", "label": "B", "x": 100, "y": 0},
+            ],
+            connectors=[
+                {"id": "edge", "from": "source", "to": "target"},
+                {"id": "edge", "from": "target", "to": "source"},
+            ],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
+def test_connector_id_colliding_with_shape_id_fails():
+    with pytest.raises(FreeformValidationError, match="Duplicate connector id node"):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[
+                {"id": "node", "label": "A", "x": 0, "y": 0},
+                {"id": "target", "label": "B", "x": 100, "y": 0},
+            ],
+            connectors=[{"id": "node", "from": "node", "to": "target"}],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
+def test_non_finite_numeric_geometry_fails():
+    with pytest.raises(FreeformValidationError, match="canvas.width must be finite"):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={"width": "nan"},
+            shapes=[],
+            connectors=[],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
+
+
+@pytest.mark.parametrize("dimension", ["width", "height"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_zero_or_negative_shape_dimensions_fail(dimension, value):
+    shape = {"id": "node", "label": "A", "x": 0, "y": 0, "width": 100, "height": 60}
+    shape[dimension] = value
+
+    with pytest.raises(FreeformValidationError, match=f"shape.{dimension} must be positive"):
+        normalize_freeform_diagram(
+            artifact_id="demo",
+            title="Demo",
+            canvas={},
+            shapes=[shape],
+            connectors=[],
+            groups=[],
+            output_formats=[],
+            diagram_intent=None,
+        )
