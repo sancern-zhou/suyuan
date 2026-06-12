@@ -492,8 +492,15 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="create_diagram_artifact", error=str(e))
 
     try:
+        from app.tools.visualization.create_drawio_board import CreateDrawioBoardTool
+        registry.register(CreateDrawioBoardTool(), priority=212)
+        logger.info("tool_loaded", tool="create_drawio_board")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_drawio_board", error=str(e))
+
+    try:
         from app.tools.visualization.create_report_chart import CreateReportChartTool
-        registry.register(CreateReportChartTool(), priority=212)
+        registry.register(CreateReportChartTool(), priority=213)
         logger.info("tool_loaded", tool="create_report_chart")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_report_chart", error=str(e))

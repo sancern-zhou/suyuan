@@ -29,7 +29,7 @@ ASSISTANT_TOOL_NAMES = {
 
     # 报告/展示产物
     "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
-    "create_diagram_artifact", "create_report_chart",
+    "create_report_chart",
 
     # 代码执行
     "execute_python",
@@ -69,7 +69,7 @@ EXPERT_TOOL_NAMES = {
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
 }
 
@@ -155,18 +155,15 @@ CHART_TOOL_NAMES = {
     # SQL Server通用查询
     "execute_sql_query",
 
-    # 知识库检索
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
     # 数据读取
     "read_data_registry",
 
     # 文件操作
-    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
-    # 代码执行
-    "create_report_chart", "execute_python", "execute_echarts_python",
+    # 代码执行和视觉校验
+    "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python", "analyze_image",
 }
 
 # ===== 运维管理模式工具 =====
@@ -291,7 +288,7 @@ ASSISTANT_TOOL_ORDER = [
     "write_file", "edit_file", "grep",
 
     # 执行
-    "bash", "create_diagram_artifact", "create_report_chart", "execute_python",
+    "bash", "create_report_chart", "execute_python",
     "get_platform_weather_image", "analyze_image", "browser",
 
     # 知识库检索
@@ -430,14 +427,14 @@ OPS_TOOL_ORDER = [
 ]
 
 CHART_TOOL_ORDER = [
-    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
-    "bash", "create_report_chart", "execute_python", "execute_echarts_python",
-    "read_data_registry",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "bash", "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
+    "read_data_registry", "analyze_image",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
-    "execute_sql_query", "knowledge_qa_workflow", "knowledge_document_reader",
+    "execute_sql_query",
 ]
 
 SOCIAL_TOOL_ORDER = [

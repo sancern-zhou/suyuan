@@ -1,5 +1,6 @@
-from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, get_tools_by_mode
+from app.agent.prompts.tool_registry import ASSISTANT_TOOL_ORDER, CHART_TOOL_ORDER, get_tools_by_mode
 from app.agent.prompts.assistant_prompt import build_assistant_prompt
+from app.agent.prompts.chart_prompt import DRAWIO_GUIDE_PATHS, build_chart_prompt
 
 
 def test_assistant_mode_does_not_expose_task_tools_or_todowrite():
@@ -8,6 +9,13 @@ def test_assistant_mode_does_not_expose_task_tools_or_todowrite():
     assert "TodoWrite" not in tools
     assert {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}.isdisjoint(tools)
     assert {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}.isdisjoint(ASSISTANT_TOOL_ORDER)
+
+
+def test_assistant_mode_does_not_expose_diagram_artifact_tool():
+    tools = get_tools_by_mode("assistant")
+
+    assert "create_diagram_artifact" not in tools
+    assert "create_diagram_artifact" not in ASSISTANT_TOOL_ORDER
 
 
 def test_weather_image_tool_is_available_in_assistant_and_expert_modes():
@@ -35,3 +43,74 @@ def test_assistant_prompt_distinguishes_freeform_and_template_diagram_references
     assert "diagram_mode=\"template\"" in prompt
     assert "references/index.md" in prompt
     assert "layers/groups/items" in prompt
+
+
+def test_chart_mode_exposes_drawio_board_not_diagram_artifact():
+    tools = get_tools_by_mode("chart")
+
+    assert "create_drawio_board" in tools
+    assert "create_drawio_board" in CHART_TOOL_ORDER
+    assert "analyze_image" in tools
+    assert "analyze_image" in CHART_TOOL_ORDER
+    assert "present_artifact" not in tools
+    assert "present_artifact" not in CHART_TOOL_ORDER
+    assert "create_diagram_artifact" not in tools
+    assert "create_diagram_artifact" not in CHART_TOOL_ORDER
+    assert "knowledge_qa_workflow" not in tools
+    assert "knowledge_qa_workflow" not in CHART_TOOL_ORDER
+    assert "knowledge_document_reader" not in tools
+    assert "knowledge_document_reader" not in CHART_TOOL_ORDER
+
+
+def test_chart_prompt_injects_authoritative_board_context():
+    prompt = build_chart_prompt(
+        ["create_drawio_board"],
+        board_context={
+            "current_xml": "<mxfile><diagram id=\"board-1\">current</diagram></mxfile>",
+            "selected_cells": [{"id": "node-1", "value": "站点A"}],
+            "viewport": {"scale": 1.2},
+        },
+    )
+
+    assert "board_context.current_xml" in prompt
+    assert "权威状态" in prompt
+    assert "node-1" in prompt
+    assert "<mxfile><diagram id=\"board-1\">current</diagram></mxfile>" in prompt
+    assert "selected_cells[*].xml" in prompt
+    assert "selected_cells[*].geometry" in prompt
+    assert "update_label" in prompt
+    assert 'target="selected"' in prompt
+
+
+def test_chart_prompt_mentions_confirmed_board_snapshot_validation():
+    prompt = build_chart_prompt(["create_drawio_board", "analyze_image"])
+
+    assert "确认画板修改" in prompt
+    assert "analyze_image" in prompt
+    assert "视觉质量检查" in prompt
+    assert "XML 仍然是权威状态" in prompt
+
+
+def test_chart_prompt_does_not_embed_drawio_tool_reading_instructions():
+    prompt = build_chart_prompt(["create_drawio_board", "read_file"])
+
+    assert "Draw.io 画板强约束文档" not in prompt
+    assert "第一次调用 `create_drawio_board` 之前" not in prompt
+    assert "create_diagram_artifact" not in prompt
+    for guide_path in DRAWIO_GUIDE_PATHS:
+        assert guide_path not in prompt
+
+
+def test_chart_prompt_omits_drawio_guide_when_board_tool_unavailable():
+    prompt = build_chart_prompt(["execute_echarts_python", "read_file"])
+
+    assert "Draw.io 画板强约束文档" not in prompt
+    for guide_path in DRAWIO_GUIDE_PATHS:
+        assert guide_path not in prompt
+
+
+def test_chart_prompt_has_no_accidental_python_string_fragments_or_duplicate_headings():
+    prompt = build_chart_prompt(["execute_echarts_python", "read_file"])
+
+    assert '        "##' not in prompt
+    assert prompt.count("### ✅ 正确示例：series 在顶层") == 1

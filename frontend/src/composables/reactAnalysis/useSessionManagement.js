@@ -9,6 +9,7 @@ import {
   getSessionMessages,
   getSessionVisualizations,
   getSessionOfficeDocuments,
+  getSessionDrawioBoard,
   markSessionCase,
   unmarkSessionCase
 } from '@/api/session'
@@ -34,7 +35,8 @@ export function useSessionManagement(store) {
   const loadLazyArtifacts = async (sessionId, options = {}) => {
     const {
       loadVisualizations = true,
-      loadOfficeDocuments = true
+      loadOfficeDocuments = true,
+      loadDrawioBoard = true
     } = options
 
     if (!sessionId) return
@@ -42,7 +44,8 @@ export function useSessionManagement(store) {
     console.log('[会话恢复] 开始自动加载延迟资源:', {
       sessionId,
       loadVisualizations,
-      loadOfficeDocuments
+      loadOfficeDocuments,
+      loadDrawioBoard
     })
 
     const tasks = []
@@ -98,6 +101,36 @@ export function useSessionManagement(store) {
             console.error('[会话恢复] 延迟加载文档失败:', error)
             if (store.currentState.sessionId === sessionId) {
               store.setLazyArtifacts({ loadingOfficeDocuments: false })
+            }
+          })
+      )
+    }
+
+    const shouldLoadDrawioBoard = loadDrawioBoard &&
+      store.currentState.lazyArtifacts?.hasDrawioBoard &&
+      !store.currentState.lazyArtifacts?.drawioBoardLoaded
+
+    if (shouldLoadDrawioBoard) {
+      store.setLazyArtifacts({ loadingDrawioBoard: true })
+      tasks.push(
+        getSessionDrawioBoard(sessionId)
+          .then(response => {
+            if (store.currentState.sessionId !== sessionId) return
+            const drawioBoard = response?.drawio_board || null
+            console.log('[会话恢复] 画板延迟加载完成:', !!drawioBoard)
+            if (drawioBoard && typeof store.restoreDrawioBoardFromSession === 'function') {
+              store.restoreDrawioBoardFromSession({ drawio_board: drawioBoard })
+            }
+            store.setLazyArtifacts({
+              hasDrawioBoard: !!drawioBoard,
+              drawioBoardLoaded: true,
+              loadingDrawioBoard: false
+            })
+          })
+          .catch(error => {
+            console.error('[会话恢复] 延迟加载画板失败:', error)
+            if (store.currentState.sessionId === sessionId) {
+              store.setLazyArtifacts({ loadingDrawioBoard: false })
             }
           })
       )
@@ -380,6 +413,9 @@ export function useSessionManagement(store) {
       store.reset()
       store.setSessionId(sessionId)
       store.setMessages(messages)
+      if (typeof store.restoreDrawioBoardFromSession === 'function') {
+        store.restoreDrawioBoardFromSession(sessionData)
+      }
       store.setLazyArtifacts({
         hasVisualizations: !!sessionData.has_lazy_visualizations,
         visualizationCount: sessionData.visualization_count || 0,
@@ -388,7 +424,10 @@ export function useSessionManagement(store) {
         hasOfficeDocuments: !!sessionData.has_lazy_office_documents,
         officeDocumentCount: sessionData.office_document_count || 0,
         officeDocumentsLoaded: !lazyArtifacts,
-        loadingOfficeDocuments: false
+        loadingOfficeDocuments: false,
+        hasDrawioBoard: !!sessionData.has_lazy_drawio_board,
+        drawioBoardLoaded: !lazyArtifacts,
+        loadingDrawioBoard: false
       })
 
       // 设置分页信息
@@ -432,7 +471,8 @@ export function useSessionManagement(store) {
         runAfterFirstPaint(() => {
           loadLazyArtifacts(sessionId, {
             loadVisualizations: true,
-            loadOfficeDocuments: restoreOfficeDocs
+            loadOfficeDocuments: restoreOfficeDocs,
+            loadDrawioBoard: true
           })
         })
       }

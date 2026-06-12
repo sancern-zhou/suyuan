@@ -3,6 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
+import { uploadChatFile } from '@/services/uploadApi'
 import { autoSaveSession } from '@/api/session'
 import { convertStreamingAnswerToThoughtIfToolPlanning } from './reactStoreStreaming'
 import {
@@ -102,6 +103,70 @@ const hasVisualizationRecord = (targetState, visualId) => {
     targetState.visualizationHistory.some(item => item?.id === visualId)
 }
 
+const createEmptyDrawioBoardState = () => ({
+  activeBoardId: null,
+  title: '',
+  currentXml: '',
+  previousXml: '',
+  selectedCells: [],
+  pendingSnapshotAttachment: null,
+  version: 0,
+  dirty: false,
+  updatedAt: null
+})
+
+const isDrawioBoardToolResult = (result = {}) => {
+  const data = result?.data || {}
+  const metadata = result?.metadata || {}
+  return metadata?.generator === 'create_drawio_board' ||
+    metadata.generator === 'create_drawio_board' ||
+    data?.artifact_kind === 'drawio_board' ||
+    data.artifact_kind === 'drawio_board'
+}
+
+const getDrawioBoardPayload = (result = {}) => {
+  const data = result?.data || {}
+  return data.board || data
+}
+
+const getDrawioBoardXml = (payload = {}) => {
+  return payload.currentXml ||
+    payload.current_xml ||
+    payload.xml ||
+    payload.drawio_xml ||
+    payload.mxfile ||
+    ''
+}
+
+const getDrawioBoardResultsFromMessage = (message = {}) => {
+  if (!message || message.type !== 'tool_result') return []
+
+  const data = message.data || {}
+  const candidates = []
+  if (data.result) {
+    candidates.push(data.result)
+  }
+  if (Array.isArray(data.results)) {
+    candidates.push(...data.results)
+  }
+  if (isDrawioBoardToolResult(data)) {
+    candidates.push(data)
+  }
+  return candidates.filter(candidate => isDrawioBoardToolResult(candidate))
+}
+
+const findLatestDrawioBoardResultFromMessages = (messages = []) => {
+  if (!Array.isArray(messages)) return null
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const results = getDrawioBoardResultsFromMessage(messages[index])
+    if (results.length > 0) {
+      return results[results.length - 1]
+    }
+  }
+  return null
+}
+
 const getOfficeDocumentIdentity = (doc = {}) => {
   return doc.file_path ||
     doc.path ||
@@ -153,6 +218,7 @@ const createEmptyModeState = () => ({
   // 可视化
   currentVisualization: null,
   visualizationHistory: [],
+  board: createEmptyDrawioBoardState(),
   groupedVisualizations: {
     weather: [],
     component: []
@@ -188,7 +254,10 @@ const createEmptyModeState = () => ({
     hasOfficeDocuments: false,
     officeDocumentCount: 0,
     officeDocumentsLoaded: false,
-    loadingOfficeDocuments: false
+    loadingOfficeDocuments: false,
+    hasDrawioBoard: false,
+    drawioBoardLoaded: false,
+    loadingDrawioBoard: false
   },
 
   // 流式渲染状态
@@ -544,6 +613,9 @@ export const useReactStore = defineStore('react', {
         hasResults: modeState.hasResults,
         currentVisualization: modeState.currentVisualization,
         visualizationHistory: modeState.visualizationHistory,
+        board: modeState.board
+          ? { ...modeState.board, pendingSnapshotAttachment: null }
+          : modeState.board,
         groupedVisualizations: modeState.groupedVisualizations,
         lazyArtifacts: modeState.lazyArtifacts,
         results: modeState.results,
@@ -831,6 +903,8 @@ export const useReactStore = defineStore('react', {
       if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
         this.setVisualizationHistory(sessionData.visualizations)
       }
+
+      this.restoreDrawioBoardFromSession(sessionData)
 
       if (sessionData.last_result) {
         this.currentState.lastExpertResults = sessionData.last_result
@@ -1365,6 +1439,8 @@ export const useReactStore = defineStore('react', {
           }
 
           const resultData = result?.data || {}
+          this.applyDrawioBoardToolResult(result, targetState)
+
           if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview)) {
             this.recordOfficeDocument({
               pdf_preview: resultData.pdf_preview,
@@ -1966,6 +2042,167 @@ export const useReactStore = defineStore('react', {
       targetState.visualizationHistory.push(record)
     },
 
+    ensureDrawioBoardState(targetState = this.currentState) {
+      if (!targetState.board) {
+        targetState.board = createEmptyDrawioBoardState()
+      }
+      if (!Array.isArray(targetState.board.selectedCells)) {
+        targetState.board.selectedCells = []
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'pendingSnapshotAttachment')) {
+        targetState.board.pendingSnapshotAttachment = null
+      }
+      return targetState.board
+    },
+
+    applyDrawioBoardToolResult(result = {}, targetState = this.currentState) {
+      if (!isDrawioBoardToolResult(result)) return false
+
+      const payload = getDrawioBoardPayload(result)
+      const xml = getDrawioBoardXml(payload)
+      if (!xml) return false
+
+      const board = this.ensureDrawioBoardState(targetState)
+      const nextVersion = Number(payload.version ?? board.version ?? 0)
+      const selectedCells = payload.selectedCells || payload.selected_cells || board.selectedCells || []
+
+      board.previousXml = board.currentXml || ''
+      board.currentXml = xml
+      board.activeBoardId = payload.activeBoardId || payload.active_board_id || payload.board_id || payload.artifact_id || payload.id || board.activeBoardId || null
+      board.title = payload.title || payload.name || board.title || 'Draw.io Board'
+      board.selectedCells = Array.isArray(selectedCells) ? selectedCells : []
+      board.version = Number.isFinite(nextVersion) ? nextVersion : board.version
+      board.dirty = Boolean(payload.dirty ?? false)
+      board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
+      targetState.hasResults = true
+      return true
+    },
+
+    restoreDrawioBoardFromSession(sessionData = {}, targetState = this.currentState) {
+      if (!sessionData || !targetState) return false
+
+      const metadataBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
+      const metadataResult = metadataBoard
+        ? {
+            metadata: { generator: 'create_drawio_board' },
+            data: metadataBoard,
+            timestamp: metadataBoard.updated_at || metadataBoard.updatedAt
+          }
+        : null
+      const latestMessageResult = metadataResult
+        ? null
+        : findLatestDrawioBoardResultFromMessages(sessionData.conversation_history || sessionData.messages || [])
+
+      const restored = this.applyDrawioBoardToolResult(metadataResult || latestMessageResult || {}, targetState)
+      if (!restored) return false
+
+      const board = this.ensureDrawioBoardState(targetState)
+      board.previousXml = ''
+      board.pendingSnapshotAttachment = null
+      console.log('[drawio-board] restored from session', {
+        source: metadataResult ? 'metadata.drawio_board' : 'tool_result',
+        currentXmlLength: board.currentXml.length,
+        boardId: board.activeBoardId,
+        title: board.title
+      })
+      return true
+    },
+
+    updateDrawioBoardXml(xml, options = {}, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      board.previousXml = board.currentXml || ''
+      board.currentXml = xml || ''
+      board.activeBoardId = options.activeBoardId || options.active_board_id || options.board_id || board.activeBoardId
+      board.title = options.title || board.title
+      board.version = Number.isFinite(Number(options.version)) ? Number(options.version) : board.version + 1
+      board.dirty = options.dirty !== undefined ? Boolean(options.dirty) : true
+      board.updatedAt = options.updatedAt || options.updated_at || new Date().toISOString()
+      console.log('[drawio-board] XML updated from editor', {
+        previousXmlLength: board.previousXml.length,
+        currentXmlLength: board.currentXml.length,
+        version: board.version,
+        dirty: board.dirty,
+        updatedAt: board.updatedAt
+      })
+      return board
+    },
+
+    updateDrawioBoardSelection(selectedCells = [], targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      board.selectedCells = Array.isArray(selectedCells) ? selectedCells : []
+      board.updatedAt = new Date().toISOString()
+      console.log('[drawio-board] selection updated in store', {
+        selectedCount: board.selectedCells.length,
+        selectedIds: board.selectedCells.map((cell) => cell?.id).filter(Boolean),
+        updatedAt: board.updatedAt
+      })
+      return board
+    },
+
+    setDrawioBoardSnapshotAttachment(attachment = null, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      board.pendingSnapshotAttachment = attachment
+      board.updatedAt = new Date().toISOString()
+      return board
+    },
+
+    async confirmDrawioBoardSnapshot(snapshot = {}, targetState = this.currentState) {
+      if (!snapshot?.file) return null
+
+      const uploadResult = await uploadChatFile(snapshot.file, targetState?.sessionId || null)
+      const attachment = {
+        id: uploadResult.file_id || `drawio_board_snapshot_${Date.now()}`,
+        file_id: uploadResult.file_id,
+        name: uploadResult.filename || snapshot.filename || snapshot.file.name || 'drawio-board.png',
+        filename: uploadResult.filename || snapshot.filename || snapshot.file.name || 'drawio-board.png',
+        type: uploadResult.file_type || 'image',
+        file_type: uploadResult.file_type || 'image',
+        mime_type: uploadResult.mime_type || snapshot.file.type || 'image/png',
+        size: uploadResult.file_size || uploadResult.size || snapshot.file.size || 0,
+        url: uploadResult.url || uploadResult.file_url || '',
+        source: 'drawio_board_snapshot',
+        title: snapshot.title || targetState?.board?.title || '画板',
+        xml_length: snapshot.xmlLength || 0,
+        confirmed_at: snapshot.confirmedAt || new Date().toISOString()
+      }
+
+      this.setDrawioBoardSnapshotAttachment(attachment, targetState)
+      console.log('[drawio-board] confirmed snapshot uploaded', {
+        fileId: attachment.file_id,
+        url: attachment.url,
+        size: attachment.size
+      })
+      return attachment
+    },
+
+    consumeDrawioBoardSnapshotAttachment(mode = this.currentMode, targetState = this.currentState) {
+      if (mode !== 'chart') return null
+      const board = this.ensureDrawioBoardState(targetState)
+      const attachment = board.pendingSnapshotAttachment
+      board.pendingSnapshotAttachment = null
+      return attachment || null
+    },
+
+    buildBoardContext(mode = this.currentMode, targetState = null) {
+      if (mode !== 'chart') return null
+
+      const state = targetState || this.currentState
+      const board = state?.board
+      if (!board?.currentXml) return null
+
+      return {
+        artifact_kind: 'drawio_board',
+        board_id: board.activeBoardId,
+        active_board_id: board.activeBoardId,
+        title: board.title,
+        current_xml: board.currentXml,
+        selected_cells: board.selectedCells || [],
+        version: board.version,
+        dirty: board.dirty,
+        updated_at: board.updatedAt
+      }
+    },
+
     // 处理结果（UDF v2.0格式 + v3.0图表格式）
     handleResult(resultData, targetState = this.currentState) {
       if (!resultData) return
@@ -2106,10 +2343,6 @@ export const useReactStore = defineStore('react', {
         queuedAlreadyShown = false
       } = options
 
-      if (!query.trim() && (!attachments || attachments.length === 0)) {
-        return
-      }
-
       const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
       if (requestedMode !== this.currentMode) {
         this.switchMode(requestedMode)
@@ -2128,8 +2361,20 @@ export const useReactStore = defineStore('react', {
         }
       }
 
+      const boardSnapshotAttachment = actualMode === 'chart'
+        ? this.consumeDrawioBoardSnapshotAttachment(actualMode, sessionState)
+        : null
+      const outgoingAttachments = [
+        ...(Array.isArray(attachments) ? attachments : []),
+        ...(boardSnapshotAttachment ? [boardSnapshotAttachment] : [])
+      ]
+
+      if (!query.trim() && outgoingAttachments.length === 0) {
+        return
+      }
+
       if (sessionState.isAnalyzing) {
-        if (actualMode === 'assistant' && (!attachments || attachments.length === 0) && sessionState.sessionId) {
+        if (actualMode === 'assistant' && outgoingAttachments.length === 0 && sessionState.sessionId) {
           await this.steerActiveAnalysis(query, sessionState)
           return
         }
@@ -2140,6 +2385,7 @@ export const useReactStore = defineStore('react', {
           options: {
             ...options,
             agentMode: actualMode,
+            attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,
             queuedAlreadyShown: true
           }
         })
@@ -2148,7 +2394,7 @@ export const useReactStore = defineStore('react', {
           'user',
           query,
           syntheticMeta,
-          attachments,
+          outgoingAttachments.length > 0 ? outgoingAttachments : null,
           { queued: true }
         )
         sessionState.currentMessage = ''
@@ -2177,7 +2423,7 @@ export const useReactStore = defineStore('react', {
           'user',
           query,
           syntheticMeta,
-          attachments,
+          outgoingAttachments.length > 0 ? outgoingAttachments : null,
           synthetic ? { synthetic: true } : {}
         )
       }
@@ -2207,6 +2453,18 @@ export const useReactStore = defineStore('react', {
       }
 
       try {
+        const boardContext = actualMode === 'chart' ? this.buildBoardContext(actualMode, sessionState) : null
+        if (boardContext) {
+          console.log('[drawio-board] board_context will be sent', {
+            sessionId: sessionState.sessionId,
+            currentXmlLength: boardContext.current_xml?.length || 0,
+            selectedCount: boardContext.selected_cells?.length || 0,
+            version: boardContext.version,
+            dirty: boardContext.dirty,
+            updatedAt: boardContext.updated_at
+          })
+        }
+
         // 调用新架构 ReAct Agent
         await agentAPI.analyze(query, {
           sessionId: sessionState.sessionId,
@@ -2221,7 +2479,8 @@ export const useReactStore = defineStore('react', {
           agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
           modelTier,
-          attachments: attachments,  // ✅ 传递附件列表
+          attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,  // ✅ 传递附件列表
+          ...(boardContext !== null ? { boardContext } : {}),
           skipAutoFollowup,
           onEvent: (event) => {
             if (!event.data) event.data = {}

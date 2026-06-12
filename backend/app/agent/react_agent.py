@@ -231,6 +231,7 @@ class ReActAgent:
         social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -447,6 +448,18 @@ class ReActAgent:
                 logger.debug(
                     "memory_context_set_to_context_builder",
                     context_length=len(memory_context)
+                )
+
+            if manual_mode == "chart" and board_context:
+                react_loop.context_builder.board_context = board_context
+                logger.info(
+                    "board_context_set_to_context_builder",
+                    has_current_xml=bool(board_context.get("current_xml") or board_context.get("currentXml")),
+                    current_xml_length=len(board_context.get("current_xml") or board_context.get("currentXml") or ""),
+                    previous_xml_length=len(board_context.get("previous_xml") or board_context.get("previousXml") or ""),
+                    selected_count=len(board_context.get("selected_cells") or board_context.get("selectedCells") or []),
+                    version=board_context.get("version"),
+                    dirty=board_context.get("dirty"),
                 )
 
             # ✅ 设置记忆文件路径到上下文构建器（所有模式）

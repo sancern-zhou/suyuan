@@ -49,3 +49,12 @@ def test_session_stats_use_database_aggregate():
         "async def export_session", 1
     )[0]
     assert "list_sessions(limit=10000)" not in stats_method
+
+
+def test_lazy_restore_preserves_lightweight_session_metadata():
+    restore_method = SESSION_ROUTES.split('@router.post("/{session_id}/restore")', 1)[1].split(
+        '@router.post("/auto-save")', 1
+    )[0]
+    assert "has_lazy_drawio_board" in restore_method
+    assert "get_session_metadata" in restore_method
+    assert '@router.get("/{session_id}/drawio-board")' in SESSION_ROUTES

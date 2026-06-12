@@ -110,6 +110,13 @@ export async function getSessionOfficeDocuments(sessionId) {
 }
 
 /**
+ * 按需加载会话 Draw.io 画板状态
+ */
+export async function getSessionDrawioBoard(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/drawio-board`)
+}
+
+/**
  * 归档会话
  */
 export async function archiveSession(sessionId) {

@@ -2,8 +2,8 @@
   <div class="input-area">
     <div class="input-container">
       <!-- 附件预览区域 -->
-      <div v-if="attachments.length > 0" class="attachments-preview">
-        <div v-for="(attachment, index) in attachments" :key="index" class="attachment-item">
+      <div v-if="visibleAttachments.length > 0" class="attachments-preview">
+        <div v-for="(attachment, index) in visibleAttachments" :key="attachment.id || attachment.file_id || index" class="attachment-item">
           <img
             v-if="attachment.type === 'image' && attachment.preview"
             :src="attachment.preview"
@@ -20,7 +20,7 @@
             </svg>
             <span class="attachment-file-name">{{ attachment.name }}</span>
           </div>
-          <button class="attachment-remove" @click="removeAttachment(index)" :disabled="attachment.uploading">
+          <button class="attachment-remove" @click="removeVisibleAttachment(index)" :disabled="attachment.uploading">
             <svg viewBox="0 0 24 24" class="remove-icon">
               <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
               <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
@@ -273,6 +273,24 @@ const modelTier = ref(readStoredModelTier(props.sessionId))
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
+const pendingBoardSnapshotAttachment = computed(() => {
+  if (reactStore.currentMode !== 'chart') return null
+  const attachment = reactStore.currentState?.board?.pendingSnapshotAttachment
+  if (!attachment) return null
+  return {
+    ...attachment,
+    id: attachment.id || attachment.file_id || 'drawio-board-snapshot',
+    name: attachment.name || attachment.filename || '画板截图.png',
+    type: attachment.type || attachment.file_type || 'image',
+    preview: attachment.preview || attachment.url || null,
+    uploading: false,
+    readonlySource: 'drawio_board_snapshot'
+  }
+})
+const visibleAttachments = computed(() => [
+  ...attachments.value,
+  ...(pendingBoardSnapshotAttachment.value ? [pendingBoardSnapshotAttachment.value] : [])
+])
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
 const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
@@ -281,9 +299,9 @@ const pendingSteeringDisplay = computed(() => getPendingSteeringDisplay(props.pe
 const actionButtonDisabled = computed(() => {
   if (props.isAnalyzing) {
     if (!canSteerWhileRunning.value) return false
-    return (!localValue.value.trim() && attachments.value.length === 0) || props.disabled
+    return (!localValue.value.trim() && visibleAttachments.value.length === 0) || props.disabled
   }
-  return (!localValue.value.trim() && attachments.value.length === 0) || props.disabled
+  return (!localValue.value.trim() && visibleAttachments.value.length === 0) || props.disabled
 })
 
 // 工作流工具列表
@@ -489,7 +507,7 @@ const handleBlur = () => {
 }
 
 const handleSend = () => {
-  if ((!localValue.value.trim() && attachments.value.length === 0) || props.disabled) return
+  if ((!localValue.value.trim() && visibleAttachments.value.length === 0) || props.disabled) return
 
   // 检查是否有附件还在上传中
   const uploadingAttachments = attachments.value.filter(a => a.uploading)
@@ -655,6 +673,16 @@ const removeAttachment = (index) => {
     return
   }
   attachments.value.splice(index, 1)
+}
+
+const removeVisibleAttachment = (index) => {
+  const attachment = visibleAttachments.value[index]
+  if (!attachment) return
+  if (attachment.readonlySource === 'drawio_board_snapshot') {
+    reactStore.setDrawioBoardSnapshotAttachment(null)
+    return
+  }
+  removeAttachment(index)
 }
 
 const previewImage = (attachment) => {

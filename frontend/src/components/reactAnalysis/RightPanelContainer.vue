@@ -50,6 +50,19 @@
           <span>溯源</span>
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
+        <button
+          v-if="showBoardTab"
+          :class="['tab-btn', { active: activeTab === 'board' }]"
+          @click="handleTabChange('board')"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 5.5h16v13H4v-13Z" />
+            <path d="M8 9h3v3H8V9Z" />
+            <path d="M14 12h3v3h-3v-3Z" />
+            <path d="M11 10.5h3" />
+          </svg>
+          <span>画板</span>
+        </button>
       </div>
 
       <!-- 可视化面板 -->
@@ -86,6 +99,19 @@
         :history="messages"
         :selected-message-id="selectedMessageId"
       />
+
+      <!-- Draw.io画板面板 -->
+      <DrawioBoardPanel
+        v-if="showBoardTab && activeTab === 'board'"
+        ref="boardPanelRef"
+        key="board-panel"
+        class="panel-content"
+        :xml="board?.currentXml || board?.current_xml || board?.xml || ''"
+        :title="board?.title || '画板'"
+        @xml-change="handleBoardXmlChange"
+        @selection-change="handleBoardSelectionChange"
+        @board-snapshot-confirm="handleBoardSnapshotConfirm"
+      />
     </template>
   </div>
 </template>
@@ -96,6 +122,7 @@ import VisualizationPanel from '@/components/VisualizationPanel.vue'
 import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
+import DrawioBoardPanel from '@/components/board/DrawioBoardPanel.vue'
 
 const props = defineProps({
   visible: {
@@ -111,6 +138,10 @@ const props = defineProps({
     default: false
   },
   knowledgePanelVisible: {
+    type: Boolean,
+    default: false
+  },
+  boardPanelVisible: {
     type: Boolean,
     default: false
   },
@@ -149,12 +180,19 @@ const props = defineProps({
   knowledgeSources: {
     type: Array,
     default: () => []
+  },
+  board: {
+    type: Object,
+    default: null
   }
 })
 
 const emit = defineEmits([
   'tab-change',
-  'office-edit-submit'
+  'office-edit-submit',
+  'board-xml-change',
+  'board-selection-change',
+  'board-snapshot-confirm'
 ])
 
 // 添加调试
@@ -169,10 +207,18 @@ watch(() => props.visible, (newVal) => {
 const vizPanelRef = ref(null)
 const officePanelRef = ref(null)
 const knowledgePanelRef = ref(null)
+const boardPanelRef = ref(null)
+
+const hasBoardXml = computed(() => !!(
+  props.board?.currentXml ||
+  props.board?.current_xml ||
+  props.board?.xml
+))
+const showBoardTab = computed(() => props.boardPanelVisible || hasBoardXml.value)
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible
+  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
 })
 
 const visualizationCount = computed(() => {
@@ -201,6 +247,18 @@ const handleTabChange = (tab) => {
 
 const handleOfficeEditSubmit = async (editData) => {
   emit('office-edit-submit', editData)
+}
+
+const handleBoardXmlChange = (xml) => {
+  emit('board-xml-change', xml)
+}
+
+const handleBoardSelectionChange = (selection) => {
+  emit('board-selection-change', selection)
+}
+
+const handleBoardSnapshotConfirm = (snapshot) => {
+  emit('board-snapshot-confirm', snapshot)
 }
 
 // 公开方法

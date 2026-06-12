@@ -55,6 +55,45 @@ def test_complete_conversation_persistence_uses_display_history_as_truth():
     ]
 
 
+def test_complete_conversation_persistence_records_drawio_board_context():
+    session = Session(
+        session_id="chart_session_existing",
+        query="old query",
+        metadata={"mode": "chart"},
+        conversation_history=_messages(2),
+    )
+
+    ConversationPersistenceService().apply_complete(
+        session,
+        display_history=_messages(3, final_content="画板已更新"),
+        collected_data_ids=[],
+        collected_visuals=[],
+        drawio_board={
+            "board_id": "board_a",
+            "title": "系统架构图",
+            "current_xml": "<mxGraphModel><root /></mxGraphModel>",
+            "previous_xml": "<old />",
+            "selected_cells": [{"id": "service_a", "value": "服务A"}],
+            "version": 7,
+            "dirty": True,
+            "updated_at": "2026-06-12T03:40:00",
+        },
+    )
+
+    assert session.metadata["drawio_board"] == {
+        "artifact_kind": "drawio_board",
+        "board_id": "board_a",
+        "active_board_id": "board_a",
+        "title": "系统架构图",
+        "current_xml": "<mxGraphModel><root /></mxGraphModel>",
+        "selected_cells": [{"id": "service_a", "value": "服务A"}],
+        "version": 7,
+        "dirty": True,
+        "updated_at": "2026-06-12T03:40:00",
+    }
+    assert "previous_xml" not in session.metadata["drawio_board"]
+
+
 def test_capture_office_document_updates_existing_report_preview():
     agent = ReActAgent.__new__(ReActAgent)
     agent._session_store = {}

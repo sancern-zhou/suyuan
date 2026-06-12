@@ -61,6 +61,7 @@ class ConversationPersistenceService:
         collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = list(display_history)
         self.apply_metadata(
@@ -68,6 +69,7 @@ class ConversationPersistenceService:
             collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
+            drawio_board=drawio_board,
         )
 
     def append_complete(
@@ -78,6 +80,7 @@ class ConversationPersistenceService:
         collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = self._append_missing_messages(
             session.conversation_history,
@@ -88,6 +91,7 @@ class ConversationPersistenceService:
             collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
+            drawio_board=drawio_board,
         )
 
     def apply_terminal(
@@ -99,6 +103,7 @@ class ConversationPersistenceService:
         collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = list(display_history) + [dict(terminal_message)]
         self.apply_metadata(
@@ -106,6 +111,7 @@ class ConversationPersistenceService:
             collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
+            drawio_board=drawio_board,
         )
 
     def append_terminal(
@@ -117,6 +123,7 @@ class ConversationPersistenceService:
         collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = self._append_missing_messages(
             session.conversation_history,
@@ -127,7 +134,45 @@ class ConversationPersistenceService:
             collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
+            drawio_board=drawio_board,
         )
+
+    @staticmethod
+    def normalize_drawio_board(board_context: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(board_context, dict):
+            return None
+
+        current_xml = (
+            board_context.get("current_xml")
+            or board_context.get("currentXml")
+            or board_context.get("xml")
+            or board_context.get("drawio_xml")
+        )
+        if not current_xml:
+            return None
+
+        board_id = (
+            board_context.get("board_id")
+            or board_context.get("active_board_id")
+            or board_context.get("activeBoardId")
+            or board_context.get("artifact_id")
+            or board_context.get("id")
+        )
+        selected_cells = board_context.get("selected_cells") or board_context.get("selectedCells") or []
+        if not isinstance(selected_cells, list):
+            selected_cells = []
+
+        return {
+            "artifact_kind": "drawio_board",
+            "board_id": board_id,
+            "active_board_id": board_id,
+            "title": board_context.get("title") or board_context.get("name") or "Draw.io Board",
+            "current_xml": current_xml,
+            "selected_cells": selected_cells,
+            "version": board_context.get("version"),
+            "dirty": bool(board_context.get("dirty", False)),
+            "updated_at": board_context.get("updated_at") or board_context.get("updatedAt"),
+        }
 
     def apply_metadata(
         self,
@@ -136,6 +181,7 @@ class ConversationPersistenceService:
         collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.data_ids = list(dict.fromkeys(collected_data_ids))
         session.visual_ids = [
@@ -148,6 +194,9 @@ class ConversationPersistenceService:
         if collected_visuals:
             session.metadata["visualizations"] = list(collected_visuals)
             session.metadata["visuals_count"] = len(collected_visuals)
+        normalized_board = self.normalize_drawio_board(drawio_board)
+        if normalized_board:
+            session.metadata["drawio_board"] = normalized_board
 
     def append_metadata(
         self,
@@ -156,6 +205,7 @@ class ConversationPersistenceService:
         collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.data_ids = list(dict.fromkeys([*session.data_ids, *collected_data_ids]))
 
@@ -189,3 +239,7 @@ class ConversationPersistenceService:
 
         if office_documents is not None:
             session.office_documents = list(office_documents)
+
+        normalized_board = self.normalize_drawio_board(drawio_board)
+        if normalized_board:
+            session.metadata["drawio_board"] = normalized_board

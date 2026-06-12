@@ -406,6 +406,34 @@ async def get_session_office_documents(session_id: str):
     }
 
 
+@router.get("/{session_id}/drawio-board")
+async def get_session_drawio_board(session_id: str):
+    """
+    按需获取会话 Draw.io 画板状态。
+
+    restore 接口默认不返回画板 XML，避免首屏携带大块可编辑画布数据。
+    """
+    from app.db.session_repository import get_session_repository
+
+    repo = get_session_repository()
+    metadata = await repo.get_session_metadata(session_id)
+    if metadata is None:
+        session = await repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        metadata = {}
+
+    drawio_board = metadata.get("drawio_board") if isinstance(metadata, dict) else None
+    if not isinstance(drawio_board, dict):
+        drawio_board = None
+
+    return {
+        "session_id": session_id,
+        "drawio_board": _sanitize_floats(drawio_board),
+        "has_drawio_board": bool(drawio_board)
+    }
+
+
 def _sanitize_floats(obj):
     """
     清理数据中的特殊浮点值（inf, -inf, nan），转换为 None
@@ -477,10 +505,15 @@ async def restore_session(
     office_documents = session_data.get("office_documents") or []
     visualizations = metadata.get("visualizations") or []
     visual_ids = session_data.get("visual_ids") or []
+    has_lazy_drawio_board = bool(metadata.get("drawio_board"))
 
     # 根据lazy_artifacts模式决定是否提取消息中的图表和文档
     if lazy_artifacts:
         # 首屏模式：只统计数量，不遍历消息提取内容（性能优化）
+        from app.db.session_repository import get_session_repository
+
+        lazy_metadata = await get_session_repository().get_session_metadata(session_id) or {}
+        has_lazy_drawio_board = bool(lazy_metadata.get("drawio_board"))
         has_lazy_visualizations = bool(visual_ids or visualizations)
         visualization_count = len(visual_ids) if visual_ids else len(visualizations) if visualizations else 0
         has_lazy_office_documents = bool(office_documents)
@@ -515,6 +548,7 @@ async def restore_session(
     session_data["visualization_count"] = visualization_count
     session_data["has_lazy_office_documents"] = has_lazy_office_documents
     session_data["office_document_count"] = office_document_count
+    session_data["has_lazy_drawio_board"] = has_lazy_drawio_board
 
     if lazy_artifacts:
         # 首屏恢复只带聊天内容，图表/文档预览由前端在消息显示后自动拉取。

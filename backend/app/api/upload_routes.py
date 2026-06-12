@@ -15,6 +15,7 @@ import uuid
 import shutil
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -26,6 +27,19 @@ from app.utils.path_config import get_uploads_dir
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    """Build an ASCII-safe Content-Disposition header for Unicode filenames."""
+    safe_name = Path(filename or "download").name or "download"
+    ascii_fallback = "".join(
+        ch if 32 <= ord(ch) < 127 and ch not in {'"', "\\", ";"} else "_"
+        for ch in safe_name
+    ).strip("._ ")
+    if not ascii_fallback:
+        ascii_fallback = "download"
+    encoded_name = quote(safe_name, safe="")
+    return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
 
 # 获取API基础URL（用于返回完整URL给LLM）
 def get_api_base_url(request: Request) -> str:
@@ -298,14 +312,14 @@ async def get_uploaded_file(file_id: str, db: AsyncSession = Depends(get_db)):
         return FileResponse(
             uploaded_file.file_path,
             media_type=uploaded_file.mime_type,
-            headers={"Content-Disposition": f"inline; filename=\"{uploaded_file.filename}\""}
+            headers={"Content-Disposition": _content_disposition("inline", uploaded_file.filename)}
         )
 
     # 如果是文档，作为下载返回
     return FileResponse(
         uploaded_file.file_path,
         media_type=uploaded_file.mime_type,
-        headers={"Content-Disposition": f"attachment; filename=\"{uploaded_file.filename}\""}
+        headers={"Content-Disposition": _content_disposition("attachment", uploaded_file.filename)}
     )
 
 
