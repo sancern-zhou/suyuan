@@ -3,7 +3,13 @@
     <div class="input-container">
       <!-- 附件预览区域 -->
       <div v-if="visibleAttachments.length > 0" class="attachments-preview">
-        <div v-for="(attachment, index) in visibleAttachments" :key="attachment.id || attachment.file_id || index" class="attachment-item">
+        <div
+          v-for="(attachment, index) in visibleAttachments"
+          :key="attachment.id || attachment.file_id || index"
+          class="attachment-item"
+          :class="{ 'context-attachment': attachment.readonlySource === 'drawio_board_selection' }"
+          :title="attachment.title || attachment.name"
+        >
           <img
             v-if="attachment.type === 'image' && attachment.preview"
             :src="attachment.preview"
@@ -20,7 +26,12 @@
             </svg>
             <span class="attachment-file-name">{{ attachment.name }}</span>
           </div>
-          <button class="attachment-remove" @click="removeVisibleAttachment(index)" :disabled="attachment.uploading">
+          <button
+            v-if="attachment.readonlySource !== 'drawio_board_selection'"
+            class="attachment-remove"
+            @click="removeVisibleAttachment(index)"
+            :disabled="attachment.uploading"
+          >
             <svg viewBox="0 0 24 24" class="remove-icon">
               <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
               <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
@@ -287,10 +298,44 @@ const pendingBoardSnapshotAttachment = computed(() => {
     readonlySource: 'drawio_board_snapshot'
   }
 })
+
+const getSelectedCellLabel = (cell = {}) => {
+  return String(cell.value || cell.label || cell.id || cell.cell_id || '选中项').trim() || '选中项'
+}
+
+const boardSelectionContextAttachment = computed(() => {
+  if (reactStore.currentMode !== 'chart') return null
+  const selectedCells = reactStore.currentState?.board?.selectedCells || []
+  if (!Array.isArray(selectedCells) || selectedCells.length === 0) return null
+
+  const firstLabel = getSelectedCellLabel(selectedCells[0])
+  const name = selectedCells.length === 1
+    ? `当前选中：${firstLabel}`
+    : `当前选中：${selectedCells.length} 项`
+  const detail = selectedCells
+    .map(cell => getSelectedCellLabel(cell))
+    .filter(Boolean)
+    .slice(0, 6)
+    .join('、')
+
+  return {
+    id: 'drawio-board-selection-context',
+    name,
+    type: 'context',
+    uploading: false,
+    readonlySource: 'drawio_board_selection',
+    title: detail ? `当前选中：${detail}` : name
+  }
+})
+
 const visibleAttachments = computed(() => [
   ...attachments.value,
+  ...(boardSelectionContextAttachment.value ? [boardSelectionContextAttachment.value] : []),
   ...(pendingBoardSnapshotAttachment.value ? [pendingBoardSnapshotAttachment.value] : [])
 ])
+const sendableAttachmentCount = computed(() => (
+  attachments.value.length + (pendingBoardSnapshotAttachment.value ? 1 : 0)
+))
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
 const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
@@ -299,9 +344,9 @@ const pendingSteeringDisplay = computed(() => getPendingSteeringDisplay(props.pe
 const actionButtonDisabled = computed(() => {
   if (props.isAnalyzing) {
     if (!canSteerWhileRunning.value) return false
-    return (!localValue.value.trim() && visibleAttachments.value.length === 0) || props.disabled
+    return (!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled
   }
-  return (!localValue.value.trim() && visibleAttachments.value.length === 0) || props.disabled
+  return (!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled
 })
 
 // 工作流工具列表
@@ -507,7 +552,7 @@ const handleBlur = () => {
 }
 
 const handleSend = () => {
-  if ((!localValue.value.trim() && visibleAttachments.value.length === 0) || props.disabled) return
+  if ((!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled) return
 
   // 检查是否有附件还在上传中
   const uploadingAttachments = attachments.value.filter(a => a.uploading)
@@ -678,6 +723,7 @@ const removeAttachment = (index) => {
 const removeVisibleAttachment = (index) => {
   const attachment = visibleAttachments.value[index]
   if (!attachment) return
+  if (attachment.readonlySource === 'drawio_board_selection') return
   if (attachment.readonlySource === 'drawio_board_snapshot') {
     reactStore.setDrawioBoardSnapshotAttachment(null)
     return
@@ -1194,6 +1240,16 @@ defineExpose({
   border-radius: 999px;
   position: relative;
   color: #5f6f89;
+}
+
+.attachment-item.context-attachment {
+  border-color: #b7d6ff;
+  background: #f4f9ff;
+  color: #23527c;
+}
+
+.attachment-item.context-attachment .attachment-file-name {
+  color: #23527c;
 }
 
 .attachment-preview-image {

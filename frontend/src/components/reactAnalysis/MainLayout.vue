@@ -152,6 +152,7 @@
         @board-xml-change="handleBoardXmlChange"
         @board-selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
+        @board-version-restore="handleBoardVersionRestore"
       />
     </div>
   </div>
@@ -369,6 +370,7 @@ const emit = defineEmits([
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
+  'board-version-restore',
   'chat-area-drag-over',
   'chat-area-drag-leave',
   'chat-area-drop',
@@ -544,6 +546,10 @@ const handleBoardSelectionChange = (selection) => {
 
 const handleBoardSnapshotConfirm = (snapshot) => {
   emit('board-snapshot-confirm', snapshot)
+}
+
+const handleBoardVersionRestore = (versionId) => {
+  emit('board-version-restore', versionId)
 }
 
 // 处理右侧面板展开/隐藏

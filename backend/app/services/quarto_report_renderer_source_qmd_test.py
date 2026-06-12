@@ -196,6 +196,56 @@ async def test_create_report_package_omits_source_qmd_when_it_is_report_qmd(tmp_
 
 
 @pytest.mark.asyncio
+async def test_create_report_package_rejects_r_chunks_before_writing_qmd(tmp_path, monkeypatch):
+    report_root = tmp_path / "reports"
+    renderer = QuartoReportRenderer(report_root=report_root)
+    monkeypatch.setattr(report_package_tool, "quarto_report_renderer", renderer)
+
+    result = await report_package_tool.CreateReportPackageTool().execute(
+        report_id="air_report",
+        qmd_content='''---
+title: "Report"
+---
+
+```{r chart, echo=FALSE}
+knitr::include_graphics("assets/charts/chart.png")
+```
+''',
+        render_html=False,
+    )
+
+    assert result["success"] is False
+    assert "unsupported R/knitr content" in result["data"]["error"]
+    assert "R code chunk" in result["data"]["unsupported_r_features"]
+    assert "knitr::" in result["data"]["unsupported_r_features"]
+    assert not (report_root / "air_report" / "report.qmd").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_report_package_rejects_r_in_source_qmd_path(tmp_path, monkeypatch):
+    report_root = tmp_path / "reports"
+    source_dir = tmp_path / "source"
+    source_qmd = source_dir / "original.qmd"
+    source_dir.mkdir(parents=True)
+    source_qmd.write_text("Report date: `r Sys.Date()`\n", encoding="utf-8")
+
+    renderer = QuartoReportRenderer(report_root=report_root)
+    monkeypatch.setattr(report_package_tool, "quarto_report_renderer", renderer)
+
+    result = await report_package_tool.CreateReportPackageTool().execute(
+        report_id="air_report",
+        qmd_content="# Snapshot report\n",
+        source_qmd_path=str(source_qmd),
+        render_html=False,
+    )
+
+    assert result["success"] is False
+    assert "unsupported R/knitr content" in result["data"]["error"]
+    assert result["data"]["unsupported_r_features"] == ["inline R expression"]
+    assert not (report_root / "air_report" / "report.qmd").exists()
+
+
+@pytest.mark.asyncio
 async def test_get_report_html_refreshes_when_source_qmd_is_newer(tmp_path, monkeypatch):
     report_root = tmp_path / "reports"
     report_dir = report_root / "air_report"

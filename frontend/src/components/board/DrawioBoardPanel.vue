@@ -25,22 +25,42 @@
     </div>
 
     <div class="drawio-canvas-shell">
-      <div
-        v-if="selectedCellsForAiEdit.length > 0"
-        class="ai-edit-indicator"
-        aria-live="polite"
-      >
-        <span class="ai-edit-icon">AI</span>
-        <span class="ai-edit-text">AI编辑</span>
-        <span class="ai-edit-target">{{ selectedCellsLabel }}</span>
-      </div>
-
       <iframe
         ref="iframeRef"
         class="drawio-frame"
         :src="drawioUrl"
         title="Draw.io board"
       ></iframe>
+    </div>
+
+    <div class="file-history-section">
+      <button type="button" class="file-history-header" @click="showVersionFiles = !showVersionFiles">
+        <span class="section-title">版本文件</span>
+        <span class="history-toggle-icon">{{ showVersionFiles ? '▼' : '▶' }}</span>
+      </button>
+      <div v-if="showVersionFiles" class="history-list">
+        <div v-if="boardDirty" class="history-dirty">
+          当前画布有手动修改，后续 AI 将基于当前画布内容。
+        </div>
+        <button
+          v-for="version in versionFiles"
+          :key="getVersionKey(version)"
+          type="button"
+          class="history-item file-history-item"
+          :class="{ current: !boardDirty && getVersionKey(version) === currentVersionId }"
+          @click="restoreVersion(version)"
+        >
+          <span class="history-icon">◇</span>
+          <span class="history-text">
+            <span class="history-file-name">{{ getVersionName(version) }}</span>
+            <span class="history-file-summary">{{ getVersionSummary(version) }}</span>
+          </span>
+          <span class="history-time">{{ formatTime(version.created_at || version.createdAt) }}</span>
+        </button>
+        <div v-if="versionFiles.length === 0" class="history-empty">
+          暂无版本文件
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -61,29 +81,38 @@ const props = defineProps({
   title: {
     type: String,
     default: ''
+  },
+  versionFiles: {
+    type: Array,
+    default: () => []
+  },
+  currentVersionId: {
+    type: String,
+    default: null
+  },
+  boardDirty: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['xml-change', 'selection-change', 'board-snapshot-confirm'])
+const emit = defineEmits(['xml-change', 'selection-change', 'board-snapshot-confirm', 'version-restore'])
 
 const iframeRef = ref(null)
 const iframeReady = ref(false)
 const latestXml = ref(props.xml || '')
 const exportingSnapshot = ref(false)
-const selectedCellsForAiEdit = ref([])
+const showVersionFiles = ref(false)
 let pendingExportResolver = null
 let selectionProbeInterval = null
 let selectionProbePending = false
+let xmlSyncPending = false
+let xmlSyncTimeout = null
+let lastXmlSyncAt = 0
 
-const drawioUrl = computed(() => 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&saveAndExit=0&noSaveBtn=1&noExitBtn=1')
+const XML_SYNC_INTERVAL_MS = 1200
 
-const selectedCellsLabel = computed(() => {
-  const selected = selectedCellsForAiEdit.value
-  if (selected.length === 1) {
-    return selected[0]?.value || selected[0]?.id || '已选中模块'
-  }
-  return `已选中 ${selected.length} 项`
-})
+const drawioUrl = computed(() => 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&modified=0&saveAndExit=0&noSaveBtn=1&noExitBtn=1')
 
 const postDrawio = (action, extra = {}) => {
   const target = iframeRef.value?.contentWindow
@@ -92,7 +121,6 @@ const postDrawio = (action, extra = {}) => {
 }
 
 const applySelection = (selection, source = 'unknown') => {
-  selectedCellsForAiEdit.value = selection
   console.log('[drawio-board] selection updated from editor', {
     source,
     selectedCount: selection.length,
@@ -111,6 +139,36 @@ const loadXml = (xml = props.xml) => {
 
 const reloadXml = () => {
   loadXml()
+}
+
+const getVersionKey = (version = {}) => String(version.version_id || version.id || version.versionNumber || version.version_number || '')
+
+const getVersionName = (version = {}) => {
+  return version.file_name || version.fileName || version.downloadLabel || `${version.title || props.title || '画板'} v${version.version_number || version.versionNumber || ''}`.trim()
+}
+
+const getVersionSummary = (version = {}) => {
+  const sourceLabel = version.source === 'agent' ? 'AI生成' : version.source === 'user_restore' ? '手动恢复' : '版本文件'
+  const number = version.version_number || version.versionNumber
+  return `${sourceLabel}${number ? ` · v${number}` : ''}`
+}
+
+const formatTime = (value) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+const restoreVersion = (version = {}) => {
+  const versionId = getVersionKey(version)
+  if (!versionId) return
+  emit('version-restore', versionId)
 }
 
 const getActiveXml = () => latestXml.value || props.xml || ''
@@ -164,6 +222,24 @@ const getExportDataUrl = (msg) => {
   return ''
 }
 
+const getExportXml = (msg) => {
+  const value = msg?.xml || msg?.data || ''
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('<mxfile') && !trimmed.startsWith('<mxGraphModel')) return ''
+  return value
+}
+
+const applyEditorXml = (xml, event = 'sync') => {
+  if (typeof xml !== 'string' || xml === latestXml.value) return
+  latestXml.value = xml
+  console.log('[drawio-board] editor emitted XML', {
+    event,
+    xmlLength: xml.length
+  })
+  emit('xml-change', xml)
+}
+
 const exportBoardImage = () => {
   if (!iframeReady.value) {
     return Promise.reject(new Error('draw.io editor is not ready'))
@@ -200,8 +276,34 @@ const exportBoardImage = () => {
   })
 }
 
+const clearXmlSyncTimeout = () => {
+  if (xmlSyncTimeout) {
+    window.clearTimeout(xmlSyncTimeout)
+    xmlSyncTimeout = null
+  }
+}
+
+const syncDrawioXml = (force = false) => {
+  if (!iframeReady.value || xmlSyncPending || selectionProbePending || pendingExportResolver) return
+
+  const now = Date.now()
+  if (!force && now - lastXmlSyncAt < XML_SYNC_INTERVAL_MS) return
+
+  xmlSyncPending = true
+  lastXmlSyncAt = now
+  clearXmlSyncTimeout()
+  xmlSyncTimeout = window.setTimeout(() => {
+    xmlSyncPending = false
+    xmlSyncTimeout = null
+  }, 2500)
+
+  postDrawio('export', {
+    format: 'xml'
+  })
+}
+
 const probeDrawioSelection = () => {
-  if (!iframeReady.value || selectionProbePending || pendingExportResolver) return
+  if (!iframeReady.value || selectionProbePending || xmlSyncPending || pendingExportResolver) return
 
   selectionProbePending = true
   postDrawio('export', {
@@ -217,10 +319,13 @@ const stopSelectionProbe = () => {
     selectionProbeInterval = null
   }
   selectionProbePending = false
+  xmlSyncPending = false
+  clearXmlSyncTimeout()
 }
 
 const startSelectionProbe = () => {
   if (!iframeReady.value) return
+  syncDrawioXml(true)
   probeDrawioSelection()
   if (selectionProbeInterval) return
 
@@ -229,6 +334,7 @@ const startSelectionProbe = () => {
       stopSelectionProbe()
       return
     }
+    syncDrawioXml()
     probeDrawioSelection()
   }, 700)
 }
@@ -289,6 +395,16 @@ const handleMessage = (event) => {
   }
 
   if (msg.event === 'export') {
+    if (xmlSyncPending) {
+      const xml = getExportXml(msg)
+      if (xml) {
+        xmlSyncPending = false
+        clearXmlSyncTimeout()
+        applyEditorXml(xml, 'xml-export')
+        return
+      }
+    }
+
     if (msg.format === 'json' && selectionProbePending) {
       selectionProbePending = false
       const selectionIds = getDrawioSelectionPayloadFromExport(msg)
@@ -307,12 +423,7 @@ const handleMessage = (event) => {
   }
 
   if ((msg.event === 'save' || msg.event === 'autosave') && typeof msg.xml === 'string') {
-    latestXml.value = msg.xml
-    console.log('[drawio-board] editor emitted XML', {
-      event: msg.event,
-      xmlLength: msg.xml.length
-    })
-    emit('xml-change', msg.xml)
+    applyEditorXml(msg.xml, msg.event)
     return
   }
 
@@ -358,6 +469,7 @@ onBeforeUnmount(() => {
 })
 
 watch(() => props.xml, (xml) => {
+  if (xml === latestXml.value) return
   latestXml.value = xml || ''
   loadXml(xml)
 })
@@ -427,52 +539,120 @@ watch(() => props.xml, (xml) => {
   min-height: 0;
 }
 
-.ai-edit-indicator {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  max-width: min(420px, calc(100% - 32px));
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid #b7d6ff;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 6px 18px rgba(45, 67, 97, 0.16);
-  color: #1f3b57;
-  font-size: 12px;
-  gap: 7px;
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-
-.ai-edit-icon {
-  display: inline-flex;
+.file-history-section {
   flex: 0 0 auto;
+  padding: 10px 12px;
+  border-top: 1px solid #edf1f7;
+  background: #fafafa;
+}
+
+.file-history-header {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  background: #1976D2;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
+  justify-content: space-between;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  user-select: none;
 }
 
-.ai-edit-text {
-  flex: 0 0 auto;
-  font-weight: 700;
-}
-
-.ai-edit-target {
-  min-width: 0;
-  overflow: hidden;
+.section-title {
   color: #526173;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-toggle-icon {
+  color: #7a8796;
+  font-size: 12px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 150px;
+  overflow: auto;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.history-item:hover {
+  border-color: #d8e8fb;
+  background: #f8fbff;
+}
+
+.history-item.current {
+  border-color: #90caf9;
+  background: #eef6ff;
+}
+
+.history-empty {
+  padding: 10px;
+  color: #98a4b3;
+  font-size: 12px;
+  text-align: center;
+}
+
+.history-dirty {
+  padding: 7px 8px;
+  border: 1px solid #f0d79b;
+  border-radius: 4px;
+  background: #fff8e6;
+  color: #8a6420;
+  font-size: 12px;
+}
+
+.history-icon {
+  flex: 0 0 auto;
+  color: #1976D2;
+  font-size: 14px;
+}
+
+.history-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  color: #333;
+}
+
+.history-file-name,
+.history-file-summary {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-file-summary {
+  margin-top: 2px;
+  color: #7b8796;
+  font-size: 11px;
+}
+
+.history-time {
+  flex: 0 0 auto;
+  color: #999;
+  font-size: 11px;
 }
 
 .drawio-frame {

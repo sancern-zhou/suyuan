@@ -108,9 +108,13 @@
         class="panel-content"
         :xml="board?.currentXml || board?.current_xml || board?.xml || ''"
         :title="board?.title || '画板'"
+        :version-files="board?.versions || []"
+        :current-version-id="board?.currentVersionId || board?.current_version_id || ''"
+        :board-dirty="!!board?.dirty"
         @xml-change="handleBoardXmlChange"
         @selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
+        @version-restore="handleBoardVersionRestore"
       />
     </template>
   </div>
@@ -192,7 +196,8 @@ const emit = defineEmits([
   'office-edit-submit',
   'board-xml-change',
   'board-selection-change',
-  'board-snapshot-confirm'
+  'board-snapshot-confirm',
+  'board-version-restore'
 ])
 
 // 添加调试
@@ -259,6 +264,10 @@ const handleBoardSelectionChange = (selection) => {
 
 const handleBoardSnapshotConfirm = (snapshot) => {
   emit('board-snapshot-confirm', snapshot)
+}
+
+const handleBoardVersionRestore = (versionId) => {
+  emit('board-version-restore', versionId)
 }
 
 // 公开方法

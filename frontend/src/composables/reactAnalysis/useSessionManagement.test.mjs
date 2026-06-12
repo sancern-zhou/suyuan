@@ -36,4 +36,10 @@ assert.doesNotMatch(
   'Session restore must be remote-first and must not short-circuit to local session state'
 )
 
+assert.match(
+  source,
+  /const\s+localSessionState\s*=\s*store\.sessionStates\?\.\[sessionId\][\s\S]*?store\._activateSession\(sessionId/,
+  'Loading an already-known session should activate local session state instead of restoring from the backend'
+)
+
 console.log('useSessionManagement recovery tests passed')
