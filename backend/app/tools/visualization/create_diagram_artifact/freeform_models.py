@@ -41,7 +41,7 @@ KNOWN_SHAPE_TYPES = {
     "drawio_shape",
 }
 
-DEFAULT_OUTPUT_FORMATS = ["drawio", "png"]
+DEFAULT_OUTPUT_FORMATS = ["drawio", "png", "drawio_svg"]
 MAX_CANVAS_WIDTH = 10000
 MAX_CANVAS_HEIGHT = 10000
 MAX_CANVAS_PIXELS = 25_000_000
@@ -220,10 +220,29 @@ def normalize_freeform_diagram(
     known_endpoint_ids = {shape.id for shape in normalized_shapes}
     known_endpoint_ids.update(group.id for group in normalized_groups)
     _validate_group_children(normalized_groups, known_endpoint_ids)
-    normalized_connectors = [
-        _normalize_connector(_require_mapping(connector, "connector"), known_endpoint_ids)
+    reserved_ids = set(known_endpoint_ids)
+    reserved_ids.update(
+        str(connector.get("id"))
         for connector in connector_sources
-    ]
+        if isinstance(connector, Mapping)
+        and connector.get("id") is not None
+        and str(connector.get("id")) != ""
+    )
+    normalized_connectors = []
+    next_generated_connector_index = 1
+    for connector_source in connector_sources:
+        connector_mapping = _require_mapping(connector_source, "connector")
+        connector_id = connector_mapping.get("id")
+        if connector_id is None or str(connector_id) == "":
+            connector_id, next_generated_connector_index = _next_connector_id(
+                reserved_ids,
+                next_generated_connector_index,
+            )
+            reserved_ids.add(connector_id)
+            connector_mapping["id"] = connector_id
+        normalized_connectors.append(
+            _normalize_connector(connector_mapping, known_endpoint_ids)
+        )
     _validate_unique_ids(normalized_shapes, normalized_groups, normalized_connectors)
 
     return FreeformDiagram(
@@ -306,7 +325,6 @@ def _normalize_connector(
         "label",
         "text",
         "type",
-        "style",
     }
     connector = FreeformConnector(
         id=_required_str(source, "id", "connector"),
@@ -384,20 +402,7 @@ def _validate_group_children(groups: list[FreeformGroup], known_ids: set[str]) -
 
 
 def _normalize_output_formats(output_formats: list[str] | None) -> list[str]:
-    if not output_formats:
-        return list(DEFAULT_OUTPUT_FORMATS)
-
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for output_format in output_formats:
-        value = str(output_format).strip().lower().strip("._").replace(".", "_")
-        if value in {"svg", "_svg", "drawio_svg"}:
-            value = "drawio_svg"
-        if not value or value in seen:
-            continue
-        normalized.append(value)
-        seen.add(value)
-    return normalized or list(DEFAULT_OUTPUT_FORMATS)
+    return list(DEFAULT_OUTPUT_FORMATS)
 
 
 def _validate_collection_size(source: list[Any], maximum: int, context: str) -> None:
@@ -445,6 +450,15 @@ def _required_str(source: dict[str, Any], key: str, context: str) -> str:
     if value is None or str(value) == "":
         raise FreeformValidationError(f"Missing {context} {key}")
     return str(value)
+
+
+def _next_connector_id(used_ids: set[str], start_index: int) -> tuple[str, int]:
+    index = start_index
+    while True:
+        candidate = f"edge_{index}"
+        index += 1
+        if candidate not in used_ids:
+            return candidate, index
 
 
 def _first_required_str(

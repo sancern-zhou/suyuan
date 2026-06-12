@@ -543,13 +543,18 @@ export function useSessionManagement(store) {
         if (!resultData) continue
 
         // 提取所有可用预览，避免 report 同时带 markdown/html 时丢失 HTML iframe 预览
-        if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview) {
+        if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview) {
           docs.push({
             pdf_preview: resultData.pdf_preview,
             markdown_preview: resultData.markdown_preview,
             html_preview: resultData.html_preview,
-            file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
-            file_type: resultData.file_type || resultData.html_preview?.file_type,
+            svg_preview: resultData.svg_preview,
+            file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path || resultData.svg_preview?.svg_path,
+            file_type: resultData.file_type || resultData.html_preview?.file_type || resultData.svg_preview?.file_type,
+            related_files: resultData.related_files,
+            artifacts: resultData.artifacts,
+            refs: resultData.refs,
+            assets: resultData.assets,
             generator: resultData.generator || result?.metadata?.generator || 'word_processor',
             summary: result.summary
           })

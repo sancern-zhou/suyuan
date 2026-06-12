@@ -18,6 +18,12 @@ assert.match(
   'Recovered office documents should preserve html_preview for report iframe previews'
 )
 
+assert.match(
+  source,
+  /svg_preview:\s*resultData\.svg_preview/,
+  'Recovered diagram documents should preserve svg_preview for right-panel previews'
+)
+
 assert.doesNotMatch(
   source,
   /doRestoreSession\(sessionId,\s*\{\s*messageLimit:\s*30/,

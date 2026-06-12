@@ -657,11 +657,17 @@ class ReActAgent:
             "pdf_preview": office_doc_data.get("pdf_preview"),
             "markdown_preview": office_doc_data.get("markdown_preview"),
             "html_preview": office_doc_data.get("html_preview"),
+            "svg_preview": office_doc_data.get("svg_preview"),
             "file_path": office_doc_data.get("file_path"),
             "file_type": office_doc_data.get("file_type"),
             "generator": office_doc_data.get("generator"),
             "summary": office_doc_data.get("summary"),
             "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
+            "related_files": office_doc_data.get("related_files"),
+            "artifacts": office_doc_data.get("artifacts"),
+            "refs": office_doc_data.get("refs"),
+            "assets": office_doc_data.get("assets"),
+            "metadata": office_doc_data.get("metadata"),
         }
         doc_entry = {k: v for k, v in doc_entry.items() if v is not None}
 
@@ -669,6 +675,7 @@ class ReActAgent:
             doc_entry.get("file_path")
             or doc_entry.get("html_preview", {}).get("html_id")
             or doc_entry.get("pdf_preview", {}).get("pdf_id")
+            or doc_entry.get("svg_preview", {}).get("svg_path")
         )
         if file_path:
             doc_entry["file_path"] = file_path

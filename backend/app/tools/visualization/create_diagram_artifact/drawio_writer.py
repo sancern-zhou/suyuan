@@ -9,6 +9,7 @@ from .freeform_models import (
     FreeformGroup,
     FreeformShape,
 )
+from .rich_text import diagram_label_html
 
 
 _SAFE_ID_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]+")
@@ -29,19 +30,19 @@ _DANGEROUS_TEXT_TOKENS = (
     "onload",
 )
 
-_BASE_VERTEX_STYLE = "whiteSpace=wrap;html=1;"
+_BASE_VERTEX_STYLE = "whiteSpace=wrap;html=1;align=center;verticalAlign=middle;"
 _BASE_EDGE_STYLE = (
     "edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;"
     "jettySize=auto;html=1;endArrow=block;endFill=1;"
 )
 
 _SHAPE_STYLES = {
-    "rect": "rounded=0;",
-    "rectangle": "rounded=0;",
+    "rect": "rounded=1;arcSize=10;",
+    "rectangle": "rounded=1;arcSize=10;",
     "rounded_rect": "rounded=1;arcSize=10;",
     "stadium": "rounded=1;absoluteArcSize=1;arcSize=60;",
     "text": "text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;",
-    "container": "rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;",
+    "container": "rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;",
     "swimlane": "swimlane;html=1;startSize=24;",
     "database": "shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;",
     "cloud": "ellipse;shape=cloud;whiteSpace=wrap;html=1;",
@@ -69,14 +70,62 @@ _CONNECTOR_STYLES = {
     "straight": "edgeStyle=none;html=1;endArrow=block;endFill=1;",
     "curved": "edgeStyle=orthogonalEdgeStyle;curved=1;html=1;endArrow=block;endFill=1;",
     "dashed": f"{_BASE_EDGE_STYLE}dashed=1;",
+    "arrow": _BASE_EDGE_STYLE,
+}
+
+_STYLE_KEY_ALIASES = {
+    "fill": "fillColor",
+    "stroke": "strokeColor",
+    "stroke-width": "strokeWidth",
+    "stroke_width": "strokeWidth",
+    "end-arrow": "endArrow",
+    "end_arrow": "endArrow",
+    "start-arrow": "startArrow",
+    "start_arrow": "startArrow",
+    "font-color": "fontColor",
+    "font_color": "fontColor",
+    "font-size": "fontSize",
+    "font_size": "fontSize",
+    "font-family": "fontFamily",
+    "font_family": "fontFamily",
+}
+
+_DIRECT_STYLE_KEYS = {
+    "fillColor",
+    "strokeColor",
+    "strokeWidth",
+    "fontColor",
+    "fontSize",
+    "fontFamily",
+    "fontStyle",
+    "dashed",
+    "dashPattern",
+    "endArrow",
+    "endFill",
+    "startArrow",
+    "startFill",
+    "opacity",
+    "fillOpacity",
+    "strokeOpacity",
 }
 
 
 def build_drawio_xml(diagram: FreeformDiagram) -> str:
     """Build Draw.io XML for a normalized freeform diagram."""
-    id_map = _build_id_map(diagram)
-    group_by_id = {group.id: group for group in diagram.groups}
-    parent_by_child = _parent_by_child(diagram.groups, diagram.shapes, group_by_id)
+    visible_groups = [group for group in diagram.groups if not _is_hidden(group.extras)]
+    visible_shapes = [shape for shape in diagram.shapes if not _is_hidden(shape.extras)]
+    visible_ids = {group.id for group in visible_groups}
+    visible_ids.update(shape.id for shape in visible_shapes)
+    visible_connectors = [
+        connector
+        for connector in diagram.connectors
+        if not _is_hidden(connector.extras)
+        and connector.source_id in visible_ids
+        and connector.target_id in visible_ids
+    ]
+    id_map = _build_id_map(visible_groups, visible_shapes, visible_connectors)
+    group_by_id = {group.id: group for group in visible_groups}
+    parent_by_child = _parent_by_child(visible_groups, visible_shapes, group_by_id)
 
     mxfile = ET.Element(
         "mxfile",
@@ -123,14 +172,14 @@ def build_drawio_xml(diagram: FreeformDiagram) -> str:
     ET.SubElement(root, "mxCell", {"id": "0"})
     ET.SubElement(root, "mxCell", {"id": "1", "parent": "0"})
 
-    for group in diagram.groups:
+    for group in visible_groups:
         _append_group(root, group, id_map)
 
-    for shape in diagram.shapes:
+    for shape in visible_shapes:
         _append_shape(root, shape, id_map, parent_by_child, group_by_id)
 
-    for connector in diagram.connectors:
-        _append_connector(root, connector, id_map)
+    for connector in visible_connectors:
+        _append_connector(root, connector, id_map, parent_by_child, group_by_id)
 
     return ET.tostring(mxfile, encoding="unicode", short_empty_elements=True)
 
@@ -146,8 +195,14 @@ def _append_group(
         "mxCell",
         {
             "id": group_id,
-            "value": _safe_text(group.label),
-            "style": f"group;{_BASE_VERTEX_STYLE}container=1;collapsible=0;",
+            "value": _safe_label_html(group.label),
+            "style": _merge_styles(
+                (
+                    f"group;rounded=1;arcSize=10;dashed=1;dashPattern=8 6;"
+                    f"{_BASE_VERTEX_STYLE}container=1;collapsible=0;"
+                ),
+                _style_from_extras(group.extras),
+            ),
             "vertex": "1",
             "connectable": "0",
             "parent": "1",
@@ -189,8 +244,8 @@ def _append_shape(
         "mxCell",
         {
             "id": shape_id,
-            "value": _safe_text(shape.label),
-            "style": _shape_style(shape),
+            "value": _safe_label_html(shape.label),
+            "style": _shape_style(shape, group_by_id.get(parent_id or "")),
             "vertex": "1",
             "parent": parent,
         },
@@ -212,11 +267,17 @@ def _append_connector(
     root: ET.Element,
     connector: FreeformConnector,
     id_map: dict[str, str],
+    parent_by_child: dict[str, str],
+    group_by_id: dict[str, FreeformGroup],
 ) -> None:
+    inherited_style = _connector_inherited_style(connector, parent_by_child, group_by_id)
     attrs = {
         "id": id_map[connector.id],
-        "value": _safe_text(connector.label),
-        "style": _CONNECTOR_STYLES.get(connector.type, _BASE_EDGE_STYLE),
+        "value": _safe_label_html(connector.label),
+        "style": _merge_styles(
+            _CONNECTOR_STYLES.get(connector.type, _BASE_EDGE_STYLE),
+            _merge_styles(inherited_style, _style_from_extras(connector.extras)),
+        ),
         "edge": "1",
         "parent": "1",
     }
@@ -231,7 +292,7 @@ def _append_connector(
     ET.SubElement(cell, "mxGeometry", {"relative": "1", "as": "geometry"})
 
 
-def _shape_style(shape: FreeformShape) -> str:
+def _shape_style(shape: FreeformShape, parent_group: FreeformGroup | None = None) -> str:
     if shape.type == "drawio_shape":
         shape_name = _safe_style_name(shape.drawio_shape_name or "process")
         native_style = _filter_drawio_style(shape.drawio_style or "")
@@ -239,17 +300,43 @@ def _shape_style(shape: FreeformShape) -> str:
 
     style = _SHAPE_STYLES.get(shape.type, _SHAPE_STYLES["rounded_rect"])
     if "whiteSpace=" in style or style.startswith("text;"):
-        return style
-    return f"{_BASE_VERTEX_STYLE}{style}"
+        base_style = style
+    else:
+        base_style = f"{_BASE_VERTEX_STYLE}{style}"
+    inherited_style = ""
+    if parent_group is not None:
+        group_stroke = _style_value_from_extras(parent_group.extras, "strokeColor")
+        if group_stroke:
+            inherited_style = f"fillColor=#ffffff;strokeColor={group_stroke};strokeWidth=2;"
+    return _merge_styles(base_style, _merge_styles(inherited_style, _style_from_extras(shape.extras)))
 
 
-def _build_id_map(diagram: FreeformDiagram) -> dict[str, str]:
+def _connector_inherited_style(
+    connector: FreeformConnector,
+    parent_by_child: dict[str, str],
+    group_by_id: dict[str, FreeformGroup],
+) -> str:
+    if _style_value_from_extras(connector.extras, "strokeColor"):
+        return ""
+    group_id = parent_by_child.get(connector.source_id) or parent_by_child.get(connector.target_id)
+    group = group_by_id.get(group_id or "")
+    stroke = _style_value_from_extras(group.extras, "strokeColor") if group is not None else ""
+    if not stroke:
+        return "strokeColor=#6b7280;strokeWidth=2;"
+    return f"strokeColor={stroke};strokeWidth=2;"
+
+
+def _build_id_map(
+    groups: list[FreeformGroup],
+    shapes: list[FreeformShape],
+    connectors: list[FreeformConnector],
+) -> dict[str, str]:
     id_map: dict[str, str] = {}
     used = {"0", "1"}
     for raw_id in [
-        *(group.id for group in diagram.groups),
-        *(shape.id for shape in diagram.shapes),
-        *(connector.id for connector in diagram.connectors),
+        *(group.id for group in groups),
+        *(shape.id for shape in shapes),
+        *(connector.id for connector in connectors),
     ]:
         safe_id = _safe_identifier(raw_id, "cell")
         candidate = safe_id
@@ -278,6 +365,104 @@ def _parent_by_child(
             if child_id not in parents:
                 parents[child_id] = group.id
     return parents
+
+
+def _style_from_extras(extras: dict[str, object]) -> str:
+    parts: list[str] = []
+    style = extras.get("style")
+    if style is not None:
+        parts.append(_translate_style(str(style)))
+
+    direct_parts: list[str] = []
+    for raw_key, raw_value in extras.items():
+        key = _STYLE_KEY_ALIASES.get(str(raw_key).lower(), str(raw_key))
+        if key not in _DIRECT_STYLE_KEYS:
+            continue
+        if str(raw_key).lower() == "hidden":
+            continue
+        direct_parts.append(f"{key}={raw_value}")
+        if key == "endArrow" and raw_value == "block":
+            direct_parts.append("endFill=1")
+    if direct_parts:
+        parts.append(";".join(direct_parts))
+
+    return _filter_drawio_style(";".join(part for part in parts if part))
+
+
+def _style_value_from_extras(extras: dict[str, object], wanted_key: str) -> str:
+    wanted_key = wanted_key.lower()
+    style = extras.get("style")
+    if style is not None:
+        translated = _translate_style(str(style))
+        for part in translated.split(";"):
+            if "=" not in part:
+                continue
+            key, value = part.split("=", 1)
+            if key.strip().lower() == wanted_key and _is_safe_style_value(value.strip()):
+                return value.strip()
+
+    for raw_key, raw_value in extras.items():
+        key = _STYLE_KEY_ALIASES.get(str(raw_key).lower(), str(raw_key))
+        value = str(raw_value).strip()
+        if key.lower() == wanted_key and _is_safe_style_value(value):
+            return value
+    return ""
+
+
+def _translate_style(style: str) -> str:
+    translated: list[str] = []
+    for raw_part in style.split(";"):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if ":" in part and "=" not in part:
+            key, value = part.split(":", 1)
+        elif "=" in part:
+            key, value = part.split("=", 1)
+        else:
+            translated.append(part)
+            continue
+        key = key.strip()
+        value = value.strip()
+        key = _STYLE_KEY_ALIASES.get(key.lower(), key)
+        if key.lower() == "hidden":
+            continue
+        if key == "endArrow" and value == "block":
+            translated.append("endFill=1")
+        translated.append(f"{key}={value}")
+    return ";".join(translated)
+
+
+def _merge_styles(base_style: str, extra_style: str) -> str:
+    if not base_style:
+        return extra_style
+    if not extra_style:
+        return base_style
+    return f"{base_style.rstrip(';')};{extra_style}"
+
+
+def _is_hidden(extras: dict[str, object]) -> bool:
+    hidden = extras.get("hidden")
+    if isinstance(hidden, bool):
+        return hidden
+    if hidden is not None and str(hidden).strip().lower() in {"1", "true", "yes"}:
+        return True
+    style = extras.get("style")
+    if style is None:
+        return False
+    for raw_part in str(style).split(";"):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if ":" in part and "=" not in part:
+            key, value = part.split(":", 1)
+        elif "=" in part:
+            key, value = part.split("=", 1)
+        else:
+            continue
+        if key.strip().lower() == "hidden" and value.strip().lower() in {"1", "true", "yes"}:
+            return True
+    return False
 
 
 def _filter_drawio_style(style: str) -> str:
@@ -330,6 +515,10 @@ def _safe_style_value(value: str) -> str:
 
 def _safe_text(value: str) -> str:
     return _strip_dangerous_text(str(value))[:1000]
+
+
+def _safe_label_html(value: str) -> str:
+    return diagram_label_html(str(value)[:1000])
 
 
 def _strip_dangerous_text(value: str) -> str:

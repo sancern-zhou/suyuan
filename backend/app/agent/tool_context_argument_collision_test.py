@@ -200,3 +200,47 @@ async def test_planner_preserves_tool_input_from_streaming_json_delta():
             tool_inputs.append(event["data"]["input"])
 
     assert tool_inputs == [{"path": "/tmp/a.txt"}]
+
+
+@pytest.mark.asyncio
+async def test_planner_does_not_execute_tool_when_streaming_json_delta_is_malformed():
+    class ToolBlock:
+        type = "tool_use"
+        id = "toolu_bad_ppt"
+        name = "create_pptx_with_ppt_master"
+
+    class Delta:
+        type = "input_json_delta"
+        partial_json = '{"title": "长PPT", "slide_plan": [{"title"'
+
+    class FakeLLMService:
+        provider = "deepseek"
+        model = "deepseek-v4-pro"
+
+        async def chat_anthropic_streaming(self, **kwargs):
+            yield {"type": "content_block_start", "data": {"index": 0, "block": ToolBlock()}}
+            yield {"type": "content_block_delta", "data": {"index": 0, "delta": Delta()}}
+            yield {"type": "content_block_stop", "data": {"index": 0}}
+            yield {"type": "message_stop", "data": {}}
+
+    planner = ReActPlanner(llm_client=FakeLLMService())
+
+    tool_use_events = []
+    actions = []
+    async for event in planner.think_and_action_streaming(
+        query="生成长PPT",
+        system_prompt="system",
+        user_conversation="user",
+        tools=[],
+        iteration=1,
+        mode="assistant",
+    ):
+        if event["type"] == "tool_use":
+            tool_use_events.append(event)
+        if event["type"] == "action":
+            actions.append(event["data"]["action"])
+
+    assert tool_use_events == []
+    assert actions[0]["type"] == "PLAIN_TEXT_REPLY"
+    assert "create_pptx_with_ppt_master" in actions[0]["answer"]
+    assert "tool input JSON" in actions[0]["answer"]

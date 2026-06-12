@@ -30,18 +30,27 @@ deck/PptxGenJS main path.
 6. Plan the deck: read `slide-plan-rules.md` and convert confirmed content
    into `slide_plan[].shapes` page by page. The Agent decides coordinates, text
    density, image fit, and visual hierarchy; the tool draws those primitives.
-7. Generate the PPTX with `create_pptx_with_ppt_master`. The output project
-   must include the current `slide_plan.v*.json`.
-8. Run QA: inspect `qa_status`, `quality_gate`, structured issues, page PNGs,
+7. If the detailed `slide_plan` would exceed 8 body pages, contains many
+   shapes, or includes many chart/table pages, do not send the whole plan in
+   one tool call. First generate a small skeleton deck with
+   `create_pptx_with_ppt_master`, then add or replace pages in batches of 3-5
+   pages with `create_pptx_with_ppt_master(operation="append"/"replace"/"patch")`.
+   For short appended batches, `batch_slides` plus `after_slide` is acceptable.
+   For long batches or pages with many shapes, write the JSON payload to a file and pass
+   `slide_plan_path` or `plan_patch_path` instead of inlining it.
+8. Generate the PPTX with `create_pptx_with_ppt_master` for short decks, or
+   use the skeleton-plus-batches flow for long decks. The output project must
+   include the current `slide_plan.v*.json`.
+9. Run QA: inspect `qa_status`, `quality_gate`, structured issues, page PNGs,
    and montage. Use montage for global visual review and page PNGs for
    slide-level facts.
-9. Run visual review on the montage when available. Visual review can identify
+10. Run visual review on the montage when available. Visual review can identify
    global composition problems, but page-level fixes should use the structured
    QA issues and the corresponding page PNG.
-10. Revise with `plan_patch`: the Agent reads the previous `slide_plan`, writes
-    only local changes, and calls `create_pptx_with_ppt_master` again so the
+11. Revise with `plan_patch`: the Agent reads the previous `slide_plan`, writes
+    only local changes, and calls `create_pptx_with_ppt_master(operation="patch")` so the
     same renderer redraws the deck.
-11. Repeat QA and visual review until the deck is deliverable, or clearly
+12. Repeat QA and visual review until the deck is deliverable, or clearly
     report the remaining issues.
 
 ## Required Tool
@@ -54,6 +63,14 @@ For high-quality formal decks, prefer `slide_plan` over fixed template slots.
 `outline` is acceptable for simple drafts, but chart-heavy, image-heavy, or
 executive-facing decks should provide explicit shapes so the Agent can use
 python-pptx primitives directly.
+
+For long decks, explicit shapes must be batched. Each revision batch must use
+the latest `data.next_revision_base_plan_path` or `data.slide_plan_path`
+returned by the previous generation step. Do not keep applying patches to the
+original skeleton plan after later batches have created newer plan versions.
+If a batch payload is large, the Agent should write it as JSON first and pass
+`plan_patch_path`; short append-only batches may still use `batch_slides` and
+`after_slide`.
 
 QMD or an equivalent structured document is the content draft. `slide_plan` is
 the visual execution plan. QA output is factual evaluation data, not an editing

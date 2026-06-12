@@ -58,6 +58,24 @@ assert.match(
 )
 
 assert.match(
+  storeSource,
+  /related_files:\s*doc\.related_files/,
+  'office document records should preserve related artifact download files'
+)
+
+assert.match(
+  storeSource,
+  /artifacts:\s*doc\.artifacts/,
+  'office document records should preserve artifact download metadata'
+)
+
+assert.match(
+  storeSource,
+  /doc\.svg_preview\?\.svg_url[\s\S]*doc\.svg_preview\?\.svg_path/,
+  'diagram documents should use svg_preview as a stable office document identity'
+)
+
+assert.match(
   sessionSource,
   /setOfficeDocumentHistory\(officeDocs\)/,
   'session restore should hydrate the full document history, not only the latest document'
