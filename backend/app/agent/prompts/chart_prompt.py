@@ -2,10 +2,48 @@
 图表模式系统提示词 - LLM 驱动的灵活图表生成
 """
 
-from typing import List, Optional
+import json
+from typing import Any, Dict, List, Optional
 
 
-def build_chart_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
+DRAWIO_GUIDE_PATHS = [
+    "app/agent/guides/drawio_board_workflow.md",
+    "app/agent/guides/drawio_xml_rules.md",
+    "app/agent/guides/drawio_edit_policy.md",
+]
+
+
+def _build_board_context_prompt(board_context: Optional[Dict[str, Any]]) -> str:
+    if not board_context:
+        return ""
+
+    current_xml = board_context.get("current_xml") or board_context.get("currentXml") or ""
+    selected_cells = board_context.get("selected_cells") or board_context.get("selectedCells") or []
+    viewport = board_context.get("viewport") or {}
+
+    selected_json = json.dumps(selected_cells, ensure_ascii=False, indent=2, default=str)
+    viewport_json = json.dumps(viewport, ensure_ascii=False, indent=2, default=str)
+
+    return (
+        "## Draw.io 画板上下文（仅图表模式）\n\n"
+        "- `board_context.current_xml` 是前端 draw.io 编辑器当前画布的权威状态；如果它与历史工具结果冲突，以这里为准。\n"
+        "- 如果用户要求修改现有画板，必须基于当前 XML 增量更新，不要凭历史重新生成旧版本。\n"
+        "- 如果存在选中元素，优先把用户的“这个/这里/选中的模块”等指代绑定到 selected_cells。\n"
+        "- `selected_cells[*].id` 是选中 mxCell 的精确 ID；`selected_cells[*].xml` 是该 mxCell 的完整 XML；`selected_cells[*].geometry` 是其当前位置和尺寸。\n"
+        "- 修改选中模块时，优先使用 `target=\"selected\"` 和结构化操作 `update_label`、`update_style`、`move_resize`、`connect`、`delete_with_edges`；只有复杂替换时才写完整 `new_xml`。\n"
+        "- 需要创建或更新可编辑画板时，输出应保持为前端画板模块可继续编辑的 draw.io XML。\n\n"
+        f"### selected_cells\n```json\n{selected_json}\n```\n\n"
+        f"### viewport\n```json\n{viewport_json}\n```\n\n"
+        f"### current_xml\n```xml\n{current_xml}\n```\n\n"
+    )
+
+
+def build_chart_prompt(
+    available_tools: List[str],
+    memory_context: Optional[str] = None,
+    memory_file_path: Optional[str] = None,
+    board_context: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     构建图表模式系统提示词
 
@@ -28,6 +66,18 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
             "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
             "- 禁止操作其他路径的 MEMORY.md 文件\n",
             "\n",
+        ])
+
+    board_context_prompt = _build_board_context_prompt(board_context)
+    if board_context_prompt:
+        prompt_parts.append(board_context_prompt)
+
+    if "create_drawio_board" in available_tools and "analyze_image" in available_tools:
+        prompt_parts.extend([
+            "## Draw.io 画板截图校验\n\n",
+            "- 用户在前端点击“确认画板修改”后，下一轮图表模式请求可能会附带当前画板 PNG 截图。\n",
+            "- 当用户要求检查、优化、确认视觉效果，或修改后的布局/连线/文字是否符合需求时，可调用 `analyze_image` 对该截图做视觉质量检查。\n",
+            "- 截图只用于视觉质量检查；XML 仍然是权威状态，继续编辑画板必须以 `board_context.current_xml` 为准。\n\n",
         ])
 
     prompt_parts.extend([
@@ -161,7 +211,6 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 代码无法复用（每次 data_id 变化都要修改路径）\n\n",
 
         "### ✅ 正确示例：series 在顶层\n\n",
-        "### ✅ 正确示例：series 在顶层\n\n",
         "```python\n",
         "# ✅ 正确：series 在顶层，可被系统识别\n",
         "result = {\n",
@@ -251,7 +300,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "   - **模板积累**：鼓励保存有复用价值的图表设计\n",
         "7. **看图生成**：用户提供参考图片时，先用 `read_file(path, analysis_type=\"chart\")` 分析图表样式，再基于用户数据生成相同风格的图表\n",
         "\n",
-        "        \"## ⚠️ 子Agent返回格式规范（CRITICAL）\n\n",
+        "## ⚠️ 子Agent返回格式规范（CRITICAL）\n\n",
         "**当作为子Agent被调用时**，必须在最终回复中明确列出所有data_id：\n\n",
         "```markdown\n",
         "## 图表生成结果\n\n",
@@ -266,7 +315,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 如果图表工具返回了新的data_id，也需列出\n",
         "- 必须在回复中明确列出，父Agent才能收集\n\n",
         "\n",
-        "        \"## 支持的图表类型\n\n",
+        "## 支持的图表类型\n\n",
         "**基础图表**：pie, bar, line, timeseries, radar\n",
         "**气象图表**：wind_rose, profile, weather_timeseries\n",
         "**空间图表**：map, heatmap\n",

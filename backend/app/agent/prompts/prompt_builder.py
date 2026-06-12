@@ -50,7 +50,8 @@ def build_react_system_prompt(
     memory_context: Optional[str] = None,  # ✅ 记忆上下文内容（MEMORY.md）
     soul_context: Optional[str] = None,  # ✅ 新增：soul.md 内容（助理灵魂档案）
     user_context: Optional[str] = None,  # ✅ 新增：用户上下文内容（USER.md）
-    backend_host: Optional[str] = None  # ✅ 新增：网关地址（仅social模式使用）
+    backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
+    board_context: Optional[dict] = None,  # 图表模式 draw.io 画板上下文
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
@@ -90,7 +91,8 @@ def build_react_system_prompt(
         user_file_path=user_file_path,  # ✅ 新增日志
         has_memory_context=memory_context is not None,
         has_soul_context=soul_context is not None,  # ✅ 新增日志
-        has_user_context=user_context is not None  # ✅ 新增日志
+        has_user_context=user_context is not None,  # ✅ 新增日志
+        has_board_context=board_context is not None,
     )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
@@ -105,7 +107,7 @@ def build_react_system_prompt(
     elif mode == "social":
         return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, heartbeat_file_path, memory_context, soul_context, user_context, backend_host)
     elif mode == "chart":
-        return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
+        return build_chart_prompt(filtered_tools, memory_context, memory_file_path, board_context)
     elif mode == "ops":
         return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_meteorology":

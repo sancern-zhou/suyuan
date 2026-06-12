@@ -817,14 +817,7 @@ class SessionRepository:
         session_id: str,
     ) -> Optional[Dict[str, Any]]:
         """Return persisted compact LLM state stored separately from display transcript."""
-        async with AsyncSession(self.engine) as session:
-            stmt = (
-                select(SessionDB.session_metadata)
-                .where(SessionDB.session_id == session_id)
-            )
-            result = await session.execute(stmt)
-            metadata = result.scalar_one_or_none() or {}
-
+        metadata = await self.get_session_metadata(session_id)
         if not isinstance(metadata, dict):
             return None
 
@@ -839,6 +832,23 @@ class SessionRepository:
             return None
 
         return compact_state
+
+    async def get_session_metadata(
+        self,
+        session_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return session metadata without loading messages or artifact columns."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionDB.session_metadata)
+                .where(SessionDB.session_id == session_id)
+            )
+            result = await session.execute(stmt)
+            metadata = result.scalar_one_or_none()
+
+        if not isinstance(metadata, dict):
+            return None
+        return metadata
 
     async def save_llm_compact_state(
         self,

@@ -4,6 +4,7 @@
  */
 import { ref, computed, watch } from 'vue'
 import { PANEL_SIZES } from '@/utils/constants'
+import { shouldAutoSwitchToDocument } from './panelTabPolicy'
 
 export function usePanelManagement(store = null) {
   // ========== 面板状态 ==========
@@ -13,6 +14,7 @@ export function usePanelManagement(store = null) {
   const vizPanelVisible = ref(false) // 可视化面板是否可见
   const officePanelVisible = ref(false) // Office文档面板是否可见
   const knowledgePanelVisible = ref(false) // 知识溯源面板是否可见
+  const boardPanelVisible = ref(false) // Draw.io画板面板是否可见
   const activeRightTab = ref('visualization') // 右侧面板活动标签页
 
   // ========== 宽度调整相关 ==========
@@ -61,7 +63,10 @@ export function usePanelManagement(store = null) {
     // 检查是否有Office文档
     const hasOffice = officePanelVisible.value
 
-    return hasCharts || hasSources || hasOffice
+    // 检查是否有Draw.io画板
+    const hasBoard = boardPanelVisible.value
+
+    return hasCharts || hasSources || hasOffice || hasBoard
   })
 
   /**
@@ -120,6 +125,14 @@ export function usePanelManagement(store = null) {
     })
   })
 
+  /**
+   * 检测是否有Draw.io画板
+   */
+  const hasBoardContent = computed(() => {
+    if (!store) return false
+    return !!store.currentState?.board?.currentXml
+  })
+
   // ========== 面板切换方法 ==========
 
   /**
@@ -164,6 +177,7 @@ export function usePanelManagement(store = null) {
     vizPanelVisible.value = false
     officePanelVisible.value = false
     knowledgePanelVisible.value = false
+    boardPanelVisible.value = false
     rightPanelVisible.value = false
     leftSidebarCollapsed.value = false
     managementPanel.value = null
@@ -264,10 +278,6 @@ export function usePanelManagement(store = null) {
     // 监听Office文档变化
     watch(hasOfficeDocuments, (newValue) => {
       officePanelVisible.value = newValue
-      // 当检测到Office文档时，自动切换到文档标签页
-      if (newValue) {
-        activeRightTab.value = 'document'
-      }
     }, { immediate: true })
 
     // 监听知识溯源变化
@@ -279,19 +289,35 @@ export function usePanelManagement(store = null) {
       }
     }, { immediate: true })
 
+    // 监听Draw.io画板变化
+    watch(hasBoardContent, (newValue) => {
+      boardPanelVisible.value = newValue
+      if (newValue) {
+        activeRightTab.value = 'board'
+      } else if (activeRightTab.value === 'board') {
+        if (vizPanelVisible.value) {
+          activeRightTab.value = 'visualization'
+        } else if (officePanelVisible.value) {
+          activeRightTab.value = 'document'
+        } else if (knowledgePanelVisible.value) {
+          activeRightTab.value = 'knowledge'
+        }
+      }
+    }, { immediate: true })
+
     // 监听图表历史变化，当有图表时且当前在document标签，切换回visualization标签
     if (store) {
       watch(() => store.currentState.visualizationHistory, (newHistory) => {
         const hasCharts = newHistory?.length > 0
-        if (hasCharts && activeRightTab.value === 'document' && !officePanelVisible.value && !knowledgePanelVisible.value) {
+        if (hasCharts && activeRightTab.value === 'document' && !officePanelVisible.value && !knowledgePanelVisible.value && !boardPanelVisible.value) {
           activeRightTab.value = 'visualization'
         }
       }, { immediate: true })
     }
 
     // 监听右侧面板显示状态
-    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible], ([viz, office, knowledge]) => {
-      const shouldShow = viz || office || knowledge
+    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible, boardPanelVisible], ([viz, office, knowledge, board]) => {
+      const shouldShow = viz || office || knowledge || board
       if (shouldShow) {
         rightPanelVisible.value = true
         // 右侧面板展开时，自动折叠左侧面板
@@ -306,11 +332,13 @@ export function usePanelManagement(store = null) {
 
     // 监听office_document事件
     if (store) {
-      watch(() => store.lastOfficeDocument, (doc) => {
+      watch(() => store.lastOfficeDocument, (doc, previousDoc) => {
         // 支持 PDF/Markdown/HTML 预览，统一显示在"文档预览"标签页
         if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview) {
           officePanelVisible.value = true
-          activeRightTab.value = 'document'
+          if (shouldAutoSwitchToDocument({ doc, previousDoc, activeTab: activeRightTab.value })) {
+            activeRightTab.value = 'document'
+          }
         }
       }, { immediate: true })
     }
@@ -346,6 +374,7 @@ export function usePanelManagement(store = null) {
     vizPanelVisible,
     officePanelVisible,
     knowledgePanelVisible,
+    boardPanelVisible,
     activeRightTab,
     vizWidth,
     isDragging,
@@ -356,6 +385,7 @@ export function usePanelManagement(store = null) {
     hasVizContent,
     hasOfficeDocuments,
     hasKnowledgeSources,
+    hasBoardContent,
 
     // 方法
     toggleVizPanel,

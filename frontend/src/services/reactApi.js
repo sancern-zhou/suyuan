@@ -30,6 +30,7 @@ class ReactAgentAPI {
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
       modelTier = 'auto',
       attachments = null,  // ✅ 附件列表
+      boardContext = null,
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
       skipAutoFollowup = false,
@@ -54,6 +55,10 @@ class ReactAgentAPI {
       is_interruption: isInterruption,
       skip_auto_followup: skipAutoFollowup,
       skipAutoFollowup
+    }
+
+    if (boardContext !== null) {
+      body.board_context = boardContext
     }
 
     return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)

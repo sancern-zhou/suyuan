@@ -80,6 +80,9 @@ class SimplifiedContextBuilder:
         # ✅ 新增：HEARTBEAT文件路径（仅social模式使用）
         self.heartbeat_file_path = None
 
+        # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
+        self.board_context = None
+
         logger.info(
             "context_builder_initialized",
             max_context=self.max_context_tokens,
@@ -247,7 +250,8 @@ class SimplifiedContextBuilder:
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
             user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
-            backend_host=backend_host  # ✅ 传递网关地址（仅social模式使用）
+            backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
+            board_context=self.board_context if self.current_mode == "chart" else None,
         )
         return f"{mode_prompt.rstrip()}\n\n{self._build_agent_control_prompt()}"
 
@@ -271,6 +275,7 @@ class SimplifiedContextBuilder:
             explicitly cleared even if an upstream caller accidentally sets them.
         """
         if mode == "social":
+            self.board_context = None
             return
 
         if any([
@@ -299,6 +304,13 @@ class SimplifiedContextBuilder:
         self.user_file_path = None
         self.heartbeat_file_path = None
 
+        if mode != "chart" and self.board_context is not None:
+            logger.warning(
+                "non_chart_board_context_stripped",
+                mode=mode,
+            )
+            self.board_context = None
+
     def _estimate_messages_tokens(self, conversation_history: Optional[List[Dict[str, Any]]]) -> int:
         """Best-effort token estimate for structured message history."""
         if not conversation_history:
@@ -317,6 +329,48 @@ class SimplifiedContextBuilder:
 
         tool_names = list(self.tool_registry.keys())
         return f"**可用工具**：{', '.join(tool_names[:20])}..."
+
+    def _build_board_selection_user_summary(self) -> str:
+        """Build a compact current-turn summary for chart board selection."""
+        if self.current_mode != "chart" or not isinstance(self.board_context, dict):
+            return ""
+
+        selected_cells = (
+            self.board_context.get("selected_cells")
+            or self.board_context.get("selectedCells")
+            or []
+        )
+        if not isinstance(selected_cells, list) or not selected_cells:
+            return ""
+
+        lines = [
+            "## 当前画板选中状态",
+            f"当前已选中 {len(selected_cells)} 个元素。",
+        ]
+
+        for index, cell in enumerate(selected_cells[:5], start=1):
+            if not isinstance(cell, dict):
+                lines.append(f"{index}. {cell}")
+                continue
+
+            cell_id = cell.get("id") or cell.get("cell_id") or cell.get("cellId") or "unknown"
+            value = cell.get("value") or cell.get("label") or ""
+            cell_type = "edge" if cell.get("edge") else "vertex" if cell.get("vertex") else "cell"
+            geometry = cell.get("geometry") if isinstance(cell.get("geometry"), dict) else {}
+            geometry_text = ""
+            if geometry:
+                geometry_text = (
+                    f" geometry=(x={geometry.get('x')}, y={geometry.get('y')}, "
+                    f"w={geometry.get('width')}, h={geometry.get('height')})"
+                )
+
+            label_text = f" value={value}" if value else ""
+            lines.append(f"{index}. id={cell_id} type={cell_type}{label_text}{geometry_text}")
+
+        if len(selected_cells) > 5:
+            lines.append(f"...另有 {len(selected_cells) - 5} 个选中元素，详见系统提示词 selected_cells JSON。")
+
+        return "\n".join(lines)
 
     def _build_user_conversation(
         self,
@@ -432,6 +486,10 @@ class SimplifiedContextBuilder:
             )
             sections.append(status_section)
 
+            board_selection_summary = self._build_board_selection_user_summary()
+            if board_selection_summary:
+                sections.append(board_selection_summary)
+
             # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
             if iteration == 1:
@@ -450,6 +508,9 @@ class SimplifiedContextBuilder:
                 )
         else:
             # 首次迭代：显示完整查询
+            board_selection_summary = self._build_board_selection_user_summary()
+            if board_selection_summary:
+                sections.append(board_selection_summary)
             sections.append(f"{current_input_section}\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）

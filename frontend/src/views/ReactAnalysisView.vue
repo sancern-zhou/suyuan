@@ -24,14 +24,17 @@
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
       :active-module="activeAssistant"
+      :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
       :right-panel-visible="rightPanelVisible"
       :viz-panel-visible="vizPanelVisible"
       :office-panel-visible="officePanelVisible"
       :knowledge-panel-visible="knowledgePanelVisible"
+      :board-panel-visible="boardPanelVisible"
       :active-right-tab="activeRightTab"
       :viz-panel-style="vizPanelStyle"
+      :board="store.currentState.board"
       :is-dragging="isDragging"
       :chat-area-drag-over="chatAreaDragOver"
       :selected-message-id="selectedMessageId"
@@ -65,6 +68,9 @@
       @reset-width="resetWidth"
       @tab-change="activeRightTab = $event"
       @office-edit-submit="handleOfficeEditSubmit"
+      @board-xml-change="handleBoardXmlChange"
+      @board-selection-change="handleBoardSelectionChange"
+      @board-snapshot-confirm="handleBoardSnapshotConfirm"
       @chat-area-drag-over="handleChatAreaDragOver"
       @chat-area-drag-leave="handleChatAreaDragLeave"
       @chat-area-drop="handleChatAreaDrop"
@@ -158,6 +164,7 @@ const {
   vizPanelVisible,
   officePanelVisible,
   knowledgePanelVisible,
+  boardPanelVisible,
   activeRightTab,
   vizWidth,
   isDragging,
@@ -417,6 +424,24 @@ const handleOfficeEditSubmit = async (editData) => {
     }
   } catch (error) {
     console.error('提交编辑失败:', error)
+  }
+}
+
+const handleBoardXmlChange = (xml) => {
+  if (typeof store.updateDrawioBoardXml === 'function') {
+    store.updateDrawioBoardXml(xml)
+  }
+}
+
+const handleBoardSelectionChange = (selection) => {
+  if (typeof store.updateDrawioBoardSelection === 'function') {
+    store.updateDrawioBoardSelection(selection)
+  }
+}
+
+const handleBoardSnapshotConfirm = async (snapshot) => {
+  if (typeof store.confirmDrawioBoardSnapshot === 'function') {
+    await store.confirmDrawioBoardSnapshot(snapshot)
   }
 }
 

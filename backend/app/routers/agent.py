@@ -117,6 +117,11 @@ class AgentAnalyzeRequest(BaseModel):
         None,
         description="附件列表，包含用户上传的文件信息 [{file_id, name, type, url}]"
     )
+    board_context: Optional[Dict[str, Any]] = Field(
+        None,
+        validation_alias=AliasChoices("board_context", "boardContext"),
+        description="图表模式画板上下文，仅 mode=chart 时传入，例如 {current_xml, selected_cells}"
+    )
     model_tier: Optional[str] = Field(
         None,
         validation_alias=AliasChoices("model_tier", "modelTier"),
@@ -367,6 +372,22 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
             "skip_auto_followup": request.skip_auto_followup
         }
+        if request.mode == "chart" and request.board_context:
+            analyze_kwargs["board_context"] = request.board_context
+            current_xml = request.board_context.get("current_xml") or request.board_context.get("currentXml") or ""
+            previous_xml = request.board_context.get("previous_xml") or request.board_context.get("previousXml") or ""
+            selected_cells = request.board_context.get("selected_cells") or request.board_context.get("selectedCells") or []
+            logger.info(
+                "chart_board_context_received",
+                session_id=request.session_id,
+                current_xml_length=len(current_xml),
+                previous_xml_length=len(previous_xml),
+                selected_count=len(selected_cells) if isinstance(selected_cells, list) else 0,
+                version=request.board_context.get("version"),
+                dirty=request.board_context.get("dirty"),
+                updated_at=request.board_context.get("updated_at") or request.board_context.get("updatedAt"),
+            )
+        drawio_board_context = request.board_context if request.mode == "chart" else None
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
         session_manager = get_session_manager()
@@ -375,6 +396,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
         conversation_history = []
         collected_data_ids = []
         collected_visuals = []
+        latest_drawio_board = None
         seen_visual_ids = set()  # ✅ 用于去重：记录已添加的图表ID
 
         if not actual_session_id:
@@ -384,7 +406,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, seen_visual_ids
+            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, latest_drawio_board, seen_visual_ids
             cancel_event = None
 
             # ✅ 用于统计（不输出日志）
@@ -499,6 +521,15 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                     has_visuals="visuals" in result,
                                     visuals_count=len(result.get("visuals") or [])
                                 )
+                                if (
+                                    request.mode == "chart"
+                                    and isinstance(result, dict)
+                                    and (
+                                        (result.get("metadata") or {}).get("generator") == "create_drawio_board"
+                                        or (result.get("data") or {}).get("artifact_kind") == "drawio_board"
+                                    )
+                                ):
+                                    latest_drawio_board = result.get("data") or {}
 
                             frontend_message = {
                                 "type": event["type"],
@@ -651,6 +682,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 collected_data_ids=collected_data_ids,
                                 collected_visuals=collected_visuals,
                                 office_documents=office_documents,
+                                drawio_board=latest_drawio_board or drawio_board_context,
                             )
                             await session_manager.append_session_transcript(session)
                             agent._session_store[actual_session_id]["display_history_persisted"] = True
@@ -686,6 +718,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 },
                                 collected_data_ids=collected_data_ids,
                                 collected_visuals=collected_visuals,
+                                drawio_board=latest_drawio_board or drawio_board_context,
                             )
                             await session_manager.append_session_transcript(session)
                             agent._session_store[actual_session_id]["display_history_persisted"] = True
@@ -713,6 +746,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                         },
                         collected_data_ids=collected_data_ids,
                         collected_visuals=collected_visuals,
+                        drawio_board=latest_drawio_board or drawio_board_context,
                     )
                     await session_manager.append_session_transcript(session)
                     if actual_session_id not in agent._session_store:
@@ -736,6 +770,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     },
                     collected_data_ids=collected_data_ids,
                     collected_visuals=collected_visuals,
+                    drawio_board=latest_drawio_board or drawio_board_context,
                 )
                 session.error = {
                     "type": "stream_error",

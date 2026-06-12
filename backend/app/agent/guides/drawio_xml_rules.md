@@ -1,0 +1,46 @@
+# Draw.io XML Rules
+
+本文件约束 `create_drawio_board` 的 XML 生成质量。
+
+## 基本结构
+
+`create_drawio_board` 可以接收以下 XML：
+
+1. 完整 `<mxfile>...</mxfile>`
+2. 完整 `<mxGraphModel>...</mxGraphModel>`
+3. 一个或多个 `<mxCell>...</mxCell>` 片段
+
+输出目标必须能被 diagrams.net/draw.io 渲染。
+
+## mxCell 规则
+
+1. 每个业务节点和连线必须有稳定、唯一的 `id`。
+2. 不要使用随机且不可读的 id；优先使用有语义的 id，例如 `station_source_1`、`pollution_process_2`。
+3. 顶层业务节点通常使用 `vertex="1"`、`parent="1"`。
+4. 连线通常使用 `edge="1"`、`parent="1"`，并设置有效的 `source` 和 `target`。
+5. 节点必须包含 `<mxGeometry ... as="geometry" />`。
+6. 普通节点应设置 `x`、`y`、`width`、`height`，避免重叠或不可见。
+7. 连线应包含 `<mxGeometry relative="1" as="geometry" />`。
+
+## 布局规则
+
+1. 默认使用从左到右或从上到下的清晰业务流。
+2. 同层节点保持对齐，间距稳定。
+3. 避免节点重叠、连线穿越过多、文本超出节点。
+4. 节点文本应短而明确；长说明应拆成多个节点或放入注释节点。
+5. 商务风格优先：清晰边框、浅色填充、克制配色，不使用花哨装饰。
+
+## 样式规则
+
+1. 节点样式应显式包含 `rounded=1;whiteSpace=wrap;html=1;`。
+2. 关键节点可以使用不同填充色，但不要形成单一高饱和配色。
+3. 连线样式应包含 `edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;`。
+4. 文本节点或注释节点必须保证可读。
+
+## 禁止事项
+
+1. 禁止生成缺少 id 的 mxCell。
+2. 禁止生成 source/target 指向不存在节点的连线。
+3. 禁止无原因改变所有已有 id。
+4. 禁止把 Mermaid、PlantUML、SVG 或 ECharts option 当作 draw.io XML 传入。
+5. 禁止在用户只要求局部修改时重排整张图。
