@@ -108,6 +108,12 @@ const createEmptyDrawioBoardState = () => ({
   title: '',
   currentXml: '',
   previousXml: '',
+  undoStack: [],
+  redoStack: [],
+  applyingHistory: false,
+  versions: [],
+  currentVersionId: null,
+  baseVersionId: null,
   selectedCells: [],
   pendingSnapshotAttachment: null,
   version: 0,
@@ -136,6 +142,51 @@ const getDrawioBoardXml = (payload = {}) => {
     payload.drawio_xml ||
     payload.mxfile ||
     ''
+}
+
+const sanitizeDrawioVersionFileName = (title = 'drawio-board') => {
+  const safeTitle = String(title || 'drawio-board')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .trim() || 'drawio-board'
+  return safeTitle
+}
+
+const createDrawioBoardVersionRecord = ({
+  board = {},
+  payload = {},
+  result = {},
+  xml = '',
+  source = 'agent'
+} = {}) => {
+  const versions = Array.isArray(board.versions) ? board.versions : []
+  const requestedVersionNumber = Number(payload.version_number || payload.version || 0)
+  const versionNumber = requestedVersionNumber > versions.length
+    ? requestedVersionNumber
+    : versions.length + 1
+  const stableId = payload.version_id ||
+    payload.versionId ||
+    `${payload.artifact_id || payload.board_id || board.activeBoardId || 'drawio'}_v${versionNumber}_${Date.now()}`
+  const title = payload.title || payload.name || board.title || 'Draw.io Board'
+  const fileName = payload.file_name ||
+    payload.fileName ||
+    `${sanitizeDrawioVersionFileName(title)}-v${versionNumber}.drawio`
+
+  return {
+    id: String(stableId),
+    version_id: String(stableId),
+    versionNumber,
+    version_number: versionNumber,
+    title,
+    xml,
+    file_name: fileName,
+    file_path: payload.file_path || payload.path || `drawio_versions/${fileName}`,
+    format: 'drawio',
+    source,
+    downloadLabel: fileName,
+    summary: result.summary || payload.summary || '',
+    created_at: payload.created_at || payload.createdAt || result.timestamp || new Date().toISOString(),
+    is_current: true
+  }
 }
 
 const getDrawioBoardResultsFromMessage = (message = {}) => {
@@ -2049,10 +2100,67 @@ export const useReactStore = defineStore('react', {
       if (!Array.isArray(targetState.board.selectedCells)) {
         targetState.board.selectedCells = []
       }
+      if (!Array.isArray(targetState.board.undoStack)) {
+        targetState.board.undoStack = []
+      }
+      if (!Array.isArray(targetState.board.redoStack)) {
+        targetState.board.redoStack = []
+      }
+      if (!Array.isArray(targetState.board.versions)) {
+        targetState.board.versions = []
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'currentVersionId')) {
+        targetState.board.currentVersionId = null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'baseVersionId')) {
+        targetState.board.baseVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'applyingHistory')) {
+        targetState.board.applyingHistory = false
+      }
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'pendingSnapshotAttachment')) {
         targetState.board.pendingSnapshotAttachment = null
       }
       return targetState.board
+    },
+
+    pushDrawioBoardHistory(xml, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const previousXml = String(xml || '')
+      if (!previousXml || previousXml === board.currentXml) return board
+
+      const lastUndo = board.undoStack[board.undoStack.length - 1]
+      if (lastUndo !== previousXml) {
+        board.undoStack.push(previousXml)
+      }
+      if (board.undoStack.length > 50) {
+        board.undoStack = board.undoStack.slice(board.undoStack.length - 50)
+      }
+      board.redoStack = []
+      return board
+    },
+
+    addDrawioBoardVersion(payload = {}, result = {}, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const xml = getDrawioBoardXml(payload)
+      if (!xml) return null
+
+      const existing = board.versions.find(version => version.xml === xml)
+      const record = existing || createDrawioBoardVersionRecord({
+        board,
+        payload,
+        result,
+        xml,
+        source: payload.source || 'agent'
+      })
+
+      board.versions = board.versions
+        .map(version => ({ ...version, is_current: false }))
+        .filter(version => version.id !== record.id && version.version_id !== record.version_id)
+      board.versions.push({ ...record, is_current: true })
+      board.currentVersionId = record.version_id || record.id
+      board.baseVersionId = board.currentVersionId
+      return record
     },
 
     applyDrawioBoardToolResult(result = {}, targetState = this.currentState) {
@@ -2066,12 +2174,16 @@ export const useReactStore = defineStore('react', {
       const nextVersion = Number(payload.version ?? board.version ?? 0)
       const selectedCells = payload.selectedCells || payload.selected_cells || board.selectedCells || []
 
+      if (!board.applyingHistory && board.currentXml && board.currentXml !== xml) {
+        this.pushDrawioBoardHistory(board.currentXml, targetState)
+      }
+      const versionRecord = this.addDrawioBoardVersion({ ...payload, xml }, result, targetState)
       board.previousXml = board.currentXml || ''
       board.currentXml = xml
       board.activeBoardId = payload.activeBoardId || payload.active_board_id || payload.board_id || payload.artifact_id || payload.id || board.activeBoardId || null
       board.title = payload.title || payload.name || board.title || 'Draw.io Board'
       board.selectedCells = Array.isArray(selectedCells) ? selectedCells : []
-      board.version = Number.isFinite(nextVersion) ? nextVersion : board.version
+      board.version = versionRecord?.versionNumber || (Number.isFinite(nextVersion) ? nextVersion : board.version)
       board.dirty = Boolean(payload.dirty ?? false)
       board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
       targetState.hasResults = true
@@ -2098,6 +2210,10 @@ export const useReactStore = defineStore('react', {
 
       const board = this.ensureDrawioBoardState(targetState)
       board.previousXml = ''
+      board.undoStack = []
+      board.redoStack = []
+      board.applyingHistory = false
+      board.baseVersionId = board.currentVersionId || board.baseVersionId || null
       board.pendingSnapshotAttachment = null
       console.log('[drawio-board] restored from session', {
         source: metadataResult ? 'metadata.drawio_board' : 'tool_result',
@@ -2110,12 +2226,18 @@ export const useReactStore = defineStore('react', {
 
     updateDrawioBoardXml(xml, options = {}, targetState = this.currentState) {
       const board = this.ensureDrawioBoardState(targetState)
+      const nextXml = xml || ''
+      if (nextXml === board.currentXml) return board
+      if (!board.applyingHistory && board.currentXml) {
+        this.pushDrawioBoardHistory(board.currentXml, targetState)
+      }
       board.previousXml = board.currentXml || ''
-      board.currentXml = xml || ''
+      board.currentXml = nextXml
       board.activeBoardId = options.activeBoardId || options.active_board_id || options.board_id || board.activeBoardId
       board.title = options.title || board.title
       board.version = Number.isFinite(Number(options.version)) ? Number(options.version) : board.version + 1
       board.dirty = options.dirty !== undefined ? Boolean(options.dirty) : true
+      board.baseVersionId = board.currentVersionId || board.baseVersionId || null
       board.updatedAt = options.updatedAt || options.updated_at || new Date().toISOString()
       console.log('[drawio-board] XML updated from editor', {
         previousXmlLength: board.previousXml.length,
@@ -2124,6 +2246,69 @@ export const useReactStore = defineStore('react', {
         dirty: board.dirty,
         updatedAt: board.updatedAt
       })
+      return board
+    },
+
+    restoreDrawioBoardVersion(versionId, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const version = board.versions.find(item => (
+        item.id === versionId ||
+        item.version_id === versionId ||
+        String(item.versionNumber) === String(versionId) ||
+        String(item.version_number) === String(versionId)
+      ))
+      if (!version?.xml) return board
+
+      if (board.currentXml && board.currentXml !== version.xml) {
+        this.pushDrawioBoardHistory(board.currentXml, targetState)
+      }
+      board.previousXml = board.currentXml || ''
+      board.currentXml = version.xml
+      board.currentVersionId = version.version_id || version.id
+      board.baseVersionId = board.currentVersionId
+      board.versions = board.versions.map(item => ({
+        ...item,
+        is_current: (item.version_id || item.id) === board.currentVersionId
+      }))
+      board.version = Number(version.version_number || version.versionNumber || board.version)
+      board.title = version.title || board.title
+      board.dirty = false
+      board.updatedAt = new Date().toISOString()
+      return board
+    },
+
+    undoDrawioBoard(targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      if (!board.currentXml || board.undoStack.length === 0) return board
+
+      const previousXml = board.undoStack.pop()
+      board.redoStack.push(board.currentXml)
+      board.previousXml = board.currentXml
+      board.applyingHistory = true
+      board.currentXml = previousXml
+      board.version += 1
+      board.dirty = true
+      board.updatedAt = new Date().toISOString()
+      board.applyingHistory = false
+      return board
+    },
+
+    redoDrawioBoard(targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      if (!board.currentXml || board.redoStack.length === 0) return board
+
+      const nextXml = board.redoStack.pop()
+      board.undoStack.push(board.currentXml)
+      if (board.undoStack.length > 50) {
+        board.undoStack = board.undoStack.slice(board.undoStack.length - 50)
+      }
+      board.previousXml = board.currentXml
+      board.applyingHistory = true
+      board.currentXml = nextXml
+      board.version += 1
+      board.dirty = true
+      board.updatedAt = new Date().toISOString()
+      board.applyingHistory = false
       return board
     },
 
@@ -2198,6 +2383,19 @@ export const useReactStore = defineStore('react', {
         current_xml: board.currentXml,
         selected_cells: board.selectedCells || [],
         version: board.version,
+        current_version_id: board.currentVersionId || null,
+        base_version_id: board.baseVersionId || board.currentVersionId || null,
+        version_files: (board.versions || []).map(version => ({
+          version_id: version.version_id || version.id,
+          version_number: version.version_number || version.versionNumber,
+          title: version.title,
+          file_name: version.file_name,
+          file_path: version.file_path,
+          format: version.format || 'drawio',
+          source: version.source,
+          created_at: version.created_at,
+          is_current: (version.version_id || version.id) === board.currentVersionId
+        })),
         dirty: board.dirty,
         updated_at: board.updatedAt
       }

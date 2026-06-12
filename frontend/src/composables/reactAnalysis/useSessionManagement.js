@@ -605,11 +605,36 @@ export function useSessionManagement(store) {
     return docs
   }
 
+  const activateLocalSessionIfAvailable = (sessionId) => {
+    const localSessionState = store.sessionStates?.[sessionId]
+    if (!localSessionState) return false
+
+    const hasMessages = Array.isArray(localSessionState.messages) && localSessionState.messages.length > 0
+    const hasVisibleState = hasMessages ||
+      !!localSessionState.isAnalyzing ||
+      !!localSessionState.isComplete ||
+      !!localSessionState.finalAnswer
+
+    if (!hasVisibleState) return false
+
+    store._activateSession(sessionId, localSessionState.mode)
+    console.log('[会话切换] 已激活本地会话状态，跳过后端恢复:', {
+      sessionId,
+      messageCount: localSessionState.messages?.length || 0,
+      isAnalyzing: !!localSessionState.isAnalyzing
+    })
+    return true
+  }
+
   /**
    * 处理会话恢复
    * @param {string} sessionId - 会话ID
    */
   const handleSessionRestore = async (sessionId) => {
+    if (activateLocalSessionIfAvailable(sessionId)) {
+      return true
+    }
+
     const result = await doRestoreSession(sessionId, { messageLimit: 100, restoreOfficeDocs: true })
 
     if (result.success) {
@@ -625,6 +650,10 @@ export function useSessionManagement(store) {
    * @param {string} sessionId - 会话ID
    */
   const handleLoadSession = async (sessionId) => {
+    if (activateLocalSessionIfAvailable(sessionId)) {
+      return true
+    }
+
     const result = await doRestoreSession(sessionId, {
       messageLimit: 100,
       restoreOfficeDocs: true

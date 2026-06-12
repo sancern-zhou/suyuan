@@ -390,6 +390,37 @@ def _normalize_static_qmd(qmd_content: str) -> str:
     return normalized
 
 
+def _find_unsupported_r_qmd_features(qmd_content: str) -> List[str]:
+    """Detect R/knitr constructs that make static report packages require R."""
+    if not qmd_content:
+        return []
+
+    checks = [
+        ("R code chunk", r"(?im)^(?:`{3,}|~{3,})\s*\{\s*r(?:[\s,}].*)?$"),
+        ("inline R expression", r"`r\s+[^`]+`"),
+        ("knitr::", r"\bknitr::"),
+        ("rmarkdown::", r"\brmarkdown::"),
+    ]
+    return [label for label, pattern in checks if re.search(pattern, qmd_content)]
+
+
+def _unsupported_r_qmd_result(report_id: str, unsupported_r_features: List[str]) -> Dict[str, Any]:
+    detail = (
+        "report.qmd contains unsupported R/knitr content. "
+        "Use static Markdown image links and pre-generated assets instead."
+    )
+    return {
+        "success": False,
+        "data": {
+            "error": detail,
+            "report_id": report_id,
+            "unsupported_r_features": unsupported_r_features,
+        },
+        "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
+        "summary": "报告包创建失败：QMD 包含不支持的 R/knitr 内容。",
+    }
+
+
 class CreateReportPackageTool(LLMTool):
     """Create a standard ReportPackage and optionally render HTML preview."""
 
@@ -494,6 +525,10 @@ class CreateReportPackageTool(LLMTool):
         **kwargs,
     ) -> Dict[str, Any]:
         safe_id = _safe_report_id(report_id)
+        unsupported_r_features = _find_unsupported_r_qmd_features(qmd_content)
+        if unsupported_r_features:
+            return _unsupported_r_qmd_result(safe_id, unsupported_r_features)
+
         report_dir = quarto_report_renderer.get_report_dir(safe_id)
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "assets" / "charts").mkdir(parents=True, exist_ok=True)
@@ -552,8 +587,13 @@ format:
             try:
                 candidate = Path(source_qmd_path).expanduser().resolve()
                 if candidate.exists() and candidate.is_file() and candidate != qmd_path.resolve():
+                    source_unsupported_r_features = _find_unsupported_r_qmd_features(
+                        candidate.read_text(encoding="utf-8")
+                    )
+                    if source_unsupported_r_features:
+                        return _unsupported_r_qmd_result(safe_id, source_unsupported_r_features)
                     source_qmd = candidate
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 source_qmd = None
 
         qmd_path.write_text(qmd_content, encoding="utf-8")

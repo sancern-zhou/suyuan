@@ -14,6 +14,12 @@ for (const field of [
   'title',
   'currentXml',
   'previousXml',
+  'undoStack',
+  'redoStack',
+  'applyingHistory',
+  'versions',
+  'currentVersionId',
+  'baseVersionId',
   'selectedCells',
   'pendingSnapshotAttachment',
   'version',
@@ -55,6 +61,66 @@ assert.match(
   storeSource,
   /updateDrawioBoardXml\(/,
   'reactStore should expose an action for user-edited draw.io XML'
+)
+
+assert.match(
+  storeSource,
+  /undoDrawioBoard\(/,
+  'reactStore should expose an action to undo draw.io board XML changes'
+)
+
+assert.match(
+  storeSource,
+  /redoDrawioBoard\(/,
+  'reactStore should expose an action to redo draw.io board XML changes'
+)
+
+assert.match(
+  storeSource,
+  /undoStack\.push\(/,
+  'draw.io board XML changes should push the previous XML onto an undo stack'
+)
+
+assert.match(
+  storeSource,
+  /redoStack\s*=\s*\[\]/,
+  'new draw.io board XML changes should clear the redo stack'
+)
+
+assert.match(
+  storeSource,
+  /applyingHistory/,
+  'draw.io board undo/redo should mark programmatic history application'
+)
+
+assert.match(
+  storeSource,
+  /addDrawioBoardVersion\(/,
+  'reactStore should record Agent-generated draw.io XML as version files'
+)
+
+assert.match(
+  storeSource,
+  /restoreDrawioBoardVersion\(/,
+  'reactStore should restore selected draw.io version files into the active board'
+)
+
+assert.match(
+  storeSource,
+  /version_files/,
+  'draw.io board context should include version file metadata'
+)
+
+assert.match(
+  storeSource,
+  /base_version_id/,
+  'draw.io board context should tell the backend which version the current XML is based on'
+)
+
+assert.match(
+  storeSource,
+  /current_version_id/,
+  'draw.io board context should include the current version pointer'
 )
 
 assert.match(
