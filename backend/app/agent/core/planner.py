@@ -397,13 +397,23 @@ class ReActPlanner:
                         if current_tool_block["input_json"]:
                             try:
                                 tool_input = json.loads(current_tool_block["input_json"])
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as exc:
                                 logger.warning(
                                     "tool_use_input_json_parse_failed",
                                     tool_name=current_tool_block["name"],
-                                    raw_json=current_tool_block["input_json"][:200]
+                                    raw_json=current_tool_block["input_json"][:200],
+                                    error=str(exc),
                                 )
-                                tool_input = {}
+                                current_blocks.append({
+                                    "type": "text",
+                                    "text": (
+                                        f"Tool call for {current_tool_block['name']} was not executed because "
+                                        "the streamed tool input JSON was malformed. Retry with a smaller tool "
+                                        "input or write large payloads to a file and pass the file path."
+                                    ),
+                                })
+                                current_tool_block = None
+                                continue
 
                         tool_block = {
                             "type": "tool_use",

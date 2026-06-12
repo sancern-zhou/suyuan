@@ -131,6 +131,10 @@ class PresentArtifactTool(LLMTool):
                 }
             elif resolved_type in {"document", "presentation", "spreadsheet"}:
                 data["pdf_preview"] = await pdf_converter.convert_to_pdf(str(resolved_path))
+                if resolved_type == "presentation" and suffix == ".pptx":
+                    ppt_preview = await self._render_ppt_preview(resolved_path)
+                    if ppt_preview:
+                        data["ppt_preview"] = ppt_preview
             elif resolved_type == "editable_diagram" and suffix in DRAWIO_EXTENSIONS:
                 artifact = {
                     "type": "document",
@@ -160,7 +164,7 @@ class PresentArtifactTool(LLMTool):
                 artifact.setdefault("file_path", str(resolved_path))
                 artifact.setdefault("file_name", resolved_path.name)
                 artifact.setdefault("title", html_artifact_id or resolved_path.stem)
-            preview = data.get("html_preview") or data.get("pdf_preview") or data.get("markdown_preview")
+            preview = data.get("html_preview") or data.get("ppt_preview") or data.get("pdf_preview") or data.get("markdown_preview")
             if isinstance(preview, dict):
                 artifact["preview"] = preview
             data["refs"] = merge_refs(
@@ -273,6 +277,26 @@ class PresentArtifactTool(LLMTool):
 
     def _stable_artifact_id(self, path: Path) -> str:
         return quote(str(path), safe="")
+
+    async def _render_ppt_preview(self, path: Path) -> Optional[Dict[str, Any]]:
+        try:
+            validator_cls = globals().get("ValidatePptxTool")
+            if validator_cls is None:
+                from app.tools.office.validate_pptx_tool import ValidatePptxTool as validator_cls
+
+            validation = await validator_cls().execute(str(path), render_overflow_check=False)
+            data = validation.get("data") if isinstance(validation, dict) else None
+            if not isinstance(data, dict):
+                return None
+            return {
+                "pptx_path": data.get("pptx_path"),
+                "pages": data.get("pages", []),
+                "montage_path": data.get("montage_path"),
+                "report_path": data.get("report_path"),
+            }
+        except Exception as exc:
+            logger.warning("present_artifact_ppt_preview_failed", path=str(path), error=str(exc))
+            return None
 
     def _failure(self, message: str) -> Dict[str, Any]:
         return {

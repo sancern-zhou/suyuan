@@ -148,24 +148,35 @@ class ObservationProcessor:
             pdf_preview = result_data.get("pdf_preview") or inner.get("pdf_preview")
             markdown_preview = result_data.get("markdown_preview") or inner.get("markdown_preview")
             html_preview = result_data.get("html_preview") or inner.get("html_preview")
+            svg_preview = result_data.get("svg_preview") or inner.get("svg_preview")
             file_path = (
                 result_data.get("file_path") or result_data.get("path") or
                 result_data.get("source_file") or result_data.get("output_file") or
                 inner.get("file_path") or inner.get("path")
             )
 
-            if pdf_preview or markdown_preview or html_preview:
+            if pdf_preview or markdown_preview or html_preview or svg_preview:
+                related_files = result_data.get("related_files") or inner.get("related_files")
+                artifacts = result_data.get("artifacts") or inner.get("artifacts")
+                refs = result_data.get("refs") or inner.get("refs")
+                assets = result_data.get("assets") or inner.get("assets")
                 document = {
                     "file_path": file_path,
                     "file_type": inner.get("file_type")
                     or result_data.get("file_type")
-                    or (html_preview or {}).get("file_type"),
+                    or (html_preview or {}).get("file_type")
+                    or (svg_preview or {}).get("file_type"),
                     "generator": generator,
                     "summary": result_data.get("summary", ""),
                     "timestamp": datetime.now().isoformat(),
                     **({"pdf_preview": pdf_preview} if pdf_preview else {}),
                     **({"markdown_preview": markdown_preview} if markdown_preview else {}),
                     **({"html_preview": html_preview} if html_preview else {}),
+                    **({"svg_preview": svg_preview} if svg_preview else {}),
+                    **({"related_files": related_files} if related_files else {}),
+                    **({"artifacts": artifacts} if artifacts else {}),
+                    **({"refs": refs} if refs else {}),
+                    **({"assets": assets} if assets else {}),
                 }
                 if html_preview and not (pdf_preview or markdown_preview):
                     yield self.events.html_document(document)

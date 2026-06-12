@@ -647,7 +647,7 @@ def create_global_tool_registry() -> ToolRegistry:
 
     try:
         from app.tools.office.wecom_cli import WeComCliTool
-        registry.register(WeComCliTool(), priority=353)
+        registry.register(WeComCliTool(), priority=354)
         logger.info("tool_loaded", tool="wecom_cli")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="wecom_cli", error=str(e))

@@ -30,7 +30,9 @@ export function useOfficeDocumentHandler(store, options = {}) {
   const hasDocument = computed(() => {
     return !!(
       latestDocument.value?.pdf_preview ||
-      latestDocument.value?.markdown_preview
+      latestDocument.value?.markdown_preview ||
+      latestDocument.value?.html_preview ||
+      latestDocument.value?.svg_preview
     )
   })
 

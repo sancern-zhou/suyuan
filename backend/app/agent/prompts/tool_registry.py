@@ -31,9 +31,6 @@ ASSISTANT_TOOL_NAMES = {
     "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
     "create_diagram_artifact", "create_report_chart",
 
-    # 任务管理
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-
     # 代码执行
     "execute_python",
 
@@ -300,8 +297,6 @@ ASSISTANT_TOOL_ORDER = [
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
 
-    # 任务管理
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
     "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
 
     # 模式互调

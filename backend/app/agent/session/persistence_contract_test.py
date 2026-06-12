@@ -102,6 +102,78 @@ def test_capture_office_document_updates_existing_report_preview():
     assert office_documents[0]["html_preview"]["preview_version"] == "new"
 
 
+def test_capture_office_document_preserves_html_artifact_related_files():
+    agent = ReActAgent.__new__(ReActAgent)
+    agent._session_store = {}
+    session_id = "assistant_session_diagram"
+    related_files = [
+        {
+            "path": "/tmp/html_artifacts/diagram/assets/diagram.drawio",
+            "relative_path": "assets/diagram.drawio",
+            "url": "/api/html-artifacts/diagram/assets/diagram.drawio",
+            "format": "drawio",
+        },
+        {
+            "path": "/tmp/html_artifacts/diagram/assets/diagram.drawio.svg",
+            "relative_path": "assets/diagram.drawio.svg",
+            "url": "/api/html-artifacts/diagram/assets/diagram.drawio.svg",
+            "format": "drawio_svg",
+        },
+    ]
+
+    agent._capture_office_document(
+        session_id,
+        {
+            "type": "html_document",
+            "data": {
+                "file_path": "/tmp/html_artifacts/diagram/index.html",
+                "file_type": "html_artifact",
+                "generator": "create_diagram_artifact",
+                "html_preview": {
+                    "html_id": "diagram",
+                    "html_url": "/api/html-artifacts/diagram/html",
+                    "file_type": "html_artifact",
+                },
+                "related_files": related_files,
+                "artifacts": [{"format": "png", "file_path": "/tmp/html_artifacts/diagram/assets/diagram.png"}],
+            },
+        },
+    )
+
+    office_documents = agent._session_store[session_id]["office_documents"]
+    assert office_documents[0]["related_files"] == related_files
+    assert office_documents[0]["artifacts"][0]["format"] == "png"
+
+
+def test_capture_office_document_preserves_svg_preview_for_diagram():
+    agent = ReActAgent.__new__(ReActAgent)
+    agent._session_store = {}
+    session_id = "assistant_session_diagram_svg"
+    svg_preview = {
+        "svg_path": "/tmp/html_artifacts/diagram/assets/diagram.drawio.svg",
+        "svg_url": "/api/html-artifacts/diagram/assets/diagram.drawio.svg",
+        "file_type": "drawio_svg",
+        "format": "drawio_svg",
+    }
+
+    agent._capture_office_document(
+        session_id,
+        {
+            "type": "office_document",
+            "data": {
+                "file_path": "/tmp/html_artifacts/diagram/assets/diagram.drawio",
+                "file_type": "drawio",
+                "generator": "create_diagram_artifact",
+                "svg_preview": svg_preview,
+            },
+        },
+    )
+
+    office_documents = agent._session_store[session_id]["office_documents"]
+    assert office_documents[0]["svg_preview"] == svg_preview
+    assert office_documents[0]["file_type"] == "drawio"
+
+
 def test_terminal_persistence_preserves_display_history_and_adds_status():
     session = Session(
         session_id="assistant_session_existing",

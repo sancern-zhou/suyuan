@@ -3,6 +3,7 @@
 
 将现有的查询函数包装为 LLMTool，供 Agent 调用
 """
+import asyncio
 from typing import Dict, Any, List, Optional
 import structlog
 from datetime import datetime
@@ -213,8 +214,8 @@ class QueryGDSuncereCityHourTool(LLMTool):
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        # 调用现有的查询函数（同步函数，直接调用）
-        result = execute_query_gd_suncere_station_hour(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_station_hour,
             cities=cities,
             start_time=start_time,
             end_time=end_time,
@@ -389,7 +390,8 @@ class QueryGDSuncereStationHourTool(LLMTool):
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        result = execute_query_gd_suncere_station_hour_real(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_station_hour_real,
             start_time=start_time,
             end_time=end_time,
             context=context,
@@ -566,7 +568,8 @@ class QueryGDSuncereStationDayTool(LLMTool):
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        result = execute_query_gd_suncere_station_day(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_station_day,
             start_date=start_date,
             end_date=end_date,
             context=context,
@@ -667,8 +670,8 @@ class QueryGDSuncereRegionalComparisonTool(LLMTool):
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        # 调用现有的查询函数（同步函数，直接调用）
-        result = execute_query_gd_suncere_regional_comparison(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_regional_comparison,
             target_city=target_city,
             nearby_cities=nearby_cities,
             start_time=start_time,
@@ -808,8 +811,8 @@ class QueryGDSuncereCityDayTool(LLMTool):
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        # 调用现有的查询函数（同步函数，直接调用）
-        result = execute_query_gd_suncere_city_day(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_city_day,
             cities=cities,
             start_date=start_date,
             end_date=end_date,
@@ -967,7 +970,8 @@ class QueryGDSuncereDistrictDayTool(LLMTool):
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        result = execute_query_gd_suncere_district_day(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_district_day,
             start_time=start_time,
             end_time=end_time,
             context=context,
@@ -1132,8 +1136,8 @@ time_type=8  # 任意时间报表
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        # 调用现有的查询函数（同步函数，直接调用）
-        result = execute_query_gd_suncere_report(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_report,
             cities=cities,
             start_time=start_time,
             end_time=end_time,
@@ -1284,7 +1288,8 @@ class QueryGDSuncereDistrictReportTool(LLMTool):
                 }
             }
 
-        result = execute_query_gd_suncere_district_report(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_district_report,
             start_time=start_time,
             end_time=end_time,
             context=context,
@@ -1452,8 +1457,8 @@ contrast_time=["2025-02-01 00:00:00", "2025-02-28 23:59:59"]
             session_id=getattr(context, 'session_id', 'unknown')
         )
 
-        # 调用现有的查询函数（同步函数，直接调用）
-        result = execute_query_gd_suncere_report_compare(
+        result = await asyncio.to_thread(
+            execute_query_gd_suncere_report_compare,
             cities=cities,
             time_point=time_point,
             contrast_time=contrast_time,

@@ -12,7 +12,8 @@
 ## 硬性约束
 
 - 生成正式业务 PPT 时优先使用 `create_pptx_with_ppt_master`。
-- 续改 PPT Master 生成物时，读取上一版 `slide_plan.v*.json`，由 Agent 编写局部 `plan_patch`，继续调用 `create_pptx_with_ppt_master` 合并并重绘。
+- 长 PPT 不要一次内联提交完整 `slide_plan`：超过 8 页、shapes 很多或图表/表格很多时，先生成骨架，再用 `create_pptx_with_ppt_master(operation="append"/"replace"/"patch")` 每批 3-5 页续改；短批次可用 `batch_slides` + `after_slide`，长批次先 `write_file` 写 JSON，再传 `slide_plan_path` 或 `plan_patch_path`；每批必须基于上一批返回的最新 `data.next_revision_base_plan_path` 或 `data.slide_plan_path`。
+- 续改 PPT Master 生成物时，读取上一版 `slide_plan.v*.json`，由 Agent 编写局部 `plan_patch`，调用 `create_pptx_with_ppt_master(operation="patch")` 合并并重绘。
 - PPT 图表图片必须在创建 PPT 时通过 `outline[].chart.image_path`、`outline[].chart.path` 或 `outline[].visual.image_path` 传入，不要先生成 mock PPT 再猜槽位替换。
 - PPT 生成后必须读取 `qa_status`、`quality_gate` 和 `validation.montage_path`；如生成了 montage，总览图必须再调用 `analyze_image` 做视觉质量检查。
 - 工具约束统一维护在 `backend/app/tools/office/ppt_master_references/`，不要从 `backend/docs/skills/` 复制或扩展 PPT Master 规则。

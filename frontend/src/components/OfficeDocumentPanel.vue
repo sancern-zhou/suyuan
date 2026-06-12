@@ -62,8 +62,16 @@
                   <button v-if="doc.doc_type === 'report'" @click="downloadReportFormat(doc, 'docx')" class="download-item">
                     下载 Word 文档
                   </button>
-                  <button v-if="doc.doc_type === 'html_artifact'" @click="downloadHtmlArtifact(doc)" class="download-item">
+                  <button v-if="doc.doc_type === 'html_artifact' && !isDiagramDocument(doc)" @click="downloadHtmlArtifact(doc)" class="download-item">
                     下载 HTML 文件
+                  </button>
+                  <button
+                    v-for="file in getRelatedDownloadFiles(doc)"
+                    :key="file.key"
+                    @click="downloadRelatedFile(file)"
+                    class="download-item"
+                  >
+                    {{ getRelatedDownloadLabel(file) }}
                   </button>
                   <button v-if="doc.file_path && doc.generator === 'present_artifact'" @click="downloadOriginalFile(doc)" class="download-item">
                     下载原文件
@@ -224,6 +232,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import { normalizeArtifactUrl, normalizeRelatedArtifactFiles } from '@/utils/artifactRelatedFiles'
 
 const reactStore = useReactStore()
 const emit = defineEmits(['submit-edit'])
@@ -283,7 +292,7 @@ const hasOfficeDocuments = computed(() => {
 
 const officeDocuments = computed(() => {
   return (reactStore.officeDocumentHistory || [])
-    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.pdf_url || doc?.html_url || doc?.markdown_content)
+    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.pdf_url || doc?.html_url || doc?.svg_url || doc?.markdown_content)
     .map(normalizeDocument)
 })
 
@@ -303,7 +312,7 @@ const fileHistory = computed(() => {
 })
 
 function getDocumentKey(doc) {
-  return doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.file_name || ''
+  return doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.svg_url || doc?.file_name || ''
 }
 
 function getDocumentSignature(doc) {
@@ -311,6 +320,7 @@ function getDocumentSignature(doc) {
   return [
     getDocumentKey(doc),
     doc.html_url,
+    doc.svg_url,
     doc.pdf_url,
     doc.preview_version,
     doc.timestamp
@@ -326,18 +336,27 @@ function selectDocument(doc) {
 }
 
 function normalizeDocument(doc) {
-  const filePath = doc.file_path || doc.path || doc.pdf_preview?.pdf_path
+  const filePath = doc.file_path || doc.path || doc.pdf_preview?.pdf_path || doc.svg_preview?.svg_path
   const fileName = doc.file_name || (filePath ? filePath.split(/[/\\]/).pop() : 'unknown')
+  const svgPreviewUrl = getSvgPreviewUrl(doc)
+  const htmlPreviewUrl = doc.html_url || withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version) || svgPreviewUrl
   return {
-    doc_type: doc.doc_type || getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
+    doc_type: doc.doc_type || getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type || doc.svg_preview?.file_type),
     file_name: fileName,
     file_path: filePath,
     generator: doc.generator,
-    pdf_url: doc.pdf_url || doc.pdf_preview?.pdf_url,
+    pdf_url: normalizeArtifactUrl(doc.pdf_url || doc.pdf_preview?.pdf_url),
     pdf_id: doc.pdf_id || doc.pdf_preview?.pdf_id,
-    html_url: doc.html_url || withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
+    html_url: normalizeArtifactUrl(htmlPreviewUrl),
     html_id: doc.html_id || doc.html_preview?.html_id,
+    svg_url: normalizeArtifactUrl(svgPreviewUrl),
+    svg_preview: doc.svg_preview,
     preview_version: doc.preview_version || doc.html_preview?.preview_version,
+    related_files: doc.related_files,
+    artifacts: doc.artifacts,
+    refs: doc.refs,
+    assets: doc.assets,
+    metadata: doc.metadata,
     markdown_content: doc.markdown_content || doc.markdown_preview?.content,
     loading: doc.loading || false,
     sharing: doc.sharing || false,
@@ -351,6 +370,20 @@ function normalizeDocument(doc) {
       timestamp: doc.timestamp || new Date()
     }
   }
+}
+
+function getSvgPreviewUrl(doc) {
+  const directUrl = doc.svg_url || doc.svg_preview?.svg_url
+  if (directUrl) {
+    return directUrl
+  }
+
+  const svgFile = getRelatedDownloadFiles(doc).find(file => {
+    const format = String(file.format || '').toLowerCase()
+    return format === 'svg' || format === 'drawio_svg'
+  })
+
+  return svgFile?.url || ''
 }
 
 function withPreviewVersion(url, version) {
@@ -707,6 +740,54 @@ async function downloadHtmlArtifact(doc) {
   } catch (error) {
     console.error('[OfficeDocumentPanel] HTML artifact download failed:', error)
     alert(`下载HTML展示页失败：${error.message}`)
+  }
+}
+
+function getRelatedDownloadFiles(doc) {
+  return normalizeRelatedArtifactFiles({
+    artifact: {
+      related_files: doc.related_files,
+      artifacts: doc.artifacts,
+      assets: doc.assets
+    },
+    refs: doc.refs
+  })
+}
+
+function getRelatedDownloadLabel(file) {
+  const format = String(file.format || '').toLowerCase()
+  if (format === 'drawio') return '下载 Draw.io 源文件（可继续编辑）'
+  if (format === 'drawio_svg' || format === 'svg') return '下载 SVG 矢量图'
+  if (format === 'png') return '下载 PNG 图片'
+  return file.downloadLabel || '下载附件'
+}
+
+function isDiagramDocument(doc) {
+  return doc?.generator === 'create_diagram_artifact' ||
+    doc?.metadata?.artifact_kind === 'diagram' ||
+    doc?.refs?.drawio ||
+    getRelatedDownloadFiles(doc).some(file => file.format === 'drawio')
+}
+
+function downloadRelatedFile(file) {
+  if (!file?.file_path && !file?.url) {
+    console.error('[OfficeDocumentPanel] Related file not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = file.file_path?.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Related file download failed:', error)
   }
 }
 

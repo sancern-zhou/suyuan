@@ -13,7 +13,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     特点：
     - 专注办公任务
     - 工具参数和描述由原生 tool schema 提供
-    - 支持任务清单管理（复杂任务拆解）
     - 记忆注入（从快照获取，直接注入到系统提示词）
 
     Args:
@@ -56,6 +55,33 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         / "index.md"
     ).resolve()
     diagram_reference_index_path_str = str(diagram_reference_index_path).replace("\\", "/")
+    freeform_reference_index_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "freeform-index.md"
+    ).resolve()
+    freeform_reference_index_path_str = str(freeform_reference_index_path).replace("\\", "/")
+    freeform_architecture_reference_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "freeform-architecture.md"
+    ).resolve()
+    freeform_architecture_reference_path_str = str(freeform_architecture_reference_path).replace("\\", "/")
+    freeform_checklist_reference_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "freeform-checklist.md"
+    ).resolve()
+    freeform_checklist_reference_path_str = str(freeform_checklist_reference_path).replace("\\", "/")
 
     # 使用字符串拼接避免 f-string 中的大括号转义问题
     prompt_parts = []
@@ -81,8 +107,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- 需要获取外部信息、操作文件、执行命令或生成产物时，使用合适工具。\n",
         "- 信息已经足够时，直接给出自然语言答复。\n",
         "- 不要重复调用相同工具和参数；已有结果足够回答时停止调用工具。\n",
-        "- 简单问答、单步操作或 8 个及以下任务节点不要使用任务清单工具。\n",
-        "- 复杂多步骤任务指需要拆分为 8 个以上任务节点的任务；仅这类任务使用 TaskCreate/TaskUpdate/TaskList/TaskGet：创建任务前先避免重复；开始任务前标记 in_progress；真实完成后再标记 completed。\n",
         "\n",
         "## 工具选择\n",
         "\n",
@@ -116,6 +140,9 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- 流程图、架构图、步骤图、决策树优先使用 `create_diagram_artifact` 生成 HTML 展示页。\n",
         "- 架构图默认使用 `create_diagram_artifact` 的 `diagram_mode=\"freeform\"`。freeform 是通用 draw.io 画布，不限定架构图，可用 `canvas/shapes/connectors/groups` 自由组合，并输出 `.drawio` 主编辑源和 PNG/SVG 预览。\n",
         "- 当用户要求可编辑图、类似 Visio/draw.io、自由布局、复杂拓扑、思维导图或不希望受模板限制时，必须使用 `diagram_mode=\"freeform\"`。\n",
+        "- 使用 `create_diagram_artifact` 绘制任何图表都必须遵循“先写大纲、再生成图表、然后做 QA、修改后最终提交”的流程；不能上来就画图，也不能把工具首次成功返回直接当作最终交付。\n",
+        "- 使用 `create_diagram_artifact` 的 `diagram_mode=\"freeform\"` 前，必须先阅读 `" + freeform_reference_index_path_str + "`（create_diagram_artifact/references/freeform-index.md）；架构图、分层系统图、平台架构图、拓扑图再读取 `" + freeform_architecture_reference_path_str + "`（freeform-architecture.md）和 `" + freeform_checklist_reference_path_str + "`（freeform-checklist.md）。\n",
+        "- 自由画布设计必须先完成画布、节点、分组和主干连线设计，再生成 `canvas/shapes/connectors/groups`；架构图默认只连接 group/container 层级或边界，不连接 group 内普通 shape，连线控制在 3-8 条；分层架构默认基础层在下、应用层在上，每层左侧单独放层级说明栏，右侧模块区居中排布；同层模块需要居中时使用 `postprocess={\"center_group_children\": true}`。\n",
         "- 只有用户明确要求标准分层模板、固定流程模板或需要严格套内置模板时，才使用 `diagram_mode=\"template\"` 和对应模板；不要把 freeform 再强行压成 `layers/groups/items`。\n",
         "- 使用 `create_diagram_artifact` 的 `diagram_mode=\"template\"` 前，必须先判断图表类型（架构图、分层系统图、流程图、决策树、数据流图），先阅读 `" + diagram_reference_index_path_str + "`（create_diagram_artifact/references/index.md），再读取对应类型模板和 checklist。\n",
         "- 架构图/分层系统图必须按模板设计 `layers/groups/items`；旧 `steps + group` 仅作为兼容格式，避免把所有模块平铺成一条长图。\n",

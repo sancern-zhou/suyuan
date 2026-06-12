@@ -4,14 +4,14 @@ Office Automation Tools
 提供当前 Agent 可用的 Office 文档处理能力。
 
 架构：
-- PPT 读取、PPT Master 生成、续改和验证
+- PPT 读取、PPT Master 生成/续改/渲染和验证
 - Word 读取由 read_file/read_docx 负责，助手模式不再暴露 Word 编辑工具
 - Excel 操作通过 execute_python 配合 openpyxl/pandas/xlsxwriter 完成
 - 企业微信能力通过官方 wecom-cli 调用（WeComCliTool）
 
 工具列表：
 - ReadPptxTool: 读取 PPTX 内容
-- CreatePptxWithPptMasterTool: 按 PPT Master 工作流创建生产级 PPTX
+- CreatePptxWithPptMasterTool: 按 operation 创建、续改或渲染生产级 PPTX
 - WeComCliTool: 官方企业微信 CLI 包装工具
 - soffice: LibreOffice 沙箱适配（跨平台）
 
@@ -25,8 +25,8 @@ Excel操作说明：
 
 PPT操作说明：
 读取PPT请优先使用 read_pptx。
-生成正式或业务型PPT请优先直接调用 create_pptx_with_ppt_master，按目标、大纲、风格、
-版式锁定、逐页绘制、QA、导出检查的流程生成。
+生成正式或业务型PPT请优先直接调用 create_pptx_with_ppt_master，按 operation=create/append/
+replace/patch/render 生成、续改或刷新可编辑PPTX预览。
 execute_python 仅用于复杂的局部编辑、特殊兼容处理或前置数据/图片资产生成。
 """
 

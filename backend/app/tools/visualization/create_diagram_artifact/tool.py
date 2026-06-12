@@ -1,7 +1,8 @@
-"""Tool for creating previewable diagram HTML artifacts."""
+"""Tool for creating diagram artifacts with SVG, Draw.io, and template exports."""
 from __future__ import annotations
 
 import html
+import json
 import re
 from datetime import datetime
 from datetime import date as date_cls
@@ -15,12 +16,15 @@ from app.tools.artifact_utils import (
     build_artifact_resume_context,
     build_document_artifact,
 )
-from app.services.html_artifact_service import html_artifact_service
+from app.services.html_artifact_service import _safe_artifact_id, html_artifact_service
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.visualization.create_diagram_artifact.freeform_exporter import export_freeform_diagram
 from app.tools.visualization.create_diagram_artifact.freeform_models import (
     FreeformValidationError,
     normalize_freeform_diagram,
+)
+from app.tools.visualization.create_diagram_artifact.freeform_postprocessor import (
+    postprocess_freeform_diagram,
 )
 from app.tools.visualization.font_sizing import FontScale, resolve_font_scale
 
@@ -140,6 +144,7 @@ ICON_TOKENS = {
 NODE_SHAPES = {"rectangle", "database", "cloud", "document", "queue"}
 DATABASE_ICON_TOKENS = {"database", "timeseries", "warehouse", "object-storage", "lake", "storage"}
 DEFAULT_DIAGRAM_FONT_SCALE = 2.0
+AUTO_CENTER_FREEFORM_INTENTS = {"architecture", "system_architecture", "layered_architecture", "topology"}
 
 
 def diagram_design_reference_paths() -> Dict[str, str]:
@@ -153,6 +158,10 @@ def diagram_design_reference_paths() -> Dict[str, str]:
         "mind_map": "create_diagram_artifact/references/mind-map.md",
         "gantt": "create_diagram_artifact/references/gantt.md",
         "layered_system": "create_diagram_artifact/references/layered-system.md",
+        "freeform_index": "create_diagram_artifact/references/freeform-index.md",
+        "freeform_primitives": "create_diagram_artifact/references/freeform-primitives.md",
+        "freeform_architecture": "create_diagram_artifact/references/freeform-architecture.md",
+        "freeform_checklist": "create_diagram_artifact/references/freeform-checklist.md",
         "icon_catalog": "create_diagram_artifact/references/icon-catalog.md",
         "checklist": "create_diagram_artifact/references/checklist.md",
     }
@@ -171,6 +180,17 @@ def _normalise_diagram_type(diagram_type: str | None) -> str:
     }
     value = (diagram_type or "auto").strip().lower()
     return mapping.get(value, value)
+
+
+def _freeform_postprocess_options(
+    diagram_intent: Optional[str],
+    postprocess: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    options = dict(postprocess or {})
+    intent = str(diagram_intent or "").strip().lower()
+    if intent in AUTO_CENTER_FREEFORM_INTENTS and "center_group_children" not in options:
+        options["center_group_children"] = True
+    return options or postprocess
 
 
 def _scaled_int(value: int, font_scale: FontScale = None) -> int:
@@ -507,16 +527,19 @@ def _diagram_icon_svg(icon: str) -> str:
 
 
 class CreateDiagramArtifactTool(LLMTool):
-    """Create a previewable/shareable diagram artifact with type-specific renderers."""
+    """Create editable diagram artifacts with type-specific renderers."""
 
     def __init__(self, name: str = "create_diagram_artifact"):
         super().__init__(
             name=name,
             description=(
-                "双输出HTML+WordA4。先判断图表类型，调用本工具前必须先读取 "
-                "create_diagram_artifact/references/index.md "
-                "create_diagram_artifact/references/architecture.md "
-                "create_diagram_artifact/references/checklist.md。"
+                "先判断 diagram_mode。template 模式输出 HTML+WordA4/Draw.io，先读 "
+                "create_diagram_artifact/references/index.md 和对应模板/checklist；"
+                "freeform 模式输出可编辑 Draw.io、SVG 预览和 PNG 兜底，先读 "
+                "create_diagram_artifact/references/freeform-index.md 和 "
+                "freeform-primitives.md；架构/拓扑类再读 freeform-architecture.md，"
+                "最后读 freeform-checklist.md。所有图表必须先写大纲、再生成、"
+                "再 QA、必要修改后才最终提交。"
             ),
             category=ToolCategory.VISUALIZATION,
             version="3.0.0",
@@ -527,11 +550,19 @@ class CreateDiagramArtifactTool(LLMTool):
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["create", "patch", "validate", "render"],
+                        "default": "create",
+                        "description": "create 新建；patch 基于上一版 diagram_plan 局部修改；validate 仅质量检查；render 只按已有 plan 重新导出 Draw.io/SVG/PNG。",
+                    },
                     "artifact_id": {
                         "type": "string",
+                        "description": "图表产物 ID；create/patch/validate/render 均必须显式传入。",
                     },
                     "title": {
                         "type": "string",
+                        "description": "新建图表时的标题；patch/render 可从 base_plan_path 中沿用。",
                     },
                     "direction": {
                         "type": "string",
@@ -658,13 +689,30 @@ class CreateDiagramArtifactTool(LLMTool):
                             "additionalProperties": True,
                         },
                     },
-                    "output_formats": {
-                        "type": "array",
-                        "description": "Freeform output formats, such as drawio, png, and drawio_svg.",
-                        "items": {"type": "string"},
+                    "postprocess": {
+                        "type": "object",
+                        "description": "Freeform deterministic cleanup options. Set enabled=false to preserve raw Agent layout exactly. center_group_children=true horizontally centers each row of group children.",
+                        "additionalProperties": True,
+                    },
+                    "base_plan_path": {
+                        "type": "string",
+                        "description": "patch/render/validate 用。上一版 data.diagram_plan_path 或 data.next_revision_base_plan_path。",
+                    },
+                    "diagram_plan_path": {
+                        "type": "string",
+                        "description": "base_plan_path 的别名，用于读取已有 diagram_plan.v*.json。",
+                    },
+                    "diagram_patch": {
+                        "type": "object",
+                        "description": "operation=patch 用。支持 replace_shapes/add_shapes/remove_shapes、replace_connectors/add_connectors/remove_connectors、replace_groups/add_groups/remove_groups。",
+                        "additionalProperties": True,
+                    },
+                    "diagram_patch_path": {
+                        "type": "string",
+                        "description": "长补丁用。JSON 文件路径，内容为 diagram_patch 对象。",
                     },
                 },
-                "required": ["artifact_id", "title"],
+                "required": ["artifact_id"],
             },
         }
 
@@ -1748,8 +1796,9 @@ class CreateDiagramArtifactTool(LLMTool):
 
     def _build_freeform_preview_html(self, title: str, artifact_id: str) -> str:
         safe_title = html.escape(title or artifact_id)
-        safe_drawio_url = html.escape(f"/api/html-artifacts/{artifact_id}/assets/diagram.drawio", quote=True)
-        safe_png_url = html.escape(f"/api/html-artifacts/{artifact_id}/assets/diagram.png", quote=True)
+        safe_drawio_url = "assets/diagram.drawio"
+        safe_svg_url = "assets/diagram.drawio.svg"
+        safe_png_url = "assets/diagram.png"
         return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1814,11 +1863,12 @@ class CreateDiagramArtifactTool(LLMTool):
       <h1>{safe_title}</h1>
       <nav class="actions" aria-label="diagram downloads">
         <a href="{safe_drawio_url}" download>Draw.io</a>
+        <a href="{safe_svg_url}" download>SVG</a>
         <a href="{safe_png_url}" download>PNG</a>
       </nav>
     </header>
     <main>
-      <img src="assets/diagram.png" alt="{safe_title}" />
+      <img src="{safe_svg_url}" alt="{safe_title}" />
     </main>
   </div>
 </body>
@@ -1828,6 +1878,8 @@ class CreateDiagramArtifactTool(LLMTool):
     async def _execute_freeform_diagram(
         self,
         *,
+        operation: str = "create",
+        base_plan_path: Optional[str] = None,
         artifact_id: str,
         title: str,
         diagram_intent: Optional[str],
@@ -1835,7 +1887,7 @@ class CreateDiagramArtifactTool(LLMTool):
         shapes: Optional[List[Dict[str, Any]]],
         connectors: Optional[List[Dict[str, Any]]],
         groups: Optional[List[Dict[str, Any]]],
-        output_formats: Optional[List[str]],
+        postprocess: Optional[Dict[str, Any]],
         metadata: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         try:
@@ -1846,7 +1898,7 @@ class CreateDiagramArtifactTool(LLMTool):
                 shapes=shapes,
                 connectors=connectors,
                 groups=groups,
-                output_formats=output_formats,
+                output_formats=None,
                 diagram_intent=diagram_intent,
             )
         except FreeformValidationError as validation_exc:
@@ -1864,41 +1916,41 @@ class CreateDiagramArtifactTool(LLMTool):
                 "summary": f"自由画布图表生成失败：{validation_exc}",
             }
 
-        data = html_artifact_service.create_artifact(
-            artifact_id,
-            self._build_freeform_preview_html(title, artifact_id),
-            title=title,
-            metadata={
-                "artifact_kind": "diagram",
-                "diagram_mode": "freeform",
-                "diagram_intent": diagram.diagram_intent,
-                "layout_engine": "freeform_drawio",
-                "output_targets": list(diagram.output_formats),
-                "generated_at": datetime.now().isoformat(),
-                **(metadata or {}),
-            },
+        postprocess_result = postprocess_freeform_diagram(
+            diagram,
+            style_pack=None,
+            options=_freeform_postprocess_options(diagram.diagram_intent, postprocess),
         )
-        index_path = Path(data["file_path"])
-        index_path.write_text(
-            self._build_freeform_preview_html(title, data["artifact_id"]),
+        diagram = postprocess_result.diagram
+        quality_warnings = list(postprocess_result.quality_warnings)
+        postprocess_actions = list(postprocess_result.actions)
+        quality_gate = self._build_freeform_quality_gate(
+            diagram,
+            quality_warnings,
+            block_delivery=True,
+        )
+        qa_status = quality_gate["status"]
+        revision_tasks = list(quality_gate["revision_tasks"])
+
+        safe_artifact_id = _safe_artifact_id(artifact_id)
+        artifact_dir = html_artifact_service.get_artifact_dir(safe_artifact_id)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        plan_version = self._next_diagram_plan_version(base_plan_path) if operation == "patch" else 1
+        design_spec_path = artifact_dir / "design_spec.md"
+        diagram_plan_path = artifact_dir / f"diagram_plan.v{plan_version}.json"
+        qa_report_path = artifact_dir / "qa_report.json"
+        design_spec_path.write_text(
+            self._build_freeform_design_spec(diagram, postprocess_result.style_pack),
             encoding="utf-8",
         )
-        html_artifact_service.record_update(data["artifact_id"], source="freeform_preview_rewrite")
-        data["html_preview"] = html_artifact_service.build_html_preview(data["artifact_id"])
-
-        export_result = export_freeform_diagram(diagram, Path(data["artifact_dir"]))
-        drawio_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio"
-        png_url = f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.png"
-        svg_exists = (
-            "drawio_svg" in diagram.output_formats
-            and export_result.preview_svg_path.exists()
+        diagram_plan_path.write_text(
+            json.dumps(diagram.to_source_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
-        svg_url = (
-            f"/api/html-artifacts/{data['artifact_id']}/assets/diagram.drawio.svg"
-            if svg_exists
-            else None
+        qa_report_path.write_text(
+            json.dumps(quality_gate, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
-        export_warnings = list(export_result.warnings)
 
         metadata_out = {
             "generator": self.name,
@@ -1908,28 +1960,85 @@ class CreateDiagramArtifactTool(LLMTool):
             "diagram_intent": diagram.diagram_intent,
             "layout_engine": "freeform_drawio",
             "output_targets": list(diagram.output_formats),
-            "export_warnings": export_warnings,
+            "style_pack": postprocess_result.style_pack,
+            "quality_warnings": quality_warnings,
+            "postprocess_actions": postprocess_actions,
+            "export_warnings": [],
+            "qa_status": qa_status,
+            "delivery_blocked": qa_status == "blocked",
         }
+        if qa_status == "blocked":
+            blocked_data = {
+                "operation": operation,
+                "artifact_id": safe_artifact_id,
+                "title": title,
+                "artifact_dir": str(artifact_dir),
+                "design_spec_path": str(design_spec_path),
+                "diagram_plan_path": str(diagram_plan_path),
+                "qa_report_path": str(qa_report_path),
+                "next_revision_base_plan_path": str(diagram_plan_path),
+                "qa_status": qa_status,
+                "quality_gate": quality_gate,
+                "revision_tasks": revision_tasks,
+                "delivery_blocked": True,
+                "drawio_path": None,
+                "preview_svg_path": None,
+                "file_path": None,
+                "file_type": "diagram",
+                "metadata": metadata_out,
+            }
+            return {
+                "status": "success",
+                "success": True,
+                "data": blocked_data,
+                "visuals": [],
+                "refs": {
+                    "diagram_plan": str(diagram_plan_path),
+                    "qa_report": str(qa_report_path),
+                },
+                "file_path": None,
+                "file_type": "diagram",
+                "artifact": None,
+                "artifacts": [],
+                "related_files": [],
+                "metadata": metadata_out,
+                "summary": f"自由画布图表未导出：{safe_artifact_id} 的架构质量门禁阻断交付。",
+            }
+
+        export_result = export_freeform_diagram(diagram, artifact_dir)
+        drawio_url = f"/api/html-artifacts/{safe_artifact_id}/assets/diagram.drawio"
+        png_url = f"/api/html-artifacts/{safe_artifact_id}/assets/diagram.png"
+        svg_exists = export_result.preview_svg_path.exists()
+        svg_url = (
+            f"/api/html-artifacts/{safe_artifact_id}/assets/diagram.drawio.svg"
+            if svg_exists
+            else None
+        )
+        preview_url = svg_url or png_url
+        preview_path = export_result.preview_svg_path if svg_exists else export_result.preview_png_path
+        preview_format = "svg" if svg_exists else "png"
+        export_warnings = list(export_result.warnings)
+
+        metadata_out["export_warnings"] = export_warnings
         visuals = [
             {
-                "id": f"{data['artifact_id']}_freeform_png",
-                "image_id": f"{data['artifact_id']}_freeform_png",
+                "id": f"{safe_artifact_id}_freeform_{preview_format}",
+                "image_id": f"{safe_artifact_id}_freeform_{preview_format}",
                 "title": title,
                 "type": "image",
-                "image_url": png_url,
-                "url": png_url,
+                "image_url": preview_url,
+                "url": preview_url,
                 "data": {
-                    "url": png_url,
-                    "local_path": str(export_result.preview_png_path),
+                    "url": preview_url,
+                    "local_path": str(preview_path),
                 },
-                "markdown_image": f"![{title}]({png_url})",
-                "local_path": str(export_result.preview_png_path),
-                "format": "png",
+                "markdown_image": f"![{title}]({preview_url})",
+                "local_path": str(preview_path),
+                "format": preview_format,
                 "output_target": "freeform",
             }
         ]
         refs = {
-            "html": data.get("file_path"),
             "drawio": str(export_result.drawio_path),
             "source_json": str(export_result.source_json_path),
             "png": str(export_result.preview_png_path),
@@ -1951,7 +2060,6 @@ class CreateDiagramArtifactTool(LLMTool):
                 kind="image",
                 format="png",
                 title=f"{title} PNG",
-                preview=data.get("html_preview"),
                 generator=self.name,
                 metadata={"url": png_url, "diagram_mode": "freeform"},
             ),
@@ -2003,44 +2111,90 @@ class CreateDiagramArtifactTool(LLMTool):
                 "format": "drawio_svg",
             })
 
-        data.pop("download_url", None)
-        data.pop("share_endpoint", None)
-        data.update(
-            {
-                "drawio_path": str(export_result.drawio_path),
-                "drawio_url": drawio_url,
-                "source_json_path": str(export_result.source_json_path),
-                "static_image_path": str(export_result.preview_png_path),
-                "static_image_url": png_url,
-                "metadata": metadata_out,
-                "assets": [
-                    {
-                        "path": str(export_result.preview_png_path),
-                        "relative_path": "assets/diagram.png",
-                        "format": "png",
-                        "size_kb": round(export_result.preview_png_path.stat().st_size / 1024, 2),
-                    }
-                ],
-                "visuals": visuals,
-                "refs": refs,
-                "artifact": artifacts[0],
-                "artifacts": artifacts,
-                "related_files": related_files,
-            }
-        )
+        generated_at = datetime.now().isoformat()
+        meta = {
+            "artifact_id": safe_artifact_id,
+            "title": title,
+            "artifact_type": "diagram",
+            "artifact_kind": "diagram",
+            "diagram_mode": "freeform",
+            "diagram_intent": diagram.diagram_intent,
+            "layout_engine": "freeform_drawio",
+            "output_targets": list(diagram.output_formats),
+            "style_pack": postprocess_result.style_pack,
+            "quality_warnings": quality_warnings,
+            "postprocess_actions": postprocess_actions,
+            "qa_status": qa_status,
+            "quality_gate": quality_gate,
+            "generated_at": generated_at,
+            "files": {
+                "diagram_plan": str(diagram_plan_path),
+                "qa_report": str(qa_report_path),
+                "drawio": str(export_result.drawio_path),
+                "source_json": str(export_result.source_json_path),
+                "png": str(export_result.preview_png_path),
+                **({"svg": str(export_result.preview_svg_path)} if svg_exists else {}),
+            },
+            "related_files": related_files,
+            **(metadata or {}),
+        }
+        html_artifact_service.write_meta(safe_artifact_id, meta)
+
+        data = {
+            "operation": operation,
+            "artifact_id": safe_artifact_id,
+            "title": title,
+            "artifact_dir": str(artifact_dir),
+            "design_spec_path": str(design_spec_path),
+            "diagram_plan_path": str(diagram_plan_path),
+            "qa_report_path": str(qa_report_path),
+            "next_revision_base_plan_path": str(diagram_plan_path),
+            "qa_status": qa_status,
+            "quality_gate": quality_gate,
+            "revision_tasks": revision_tasks,
+            "file_path": str(export_result.drawio_path),
+            "file_type": "drawio",
+            "format": "drawio",
+            "preview_url": preview_url,
+            "preview_path": str(preview_path),
+            "preview_format": preview_format,
+            "drawio_path": str(export_result.drawio_path),
+            "drawio_url": drawio_url,
+            "source_json_path": str(export_result.source_json_path),
+            "static_image_path": str(export_result.preview_png_path),
+            "static_image_url": png_url,
+            "metadata": metadata_out,
+            "assets": [
+                {
+                    "path": str(export_result.preview_png_path),
+                    "relative_path": "assets/diagram.png",
+                    "format": "png",
+                    "size_kb": round(export_result.preview_png_path.stat().st_size / 1024, 2),
+                }
+            ],
+            "visuals": visuals,
+            "refs": refs,
+            "artifact": artifacts[0],
+            "artifacts": artifacts,
+            "related_files": related_files,
+        }
         if svg_exists:
             data["preview_svg_path"] = str(export_result.preview_svg_path)
             data["preview_svg_url"] = svg_url
+            data["svg_preview"] = {
+                "svg_path": str(export_result.preview_svg_path),
+                "svg_url": svg_url,
+                "file_type": "drawio_svg",
+                "format": "drawio_svg",
+            }
 
         return {
             "status": "success",
             "success": True,
             "data": data,
-            "visuals": visuals,
             "refs": refs,
-            "html_preview": data.get("html_preview"),
             "file_path": data.get("file_path"),
-            "file_type": data.get("file_type", "html_artifact"),
+            "file_type": data.get("file_type", "drawio"),
             "artifact": data.get("artifact"),
             "artifacts": artifacts,
             "related_files": related_files,
@@ -2048,8 +2202,345 @@ class CreateDiagramArtifactTool(LLMTool):
             "summary": f"自由画布图表已生成：{data['artifact_id']}。Draw.io 路径：{data['drawio_path']}。",
         }
 
+    async def _execute_freeform_validate(
+        self,
+        *,
+        artifact_id: str,
+        title: str,
+        diagram_intent: Optional[str],
+        canvas: Optional[Dict[str, Any]],
+        shapes: Optional[List[Dict[str, Any]]],
+        connectors: Optional[List[Dict[str, Any]]],
+        groups: Optional[List[Dict[str, Any]]],
+        postprocess: Optional[Dict[str, Any]],
+        base_plan_path: Optional[str],
+    ) -> Dict[str, Any]:
+        if base_plan_path:
+            try:
+                source = self._load_diagram_plan(base_plan_path)
+            except ValueError as exc:
+                return {"status": "failed", "success": False, "data": {"error": str(exc)}, "summary": f"图表验证失败：{exc}"}
+            artifact_id = str(source.get("artifact_id") or artifact_id)
+            title = str(source.get("title") or title)
+            diagram_intent = source.get("diagram_intent") or diagram_intent
+            canvas = source.get("canvas")
+            shapes = source.get("shapes")
+            connectors = source.get("connectors")
+            groups = source.get("groups")
+        try:
+            diagram = normalize_freeform_diagram(
+                artifact_id=artifact_id,
+                title=title,
+                canvas=canvas,
+                shapes=shapes,
+                connectors=connectors,
+                groups=groups,
+                output_formats=None,
+                diagram_intent=diagram_intent,
+            )
+        except FreeformValidationError as validation_exc:
+            return {"status": "failed", "success": False, "data": {"error": str(validation_exc)}, "summary": f"图表验证失败：{validation_exc}"}
+        postprocess_result = postprocess_freeform_diagram(
+            diagram,
+            style_pack=None,
+            options=_freeform_postprocess_options(diagram.diagram_intent, postprocess),
+        )
+        quality_gate = self._build_freeform_quality_gate(
+            postprocess_result.diagram,
+            list(postprocess_result.quality_warnings),
+        )
+        data = {
+            "operation": "validate",
+            "artifact_id": _safe_artifact_id(artifact_id),
+            "title": title,
+            "diagram_mode": "freeform",
+            "diagram_intent": postprocess_result.diagram.diagram_intent,
+            "qa_status": quality_gate["status"],
+            "quality_gate": quality_gate,
+            "revision_tasks": quality_gate["revision_tasks"],
+            "drawio_path": None,
+            "preview_svg_path": None,
+        }
+        return {
+            "status": "success",
+            "success": True,
+            "data": data,
+            "metadata": {
+                "generator": self.name,
+                "artifact_kind": "diagram",
+                "diagram_mode": "freeform",
+                "qa_status": quality_gate["status"],
+            },
+            "summary": f"自由画布图表验证完成：{quality_gate['status']}。",
+        }
+
+    def _load_diagram_plan(self, path: str) -> Dict[str, Any]:
+        plan_path = Path(path)
+        if not plan_path.exists():
+            raise ValueError(f"diagram_plan_not_found: {plan_path}")
+        try:
+            data = json.loads(plan_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"diagram_plan_invalid_json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("diagram_plan_must_be_object")
+        return data
+
+    def _apply_diagram_patch(self, base_plan: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(patch, dict):
+            raise ValueError("diagram_patch_must_be_object")
+        next_plan = dict(base_plan)
+        for key in ("canvas", "artifact_id", "title", "diagram_intent"):
+            if key in patch:
+                next_plan[key] = patch[key]
+        next_plan["shapes"] = self._patch_items(
+            list(base_plan.get("shapes") or []),
+            patch.get("replace_shapes") or [],
+            patch.get("add_shapes") or [],
+            patch.get("remove_shapes") or [],
+            "shape",
+        )
+        next_plan["connectors"] = self._patch_items(
+            list(base_plan.get("connectors") or []),
+            patch.get("replace_connectors") or [],
+            patch.get("add_connectors") or [],
+            patch.get("remove_connectors") or [],
+            "connector",
+        )
+        next_plan["groups"] = self._patch_items(
+            list(base_plan.get("groups") or []),
+            patch.get("replace_groups") or [],
+            patch.get("add_groups") or [],
+            patch.get("remove_groups") or [],
+            "group",
+        )
+        next_plan["diagram_mode"] = "freeform"
+        return next_plan
+
+    def _patch_items(
+        self,
+        base_items: List[Dict[str, Any]],
+        replace_items: List[Dict[str, Any]],
+        add_items: List[Dict[str, Any]],
+        remove_ids: List[Any],
+        item_name: str,
+    ) -> List[Dict[str, Any]]:
+        items_by_id = {}
+        order = []
+        for item in base_items:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise ValueError(f"diagram_patch_{item_name}_requires_id")
+            item_id = str(item["id"])
+            items_by_id[item_id] = dict(item)
+            order.append(item_id)
+        for raw_id in remove_ids:
+            item_id = str(raw_id)
+            items_by_id.pop(item_id, None)
+            order = [existing_id for existing_id in order if existing_id != item_id]
+        for item in replace_items:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise ValueError(f"diagram_patch_replace_{item_name}_requires_id")
+            item_id = str(item["id"])
+            merged = dict(items_by_id.get(item_id, {}))
+            merged.update(item)
+            items_by_id[item_id] = merged
+            if item_id not in order:
+                order.append(item_id)
+        for item in add_items:
+            if not isinstance(item, dict) or not item.get("id"):
+                raise ValueError(f"diagram_patch_add_{item_name}_requires_id")
+            item_id = str(item["id"])
+            items_by_id[item_id] = dict(item)
+            if item_id not in order:
+                order.append(item_id)
+        return [items_by_id[item_id] for item_id in order if item_id in items_by_id]
+
+    def _next_diagram_plan_version(self, base_plan_path: Optional[str]) -> int:
+        if not base_plan_path:
+            return 1
+        match = re.search(r"diagram_plan\.v(\d+)\.json$", str(base_plan_path))
+        if not match:
+            return 2
+        return int(match.group(1)) + 1
+
+    def _build_freeform_design_spec(self, diagram: Any, style_pack: Optional[str]) -> str:
+        return "\n".join(
+            [
+                f"# {diagram.title}",
+                "",
+                f"- diagram_mode: freeform",
+                f"- diagram_intent: {diagram.diagram_intent or 'unspecified'}",
+                f"- style_pack: {style_pack or 'default'}",
+                f"- shapes: {len(diagram.shapes)}",
+                f"- connectors: {len(diagram.connectors)}",
+                f"- groups: {len(diagram.groups)}",
+                "",
+                "Agent edits this diagram through diagram_plan.v*.json and diagram_patch payloads.",
+            ]
+        )
+
+    def _build_freeform_quality_gate(
+        self,
+        diagram: Any,
+        warning_codes: List[str],
+        *,
+        block_delivery: bool = False,
+    ) -> Dict[str, Any]:
+        issues: List[Dict[str, Any]] = []
+        for code in warning_codes:
+            if code == "style_pack_applied":
+                continue
+            issues.append(self._diagram_issue(code, "warning", {"source": "postprocess"}))
+        issues.extend(self._architecture_semantic_issues(diagram))
+        deduped = []
+        seen = set()
+        for issue in issues:
+            key = (issue.get("code"), json.dumps(issue.get("evidence", {}), ensure_ascii=False, sort_keys=True))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(issue)
+        if block_delivery:
+            for issue in deduped:
+                if issue.get("code") == "architecture_shape_level_connectors":
+                    issue["severity"] = "error"
+        has_blocking_issue = any(issue.get("severity") == "error" for issue in deduped)
+        status = "blocked" if has_blocking_issue else "needs_revision" if deduped else "passed"
+        revision_tasks = [
+            {
+                "code": issue["code"],
+                "severity": issue["severity"],
+                "message": issue["message"],
+                "evidence": issue.get("evidence", {}),
+                "suggested_patch_hint": issue.get("suggested_patch_hint", ""),
+            }
+            for issue in deduped
+            if issue.get("severity") in {"warning", "error"}
+        ]
+        return {
+            "status": status,
+            "qa_status": status,
+            "issues": deduped,
+            "revision_tasks": revision_tasks,
+        }
+
+    def _architecture_semantic_issues(self, diagram: Any) -> List[Dict[str, Any]]:
+        if str(diagram.diagram_intent or "").lower() not in {"architecture", "topology", "system_architecture"}:
+            return []
+        issues: List[Dict[str, Any]] = []
+        fan_in: Dict[str, int] = {}
+        for connector in diagram.connectors:
+            fan_in[connector.target_id] = fan_in.get(connector.target_id, 0) + 1
+        for target_id, count in fan_in.items():
+            if count >= 4:
+                issues.append(
+                    self._diagram_issue(
+                        "high_fan_in",
+                        "warning",
+                        {"target_id": target_id, "incoming_count": count},
+                    )
+                )
+        shape_ids = {shape.id for shape in diagram.shapes}
+        connector_pairs = {(connector.source_id, connector.target_id) for connector in diagram.connectors}
+        for group in diagram.groups:
+            children = [child for child in group.children if child in shape_ids]
+            if len(children) < 4:
+                continue
+            chain_edges = 0
+            for left, right in zip(children, children[1:]):
+                if (left, right) in connector_pairs:
+                    chain_edges += 1
+            if chain_edges >= 3:
+                issues.append(
+                    self._diagram_issue(
+                        "layer_internal_long_chain",
+                        "warning",
+                        {
+                            "group_id": group.id,
+                            "group_label": group.label,
+                            "chain_edges": chain_edges,
+                            "children_count": len(children),
+                        },
+                    )
+                )
+        shape_level_connectors = self._architecture_shape_level_connectors(diagram)
+        if shape_level_connectors:
+            same_layer_count = sum(1 for item in shape_level_connectors if item.get("same_layer"))
+            issues.append(
+                self._diagram_issue(
+                    "architecture_shape_level_connectors",
+                    "warning",
+                    {
+                        "connector_count": len(shape_level_connectors),
+                        "same_layer_connector_count": same_layer_count,
+                        "sample_connector_ids": [item["id"] for item in shape_level_connectors[:8]],
+                    },
+                )
+            )
+        return issues
+
+    def _architecture_shape_level_connectors(self, diagram: Any) -> List[Dict[str, Any]]:
+        shape_by_id = {shape.id: shape for shape in diagram.shapes}
+        group_ids = {group.id for group in diagram.groups}
+        container_shape_ids = {
+            shape.id
+            for shape in diagram.shapes
+            if str(shape.type or "").lower() in {"container", "swimlane"}
+        }
+        layer_endpoint_ids = group_ids | container_shape_ids
+        if not layer_endpoint_ids:
+            return []
+
+        memberships: Dict[str, set[str]] = {}
+        for group in diagram.groups:
+            for child_id in group.children:
+                memberships.setdefault(child_id, set()).add(group.id)
+
+        shape_level_connectors: List[Dict[str, Any]] = []
+        for connector in diagram.connectors:
+            source_is_plain_shape = connector.source_id in shape_by_id and connector.source_id not in layer_endpoint_ids
+            target_is_plain_shape = connector.target_id in shape_by_id and connector.target_id not in layer_endpoint_ids
+            if not (source_is_plain_shape or target_is_plain_shape):
+                continue
+            source_groups = memberships.get(connector.source_id, set())
+            target_groups = memberships.get(connector.target_id, set())
+            shape_level_connectors.append({
+                "id": connector.id,
+                "from": connector.source_id,
+                "to": connector.target_id,
+                "same_layer": bool(source_groups and target_groups and source_groups.intersection(target_groups)),
+            })
+        return shape_level_connectors
+
+    def _diagram_issue(self, code: str, severity: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
+        messages = {
+            "overlap_detected": "存在节点重叠，影响阅读和后续编辑。",
+            "high_fan_in": "多个源节点直接汇聚到同一目标，架构图应考虑接入总线、网关或聚合节点。",
+            "label_too_long": "存在过长标签，建议拆成标题和说明或增大节点。",
+            "canvas_sparse": "画布利用率偏低，建议收紧布局或调整画布尺寸。",
+            "layer_internal_long_chain": "同一层内出现长流程链，架构图应优先表达能力簇和层间关系。",
+            "architecture_shape_level_connectors": "架构图存在普通元素级连线，应优先保留层级、域或边界之间的连接。",
+            "canvas_expanded": "画布已被扩展以容纳越界元素。",
+        }
+        hints = {
+            "high_fan_in": "添加接入汇聚/数据总线节点，将多条输入先连到总线，再连到目标。",
+            "layer_internal_long_chain": "移除同层连续串联连线，改为并列能力模块或仅保留关键跨层连接。",
+            "architecture_shape_level_connectors": "在下一轮 diagram_patch 中移除普通节点之间的 connectors，改为连接 group/container 层级或代表性边界节点。",
+            "overlap_detected": "移动或缩放重叠节点。",
+            "label_too_long": "缩短 label 或把说明放入独立 note/callout。",
+            "canvas_sparse": "压缩节点间距或减小 canvas。",
+        }
+        return {
+            "code": code,
+            "severity": severity,
+            "message": messages.get(code, code),
+            "evidence": evidence,
+            "suggested_patch_hint": hints.get(code, ""),
+        }
+
     async def execute(
         self,
+        operation: str = "create",
         artifact_id: Optional[str] = None,
         title: Optional[str] = None,
         direction: str = "TB",
@@ -2059,7 +2550,11 @@ class CreateDiagramArtifactTool(LLMTool):
         shapes: Optional[List[Dict[str, Any]]] = None,
         connectors: Optional[List[Dict[str, Any]]] = None,
         groups: Optional[List[Dict[str, Any]]] = None,
-        output_formats: Optional[List[str]] = None,
+        postprocess: Optional[Dict[str, Any]] = None,
+        base_plan_path: Optional[str] = None,
+        diagram_plan_path: Optional[str] = None,
+        diagram_patch: Optional[Dict[str, Any]] = None,
+        diagram_patch_path: Optional[str] = None,
         diagram_type: str = "auto",
         layers: Optional[List[Dict[str, Any]]] = None,
         steps: Optional[List[Dict[str, Any]]] = None,
@@ -2071,6 +2566,54 @@ class CreateDiagramArtifactTool(LLMTool):
         **kwargs,
     ) -> Dict[str, Any]:
         try:
+            operation = str(operation or "create").strip().lower()
+            if operation not in {"create", "patch", "validate", "render"}:
+                return {
+                    "success": False,
+                    "data": {"error": "invalid_operation"},
+                    "summary": f"图表生成失败：不支持 operation={operation}",
+                }
+            if diagram_patch_path and diagram_patch is not None:
+                return {
+                    "success": False,
+                    "data": {"error": "diagram_patch_conflict"},
+                    "summary": "图表生成失败：diagram_patch 和 diagram_patch_path 只能传一个",
+                }
+            if diagram_patch_path:
+                try:
+                    patch_path = Path(diagram_patch_path)
+                    diagram_patch = json.loads(patch_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    return {
+                        "success": False,
+                        "data": {"error": f"diagram_patch_path_invalid: {exc}"},
+                        "summary": f"图表生成失败：diagram_patch_path 无法读取：{exc}",
+                    }
+            if operation in {"patch", "render"}:
+                base_path = base_plan_path or diagram_plan_path
+                if not base_path:
+                    return {
+                        "success": False,
+                        "data": {"error": "base_plan_path_required"},
+                        "summary": f"图表生成失败：operation={operation} 需要 base_plan_path 或 diagram_plan_path。",
+                    }
+                try:
+                    base_plan = self._load_diagram_plan(base_path)
+                    if operation == "patch":
+                        base_plan = self._apply_diagram_patch(base_plan, diagram_patch or {})
+                    artifact_id = str(artifact_id or "").strip()
+                    title = str(title or base_plan.get("title") or "").strip()
+                    diagram_intent = diagram_intent or base_plan.get("diagram_intent")
+                    canvas = canvas or base_plan.get("canvas")
+                    shapes = shapes or base_plan.get("shapes")
+                    connectors = connectors or base_plan.get("connectors")
+                    groups = groups or base_plan.get("groups")
+                except ValueError as exc:
+                    return {
+                        "success": False,
+                        "data": {"error": str(exc)},
+                        "summary": f"图表生成失败：{str(exc)[:100]}",
+                    }
             artifact_id = str(artifact_id or "").strip()
             title = str(title or "").strip()
             missing = []
@@ -2097,8 +2640,8 @@ class CreateDiagramArtifactTool(LLMTool):
                 and (layers or steps)
             ):
                 diagram_mode = "template"
-            if diagram_mode == "freeform":
-                return await self._execute_freeform_diagram(
+            if operation == "validate" and str(diagram_mode or "freeform").strip().lower() == "freeform":
+                return await self._execute_freeform_validate(
                     artifact_id=artifact_id,
                     title=title,
                     diagram_intent=diagram_intent,
@@ -2106,7 +2649,22 @@ class CreateDiagramArtifactTool(LLMTool):
                     shapes=shapes,
                     connectors=connectors,
                     groups=groups,
-                    output_formats=output_formats,
+                    postprocess=postprocess,
+                    base_plan_path=base_plan_path or diagram_plan_path,
+                )
+
+            if diagram_mode == "freeform":
+                return await self._execute_freeform_diagram(
+                    operation=operation,
+                    base_plan_path=base_plan_path or diagram_plan_path,
+                    artifact_id=artifact_id,
+                    title=title,
+                    diagram_intent=diagram_intent,
+                    canvas=canvas,
+                    shapes=shapes,
+                    connectors=connectors,
+                    groups=groups,
+                    postprocess=postprocess,
                     metadata=metadata,
                 )
 

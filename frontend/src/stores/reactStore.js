@@ -108,6 +108,8 @@ const getOfficeDocumentIdentity = (doc = {}) => {
     doc.pdf_preview?.pdf_id ||
     doc.html_preview?.html_id ||
     doc.html_preview?.html_url ||
+    doc.svg_preview?.svg_url ||
+    doc.svg_preview?.svg_path ||
     doc.markdown_preview?.content ||
     ''
 }
@@ -763,8 +765,12 @@ export const useReactStore = defineStore('react', {
       if (!doc || !targetState) return
       const normalizedDoc = {
         ...doc,
-        file_path: doc.file_path || doc.path || doc.pdf_preview?.pdf_path,
-        file_type: doc.file_type || doc.html_preview?.file_type,
+        file_path: doc.file_path || doc.path || doc.pdf_preview?.pdf_path || doc.svg_preview?.svg_path,
+        file_type: doc.file_type || doc.html_preview?.file_type || doc.svg_preview?.file_type,
+        related_files: doc.related_files,
+        artifacts: doc.artifacts,
+        refs: doc.refs,
+        assets: doc.assets,
         timestamp: doc.timestamp || new Date().toISOString()
       }
       const identity = getOfficeDocumentIdentity(normalizedDoc)
@@ -1359,13 +1365,18 @@ export const useReactStore = defineStore('react', {
           }
 
           const resultData = result?.data || {}
-          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview)) {
+          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview)) {
             this.recordOfficeDocument({
               pdf_preview: resultData.pdf_preview,
               markdown_preview: resultData.markdown_preview,
               html_preview: resultData.html_preview,
-              file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
-              file_type: resultData.file_type || resultData.html_preview?.file_type,
+              svg_preview: resultData.svg_preview,
+              file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path || resultData.svg_preview?.svg_path,
+              file_type: resultData.file_type || resultData.html_preview?.file_type || resultData.svg_preview?.file_type,
+              related_files: resultData.related_files,
+              artifacts: resultData.artifacts,
+              refs: resultData.refs,
+              assets: resultData.assets,
               generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
               summary: result.summary,
               timestamp: toolResultData.timestamp
@@ -1390,8 +1401,13 @@ export const useReactStore = defineStore('react', {
             pdf_preview: data?.pdf_preview,
             markdown_preview: data?.markdown_preview,
             html_preview: data?.html_preview,
-            file_path: data?.file_path,
-            file_type: data?.file_type,
+            svg_preview: data?.svg_preview,
+            file_path: data?.file_path || data?.svg_preview?.svg_path,
+            file_type: data?.file_type || data?.svg_preview?.file_type,
+            related_files: data?.related_files,
+            artifacts: data?.artifacts,
+            refs: data?.refs,
+            assets: data?.assets,
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
@@ -1422,6 +1438,10 @@ export const useReactStore = defineStore('react', {
             markdown_preview: data?.markdown_preview,
             file_path: data?.file_path,
             file_type: data?.file_type || 'html',
+            related_files: data?.related_files,
+            artifacts: data?.artifacts,
+            refs: data?.refs,
+            assets: data?.assets,
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp

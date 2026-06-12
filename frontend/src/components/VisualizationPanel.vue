@@ -124,6 +124,7 @@ import DataTable from './visualization/DataTable.vue'
 import ImagePanel from './visualization/ImagePanel.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import {
+  buildArtifactDownloadPayload,
   hasRelatedArtifactFiles,
   normalizeRelatedArtifactFiles
 } from '@/utils/artifactRelatedFiles'
@@ -637,23 +638,15 @@ const artifactSourceMessage = computed(() => selectedMessage.value || latestArti
 
 const currentArtifactPayload = computed(() => {
   const result = artifactSourceMessage.value?.data?.result
-  const data = result?.data || {}
-  const artifact = data.artifact || result?.artifact || {}
-
-  return {
-    ...data,
-    ...result,
-    ...artifact,
-    related_files: artifact.related_files || data.related_files || result?.related_files,
-    relatedFiles: artifact.relatedFiles || data.relatedFiles || result?.relatedFiles,
-    artifacts: artifact.artifacts || data.artifacts || result?.artifacts || latestVisualization.value?.artifacts || props.content?.artifacts
-  }
+  return buildArtifactDownloadPayload({
+    result,
+    latestVisualization: latestVisualization.value,
+    content: props.content
+  })
 })
 
 const currentArtifactRefs = computed(() => {
-  const result = artifactSourceMessage.value?.data?.result
-  const data = result?.data || {}
-  return data.refs || result?.refs || props.content?.refs || {}
+  return currentArtifactPayload.value?.refs || {}
 })
 
 const relatedFiles = computed(() => normalizeRelatedArtifactFiles({
@@ -877,13 +870,13 @@ const triggerRegenerate = async (query, options) => {
 }
 
 const downloadRelatedFile = (file) => {
-  if (!file?.file_path) {
+  if (!file?.file_path && !file?.url) {
     console.error('[VisualizationPanel] Related file path not available')
     return
   }
 
   try {
-    const fileUrl = `/api/file/${encodeURIComponent(file.file_path)}`
+    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
     const link = document.createElement('a')
     link.href = fileUrl
     link.download = file.file_path.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'

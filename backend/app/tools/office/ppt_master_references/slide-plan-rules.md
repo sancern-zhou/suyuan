@@ -19,6 +19,29 @@ formal business PPT generation.
 `slide_plan` is an array of body pages. The tool automatically adds the cover
 as slide 1, so the first `slide_plan` item becomes slide 2.
 
+## Batch Generation Contract
+
+Do not send a very large `slide_plan` in one tool call. If the planned deck has
+more than 8 body pages, many shapes per page, or many chart/table pages, the
+Agent must use a skeleton-plus-batches workflow:
+
+1. Call `create_pptx_with_ppt_master` with `title` and a short `outline` or a
+   small set of section/placeholder pages. If the full initial `slide_plan` is
+   already available but large, write it to JSON and pass `slide_plan_path`.
+2. Read the returned `data.slide_plan_path` or `data.page_plan_path`.
+3. Call `create_pptx_with_ppt_master(operation="append")` with `batch_slides`
+   and `after_slide` for short append batches. For complex replacements or
+   large page payloads, call `create_pptx_with_ppt_master(operation="patch")`
+   with a local `plan_patch` JSON file and `plan_patch_path`. Insert or replace
+   only 3-5 pages in one call.
+4. For each later batch, use the newest `data.slide_plan_path` returned by the
+   previous batch. Do not keep patching the original skeleton plan.
+5. If a page has unusually many shapes, patch only 1-2 pages in that call.
+
+This avoids truncated streaming tool JSON and keeps each revision reviewable.
+Each revision result also includes `data.next_revision_base_plan_path`; use that
+path as the next batch's `base_plan_path` when present.
+
 Each item may contain:
 
 ```json
@@ -86,7 +109,7 @@ After generation, inspect these fields before delivery:
 
 `success=true` only means the file was created. If `qa_status` is
 `needs_revision`, revise the previous `slide_plan` with a local `plan_patch`
-and rerun `create_pptx_with_ppt_master`; do not present the deck as final. Use
+and rerun `create_pptx_with_ppt_master(operation="patch")`; do not present the deck as final. Use
 individual page PNGs for page-level fixes and montage only for overall visual
 review.
 

@@ -73,3 +73,49 @@ async def test_present_artifact_treats_managed_html_index_as_html_artifact(tmp_p
         "file_path": str(index_path.resolve()),
         "tool_hint": f"Use present_artifact(file_path='{index_path.resolve()}') to preview this artifact.",
     }
+
+
+@pytest.mark.asyncio
+async def test_present_pptx_adds_rendered_preview_metadata(tmp_path, monkeypatch):
+    pptx_path = tmp_path / "deck.pptx"
+    pptx_path.write_bytes(b"fake pptx")
+
+    class FakePdfConverter:
+        async def convert_to_pdf(self, path):
+            return {"pdf_url": "/api/file/deck.pdf", "pdf_path": path}
+
+    class FakeValidatePptxTool:
+        async def execute(self, path, **kwargs):
+            return {
+                "success": True,
+                "data": {
+                    "pptx_path": path,
+                    "pages": [{"slide": 1, "png_path": str(tmp_path / "page-001.png")}],
+                    "montage_path": str(tmp_path / "montage.png"),
+                    "report_path": str(tmp_path / "report.json"),
+                },
+            }
+
+    monkeypatch.setattr(present_artifact_tool, "pdf_converter", FakePdfConverter())
+    monkeypatch.setattr(
+        present_artifact_tool,
+        "ValidatePptxTool",
+        FakeValidatePptxTool,
+        raising=False,
+    )
+
+    tool = PresentArtifactTool()
+    tool.allowed_dirs = [tmp_path.resolve()]
+
+    result = await tool.execute(str(pptx_path))
+
+    assert result["success"] is True
+    assert result["data"]["file_type"] == "presentation"
+    assert result["data"]["pdf_preview"]["pdf_url"] == "/api/file/deck.pdf"
+    assert result["data"]["ppt_preview"] == {
+        "pptx_path": str(pptx_path.resolve()),
+        "pages": [{"slide": 1, "png_path": str(tmp_path / "page-001.png")}],
+        "montage_path": str(tmp_path / "montage.png"),
+        "report_path": str(tmp_path / "report.json"),
+    }
+    assert result["artifact"]["preview"] == result["data"]["ppt_preview"]

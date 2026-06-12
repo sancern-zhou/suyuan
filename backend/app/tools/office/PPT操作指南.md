@@ -2,7 +2,7 @@
 
 ## 概述
 
-本项目生成正式或业务型 PPT 时，统一使用 `create_pptx_with_ppt_master`。该工具按 PPT Master 工作流生成可编辑 PPTX：Agent 负责内容取舍、页面策略和 `slide_plan`，工具负责用 `python-pptx` 确定性绘制、登记产物、渲染 QA 和续改合并。
+本项目生成正式或业务型 PPT 时，使用 `create_pptx_with_ppt_master`。同一个工具通过 `operation=create/append/replace/patch/render` 区分新建、追加、替换、局部补丁和渲染预览。底层仍复用同一套 PPT Master 渲染逻辑：Agent 负责内容取舍、页面策略和 `slide_plan`/`plan_patch`，工具负责用 `python-pptx` 确定性绘制、登记产物、渲染 QA 和续改合并。
 
 模板槽位套版路径已从 Agent 工具体系移除。不要调用或建议 `analyze_pptx_template`、`create_pptx_from_template`，也不要回退到旧 deck 结构、底层 PptxGenJS 管线或手动 import PPT 工具类。
 
@@ -11,7 +11,7 @@
 | 任务类型 | 工具 | 说明 |
 |---------|------|------|
 | 从零生成正式业务 PPT | `create_pptx_with_ppt_master` | 主入口。优先由 Agent 提供 `slide_plan[].shapes` |
-| 续改 PPT Master 生成物 | `create_pptx_with_ppt_master` + `base_plan_path`/`plan_patch` | 读取上一版 plan，只写局部 patch，未涉及页面保持原样 |
+| 续改 PPT Master 生成物 | `create_pptx_with_ppt_master(operation="patch")` + `base_plan_path`/`plan_patch` | 读取上一版 plan，只写局部 patch，未涉及页面保持原样 |
 | 读取 PPT 内容 | `read_pptx` | 提取文本、表格、图片信息、备注和基础元数据 |
 | 验证 PPT 质量 | `validate_pptx` | 渲染 PDF/PNG、montage，并检查字体、空页、越界、拥挤和文字密度 |
 
@@ -24,10 +24,12 @@
 -> 形成 QMD 内容底稿或等价结构化大纲
 -> 生成必要图表、地图、复杂表格 PNG 资产
 -> 将内容规划为 slide_plan[].shapes
--> create_pptx_with_ppt_master 绘制 PPTX
+-> 若预计超过 8 页或 shapes 很多，先 create_pptx_with_ppt_master 生成骨架
+-> create_pptx_with_ppt_master(operation="append"/"replace") 按 3-5 页一批插入或替换页面
+-> 简短 PPT 可直接 create_pptx_with_ppt_master 绘制完整 PPTX
 -> validate_pptx 渲染 PDF/PNG、montage 并生成 QA
 -> 结合 QA、单页 PNG 和上一版 slide_plan 写 plan_patch
--> create_pptx_with_ppt_master 合并 patch 并重绘
+-> create_pptx_with_ppt_master(operation="patch") 合并 patch 并重绘
 ```
 
 用户明确要求“直接生成 PPT”或任务很小、内容已充分明确时，可以跳过内容底稿确认，但仍应保留 QA 和视觉检查。
@@ -50,6 +52,20 @@
 ## slide_plan 支持的 shape
 
 `slide_plan` 是 body pages 数组。工具自动添加第 1 页封面，所以第一个 `slide_plan` item 会成为第 2 页。
+
+## 长 PPT 分批生成
+
+当 `slide_plan` 预计超过 8 页、正文页很多、每页 `shapes` 较多，或需要插入大量图表/表格时，不要一次把完整 `slide_plan` 直接内联传给 `create_pptx_with_ppt_master`。长 JSON 参数在流式 tool call 中容易被截断，导致工具参数解析失败。
+
+长 PPT 应按以下流程生成：
+
+1. 首次调用 `create_pptx_with_ppt_master` 只创建骨架 PPT：显式传 `title`、`purpose`、`audience`、`style`，并传短 `outline` 或少量章节/占位页。若已经有完整长 `slide_plan`，先用 `write_file` 写成 JSON 文件，再传 `slide_plan_path`，不要内联长数组。
+2. 从返回结果读取最新的 `data.slide_plan_path` 或 `data.page_plan_path`。
+3. 每次调用 `create_pptx_with_ppt_master(operation="append"/"replace"/"patch")` 只插入或替换 3-5 页。短批次可用 `batch_slides` + `after_slide`；页面内容较长、shape 较多或包含多表格/图表时，先写 `plan_patch` JSON 文件，再传 `plan_patch_path`。
+4. 每一批都必须基于上一批返回的新 `data.slide_plan_path`，不要反复基于最初版本，否则会覆盖或丢失前面批次。
+5. 所有批次完成后，再统一检查 `qa_status`、`quality_gate`、`validation.montage_path` 和单页 PNG；需要修复时继续用 `operation="patch"` 和局部 `plan_patch`。
+
+如果某一页的 `shapes` 特别多，应单页或两页一批续改。不要在一次 tool call 中生成 20 页以上的详细 `slide_plan`。
 
 支持的 shape 类型：
 
@@ -111,9 +127,10 @@ create_pptx_with_ppt_master(
 对 PPT Master 生成物继续编辑时：
 
 1. 读取上一次结果里的 `data.slide_plan_path` 或 `data.page_plan_path`。
-2. 根据用户要求、QA 问题和单页 PNG，只写局部 `plan_patch`。
-3. 调用 `create_pptx_with_ppt_master(base_plan_path=..., plan_patch=...)`。
+2. 根据用户要求、QA 问题和单页 PNG，只写局部修改。连续追加页面时优先使用 `batch_slides` + `after_slide`；复杂替换时使用局部 `plan_patch`。
+3. 调用 `create_pptx_with_ppt_master(operation="append", base_plan_path=..., batch_slides=[...], after_slide=...)`，或 `create_pptx_with_ppt_master(operation="patch", base_plan_path=..., plan_patch=...)`。
 4. 设置 `quality="standard"` 或 `run_validation=true` 重新验证。
+5. 续改结果会返回 `data.next_revision_base_plan_path`，下一批续改优先直接使用该路径。
 
 不要每次重写整份 PPT。未涉及页面由工具从基线 plan 原样保留。
 

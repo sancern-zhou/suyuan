@@ -109,10 +109,12 @@ class CreatePptxWithPptMasterTool(LLMTool):
 
     async def execute(
         self,
+        operation: str = "create",
         title: Optional[str] = None,
         purpose: str = "business_report",
         outline: Optional[List[Dict[str, Any]]] = None,
         slide_plan: Optional[List[Dict[str, Any]]] = None,
+        slide_plan_path: Optional[str] = None,
         audience: str = "",
         style: str = "business_clean",
         output_file: Optional[str] = None,
@@ -120,12 +122,57 @@ class CreatePptxWithPptMasterTool(LLMTool):
         base_plan_path: Optional[str] = None,
         base_project_dir: Optional[str] = None,
         plan_patch: Optional[Dict[str, Any]] = None,
+        plan_patch_path: Optional[str] = None,
+        batch_slides: Optional[List[Dict[str, Any]]] = None,
+        after_slide: Optional[int] = None,
+        replace_slides: Optional[List[Dict[str, Any]]] = None,
+        insert_slide_after: Optional[List[Dict[str, Any]]] = None,
+        file_path: Optional[str] = None,
         enable_preview: bool = True,
         run_validation: bool = True,
         quality: str = "standard",
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        is_revision = bool(base_plan_path or base_project_dir or plan_patch)
+        operation = str(operation or "create").strip().lower()
+        if operation not in {"create", "append", "replace", "patch", "render"}:
+            return {"success": False, "data": {"error": "invalid_operation"}, "summary": f"创建PPT失败：不支持 operation={operation}"}
+        if operation == "render":
+            return await self._render_existing_pptx(
+                file_path=file_path or output_file,
+                enable_preview=enable_preview,
+                run_validation=run_validation,
+                quality=quality,
+            )
+
+        if slide_plan_path and slide_plan is not None:
+            return {"success": False, "data": {"error": "slide_plan_conflict"}, "summary": "创建PPT失败：slide_plan 和 slide_plan_path 只能传一个"}
+        if plan_patch_path and plan_patch is not None:
+            return {"success": False, "data": {"error": "plan_patch_conflict"}, "summary": "创建PPT失败：plan_patch 和 plan_patch_path 只能传一个"}
+        if slide_plan_path:
+            try:
+                slide_plan = self._load_json_array_path(slide_plan_path, "slide_plan")
+            except ValueError as exc:
+                return {"success": False, "data": {"error": str(exc)}, "summary": f"创建PPT失败：{str(exc)[:80]}"}
+        if plan_patch_path:
+            try:
+                plan_patch = self._load_json_object_path(plan_patch_path, "plan_patch")
+            except ValueError as exc:
+                return {"success": False, "data": {"error": str(exc)}, "summary": f"创建PPT失败：{str(exc)[:80]}"}
+
+        if operation in {"append", "replace", "patch"}:
+            try:
+                plan_patch = self._normalize_operation_patch(
+                    operation=operation,
+                    plan_patch=plan_patch,
+                    batch_slides=batch_slides,
+                    after_slide=after_slide,
+                    replace_slides=replace_slides,
+                    insert_slide_after=insert_slide_after,
+                )
+            except ValueError as exc:
+                return {"success": False, "data": {"error": str(exc)}, "summary": f"创建PPT失败：{str(exc)[:80]}"}
+
+        is_revision = operation in {"append", "replace", "patch"} or bool(base_plan_path or base_project_dir or plan_patch)
         if not title and not is_revision:
             return {"success": False, "data": {"error": "title_required"}, "summary": "创建PPT失败：title 参数缺失"}
         if outline is not None and not isinstance(outline, list):
@@ -192,6 +239,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         self._render_pptx(output_path, title, page_plan, palette)
 
         result_data: Dict[str, Any] = {
+            "operation": operation,
             "workflow": "ppt_master",
             "reference_paths": ppt_master_reference_paths(),
             "file_path": str(output_path),
@@ -229,6 +277,8 @@ class CreatePptxWithPptMasterTool(LLMTool):
                     render_overflow_check=str(quality).lower() == "strict" or run_validation,
                 )
                 result_data["validation"] = validation.get("data")
+                if isinstance(result_data["validation"], dict):
+                    result_data["ppt_preview"] = self._ppt_preview_from_validation(result_data["validation"])
                 result_data["quality_gate"] = self._workflow_quality_gate(page_plan, result_data["validation"])
             except Exception as validation_error:
                 logger.warning("ppt_master_validation_failed", error=str(validation_error))
@@ -242,6 +292,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         result_data["qa_status"] = final_quality_gate.get("qa_status", "passed")
         result_data["revision_tasks"] = final_quality_gate.get("revision_tasks", [])
         result_data["affected_slides"] = final_quality_gate.get("affected_slides", [])
+        result_data["next_revision_base_plan_path"] = str(slide_plan_path)
 
         attach_document_artifact(
             result_data,
@@ -249,7 +300,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
             kind="office",
             format="pptx",
             title=title,
-            preview_key="pdf_preview",
+            preview_key="ppt_preview" if result_data.get("ppt_preview") else "pdf_preview",
             generator=self.name,
             metadata={"workflow": "ppt_master", "project_dir": str(project_path)},
         )
@@ -269,6 +320,124 @@ class CreatePptxWithPptMasterTool(LLMTool):
             **resume_context,
             "summary": self._build_summary(output_path.name, len(page_plan), final_quality_gate),
         }
+
+    async def _render_existing_pptx(
+        self,
+        file_path: Optional[str],
+        enable_preview: bool,
+        run_validation: bool,
+        quality: str,
+    ) -> Dict[str, Any]:
+        if not file_path:
+            return {"success": False, "data": {"error": "file_path_required"}, "summary": "渲染PPT失败：file_path 参数缺失"}
+        pptx_path = Path(file_path)
+        if not pptx_path.is_absolute():
+            pptx_path = (Path.cwd() / pptx_path).resolve()
+        if not pptx_path.exists():
+            return {"success": False, "data": {"error": f"file_not_found: {pptx_path}"}, "summary": f"渲染PPT失败：文件不存在 {pptx_path}"}
+        if pptx_path.suffix.lower() != ".pptx":
+            return {"success": False, "data": {"error": "pptx_required"}, "summary": f"渲染PPT失败：只支持 .pptx，当前为 {pptx_path.suffix}"}
+
+        result_data: Dict[str, Any] = {
+            "operation": "render",
+            "workflow": "ppt_master",
+            "file_path": str(pptx_path),
+            "output_file": str(pptx_path),
+            "file_name": pptx_path.name,
+            "quality": quality,
+        }
+        if enable_preview:
+            try:
+                from app.services.pdf_converter import pdf_converter
+
+                result_data["pdf_preview"] = await pdf_converter.convert_to_pdf(str(pptx_path))
+            except Exception as preview_error:
+                logger.warning("ppt_master_render_preview_failed", error=str(preview_error))
+        if run_validation or str(quality).lower() in {"standard", "strict"}:
+            try:
+                validator_cls = globals().get("ValidatePptxTool")
+                if validator_cls is None:
+                    from app.tools.office.validate_pptx_tool import ValidatePptxTool as validator_cls
+
+                validation = await validator_cls().execute(
+                    str(pptx_path),
+                    render_overflow_check=str(quality).lower() == "strict",
+                )
+                result_data["validation"] = validation.get("data")
+                if isinstance(result_data["validation"], dict):
+                    result_data["ppt_preview"] = self._ppt_preview_from_validation(result_data["validation"])
+            except Exception as validation_error:
+                logger.warning("ppt_master_render_validation_failed", error=str(validation_error))
+                result_data["validation_error"] = str(validation_error)
+
+        attach_document_artifact(
+            result_data,
+            pptx_path,
+            kind="office",
+            format="pptx",
+            title=pptx_path.stem,
+            preview_key="ppt_preview" if result_data.get("ppt_preview") else "pdf_preview",
+            generator=self.name,
+            metadata={"workflow": "ppt_master", "operation": "render"},
+        )
+        resume_context = build_artifact_resume_context(result_data, pptx_path)
+        return {
+            "success": True,
+            "data": result_data,
+            **resume_context,
+            "summary": f"PPT渲染预览已刷新：{pptx_path.name}",
+        }
+
+    def _ppt_preview_from_validation(self, validation: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "pptx_path": validation.get("pptx_path"),
+            "pages": validation.get("pages", []),
+            "montage_path": validation.get("montage_path"),
+            "report_path": validation.get("report_path"),
+        }
+
+    def _normalize_operation_patch(
+        self,
+        operation: str,
+        plan_patch: Optional[Dict[str, Any]],
+        batch_slides: Optional[List[Dict[str, Any]]],
+        after_slide: Optional[int],
+        replace_slides: Optional[List[Dict[str, Any]]],
+        insert_slide_after: Optional[List[Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        if operation == "patch" and plan_patch is not None:
+            return plan_patch
+        patch: Dict[str, Any] = dict(plan_patch or {})
+        if operation == "append":
+            if batch_slides:
+                if after_slide is None:
+                    raise ValueError("batch_slides_requires_after_slide")
+                patch.setdefault("insert_slide_after", []).append(
+                    {"after_slide": after_slide, "slides": batch_slides}
+                )
+            if insert_slide_after:
+                patch.setdefault("insert_slide_after", []).extend(insert_slide_after)
+            if not patch.get("insert_slide_after"):
+                raise ValueError("append_requires_batch_slides_or_insert_slide_after")
+        elif operation == "replace":
+            if replace_slides:
+                patch.setdefault("replace_slides", []).extend(replace_slides)
+            if not patch.get("replace_slides"):
+                raise ValueError("replace_requires_replace_slides")
+        elif operation == "patch":
+            if replace_slides:
+                patch.setdefault("replace_slides", []).extend(replace_slides)
+            if insert_slide_after:
+                patch.setdefault("insert_slide_after", []).extend(insert_slide_after)
+            if batch_slides:
+                if after_slide is None:
+                    raise ValueError("batch_slides_requires_after_slide")
+                patch.setdefault("insert_slide_after", []).append(
+                    {"after_slide": after_slide, "slides": batch_slides}
+                )
+            if not patch:
+                raise ValueError("patch_requires_plan_patch_or_operations")
+        return patch
 
     def _normalize_outline(self, outline: List[Dict[str, Any]], title: str) -> List[Dict[str, Any]]:
         if not outline:
@@ -411,6 +580,38 @@ class CreatePptxWithPptMasterTool(LLMTool):
             raise ValueError("base_plan_empty")
         return pages
 
+    def _resolve_json_input_path(self, path: str, field_name: str) -> Path:
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve()
+        if not resolved.exists():
+            raise ValueError(f"{field_name}_path_not_found: {resolved}")
+        if not resolved.is_file():
+            raise ValueError(f"{field_name}_path_not_file: {resolved}")
+        return resolved
+
+    def _load_json_array_path(self, path: str, field_name: str) -> List[Dict[str, Any]]:
+        resolved = self._resolve_json_input_path(path, field_name)
+        try:
+            data = json.loads(resolved.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name}_path_invalid_json: {exc}") from exc
+        if not isinstance(data, list):
+            raise ValueError(f"{field_name}_path_must_be_array")
+        if any(not isinstance(item, dict) for item in data):
+            raise ValueError(f"{field_name}_path_items_must_be_objects")
+        return data
+
+    def _load_json_object_path(self, path: str, field_name: str) -> Dict[str, Any]:
+        resolved = self._resolve_json_input_path(path, field_name)
+        try:
+            data = json.loads(resolved.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name}_path_invalid_json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{field_name}_path_must_be_object")
+        return data
+
     def _apply_plan_patch(self, base_page_plan: List[Dict[str, Any]], plan_patch: Dict[str, Any]) -> List[Dict[str, Any]]:
         pages = [dict(page) for page in base_page_plan]
         replace_slides = plan_patch.get("replace_slides") or []
@@ -440,11 +641,16 @@ class CreatePptxWithPptMasterTool(LLMTool):
             if not isinstance(operation, dict):
                 raise ValueError("plan_patch.insert_slide_after_item_must_be_object")
             slide_number = self._patch_slide_number(operation)
-            slide_item = operation.get("slide_plan") or operation.get("page")
-            if not isinstance(slide_item, dict):
+            slide_items = operation.get("slides")
+            if slide_items is None:
+                slide_items = operation.get("slide_plan") or operation.get("page")
+            if isinstance(slide_items, dict):
+                slide_items = [slide_items]
+            if not isinstance(slide_items, list) or not slide_items:
                 raise ValueError("plan_patch.insert_slide_after_requires_slide")
+            normalized_items = [self._normalize_patch_page(item) for item in slide_items]
             index = self._page_index_for_slide(pages, slide_number)
-            pages = pages[: index + 1] + [self._normalize_patch_page(slide_item)] + pages[index + 1 :]
+            pages = pages[: index + 1] + normalized_items + pages[index + 1 :]
 
         return self._renumber_page_plan(pages)
 
@@ -1372,21 +1578,26 @@ class CreatePptxWithPptMasterTool(LLMTool):
         return {
             "name": self.name,
             "description": (
-                self.description
-                + " 生成 PPT 前必须先阅读 backend/app/tools/office/ppt_master_references/index.md；"
-                "通用 PPT 操作约束见 backend/app/tools/office/PPT操作指南.md，必须先阅读；"
-                "生成后必须检查 qa_status/quality_gate，并对 validation.montage_path 调用 analyze_image 做视觉质量检查。"
+                "业务 PPT 统一入口。operation=create 新建；append/replace/patch 基于上一版 "
+                "base_plan_path/base_project_dir 局部续写或修改；render 只刷新已有 PPTX 的预览/QA。"
+                "生成 PPT 前必须先阅读 backend/app/tools/office/PPT操作指南.md；生成后查 qa_status/quality_gate。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["create", "append", "replace", "patch", "render"],
+                        "default": "create",
+                        "description": "create 新建；append 追加页面；replace 替换页面；patch 通用局部补丁；render 仅渲染/预览已有 PPTX。",
+                    },
                     "title": {
                         "type": "string",
-                        "description": "PPT标题。生成 PPT 前必须先阅读 backend/app/tools/office/ppt_master_references/index.md。",
+                        "description": "新建 PPT 标题；operation=create 时必填，续改时可省略沿用基线标题。",
                     },
                     "purpose": {
                         "type": "string",
-                        "description": "用途：汇报、路演、教学、销售、总结、方案展示等",
+                        "description": "用途：汇报、路演、教学、销售、总结等",
                     },
                     "audience": {"type": "string", "description": "目标受众"},
                     "style": {
@@ -1396,53 +1607,65 @@ class CreatePptxWithPptMasterTool(LLMTool):
                     },
                     "outline": {
                         "type": "array",
-                        "description": (
-                            "生成 PPT 前必须先阅读 backend/app/tools/office/ppt_master_references/index.md。"
-                            "结构化大纲，每项可包含 title/message/points/chart/visual。"
-                            "图表图片必须在生成时直接插入：在对应页传 "
-                            "chart.image_path/path/asset/image_url 或 visual.image_path/path/asset。"
-                            "不要先生成 mock PPT 后再用另一套局部编辑逻辑替换图表。"
-                        ),
+                        "description": "大纲项含 title/message/points/chart/visual；chart.image_path 生成时直接插入。",
                         "items": {"type": "object"},
                     },
                     "slide_plan": {
                         "type": "array",
                         "description": (
-                            "Agent 自行规划的细粒度页面绘制计划。使用前必须阅读 "
-                            "backend/app/tools/office/ppt_master_references/slide-plan-rules.md。"
-                            "适合从零生成正式业务 PPT 时发挥 Agent 的 python-pptx "
-                            "布局判断能力：每页可提供 title/message/shapes，shapes 支持 text/textbox/title、image/picture、"
-                            "table、rect/card；坐标支持 unit=relative|in|emu，relative 按 16:9 页面比例计算；图片 fit 支持 "
-                            "contain/cover/stretch。提供 slide_plan 时，工具只做确定性绘制、产物登记和 QA，不做模板槽位套版。"
+                            "Agent 自行规划的页面 shape plan；页含 title/message/shapes，"
+                            "shape 支持 text/image/table/rect。"
                         ),
                         "items": {"type": "object"},
                     },
+                    "slide_plan_path": {
+                        "type": "string",
+                        "description": "长 PPT 用。JSON 文件路径，内容为 slide_plan 数组。",
+                    },
                     "base_plan_path": {
                         "type": "string",
-                        "description": (
-                            "续改上一版 PPT Master 项目时使用的基线 plan 路径，通常来自上一次返回的 "
-                            "data.slide_plan_path 或 data.page_plan_path。续改时 Agent 读取该 plan，"
-                            "只输出局部 plan_patch，未涉及页面由工具原样保留。"
-                        ),
+                        "description": "append/replace/patch 用。上一版 data.slide_plan_path/page_plan_path。",
                     },
                     "base_project_dir": {
                         "type": "string",
-                        "description": "续改上一版 PPT Master 项目目录；未提供 base_plan_path 时，工具从目录中选择最新 slide_plan.v*.json。",
+                        "description": "append/replace/patch 用。上一版项目目录；自动取最新 slide_plan.v*.json。",
                     },
                     "plan_patch": {
                         "type": "object",
-                        "description": (
-                            "Agent 编写的局部结构化修改，不接收自然语言。支持 "
-                            "{replace_slides:[{slide,slides:[...]}]} 替换某页为一页或多页，"
-                            "以及 {insert_slide_after:[{after_slide,slide_plan:{...}}]} 插入新页。"
-                            "工具只校验、合并、保存新版本 plan，并用同一 renderer 重绘。"
-                        ),
+                        "description": "operation=patch 用。支持 replace_slides/insert_slide_after。",
+                    },
+                    "plan_patch_path": {
+                        "type": "string",
+                        "description": "长补丁用。JSON 文件路径，内容为 plan_patch 对象。",
+                    },
+                    "batch_slides": {
+                        "type": "array",
+                        "description": "operation=append/patch 的便捷追加页面数组；同时传 after_slide。",
+                        "items": {"type": "object"},
+                    },
+                    "after_slide": {
+                        "type": "integer",
+                        "description": "配合 batch_slides：插入到该页之后。",
+                    },
+                    "replace_slides": {
+                        "type": "array",
+                        "description": "operation=replace/patch 的便捷替换操作数组。",
+                        "items": {"type": "object"},
+                    },
+                    "insert_slide_after": {
+                        "type": "array",
+                        "description": "operation=append/patch 的插入操作数组。",
+                        "items": {"type": "object"},
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "operation=render 用。已有 PPTX 文件路径。",
                     },
                     "output_file": {"type": "string"},
                     "quality": {"type": "string", "enum": ["draft", "standard", "strict"], "default": "standard"},
                     "run_validation": {"type": "boolean", "default": True},
                 },
-                "required": ["title"],
+                "required": [],
             },
         }
 

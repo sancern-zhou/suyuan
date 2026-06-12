@@ -33,7 +33,7 @@ export function useRightPanelState(store = null) {
   const hasOfficeDocuments = computed(() => {
     if (!store || !store.messages) return false
 
-    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview) {
+    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview || store.lastOfficeDocument?.svg_preview) {
       return true
     }
 
@@ -54,10 +54,10 @@ export function useRightPanelState(store = null) {
 
         if (['read_file', 'edit_file'].includes(generator)) {
           const result = msg.data.result
-          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview)
+          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview || result.data?.svg_preview)
         }
 
-        return isOfficeTool && !!(msg.data.result?.data?.pdf_preview || msg.data.result?.data?.markdown_preview || msg.data.result?.data?.html_preview)
+        return isOfficeTool && !!(msg.data.result?.data?.pdf_preview || msg.data.result?.data?.markdown_preview || msg.data.result?.data?.html_preview || msg.data.result?.data?.svg_preview)
       }
       return false
     })
@@ -194,7 +194,7 @@ export function useRightPanelState(store = null) {
     // 监听office_document事件
     if (store) {
       watch(() => store.lastOfficeDocument, (doc) => {
-        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview) {
+        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview) {
           officePanelVisible.value = true
           activeRightTab.value = 'document'
         }
