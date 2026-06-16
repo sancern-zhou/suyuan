@@ -248,6 +248,7 @@ class OpsAuditRunRulesTool(LLMTool):
                         "dataset_path": {"type": "string", "description": "ops_audit_fetch_dataset 返回的数据集JSON路径。"},
                         "output_dir": {"type": "string", "description": "审核结果输出目录；不填使用数据集所在目录。"},
                         "evidence_level": {"type": "string", "enum": ["summary", "detail", "raw"], "description": "证据层级：summary 默认，detail 加载结构化明细，raw 仅引用原始证据路径。"},
+                        "enable_visual": {"type": "boolean", "description": "是否执行流量/读数照片视觉识别；默认 true。传 false 时跳过视觉识别，仅执行非视觉规则。", "default": True},
                     },
                     "required": ["dataset_path"],
                 },
@@ -256,7 +257,15 @@ class OpsAuditRunRulesTool(LLMTool):
             requires_context=True,
         )
 
-    async def execute(self, context=None, dataset_path: str = "", output_dir: Optional[str] = None, evidence_level: str = "summary", **_: Any) -> Dict[str, Any]:
+    async def execute(
+        self,
+        context=None,
+        dataset_path: str = "",
+        output_dir: Optional[str] = None,
+        evidence_level: str = "summary",
+        enable_visual: bool = True,
+        **_: Any,
+    ) -> Dict[str, Any]:
         if not dataset_path:
             return _standard_failure(self.name, "请提供 dataset_path。", "missing_dataset_path")
         try:
@@ -268,10 +277,12 @@ class OpsAuditRunRulesTool(LLMTool):
                     "dataset_path_not_found",
                     {"dataset_path": dataset_path, "latest_dataset_path": str(_latest_dataset_path()) if _latest_dataset_path() else None},
                 )
+            visual_enabled = _coerce_bool(enable_visual, default=True)
             result = run_ops_audit_rules(
                 resolved_dataset_path,
                 output_dir=Path(output_dir) if output_dir else None,
                 evidence_level=evidence_level,
+                enable_visual=visual_enabled,
             )
             if context and hasattr(context, "save_data"):
                 result["data_id"] = context.save_data(
@@ -290,10 +301,11 @@ class OpsAuditRunRulesTool(LLMTool):
         levels = result.get("summary", {}).get("audit_level_counts", {})
         top_rules = result.get("summary", {}).get("top_rules", [])[:5]
         business = result.get("business_review", {})
+        visual_text = "流量图片视觉比对已执行" if result.get("enable_visual", True) else "流量图片视觉比对已关闭"
         level_text = "，".join(f"{key}{value}条" for key, value in levels.items())
         rule_text = "，".join(f"{rule_id}({count})" for rule_id, count in top_rules)
         return (
-            f"确定性规则和流量图片视觉比对已执行。分类分布：{level_text}。"
+            f"确定性规则已执行，{visual_text}。分类分布：{level_text}。"
             f"备注语义候选 {result.get('semantic_candidate_count', 0)} 条。"
             f"备注语义复核结果 {result.get('semantic_review_result_count', 0)} 条（仅用于闭环说明辅助定性）。"
             f"备注语义复核任务 {result.get('semantic_review_task_count', 0)} 条。"
@@ -312,6 +324,19 @@ class OpsAuditRunRulesTool(LLMTool):
             f"semantic_results={result.get('semantic_review_results_path')}；"
             f"final_issue_list={result.get('final_issue_list_path')}"
         )
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"false", "0", "no", "off", "disabled", "关闭", "否"}:
+        return False
+    if text in {"true", "1", "yes", "on", "enabled", "开启", "是"}:
+        return True
+    return default
 
 
 class OpsAuditInspectTool(LLMTool):

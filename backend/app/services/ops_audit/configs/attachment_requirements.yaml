@@ -52,7 +52,7 @@ photo_extensions:
 requirements:
   - id: MONTH_FLOW_CHECK_REPORT
     name: 月流量检查报告
-    enabled: true
+    enabled: false
     order_types: [Check, SupCheck]
     maintenance_types: [Month]
     rf_tables:
@@ -64,7 +64,7 @@ requirements:
 
   - id: TWOWEEK_PM_FLOW_CHECK_REPORT
     name: 两周颗粒物流量检查报告
-    enabled: true
+    enabled: false
     order_types: [Check, SupCheck]
     maintenance_types: [TwoWeek]
     rf_tables:
@@ -76,7 +76,7 @@ requirements:
 
   - id: MULTIPOINT_CALIBRATION_CURVE
     name: 多点校准曲线图
-    enabled: true
+    enabled: false
     order_types: [Check, SupCheck]
     maintenance_types: [Quarter, HalfYear, Year]
     rf_tables:
@@ -84,9 +84,9 @@ requirements:
       - RF_Q_GASEOUSMULTIPOINT_NO2
       - RF_Q_GASEOUSMULTIPOINT_O3
       - RF_Q_GASEOUSMULTIPOINT_SO2
-    required_types: [report, curve]
+    required_types: [report]
     severity: 高
-    suggestion: 补充多点校准报告和曲线图附件。
+    suggestion: 补充多点校准报告附件。
 
   - id: PREVENTIVE_MAINTENANCE_REPORT
     name: 预防性维护报告

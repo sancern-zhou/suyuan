@@ -210,7 +210,6 @@
 <title>rf_complete</title>
 <path fill="#f8fafc" stroke="#5b6472" d="M2219.5,-240C2219.5,-240 1850.5,-240 1850.5,-240 1844.5,-240 1838.5,-234 1838.5,-228 1838.5,-228 1838.5,-162 1838.5,-162 1838.5,-156 1844.5,-150 1850.5,-150 1850.5,-150 2219.5,-150 2219.5,-150 2225.5,-150 2231.5,-156 2231.5,-162 2231.5,-162 2231.5,-228 2231.5,-228 2231.5,-234 2225.5,-240 2219.5,-240"/>
 <text text-anchor="middle" x="2035" y="-224.4" font-family="Noto Sans CJK SC" font-size="12.00">RF 完整性与规范性</text>
-<text text-anchor="middle" x="2035" y="-211.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_MISSING：检查/巡检/维护类无 RF 表</text>
 <text text-anchor="middle" x="2035" y="-198.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_REQUIRED_FIELD_LOW_VALUE：关键字段为空或低价值</text>
 <text text-anchor="middle" x="2035" y="-185.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_ENV_TEMP_HUMIDITY_EMPTY：温湿度未填</text>
 <text text-anchor="middle" x="2035" y="-172.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE：人员/车辆不规范</text>
@@ -246,7 +245,7 @@
 <text text-anchor="middle" x="2035" y="-464.4" font-family="Noto Sans CJK SC" font-size="12.00">时间合理性规则</text>
 <text text-anchor="middle" x="2035" y="-451.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_CHECK_TIME_OUTSIDE_RANGE：检查时间越界</text>
 <text text-anchor="middle" x="2035" y="-438.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_CALIBRATION_DATE_EXPIRED：校准有效期异常</text>
-<text text-anchor="middle" x="2035" y="-425.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_CALIBRATION_PREV_DATE_MISMATCH：上次校准日期不一致</text>
+<text text-anchor="middle" x="2035" y="-425.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_CALIBRATION_INTERVAL_TOO_LONG：校准周期超过两年</text>
 <text text-anchor="middle" x="2035" y="-412.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH：参考流量计证书日期不一致</text>
 <text text-anchor="middle" x="2035" y="-399.4" font-family="Noto Sans CJK SC" font-size="12.00">RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID：湿度校准日期异常</text>
 </g>

@@ -12,7 +12,7 @@ from app.services.ops_audit.rules.base import add_issue
 
 
 RULE_ID = "RF_CALIBRATION_DATE_EXPIRED"
-PREV_MISMATCH_RULE_ID = "RF_CALIBRATION_PREV_DATE_MISMATCH"
+INTERVAL_RULE_ID = "RF_CALIBRATION_INTERVAL_TOO_LONG"
 PROFILES = load_yaml_config("rf_calibration_date_profiles.yaml", {})
 
 
@@ -47,32 +47,26 @@ def check_rf_calibration_dates(
             if prev_field and next_field and prev_time and next_time and prev_time > next_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "prev_after_next"))
                 continue
+            if prev_field and next_field and prev_time and next_time:
+                max_next_time = _calendar_years_after(prev_time, 2)
+                if next_time > max_next_time:
+                    _add_interval_too_long_issue(
+                        order,
+                        table,
+                        pair,
+                        prev_field,
+                        next_field,
+                        prev_time,
+                        next_time,
+                        max_next_time,
+                        reference_time,
+                        issues,
+                    )
             if pair.get("prev_must_not_after_reference") and prev_field and prev_time and prev_time > reference_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "prev_after_reference"))
                 continue
             if next_field and next_time and next_time <= reference_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "not_after_reference"))
-            if pair.get("prev_must_match_actual_previous") and prev_field and prev_time:
-                previous = _previous_same_station_table_reference(
-                    order,
-                    table,
-                    form,
-                    reference_time,
-                    profile.get("reference_time_fields", []),
-                    all_orders or [],
-                    forms_by_code or {},
-                )
-                if previous and prev_time.date() != previous["reference_time"].date():
-                    _add_previous_mismatch_issue(
-                        order,
-                        table,
-                        pair,
-                        prev_field,
-                        prev_time,
-                        previous,
-                        issues,
-                    )
-
         if not violations:
             continue
 
@@ -94,81 +88,50 @@ def check_rf_calibration_dates(
         )
 
 
-def _add_previous_mismatch_issue(
+def _add_interval_too_long_issue(
     order: dict[str, Any],
     table: str,
     pair: dict[str, Any],
     prev_field: str,
+    next_field: str,
     prev_time: datetime,
-    previous: dict[str, Any],
+    next_time: datetime,
+    max_next_time: datetime,
+    reference_time: datetime,
     issues: list[Issue],
 ) -> None:
+    violation = _violation(
+        pair,
+        prev_field,
+        next_field,
+        prev_time,
+        next_time,
+        reference_time,
+        "interval_over_two_years",
+    )
+    violation["max_next_time"] = _format_time(max_next_time)
     evidence = {
         "working_order_code": order.get("WORKINGORDERCODE"),
         "rf_table": table,
-        "label": pair.get("label"),
-        "prev_field": prev_field,
-        "filled_previous_time": _format_time(prev_time),
-        "actual_previous_time": _format_time(previous["reference_time"]),
-        "previous_order_code": previous.get("working_order_code"),
-        "previous_table": previous.get("table"),
-        "reason": "prev_not_actual_previous_reference",
+        "reference_time": _format_time(reference_time),
+        "violations": [violation],
     }
     add_issue(
         issues,
-        PREV_MISMATCH_RULE_ID,
+        INTERVAL_RULE_ID,
         "时间合理性",
         "高",
-        f"rf.{table}.{prev_field}",
-        f"RF表单上一次校准日期与系统上一条同站点作业日期不一致: {pair.get('label')}",
+        f"rf.{table}.{next_field}",
+        f"RF表单下次校准日期距上次校准日期超过两年: {pair.get('label')}",
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
 
-def _previous_same_station_table_reference(
-    current_order: dict[str, Any],
-    current_table: str,
-    current_form: dict[str, Any],
-    current_reference_time: datetime,
-    reference_fields: list[str],
-    all_orders: list[dict[str, Any]],
-    forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]],
-) -> dict[str, Any] | None:
-    station_id = _station_id(current_order, current_form)
-    current_code = str(current_order.get("WORKINGORDERCODE") or "")
-    if not station_id or not current_code:
-        return None
-
-    orders_by_code = {
-        str(order.get("WORKINGORDERCODE")): order
-        for order in all_orders
-        if order.get("WORKINGORDERCODE")
-    }
-    previous: dict[str, Any] | None = None
-    for order_code, form_rows in forms_by_code.items():
-        other_code = str(order_code or "")
-        if not other_code or other_code == current_code:
-            continue
-        other_order = orders_by_code.get(other_code, {"WORKINGORDERCODE": other_code})
-        for other_table, other_form in form_rows:
-            if other_table != current_table or other_form.get("_query_error"):
-                continue
-            if _station_id(other_order, other_form) != station_id:
-                continue
-            other_reference_time = _first_time(other_form, reference_fields) or _parse_time(other_order.get("CREATETIME"))
-            if not other_reference_time or other_reference_time >= current_reference_time:
-                continue
-            if previous is None or other_reference_time > previous["reference_time"]:
-                previous = {
-                    "working_order_code": other_code,
-                    "table": other_table,
-                    "reference_time": other_reference_time,
-                }
-    return previous
-
-
-def _station_id(order: dict[str, Any], form: dict[str, Any]) -> str:
-    return str(form.get("STATIONID") or order.get("STATIONID") or "").strip()
+def _calendar_years_after(value: datetime, years: int) -> datetime:
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:
+        return value.replace(year=value.year + years, day=28)
 
 
 def _violation(

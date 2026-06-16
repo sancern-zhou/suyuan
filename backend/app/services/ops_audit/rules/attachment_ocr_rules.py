@@ -23,7 +23,6 @@ FLOW_VISUAL_RULE_TABLES = {
     "RF_M_GASEOUSFLOWCHECK",
     "RF_Q_GaseousFlowCheck",
     *PM_MEMBRANE_VISUAL_RULE_TABLES,
-    *PM_TEMP_PRESSURE_VISUAL_RULE_TABLES,
 }
 OCR_RULE_IDS = {
     "ATTACHMENT_CERT_INCOMPLETE",
@@ -160,8 +159,6 @@ def _check_flow_visual_values(
             _check_gas_flow_display_visual(order, table, form, item, issues)
         elif table in PM_MEMBRANE_VISUAL_RULE_TABLES:
             _check_pm_membrane_visual(order, table, form, item, issues)
-        elif table in PM_TEMP_PRESSURE_VISUAL_RULE_TABLES:
-            _check_pm_temp_pressure_visual(order, table, form, item, issues)
 
 
 def _build_reference_flowmeter_certificate_tasks(
@@ -502,8 +499,9 @@ def _check_pm_flow_calibration_visual(
         return
 
     comparisons = []
-    comparisons.extend(_compare_visual_value("before_flow", data.get("before_flow"), form, ["Prev_A", "Prev_B"]))
-    comparisons.extend(_compare_visual_value("after_flow", data.get("after_flow"), form, ["Next_A", "Next_B"]))
+    before_fields, after_fields = _pm_flow_calibration_fields_for_attachment(item)
+    comparisons.extend(_compare_visual_value("before_flow", data.get("before_flow"), form, before_fields))
+    comparisons.extend(_compare_visual_value("after_flow", data.get("after_flow"), form, after_fields))
     violations = [item for item in comparisons if item.get("status") == "mismatch"]
     if not violations:
         return
@@ -536,19 +534,21 @@ def _check_gas_flow_display_visual(
             "请判断图片是否为气体流量检查的仪器面板、分析仪流量显示照片，或外接流量计/质量流量计测量照片，并只读取明确属于流量的读数。"
             "display_values 只能填写分析仪/仪器面板显示流量值，常见标签包括 FLOW、SAMPLE FLOW、SAMP FL、FLOW CHECK、采样流量、流量显示值、仪器显示流量、示值。"
             "measured_values 只能填写外接流量计/质量流量计/便携流量计测量值，常见标签包括 Volu Flow、LPM、SLPM、实测流量、测量值、测值、流量计读数。"
+            "必须保留图片原始单位，常见单位包括 LPM、SLPM、L/min、L/h、ml/min、SCCM、cc/min，不确定单位时保持空。"
             "严禁把污染物浓度读数填入 display_values；凡是带 PPM、PPB、ug/m3、mg/m3 或标注为浓度/CONC 的数值都不是流量，应忽略。"
             "不要读取日期水印、时间、站点编号、设备序列号、证书编号、量程或百分比误差。"
             "如能从图片文字、文件名或上下文区分污染物对应的流量，请按 SO2、NO2、CO、O3 返回；不能区分则只放入 visible_flow_values，对应项保持 null。"
             "热电/THERMO 臭氧(O3)分析仪比较特殊，仪器显示值可能由图片中的流量A/Flow A 与流量B/Flow B 相加得到；"
             "如图片中明确出现这两个 O3 流量分量，请在 display_components.O3 中分别返回流量A和流量B，不要把单个分量当作合计。"
+            "如果热电/THERMO O3 图片不能同时识别流量A和流量B，则 display_values.O3 保持 null，只把可见单个分量放入 visible_flow_values。"
             "只输出JSON，格式："
             "{\"is_gas_flow_panel_photo\": true/false, "
             "\"display_values\": {\"SO2\": 数值或null, \"NO2\": 数值或null, \"CO\": 数值或null, \"O3\": 数值或null}, "
             "\"display_components\": {\"O3\": [{\"label\":\"流量A或Flow A\", \"value\":数值, \"unit\":\"单位\"}, {\"label\":\"流量B或Flow B\", \"value\":数值, \"unit\":\"单位\"}]}, "
             "\"measured_values\": {\"SO2\": 数值或null, \"NO2\": 数值或null, \"CO\": 数值或null, \"O3\": 数值或null}, "
-            "\"display_units\": {\"SO2\": \"单位或空\", \"NO2\": \"单位或空\", \"CO\": \"单位或空\", \"O3\": \"单位或空\"}, "
-            "\"measured_units\": {\"SO2\": \"单位或空\", \"NO2\": \"单位或空\", \"CO\": \"单位或空\", \"O3\": \"单位或空\"}, "
-            "\"unit\": \"L/min或ml/min或空\", "
+            "\"display_units\": {\"SO2\": \"原始单位或空\", \"NO2\": \"原始单位或空\", \"CO\": \"原始单位或空\", \"O3\": \"原始单位或空\"}, "
+            "\"measured_units\": {\"SO2\": \"原始单位或空\", \"NO2\": \"原始单位或空\", \"CO\": \"原始单位或空\", \"O3\": \"原始单位或空\"}, "
+            "\"unit\": \"原始单位或空\", "
             "\"visible_flow_values\": [{\"label\":\"原图文字标签\", \"value\":数值, \"unit\":\"单位\"}], "
             "\"confidence\": 0到1, \"reason\":\"简短依据\"}"
         ),
@@ -568,33 +568,48 @@ def _check_gas_flow_display_visual(
     fallback_unit = data.get("unit")
     display_comparisons = []
     measured_comparisons = []
+    photo_value_role = _gas_flow_photo_value_role(item)
     if table == "RF_M_GASEOUSFLOWCHECK":
         for gas in ("SO2", "NO2", "CO", "O3"):
-            display_value = _monthly_gas_flow_display_value(
-                table,
-                form,
-                gas,
-                display_values.get(gas),
-                display_components.get(gas),
-            )
-            display_comparisons.extend(
-                _compare_visual_value(
-                    gas,
-                    display_value,
+            if photo_value_role != "measured":
+                if _should_skip_monthly_thermo_o3_display_comparison(
+                    table,
                     form,
-                    [f"DISPLAYVALUE{gas}"],
-                    visual_unit=display_units.get(gas) or fallback_unit,
-                )
-            )
-            measured_comparisons.extend(
-                _compare_visual_value(
                     gas,
-                    measured_values.get(gas),
+                    display_components.get(gas),
+                ):
+                    continue
+                display_value = _monthly_gas_flow_display_value(
+                    table,
                     form,
-                    [f"MEASUREDVALUE{gas}"],
-                    visual_unit=measured_units.get(gas) or fallback_unit,
+                    gas,
+                    display_values.get(gas),
+                    display_components.get(gas),
                 )
-            )
+                display_comparisons.extend(
+                    _compare_visual_value(
+                        gas,
+                        display_value,
+                        form,
+                        [f"DISPLAYVALUE{gas}"],
+                        visual_unit=display_units.get(gas) or fallback_unit,
+                    )
+                )
+            if photo_value_role != "display":
+                measured_comparisons.extend(
+                    _compare_monthly_measured_flow_candidates(
+                        gas,
+                        form,
+                        measured_values.get(gas),
+                        measured_units.get(gas) or fallback_unit,
+                        (
+                            display_values.get(gas)
+                            if photo_value_role == "measured" and measured_values.get(gas) is not None
+                            else None
+                        ),
+                        display_units.get(gas) or fallback_unit,
+                    )
+                )
     elif table == "RF_Q_GaseousFlowCheck":
         for point in ("85", "60", "35", "80", "50", "20"):
             display_comparisons.extend(
@@ -660,9 +675,13 @@ def _check_pm_membrane_visual(
         prompt=(
             f"附件文件名：{item.get('filename') or ''}。"
             "请判断图片是否为颗粒物PM10/PM2.5季度运行状态检查中的校准膜、标准膜、膜片检查照片，并只读取膜片校准相关读数。"
-            "original_value 只能填写校准膜/标准膜/膜片原始值、初始值、膜前值。"
-            "check_value 只能填写本次检查值、实测值、膜后值、膜检值。"
-            "不要读取日期水印、时间、站点编号、设备序列号、证书编号、温度、湿度、气压或流量。"
+            "本规则要与表单 PM10CHECKTEMP1VALUE/PM25CHECKTEMP1VALUE、PM10CHECKTEMP2VALUE/PM25CHECKTEMP2VALUE 比对，"
+            "这些表单字段对应图片屏幕中的 MASS系数、CAL MASS、MASS COEF、MASS FACTOR、质量系数等数值。"
+            "original_value 只能填写原始值照片中的 MASS系数/CAL MASS/质量系数；check_value 只能填写结果、检查值、实测值照片中的 MASS系数/CAL MASS/质量系数。"
+            "如果文件名或图片文字包含“原始值/初始值/膜前/检查1”，只填写 original_value，check_value 必须为 null。"
+            "如果文件名或图片文字包含“结果/检查值/实测值/膜后/检查2”，只填写 check_value，original_value 必须为 null。"
+            "严禁把校准膜读数、标准膜标称值、膜片标签值、膜片重量、1400/1404 μg、ug、μg 对应的数值填入 original_value 或 check_value；这些只可作为 visible_values 记录。"
+            "不要读取日期水印、时间、站点编号、设备序列号、证书编号、温度、湿度、气压、流量、PM浓度或误差百分比。"
             "如果图片只包含一个明确读数，请根据文件名或图片文字放入 original_value 或 check_value；不能判断则保持 null。"
             "只输出JSON，格式："
             "{\"is_pm_membrane_photo\": true/false, "
@@ -678,6 +697,7 @@ def _check_pm_membrane_visual(
     if not data.get("is_pm_membrane_photo"):
         return
 
+    data = _normalize_pm_membrane_values_by_filename(data, item)
     profile = _pm_membrane_profile(table)
     if not profile:
         return
@@ -794,10 +814,23 @@ def _compare_visual_value(
 
     comparisons = []
     for field in candidate_fields:
-        form_number = _parse_number(form.get(field))
+        form_value = form.get(field)
+        form_number = _parse_number(form_value)
         if form_number is None:
             continue
-        comparable_visual = _normalize_flow_value_for_comparison(visual_number, visual_unit, form_number)
+        comparable_candidates = _flow_value_candidates_for_comparison(
+            visual_number,
+            visual_unit,
+            form_number,
+            form_value=form_value,
+            form=form,
+            field=field,
+            label=label,
+        )
+        comparable_visual = next(
+            (candidate for candidate in comparable_candidates if _numbers_close(candidate, form_number)),
+            comparable_candidates[0],
+        )
         matched = _numbers_close(comparable_visual, form_number)
         comparisons.append(
             {
@@ -831,6 +864,17 @@ def _monthly_gas_flow_display_value(
     return component_sum
 
 
+def _should_skip_monthly_thermo_o3_display_comparison(
+    table: str,
+    form: dict[str, Any],
+    gas: str,
+    display_components: Any,
+) -> bool:
+    if table != "RF_M_GASEOUSFLOWCHECK" or gas != "O3" or not _is_thermo_brand(form):
+        return False
+    return _sum_flow_a_b_components(display_components) is None
+
+
 def _is_thermo_brand(form: dict[str, Any]) -> bool:
     brand_text = str(form.get("DEVICEBRAND") or form.get("BRAND") or "").strip()
     if not brand_text:
@@ -861,6 +905,23 @@ def _sum_flow_a_b_components(components: Any) -> float | None:
     return round(flow_a + flow_b, 6)
 
 
+def _compare_monthly_measured_flow_candidates(
+    gas: str,
+    form: dict[str, Any],
+    measured_value: Any,
+    measured_unit: Any,
+    alternate_value: Any = None,
+    alternate_unit: Any = None,
+) -> list[dict[str, Any]]:
+    field = f"MEASUREDVALUE{gas}"
+    comparisons = _compare_visual_value(gas, measured_value, form, [field], visual_unit=measured_unit)
+    if alternate_value is not None:
+        comparisons.extend(_compare_visual_value(gas, alternate_value, form, [field], visual_unit=alternate_unit))
+    if any(item.get("status") == "matched" for item in comparisons):
+        return [item for item in comparisons if item.get("status") == "matched"]
+    return comparisons
+
+
 def _compare_pm_membrane_value(
     label: str,
     visual_value: Any,
@@ -885,6 +946,49 @@ def _compare_pm_membrane_value(
             "status": "matched" if matched else "mismatch",
         }
     ]
+
+
+def _normalize_pm_membrane_values_by_filename(data: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    slot = _pm_membrane_filename_slot(item)
+    if slot not in {"original", "check"}:
+        return data
+    original = _parse_number(data.get("original_value"))
+    check = _parse_number(data.get("check_value"))
+    if original is not None and check is not None:
+        value = original if slot == "original" else check
+    else:
+        value = original if original is not None else check
+    if value is None:
+        visible_values = data.get("visible_values")
+        if isinstance(visible_values, list) and len(visible_values) == 1:
+            value = _parse_number(visible_values[0].get("value") if isinstance(visible_values[0], dict) else None)
+    if value is None:
+        return data
+    normalized = dict(data)
+    if slot == "original":
+        normalized["original_value"] = value
+        normalized["check_value"] = None
+    else:
+        normalized["original_value"] = None
+        normalized["check_value"] = value
+    return normalized
+
+
+def _pm_membrane_filename_slot(item: dict[str, Any]) -> str | None:
+    filename = str(item.get("filename") or "").strip()
+    normalized = filename.upper().replace(" ", "")
+    if not any(keyword in normalized for keyword in ("膜片检查", "膜检", "校准膜", "标准膜")):
+        if not any(keyword in normalized for keyword in ("原始值", "初始值", "膜前", "结果", "检查值", "实测值", "膜后")):
+            return None
+    if any(keyword in normalized for keyword in ("原始值", "初始值", "膜前")):
+        return "original"
+    if any(keyword in normalized for keyword in ("结果", "检查值", "实测值", "膜后")):
+        return "check"
+    if re.search(r"(?:检查|膜检|膜片|校准膜|标准膜)[_\\-（(]?(?:1|一)[）)]?", normalized):
+        return "original"
+    if re.search(r"(?:检查|膜检|膜片|校准膜|标准膜)[_\\-（(]?(?:2|二)[）)]?", normalized):
+        return "check"
+    return None
 
 
 def _compare_pm_temp_pressure_value(
@@ -987,13 +1091,70 @@ def _parse_number(value: Any) -> float | None:
         return None
 
 
-def _normalize_flow_value_for_comparison(visual_number: float, visual_unit: Any, form_number: float) -> float:
+def _normalize_flow_value_for_comparison(
+    visual_number: float,
+    visual_unit: Any,
+    form_number: float,
+    *,
+    form_value: Any = None,
+    form: dict[str, Any] | None = None,
+    field: str = "",
+    label: str = "",
+) -> float:
     unit = _normalize_flow_unit(visual_unit)
-    if unit == "L/min" and abs(form_number) >= 10 and abs(visual_number) < 10:
+    form_unit = _infer_form_flow_unit(form_value, form, field, label)
+    if unit == "L/min" and form_unit == "L/h":
+        return round(visual_number * 60, 6)
+    if unit == "ml/min" and form_unit == "L/h":
+        return round(visual_number / 1000 * 60, 6)
+    if unit == "L/h" and form_unit == "L/min":
+        return round(visual_number / 60, 6)
+    if unit == "L/h" and form_unit == "ml/min":
+        return round(visual_number / 60 * 1000, 6)
+    if unit == "L/min" and form_unit == "ml/min":
         return visual_number * 1000
-    if unit == "ml/min" and abs(form_number) < 10 and abs(visual_number) >= 10:
+    if unit == "ml/min" and form_unit == "L/min":
+        return visual_number / 1000
+    if unit == "L/min" and form_unit is None and abs(form_number) >= 10 and abs(visual_number) < 10:
+        return visual_number * 1000
+    if unit == "ml/min" and form_unit is None and abs(form_number) < 10 and abs(visual_number) >= 10:
         return visual_number / 1000
     return visual_number
+
+
+def _flow_value_candidates_for_comparison(
+    visual_number: float,
+    visual_unit: Any,
+    form_number: float,
+    *,
+    form_value: Any = None,
+    form: dict[str, Any] | None = None,
+    field: str = "",
+    label: str = "",
+) -> list[float]:
+    primary = _normalize_flow_value_for_comparison(
+        visual_number,
+        visual_unit,
+        form_number,
+        form_value=form_value,
+        form=form,
+        field=field,
+        label=label,
+    )
+    candidates = [primary]
+    unit = _normalize_flow_unit(visual_unit)
+    form_unit = _infer_form_flow_unit(form_value, form, field, label)
+    if form_unit is None:
+        candidates.append(visual_number)
+        if unit == "L/h":
+            candidates.append(round(visual_number / 60, 6))
+        elif unit == "L/min":
+            candidates.append(round(visual_number * 60, 6))
+    deduped = []
+    for candidate in candidates:
+        if not any(_numbers_close(candidate, existing) for existing in deduped):
+            deduped.append(candidate)
+    return deduped
 
 
 def _normalize_pm_temp_pressure_value_for_comparison(
@@ -1030,14 +1191,58 @@ def _normalize_flow_unit(unit: Any) -> str | None:
     if not text:
         return None
     text = text.replace("／", "/")
-    if text in {"lpm", "l/min", "lmin", "升/分钟", "升每分钟"}:
-        return "L/min"
-    if text in {"mlpm", "ml/min", "mlmin", "cc/m", "cc/min", "ccm", "毫升/分钟", "毫升每分钟"}:
+    if text in {"mlpm", "sccm", "ml/min", "mlmin", "cc/m", "cc/min", "ccm", "毫升/分钟", "毫升每分钟"}:
         return "ml/min"
-    if "lpm" in text or "l/min" in text:
+    if text in {"l/h", "lph", "lh", "l/hr", "l/hour", "升/小时", "升每小时"}:
+        return "L/h"
+    if text in {"lpm", "slpm", "slm", "l/min", "lmin", "sl/min", "升/分钟", "升每分钟"}:
         return "L/min"
     if "ml" in text or "cc" in text:
         return "ml/min"
+    if "l/h" in text or "lph" in text or "l/hr" in text or "l/hour" in text:
+        return "L/h"
+    if "lpm" in text or "l/min" in text or "slm" in text:
+        return "L/min"
+    return None
+
+
+def _infer_form_flow_unit(form_value: Any, form: dict[str, Any] | None, field: str, label: str) -> str | None:
+    value_unit = _normalize_flow_unit(form_value)
+    if value_unit:
+        return value_unit
+    if not form:
+        return None
+    range_field = _monthly_gas_flow_range_field(field, label)
+    if range_field:
+        range_text = str(form.get(range_field) or "").strip().lower().replace(" ", "")
+        range_text = range_text.replace("／", "/")
+        if _normalize_flow_unit(range_text):
+            return _normalize_flow_unit(range_text)
+        if "/h" in range_text or "1/h" in range_text:
+            return "L/h"
+        if "/min" in range_text:
+            return "L/min"
+    return None
+
+
+def _monthly_gas_flow_range_field(field: str, label: str) -> str | None:
+    upper_field = str(field or "").upper()
+    upper_label = str(label or "").upper()
+    for gas in ("SO2", "NO2", "CO", "O3"):
+        if upper_field.endswith(gas) or upper_label == gas:
+            return f"FLOWRANG{gas}"
+    return None
+
+
+def _gas_flow_photo_value_role(item: dict[str, Any]) -> str | None:
+    text = _attachment_search_text(item)
+    filename = str(item.get("filename") or "").strip()
+    if re.search(r"(?:SO2|NO2|NO|NOX|CO|O3)测(?:\.[^.]+)?$", filename, flags=re.IGNORECASE):
+        return "measured"
+    if any(token in text for token in ("流量计测值", "流量计读数", "测量流量", "流量测量", "测量值", "测量", "实测", "测值")):
+        return "measured"
+    if any(token in text for token in ("仪器示值", "显示流量", "流量显示", "显示值", "显示", "分析仪示值", "仪器显示", "示值")):
+        return "display"
     return None
 
 
@@ -1056,6 +1261,47 @@ def _pm_membrane_profile(table: str) -> dict[str, str] | None:
             "check_field": "PM10CHECKTEMP2VALUE",
             "error_field": "PM10CHECKTEMP3VALUE",
         }
+    return None
+
+
+def _pm_flow_calibration_fields_for_attachment(item: dict[str, Any]) -> tuple[list[str], list[str]]:
+    role = _pm_flow_photo_value_role(item)
+    before_fields = ["Prev_S", "Prev_A", "Prev_B"]
+    after_fields = ["Next_S", "Next_A", "Next_B"]
+    if role == "before":
+        return before_fields, before_fields
+    if role == "after":
+        return after_fields, after_fields
+    return before_fields, after_fields
+
+
+def _pm_flow_photo_value_role(item: dict[str, Any]) -> str | None:
+    text = _attachment_search_text(item)
+    if any(token in text for token in ("校准前", "校前", "流量检查", "检查")):
+        return "before"
+    if any(token in text for token in ("校准后", "校后")):
+        return "after"
+    return None
+
+
+def _pm_flow_pollutant_from_attachment(item: dict[str, Any]) -> str | None:
+    return _normalize_pm_pollutant(_attachment_search_text(item))
+
+
+def _pm_flow_form_pollutant(form: dict[str, Any]) -> str | None:
+    for field in ("PollutantType", "PM_DeviceType", "pollutant_type", "pollutantType"):
+        pollutant = _normalize_pm_pollutant(form.get(field))
+        if pollutant:
+            return pollutant
+    return None
+
+
+def _normalize_pm_pollutant(value: Any) -> str | None:
+    text = str(value or "").upper().replace(" ", "")
+    if "PM2.5" in text or "PM25" in text:
+        return "PM2.5"
+    if "PM10" in text:
+        return "PM10"
     return None
 
 
@@ -1188,14 +1434,26 @@ def _forms_for_attachment(
     item: dict[str, Any],
 ) -> list[tuple[str, dict[str, Any]]]:
     matched = [(table, form) for table, form in forms if _attachment_matches_table(item, table)]
-    return matched or forms
+    candidates = matched or forms
+    pollutant = _pm_flow_pollutant_from_attachment(item)
+    if pollutant:
+        pollutant_matched = [
+            (table, form)
+            for table, form in candidates
+            if table == "RF_TW_PmFlowCalibrate" and _pm_flow_form_pollutant(form) == pollutant
+        ]
+        if pollutant_matched:
+            return pollutant_matched
+    return candidates
 
 
 def _attachment_matches_table(item: dict[str, Any], table: str) -> bool:
     attachment_table = _attachment_table_hint(item)
     if not attachment_table:
         return False
-    return _normalize_table_name(attachment_table) == _normalize_table_name(table)
+    attachment_normalized = _normalize_table_name(attachment_table)
+    table_normalized = _normalize_table_name(table)
+    return attachment_normalized == table_normalized or attachment_normalized.startswith(table_normalized)
 
 
 def _attachment_table_hint(item: dict[str, Any]) -> str:

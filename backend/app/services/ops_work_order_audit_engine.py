@@ -1414,10 +1414,6 @@ def check_rf_forms(
     rf_attachment_typecodes: list[str] | None = None,
     attachment_records: list[dict[str, Any]] | None = None,
 ) -> None:
-    if order.get("DDWORKINGORDERTYPE") in {"Check", "SupCheck"} and not forms and not rf_attachment_typecodes:
-        add_issue(issues, "RF_MISSING", "表单完整性", "高", "RF_*", "检查/巡检类完工工单未找到 RF 表单", "")
-        return
-
     has_tw_cleaning_photo = _has_tw_cleaning_photo(attachment_records or [])
     tw_cleaning_candidate_added = False
     for table, form in forms:
@@ -1622,7 +1618,7 @@ def _run_one_flow_visual_task(task: dict[str, Any]) -> list[Issue]:
     return issues
 
 
-def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
+def audit_dataset(dataset: dict[str, Any], *, enable_visual: bool = True) -> dict[str, Any]:
     details_by_code = defaultdict(list)
     for detail in dataset.get("details", []):
         details_by_code[detail.get("WORKINGORDERCODE")].append(detail)
@@ -1722,15 +1718,16 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             wo_commonfile_by_code.get(str(code), []),
             issues,
         )
-        order_flow_tasks = build_flow_visual_tasks(
-            order,
-            forms,
-            attachments_by_code.get(str(code), []),
-            wo_commonfile_by_code.get(str(code), []),
-        )
-        for task in order_flow_tasks:
-            task["working_order_code"] = code
-        flow_visual_tasks.extend(order_flow_tasks)
+        if enable_visual:
+            order_flow_tasks = build_flow_visual_tasks(
+                order,
+                forms,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+            )
+            for task in order_flow_tasks:
+                task["working_order_code"] = code
+            flow_visual_tasks.extend(order_flow_tasks)
         record_issues_by_code[str(code)] = issues
         issues_for_record = [issue for issue in dedupe_issues(issues) if not is_excluded_rule(issue.rule_id)]
         attachment_review_rules = sorted(
@@ -1763,7 +1760,8 @@ def audit_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    _run_flow_visual_tasks(flow_visual_tasks, record_issues_by_code)
+    if enable_visual:
+        _run_flow_visual_tasks(flow_visual_tasks, record_issues_by_code)
     for record in records:
         code = str(record.get("working_order_code") or "")
         issues = [issue for issue in dedupe_issues(record_issues_by_code.get(code, [])) if not is_excluded_rule(issue.rule_id)]

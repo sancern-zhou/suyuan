@@ -24,30 +24,31 @@ from app.tools import global_tool_registry
 from app.tools.observed_weather_tool import observed_tool_registry
 from app.tools.openmeteo_current_tool import openmeteo_current_tool
 from app.tools.weatherapi_com_tool import weatherapi_com_tool
+from app.agent.runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
 
 
-def _social_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Expose native multimodal image attachment while hiding legacy image analysis."""
-    social_schema = copy.deepcopy(schema)
-    social_schema["description"] = (
-        "读取文件或目录内容，支持文本分页、图片原生多模态挂载、PDF、DOCX、PPTX、Word XML、Markdown。"
-        "图片文件会返回 multimodal_attachment，由社交模式在下一轮以原生多模态输入提供；不会返回base64或文本分析结果。"
+    multimodal_schema = copy.deepcopy(schema)
+    multimodal_schema["description"] = (
+        "读取文件或目录内容，支持文本分页、PDF、DOCX、PPTX、Word XML、Markdown。"
+        "图片文件默认按普通文件读取；只有明确需要查看历史或工具生成的本地图片时，才设置 as_multimodal_attachment=true。"
         "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
         "Excel文件不由 read_file 读取，需使用 execute_python。"
         "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
         "不返回base64，避免浪费上下文。"
     )
-    properties = social_schema.get("parameters", {}).get("properties", {})
+    properties = multimodal_schema.get("parameters", {}).get("properties", {})
     properties.pop("auto_analyze", None)
     properties.pop("analysis_type", None)
     properties["as_multimodal_attachment"] = {
         "type": "boolean",
-        "description": "社交模式读取图片文件时使用：true 表示将本地图片挂载为原生多模态输入，并在下一轮由模型直接查看。",
-        "default": True,
+        "description": "社交模式/图表模式等原生多模态模式下，仅在需要查看历史或工具生成的本地图片时设置为 true；本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "default": False,
     }
-    return social_schema
+    return multimodal_schema
 
 
 # ========================================
@@ -811,8 +812,8 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
             if allowed_tools is not None and tool.name not in allowed_tools:
                 continue
             schema = tool.get_function_schema()
-            if mode == "social" and tool.name == "read_file":
-                schema = _social_read_file_schema(schema)
+            if supports_native_multimodal(mode) and tool.name == "read_file":
+                schema = _native_multimodal_read_file_schema(schema)
             schemas.append(schema)
 
     # ========================================
@@ -894,17 +895,21 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     return schemas
 
 
-def get_detailed_schemas_for_tools(tool_names: List[str]) -> List[Dict[str, Any]]:
+def get_detailed_schemas_for_tools(
+    tool_names: List[str],
+    mode: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     按需获取指定工具的详细Schema（第二阶段）
 
     Args:
         tool_names: 需要详细Schema的工具名称列表
+        mode: 可选Agent模式，用于应用该模式的schema适配
 
     Returns:
         指定工具的完整Schema列表
     """
-    all_schemas = get_tool_schemas()
+    all_schemas = get_tool_schemas(mode=mode)
     detailed_schemas = [
         schema for schema in all_schemas
         if schema["name"] in tool_names

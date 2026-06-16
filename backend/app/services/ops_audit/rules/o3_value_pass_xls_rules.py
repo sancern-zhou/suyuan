@@ -18,12 +18,11 @@ from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
 RF_TABLE = "RF_HY_O3VALUEPASS"
-TOLERANCE = 1e-6
 
 COMPARISONS = [
-    {"field": "DEVICEDELIVERMODEL", "label": "斜率", "cell": "F25", "candidate_cells": ["F25", "F24"]},
-    {"field": "DELIVERFC", "label": "截距(ppb)", "cell": "F26", "candidate_cells": ["F26", "F25"]},
-    {"field": "DENSITY1VALUE", "label": "相对于前一次传递的改变(%)", "cell": "F28", "candidate_cells": ["F28", "F26"]},
+    {"field": "DEVICEDELIVERMODEL", "label": "斜率", "cell": "F"},
+    {"field": "DELIVERFC", "label": "截距(ppb)", "cell": "F"},
+    {"field": "DENSITY1VALUE", "label": "相对于前一次传递的改变(%)", "cell": "F"},
 ]
 
 
@@ -44,7 +43,6 @@ def check_o3_value_pass_xls_values(
     for form in relevant_forms:
         item = _select_item(items)
         if not item:
-            _add_issue(order, form, None, [{"status": "missing_xls_attachment"}], issues)
             continue
 
         cell_values = _read_cells(item)
@@ -108,7 +106,7 @@ def _read_cells_from_path(path: Path) -> dict[str, Any]:
 
             wb = load_workbook(path, data_only=True, read_only=True)
             ws = wb.worksheets[0]
-            cells = {comparison["cell"]: _worksheet_cell_values(ws, comparison) for comparison in COMPARISONS}
+            cells = _worksheet_dynamic_cells(ws)
             wb.close()
             return {"status": "success", "cells": cells}
         if suffix == ".xls":
@@ -116,7 +114,7 @@ def _read_cells_from_path(path: Path) -> dict[str, Any]:
 
             book = xlrd.open_workbook(str(path))
             sheet = book.sheet_by_index(0)
-            cells = {comparison["cell"]: _xls_sheet_cell_values(sheet, comparison) for comparison in COMPARISONS}
+            cells = _xls_sheet_dynamic_cells(sheet)
             return {"status": "success", "cells": cells}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
@@ -126,16 +124,16 @@ def _read_cells_from_path(path: Path) -> dict[str, Any]:
 def _source_candidates(record: dict[str, Any]) -> list[str]:
     candidates = []
     for field in (
-        "FILEPATH",
-        "filepath",
-        "PATH",
-        "path",
         "file_url",
         "fileUrl",
         "FILEURL",
         "FILE_URL",
         "URL",
         "url",
+        "FILEPATH",
+        "filepath",
+        "PATH",
+        "path",
     ):
         value = record.get(field)
         if value is None:
@@ -146,24 +144,65 @@ def _source_candidates(record: dict[str, Any]) -> list[str]:
     return candidates
 
 
-def _comparison_cells(comparison: dict[str, Any]) -> list[str]:
-    configured = comparison.get("candidate_cells")
-    if configured:
-        return [str(cell) for cell in configured]
-    cells = [str(comparison["cell"])]
-    cells.extend(str(cell) for cell in comparison.get("fallback_cells", []))
+def _worksheet_dynamic_cells(ws: Any) -> dict[str, list[dict[str, Any]]]:
+    slope_row, intercept_row = _find_o3_value_pass_rows(
+        ((row_index, ws[f"D{row_index}"].value) for row_index in range(1, ws.max_row + 1))
+    )
+    return _dynamic_value_cells(
+        slope_row,
+        intercept_row,
+        lambda row_index: ws[f"F{row_index}"].value,
+    )
+
+
+def _xls_sheet_dynamic_cells(sheet: Any) -> dict[str, list[dict[str, Any]]]:
+    slope_row, intercept_row = _find_o3_value_pass_rows(
+        ((row_index + 1, sheet.cell_value(row_index, 3)) for row_index in range(sheet.nrows))
+    )
+    return _dynamic_value_cells(
+        slope_row,
+        intercept_row,
+        lambda row_index: sheet.cell_value(row_index - 1, 5) if row_index <= sheet.nrows else None,
+    )
+
+
+def _find_o3_value_pass_rows(labels: Any) -> tuple[int | None, int | None]:
+    slope_row = None
+    intercept_row = None
+    for row_index, value in labels:
+        label = _normalize_label(value)
+        if slope_row is None and "斜率" in label:
+            slope_row = row_index
+        if intercept_row is None and "截距" in label:
+            intercept_row = row_index
+        if slope_row is not None and intercept_row is not None:
+            break
+    return slope_row, intercept_row
+
+
+def _dynamic_value_cells(
+    slope_row: int | None,
+    intercept_row: int | None,
+    value_at: Any,
+) -> dict[str, list[dict[str, Any]]]:
+    cells = {
+        "DEVICEDELIVERMODEL": [],
+        "DELIVERFC": [],
+        "DENSITY1VALUE": [],
+    }
+    if slope_row is not None:
+        cells["DEVICEDELIVERMODEL"].append({"cell": f"F{slope_row}", "value": value_at(slope_row)})
+    if intercept_row is not None:
+        cells["DELIVERFC"].append({"cell": f"F{intercept_row}", "value": value_at(intercept_row)})
+        cells["DENSITY1VALUE"].extend(
+            {"cell": f"F{row_index}", "value": value_at(row_index)}
+            for row_index in range(intercept_row + 1, intercept_row + 4)
+        )
     return cells
 
 
-def _worksheet_cell_values(ws: Any, comparison: dict[str, Any]) -> list[dict[str, Any]]:
-    return [{"cell": cell, "value": ws[cell].value} for cell in _comparison_cells(comparison)]
-
-
-def _xls_sheet_cell_values(sheet: Any, comparison: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {"cell": cell, "value": sheet.cell_value(*_xls_cell_indexes(cell))}
-        for cell in _comparison_cells(comparison)
-    ]
+def _normalize_label(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "")).replace("（", "(").replace("）", ")")
 
 
 def _resolve_source(source: str) -> dict[str, Any]:
@@ -214,7 +253,7 @@ def _compare_values(form: dict[str, Any], cells: dict[str, Any]) -> list[dict[st
         form_raw = form.get(field)
         form_value = _number(form_raw)
         form_precision = _decimal_places(form_raw)
-        cell_candidates = _cell_candidates(cells.get(cell), comparison)
+        cell_candidates = _cell_candidates(cells.get(field), comparison)
         matched_cell = _matched_cell(form_value, form_precision, cell_candidates, field)
         first_numeric_cell = next((item for item in cell_candidates if item["number"] is not None), None)
         used_cell = first_numeric_cell or (
@@ -389,14 +428,3 @@ def _number(value: Any) -> float | None:
 
 def _is_blank(value: Any) -> bool:
     return value is None or not str(value).strip()
-
-
-def _xls_cell_indexes(cell: str) -> tuple[int, int]:
-    match = re.fullmatch(r"([A-Z]+)([0-9]+)", cell.upper())
-    if not match:
-        raise ValueError(f"非法单元格地址：{cell}")
-    letters, row_text = match.groups()
-    col = 0
-    for char in letters:
-        col = col * 26 + ord(char) - ord("A") + 1
-    return int(row_text) - 1, col - 1

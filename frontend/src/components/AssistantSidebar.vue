@@ -128,7 +128,7 @@ const recentSessions = ref([])
 const refreshingSessions = ref(false)
 const showCaseLibrary = ref(false)
 const RECENT_SESSIONS_LIMIT = 30
-const SESSION_FETCH_LIMIT = 200
+const SESSION_FETCH_LIMIT = 50
 let recentSessionsTimer = null
 
 const isSessionCase = (session) => session?.metadata?.is_case === true

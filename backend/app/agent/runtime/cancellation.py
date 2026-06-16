@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 import structlog
 
+from .ownership import run_ownership_registry
+
 logger = structlog.get_logger()
 
 
@@ -71,7 +73,9 @@ class CancellationRegistry:
         async with self._lock:
             handle = self._handles.get(session_id)
             if not handle:
+                await run_ownership_registry.revoke(session_id)
                 return False
+            await run_ownership_registry.revoke(session_id)
             handle.cancel_event.set()
             if handle.streaming_executor:
                 handle.streaming_executor.discard()

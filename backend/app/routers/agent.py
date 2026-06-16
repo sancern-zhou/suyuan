@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 import asyncio
 import json
 import structlog
@@ -18,7 +19,7 @@ from app.agent.session import Session, get_session_manager
 from app.agent.session.conversation_persistence import ConversationPersistenceService
 from app.agent.runtime.cancellation import cancellation_registry
 from app.agent.runtime.steering import steering_registry
-from app.agent.runtime.session_advisory_lock import session_advisory_lock
+from app.agent.runtime.ownership import run_ownership_registry
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -69,6 +70,39 @@ def _append_attachment_text_for_history(
     if len(lines) <= 3:
         return query
     return query + "\n".join(lines)
+
+
+def _event_run_id(event: Dict[str, Any]) -> Optional[str]:
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    return data.get("run_id") or event.get("run_id")
+
+
+def _drawio_xml_from_result(result: Dict[str, Any]) -> str:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    for field in ("current_xml", "currentXml", "xml", "drawio_xml", "mxfile"):
+        value = data.get(field)
+        if isinstance(value, str) and value:
+            return value
+
+    candidate_refs: List[Dict[str, Any]] = []
+    xml_ref = data.get("xml_ref")
+    if isinstance(xml_ref, dict):
+        candidate_refs.append(xml_ref)
+    refs = result.get("refs") if isinstance(result.get("refs"), dict) else {}
+    artifacts = refs.get("artifacts") if isinstance(refs.get("artifacts"), list) else []
+    candidate_refs.extend(item for item in artifacts if isinstance(item, dict))
+
+    for ref in candidate_refs:
+        path_value = ref.get("local_path") or ref.get("path") or ref.get("file_path")
+        if not isinstance(path_value, str) or not path_value:
+            continue
+        try:
+            path = Path(path_value).expanduser().resolve()
+            if path.is_file():
+                return path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning("drawio_board_xml_ref_read_failed", path=path_value, error=str(exc))
+    return ""
 
 
 # ========================================
@@ -406,8 +440,9 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, latest_drawio_board, seen_visual_ids
+            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, latest_drawio_board, drawio_board_context, seen_visual_ids
             cancel_event = None
+            latest_event_run_id = None
 
             # ✅ 用于统计（不输出日志）
             event_count = 0
@@ -435,6 +470,33 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                         data_ids_count=len(session.data_ids) if session.data_ids else 0
                     )
                     conversation_history = session.conversation_history or []
+                    if (
+                        request.mode == "chart"
+                        and drawio_board_context is None
+                        and isinstance(session.metadata, dict)
+                    ):
+                        stored_drawio_board = session.metadata.get("drawio_board")
+                        if isinstance(stored_drawio_board, dict):
+                            drawio_board_context = stored_drawio_board
+                            analyze_kwargs["board_context"] = stored_drawio_board
+                            logger.info(
+                                "chart_board_context_restored_from_session_metadata",
+                                session_id=actual_session_id,
+                                current_xml_length=len(
+                                    stored_drawio_board.get("current_xml")
+                                    or stored_drawio_board.get("currentXml")
+                                    or stored_drawio_board.get("xml")
+                                    or ""
+                                ),
+                                selected_count=len(
+                                    stored_drawio_board.get("selected_cells")
+                                    or stored_drawio_board.get("selectedCells")
+                                    or []
+                                ),
+                                version=stored_drawio_board.get("version"),
+                                updated_at=stored_drawio_board.get("updated_at")
+                                or stored_drawio_board.get("updatedAt"),
+                            )
 
                     # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
                     # 避免重复加载历史消息
@@ -496,6 +558,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     async for event in agent.analyze(**analyze_kwargs):
                         event_count += 1
                         event_type = event.get("type")
+                        latest_event_run_id = _event_run_id(event) or latest_event_run_id
 
                         # ✅ 关闭流式文本事件的所有日志
                         if event_type != "streaming_text":
@@ -529,7 +592,15 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                         or (result.get("data") or {}).get("artifact_kind") == "drawio_board"
                                     )
                                 ):
-                                    latest_drawio_board = result.get("data") or {}
+                                    result_data = result.get("data") or {}
+                                    if isinstance(result_data, dict):
+                                        drawio_xml = _drawio_xml_from_result(result)
+                                        if drawio_xml:
+                                            latest_drawio_board = {
+                                                **result_data,
+                                                "current_xml": drawio_xml,
+                                                "xml": drawio_xml,
+                                            }
 
                             frontend_message = {
                                 "type": event["type"],
@@ -622,6 +693,16 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
                         # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
                         if event["type"] == "complete":
+                            event_run_id = _event_run_id(event)
+                            if not await run_ownership_registry.can_write(actual_session_id, event_run_id):
+                                logger.info(
+                                    "stale_run_complete_discarded",
+                                    session_id=actual_session_id,
+                                    run_id=event_run_id,
+                                )
+                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                yield f"data: {event_data}\n\n"
+                                break
                             # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
                             # office_document 实时事件后无法打开预览面板。
                             office_documents = agent._session_store.get(
@@ -686,7 +767,19 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             )
                             await session_manager.append_session_transcript(session)
                             agent._session_store[actual_session_id]["display_history_persisted"] = True
+                            await run_ownership_registry.complete(actual_session_id, event_run_id)
                         elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
+                            event_run_id = _event_run_id(event)
+                            if not await run_ownership_registry.can_write(actual_session_id, event_run_id):
+                                logger.info(
+                                    "stale_run_terminal_discarded",
+                                    session_id=actual_session_id,
+                                    run_id=event_run_id,
+                                    event_type=event["type"],
+                                )
+                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                yield f"data: {event_data}\n\n"
+                                break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
                                 agent._session_store[actual_session_id] = {}
@@ -722,6 +815,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             )
                             await session_manager.append_session_transcript(session)
                             agent._session_store[actual_session_id]["display_history_persisted"] = True
+                            await run_ownership_registry.complete(actual_session_id, event_run_id)
 
                             logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
@@ -736,22 +830,23 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             except asyncio.CancelledError:
                 if actual_session_id:
                     await cancellation_registry.cancel(actual_session_id)
-                    persistence.apply_terminal(
-                        session,
-                        display_history=conversation_history,
-                        terminal_message={
-                            "type": "interrupted",
-                            "content": "客户端已断开，本轮分析已取消",
-                            "timestamp": datetime.now().isoformat(),
-                        },
-                        collected_data_ids=collected_data_ids,
-                        collected_visuals=collected_visuals,
-                        drawio_board=latest_drawio_board or drawio_board_context,
-                    )
-                    await session_manager.append_session_transcript(session)
-                    if actual_session_id not in agent._session_store:
-                        agent._session_store[actual_session_id] = {}
-                    agent._session_store[actual_session_id]["display_history_persisted"] = True
+                    if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
+                        persistence.apply_terminal(
+                            session,
+                            display_history=conversation_history,
+                            terminal_message={
+                                "type": "interrupted",
+                                "content": "客户端已断开，本轮分析已取消",
+                                "timestamp": datetime.now().isoformat(),
+                            },
+                            collected_data_ids=collected_data_ids,
+                            collected_visuals=collected_visuals,
+                            drawio_board=latest_drawio_board or drawio_board_context,
+                        )
+                        await session_manager.append_session_transcript(session)
+                        if actual_session_id not in agent._session_store:
+                            agent._session_store[actual_session_id] = {}
+                        agent._session_store[actual_session_id]["display_history_persisted"] = True
                 raise
             except Exception as e:
                 logger.error(
@@ -759,30 +854,31 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     error=str(e),
                     exc_info=True
                 )
-                # 保存失败会话
-                persistence.apply_terminal(
-                    session,
-                    display_history=conversation_history,
-                    terminal_message={
-                        "type": "fatal_error",
-                        "content": str(e),
-                        "timestamp": datetime.now().isoformat(),
-                    },
-                    collected_data_ids=collected_data_ids,
-                    collected_visuals=collected_visuals,
-                    drawio_board=latest_drawio_board or drawio_board_context,
-                )
-                session.error = {
-                    "type": "stream_error",
-                    "message": str(e),
-                    "timestamp": datetime.now().isoformat()
-                }
-                await session_manager.append_session_transcript(session)
-                if actual_session_id:
-                    if actual_session_id not in agent._session_store:
-                        agent._session_store[actual_session_id] = {}
-                    agent._session_store[actual_session_id]["display_history_persisted"] = True
-                logger.info("session_saved_on_exception", session_id=actual_session_id)
+                if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
+                    # 保存失败会话
+                    persistence.apply_terminal(
+                        session,
+                        display_history=conversation_history,
+                        terminal_message={
+                            "type": "fatal_error",
+                            "content": str(e),
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        collected_data_ids=collected_data_ids,
+                        collected_visuals=collected_visuals,
+                        drawio_board=latest_drawio_board or drawio_board_context,
+                    )
+                    session.error = {
+                        "type": "stream_error",
+                        "message": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    await session_manager.append_session_transcript(session)
+                    if actual_session_id:
+                        if actual_session_id not in agent._session_store:
+                            agent._session_store[actual_session_id] = {}
+                        agent._session_store[actual_session_id]["display_history_persisted"] = True
+                    logger.info("session_saved_on_exception", session_id=actual_session_id)
 
                 error_event = {
                     "type": "fatal_error",
@@ -796,13 +892,8 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
-        async def locked_event_generator():
-            async with session_advisory_lock(actual_session_id):
-                async for chunk in event_generator():
-                    yield chunk
-
         return StreamingResponse(
-            locked_event_generator(),
+            event_generator(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -826,11 +917,13 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 @router.post("/{session_id}/cancel")
 async def cancel_analysis(session_id: str):
     """Cancel an in-flight streaming analysis for a session."""
+    active_run_id = await run_ownership_registry.current_run_id(session_id)
     cancelled = await cancellation_registry.cancel(session_id)
     return {
         "success": True,
         "cancelled": cancelled,
         "session_id": session_id,
+        "revoked_run_id": active_run_id,
         "message": "已发送取消信号" if cancelled else "没有找到运行中的分析任务",
     }
 

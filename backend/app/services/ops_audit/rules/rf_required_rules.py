@@ -192,9 +192,6 @@ def _check_env_temp_humidity(
 
     if has_order_env_temp_humidity:
         return
-    if _form_indicates_not_applicable_device(form):
-        return
-
     temp_fields = RF_FIELD_PROFILES.get("temperature_fields", [])
     humidity_fields = RF_FIELD_PROFILES.get("humidity_fields", [])
 
@@ -219,11 +216,15 @@ def _check_env_temp_humidity(
     if not missing_temp and not missing_humidity:
         return
 
+    remark_candidates = _remark_candidates(form)
+    has_remark = any(str(value or "").strip() for value in remark_candidates.values())
     evidence = {
         "working_order_code": order.get("WORKINGORDERCODE"),
         "rf_table": table,
         "missing_temperature": missing_temp,
         "missing_humidity": missing_humidity,
+        "remark_candidates": remark_candidates,
+        "needs_semantic_review": has_remark,
     }
 
     message_parts = []
@@ -241,6 +242,15 @@ def _check_env_temp_humidity(
         f"RF表单{'; '.join(message_parts)}",
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
+
+
+def _remark_candidates(form: dict[str, Any]) -> dict[str, Any]:
+    candidates = {}
+    for field, value in form.items():
+        upper = str(field or "").upper()
+        if any(token in upper for token in ("REMARK", "REMARKS", "CHECKREMARK", "DESCRIPTION", "SITUATION", "COMMENT")):
+            candidates[str(field)] = value
+    return candidates
 
 
 def _has_complete_env_temp_humidity(forms: list[tuple[str, dict[str, Any]]]) -> bool:

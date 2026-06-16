@@ -28,6 +28,7 @@ def _build_board_context_prompt(board_context: Optional[Dict[str, Any]]) -> str:
         "## Draw.io 画板上下文（仅图表模式）\n\n"
         "- `board_context.current_xml` 是前端 draw.io 编辑器当前画布的权威状态；如果它与历史工具结果冲突，以这里为准。\n"
         "- 如果用户要求修改现有画板，必须基于当前 XML 增量更新，不要凭历史重新生成旧版本。\n"
+        "- 调用 `create_drawio_board(operation=\"edit\")` 时，只传结构化 `operations`。\n"
         "- 如果存在选中元素，优先把用户的“这个/这里/选中的模块”等指代绑定到 selected_cells。\n"
         "- `selected_cells[*].id` 是选中 mxCell 的精确 ID；`selected_cells[*].xml` 是该 mxCell 的完整 XML；`selected_cells[*].geometry` 是其当前位置和尺寸。\n"
         "- 修改选中模块时，优先使用 `target=\"selected\"` 和结构化操作 `update_label`、`update_style`、`move_resize`、`connect`、`delete_with_edges`；只有复杂替换时才写完整 `new_xml`。\n"
@@ -72,12 +73,13 @@ def build_chart_prompt(
     if board_context_prompt:
         prompt_parts.append(board_context_prompt)
 
-    if "create_drawio_board" in available_tools and "analyze_image" in available_tools:
+    if "create_drawio_board" in available_tools:
         prompt_parts.extend([
-            "## Draw.io 画板截图校验\n\n",
+            "## Draw.io 画板截图与原生多模态输入\n\n",
             "- 用户在前端点击“确认画板修改”后，下一轮图表模式请求可能会附带当前画板 PNG 截图。\n",
-            "- 当用户要求检查、优化、确认视觉效果，或修改后的布局/连线/文字是否符合需求时，可调用 `analyze_image` 对该截图做视觉质量检查。\n",
-            "- 截图只用于视觉质量检查；XML 仍然是权威状态，继续编辑画板必须以 `board_context.current_xml` 为准。\n\n",
+            "- 本轮上传图片和画板截图已经作为原生多模态输入提供；直接基于可见图片理解图表类型、样式、配色和布局。\n",
+            "- 截图只用于视觉质量检查和参考复刻；XML 仍然是权威状态，继续编辑画板必须基于 `board_context.current_xml` 理解现状。\n",
+            "- 只有当需要读取历史文件路径或工具生成的本地图片时，才调用 `read_file(as_multimodal_attachment=true)` 将图片挂载到下一轮原生多模态输入。\n\n",
         ])
 
     prompt_parts.extend([
@@ -105,7 +107,7 @@ def build_chart_prompt(
         "1. **查询数据**：使用数据查询工具获取数据（获得 data_id），然后继续场景1的第2-6步\n\n",
 
         "**场景3：用户提供参考图片**（⭐ 看图生成图表）\n",
-        "1. **分析参考图片**：使用 `read_file(path, analysis_type=\"chart\")` 分析图表类型、样式、配色\n",
+        "1. **直接理解参考图片**：本轮图片已作为原生多模态输入提供，直接观察图表类型、结构、样式、配色和布局\n",
         "2. **查询数据**：根据参考图表需求使用数据查询工具获取数据\n",
         "3. **分析数据结构**：使用 `read_data_registry(data_id, list_fields=true)` 查看字段\n",
         "4. **展示设计方案**：向用户展示基于参考图片的设计方案并等待确认\n",
@@ -298,7 +300,7 @@ def build_chart_prompt(
         "   - **保存模板**：如果生成了独特的图表设计，询问用户是否保存为新模板（使用 `write_file` 保存到 config/chart_templates/{category}/{template_id}.json）\n",
         "   - **删除模板**：如果用户需要删除旧模板，使用 `bash(command=\"rm config/chart_templates/...\")`\n",
         "   - **模板积累**：鼓励保存有复用价值的图表设计\n",
-        "7. **看图生成**：用户提供参考图片时，先用 `read_file(path, analysis_type=\"chart\")` 分析图表样式，再基于用户数据生成相同风格的图表\n",
+        "7. **看图生成**：用户提供参考图片时，直接基于本轮原生多模态输入理解图表样式，再基于用户数据生成相同风格的图表\n",
         "\n",
         "## ⚠️ 子Agent返回格式规范（CRITICAL）\n\n",
         "**当作为子Agent被调用时**，必须在最终回复中明确列出所有data_id：\n\n",

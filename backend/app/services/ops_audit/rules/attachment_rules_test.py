@@ -1,9 +1,61 @@
-import json
-
 from app.services.ops_audit.rules.attachment_rules import check_attachment_requirements
 
 
-def test_multipoint_calibration_accepts_xlsx_as_report_without_report_keywords():
+def test_month_flow_check_report_missing_attachment_is_not_issue_when_sync_may_lag():
+    issues = []
+
+    check_attachment_requirements(
+        {
+            "WORKINGORDERCODE": "CH2606041780545777107",
+            "DDWORKINGORDERTYPE": "Check",
+            "MAINTENANCETYPE": "Month",
+        },
+        [("RF_M_GASEOUSFLOWCHECK", {"WORKINGORDERCODE": "CH2606041780545777107"})],
+        [],
+        [],
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_two_week_pm_flow_check_report_missing_attachment_is_not_issue_when_sync_may_lag():
+    issues = []
+
+    check_attachment_requirements(
+        {
+            "WORKINGORDERCODE": "CH2606061780706161834",
+            "DDWORKINGORDERTYPE": "Check",
+            "MAINTENANCETYPE": "TwoWeek",
+        },
+        [("RF_TW_PmFlowCalibrate", {"WORKINGORDERCODE": "CH2606061780706161834"})],
+        [],
+        [],
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_multipoint_calibration_missing_attachment_is_not_issue_when_sync_may_lag():
+    issues = []
+
+    check_attachment_requirements(
+        {
+            "WORKINGORDERCODE": "CH2606061780715418079",
+            "DDWORKINGORDERTYPE": "Check",
+            "MAINTENANCETYPE": "Quarter",
+        },
+        [("RF_Q_GASEOUSMULTIPOINT_O3", {"WORKINGORDERCODE": "CH2606061780715418079"})],
+        [],
+        [],
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_multipoint_calibration_does_not_require_curve_attachment_when_report_exists():
     issues = []
 
     check_attachment_requirements(
@@ -25,9 +77,4 @@ def test_multipoint_calibration_accepts_xlsx_as_report_without_report_keywords()
         issues,
     )
 
-    assert len(issues) == 1
-    assert issues[0].rule_id == "ATTACHMENT_REQUIRED_MISSING"
-    assert issues[0].message == "多点校准曲线图缺失：curve"
-    evidence = json.loads(issues[0].evidence)
-    assert evidence["missing_types"] == ["curve"]
-    assert evidence["type_counts"]["report"] == 1
+    assert issues == []

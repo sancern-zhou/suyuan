@@ -1,5 +1,3 @@
-const createMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-
 const normalizeText = (content) => String(content || '').trim()
 
 export const addPendingSteeringInput = (state, content, timestamp = new Date().toISOString()) => {
@@ -36,27 +34,8 @@ export const applyPendingSteeringInputs = (state, contents = [], timestamp = new
     const text = normalizeText(content)
     if (!text) continue
 
-    removePendingSteeringInput(state, text)
-    const alreadyApplied = state.messages.some(message =>
-      message?.type === 'user' &&
-      message?.steering === true &&
-      message?.steeringStatus === 'applied' &&
-      normalizeText(message.content) === text
-    )
-    if (alreadyApplied) continue
-
-    state.messages.push({
-      id: createMessageId(),
-      type: 'user',
-      content: text,
-      data: { source: 'steering' },
-      attachments: null,
-      timestamp,
-      steering: true,
-      steeringStatus: 'applied',
-      steeringAppliedAt: timestamp
-    })
-    appliedCount++
+    const removed = removePendingSteeringInput(state, text)
+    if (removed) appliedCount++
   }
 
   return appliedCount
@@ -124,7 +103,7 @@ export const promoteUnappliedSteeringInputsToQueue = (
     )
     if (!alreadyShown) {
       state.messages.push({
-        id: createMessageId(),
+        id: `queued_steering_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
         type: 'user',
         content: text,
         data: { source: 'steering_unapplied' },

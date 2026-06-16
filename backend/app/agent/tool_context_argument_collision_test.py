@@ -3,7 +3,12 @@ import pytest
 from app.agent.core.executor import ToolExecutor
 from app.agent.core.planner import ReActPlanner
 from app.agent.memory.hybrid_manager import HybridMemoryManager
-from app.agent.tool_adapter import call_llm_tool, get_react_agent_tool_registry
+from app.agent.tool_adapter import (
+    call_llm_tool,
+    get_detailed_schemas_for_tools,
+    get_react_agent_tool_registry,
+    get_tool_schemas,
+)
 
 
 @pytest.mark.asyncio
@@ -124,6 +129,112 @@ async def test_call_llm_tool_keeps_context_keyword_for_context_aware_tools(monke
     assert captured["execution_context"] is runtime_context
     assert captured["pattern"] == "case.*image"
     assert "context" not in captured["kwargs"]
+
+
+def test_chart_read_file_schema_keeps_optional_native_multimodal_attachment(monkeypatch):
+    class FakeReadFileTool:
+        name = "read_file"
+
+        def is_available(self):
+            return True
+
+        def get_function_schema(self):
+            return {
+                "name": "read_file",
+                "description": "读取文件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "auto_analyze": {"type": "boolean"},
+                        "analysis_type": {"type": "string"},
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.agent.tool_adapter.global_tool_registry.get_all_tools",
+        lambda: [{"tool": FakeReadFileTool()}],
+    )
+
+    schemas = get_tool_schemas(mode="chart")
+
+    read_file_schema = next(schema for schema in schemas if schema["name"] == "read_file")
+    properties = read_file_schema["parameters"]["properties"]
+    assert "analysis_type" not in properties
+    assert "auto_analyze" not in properties
+    assert properties["as_multimodal_attachment"]["default"] is False
+    assert "需要查看历史或工具生成的本地图片" in properties["as_multimodal_attachment"]["description"]
+    assert "图表模式" in properties["as_multimodal_attachment"]["description"]
+    assert "社交模式" in properties["as_multimodal_attachment"]["description"]
+
+
+def test_chart_detailed_read_file_schema_keeps_optional_native_multimodal_attachment(monkeypatch):
+    class FakeReadFileTool:
+        name = "read_file"
+
+        def is_available(self):
+            return True
+
+        def get_function_schema(self):
+            return {
+                "name": "read_file",
+                "description": "读取文件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "auto_analyze": {"type": "boolean"},
+                        "analysis_type": {"type": "string"},
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.agent.tool_adapter.global_tool_registry.get_all_tools",
+        lambda: [{"tool": FakeReadFileTool()}],
+    )
+
+    schemas = get_detailed_schemas_for_tools(["read_file"], mode="chart")
+
+    properties = schemas[0]["parameters"]["properties"]
+    assert "analysis_type" not in properties
+    assert "auto_analyze" not in properties
+    assert properties["as_multimodal_attachment"]["default"] is False
+
+
+def test_default_detailed_read_file_schema_retains_legacy_image_analysis_fields(monkeypatch):
+    class FakeReadFileTool:
+        name = "read_file"
+
+        def is_available(self):
+            return True
+
+        def get_function_schema(self):
+            return {
+                "name": "read_file",
+                "description": "读取文件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "auto_analyze": {"type": "boolean"},
+                        "analysis_type": {"type": "string"},
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.agent.tool_adapter.global_tool_registry.get_all_tools",
+        lambda: [{"tool": FakeReadFileTool()}],
+    )
+
+    schemas = get_detailed_schemas_for_tools(["read_file"])
+
+    properties = schemas[0]["parameters"]["properties"]
+    assert "analysis_type" in properties
+    assert "auto_analyze" in properties
+    assert "as_multimodal_attachment" not in properties
 
 
 @pytest.mark.asyncio

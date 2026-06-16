@@ -27,11 +27,7 @@ const appliedCount = applyPendingSteeringInputs(state, ['补充考虑昨天数�
 
 assert.equal(appliedCount, 1)
 assert.equal(state.pendingSteeringInputs.length, 0)
-assert.equal(state.messages.length, 3)
-assert.equal(state.messages[2].type, 'user')
-assert.equal(state.messages[2].content, '补充考虑昨天数据')
-assert.equal(state.messages[2].steering, true)
-assert.equal(state.messages[2].steeringStatus, 'applied')
+assert.equal(state.messages.length, 2, 'applied steering should clear pending indicator without duplicating user input')
 
 const terminalState = {
   pendingSteeringInputs: [

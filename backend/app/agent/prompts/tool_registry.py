@@ -162,8 +162,8 @@ CHART_TOOL_NAMES = {
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
-    # 代码执行和视觉校验
-    "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python", "analyze_image",
+    # 代码执行和原生多模态视觉参考
+    "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
 }
 
 # ===== 运维管理模式工具 =====
@@ -182,6 +182,9 @@ OPS_TOOL_NAMES = {
     # 报告产物
     "create_report_package",
     "validate_report_package",
+
+    # 子 Agent 复核
+    "call_sub_agent",
 
     # 站点小时/日数据核对
     "query_gd_suncere_station_hour_new",
@@ -429,7 +432,7 @@ OPS_TOOL_ORDER = [
 CHART_TOOL_ORDER = [
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash", "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
-    "read_data_registry", "analyze_image",
+    "read_data_registry",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",

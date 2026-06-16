@@ -158,3 +158,86 @@ async def test_social_mode_does_not_override_llm_provider_or_model(monkeypatch):
     assert "llm_provider" not in captured_kwargs
     assert "llm_model" not in captured_kwargs
     assert captured_kwargs["auto_profile"] == "multimodal"
+
+
+@pytest.mark.asyncio
+async def test_chart_mode_uses_multimodal_auto_profile(monkeypatch):
+    from app.agent import react_agent as react_agent_module
+
+    captured_kwargs = {}
+
+    class FakeReActLoop:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            self.context_builder = SimpleNamespace()
+
+        async def run(self, **kwargs):
+            yield {
+                "type": "complete",
+                "data": {"answer": "ok"},
+            }
+
+    monkeypatch.setattr(react_agent_module, "ReActLoop", FakeReActLoop)
+
+    agent = ReActAgent(tool_registry={})
+    image_attachment = {
+        "type": "image",
+        "name": "ref.png",
+        "url": "https://example.com/ref.png",
+    }
+
+    events = [
+        event
+        async for event in agent.analyze(
+            user_query="按参考图生成图表",
+            session_id="chart_session_profile",
+            manual_mode="chart",
+            attachments=[image_attachment],
+        )
+    ]
+
+    assert events[-1]["type"] == "complete"
+    assert captured_kwargs["auto_profile"] == "multimodal"
+    assert captured_kwargs["attachments"] == [image_attachment]
+
+
+@pytest.mark.asyncio
+async def test_non_multimodal_mode_does_not_forward_runtime_attachments(monkeypatch):
+    from app.agent import react_agent as react_agent_module
+
+    captured_kwargs = {}
+
+    class FakeReActLoop:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            self.context_builder = SimpleNamespace()
+
+        async def run(self, **kwargs):
+            yield {
+                "type": "complete",
+                "data": {"answer": "ok"},
+            }
+
+    monkeypatch.setattr(react_agent_module, "ReActLoop", FakeReActLoop)
+
+    agent = ReActAgent(tool_registry={})
+
+    events = [
+        event
+        async for event in agent.analyze(
+            user_query="普通助手问题",
+            session_id="assistant_session_profile",
+            manual_mode="assistant",
+            attachments=[
+                {
+                    "type": "image",
+                    "name": "ref.png",
+                    "url": "https://example.com/ref.png",
+                }
+            ],
+        )
+    ]
+
+    assert events[-1]["type"] == "complete"
+    assert captured_kwargs["auto_profile"] is None
+    assert captured_kwargs["attachments"] is None

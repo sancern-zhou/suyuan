@@ -14,7 +14,7 @@ globalThis.fetch = async (url, options = {}) => {
 }
 
 await listSessions()
-assert.equal(calls.at(-1).url, '/api/sessions/?limit=200')
+assert.equal(calls.at(-1).url, '/api/sessions/?limit=50')
 assert.deepEqual(calls.at(-1).options, {
   method: 'GET',
   headers: {}

@@ -31,10 +31,11 @@ def run_rule_engine(
     output_dir: Path | None = None,
     persist_outputs: bool = True,
     evidence_level: str = "summary",
+    enable_visual: bool = True,
 ) -> dict[str, Any]:
     """Run deterministic rules, classify issues, and persist audit outputs."""
 
-    audit = audit_dataset(dataset)
+    audit = audit_dataset(dataset, enable_visual=enable_visual)
     audit["evidence"] = build_dataset_evidence(dataset, evidence_level=evidence_level)
     semantic_candidates = build_semantic_candidates(audit)
     semantic_review_tasks = build_semantic_review_tasks(audit)
@@ -65,6 +66,7 @@ def run_rule_engine(
         "final_issue_list_path": str(final_issue_list_path),
         "summary": audit.get("summary", {}),
         "audit_info": audit.get("audit_info", {}),
+        "enable_visual": enable_visual,
         "semantic_candidate_count": semantic_candidates.get("candidate_count", 0),
         "semantic_review_task_count": semantic_review_tasks.get("task_count", 0),
         "semantic_review_result_count": semantic_review_results.get("result_count", 0),

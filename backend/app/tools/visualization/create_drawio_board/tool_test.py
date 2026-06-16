@@ -15,7 +15,6 @@ def test_create_drawio_board_schema_points_to_required_guides():
     assert "app/agent/guides/drawio_edit_policy.md" in description
     assert "app/agent/guides/drawio_design_patterns.md" not in description
     assert "before first use" in description
-    assert "board_context.current_xml" in description
     assert "create_diagram_artifact" in description
 
 
@@ -71,8 +70,14 @@ async def test_create_drawio_board_returns_editable_board_payload():
     assert result["data"]["board_id"] == "board_a"
     assert result["data"]["title"] == "系统画板"
     assert result["data"]["version"] == 1
-    assert "<mxfile" in result["data"]["xml"]
+    assert "xml" not in result["data"]
+    assert result["data"]["xml_length"] > 0
+    assert result["data"]["xml_ref"]["local_path"]
+    assert result["data"]["xml_ref"]["read_url"].startswith("/api/file/")
+    stored_xml = Path(result["data"]["xml_ref"]["local_path"]).read_text(encoding="utf-8")
+    assert "<mxfile" in stored_xml
     assert result["metadata"]["generator"] == "create_drawio_board"
+    assert "无需再次加载参考图片" in result["summary"]
     assert result["metadata"]["schema_version"] == "v1.0"
     assert result["metadata"]["panel"] == "board"
     assert result["metadata"]["editable"] is True
@@ -80,7 +85,7 @@ async def test_create_drawio_board_returns_editable_board_payload():
 
 
 @pytest.mark.asyncio
-async def test_create_drawio_board_standardization_preserves_xml_data():
+async def test_create_drawio_board_standardization_preserves_externalized_xml_ref():
     tool = CreateDrawioBoardTool()
 
     result = await tool.execute(
@@ -95,7 +100,9 @@ async def test_create_drawio_board_standardization_preserves_xml_data():
     assert standardized["success"] is True
     assert standardized["data"]["artifact_kind"] == "drawio_board"
     assert standardized["data"]["board_id"] == "board_a"
-    assert "<mxfile" in standardized["data"]["xml"]
+    assert "xml" not in standardized["data"]
+    assert standardized["data"]["xml_ref"]["local_path"]
+    assert standardized["refs"]["artifacts"][0]["local_path"] == standardized["data"]["xml_ref"]["local_path"]
     assert standardized["metadata"]["generator"] == "create_drawio_board"
 
 
@@ -121,7 +128,38 @@ async def test_create_drawio_board_edit_applies_operations_to_current_xml():
     )
 
     assert result["success"] is True
-    assert "Auth API" in result["data"]["xml"]
+    assert "xml" not in result["data"]
+    stored_xml = Path(result["data"]["xml_ref"]["local_path"]).read_text(encoding="utf-8")
+    assert "Auth API" in stored_xml
+    assert result["data"]["operation"] == "edit"
+    assert result["data"]["changed"] is True
+    assert result["data"]["changed_cells"] == ["2"]
+    assert "已应用 1 个编辑操作" in result["summary"]
+    assert "2" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_create_drawio_board_edit_reports_noop_when_labels_already_match():
+    tool = CreateDrawioBoardTool()
+    current_xml = """
+    <mxCell id="2" value="Auth API" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry"/></mxCell>
+    """
+
+    result = await tool.execute(
+        artifact_id="board_a",
+        title="系统画板",
+        operation="edit",
+        current_xml=current_xml,
+        operations=[
+            {"operation": "update_label", "cell_id": "2", "label": "Auth API"},
+        ],
+    )
+
+    assert result["success"] is True
+    assert result["data"]["operation"] == "edit"
+    assert result["data"]["changed"] is False
+    assert result["data"]["changed_cells"] == []
+    assert "未产生实际变更" in result["summary"]
 
 
 @pytest.mark.asyncio
@@ -144,6 +182,7 @@ async def test_create_drawio_board_edit_can_target_selected_cells():
     )
 
     assert result["success"] is True
-    assert 'value="认证服务"' in result["data"]["xml"]
-    assert 'width="180"' in result["data"]["xml"]
-    assert 'height="80"' in result["data"]["xml"]
+    assert "xml" not in result["data"]
+    stored_xml = Path(result["data"]["xml_ref"]["local_path"]).read_text(encoding="utf-8")
+    assert "认证服务" in stored_xml
+    assert 'width="180"' in stored_xml

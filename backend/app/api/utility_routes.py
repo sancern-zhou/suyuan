@@ -32,6 +32,8 @@ MEDIA_TYPES = {
     ".xls": "application/vnd.ms-excel",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".txt": "text/plain",
+    ".drawio": "application/xml",
+    ".xml": "application/xml",
 }
 
 INLINE_PREVIEW_EXTENSIONS = {

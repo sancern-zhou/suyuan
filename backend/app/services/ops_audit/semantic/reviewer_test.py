@@ -3,6 +3,228 @@ import json
 from app.services.ops_audit.semantic import prompts, reviewer
 
 
+def test_review_text_includes_rf_field_row_explanations():
+    text = reviewer._compose_review_text(
+        {"ORDERTITLE": "任务检查单"},
+        [],
+        [
+            (
+                "RF_W_GASEOUSCHECK_NOX",
+                {
+                    "REMARK": "",
+                    "PMTCHECKVALUE": "0.002",
+                    "PMTCHECKROW": "表格范围有误",
+                },
+            )
+        ],
+    )
+
+    assert "RF_W_GASEOUSCHECK_NOX.PMTCHECKROW:表格范围有误" in text
+
+
+def test_review_text_includes_rf_handling_record_explanations():
+    text = reviewer._compose_review_text(
+        {"ORDERTITLE": "任务检查单"},
+        [],
+        [
+            (
+                "RF_W_GASEOUSCHECK_NOX",
+                {
+                    "REMARK": "",
+                    "PMTCHECKVALUE": "0.018",
+                    "EXCEPTIONHANDLINGRECORD": "厂家文件范围：0～4.096 v",
+                    "异常时处理记录": "厂家文件范围：0～4.096 v",
+                },
+            )
+        ],
+    )
+
+    assert "RF_W_GASEOUSCHECK_NOX.EXCEPTIONHANDLINGRECORD:厂家文件范围：0～4.096 v" in text
+    assert "RF_W_GASEOUSCHECK_NOX.异常时处理记录:厂家文件范围：0～4.096 v" in text
+
+
+def test_remark_batch_payload_includes_issue_evidence_summary(monkeypatch):
+    captured = {}
+
+    def fake_call(prompt, text, *, context=None):
+        captured["prompt"] = prompt
+        captured["text"] = text
+        return {
+            "results": [
+                {
+                    "working_order_code": "WO-NOX-PMT",
+                    "is_complete": True,
+                    "has_cause": True,
+                    "has_action": True,
+                    "has_result": True,
+                    "problem_description": "",
+                    "confidence": 0.95,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", fake_call)
+    issue = {
+        "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+        "category": "异常说明问题",
+        "severity": "高",
+        "field": "rf.RF_W_GASEOUSCHECK_NOX.remark",
+        "message": "RF表单存在异常/漏填/错配，需语义判断备注是否解释充分: NOx周检参考PMT信号检查值(0.018)超出FPI品牌正常范围(1.5-4.096 V)",
+        "evidence": json.dumps(
+            {
+                "working_order_code": "WO-NOX-PMT",
+                "rf_table": "RF_W_GASEOUSCHECK_NOX",
+                "reason_rule_id": "RF_RANGE_OUT_OF_SPEC",
+                "abnormal_field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+                "abnormal_message": "NOx周检参考PMT信号检查值(0.018)超出FPI品牌正常范围(1.5-4.096 V)",
+                "remark_candidates": {
+                    "EXCEPTIONHANDLINGRECORD": "厂家文件范围：0～4.096 v"
+                },
+                "needs_semantic_review": True,
+            },
+            ensure_ascii=False,
+        ),
+    }
+    task = {
+        "working_order_code": "WO-NOX-PMT",
+        "review_kind": "remark_semantics",
+        "semantic_focus": ["RF_ABNORMAL_VALUE_NO_REMARK"],
+        "evidence_summary": {
+            "matched_rules": ["RF_ABNORMAL_VALUE_NO_REMARK"],
+            "sample_issues": [issue],
+        },
+    }
+
+    result = reviewer._review_remark_tasks_batch(
+        [task],
+        {"WO-NOX-PMT": {"scoring_issues": [issue]}},
+        {"WO-NOX-PMT": {}},
+        {},
+        {"WO-NOX-PMT": []},
+    )
+
+    payload = json.loads(captured["text"])
+    item = payload["items"][0]
+    assert captured["prompt"] == prompts.REMARK_BATCH_SEMANTIC_JSON_PROMPT
+    assert item["evidence_summary"]["sample_issues"][0]["evidence"]
+    assert "厂家文件范围：0～4.096 v" in item["evidence_summary"]["sample_issues"][0]["evidence"]
+    assert result["WO-NOX-PMT"]["judgment"] == "cleared"
+
+
+def test_remark_batch_prompt_mentions_pm_temp_calibration_situation():
+    assert "RF_PM_TEMP_ERROR_OUT_OF_RANGE" in prompts.REMARK_BATCH_SEMANTIC_JSON_PROMPT
+    assert "calibration_situation" in prompts.REMARK_BATCH_SEMANTIC_JSON_PROMPT
+    assert "校准情况" in prompts.REMARK_BATCH_SEMANTIC_JSON_PROMPT
+
+
+def test_pm_tape_candidate_is_not_promoted_by_generic_remark_review(monkeypatch):
+    def fake_call(prompt, text, *, context=None):
+        if prompt == prompts.PM_TAPE_USAGE_BATCH_JSON_PROMPT:
+            return {
+                "results": [
+                    {
+                        "item_id": "WO-1::PM10::TAPEUSAGEDISPOSAL",
+                        "is_valid": True,
+                        "reason": "纸带够一周使用量，可支撑到下次维护。",
+                        "problem_description": "纸带使用量及处置情况为“够一周使用量”，可判断纸带足够使用到下次维护。",
+                    }
+                ]
+            }
+        if prompt == prompts.REMARK_BATCH_SEMANTIC_JSON_PROMPT:
+            return {
+                "results": [
+                    {
+                        "working_order_code": "WO-1",
+                        "is_complete": False,
+                        "has_cause": False,
+                        "has_action": False,
+                        "has_result": False,
+                        "problem_description": "备注内容仅为“任务检查单”，未说明异常原因、处置措施和处理结果。",
+                        "confidence": 0.95,
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected prompt: {prompt}")
+
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", fake_call)
+    abnormal_issue = {
+        "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+        "category": "异常说明问题",
+        "severity": "高",
+        "field": "rf.RF_W_GASEOUSCHECK_O3.remark",
+        "message": "RF表单存在异常/漏填/错配但无有效说明: O3周检测量信号A检查值超出正常范围",
+        "evidence": json.dumps(
+            {
+                "working_order_code": "WO-1",
+                "rf_table": "RF_W_GASEOUSCHECK_O3",
+                "reason_rule_id": "RF_RANGE_OUT_OF_SPEC",
+                "abnormal_field": "rf.RF_W_GASEOUSCHECK_O3.GYCHECKVALUE",
+                "abnormal_message": "O3周检测量信号A检查值超出正常范围",
+                "remark_candidates": {"REMARK": ""},
+                "needs_semantic_review": False,
+            },
+            ensure_ascii=False,
+        ),
+    }
+    pm_tape_issue = {
+        "rule_id": "RF_PM_TAPE_USAGE_INVALID",
+        "category": "规范性问题",
+        "severity": "中",
+        "field": "rf.RF_W_PMCHECK.TAPEUSAGEDISPOSAL",
+        "message": "颗粒物周检纸带使用量及处置情况需复核: 够一周使用量",
+        "evidence": json.dumps(
+            {
+                "working_order_code": "WO-1",
+                "rf_table": "RF_W_PMCHECK",
+                "pollutant_type": "PM10",
+                "device_model": "MP101",
+                "instrument_type": "paper_tape",
+                "field": "TAPEUSAGEDISPOSAL",
+                "field_label": "纸带使用量及处置情况",
+                "value": "够一周使用量",
+                "needs_semantic_review": True,
+            },
+            ensure_ascii=False,
+        ),
+    }
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-1",
+                "station_id": "ST-1",
+                "order_type": "Check",
+                "maintenance_type": "Week",
+                "finish_time": "2026-06-09 15:27:16",
+                "audit_level": "有问题",
+                "deterministic_issue_count": 1,
+                "candidate_issue_count": 1,
+                "attachment_count": 0,
+                "attachment_review_rules": [],
+                "workflow_steps": ["CreateOrder", "CheckOrder"],
+                "rf_tables": ["RF_W_GASEOUSCHECK_O3", "RF_W_PMCHECK"],
+                "scoring_issues": [abnormal_issue, pm_tape_issue],
+            }
+        ]
+    }
+
+    results = reviewer.build_semantic_review_results(audit, {"orders": [], "details": [], "rf_forms": {}})
+
+    confirmed_rule_sets = [
+        set(result.get("supported_rule_ids", []))
+        for result in results["results"]
+        if result.get("judgment") == "confirmed_issue"
+    ]
+    pm_results = [
+        result
+        for result in results["results"]
+        if result.get("field_label") == "纸带使用量及处置情况"
+    ]
+    assert {"RF_ABNORMAL_VALUE_NO_REMARK"} in confirmed_rule_sets
+    assert {"RF_PM_TAPE_USAGE_INVALID"} not in confirmed_rule_sets
+    assert pm_results
+    assert all(result.get("judgment") == "cleared" for result in pm_results)
+
+
 def test_no_device_review_uses_specific_problem_description(monkeypatch):
     problem_description = (
         "城市摄像设备型号填写为/，运行情况为“城市摄影系统故障，历史交接遗留”；"
