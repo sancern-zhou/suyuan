@@ -17,6 +17,7 @@ MONTHLY_GASEOUS_FLOW_FIELDS = [
     ("CO", "FLOWRANGCO", ["DISPLAYVALUECO", "MEASUREDVALUECO"]),
     ("O3", "FLOWRANGO3", ["DISPLAYVALUEO3", "MEASUREDVALUEO3"]),
 ]
+RANGE_UNIT_MISMATCH_RULE_ID = "RF_RANGE_UNIT_MISMATCH"
 
 
 def check_rf_range_values(
@@ -91,6 +92,7 @@ def _check_weekly_structured_ranges(
     brand = _normalize_profile_brand(
         form.get(profile.get("brand_field") or "DEVICEBRAND") or form.get("BRAND"),
         profile.get("brand_aliases", {}),
+        _profile_model_text(form),
     )
     if not brand:
         return
@@ -105,12 +107,31 @@ def _check_weekly_structured_ranges(
             if field_config.get("semantic_required_when_blank"):
                 _add_blank_structured_value_semantic_candidate(order, table, form, field_config, issues)
             continue
-        spec = (field_config.get("ranges") or {}).get(brand)
+        spec = _inline_range_spec_for_field(form, field_name) or (field_config.get("ranges") or {}).get(brand)
         if not spec:
             continue
         comparison_result = _comparison_text_satisfies_spec(form.get(field_name), spec)
         if comparison_result is True:
             continue
+        raw_unit = _extract_value_unit(form.get(field_name))
+        unit_status = _unit_comparison_status(raw_unit, spec.get("unit"))
+        if unit_status == "incompatible":
+            _add_range_unit_mismatch_issue(
+                order,
+                table,
+                profile,
+                brand,
+                field_config,
+                field_name,
+                form.get(field_name),
+                raw_unit,
+                spec,
+                issues,
+            )
+            continue
+        converted_value = _convert_value_to_spec_unit(form.get(field_name), value, spec)
+        if converted_value is not None:
+            value = converted_value
         if _is_value_in_spec(value, spec):
             continue
         out_of_spec_values.append(
@@ -127,7 +148,7 @@ def _check_weekly_structured_ranges(
         )
 
     for item in out_of_spec_values:
-        handling_record_candidates = _handling_record_candidates(form)
+        handling_record_candidates = _handling_record_candidates(form, item.get("field"))
         evidence = {
             "working_order_code": order.get("WORKINGORDERCODE"),
             "rf_table": table,
@@ -149,6 +170,52 @@ def _check_weekly_structured_ranges(
             ),
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
+
+
+def _add_range_unit_mismatch_issue(
+    order: dict[str, Any],
+    table: str,
+    profile: dict[str, Any],
+    brand: str,
+    field_config: dict[str, Any],
+    field_name: str,
+    raw_value: Any,
+    raw_unit: str,
+    spec: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    label = str(field_config.get("label") or field_name)
+    spec_unit = str(spec.get("unit") or "").strip()
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "brand": brand,
+        "field": field_name,
+        "label": label,
+        "raw_value": raw_value,
+        "raw_unit": raw_unit,
+        "expected_unit": spec_unit,
+        "expected_range": _range_spec_text(
+            {
+                "min": spec.get("min"),
+                "max": spec.get("max"),
+                "operator": spec.get("operator"),
+                "unit": spec_unit,
+            }
+        ),
+    }
+    add_issue(
+        issues,
+        RANGE_UNIT_MISMATCH_RULE_ID,
+        "一致性",
+        "中",
+        f"rf.{table}.{field_name}",
+        (
+            f"{profile.get('display_name') or table}周检{label}检查值({raw_value})单位为{raw_unit}，"
+            f"但{brand}品牌正常范围单位为{spec_unit}，单位不一致，无法进行范围比对"
+        ),
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _add_blank_structured_value_semantic_candidate(
@@ -414,13 +481,15 @@ def _normalize_brand(brand: Any) -> str | None:
     return brand_str
 
 
-def _normalize_profile_brand(brand: Any, aliases: dict[str, Any]) -> str | None:
+def _normalize_profile_brand(brand: Any, aliases: dict[str, Any], model: Any = None) -> str | None:
     if not brand:
         return None
     brand_text = str(brand).strip()
     if not brand_text:
         return None
     brand_upper = brand_text.upper()
+    if brand_upper == "TH":
+        return "TH" if _is_tianhong_200xh_model(model) else "THERMO"
     for normalized, values in aliases.items():
         candidates = {str(value).strip().upper() for value in values if str(value).strip()}
         candidates.add(str(normalized).strip().upper())
@@ -431,6 +500,26 @@ def _normalize_profile_brand(brand: Any, aliases: dict[str, Any]) -> str | None:
     if "API" in brand_upper:
         return "API"
     return brand_upper
+
+
+def _profile_model_text(form: dict[str, Any]) -> str:
+    fields = (
+        "DEVICEMODEL",
+        "DEVICE_MODEL",
+        "MODEL",
+        "DEIVCEMODEL",
+        "DEMODEL",
+        "DEVICEMODELO3",
+        "DEVICEMODELNO2",
+        "DEVICEMODELSO2",
+        "DEVICEMODELCO",
+    )
+    return " ".join(str(form.get(field) or "") for field in fields).strip()
+
+
+def _is_tianhong_200xh_model(model: Any) -> bool:
+    model_text = str(model or "").upper()
+    return any(marker in model_text for marker in ("2001H", "2002H", "2003H", "2004H"))
 
 
 def _parse_numeric(value: Any) -> float | None:
@@ -451,6 +540,10 @@ def _parse_numeric(value: Any) -> float | None:
         return None
 
 
+def _convert_value_to_spec_unit(raw_value: Any, numeric: float, spec: dict[str, Any]) -> float | None:
+    return _convert_unit(numeric, _extract_value_unit(raw_value), spec.get("unit"))
+
+
 def _comparison_text_satisfies_spec(value: Any, spec: dict[str, Any]) -> bool | None:
     if value is None or isinstance(value, (int, float)):
         return None
@@ -467,6 +560,9 @@ def _comparison_text_satisfies_spec(value: Any, spec: dict[str, Any]) -> bool | 
         threshold = float(match.group(2))
     except (ValueError, TypeError):
         return None
+    converted_threshold = _convert_unit(threshold, _extract_value_unit(text), spec.get("unit"))
+    if converted_threshold is not None:
+        threshold = converted_threshold
 
     spec_operator = str(spec.get("operator") or "").strip()
     min_value = spec.get("min")
@@ -491,6 +587,128 @@ def _comparison_text_satisfies_spec(value: Any, spec: dict[str, Any]) -> bool | 
                 return True
         if spec_operator == "<=" and threshold <= spec_max:
             return True
+
+    return None
+
+
+def _extract_value_unit(value: Any) -> str:
+    if value is None or isinstance(value, (int, float)):
+        return ""
+    text = str(value)
+    match = re.search(
+        r"(In-Hg-A|inHgA|inHg|in-Hg|hPa|HPA|KPa|kPa|mmHg|TORR|torr|PSIA|psia|"
+        r"ml/min|mL/min|l/min|L/min|sccm|SCCM|scc|SLPM|mV|V|%)",
+        text,
+    )
+    return match.group(1) if match else ""
+
+
+def _unit_comparison_status(source_unit: Any, target_unit: Any) -> str:
+    source = _canonical_unit(source_unit)
+    target = _canonical_unit(target_unit)
+    if not source or not target:
+        return "unknown"
+    if source == target or _convert_unit(1.0, source, target) is not None:
+        return "compatible"
+    return "incompatible"
+
+
+def _convert_unit(value: float, source_unit: Any, target_unit: Any) -> float | None:
+    source = _canonical_unit(source_unit)
+    target = _canonical_unit(target_unit)
+    if not source or not target or source == target:
+        return value if source and target and source == target else None
+    pressure_to_kpa = {
+        "kpa": 1.0,
+        "hpa": 0.1,
+        "mmhg": 0.133322368,
+        "torr": 0.133322368,
+        "inhg": 3.38638867,
+        "psia": 6.89475729,
+    }
+    if source in pressure_to_kpa and target in pressure_to_kpa:
+        return value * pressure_to_kpa[source] / pressure_to_kpa[target]
+    factors = {
+        "l/min": {"ml/min": 1000.0},
+        "ml/min": {"l/min": 0.001},
+        "v": {"mv": 1000.0},
+        "mv": {"v": 0.001},
+    }
+    factor = factors.get(source, {}).get(target)
+    if factor is None:
+        return None
+    return value * factor
+
+
+def _canonical_unit(unit: Any) -> str:
+    text = str(unit or "").strip()
+    if not text:
+        return ""
+    normalized = text.replace("／", "/").replace("升", "L").replace("毫升", "mL")
+    lower = normalized.lower()
+    if lower in {"l/min", "lpm", "slpm"}:
+        return "l/min"
+    if lower in {"ml/min", "mlpm", "sccm", "scc"}:
+        return "ml/min"
+    if lower == "v":
+        return "v"
+    if lower == "mv":
+        return "mv"
+    if lower == "kpa":
+        return "kpa"
+    if lower == "hpa":
+        return "hpa"
+    if lower in {"mmhg"}:
+        return "mmhg"
+    if lower == "torr":
+        return "torr"
+    if lower in {"in-hg-a", "inhga", "inhg", "in-hg"}:
+        return "inhg"
+    if lower == "psia":
+        return "psia"
+    return lower
+
+
+def _inline_range_spec_for_field(form: dict[str, Any], field_name: str) -> dict[str, Any] | None:
+    row_field = _row_field_for_value_field(field_name)
+    if not row_field:
+        return None
+    return _parse_inline_range_spec(form.get(row_field))
+
+
+def _row_field_for_value_field(field_name: str) -> str | None:
+    if not field_name.endswith("VALUE"):
+        return None
+    return f"{field_name[:-5]}ROW"
+
+
+def _parse_inline_range_spec(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or "范围" not in text:
+        return None
+    unit_match = re.search(
+        r"(In-Hg-A|inHgA|inHg|in-Hg|hPa|HPA|KPa|kPa|PSIA|psia|mmHg|TORR|torr|"
+        r"sccm|SCCM|ml/min|mL/min|L/min|SLPM|mV|V|%)",
+        text,
+    )
+    unit = unit_match.group(1) if unit_match else ""
+
+    range_match = re.search(
+        r"([-+]?\d+(?:\.\d+)?)\s*(?:~|～|-|－|—|至|到)\s*([-+]?\d+(?:\.\d+)?)",
+        text,
+    )
+    if range_match:
+        left = float(range_match.group(1))
+        right = float(range_match.group(2))
+        return {"min": min(left, right), "max": max(left, right), "unit": unit, "source": "inline_row"}
+
+    plus_minus_match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*(?:±|\+/-)\s*([-+]?\d+(?:\.\d+)?)", text)
+    if plus_minus_match:
+        center = float(plus_minus_match.group(1))
+        delta = float(plus_minus_match.group(2))
+        return {"min": center - delta, "max": center + delta, "unit": unit, "source": "inline_row"}
 
     return None
 
@@ -588,12 +806,33 @@ def _parse_flow_range_text(value: Any) -> tuple[float, float, str] | None:
     return min(first, second), max(first, second), unit
 
 
-def _handling_record_candidates(form: dict[str, Any]) -> dict[str, Any]:
+def _handling_record_candidates(form: dict[str, Any], value_field: Any = None) -> dict[str, Any]:
     candidates: dict[str, Any] = {}
     for field, value in form.items():
         if _is_handling_record_field(field):
             candidates[str(field)] = value
+    for field in _field_specific_remark_fields(value_field):
+        if field in form and field not in candidates:
+            candidates[field] = form.get(field)
     return candidates
+
+
+def _field_specific_remark_fields(value_field: Any) -> list[str]:
+    field = str(value_field or "").strip()
+    if not field:
+        return []
+    upper = field.upper()
+    candidates = []
+    if upper.endswith("VALUE"):
+        candidates.append(field[: -len("VALUE")] + "ROW")
+    if upper.endswith("CHECKVALUE"):
+        candidates.append(field[: -len("CHECKVALUE")] + "CHECKROW")
+    candidates.append(f"{field}ROW")
+    deduped = []
+    for candidate in candidates:
+        if candidate and candidate not in deduped:
+            deduped.append(candidate)
+    return deduped
 
 
 def _is_handling_record_field(field: Any) -> bool:

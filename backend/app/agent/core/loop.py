@@ -128,6 +128,7 @@ class ReActLoop:
             auto_profile=self.auto_profile,
             runtime_mode=self.current_mode,
             user_identifier=getattr(self.executor, "user_identifier", None),
+            board_context=self.context_builder.board_context if self.current_mode == "chart" else None,
         ))
 
         async for event in runtime.run(

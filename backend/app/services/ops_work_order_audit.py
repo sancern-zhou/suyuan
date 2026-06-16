@@ -151,14 +151,6 @@ RULE_CATALOG = [
         "rationale": "备注缺少原因、措施、结果时，需要语义审核进一步判断闭环性。",
     },
     {
-        "rule_id": "RF_MISSING",
-        "name": "检查/巡检类完工工单未找到 RF 表单",
-        "category": "表单完整性",
-        "default_severity": "高",
-        "scope": "RF_*",
-        "rationale": "RF 表单是检查记录的主要结构化证据。",
-    },
-    {
         "rule_id": "RF_AUDITOR_EMPTY",
         "name": "RF 表单审批人为空",
         "category": "表单完整性",
@@ -312,6 +304,7 @@ def run_ops_audit_rules(
     *,
     persist_outputs: bool = True,
     evidence_level: str = "summary",
+    enable_visual: bool = True,
 ) -> dict[str, Any]:
     """Run audit rules against an existing dataset and assemble final issues."""
     resolved_dataset_path = dataset_path.resolve()
@@ -321,6 +314,7 @@ def run_ops_audit_rules(
         output_dir=output_dir or resolved_dataset_path.parent,
         persist_outputs=persist_outputs,
         evidence_level=evidence_level,
+        enable_visual=enable_visual,
     )
     result["dataset_path"] = str(resolved_dataset_path)
     result["calibration_questions"] = [

@@ -35,6 +35,12 @@ from app.services.ops_audit.semantic.prompts import (
 
 REMARK_REVIEW_RULE_IDS = rules_for_review_stage("semantic_remark")
 ATTACHMENT_REVIEW_RULE_IDS: set[str] = set()
+SPECIALIZED_REMARK_REVIEW_RULE_IDS = {
+    "RF_NO_DEVICE_WITHOUT_REMARK",
+    "RF_PM_TAPE_USAGE_INVALID",
+    "ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING",
+}
+GENERIC_REMARK_REVIEW_RULE_IDS = REMARK_REVIEW_RULE_IDS - SPECIALIZED_REMARK_REVIEW_RULE_IDS
 
 SEMANTIC_REVIEW_RULE_IDS = REMARK_REVIEW_RULE_IDS | ATTACHMENT_REVIEW_RULE_IDS
 
@@ -374,14 +380,11 @@ def _review_batch_semantic_tasks(
         task for task in tasks
         if "ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING" in set(task.get("semantic_focus", []))
     ]
-    specialized_codes = {
-        str(task.get("working_order_code"))
-        for task in order_description_tasks + no_device_tasks + pm_tape_tasks + filename_attachment_tasks
-    }
     remark_tasks = [
-        task for task in tasks
-        if str(task.get("working_order_code")) not in specialized_codes
-        and task.get("review_kind") == "remark_semantics"
+        _task_with_semantic_focus(task, sorted(set(task.get("semantic_focus", [])) & GENERIC_REMARK_REVIEW_RULE_IDS))
+        for task in tasks
+        if task.get("review_kind") == "remark_semantics"
+        and set(task.get("semantic_focus", [])) & GENERIC_REMARK_REVIEW_RULE_IDS
     ]
 
     batch_calls = [
@@ -693,6 +696,7 @@ def _review_remark_tasks_batch(
                 "working_order_code": code,
                 "semantic_focus": task.get("semantic_focus", []),
                 "text": text,
+                "evidence_summary": task.get("evidence_summary", {}),
             }
         )
     raw = _call_semantic_llm_json(
@@ -1123,6 +1127,21 @@ def _issue_evidence(issue: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _task_with_semantic_focus(task: dict[str, Any], focus: list[str]) -> dict[str, Any]:
+    narrowed = dict(task)
+    narrowed["semantic_focus"] = focus
+    summary = dict(task.get("evidence_summary") or {})
+    sample_issues = [
+        issue
+        for issue in summary.get("sample_issues", [])
+        if isinstance(issue, dict) and issue.get("rule_id") in set(focus)
+    ]
+    summary["matched_rules"] = sorted(set(focus))
+    summary["sample_issues"] = sample_issues
+    narrowed["evidence_summary"] = summary
+    return narrowed
+
+
 def _call_semantic_llm_json(prompt: str, text: str, *, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Call the project-wide LLM service for semantic JSON review."""
 
@@ -1292,6 +1311,7 @@ def _attachment_problem_description(issues: list[str], attachment_type: str) -> 
 
 
 def _build_evidence_summary(record: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
+    sample_issues = _sample_issues_covering_rules(issues, limit=8)
     return {
         "audit_level": record.get("audit_level"),
         "issue_count": len(issues),
@@ -1302,8 +1322,20 @@ def _build_evidence_summary(record: dict[str, Any], issues: list[dict[str, Any]]
         "workflow_steps": record.get("workflow_steps", []),
         "rf_tables": record.get("rf_tables", []),
         "matched_rules": sorted({issue.get("rule_id") for issue in issues}),
-        "sample_issues": issues[:8],
+        "sample_issues": sample_issues,
     }
+
+
+def _sample_issues_covering_rules(issues: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    sample = list(issues[:limit])
+    seen_rules = {issue.get("rule_id") for issue in sample}
+    for issue in issues[limit:]:
+        rule_id = issue.get("rule_id")
+        if rule_id in seen_rules:
+            continue
+        sample.append(issue)
+        seen_rules.add(rule_id)
+    return sample
 
 
 def _review_semantic_task(
@@ -1377,7 +1409,7 @@ def _review_semantic_task(
 def _supported_final_rule_ids(semantic_focus: list[str], judgment: str) -> list[str]:
     if judgment != "confirmed_issue":
         return []
-    return sorted({rule_id for rule_id in semantic_focus if rule_id in REMARK_REVIEW_RULE_IDS})
+    return sorted({rule_id for rule_id in semantic_focus if rule_id in GENERIC_REMARK_REVIEW_RULE_IDS})
 
 
 def _is_order_description_review(semantic_focus: list[str]) -> bool:
@@ -1421,8 +1453,36 @@ def _compose_review_text(
             if value and str(value).strip():
                 parts.append(f"{table}:{str(value).strip()}")
                 break
+        for field, value in form.items():
+            if not _is_field_level_explanation_field(field):
+                continue
+            if value and str(value).strip() and str(value).strip() not in {"/", "-", "无"}:
+                parts.append(f"{table}.{field}:{str(value).strip()}")
 
     return "\n".join(parts).strip()
+
+
+def _is_field_level_explanation_field(field: Any) -> bool:
+    upper = str(field or "").upper()
+    tokens = (
+        "EXCEPTION",
+        "ABNORMAL",
+        "HANDLE",
+        "HANDLING",
+        "PROCESS",
+        "DISPOSAL",
+        "TREAT",
+        "RECORD",
+        "REMARK",
+        "DESCRIPTION",
+        "异常",
+        "处理",
+        "处置",
+        "记录",
+        "备注",
+        "说明",
+    )
+    return upper.endswith("ROW") or any(token in upper for token in tokens)
 
 
 def _first_present(record: dict[str, Any], fields: list[str]) -> Any:

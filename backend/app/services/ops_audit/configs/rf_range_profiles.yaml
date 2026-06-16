@@ -118,8 +118,8 @@ o3_weekly_check_profiles:
       API: ["API"]
       FPI: ["FPI", "聚光"]
       ESA: ["ESA"]
-      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电"]
-      TH: ["TH", "天虹"]
+      THERMO: ["THERMO", "Thermo", "TE", "TH", "赛默飞", "热电"]
+      TH: ["天虹"]
       DASIBI: ["DASIBI", "大西比"]
       XH: ["XH", "新先河", "先河环保"]
       EC: ["EC"]
@@ -210,8 +210,8 @@ nox_weekly_check_profiles:
       API: ["API"]
       FPI: ["FPI", "聚光"]
       ESA: ["ESA"]
-      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电"]
-      TH: ["TH", "天虹"]
+      THERMO: ["THERMO", "Thermo", "TE", "TH", "赛默飞", "热电"]
+      TH: ["天虹"]
       DASIBI: ["DASIBI", "大西比"]
       XH: ["XH", "新先河", "先河环保", "先河"]
       EC: ["EC"]
@@ -263,11 +263,9 @@ nox_weekly_check_profiles:
           API: {min: 49, max: 51, unit: ℃}
           EC: {min: 47, max: 53, unit: ℃}
           FPI: {min: 49, max: 51, unit: ℃}
-          ESA: {min: 1350, max: 1450, unit: mV}
           DASIBI: {min: 42.5, max: 43.5, unit: ℃}
           THERMO: {min: 48, max: 52, unit: ℃}
           TH: {min: 45, max: 55, unit: ℃}
-          XH: {min: 49, max: 51, unit: ℃}
       - key: converter_temperature
         label: 转化炉温度
         field: ZHLCHECKVALUE
@@ -286,7 +284,6 @@ nox_weekly_check_profiles:
           API: {max: 10, operator: "<", unit: In-Hg-A}
           FPI: {min: 0, max: 15, unit: psia}
           ESA: {min: 133, max: 433, unit: mV}
-          XH: {min: 13, max: 34, unit: KPa}
       - key: sample_pressure
         label: 采样压力
         field: CYYLCHECKVALUE
@@ -341,8 +338,8 @@ so2_weekly_check_profiles:
       API: ["API"]
       FPI: ["FPI", "聚光"]
       ESA: ["ESA"]
-      THERMO: ["THERMO", "Thermo", "TE", "赛默飞", "热电"]
-      TH: ["TH", "天虹"]
+      THERMO: ["THERMO", "Thermo", "TE", "TH", "赛默飞", "热电"]
+      TH: ["天虹"]
       DASIBI: ["DASIBI", "大西比"]
       XH: ["XH", "新先河", "先河环保", "先河"]
       EC: ["EC"]
@@ -442,7 +439,6 @@ pm_weekly_check_profiles:
       - key: main_flow
         label: 流量(Main Flow)
         field: MAINFLOWVALUE
-        semantic_required_when_blank: true
         ranges:
           THERMO: {min: 15.87, max: 17.54, unit: L/min}
       - key: air_temperature

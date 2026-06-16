@@ -42,7 +42,7 @@ async function request(url, options = {}) {
  * 获取会话列表
  */
 export async function listSessions(options = {}) {
-  const { limit = 200 } = options
+  const { limit = 50 } = options
   const params = new URLSearchParams()
   if (limit) params.set('limit', limit)
   const query = params.toString()

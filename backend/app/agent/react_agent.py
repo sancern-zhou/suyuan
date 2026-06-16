@@ -21,6 +21,7 @@ from .memory.hybrid_manager import HybridMemoryManager
 from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
+from .runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
 
@@ -65,7 +66,7 @@ class ReActAgent:
         Profiles describe required model capabilities; they do not name a
         concrete provider/model.
         """
-        if manual_mode == "social":
+        if supports_native_multimodal(manual_mode):
             return "multimodal"
         return None
 
@@ -269,6 +270,7 @@ class ReActAgent:
         unified_user_id = None
         memory_tool_mode = manual_mode or "expert"
         memory_snapshot_created = False
+        active_run_id = None
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
@@ -438,7 +440,7 @@ class ReActAgent:
                 enable_reasoning=enable_reasoning,
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
-                attachments=runtime_attachments if manual_mode == "social" else None,
+                attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
                 auto_profile=auto_profile,
             )
 
@@ -535,6 +537,8 @@ class ReActAgent:
                 initial_messages=initial_messages,
                 manual_mode=manual_mode
             ):
+                event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                active_run_id = event_data.get("run_id") or event.get("run_id") or active_run_id
                 self._capture_office_document(actual_session_id, event)
 
                 if self._should_run_report_auto_followup(
@@ -577,36 +581,48 @@ class ReActAgent:
             # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
+                    from app.agent.runtime.ownership import run_ownership_registry
                     from app.agent.session.session_resolver import (
                         load_session_for_mode,
                         save_session_metadata_for_mode,
                     )
 
-                    # ✅ 从数据库加载 session
-                    session = await load_session_for_mode(
+                    can_save_metadata = await run_ownership_registry.can_write(
                         actual_session_id,
-                        mode=manual_mode,
-                        include_messages=False,
+                        active_run_id,
                     )
-
-                    if session:
-                        if actual_session_id in self._session_store:
-                            entry = self._session_store[actual_session_id]
-                            self._apply_session_store_entry_for_persistence(session, entry)
-
-                        # Route handlers own transcript persistence. Agent
-                        # finalization only refreshes metadata collected by
-                        # runtime tools.
-                        await save_session_metadata_for_mode(
-                            session,
-                            mode=manual_mode,
-                        )
+                    if not can_save_metadata:
                         logger.info(
-                            "session_saved_after_analysis",
+                            "stale_run_metadata_save_skipped",
                             session_id=actual_session_id,
-                            message_count=len(session.conversation_history),
-                            metadata_keys=list(session.metadata.keys()) if session.metadata else []
+                            run_id=active_run_id,
                         )
+                    else:
+                        # ✅ 从数据库加载 session
+                        session = await load_session_for_mode(
+                            actual_session_id,
+                            mode=manual_mode,
+                            include_messages=False,
+                        )
+
+                        if session:
+                            if actual_session_id in self._session_store:
+                                entry = self._session_store[actual_session_id]
+                                self._apply_session_store_entry_for_persistence(session, entry)
+
+                            # Route handlers own transcript persistence. Agent
+                            # finalization only refreshes metadata collected by
+                            # runtime tools.
+                            await save_session_metadata_for_mode(
+                                session,
+                                mode=manual_mode,
+                            )
+                            logger.info(
+                                "session_saved_after_analysis",
+                                session_id=actual_session_id,
+                                message_count=len(session.conversation_history),
+                                metadata_keys=list(session.metadata.keys()) if session.metadata else []
+                            )
                 except Exception as e:
                     logger.warning(
                         "failed_to_save_session_after_analysis",

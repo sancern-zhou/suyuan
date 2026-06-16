@@ -48,7 +48,11 @@ def check_rf_pm_pressure_values(
             )
             temp_error_violations.extend(temp_violations["mismatch"])
             temp_range_violations.extend(
-                _range_violations(temp_violations["calculated"], threshold=2.0, unit="℃", rule_kind="temp")
+                _with_calibration_situation(
+                    _range_violations(temp_violations["calculated"], threshold=2.0, unit="℃", rule_kind="temp"),
+                    form,
+                    f"{pollutant}CHECKTEMP4VALUE",
+                )
             )
             unrecalculable_violations.extend(temp_violations["unrecalculable"])
 
@@ -71,6 +75,7 @@ def check_rf_pm_pressure_values(
                 (f"{pollutant}CHECKPRES2VALUE", standard),
             ):
                 if value is not None and not _is_valid_pressure_scale(value):
+                    situation_field = f"{pollutant}CHECKPRES4VALUE"
                     unit_violations.append(
                         {
                             "pollutant": pollutant,
@@ -79,17 +84,39 @@ def check_rf_pm_pressure_values(
                             "parsed_value": value,
                             "expected_unit": "kPa 或 hPa",
                             "expected_range": "80-110 kPa 或 800-1100 hPa",
+                            "calibration_situation_field": situation_field,
+                            "calibration_situation": str(form.get(situation_field) or "").strip(),
                         }
                     )
 
         if unit_violations:
-            _add_issue(order, table, issues, UNIT_RULE_ID, "表单数值逻辑", "高", unit_violations, "颗粒物气压字段数值量级不符合 kPa/hPa 常见范围")
+            _add_issue(
+                order,
+                table,
+                issues,
+                UNIT_RULE_ID,
+                "表单数值逻辑",
+                "高",
+                unit_violations,
+                "颗粒物气压字段数值量级不符合 kPa/hPa 常见范围",
+                semantic_context=_unit_violation_semantic_context(order, unit_violations),
+            )
         if pressure_error_violations:
             _add_issue(order, table, issues, ERROR_RULE_ID, "表单数值逻辑", "高", pressure_error_violations, "颗粒物气压误差字段复算不一致")
         if temp_error_violations:
             _add_issue(order, table, issues, TEMP_ERROR_RULE_ID, "表单数值逻辑", "高", temp_error_violations, "颗粒物温度误差字段复算不一致")
         if temp_range_violations:
-            _add_issue(order, table, issues, TEMP_RANGE_RULE_ID, "表单结果合理性", "高", temp_range_violations, "颗粒物温度误差不满足小于±2℃要求")
+            _add_issue(
+                order,
+                table,
+                issues,
+                TEMP_RANGE_RULE_ID,
+                "表单结果合理性",
+                "高",
+                temp_range_violations,
+                "颗粒物温度误差不满足小于±2℃要求",
+                semantic_context=_temp_range_semantic_context(order, temp_range_violations),
+            )
         if pressure_range_violations:
             _add_issue(order, table, issues, PRESSURE_RANGE_RULE_ID, "表单结果合理性", "高", pressure_range_violations, "颗粒物气压误差不满足小于±1kPa要求")
         if unrecalculable_violations:
@@ -200,6 +227,21 @@ def _pressure_triplet_looks_hpa(item: dict[str, Any]) -> bool:
     return max(abs(float(item["display"])), abs(float(item["standard"]))) > 200
 
 
+def _with_calibration_situation(
+    violations: list[dict[str, Any]],
+    form: dict[str, Any],
+    situation_field: str,
+) -> list[dict[str, Any]]:
+    situation = str(form.get(situation_field) or "").strip()
+    enriched = []
+    for violation in violations:
+        item = dict(violation)
+        item["calibration_situation_field"] = situation_field
+        item["calibration_situation"] = situation
+        enriched.append(item)
+    return enriched
+
+
 def _is_valid_pressure_scale(value: float) -> bool:
     return 80 <= value <= 110 or 800 <= value <= 1100
 
@@ -219,6 +261,7 @@ def _add_issue(
     severity: str,
     violations: list[dict[str, Any]],
     message: str,
+    semantic_context: dict[str, Any] | None = None,
 ) -> None:
     first = violations[0]
     evidence = {
@@ -227,6 +270,8 @@ def _add_issue(
         "violation_count": len(violations),
         "violations": violations[:20],
     }
+    if semantic_context:
+        evidence.update(semantic_context)
     add_issue(
         issues,
         rule_id,
@@ -236,6 +281,32 @@ def _add_issue(
         message,
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
+
+
+def _unit_violation_semantic_context(order: dict[str, Any], violations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not any(str(item.get("calibration_situation") or "").strip() for item in violations):
+        return None
+    return {
+        "needs_semantic_review": True,
+        "semantic_review_basis": "颗粒物气压数值异常但对应校准情况字段有说明，需结合说明和工单标题/内容复核。",
+        "order_context": {
+            "title": str(order.get("ORDERTITLE") or "").strip(),
+            "content": str(order.get("ORDERCONTENT") or "").strip(),
+        },
+    }
+
+
+def _temp_range_semantic_context(order: dict[str, Any], violations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not any(str(item.get("calibration_situation") or "").strip() for item in violations):
+        return None
+    return {
+        "needs_semantic_review": True,
+        "semantic_review_basis": "颗粒物温度误差超限但对应校准情况字段有说明，需结合说明和工单标题/内容复核。",
+        "order_context": {
+            "title": str(order.get("ORDERTITLE") or "").strip(),
+            "content": str(order.get("ORDERCONTENT") or "").strip(),
+        },
+    }
 
 
 def _num(value: Any) -> float | None:

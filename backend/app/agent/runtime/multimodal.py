@@ -1,4 +1,4 @@
-"""Helpers for native multimodal social-mode messages."""
+"""Helpers for native multimodal runtime messages."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ def build_anthropic_user_content(
 ) -> str | List[Dict[str, Any]]:
     """Build Anthropic content blocks for a user turn.
 
-    Social mode uses MiniMax-M3 through the Anthropic-compatible endpoint, so
-    image attachments should be sent as native image blocks instead of as text
-    paths that the model cannot inspect.
+    Native multimodal modes use Anthropic-compatible endpoints, so image
+    attachments should be sent as native image blocks instead of as text paths
+    that the model cannot inspect.
     """
     if not attachments:
         return text
@@ -103,7 +103,7 @@ def build_persisted_user_content(
     text: str,
     attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> str | List[Dict[str, Any]]:
-    """Build compact history content for a multimodal social user turn."""
+    """Build compact history content for a native multimodal user turn."""
     if not attachments:
         return text
 

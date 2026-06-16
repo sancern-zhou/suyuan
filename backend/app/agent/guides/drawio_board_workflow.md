@@ -11,9 +11,8 @@
 ## 权威状态
 
 1. 前端传入的 `board_context.current_xml` 是当前画布的权威状态。
-2. 如果 `board_context.current_xml` 与历史工具结果或历史对话冲突，必须以 `board_context.current_xml` 为准。
-3. 除非用户明确要求重建整张图，否则不得丢弃现有 XML 后重新生成。
-4. 修改现有画板时，应优先做局部编辑，保留未被用户要求修改的节点、连线、样式和布局。
+2. 除非用户明确要求重建整张图，否则不得丢弃现有 XML 后重新生成。
+3. 修改现有画板时，应优先做局部编辑，保留未被用户要求修改的节点、连线、样式和布局。
 
 ## 多轮工作流
 
@@ -21,7 +20,7 @@
 2. 判断任务是新建画板还是编辑现有画板。
 3. 按“专项设计文档路由”读取与任务匹配的设计文档；如果任务只做局部文字、颜色、位置调整，可以不读取专项设计文档。
 4. 新建画板时，调用 `create_drawio_board(operation="create")`，传入完整可渲染 XML。
-5. 编辑画板时，基于 `board_context.current_xml` 调用 `create_drawio_board(operation="edit")`。
+5. 编辑画板时，基于 `board_context.current_xml` 理解现有画板，并调用 `create_drawio_board(operation="edit")` 提交结构化 `operations`。
 6. 如果用户选择了画布元素，优先用 `board_context.selected_cells` 解释“这个”“这里”“选中的模块”等指代。
 7. 工具返回失败时，先修正 XML 或 operations，再重试；不要直接向用户输出无法渲染的 XML。
 

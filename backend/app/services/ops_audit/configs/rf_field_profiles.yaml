@@ -34,6 +34,7 @@ humidity_fields:
   - ROOMHUMID
   - HUMIDITY
   - HUMID
+  - DAMP
   - SD
 check_time_fields:
   - CHECKTIME

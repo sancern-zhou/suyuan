@@ -107,7 +107,7 @@
           />
 
           <div class="action-group">
-            <div class="model-tier-wrapper">
+            <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
                 v-model="modelTier"
                 class="model-tier-select"
@@ -199,6 +199,10 @@ import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.
 import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
+import {
+  getEffectiveModelTier,
+  shouldShowModelTierSelector
+} from '@/components/inputBoxModelTier.js'
 
 const kbStore = useKnowledgeBaseStore()
 const reactStore = useReactStore()
@@ -336,6 +340,10 @@ const visibleAttachments = computed(() => [
 const sendableAttachmentCount = computed(() => (
   attachments.value.length + (pendingBoardSnapshotAttachment.value ? 1 : 0)
 ))
+const activeModelTierMode = computed(() => (
+  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : agentMode.value
+))
+const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
 const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
@@ -488,6 +496,7 @@ watch(
 
 watch([modelTier, () => props.sessionId], ([newTier, newSessionId]) => {
   if (!validModelTiers.includes(newTier)) return
+  if (!showModelTierSelector.value) return
   if (newSessionId) {
     localStorage.setItem(getSessionModelTierKey(newSessionId), newTier)
     return
@@ -587,7 +596,7 @@ const handleSend = () => {
     query: localValue.value,
     knowledgeBaseIds: knowledgeBaseIds,
     agentMode: activeAgentMode,
-    modelTier: modelTier.value,
+    modelTier: getEffectiveModelTier(modelTier.value, activeAgentMode),
     attachments: attachmentsData
   })
 

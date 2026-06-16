@@ -35,12 +35,6 @@ rules:
     default_severity: 中
     scope: RF_*
     rationale: 人员、车辆、备注等关键字段不能为空或仅填写 /、正常、无等低信息内容。
-  - rule_id: RF_MISSING
-    name: 检查/巡检类完工工单未找到 RF 表单
-    category: 表单完整性
-    default_severity: 高
-    scope: working_orders/RF_*
-    rationale: 检查、巡检、维护类完工工单必须有可追溯表单作为实际作业证据。
   - rule_id: RF_AUDITOR_EMPTY
     name: RF 表单审批人为空
     category: 表单完整性
@@ -215,12 +209,12 @@ rules:
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck/RF_TW_PmFlowCheck/RF_TW_PmFlowCalibrate/RF_Q_GASEOUSMULTIPOINT_*
     rationale: 上次校准日期不得晚于下次校准日期，下次校准日期或有效期必须晚于检查/校准作业日期。
-  - rule_id: RF_CALIBRATION_PREV_DATE_MISMATCH
-    name: RF 表单上一次校准日期与实际上一条作业日期不一致
+  - rule_id: RF_CALIBRATION_INTERVAL_TOO_LONG
+    name: RF 表单校准周期超过两年
     category: 时间合理性
     default_severity: 高
-    scope: RF_Q_GaseousFlowCheck
-    rationale: 季度气态流量检查中动态校准仪的上一次校准日期应与同站点上一条气态流量检查表的实际作业日期一致。
+    scope: RF_Q_GaseousFlowCheck/RF_TW_PmFlowCheck/RF_TW_PmFlowCalibrate/RF_Q_GASEOUSMULTIPOINT_*
+    rationale: 同一校准对象的下次校准日期应在上次校准日期两年内，超过两年表示校准周期过长或日期填报错误。
   - rule_id: RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH
     name: 月度气态流量检查参考流量计证书日期不一致
     category: 时间合理性
@@ -232,7 +226,7 @@ rules:
     category: 附件读数一致性
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
-    rationale: 臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的候选单元格一致；斜率比对 F25/F24，截距比对 F26/F25，改变率比对 F28/F26，任一候选单元格匹配即视为一致。
+    rationale: 臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的候选单元格一致；斜率比对 F25/F24，截距比对 F26/F25，改变率比对 F28/F27，任一候选单元格匹配即视为一致。
   - rule_id: RF_ENUM_VALUE_INVALID
     name: RF 表单枚举字段取值异常
     category: 表单填报一致性

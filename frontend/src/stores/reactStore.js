@@ -5,15 +5,21 @@ import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
 import { uploadChatFile } from '@/services/uploadApi'
 import { autoSaveSession } from '@/api/session'
-import { convertStreamingAnswerToThoughtIfToolPlanning } from './reactStoreStreaming'
+import {
+  convertStreamingAnswerToThoughtIfToolPlanning,
+  freezeActiveAssistantOutput
+} from './reactStoreStreaming'
 import {
   addPendingSteeringInput,
   applyPendingSteeringInputs,
   promoteUnappliedSteeringInputsToQueue,
   removePendingSteeringInput
 } from './reactStoreSteering'
+import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership'
+import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue'
 
 const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -144,6 +150,32 @@ const getDrawioBoardXml = (payload = {}) => {
     ''
 }
 
+const getDrawioBoardXmlRef = (payload = {}, result = {}) => {
+  if (payload.xml_ref && typeof payload.xml_ref === 'object') {
+    return payload.xml_ref
+  }
+  const artifacts = result?.refs?.artifacts
+  if (Array.isArray(artifacts)) {
+    return artifacts.find(item => item?.kind === 'drawio_board_xml' || item?.artifact_kind === 'drawio_board') || null
+  }
+  return null
+}
+
+const readDrawioBoardXmlFromRef = async (xmlRef = {}) => {
+  const directUrl = xmlRef.read_url || xmlRef.url || xmlRef.download_url
+  const localPath = xmlRef.local_path || xmlRef.path || xmlRef.file_path
+  const normalizedDirectUrl = directUrl?.startsWith('/api/') && API_BASE_URL !== '/api'
+    ? `${API_BASE_URL}${directUrl.slice(4)}`
+    : directUrl
+  const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
+  if (!url) return ''
+  const response = await fetch(url, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error(`Failed to read drawio xml ref: ${response.status}`)
+  }
+  return await response.text()
+}
+
 const sanitizeDrawioVersionFileName = (title = 'drawio-board') => {
   const safeTitle = String(title || 'drawio-board')
     .replace(/[\\/:*?"<>|]+/g, '_')
@@ -234,6 +266,8 @@ const getOfficeDocumentIdentity = (doc = {}) => {
 const createEmptyModeState = () => ({
   // 基础状态
   sessionId: null,
+  activeRunId: null,
+  ignoredRunIds: [],
   isAnalyzing: false,
   error: null,
   isInterruption: false,
@@ -1346,6 +1380,16 @@ export const useReactStore = defineStore('react', {
       console.log('[handleEvent] targetState:', targetState)
       console.log('[handleEvent] targetState.messages.length:', targetState?.messages?.length)
 
+      if (!shouldApplyRunEvent(targetState, event)) {
+        console.warn('[handleEvent] Ignoring stale run event', {
+          eventRunId: getEventRunId(event),
+          activeRunId: targetState.activeRunId,
+          sessionId,
+          type
+        })
+        return
+      }
+
       // 如果事件属于非当前模式，记录日志
       if (eventMode && eventMode !== this.currentMode) {
         console.log(`[handleEvent] ⚠️ ROUTING event to mode ${eventMode} (current: ${this.currentMode}, type: ${type})`)
@@ -1366,6 +1410,10 @@ export const useReactStore = defineStore('react', {
       switch (type) {
         case 'start': {
           // 分析开始
+          const runId = getEventRunId(event)
+          if (runId) {
+            targetState.activeRunId = runId
+          }
           addMessage('start', `开始分析: ${data?.query || ''}`)
           if (data?.session_id) {
             targetState.sessionId = data.session_id
@@ -1490,7 +1538,10 @@ export const useReactStore = defineStore('react', {
           }
 
           const resultData = result?.data || {}
-          this.applyDrawioBoardToolResult(result, targetState)
+          const appliedDrawioBoard = this.applyDrawioBoardToolResult(result, targetState)
+          if (!appliedDrawioBoard) {
+            this.applyDrawioBoardToolResultFromRef(result, targetState)
+          }
 
           if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview)) {
             this.recordOfficeDocument({
@@ -1810,6 +1861,7 @@ export const useReactStore = defineStore('react', {
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          targetState.activeRunId = null
           if (data?.auto_followup_pending && data?.auto_followup_prompt) {
             targetState._pendingAutoFollowupPrompt = data.auto_followup_prompt
             targetState._pendingAutoFollowupHookName = data.auto_followup_hook_name || 'report_final_review'
@@ -1871,6 +1923,7 @@ export const useReactStore = defineStore('react', {
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          targetState.activeRunId = null
           promoteUnappliedSteeringInputsToQueue(targetState, {
             agentMode: targetMode,
             queuedAlreadyShown: true,
@@ -1892,6 +1945,7 @@ export const useReactStore = defineStore('react', {
           targetState.isInterruption = true
           targetState.streamingAnswerMessageId = null
           targetState.streamingThinkingMessageId = null
+          targetState.activeRunId = null
           promoteUnappliedSteeringInputsToQueue(targetState, {
             agentMode: targetMode,
             queuedAlreadyShown: true,
@@ -1906,6 +1960,7 @@ export const useReactStore = defineStore('react', {
           targetState.error = data?.error || '致命错误'
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
+          targetState.activeRunId = null
           promoteUnappliedSteeringInputsToQueue(targetState, {
             agentMode: targetMode,
             queuedAlreadyShown: true,
@@ -2188,6 +2243,34 @@ export const useReactStore = defineStore('react', {
       board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
       targetState.hasResults = true
       return true
+    },
+
+    async applyDrawioBoardToolResultFromRef(result = {}, targetState = this.currentState) {
+      if (!isDrawioBoardToolResult(result)) return false
+
+      const payload = getDrawioBoardPayload(result)
+      if (getDrawioBoardXml(payload)) return this.applyDrawioBoardToolResult(result, targetState)
+
+      const xmlRef = getDrawioBoardXmlRef(payload, result)
+      if (!xmlRef) return false
+
+      try {
+        const xml = await readDrawioBoardXmlFromRef(xmlRef)
+        if (!xml) return false
+        return this.applyDrawioBoardToolResult({
+          ...result,
+          data: {
+            ...(result.data || {}),
+            xml
+          }
+        }, targetState)
+      } catch (error) {
+        console.warn('[drawio-board] failed to read xml_ref', {
+          xmlRef,
+          error: error?.message || error
+        })
+        return false
+      }
     },
 
     restoreDrawioBoardFromSession(sessionData = {}, targetState = this.currentState) {
@@ -2577,24 +2660,17 @@ export const useReactStore = defineStore('react', {
           return
         }
 
-        sessionState.pendingUserInputs = sessionState.pendingUserInputs || []
-        sessionState.pendingUserInputs.push({
+        freezeActiveAssistantOutput(sessionState, { reason: 'queued_input' }, contentToString)
+        enqueueUserInput(sessionState, {
           query,
           options: {
             ...options,
             agentMode: actualMode,
             attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,
-            queuedAlreadyShown: true
-          }
+          },
+          data: syntheticMeta,
+          attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null
         })
-        this._addMessageToState(
-          sessionState,
-          'user',
-          query,
-          syntheticMeta,
-          outgoingAttachments.length > 0 ? outgoingAttachments : null,
-          { queued: true }
-        )
         sessionState.currentMessage = ''
         console.log('[startAnalysis] 当前模式运行中，用户输入已排队', {
           mode: actualMode,
@@ -2615,14 +2691,19 @@ export const useReactStore = defineStore('react', {
       }
 
       // 重置状态
-      if (!queuedAlreadyShown) {
+      const clientMessageId = options.clientMessageId || null
+      const wasAlreadyShown = queuedAlreadyShown || hasShownClientMessage(sessionState, clientMessageId)
+      if (!wasAlreadyShown) {
         this._addMessageToState(
           sessionState,
           'user',
           query,
           syntheticMeta,
           outgoingAttachments.length > 0 ? outgoingAttachments : null,
-          synthetic ? { synthetic: true } : {}
+          {
+            ...(synthetic ? { synthetic: true } : {}),
+            ...(clientMessageId ? { clientMessageId } : {})
+          }
         )
       }
       sessionState.currentMessage = ''
@@ -2742,19 +2823,12 @@ export const useReactStore = defineStore('react', {
 
       if (!accepted) {
         removePendingSteeringInput(sessionState, text)
-        sessionState.pendingUserInputs = sessionState.pendingUserInputs || []
-        sessionState.pendingUserInputs.push({
+        freezeActiveAssistantOutput(sessionState, { reason: 'steering_fallback' }, contentToString)
+        enqueueUserInput(sessionState, {
           query: text,
-          options: { agentMode: 'assistant' }
+          options: { agentMode: 'assistant' },
+          data: { source: 'steering_fallback' }
         })
-        this._addMessageToState(
-          sessionState,
-          'user',
-          text,
-          { source: 'steering_fallback' },
-          null,
-          { queued: true }
-        )
         console.warn('[steerActiveAnalysis] 后端没有可追加任务，已转入队列')
       }
     },
@@ -2790,6 +2864,12 @@ export const useReactStore = defineStore('react', {
 
     // 停止分析
     async stopAnalysis() {
+      freezeActiveAssistantOutput(this.currentState, { reason: 'stopped' }, contentToString)
+      const activeRunId = this.currentState.activeRunId
+      if (activeRunId) {
+        this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
+        this.currentState.activeRunId = null
+      }
       await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       // 不添加系统消息
@@ -2797,6 +2877,12 @@ export const useReactStore = defineStore('react', {
 
     // 暂停分析（与stopAnalysis相同）
     async pauseAnalysis() {
+      freezeActiveAssistantOutput(this.currentState, { reason: 'paused' }, contentToString)
+      const activeRunId = this.currentState.activeRunId
+      if (activeRunId) {
+        this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
+        this.currentState.activeRunId = null
+      }
       await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       this.currentState.isComplete = false

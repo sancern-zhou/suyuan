@@ -62,12 +62,13 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_DEVICE_IDENTITY_INCONSISTENT",
         "RF_ENUM_VALUE_INVALID",
         "RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT",
+        "RF_RANGE_UNIT_MISMATCH",
     }:
         return "一致性问题"
     if rule in {
         "RF_CHECK_TIME_OUTSIDE_RANGE",
         "RF_CALIBRATION_DATE_EXPIRED",
-        "RF_CALIBRATION_PREV_DATE_MISMATCH",
+        "RF_CALIBRATION_INTERVAL_TOO_LONG",
         "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
         "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID",
     }:

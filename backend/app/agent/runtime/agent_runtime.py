@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 import asyncio
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import structlog
@@ -20,6 +21,8 @@ from .tool_classification import HOUSEKEEPING_TOOL_NAMES, all_housekeeping_tools
 from .transcript_repairer import TranscriptRepairer
 from .types import PlannerResult, RunState, ToolCall
 from .cancellation import AgentRunCancelled, cancellation_registry
+from .mode_capabilities import supports_native_multimodal
+from .ownership import run_ownership_registry
 from .steering import steering_registry
 from ..context.context_diagnostics import ContextDiagnostics
 
@@ -47,6 +50,7 @@ class AgentRuntimeConfig:
     auto_profile: Optional[str] = None
     runtime_mode: Optional[str] = None
     user_identifier: Optional[str] = None
+    board_context: Optional[Dict[str, Any]] = None
 
 
 class AgentRuntime:
@@ -82,15 +86,25 @@ class AgentRuntime:
             user_query=user_query,
             mode=mode,
             enhance_with_history=self.config.enhance_with_history,
+            board_context=self.config.board_context,
         )
 
-        async with self.session_queue.lock(state.session_id):
-            await steering_registry.register(state.session_id, state.run_id, state.mode)
-            try:
-                async for event in self._run_locked(state, initial_messages):
-                    yield event
-            finally:
-                await steering_registry.unregister(state.session_id, state.run_id)
+        await run_ownership_registry.register(state.session_id, state.run_id)
+        await steering_registry.register(state.session_id, state.run_id, state.mode)
+        try:
+            async for event in self._run_locked(state, initial_messages):
+                yield self._with_run_identity(state, event)
+        finally:
+            await steering_registry.unregister(state.session_id, state.run_id)
+
+    def _with_run_identity(self, state: RunState, event: Dict[str, Any]) -> Dict[str, Any]:
+        event.setdefault("session_id", state.session_id)
+        event.setdefault("run_id", state.run_id)
+        data = event.setdefault("data", {})
+        if isinstance(data, dict):
+            data.setdefault("session_id", state.session_id)
+            data.setdefault("run_id", state.run_id)
+        return event
 
     async def _run_locked(
         self,
@@ -159,7 +173,7 @@ class AgentRuntime:
     async def _run_iteration(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         context_result, conversation_history = await self._build_context(state)
         attachments = self._effective_attachments(state)
-        if state.mode == "social" and attachments:
+        if supports_native_multimodal(state.mode) and attachments:
             from .multimodal import build_anthropic_user_content, build_persisted_user_content
 
             state.user_message_content = build_anthropic_user_content(
@@ -170,6 +184,8 @@ class AgentRuntime:
                 state.user_query,
                 attachments,
             )
+        elif supports_native_multimodal(state.mode):
+            state.user_message_content = None
         self._raise_if_cancelled()
         planner_result = None
         streaming_tool_executor = None
@@ -222,6 +238,7 @@ class AgentRuntime:
             else:
                 observation, records, tool_events = await self.tool_coordinator.execute_legacy_action(state, action)
             self._capture_multimodal_attachments(state, observation)
+            self._capture_drawio_board_context(state, observation)
             self._apply_housekeeping_policy(state, action, observation)
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
@@ -241,16 +258,76 @@ class AgentRuntime:
         self.writer.add_iteration(planner_result.thought, action, observation)
 
     def _effective_attachments(self, state: RunState) -> List[Dict[str, Any]]:
-        """Current-run image attachments available to social-mode native multimodal calls."""
+        """Current-run image attachments available to native multimodal calls."""
         attachments: List[Dict[str, Any]] = []
-        if self.config.attachments:
+        if (
+            self.config.attachments
+            and not state.initial_attachments_consumed
+            and not self._should_suppress_initial_attachments(state)
+        ):
             attachments.extend(self.config.attachments)
         if state.pending_attachments:
             attachments.extend(state.pending_attachments)
         return attachments
 
+    def _consume_effective_attachments(self, state: RunState) -> None:
+        for attachment in self._effective_attachments(state):
+            key = self._attachment_key(attachment)
+            if key:
+                state.consumed_attachment_keys.add(key)
+        if (
+            self.config.attachments
+            and not state.initial_attachments_consumed
+            and not self._should_suppress_initial_attachments(state)
+        ):
+            state.initial_attachments_consumed = True
+        if state.pending_attachments:
+            state.pending_attachments.clear()
+
+    def _consume_pending_attachments(self, state: RunState) -> None:
+        for attachment in state.pending_attachments:
+            key = self._attachment_key(attachment)
+            if key:
+                state.consumed_attachment_keys.add(key)
+        state.pending_attachments.clear()
+
+    def _should_consume_initial_attachments_after_planner(self, state: RunState) -> bool:
+        if state.mode == "chart":
+            return False
+        return True
+
+    def _consume_initial_attachments_after_drawio_board_created(self, state: RunState) -> None:
+        attachments = getattr(getattr(self, "config", None), "attachments", None)
+        if not attachments or state.initial_attachments_consumed:
+            return
+        for attachment in attachments:
+            key = self._attachment_key(attachment)
+            if key:
+                state.consumed_attachment_keys.add(key)
+        state.initial_attachments_consumed = True
+
+    def _consume_sent_attachments_after_planner(self, state: RunState) -> None:
+        if state.pending_attachments:
+            self._consume_pending_attachments(state)
+        if self._should_consume_initial_attachments_after_planner(state):
+            self._consume_effective_attachments(state)
+
+    def _should_suppress_initial_attachments(self, state: RunState) -> bool:
+        if state.mode != "chart":
+            return False
+        if state.board_context_updated_in_run:
+            return True
+        if not isinstance(state.board_context, dict):
+            return False
+        return bool(
+            state.board_context.get("current_xml")
+            or state.board_context.get("currentXml")
+            or state.board_context.get("xml")
+            or state.board_context.get("drawio_xml")
+        )
+
     def _capture_multimodal_attachments(self, state: RunState, observation: Dict[str, Any]) -> None:
-        if state.mode != "social" or not isinstance(observation, dict):
+        if not supports_native_multimodal(state.mode) or not isinstance(observation, dict):
             return
 
         from .multimodal import extract_multimodal_attachments
@@ -259,15 +336,129 @@ class AgentRuntime:
         if not attachments:
             return
 
-        state.pending_attachments.extend(attachments)
+        known_keys = {
+            key
+            for key in (self._attachment_key(item) for item in state.pending_attachments)
+            if key
+        }
+        filtered_attachments: List[Dict[str, Any]] = []
+        for attachment in attachments:
+            key = self._attachment_key(attachment)
+            if key and (key in state.consumed_attachment_keys or key in known_keys):
+                continue
+            filtered_attachments.append(attachment)
+            if key:
+                known_keys.add(key)
+
+        if not filtered_attachments:
+            return
+
+        state.pending_attachments.extend(filtered_attachments)
         logger.info(
             "multimodal_attachments_captured_from_tool",
             session_id=state.session_id,
             run_id=state.run_id,
             iteration=state.iteration,
-            count=len(attachments),
-            names=[item.get("name") for item in attachments if isinstance(item, dict)],
+            count=len(filtered_attachments),
+            names=[item.get("name") for item in filtered_attachments if isinstance(item, dict)],
         )
+
+    @staticmethod
+    def _attachment_key(attachment: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(attachment, dict):
+            return None
+        for field in ("local_path", "path", "url", "signed_url"):
+            value = attachment.get(field)
+            if isinstance(value, str) and value:
+                return f"{field}:{value}"
+        name = attachment.get("name")
+        if isinstance(name, str) and name:
+            return f"name:{name}"
+        return None
+
+    def _capture_drawio_board_context(self, state: RunState, observation: Dict[str, Any]) -> None:
+        if state.mode != "chart" or not isinstance(observation, dict):
+            return
+
+        for result in self._iter_drawio_observation_results(observation):
+            data = result.get("data")
+            if not isinstance(data, dict):
+                continue
+            xml = self._drawio_xml_from_result(result)
+            if not xml:
+                continue
+            if data.get("artifact_kind") != "drawio_board":
+                metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+                if metadata.get("tool_name") != "create_drawio_board":
+                    continue
+
+            previous = state.board_context if isinstance(state.board_context, dict) else {}
+            state.board_context = {
+                **previous,
+                "current_xml": xml,
+                "xml": xml,
+                "artifact_id": data.get("artifact_id") or previous.get("artifact_id"),
+                "board_id": data.get("board_id") or previous.get("board_id"),
+                "title": data.get("title") or previous.get("title"),
+            }
+            state.board_context_updated_in_run = True
+            self._consume_initial_attachments_after_drawio_board_created(state)
+            context_builder = getattr(getattr(self, "config", None), "context_builder", None)
+            if context_builder is not None:
+                context_builder.board_context = state.board_context
+            logger.info(
+                "drawio_board_context_captured_from_tool_result",
+                session_id=state.session_id,
+                run_id=state.run_id,
+                iteration=state.iteration,
+                artifact_id=state.board_context.get("artifact_id"),
+                title=state.board_context.get("title"),
+                xml_chars=len(str(xml)),
+            )
+
+    @staticmethod
+    def _drawio_xml_from_result(result: Dict[str, Any]) -> str:
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        for field in ("current_xml", "currentXml", "xml", "drawio_xml", "mxfile"):
+            value = data.get(field)
+            if isinstance(value, str) and value:
+                return value
+
+        candidate_refs: List[Dict[str, Any]] = []
+        xml_ref = data.get("xml_ref")
+        if isinstance(xml_ref, dict):
+            candidate_refs.append(xml_ref)
+        refs = result.get("refs") if isinstance(result.get("refs"), dict) else {}
+        artifacts = refs.get("artifacts") if isinstance(refs.get("artifacts"), list) else []
+        candidate_refs.extend(item for item in artifacts if isinstance(item, dict))
+
+        for ref in candidate_refs:
+            path_value = ref.get("local_path") or ref.get("path") or ref.get("file_path")
+            if not isinstance(path_value, str) or not path_value:
+                continue
+            try:
+                path = Path(path_value).expanduser().resolve()
+                if path.is_file():
+                    return path.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning(
+                    "drawio_board_xml_ref_read_failed",
+                    path=path_value,
+                    error=str(exc),
+                )
+        return ""
+
+    def _iter_drawio_observation_results(self, observation: Dict[str, Any]):
+        yield observation
+        tool_results = observation.get("tool_results")
+        if not isinstance(tool_results, list):
+            return
+        for item in tool_results:
+            if not isinstance(item, dict):
+                continue
+            result = item.get("result", item)
+            if isinstance(result, dict):
+                yield result
 
     async def _apply_steering_inputs(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
         items = await steering_registry.drain(state.session_id, state.run_id)
@@ -364,7 +555,7 @@ class AgentRuntime:
         planner_result = PlannerResult()
         user_content = None
         attachments = self._effective_attachments(state)
-        if state.mode == "social" and attachments:
+        if supports_native_multimodal(state.mode) and attachments:
             from .multimodal import build_anthropic_user_content
 
             user_content = build_anthropic_user_content(
@@ -418,10 +609,10 @@ class AgentRuntime:
                 tool_data = event["data"]
                 tool_use_id = tool_data.get("tool_use_id", "")
                 tool_name = tool_data.get("tool_name", "")
-                tool_input = self.tool_coordinator.normalize_tool_input(
+                tool_input, preparation_error = self.tool_coordinator.prepare_tool_input_for_state(
                     tool_name,
                     tool_data.get("input", {}),
-                    mode=state.mode,
+                    state,
                 )
                 state.has_seen_tool_use = True
                 buffer.note_tool_use()
@@ -433,7 +624,14 @@ class AgentRuntime:
                     "args": tool_input,
                 }
                 suppressed_observation = self._suppressed_housekeeping_observation(state, tool_action)
-                if suppressed_observation is not None:
+                if preparation_error is not None:
+                    streaming_tool_executor.addCompletedTool(
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        result=preparation_error,
+                    )
+                elif suppressed_observation is not None:
                     streaming_tool_executor.addCompletedTool(
                         tool_use_id=tool_use_id,
                         tool_name=tool_name,
@@ -470,6 +668,9 @@ class AgentRuntime:
                 tool_schemas,
                 planner_result,
             )
+
+        if supports_native_multimodal(state.mode) and attachments:
+            self._consume_sent_attachments_after_planner(state)
 
         if planner_result.action and planner_result.action.get("type") in ("TOOL_CALL", "TOOL_CALLS"):
             planner_result.tool_calls = self.tool_coordinator.tool_calls_from_action(planner_result.action)
@@ -564,7 +765,7 @@ class AgentRuntime:
         self._raise_if_cancelled()
         user_content = None
         attachments = self._effective_attachments(state)
-        if state.mode == "social" and attachments:
+        if supports_native_multimodal(state.mode) and attachments:
             from .multimodal import build_anthropic_user_content
 
             user_content = build_anthropic_user_content(
@@ -585,6 +786,8 @@ class AgentRuntime:
             llm_model=self.config.llm_model,
             auto_profile=self.config.auto_profile,
         )
+        if supports_native_multimodal(state.mode) and attachments:
+            self._consume_sent_attachments_after_planner(state)
         partial.thought = result.get("thought")
         partial.action = result.get("action")
         partial.raw_thinking_blocks = result.get("raw_thinking_blocks")
@@ -606,6 +809,7 @@ class AgentRuntime:
 
         observation, action, records = self.tool_coordinator.collect_streaming_results(state, streaming_tool_executor)
         self._capture_multimodal_attachments(state, observation)
+        self._capture_drawio_board_context(state, observation)
         self._apply_housekeeping_policy(state, action, observation)
         self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)

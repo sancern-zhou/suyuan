@@ -146,12 +146,100 @@ def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, A
 def _prepare_tool_input_for_history(tool_name: str, tool_input: Any) -> Any:
     """Return a compact assistant tool_use input for LLM-facing history.
 
-    ⚠️ 不再压缩 tool_input，保持与工具 schema 定义一致。
-    压缩只在 tool_result 层面进行（_prepare_tool_result_for_history），
-    避免 LLM 从历史记录中学习到错误的参数格式。
+    Current-turn draw.io create history intentionally preserves XML. Edit calls
+    receive current_xml from runtime state, so that injected XML is never useful
+    LLM-facing context and should not be echoed back into history.
     """
-    # 直接返回原始 tool_input，不做任何压缩
+    if (
+        tool_name == "create_drawio_board"
+        and isinstance(tool_input, dict)
+        and str(tool_input.get("operation") or "").strip().lower() == "edit"
+    ):
+        return _compact_drawio_tool_input_for_history(tool_input)
     return tool_input
+
+
+def _compact_drawio_tool_input_for_history(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, list):
+        compacted_items = []
+        for item in value:
+            compacted = _compact_drawio_tool_input_for_history(item)
+            if compacted != {}:
+                compacted_items.append(compacted)
+        return compacted_items
+
+    if not isinstance(value, dict):
+        return value
+
+    compacted: Dict[str, Any] = {}
+    for key, item in value.items():
+        if key in {"xml", "current_xml", "currentXml", "drawio_xml"}:
+            continue
+        compacted_value = _compact_drawio_tool_input_for_history(item)
+        if compacted_value == {}:
+            continue
+        compacted[key] = compacted_value
+    return compacted
+
+
+def _compact_drawio_payload_for_history(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, list):
+        return [_compact_drawio_payload_for_history(item) for item in value]
+
+    if not isinstance(value, dict):
+        return value
+
+    compacted: Dict[str, Any] = {}
+    for key, item in value.items():
+        if key in {"xml", "current_xml", "currentXml", "drawio_xml"} and isinstance(item, str):
+            compacted[f"{key}_omitted"] = True
+            compacted[f"{key}_length"] = len(item)
+            continue
+        compacted[key] = _compact_drawio_payload_for_history(item)
+    return compacted
+
+
+def _is_drawio_board_result(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    metadata = result.get("metadata")
+    data = result.get("data")
+    return (
+        isinstance(metadata, dict)
+        and metadata.get("generator") == "create_drawio_board"
+    ) or (
+        isinstance(data, dict)
+        and data.get("artifact_kind") == "drawio_board"
+    )
+
+
+def _compact_drawio_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
+    compacted = _compact_drawio_payload_for_history(result)
+    if not isinstance(compacted, dict):
+        return compacted
+
+    data = compacted.get("data") if isinstance(compacted.get("data"), dict) else {}
+    title = data.get("title") or result.get("summary") or "Draw.io Board"
+    artifact_id = data.get("artifact_id") or data.get("board_id")
+    compacted["llm_resume"] = {
+        "artifact_ready": bool(compacted.get("success", True)),
+        "artifact_kind": "drawio_board",
+        "artifact_id": artifact_id,
+        "title": title,
+        "xml_omitted": True,
+        "next_action": "answer_user_without_recreating_board",
+        "instruction": (
+            "create_drawio_board 已成功生成可编辑画板并返回给前端；"
+            "不要再次调用 create_drawio_board 仅为了确认生成结果。"
+        ),
+    }
+    return compacted
 
 
 def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
@@ -1015,8 +1103,60 @@ class SessionMemory:
 
         return dict(self.data_files)
 
+    def compact_completed_drawio_turns_for_next_user_turn(self) -> None:
+        """Compact completed draw.io XML before a new user turn starts.
+
+        The active agent turn keeps full XML so the model can reason over the
+        exact tool output. Once a new user message arrives, frontend
+        board_context.current_xml becomes the authoritative XML source and old
+        tool XML must leave ordinary conversation history.
+        """
+        compacted_count = 0
+        for turn in self.conversation_history:
+            if turn.type == "tool_use" and isinstance(turn.content, list):
+                for block in turn.content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_use" or block.get("name") != "create_drawio_board":
+                        continue
+                    tool_input = block.get("input")
+                    if isinstance(tool_input, dict) and any(
+                        key in tool_input for key in ("xml", "current_xml", "currentXml", "drawio_xml")
+                    ):
+                        block["input"] = _compact_drawio_tool_input_for_history(tool_input)
+                        compacted_count += 1
+
+            if turn.type == "tool_result" and isinstance(turn.content, list):
+                for block in turn.content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    content = block.get("content")
+                    if not isinstance(content, str):
+                        continue
+                    try:
+                        payload = json.loads(content)
+                    except Exception:
+                        continue
+                    if not _is_drawio_board_result(payload):
+                        continue
+                    compacted_payload = _compact_drawio_result_for_history(payload)
+                    block["content"] = json.dumps(compacted_payload, ensure_ascii=False, indent=2, default=str)
+                    compacted_count += 1
+                    if isinstance(turn.data, dict):
+                        result_data = turn.data.get("result")
+                        if isinstance(result_data, dict) and _is_drawio_board_result(result_data):
+                            turn.data["result"] = _compact_drawio_result_for_history(result_data)
+
+        if compacted_count:
+            logger.info(
+                "drawio_history_compacted_for_next_user_turn",
+                session_id=self.session_id,
+                compacted_count=compacted_count,
+            )
+
     def add_user_message(self, content: str | List[Dict[str, Any]]) -> None:
         """Record a user utterance."""
+        self.compact_completed_drawio_turns_for_next_user_turn()
         self._append_conversation_turn("user", content, type="user")
         logger.debug(
             "add_user_message_called",
