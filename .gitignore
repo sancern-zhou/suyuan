@@ -40,6 +40,9 @@ data/
 *.tmp
 nul
 
+# Root-level Markdown documents may contain local notes or sensitive details.
+/*.md
+
 # OS
 .DS_Store
 Thumbs.db
