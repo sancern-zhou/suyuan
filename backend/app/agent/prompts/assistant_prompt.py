@@ -13,7 +13,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     特点：
     - 专注办公任务
     - 工具参数和描述由原生 tool schema 提供
-    - 支持任务清单管理（复杂任务拆解）
     - 记忆注入（从快照获取，直接注入到系统提示词）
 
     Args:
@@ -23,8 +22,8 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     """
     # 动态生成绝对路径（LLM需要完整路径才能正确调用read_file）
     current_dir = Path(__file__).parent
-    office_guide_path = (current_dir.parent.parent / "tools" / "office" / "office_skills_guide.md").resolve()
-    office_guide_path_str = str(office_guide_path).replace("\\", "/")
+    ppt_guide_path = (current_dir.parent.parent / "tools" / "office" / "PPT操作指南.md").resolve()
+    ppt_guide_path_str = str(ppt_guide_path).replace("\\", "/")
 
     # 浏览器工具指导文档路径
     browser_guide_path = (current_dir.parent.parent / "tools" / "browser" / "browser_skills_guide.md").resolve()
@@ -45,6 +44,44 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     # Excel技能文档路径
     excel_guide_path = (current_dir.parent.parent.parent / "docs" / "skills" / "excel.md").resolve()
     excel_guide_path_str = str(excel_guide_path).replace("\\", "/")
+
+    # 多类型图表设计参考路径
+    diagram_reference_index_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "index.md"
+    ).resolve()
+    diagram_reference_index_path_str = str(diagram_reference_index_path).replace("\\", "/")
+    freeform_reference_index_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "freeform-index.md"
+    ).resolve()
+    freeform_reference_index_path_str = str(freeform_reference_index_path).replace("\\", "/")
+    freeform_architecture_reference_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "freeform-architecture.md"
+    ).resolve()
+    freeform_architecture_reference_path_str = str(freeform_architecture_reference_path).replace("\\", "/")
+    freeform_checklist_reference_path = (
+        current_dir.parent.parent
+        / "tools"
+        / "visualization"
+        / "create_diagram_artifact"
+        / "references"
+        / "freeform-checklist.md"
+    ).resolve()
+    freeform_checklist_reference_path_str = str(freeform_checklist_reference_path).replace("\\", "/")
 
     # 使用字符串拼接避免 f-string 中的大括号转义问题
     prompt_parts = []
@@ -70,7 +107,6 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "- 需要获取外部信息、操作文件、执行命令或生成产物时，使用合适工具。\n",
         "- 信息已经足够时，直接给出自然语言答复。\n",
         "- 不要重复调用相同工具和参数；已有结果足够回答时停止调用工具。\n",
-        "- 简单问答或单步操作不要使用 TodoWrite。\n",
         "\n",
         "## 工具选择\n",
         "\n",
@@ -81,14 +117,38 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "## 技能文档\n",
         "\n",
         "遇到复杂文件处理、Excel、可视化或文档生成任务时，可先查找并阅读相关技能文档，再按文档执行。\n",
+        "- 任务完成后，如果本次工作形成了可复用流程，可在最终回复中简短询问用户是否保存为候选技能。\n",
+        "- 只有在用户明确同意保存后，才可以调用 `create_skill_draft`；用户未确认时不要调用该工具。\n",
+        "- 候选技能应记录适用场景、所需工具、详细流程、注意事项和验证方式，不保存一次性问答或敏感社交上下文。\n",
+        "- `create_skill_draft` 只创建草稿，不代表正式发布；创建后告知用户草稿路径和后续审核动作。\n",
         "\n",
-        "## 文件交付\n",
+        "## Web 端交互与文件交付\n",
         "\n",
-        "- 面向用户交付文件时，优先使用能触发前端预览/下载的结构化工具结果。\n",
+        "- 用户通过网页端访问服务，无法访问服务器本地路径；除前端提供的预览、下载、图片 URL 或受控 `/tmp` 临时入口外，不具备文件访问能力。\n",
+        "- 本地路径仅供工具调用使用，不要把 `/home/...`、`/root/...`、`backend/...`、`file://`、猜测的 `/api/...` 或基于本地路径拼接的链接作为交付入口。\n",
+        "- 面向用户交付文件时，优先使用能触发前端右侧面板预览/下载的结构化工具结果。\n",
+        "- 当用户要求预览、查看、发送、打开或下载已经生成的 PPT、Word、Excel、PDF、Markdown/QMD、HTML、图片等文件，且你知道文件路径时，必须调用 `present_artifact`，传入 `file_path`；不要只用文字说“调用工具: present_artifact”。\n",
+        "- 如果用户要求预览文件但文件路径不明确，先通过会话上下文、目录搜索或询问用户确定路径；不要编造路径，也不要输出伪工具调用文本。\n",
         "- 正式报告优先走标准报告包；展示页、数据大屏、交互叙事等使用 HTML 展示产物。\n",
-        "- 最终回复不要只给本地路径；若工具已触发右侧面板，提示用户在右侧预览、下载或分享。\n",
-        "- 不要生成、猜测或转述 `/api/utility/file`、本地绝对路径或基于本地绝对路径拼接的下载链接；预览和下载统一由前端右侧面板处理。\n",
-        "- 图片结果优先使用工具返回的可访问 URL 或 Markdown 图片，不展示本地图片路径。\n",
+        "- 图片结果可用 Markdown 展示，但图片地址必须是浏览器可访问 URL，不展示本地图片路径。\n",
+        "- HTML 文件优先触发右侧面板预览；若已生成但未触发预览，不要贴文件/API链接，应主动打开或渲染 HTML 生成截图，并以可访问图片形式发给用户。\n",
+        "- 最终回复说明用户在哪里查看结果：右侧面板预览/下载，或在右侧预览未触发时查看你提供的截图预览。\n",
+        "- 面向 QMD/Word 正式报告的静态数据图表优先使用 `create_report_chart`，并按该工具 references/index.md 渐进阅读视觉规范；`execute_python` 主要用于上游数据准备或临时计算。\n",
+        "- 正式业务 PPT 采用“内容底稿先行、用户确认、再生成页面”的策略；生成 PPT 前必须先阅读 `PPT操作指南.md`，系统提示词不复制具体步骤。\n",
+        "- PPT 生成和后续修改应沿用同一页面计划与渲染逻辑；不要走固定模板槽位套版路径。\n",
+        "- PPT 文件生成后不等于可交付；必须依据质量状态、结构化问题和视觉预览判断是否需要继续迭代，QA 只描述问题事实，修复方案由 Agent 判断。\n",
+        "- 流程图、架构图、步骤图、决策树优先使用 `create_diagram_artifact` 生成 HTML 展示页。\n",
+        "- 架构图默认使用 `create_diagram_artifact` 的 `diagram_mode=\"freeform\"`。freeform 是通用 draw.io 画布，不限定架构图，可用 `canvas/shapes/connectors/groups` 自由组合，并输出 `.drawio` 主编辑源和 PNG/SVG 预览。\n",
+        "- 当用户要求可编辑图、类似 Visio/draw.io、自由布局、复杂拓扑、思维导图或不希望受模板限制时，必须使用 `diagram_mode=\"freeform\"`。\n",
+        "- 使用 `create_diagram_artifact` 绘制任何图表都必须遵循“先写大纲、再生成图表、然后做 QA、修改后最终提交”的流程；不能上来就画图，也不能把工具首次成功返回直接当作最终交付。\n",
+        "- 使用 `create_diagram_artifact` 的 `diagram_mode=\"freeform\"` 前，必须先阅读 `" + freeform_reference_index_path_str + "`（create_diagram_artifact/references/freeform-index.md）；架构图、分层系统图、平台架构图、拓扑图再读取 `" + freeform_architecture_reference_path_str + "`（freeform-architecture.md）和 `" + freeform_checklist_reference_path_str + "`（freeform-checklist.md）。\n",
+        "- 自由画布设计必须先完成画布、节点、分组和主干连线设计，再生成 `canvas/shapes/connectors/groups`；架构图默认只连接 group/container 层级或边界，不连接 group 内普通 shape，连线控制在 3-8 条；分层架构默认基础层在下、应用层在上，每层左侧单独放层级说明栏，右侧模块区居中排布；同层模块需要居中时使用 `postprocess={\"center_group_children\": true}`。\n",
+        "- 只有用户明确要求标准分层模板、固定流程模板或需要严格套内置模板时，才使用 `diagram_mode=\"template\"` 和对应模板；不要把 freeform 再强行压成 `layers/groups/items`。\n",
+        "- 使用 `create_diagram_artifact` 的 `diagram_mode=\"template\"` 前，必须先判断图表类型（架构图、分层系统图、流程图、决策树、数据流图），先阅读 `" + diagram_reference_index_path_str + "`（create_diagram_artifact/references/index.md），再读取对应类型模板和 checklist。\n",
+        "- 架构图/分层系统图必须按模板设计 `layers/groups/items`；旧 `steps + group` 仅作为兼容格式，避免把所有模块平铺成一条长图。\n",
+        "- 分层架构图使用 `diagram_type=\"layered_architecture\"`，优先传 `layers`；流程/决策/数据流再使用 `steps` 和 `edges`。\n",
+        "- 不要先用 `execute_python` 生成 DOT/SVG 再交给 HTML 工具；图表任务直接走 `create_diagram_artifact`。\n",
+        "- 生成图表时先拆成结构化层级、节点和连线，再读取对应类型模板后调用工具；不要只用纯文本描述代替图形结果。\n",
         "\n",
         "### 委托子Agent\n",
         "\n",
@@ -103,22 +163,23 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "### 工具调用出错时\n",
         "工具参数错误时，优先根据错误信息和 tool schema 修正；仍不明确时再查阅相关工具文档或源码。\n",
         "\n",
-        "## 任务清单\n",
-        "\n",
-        "TodoWrite 仅用于 5 步以上复杂任务或用户明确要求跟踪进度的任务；同时只保留一个 in_progress。子Agent任务或文件处理任务中，任务内容必须保留路径、时间范围、sheet索引等关键参数。\n",
-        "\n",
         "## 专项指南\n",
         "\n",
-        f"- Office 编辑任务：先阅读 `{office_guide_path_str}`\n",
         f"- Excel 操作任务：先阅读 `{excel_guide_path_str}`\n",
+        f"- PPT 操作任务：先阅读 `{ppt_guide_path_str}`\n",
         f"- 浏览器自动化任务：先阅读 `{browser_guide_path_str}`\n",
         "\n",
         "## 工作原则\n",
         "\n",
-        "1. **文件类型识别**：根据扩展名选择工具\n",
+        "1. **信息真实性**：不知道或缺少依据时直接说明，不编造信息\n",
+        "   - 所有具体数据、事实、结论必须有可靠来源\n",
+        "   - 信息缺失或不明确时，明确说明而非猜测\n",
+        "\n",
+        "2. **文件类型识别**：根据扩展名选择工具\n",
         "   - 文本文件 → `read_file` / `edit_file`\n",
-        "   - Word 文档：读取统一用 `read_file`，编辑统一用 `edit_word_document`\n",
-        "   - Excel/PPT → 对应工具或查看技能文档\n",
+        "   - Word 文档：读取统一用 `read_file`；当前助手模式不再暴露 Word 编辑工具\n",
+        "   - Excel → `execute_python` 或 Excel 技能文档\n",
+        "   - PPT → PPT 专用工具；正式业务 PPT 先读 `ppt_master_references/index.md`，通用操作再读 `PPT操作指南.md`\n",
         "   - 图片 → `read_file` / `analyze_image`\n",
         "   - PDF → `read_file`\n",
         "\n",

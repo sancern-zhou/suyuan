@@ -19,11 +19,13 @@ ENV/
 .vscode/
 .cursor/
 .idea/
+.qoder/
 *.swp
 *.swo
 
 # Data & Cache
 backend_data_registry/
+backend_data_registry_old_*/
 backend_data/
 backend/models/
 data/
@@ -37,6 +39,77 @@ data/
 *.html
 *.tmp
 nul
+
+# Root-level Markdown documents may contain local notes or sensitive details.
+/*.md
+
+# Process artifacts: keep repository focused on runnable app code and runtime docs.
+.claude/
+.superpowers/
+app_backup_*/
+*_backup_*/
+logs/
+reports/
+games/
+docs/
+frontend/.vite/
+backend/tests/
+**/tests/
+**/__tests__/
+**/*_test.py
+**/*.test.mjs
+*.backup*
+*.bak
+*.tmp
+*.txt
+!backend/requirements.txt
+*.docx
+*.xlsx
+*.pptx
+*.ipynb
+/*.py
+/*.sh
+/*.sql
+backend/*.md
+backend/doc/
+backend/docs/
+backend/bug_reports/
+backend/database/*.md
+backend/migrations/*.md
+backend/app/**/*.md
+!backend/app/agent/guides/**/*.md
+!backend/app/agent/prompts/**/*.md
+!backend/app/tools/TOOL_CLASSIFICATION.md
+!backend/app/tools/**/*_guide.md
+!backend/app/tools/**/README.md
+!backend/app/tools/**/references/**/*.md
+!backend/app/tools/**/ppt_master_references/**/*.md
+!backend/app/tools/**/deck_assets/**/*.md
+!backend/app/tools/utility/execute_python_manual.md
+!backend/app/tools/utility/read_excel_charts_examples.md
+!backend/app/tools/utility/read_file_excel_enhancement.md
+backend/config/chart_templates/
+backend/*_result.txt
+backend/tool_summaries_*.txt
+backend/test*
+backend/debug*
+backend/diagnose*
+backend/fix*
+backend/generate*
+backend/recalculate*
+backend/recreate*
+backend/run*
+backend/simple*
+backend/start*
+backend/update*
+backend/cleanup*
+backend/search*
+backend/comprehensive_test*
+backend/*_game.py
+frontend/start.*
+frontend/test-*
+frontend/*.md
+station_info.json
 
 # OS
 .DS_Store
@@ -57,6 +130,7 @@ test_outputs/
 
 # Archives
 *.zip
+*.deb
 *.tar
 *.tar.gz
 *.rar
@@ -147,6 +221,7 @@ temp_images/
 test_results/
 tmp/
 tmpnumpy_wheels/
+.worktrees/
 __pycache__/
 D:tmp/
 
@@ -160,3 +235,4 @@ bge-*-model/
 # Document files
 *.docx
 backend/backend/
+backend/html_artifacts/

@@ -1,93 +1,95 @@
 <template>
   <div class="social-accounts-view">
-    <!-- 添加账号按钮 -->
-    <div class="add-account-bar">
-      <button @click="showCreateModal = true" class="btn-primary">
-        + 扫码添加微信
-      </button>
-    </div>
+    <section>
+      <!-- 添加账号按钮 -->
+      <div class="add-account-bar">
+        <button @click="showCreateModal = true" class="btn-primary">
+          + 扫码添加微信
+        </button>
+      </div>
 
-    <!-- 账号列表 -->
-    <div v-if="loading" class="loading">
-      <p>加载中...</p>
-    </div>
+      <!-- 账号列表 -->
+      <div v-if="loading" class="loading">
+        <p>加载中...</p>
+      </div>
 
-    <div v-else-if="accounts.length === 0" class="empty">
-      <p>暂无微信账号</p>
-      <p class="empty-hint">点击"扫码添加微信"按钮，扫描二维码即可快速添加</p>
-      <button @click="showCreateModal = true" class="btn-primary">
-        扫码添加微信
-      </button>
-    </div>
+      <div v-else-if="accounts.length === 0" class="empty">
+        <p>暂无微信账号</p>
+        <p class="empty-hint">点击"扫码添加微信"按钮，扫描二维码即可快速添加</p>
+        <button @click="showCreateModal = true" class="btn-primary">
+          扫码添加微信
+        </button>
+      </div>
 
-    <div v-else class="accounts-grid">
-      <div
-        v-for="account in accounts"
-        :key="account.id"
-        class="account-card"
-        :class="{
-          'running': account.running,
-          'logged-in': account.login_status === 'logged_in'
-        }"
-      >
-        <div class="account-header">
-          <h3>{{ account.name }}</h3>
-          <span class="account-id">{{ account.id }}</span>
-        </div>
-
-        <div class="account-status">
-          <div class="status-item">
-            <span class="label">状态:</span>
-            <span :class="['badge', account.running ? 'running' : 'stopped']">
-              {{ account.running ? '运行中' : '已停止' }}
-            </span>
+      <div v-else class="accounts-grid">
+        <div
+          v-for="account in accounts"
+          :key="account.id"
+          class="account-card"
+          :class="{
+            'running': account.running,
+            'logged-in': account.login_status === 'logged_in'
+          }"
+        >
+          <div class="account-header">
+            <h3>{{ account.name }}</h3>
+            <span class="account-id">{{ account.id }}</span>
           </div>
-          <div class="status-item">
-            <span class="label">登录:</span>
-            <span :class="['badge', account.login_status === 'logged_in' ? 'success' : 'warning']">
-              {{ account.login_status === 'logged_in' ? '已登录' : '未登录' }}
-            </span>
-          </div>
-          <div v-if="account.bot_account" class="status-item">
-            <span class="label">账号:</span>
-            <span class="value">{{ account.bot_account }}</span>
-          </div>
-        </div>
 
-        <div class="account-actions">
-          <button
-            v-if="!account.running"
-            @click="startAccount(account.id)"
-            class="btn-start"
-            :disabled="actionLoading[account.id]"
-          >
-            {{ actionLoading[account.id] ? '启动中...' : '启动' }}
-          </button>
-          <button
-            v-if="account.running"
-            @click="stopAccount(account.id)"
-            class="btn-stop"
-            :disabled="actionLoading[account.id]"
-          >
-            {{ actionLoading[account.id] ? '停止中...' : '停止' }}
-          </button>
-          <button
-            @click="showQRCode(account)"
-            :disabled="!account.running || account.login_status === 'logged_in'"
-            class="btn-qrcode"
-          >
-            {{ account.qr_code_available ? '查看二维码' : '获取二维码' }}
-          </button>
-          <button
-            @click="deleteAccount(account.id)"
-            class="btn-delete"
-            :disabled="account.running"
-          >
-            删除
-          </button>
+          <div class="account-status">
+            <div class="status-item">
+              <span class="label">状态:</span>
+              <span :class="['badge', account.running ? 'running' : 'stopped']">
+                {{ account.running ? '运行中' : '已停止' }}
+              </span>
+            </div>
+            <div class="status-item">
+              <span class="label">登录:</span>
+              <span :class="['badge', account.login_status === 'logged_in' ? 'success' : 'warning']">
+                {{ account.login_status === 'logged_in' ? '已登录' : '未登录' }}
+              </span>
+            </div>
+            <div v-if="account.bot_account" class="status-item">
+              <span class="label">账号:</span>
+              <span class="value">{{ account.bot_account }}</span>
+            </div>
+          </div>
+
+          <div class="account-actions">
+            <button
+              v-if="!account.running"
+              @click="startAccount(account.id)"
+              class="btn-start"
+              :disabled="actionLoading[account.id]"
+            >
+              {{ actionLoading[account.id] ? '启动中...' : '启动' }}
+            </button>
+            <button
+              v-if="account.running"
+              @click="stopAccount(account.id)"
+              class="btn-stop"
+              :disabled="actionLoading[account.id]"
+            >
+              {{ actionLoading[account.id] ? '停止中...' : '停止' }}
+            </button>
+            <button
+              @click="showQRCode(account)"
+              :disabled="!account.running || account.login_status === 'logged_in'"
+              class="btn-qrcode"
+            >
+              {{ account.qr_code_available ? '查看二维码' : '获取二维码' }}
+            </button>
+            <button
+              @click="deleteAccount(account.id)"
+              class="btn-delete"
+              :disabled="account.running"
+            >
+              删除
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- 二维码弹窗 -->
     <QRCodeModal

@@ -57,6 +57,8 @@ class RunState:
     user_query: str
     mode: str
     enhance_with_history: bool = True
+    user_message_content: Any = None
+    persisted_user_message_content: Any = None
     run_id: str = field(default_factory=lambda: uuid4().hex)
     iteration: int = 0
     task_completed: bool = False
@@ -72,7 +74,13 @@ class RunState:
     # direct_from_workflow: bool = False
     last_observation: Optional[Dict[str, Any]] = None
     last_single_tool_result: Optional[Dict[str, Any]] = None
+    pending_attachments: List[Dict[str, Any]] = field(default_factory=list)
+    consumed_attachment_keys: set[str] = field(default_factory=set)
+    initial_attachments_consumed: bool = False
+    board_context: Optional[Dict[str, Any]] = None
+    board_context_updated_in_run: bool = False
     suppress_tool_names_next_turn: set[str] = field(default_factory=set)
+    suppress_tool_names_current_turn: set[str] = field(default_factory=set)
     last_tool_turn_housekeeping_only: bool = False
 
     def timestamp(self) -> str:

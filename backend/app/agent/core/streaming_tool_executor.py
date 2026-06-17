@@ -177,7 +177,7 @@ class StreamingToolExecutor:
             return
 
         guarded = self.loop_guard.before_call(tool_name, tool_input) if self.loop_guard else None
-        if guarded:
+        if guarded and guarded.get("severity") == "block":
             execution = ToolExecution(
                 tool_use_id=tool_use_id,
                 tool_name=tool_name,
@@ -194,6 +194,14 @@ class StreamingToolExecutor:
                 total_executions=len(self._executions),
             )
             return
+        if guarded:
+            logger.warning(
+                "streaming_tool_loop_guard_warning",
+                tool_name=tool_name,
+                tool_use_id=tool_use_id[:12],
+                summary=guarded.get("summary") if isinstance(guarded, dict) else None,
+                total_executions=len(self._executions),
+            )
 
         # ⚠️ 检测并发 call_sub_agent 调用，强制 session 隔离
         if tool_name == "call_sub_agent":
@@ -247,6 +255,30 @@ class StreamingToolExecutor:
             tool_name=tool_name,
             tool_use_id=tool_use_id[:12],
             is_concurrency_safe=is_safe,
+            total_executions=len(self._executions),
+        )
+
+    def addCompletedTool(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> None:
+        """Record a tool result without executing the tool body."""
+        execution = ToolExecution(
+            tool_use_id=tool_use_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            is_concurrency_safe=True,
+        )
+        execution.mark_completed(result)
+        self._executions.append(execution)
+        logger.info(
+            "streaming_tool_short_circuited",
+            tool_name=tool_name,
+            tool_use_id=tool_use_id[:12],
+            status=result.get("status") if isinstance(result, dict) else None,
             total_executions=len(self._executions),
         )
 

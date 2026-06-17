@@ -12,6 +12,7 @@ from datetime import datetime
 import subprocess
 import structlog
 from app.services.data_registry import data_registry
+from app.tools.resource_refs import build_data_ref, build_file_ref, merge_refs
 from app.utils.path_config import get_datasets_dir
 from app.tools.system.data_registry_read_state import get_data_registry_read_state
 
@@ -168,6 +169,20 @@ class ReadDataRegistryTool(LLMTool):
             data_registry_path, data_id, list_fields, list_views, view, time_range, fields,
             where, select, limit, jq_filter
         )
+        self._attach_resume_context(
+            result,
+            data_id=data_id,
+            file_path=data_registry_path,
+            list_fields=list_fields,
+            list_views=list_views,
+            view=view,
+            time_range=time_range,
+            fields=fields,
+            where=where,
+            select=select,
+            limit=limit,
+            jq_filter=jq_filter,
+        )
         self._record_read_state(
             result,
             data_id=data_id,
@@ -179,6 +194,77 @@ class ReadDataRegistryTool(LLMTool):
             list_views=list_views,
         )
         return result
+
+    def _attach_resume_context(
+        self,
+        result: Dict[str, Any],
+        *,
+        data_id: str,
+        file_path: Path,
+        list_fields: bool,
+        list_views: bool,
+        view: Optional[str],
+        time_range: Optional[str],
+        fields: Optional[List[str]],
+        where: Optional[Any],
+        select: Optional[Any],
+        limit: Optional[int],
+        jq_filter: Optional[str],
+    ) -> None:
+        if not isinstance(result, dict) or not result.get("success"):
+            return
+
+        result["refs"] = merge_refs(
+            result.get("refs"),
+            {
+                "data": [build_data_ref(data_id, usage="read")],
+                "files": [
+                    build_file_ref(
+                        file_path,
+                        type="data",
+                        format="json",
+                        size=file_path.stat().st_size if file_path.exists() else None,
+                        usage="data_registry",
+                        data_id=data_id,
+                    )
+                ],
+            },
+        )
+
+        read_args = {
+            "data_id": data_id,
+            "list_fields": list_fields or None,
+            "list_views": list_views or None,
+            "view": view,
+            "time_range": time_range,
+            "fields": fields,
+            "where": where,
+            "select": select,
+            "limit": limit,
+            "jq_filter": jq_filter,
+        }
+        compact_args = {key: value for key, value in read_args.items() if value not in (None, False, [], {})}
+        data_preview = self._build_data_preview(result.get("data"))
+        llm_resume = {
+            "tool_hint": self._build_tool_hint(compact_args),
+            "read_args": compact_args,
+        }
+        if data_preview:
+            llm_resume["content_preview"] = data_preview
+        result["llm_resume"] = llm_resume
+
+    def _build_tool_hint(self, args: Dict[str, Any]) -> str:
+        rendered_args = ", ".join(f"{key}={value!r}" for key, value in args.items())
+        return f"Use read_data_registry({rendered_args}) to reread this data."
+
+    def _build_data_preview(self, data: Any, max_chars: int = 2000) -> str:
+        try:
+            preview = json.dumps(data, ensure_ascii=False, default=str)
+        except Exception:
+            preview = str(data)
+        if len(preview) <= max_chars:
+            return preview
+        return f"{preview[:max_chars]}\n...[truncated {len(preview) - max_chars} chars]"
 
     def _record_read_state(
         self,
@@ -242,9 +328,15 @@ class ReadDataRegistryTool(LLMTool):
 
     async def _load_from_data_registry(
         self, file_path: Path, data_id: str,
-        list_fields: bool, list_views: bool, view: Optional[str],
-        time_range: Optional[str], fields: Optional[List[str]], where: Optional[Any],
-        select: Optional[Any], limit: Optional[int], jq_filter: Optional[str]
+        list_fields: bool = False,
+        list_views: bool = False,
+        view: Optional[str] = None,
+        time_range: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+        where: Optional[Any] = None,
+        select: Optional[Any] = None,
+        limit: Optional[int] = None,
+        jq_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """从 DataRegistry 格式加载数据"""
         try:
@@ -610,8 +702,18 @@ class ReadDataRegistryTool(LLMTool):
         return {
             "success": False,
             "error": f"返回{returned_count}条记录，超过{self.DEFAULT_MAX_RECORDS}条限制",
+            "data": {
+                "error_type": "too_many_records",
+                "filtered_records": returned_count,
+                "max_records": self.DEFAULT_MAX_RECORDS,
+                "time_range": time_range,
+                "fields": fields,
+                "jq_filter": jq_filter,
+                "filter_details": filter_info,
+                "suggestion": suggestion,
+            },
             "hint": suggestion,
-            "summary": f"数据量过大：{returned_count}条 > {self.DEFAULT_MAX_RECORDS}条"
+            "summary": f"数据量过大：{returned_count}条 > {self.DEFAULT_MAX_RECORDS}条，请缩小 time_range 或使用聚合查询"
         }
 
     def _build_structured_filter_mismatch_result(

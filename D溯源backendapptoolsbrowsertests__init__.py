@@ -1,1 +1,0 @@
-# Browser Tool Tests

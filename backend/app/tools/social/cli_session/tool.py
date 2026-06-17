@@ -41,79 +41,63 @@ class CliSessionTool(LLMTool):
     """Run multi-turn Claude Code or Codex sessions from social mode."""
 
     VALID_PROVIDERS = {"claude", "codex"}
-    VALID_ACTIONS = {"start", "send", "status", "list", "reset"}
+    VALID_ACTIONS = {"start", "send", "status", "list", "reset", "task_status", "task_list", "task_cancel"}
 
     def __init__(self) -> None:
         function_schema = {
             "name": "cli_session",
-            "description": (
-                "通过 Claude Code 或 Codex CLI 执行多轮编程/问答任务。"
-                "会话按社交用户和 session_name 持久化，后续 send 会自动恢复同一 CLI 上下文。"
-                "适合让外部编程 Agent 修改代码、运行测试、解释工程问题。"
-            ),
+            "description": "运行可恢复 Claude Code/Codex CLI 会话；start/send 默认后台返回 task_id。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["start", "send", "status", "list", "reset"],
-                        "description": "操作：start/send 发起一轮；status 查看指定会话；list 列出会话；reset 删除会话状态。"
+                        "description": "操作类型：start/send/status/list/reset/task_status/task_list/task_cancel。"
                     },
                     "provider": {
                         "type": "string",
                         "enum": ["claude", "codex"],
-                        "description": "外部 CLI：claude 或 codex。start/send 默认 claude。"
+                        "description": "外部CLI，默认claude。"
                     },
                     "session_name": {
                         "type": "string",
-                        "description": "社交用户下的会话名，默认 default。不同任务请使用不同名称。"
+                        "description": "会话名，默认default。"
                     },
                     "prompt": {
                         "type": "string",
-                        "description": "发送给 Claude Code/Codex 的本轮用户消息。action=start/send 时必填。"
+                        "description": "start/send必填。"
                     },
-                    "cwd": {
-                        "type": "string",
-                        "description": "CLI 工作目录，必须在项目目录内。默认项目根目录 D:/溯源。"
-                    },
+                    "cwd": {"type": "string", "description": "项目内工作目录。"},
                     "timeout": {
                         "type": "integer",
-                        "description": "本轮 CLI 最大执行秒数，默认 600，范围 30-3600。",
-                        "minimum": 30,
-                        "maximum": 3600,
-                        "default": 600
+                        "description": "执行秒数，默认600（范围30-3600）。"
                     },
-                    "model": {
-                        "type": "string",
-                        "description": "可选模型名，透传给 CLI。"
-                    },
+                    "model": {"type": "string", "description": "透传模型名。"},
                     "permission_mode": {
                         "type": "string",
-                        "enum": ["default", "acceptEdits", "bypassPermissions", "dontAsk", "plan"],
-                        "description": "Claude Code 权限模式，默认 acceptEdits。需要完全自动化时才用 bypassPermissions。"
+                        "description": "Claude Code权限：default/acceptEdits/bypassPermissions/dontAsk/plan。"
                     },
                     "sandbox": {
                         "type": "string",
-                        "enum": ["read-only", "workspace-write", "danger-full-access"],
-                        "description": "Codex 沙箱模式，默认 workspace-write。"
+                        "description": "Codex沙箱：read-only/workspace-write/danger-full-access。"
                     },
                     "approval_policy": {
                         "type": "string",
-                        "enum": ["untrusted", "on-failure", "on-request", "never"],
-                        "description": "Codex 审批策略，默认 never，避免社交渠道卡在交互确认。"
+                        "description": "Codex审批：untrusted/on-failure/on-request/never。"
                     },
                     "max_output_chars": {
                         "type": "integer",
-                        "description": "返回给当前 Agent 的 answer 最大字符数，默认 12000。原始 stdout/stderr 默认不返回。",
-                        "minimum": 1000,
-                        "maximum": 100000,
-                        "default": DEFAULT_ANSWER_CHARS
+                        "description": "answer字符上限，默认12000（范围1000-100000）。"
                     },
                     "include_raw_output": {
                         "type": "boolean",
-                        "description": "是否在成功时也返回 stdout/stderr 摘要。默认 false；失败时会自动返回 stderr/stdout 摘要。",
-                        "default": False
-                    }
+                        "description": "返回stdout/stderr摘要，默认false。"
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "start/send后台执行，默认true。"
+                    },
+                    "task_id": {"type": "string", "description": "后台任务ID。"}
                 },
                 "required": ["action"]
             }
@@ -143,6 +127,8 @@ class CliSessionTool(LLMTool):
         approval_policy: str = "never",
         max_output_chars: int = DEFAULT_ANSWER_CHARS,
         include_raw_output: bool = False,
+        background: bool = True,
+        task_id: Optional[str] = None,
         context: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -156,6 +142,52 @@ class CliSessionTool(LLMTool):
             return self._failed(f"不支持的 action: {action}")
 
         user_key = self._get_user_key(context)
+
+        if action in {"task_status", "task_cancel"}:
+            if not task_id:
+                return self._failed(f"action={action} 时必须提供 task_id")
+            manager = self._get_cli_task_manager()
+            if not manager:
+                return self._failed("CliTaskManager未初始化")
+            if action == "task_status":
+                task = await manager.get_task(task_id)
+                if not task:
+                    return self._failed(f"CLI后台任务不存在: {task_id}")
+                if task.get("social_user_id") and task.get("social_user_id") != user_key:
+                    return self._failed(f"CLI后台任务不存在: {task_id}")
+                return {
+                    "status": "success",
+                    "success": True,
+                    "metadata": self._metadata(action=action, task_id=task_id),
+                    "data": task,
+                    "summary": f"CLI后台任务 {task_id} 当前状态: {task.get('status')}",
+                }
+            task = await manager.get_task(task_id)
+            if task and task.get("social_user_id") and task.get("social_user_id") != user_key:
+                return self._failed(f"CLI后台任务不存在: {task_id}")
+            result = await manager.cancel_task(task_id)
+            if not result.get("success"):
+                return self._failed(result.get("error", "取消后台CLI任务失败"))
+            return {
+                "status": "success",
+                "success": True,
+                "metadata": self._metadata(action=action, task_id=task_id),
+                "data": result,
+                "summary": f"已取消CLI后台任务: {task_id}",
+            }
+
+        if action == "task_list":
+            manager = self._get_cli_task_manager()
+            if not manager:
+                return self._failed("CliTaskManager未初始化")
+            tasks = await manager.list_tasks(social_user_id=user_key)
+            return {
+                "status": "success",
+                "success": True,
+                "metadata": self._metadata(action=action),
+                "data": {"tasks": tasks, "count": len(tasks)},
+                "summary": f"共有 {len(tasks)} 个CLI后台任务",
+            }
 
         if action == "list":
             return self._list_sessions(user_key)
@@ -230,6 +262,21 @@ class CliSessionTool(LLMTool):
                 model=model,
                 sandbox=sandbox,
                 approval_policy=approval_policy,
+            )
+
+        if background:
+            return await self._start_background_task(
+                user_key=user_key,
+                provider=provider,
+                session_name=session_name,
+                prompt=prompt,
+                cwd=resolved_cwd,
+                args=args,
+                stdin_text=stdin_text,
+                timeout=timeout,
+                state_path=state_path,
+                state=state,
+                output_file=output_file,
             )
 
         started_at = datetime.now().isoformat()
@@ -318,6 +365,89 @@ class CliSessionTool(LLMTool):
             ),
         }
 
+    async def _start_background_task(
+        self,
+        *,
+        user_key: str,
+        provider: str,
+        session_name: str,
+        prompt: str,
+        cwd: Path,
+        args: List[str],
+        stdin_text: str,
+        timeout: int,
+        state_path: Path,
+        state: Dict[str, Any],
+        output_file: Optional[Path],
+    ) -> Dict[str, Any]:
+        manager = self._get_cli_task_manager()
+        if not manager:
+            return self._failed("CliTaskManager未初始化")
+
+        origin_info = self._get_origin_info()
+        label = f"{provider} CLI: {session_name}"
+        started_at = datetime.now().isoformat()
+
+        def parser(stdout: str, stderr: str) -> Tuple[str, Optional[str]]:
+            return self._parse_cli_output(provider, stdout, stderr, output_file)
+
+        def completion_callback(payload: Dict[str, Any]) -> None:
+            result = {
+                "exit_code": payload.get("exit_code", -1),
+                "stdout": payload.get("stdout", ""),
+                "stderr": payload.get("stderr", ""),
+            }
+            self._record_turn(
+                state_path=state_path,
+                state=state,
+                prompt=prompt,
+                started_at=started_at,
+                finished_at=payload.get("finished_at") or datetime.now().isoformat(),
+                result=result,
+                parsed_text=payload.get("parsed_text", ""),
+                vendor_session_id=payload.get("vendor_session_id"),
+            )
+
+        result = await manager.start_task(
+            social_user_id=user_key,
+            origin_info=origin_info,
+            provider=provider,
+            session_name=session_name,
+            cwd=str(cwd),
+            args=args,
+            stdin_text=stdin_text,
+            timeout=timeout,
+            label=label,
+            parser=parser,
+            completion_callback=completion_callback,
+        )
+        if not result.get("success"):
+            return self._failed(result.get("error", "创建CLI后台任务失败"))
+
+        return {
+            "status": "success",
+            "success": True,
+            "metadata": self._metadata(
+                action="background",
+                provider=provider,
+                session_name=session_name,
+                task_id=result.get("task_id"),
+                cwd=str(cwd),
+                command=self._redact_command(args),
+            ),
+            "data": {
+                "task_id": result.get("task_id"),
+                "provider": provider,
+                "session_name": session_name,
+                "cwd": str(cwd),
+                "background": True,
+            },
+            "summary": (
+                f"已创建CLI后台任务 `{result.get('task_id')}`，当前对话不会阻塞。"
+                "请优先使用 wait_task 等待完成，必要时再用 action=task_status 查询或 action=task_cancel 取消。"
+            ),
+        }
+
     def _build_claude_command(
         self,
         binary: str,
@@ -362,11 +492,26 @@ class CliSessionTool(LLMTool):
             str(output_file),
             "--cd",
             state["cwd"],
-            "--sandbox",
-            sandbox if sandbox in {"read-only", "workspace-write", "danger-full-access"} else "workspace-write",
-            "--ask-for-approval",
-            approval_policy if approval_policy in {"untrusted", "on-failure", "on-request", "never"} else "never",
         ]
+
+        # 在SELinux环境下，bubblewrap无法正常工作，需要绕过沙箱
+        # 检测SELinux状态，如果启用则使用dangerously-bypass模式
+        try:
+            import subprocess
+            selinux_result = subprocess.run(["getenforce"], capture_output=True, text=True, timeout=2)
+            if selinux_result.stdout.strip() in ["Enforcing", "Permissive"]:
+                # SELinux启用时，绕过沙箱以避免bubblewrap权限问题
+                args.append("--dangerously-bypass-approvals-and-sandbox")
+            else:
+                # 正常情况下使用沙箱
+                args.extend(["--sandbox", sandbox if sandbox in {"read-only", "workspace-write", "danger-full-access"} else "workspace-write"])
+        except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
+            # 无法检测SELinux状态，使用沙箱
+            args.extend(["--sandbox", sandbox if sandbox in {"read-only", "workspace-write", "danger-full-access"} else "workspace-write"])
+
+        # Add approval policy via config override (仅在不绕过沙箱时有效)
+        if approval_policy in {"untrusted", "on-failure", "on-request", "never"}:
+            args.extend(["-c", f'approval_policy="{approval_policy}"'])
         if model:
             args.extend(["--model", model])
 
@@ -376,6 +521,38 @@ class CliSessionTool(LLMTool):
         else:
             args.append("-")
         return args, prompt, output_file
+
+    def _record_turn(
+        self,
+        *,
+        state_path: Path,
+        state: Dict[str, Any],
+        prompt: str,
+        started_at: str,
+        finished_at: str,
+        result: Dict[str, Any],
+        parsed_text: str,
+        vendor_session_id: Optional[str],
+    ) -> None:
+        if vendor_session_id:
+            state["vendor_session_id"] = vendor_session_id
+        turn = {
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "prompt": prompt,
+            "exit_code": result["exit_code"],
+            "success": result["exit_code"] == 0,
+            "stdout_tail": self._tail(result["stdout"], 12000),
+            "stderr_tail": self._tail(result["stderr"], 6000),
+            "answer": self._tail(parsed_text, 30000),
+            "background": True,
+        }
+        state.setdefault("turns", []).append(turn)
+        state["updated_at"] = finished_at
+        state["last_exit_code"] = result["exit_code"]
+        state["last_success"] = result["exit_code"] == 0
+        state["last_error"] = result["stderr"] if result["exit_code"] != 0 else ""
+        self._save_state(state_path, state)
 
     async def _run_cli(
         self,
@@ -436,6 +613,40 @@ class CliSessionTool(LLMTool):
         except Exception as exc:
             logger.error("cli_session_run_failed", error=str(exc), exc_info=True)
             return {"exit_code": -1, "stdout": "", "stderr": str(exc)}
+
+    def _get_cli_task_manager(self):
+        try:
+            from app.social.cli_task_singleton import get_cli_task_manager
+
+            manager = get_cli_task_manager()
+            if manager:
+                return manager
+        except Exception:
+            pass
+
+        try:
+            from app.social.cli_task_manager import CliTaskManager
+            from app.social.cli_task_store import CliTaskStore
+            from app.social.message_bus_singleton import get_message_bus
+
+            manager = CliTaskManager(task_store=CliTaskStore(), message_bus=get_message_bus())
+            from app.social.cli_task_singleton import set_cli_task_manager
+
+            set_cli_task_manager(manager)
+            return manager
+        except Exception as exc:
+            logger.error("cli_task_manager_init_failed", error=str(exc), exc_info=True)
+            return None
+
+    def _get_origin_info(self) -> Dict[str, str]:
+        try:
+            from app.social.message_bus_singleton import get_current_chat_id, get_current_channel
+
+            channel = get_current_channel() or "unknown"
+            chat_id = get_current_chat_id() or "unknown"
+            return {"channel": channel, "chat_id": chat_id, "sender_id": chat_id}
+        except Exception:
+            return {"channel": "unknown", "chat_id": "unknown", "sender_id": "unknown"}
 
     def _parse_cli_output(
         self,

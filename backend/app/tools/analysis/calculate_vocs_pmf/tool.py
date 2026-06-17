@@ -21,6 +21,7 @@ from app.tools.analysis.calculate_vocs_pmf.calculator import PMFCalculator
 from app.tools.analysis.calculate_pm_pmf.pmf_weights import PMFWeightCalculator, PMFWeights
 from app.tools.analysis.calculate_pm_pmf.factor_analyzer import FactorAnalyzer, FactorAnalysisResult
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_resume_context, merge_refs
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -551,7 +552,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             success=result.get("success")
         )
 
-        return {
+        final_result = {
             "status": "success",
             "success": True,
             "data": result,
@@ -587,6 +588,20 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                 f"模型R2={r2_str}。请根据因子载荷矩阵解读各因子对应的VOCs污染源类型。"
             )
         }
+        self._attach_resume_context(final_result)
+        return final_result
+
+    def _attach_resume_context(self, result: Dict[str, Any]) -> None:
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        generated_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        source_id = metadata.get("data_id")
+        source_ids = [source_id] if isinstance(source_id, str) and source_id != generated_id else []
+        context = build_data_resume_context(
+            source_data_ids=source_ids,
+            generated_data_ids=[generated_id] if generated_id else [],
+        )
+        result["refs"] = merge_refs(result.get("refs"), context["refs"])
+        result["llm_resume"] = context["llm_resume"]
 
     def _transform_vocs_to_pmf_input(
         self,

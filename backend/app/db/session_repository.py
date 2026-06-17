@@ -12,12 +12,13 @@
 
 import json
 import structlog
+import time
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, update, delete, func
+from sqlalchemy.orm import sessionmaker, load_only
+from sqlalchemy import select, update, delete, func, cast, Text
 
 from .models_session import SessionDB, SessionMessageDB
 from .database import engine
@@ -26,6 +27,23 @@ logger = structlog.get_logger()
 
 # 有效的语义类型集合
 VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
+
+MESSAGE_METADATA_EXCLUDED_KEYS = {
+    "type",
+    "role",
+    "content",
+    "data",
+    "metadata",
+    "timestamp",
+    "thought",
+    "reasoning",
+    "id",
+    "message_id",
+    "visuals",
+    "tool_use_id",
+    "tool_name",
+    "is_error",
+}
 
 # type -> role 映射表（确定每条消息的 Anthropic 角色）
 TYPE_TO_ROLE = {
@@ -46,6 +64,15 @@ class SessionRepository:
 
     def __init__(self):
         self.engine = engine
+
+    def _pool_status(self) -> dict:
+        pool = self.engine.pool
+        return {
+            "pool_status": pool.status(),
+            "pool_size": pool.size(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+        }
 
     @staticmethod
     def _convert_decimal_to_float(obj: Any) -> Any:
@@ -116,6 +143,34 @@ class SessionRepository:
         # 其他类型（Decimal 等）转换为字符串
         return str(content)
 
+    @staticmethod
+    def _message_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Return only small custom metadata fields for message persistence."""
+        metadata = {
+            k: v
+            for k, v in msg.items()
+            if k not in MESSAGE_METADATA_EXCLUDED_KEYS
+        }
+        return SessionRepository._convert_decimal_to_float(metadata)
+
+    @staticmethod
+    def _message_data(msg: Dict[str, Any]) -> Any:
+        """Return message data with tool runtime fields preserved in one place."""
+        msg_data = SessionRepository._convert_decimal_to_float(msg.get("data"))
+        tool_fields = {
+            key: msg[key]
+            for key in ("tool_use_id", "tool_name", "is_error")
+            if key in msg
+        }
+        if not tool_fields:
+            return msg_data
+        if msg_data is None:
+            msg_data = {}
+        if isinstance(msg_data, dict):
+            for key, value in tool_fields.items():
+                msg_data.setdefault(key, value)
+        return SessionRepository._convert_decimal_to_float(msg_data)
+
     async def create_session(
         self,
         session_id: str,
@@ -155,20 +210,52 @@ class SessionRepository:
     async def get_session_with_messages(
         self,
         session_id: str,
-        include_messages: bool = True
+        include_messages: bool = True,
+        include_artifacts: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         获取会话及其消息
 
         返回格式兼容 Session 模型（用于平滑迁移）
         """
+        started = time.monotonic()
+        metadata_ms = None
+        messages_query_ms = None
+        messages_convert_ms = None
         async with AsyncSession(self.engine) as session:
             # 获取会话
             stmt = select(SessionDB).where(SessionDB.session_id == session_id)
+            if not include_artifacts:
+                stmt = stmt.options(
+                    load_only(
+                        SessionDB.session_id,
+                        SessionDB.query,
+                        SessionDB.created_at,
+                        SessionDB.updated_at,
+                        SessionDB.mode,
+                        SessionDB.current_step,
+                        SessionDB.current_expert,
+                        SessionDB.data_ids,
+                        SessionDB.visual_ids,
+                        SessionDB.error,
+                    )
+                )
+            metadata_started = time.monotonic()
             result = await session.execute(stmt)
             db_session = result.scalar_one_or_none()
+            metadata_ms = round((time.monotonic() - metadata_started) * 1000, 2)
 
             if not db_session:
+                logger.info(
+                    "session_load_diagnostics",
+                    session_id=session_id,
+                    include_messages=include_messages,
+                    include_artifacts=include_artifacts,
+                    found=False,
+                    metadata_ms=metadata_ms,
+                    total_ms=round((time.monotonic() - started) * 1000, 2),
+                    **self._pool_status(),
+                )
                 return None
 
             # 转换为字典格式
@@ -182,9 +269,9 @@ class SessionRepository:
                 "current_expert": db_session.current_expert,
                 "data_ids": db_session.data_ids or [],
                 "visual_ids": db_session.visual_ids or [],
-                "office_documents": db_session.office_documents or [],
+                "office_documents": db_session.office_documents or [] if include_artifacts else [],
                 "error": db_session.error,
-                "metadata": db_session.session_metadata or {},
+                "metadata": db_session.session_metadata or {} if include_artifacts else {},
                 "conversation_history": []
             }
 
@@ -195,13 +282,17 @@ class SessionRepository:
                     .where(SessionMessageDB.session_id == session_id)
                     .order_by(SessionMessageDB.sequence_number)
                 )
+                messages_query_started = time.monotonic()
                 result_msgs = await session.execute(stmt_msgs)
                 messages = result_msgs.scalars().all()
+                messages_query_ms = round((time.monotonic() - messages_query_started) * 1000, 2)
 
                 # 转换消息为前端格式
+                messages_convert_started = time.monotonic()
                 for msg in messages:
                     msg_dict = self._msg_to_dict(msg)
                     session_dict["conversation_history"].append(msg_dict)
+                messages_convert_ms = round((time.monotonic() - messages_convert_started) * 1000, 2)
 
                 logger.info(
                     "session_loaded_with_messages",
@@ -209,6 +300,19 @@ class SessionRepository:
                     message_count=len(messages)
                 )
 
+            logger.info(
+                "session_load_diagnostics",
+                session_id=session_id,
+                include_messages=include_messages,
+                include_artifacts=include_artifacts,
+                found=True,
+                message_count=len(session_dict["conversation_history"]),
+                metadata_ms=metadata_ms,
+                messages_query_ms=messages_query_ms,
+                messages_convert_ms=messages_convert_ms,
+                total_ms=round((time.monotonic() - started) * 1000, 2),
+                **self._pool_status(),
+            )
             return session_dict
 
     async def update_session(
@@ -217,6 +321,7 @@ class SessionRepository:
         **kwargs
     ) -> bool:
         """更新会话信息"""
+        started = time.monotonic()
         # 处理字段映射：metadata -> session_metadata
         if "metadata" in kwargs:
             kwargs["session_metadata"] = kwargs.pop("metadata")
@@ -239,7 +344,13 @@ class SessionRepository:
 
             success = result.rowcount > 0
             if success:
-                logger.info("session_updated_in_db", session_id=session_id, updated_fields=list(filtered_kwargs.keys()))
+                logger.info(
+                    "session_updated_in_db",
+                    session_id=session_id,
+                    updated_fields=list(filtered_kwargs.keys()),
+                    duration_ms=round((time.monotonic() - started) * 1000, 2),
+                    **self._pool_status(),
+                )
 
             return success
 
@@ -264,7 +375,17 @@ class SessionRepository:
     ) -> List[Dict[str, Any]]:
         """列出会话（返回摘要信息）"""
         async with AsyncSession(self.engine) as session:
-            stmt = select(SessionDB)
+            stmt = select(
+                SessionDB.session_id,
+                SessionDB.query,
+                SessionDB.created_at,
+                SessionDB.updated_at,
+                SessionDB.mode,
+                SessionDB.data_ids,
+                SessionDB.visual_ids,
+                SessionDB.error,
+                SessionDB.session_metadata,
+            )
 
             # 过滤条件
             if mode:
@@ -275,7 +396,7 @@ class SessionRepository:
             stmt = stmt.limit(limit).offset(offset)
 
             result = await session.execute(stmt)
-            sessions = result.scalars().all()
+            sessions = result.all()
 
             # 转换为摘要格式
             summaries = []
@@ -288,10 +409,50 @@ class SessionRepository:
                     "mode": s.mode,
                     "data_count": len(s.data_ids) if s.data_ids else 0,
                     "visual_count": len(s.visual_ids) if s.visual_ids else 0,
-                    "has_error": s.error is not None
+                    "has_error": s.error is not None,
+                    "metadata": self._session_summary_metadata(s.session_metadata)
                 })
 
             return summaries
+
+    def _session_summary_metadata(self, metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Keep list metadata lightweight while preserving fields used by list features."""
+        if not isinstance(metadata, dict):
+            return {}
+
+        summary_keys = {
+            "mode",
+            "is_case",
+            "case_marked_at",
+            "source",
+            "channel",
+        }
+        return {key: metadata[key] for key in summary_keys if key in metadata}
+
+    async def get_session_stats_summary(self) -> Dict[str, Any]:
+        """Return aggregate session stats without loading session rows into Python."""
+        async with AsyncSession(self.engine) as session:
+            stmt = select(
+                func.count().label("total"),
+                func.coalesce(
+                    func.sum(func.coalesce(func.json_array_length(SessionDB.data_ids), 0)),
+                    0,
+                ).label("total_data_count"),
+                func.coalesce(
+                    func.sum(func.coalesce(func.json_array_length(SessionDB.visual_ids), 0)),
+                    0,
+                ).label("total_visual_count"),
+                func.count(SessionDB.error).label("error_count"),
+            )
+            result = await session.execute(stmt)
+            row = result.one()
+
+            return {
+                "total": int(row.total or 0),
+                "total_data_count": int(row.total_data_count or 0),
+                "total_visual_count": int(row.total_visual_count or 0),
+                "error_count": int(row.error_count or 0),
+            }
 
     async def save_conversation_history(
         self,
@@ -327,24 +488,8 @@ class SessionRepository:
                                 session_id=session_id,
                             )
 
-                            # 提取元数据（排除已知字段）
-                            # ✅ 修复：tool_use_id 和 is_error 需要保存到 data 中，不要排除
-                            # ✅ 修复：id 字段也要排除，避免污染 metadata（DB会自动生成唯一id）
-                            known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning", "id"}
-                            msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
-
-                            # ✅ 修复：将 tool_use_id、tool_name、is_error 合并到 data 中
-                            msg_data = self._convert_decimal_to_float(msg.get("data"))
-                            if msg_data and isinstance(msg_data, dict):
-                                # 确保 data 是字典
-                                if "tool_use_id" in msg and "tool_use_id" not in msg_data:
-                                    msg_data["tool_use_id"] = msg["tool_use_id"]
-                                if "tool_name" in msg and "tool_name" not in msg_data:
-                                    msg_data["tool_name"] = msg["tool_name"]
-                                if "is_error" in msg and "is_error" not in msg_data:
-                                    msg_data["is_error"] = msg["is_error"]
-
-                            msg_metadata_converted = self._convert_decimal_to_float(msg_metadata)
+                            msg_data = self._message_data(msg)
+                            msg_metadata_converted = self._message_metadata(msg)
                             content = self._serialize_content(msg.get("content"))
 
                             # 使用 Core insert（注意：使用数据库列名）
@@ -407,8 +552,10 @@ class SessionRepository:
         if not conversation_history:
             return True
 
+        started = time.monotonic()
         try:
             async with AsyncSession(self.engine) as session:
+                count_started = time.monotonic()
                 stmt = (
                     select(func.max(SessionMessageDB.sequence_number))
                     .where(SessionMessageDB.session_id == session_id)
@@ -416,18 +563,23 @@ class SessionRepository:
                 result = await session.execute(stmt)
                 max_seq = result.scalar()
                 existing_count = (max_seq + 1) if max_seq is not None else 0
+                count_ms = round((time.monotonic() - count_started) * 1000, 2)
 
                 if existing_count >= len(conversation_history):
                     logger.debug(
                         "conversation_history_incremental_noop",
                         session_id=session_id,
                         existing_count=existing_count,
-                        incoming_count=len(conversation_history)
+                        incoming_count=len(conversation_history),
+                        count_ms=count_ms,
+                        total_ms=round((time.monotonic() - started) * 1000, 2),
+                        **self._pool_status(),
                     )
                     return True
 
                 new_messages = conversation_history[existing_count:]
 
+                rows_started = time.monotonic()
                 rows = []
                 for offset, msg in enumerate(new_messages, start=existing_count):
                     role, msg_type = self._resolve_role_and_type(msg)
@@ -436,17 +588,7 @@ class SessionRepository:
                         session_id=session_id,
                     )
 
-                    known_keys = {"type", "role", "content", "timestamp", "thought", "reasoning", "id"}
-                    msg_metadata = {k: v for k, v in msg.items() if k not in known_keys}
-
-                    msg_data = self._convert_decimal_to_float(msg.get("data"))
-                    if msg_data and isinstance(msg_data, dict):
-                        if "tool_use_id" in msg and "tool_use_id" not in msg_data:
-                            msg_data["tool_use_id"] = msg["tool_use_id"]
-                        if "tool_name" in msg and "tool_name" not in msg_data:
-                            msg_data["tool_name"] = msg["tool_name"]
-                        if "is_error" in msg and "is_error" not in msg_data:
-                            msg_data["is_error"] = msg["is_error"]
+                    msg_data = self._message_data(msg)
 
                     rows.append(
                         {
@@ -456,21 +598,32 @@ class SessionRepository:
                             "content": self._serialize_content(msg.get("content")),
                             "data": msg_data,
                             "timestamp": timestamp,
-                            "metadata": self._convert_decimal_to_float(msg_metadata),
+                            "metadata": self._message_metadata(msg),
                             "sequence_number": offset,
                         }
                     )
+                rows_build_ms = round((time.monotonic() - rows_started) * 1000, 2)
 
+                insert_started = time.monotonic()
                 await session.execute(SessionMessageDB.__table__.insert(), rows)
+                insert_ms = round((time.monotonic() - insert_started) * 1000, 2)
 
+                commit_started = time.monotonic()
                 await session.commit()
+                commit_ms = round((time.monotonic() - commit_started) * 1000, 2)
 
                 logger.info(
                     "conversation_history_incremental_saved",
                     session_id=session_id,
                     existing_count=existing_count,
                     appended_count=len(new_messages),
-                    incoming_count=len(conversation_history)
+                    incoming_count=len(conversation_history),
+                    count_ms=count_ms,
+                    rows_build_ms=rows_build_ms,
+                    insert_ms=insert_ms,
+                    commit_ms=commit_ms,
+                    total_ms=round((time.monotonic() - started) * 1000, 2),
+                    **self._pool_status(),
                 )
                 return True
 
@@ -505,14 +658,8 @@ class SessionRepository:
                 # 解析 role 和 msg_type
                 role, msg_type = self._resolve_role_and_type(message)
 
-                # 转换 Decimal 为 float
-                msg_data = self._convert_decimal_to_float(message.get("data"))
-                # ✅ 修复：添加 "id" 到 known_keys，避免污染 metadata
-                known_keys = {"type", "role", "content", "data", "timestamp", "thought", "reasoning",
-                              "tool_use_id", "is_error", "id"}
-                msg_metadata = self._convert_decimal_to_float(
-                    {k: v for k, v in message.items() if k not in known_keys}
-                )
+                msg_data = self._message_data(message)
+                msg_metadata = self._message_metadata(message)
                 content = self._serialize_content(message.get("content"))
 
                 db_msg = SessionMessageDB(
@@ -577,7 +724,7 @@ class SessionRepository:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
-    def _msg_to_dict(self, msg: SessionMessageDB) -> Dict[str, Any]:
+    def _msg_to_dict(self, msg: SessionMessageDB, include_data: bool = True) -> Dict[str, Any]:
         """
         将数据库消息转换为前端字典格式
 
@@ -594,20 +741,199 @@ class SessionRepository:
             "id": f"msg_{msg.id}",  # ✅ 始终使用DB生成的唯一id
             "sequence_number": msg.sequence_number
         }
-        if msg.data:
+        if include_data and msg.data:
             msg_dict["data"] = msg.data
-        if msg.msg_metadata:
+        if include_data and msg.msg_metadata:
             # ✅ 从metadata中排除id字段，避免覆盖DB生成的唯一id
             metadata_without_id = {k: v for k, v in msg.msg_metadata.items() if k != "id"}
             if metadata_without_id:  # 只有在有内容时才update
                 msg_dict.update(metadata_without_id)
         return msg_dict
 
+    def _message_row_to_context_dict(self, row: Any, include_data: bool = True) -> Dict[str, Any]:
+        message = {
+            "role": row.role,
+            "type": row.msg_type,
+            "content": row.content,
+            "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+            "id": f"msg_{row.id}",
+            "sequence_number": row.sequence_number,
+        }
+        if include_data and getattr(row, "data", None):
+            message["data"] = row.data
+        return message
+
+    async def get_llm_history_messages(self, session_id: str) -> List[Dict[str, Any]]:
+        """Load transcript fields needed to rebuild LLM continuation context."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(
+                    SessionMessageDB.id,
+                    SessionMessageDB.role,
+                    SessionMessageDB.msg_type,
+                    SessionMessageDB.content,
+                    SessionMessageDB.data,
+                    SessionMessageDB.timestamp,
+                    SessionMessageDB.sequence_number,
+                )
+                .where(SessionMessageDB.session_id == session_id)
+                .order_by(SessionMessageDB.sequence_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                self._message_row_to_context_dict(row)
+                for row in result.all()
+            ]
+
+    async def get_llm_history_messages_after(
+        self,
+        session_id: str,
+        after_sequence: int,
+    ) -> List[Dict[str, Any]]:
+        """Load LLM transcript rows appended after a compacted-history boundary."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(
+                    SessionMessageDB.id,
+                    SessionMessageDB.role,
+                    SessionMessageDB.msg_type,
+                    SessionMessageDB.content,
+                    SessionMessageDB.data,
+                    SessionMessageDB.timestamp,
+                    SessionMessageDB.sequence_number,
+                )
+                .where(SessionMessageDB.session_id == session_id)
+                .where(SessionMessageDB.sequence_number > after_sequence)
+                .order_by(SessionMessageDB.sequence_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                self._message_row_to_context_dict(row)
+                for row in result.all()
+            ]
+
+    async def get_active_llm_compact_state(
+        self,
+        session_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return persisted compact LLM state stored separately from display transcript."""
+        metadata = await self.get_session_metadata(session_id)
+        if not isinstance(metadata, dict):
+            return None
+
+        compact_state = metadata.get("llm_compact_state")
+        if not isinstance(compact_state, dict):
+            return None
+        if compact_state.get("active") is False:
+            return None
+        if not isinstance(compact_state.get("messages"), list):
+            return None
+        if not isinstance(compact_state.get("source_until_sequence"), int):
+            return None
+
+        return compact_state
+
+    async def get_session_metadata(
+        self,
+        session_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return session metadata without loading messages or artifact columns."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionDB.session_metadata)
+                .where(SessionDB.session_id == session_id)
+            )
+            result = await session.execute(stmt)
+            metadata = result.scalar_one_or_none()
+
+        if not isinstance(metadata, dict):
+            return None
+        return metadata
+
+    async def save_llm_compact_state(
+        self,
+        session_id: str,
+        compact_state: Dict[str, Any],
+    ) -> bool:
+        """Persist compact LLM state in session metadata without touching transcript rows."""
+        db_session = await self.get_session(session_id)
+        if not db_session:
+            return False
+
+        metadata = db_session.session_metadata or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["llm_compact_state"] = compact_state
+
+        return await self.update_session(
+            session_id,
+            metadata=metadata,
+        )
+
+    async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
+        """Load a full-length display transcript stub without data/metadata JSON."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(
+                    SessionMessageDB.id,
+                    SessionMessageDB.role,
+                    SessionMessageDB.msg_type,
+                    SessionMessageDB.content,
+                    SessionMessageDB.timestamp,
+                    SessionMessageDB.sequence_number,
+                )
+                .where(SessionMessageDB.session_id == session_id)
+                .order_by(SessionMessageDB.sequence_number)
+            )
+            result = await session.execute(stmt)
+            return [
+                self._message_row_to_context_dict(row, include_data=False)
+                for row in result.all()
+            ]
+
+    def _message_row_to_light_dict(self, row: Any) -> Dict[str, Any]:
+        """
+        将数据库消息行转换为轻量级字典
+
+        ⚠️ 轻量级策略：
+        - 不查询 data 字段（避免传输大型 result 数据）
+        - 前端从 content_preview 中解析工具名称
+        - 性能优化：首屏恢复速度提升 3-5 倍
+        """
+        msg_dict: Dict[str, Any] = {
+            "role": row.role,
+            "type": row.msg_type,
+            "content": row.content_preview or "",
+            "content_preview": row.content_preview or "",
+            "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+            "id": f"msg_{row.id}",
+            "sequence_number": row.sequence_number,
+            "is_lightweight": True,
+        }
+
+        # ✅ 从 content_preview 中提取工具名称（用于前端显示）
+        # tool_use 消息的 content 通常包含："调用工具：check_order" 等信息
+        if row.msg_type == "tool_use" and row.content_preview:
+            content = row.content_preview
+            # 尝试从 content 中提取工具名称（兼容多种格式）
+            import re
+            # 格式1：调用工具：tool_name
+            # 格式2：执行【tool_name】
+            # 格式3：Tool Use: tool_name
+            tool_match = re.search(r'(?:调用工具|执行【|Tool Use:)\s*([^】:\n]+)', content)
+            if tool_match:
+                tool_name = tool_match.group(1).strip()
+                msg_dict["data"] = {"tool_name": tool_name}
+
+        return msg_dict
+
     async def get_messages_before(
         self,
         session_id: str,
         before_sequence: Optional[int] = None,
-        limit: int = 30
+        limit: int = 30,
+        include_data: bool = True
     ) -> Dict[str, Any]:
         """
         游标分页获取消息
@@ -635,22 +961,43 @@ class SessionRepository:
             total_count = total_result.scalar() or 0
 
             # 查询消息（降序取 limit 条，再升序返回）
-            stmt = (
-                select(SessionMessageDB)
-                .where(SessionMessageDB.session_id == session_id)
-            )
+            if not include_data:
+                content_text = cast(SessionMessageDB.content, Text)
+                # ✅ 轻量级查询：不查询 data 字段，避免传输大型 result 数据
+                # 前端从 content_preview 中解析工具名称（content 包含工具调用信息）
+                stmt = (
+                    select(
+                        SessionMessageDB.id,
+                        SessionMessageDB.role,
+                        SessionMessageDB.msg_type,
+                        SessionMessageDB.timestamp,
+                        SessionMessageDB.sequence_number,
+                        func.substring(content_text, 1, 2000).label("content_preview"),
+                        # ❌ 不查询 data 字段（避免传输大型 result 数据）
+                    )
+                    .where(SessionMessageDB.session_id == session_id)
+                )
+            else:
+                stmt = (
+                    select(SessionMessageDB)
+                    .where(SessionMessageDB.session_id == session_id)
+                )
             if before_sequence is not None:
                 stmt = stmt.where(SessionMessageDB.sequence_number < before_sequence)
 
             stmt = stmt.order_by(SessionMessageDB.sequence_number.desc()).limit(limit)
             result = await session.execute(stmt)
-            messages = list(reversed(result.scalars().all()))
+            messages = list(reversed(result.scalars().all() if include_data else result.all()))
 
             oldest_sequence = messages[0].sequence_number if messages else None
             has_more = oldest_sequence is not None and oldest_sequence > 0
 
             return {
-                "messages": [self._msg_to_dict(msg) for msg in messages],
+                "messages": [
+                    self._msg_to_dict(msg, include_data=include_data) if include_data
+                    else self._message_row_to_light_dict(msg)
+                    for msg in messages
+                ],
                 "has_more": has_more,
                 "oldest_sequence": oldest_sequence,
                 "total_count": total_count

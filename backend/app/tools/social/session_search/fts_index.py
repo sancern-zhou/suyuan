@@ -7,6 +7,7 @@ Full-text search index with trigram tokenizer for Chinese CJK support.
 import sqlite3
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import structlog
@@ -85,6 +86,41 @@ class AgentRunsFTSIndex:
             self._conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS agent_runs_fts_trigram USING fts5(
                     run_id UNINDEXED,
+                    session_id UNINDEXED,
+                    content,
+                    query,
+                    response_preview,
+                    start_time UNINDEXED,
+                    status UNINDEXED,
+                    duration_ms UNINDEXED,
+                    tokenize='trigram'
+                )
+            """)
+
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS session_runs (
+                    run_id TEXT PRIMARY KEY,
+                    owner_type TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    session_id TEXT,
+                    query TEXT,
+                    response_preview TEXT,
+                    start_time TEXT,
+                    status TEXT,
+                    duration_ms REAL,
+                    source_path TEXT,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            self._conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_session_runs_owner_time
+                ON session_runs(owner_type, owner_id, start_time DESC)
+            """)
+            self._conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS session_runs_fts USING fts5(
+                    run_id UNINDEXED,
+                    owner_type UNINDEXED,
+                    owner_id UNINDEXED,
                     session_id UNINDEXED,
                     content,
                     query,
@@ -182,25 +218,34 @@ class AgentRunsFTSIndex:
         logger.info("fts_index_built", indexed_count=indexed_count)
         return indexed_count
 
+    def _record_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract searchable fields from an agent run record."""
+        response = data.get("final_answer_preview", "") or data.get("response_preview", "")
+        return {
+            "run_id": data.get("run_id", ""),
+            "session_id": data.get("session_id", ""),
+            "query": data.get("query", ""),
+            "response_preview": response,
+            "start_time": data.get("start_time", ""),
+            "status": data.get("status", ""),
+            "duration_ms": data.get("stats", {}).get("duration_ms", 0),
+            "content": f"{data.get('query', '')} {response}",
+        }
+
     def _insert_record(self, data: Dict[str, Any]):
         """Insert a single record into both FTS tables"""
-        run_id = data.get("run_id", "")
-        session_id = data.get("session_id", "")
-        query = data.get("query", "")
-        response = data.get("final_answer_preview", "") or data.get("response_preview", "")
-        start_time = data.get("start_time", "")
-        status = data.get("status", "")
-        duration = data.get("stats", {}).get("duration_ms", 0)
-
-        # Combined content for full-text search
-        content = f"{query} {response}"
+        fields = self._record_fields(data)
 
         # Insert into unicode61 table
         self._conn.execute(
             """INSERT OR REPLACE INTO agent_runs_fts
                (run_id, session_id, content, query, response_preview, start_time, status, duration_ms)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, session_id, content, query, response, start_time, status, duration)
+            (
+                fields["run_id"], fields["session_id"], fields["content"],
+                fields["query"], fields["response_preview"], fields["start_time"],
+                fields["status"], fields["duration_ms"]
+            )
         )
 
         # Insert into trigram table
@@ -208,10 +253,75 @@ class AgentRunsFTSIndex:
             """INSERT OR REPLACE INTO agent_runs_fts_trigram
                (run_id, session_id, content, query, response_preview, start_time, status, duration_ms)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, session_id, content, query, response, start_time, status, duration)
+            (
+                fields["run_id"], fields["session_id"], fields["content"],
+                fields["query"], fields["response_preview"], fields["start_time"],
+                fields["status"], fields["duration_ms"]
+            )
         )
 
-    def add_record(self, data: Dict[str, Any]):
+    def _upsert_scoped_record(
+        self,
+        data: Dict[str, Any],
+        owner_type: str,
+        owner_id: str,
+        source_path: str = "",
+    ):
+        """Insert or update a user-scoped run and its FTS row."""
+        fields = self._record_fields(data)
+        run_id = fields["run_id"]
+        if not run_id:
+            raise ValueError("run_id is required for scoped session indexing")
+        if not owner_type or not owner_id:
+            raise ValueError("owner_type and owner_id are required for scoped session indexing")
+
+        updated_at = datetime.utcnow().isoformat()
+        self._conn.execute(
+            """
+            INSERT INTO session_runs (
+                run_id, owner_type, owner_id, session_id, query, response_preview,
+                start_time, status, duration_ms, source_path, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                owner_type=excluded.owner_type,
+                owner_id=excluded.owner_id,
+                session_id=excluded.session_id,
+                query=excluded.query,
+                response_preview=excluded.response_preview,
+                start_time=excluded.start_time,
+                status=excluded.status,
+                duration_ms=excluded.duration_ms,
+                source_path=excluded.source_path,
+                updated_at=excluded.updated_at
+            """,
+            (
+                run_id, owner_type, owner_id, fields["session_id"], fields["query"],
+                fields["response_preview"], fields["start_time"], fields["status"],
+                fields["duration_ms"], source_path, updated_at,
+            )
+        )
+
+        self._conn.execute("DELETE FROM session_runs_fts WHERE run_id = ?", (run_id,))
+        self._conn.execute(
+            """INSERT INTO session_runs_fts
+               (run_id, owner_type, owner_id, session_id, content, query,
+                response_preview, start_time, status, duration_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id, owner_type, owner_id, fields["session_id"], fields["content"],
+                fields["query"], fields["response_preview"], fields["start_time"],
+                fields["status"], fields["duration_ms"],
+            )
+        )
+
+    def add_record(
+        self,
+        data: Dict[str, Any],
+        owner_type: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        source_path: str = "",
+    ):
         """
         Add a new record to the index
 
@@ -220,9 +330,19 @@ class AgentRunsFTSIndex:
         """
         if not self._initialized:
             self.initialize_schema()
-        self._insert_record(data)
+        with self.conn:
+            if owner_type or owner_id:
+                self._upsert_scoped_record(data, owner_type or "", owner_id or "", source_path)
+            else:
+                self._insert_record(data)
 
-    def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        owner_type: Optional[str] = None,
+        owner_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Search FTS index
 
@@ -240,6 +360,11 @@ class AgentRunsFTSIndex:
         if not query:
             return []
 
+        if owner_type or owner_id:
+            if not owner_type or not owner_id:
+                return []
+            return self._search_scoped(query, limit, owner_type, owner_id)
+
         # Detect CJK and route to appropriate table
         cjk_count = self._count_cjk(query)
 
@@ -254,6 +379,55 @@ class AgentRunsFTSIndex:
             results = self._search_unicode(query, limit)
 
         return results
+
+    def _search_scoped(
+        self,
+        query: str,
+        limit: int,
+        owner_type: str,
+        owner_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Search user-scoped social session runs."""
+        if 0 < self._count_cjk(query) < 3:
+            return self._search_scoped_like(query, limit, owner_type, owner_id)
+
+        try:
+            cursor = self._conn.execute("""
+                SELECT
+                    run_id, session_id, query, response_preview,
+                    start_time, status, duration_ms,
+                    bm25(session_runs_fts) AS rank
+                FROM session_runs_fts
+                WHERE session_runs_fts MATCH ?
+                  AND owner_type = ?
+                  AND owner_id = ?
+                ORDER BY rank
+                LIMIT ?
+            """, (self._escape_fts_query(query), owner_type, owner_id, limit))
+            return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError:
+            return self._search_scoped_like(query, limit, owner_type, owner_id)
+
+    def _search_scoped_like(
+        self,
+        query: str,
+        limit: int,
+        owner_type: str,
+        owner_id: str,
+    ) -> List[Dict[str, Any]]:
+        """LIKE fallback for short CJK terms within a scoped owner."""
+        cursor = self._conn.execute("""
+            SELECT
+                run_id, session_id, query, response_preview,
+                start_time, status, duration_ms
+            FROM session_runs_fts
+            WHERE owner_type = ?
+              AND owner_id = ?
+              AND (query LIKE ? OR response_preview LIKE ?)
+            ORDER BY start_time DESC
+            LIMIT ?
+        """, (owner_type, owner_id, f"%{query}%", f"%{query}%", limit))
+        return [dict(row) for row in cursor.fetchall()]
 
     def _search_unicode(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """Search using default unicode61 table"""

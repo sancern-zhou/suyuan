@@ -3,14 +3,16 @@
  * 管理右侧面板的显示、隐藏、标签页切换等
  */
 import { ref, computed, watch } from 'vue'
+import { shouldAutoSwitchToDocument } from './panelTabPolicy'
 
 export function useRightPanelState(store = null) {
   // ========== 状态 ==========
   const vizPanelVisible = ref(false)
   const officePanelVisible = ref(false)
   const knowledgePanelVisible = ref(false)
+  const boardPanelVisible = ref(false)
   const rightPanelVisible = ref(false)
-  const activeRightTab = ref('visualization') // 'visualization' | 'document' | 'knowledge'
+  const activeRightTab = ref('visualization') // 'visualization' | 'document' | 'knowledge' | 'board'
 
   // ========== 计算属性 ==========
 
@@ -21,7 +23,8 @@ export function useRightPanelState(store = null) {
     if (!store) return false
 
     const hasCharts = store.currentState.visualizationHistory?.length > 0 ||
-      store.currentState.currentVisualization?.visuals?.length > 0
+      store.currentState.currentVisualization?.visuals?.length > 0 ||
+      store.currentState.lazyArtifacts?.hasVisualizations
 
     return hasCharts
   })
@@ -31,6 +34,14 @@ export function useRightPanelState(store = null) {
    */
   const hasOfficeDocuments = computed(() => {
     if (!store || !store.messages) return false
+
+    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview || store.lastOfficeDocument?.svg_preview) {
+      return true
+    }
+
+    if (store.currentState.lazyArtifacts?.hasOfficeDocuments) {
+      return true
+    }
 
     return store.messages.some(msg => {
       if (msg?.type === 'tool_result' && msg?.data?.result) {
@@ -45,10 +56,10 @@ export function useRightPanelState(store = null) {
 
         if (['read_file', 'edit_file'].includes(generator)) {
           const result = msg.data.result
-          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview)
+          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview || result.data?.svg_preview)
         }
 
-        return isOfficeTool
+        return isOfficeTool && !!(msg.data.result?.data?.pdf_preview || msg.data.result?.data?.markdown_preview || msg.data.result?.data?.html_preview || msg.data.result?.data?.svg_preview)
       }
       return false
     })
@@ -69,10 +80,18 @@ export function useRightPanelState(store = null) {
   })
 
   /**
+   * 是否有Draw.io画板
+   */
+  const hasBoardContent = computed(() => {
+    if (!store) return false
+    return !!store.currentState?.board?.currentXml
+  })
+
+  /**
    * 是否显示标签页切换按钮
    */
   const showTabs = computed(() => {
-    return vizPanelVisible.value || officePanelVisible.value || knowledgePanelVisible.value
+    return vizPanelVisible.value || officePanelVisible.value || knowledgePanelVisible.value || boardPanelVisible.value
   })
 
   // ========== 方法 ==========
@@ -99,12 +118,20 @@ export function useRightPanelState(store = null) {
   }
 
   /**
+   * 切换到画板标签页
+   */
+  const switchToBoard = () => {
+    activeRightTab.value = 'board'
+  }
+
+  /**
    * 重置面板状态
    */
   const resetPanelState = () => {
     vizPanelVisible.value = false
     officePanelVisible.value = false
     knowledgePanelVisible.value = false
+    boardPanelVisible.value = false
     rightPanelVisible.value = false
     activeRightTab.value = 'visualization'
   }
@@ -125,9 +152,15 @@ export function useRightPanelState(store = null) {
     } else if (type === 'knowledge') {
       knowledgePanelVisible.value = true
       activeRightTab.value = 'knowledge'
+    } else if (type === 'board') {
+      boardPanelVisible.value = true
+      activeRightTab.value = 'board'
     } else if (type === 'auto') {
       // 自动检测
-      if (hasOfficeDocuments.value) {
+      if (hasBoardContent.value) {
+        boardPanelVisible.value = true
+        activeRightTab.value = 'board'
+      } else if (hasOfficeDocuments.value) {
         officePanelVisible.value = true
         activeRightTab.value = 'document'
       } else if (hasKnowledgeSources.value) {
@@ -163,9 +196,6 @@ export function useRightPanelState(store = null) {
     // 监听Office文档变化
     watch(hasOfficeDocuments, (newValue) => {
       officePanelVisible.value = newValue
-      if (newValue) {
-        activeRightTab.value = 'document'
-      }
     }, { immediate: true })
 
     // 监听知识溯源变化
@@ -176,18 +206,36 @@ export function useRightPanelState(store = null) {
       }
     }, { immediate: true })
 
+    // 监听Draw.io画板变化
+    watch(hasBoardContent, (newValue) => {
+      boardPanelVisible.value = newValue
+      if (newValue) {
+        activeRightTab.value = 'board'
+      } else if (activeRightTab.value === 'board') {
+        if (vizPanelVisible.value) {
+          activeRightTab.value = 'visualization'
+        } else if (officePanelVisible.value) {
+          activeRightTab.value = 'document'
+        } else if (knowledgePanelVisible.value) {
+          activeRightTab.value = 'knowledge'
+        }
+      }
+    }, { immediate: true })
+
     // 监听面板可见性变化
-    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible], ([viz, office, knowledge]) => {
-      const shouldShow = viz || office || knowledge
+    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible, boardPanelVisible], ([viz, office, knowledge, board]) => {
+      const shouldShow = viz || office || knowledge || board
       rightPanelVisible.value = shouldShow
     }, { immediate: true })
 
     // 监听office_document事件
     if (store) {
-      watch(() => store.lastOfficeDocument, (doc) => {
-        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview) {
+      watch(() => store.lastOfficeDocument, (doc, previousDoc) => {
+        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview) {
           officePanelVisible.value = true
-          activeRightTab.value = 'document'
+          if (shouldAutoSwitchToDocument({ doc, previousDoc, activeTab: activeRightTab.value })) {
+            activeRightTab.value = 'document'
+          }
         }
       })
     }
@@ -198,6 +246,7 @@ export function useRightPanelState(store = null) {
     vizPanelVisible,
     officePanelVisible,
     knowledgePanelVisible,
+    boardPanelVisible,
     rightPanelVisible,
     activeRightTab,
 
@@ -205,12 +254,14 @@ export function useRightPanelState(store = null) {
     hasVizContent,
     hasOfficeDocuments,
     hasKnowledgeSources,
+    hasBoardContent,
     showTabs,
 
     // 方法
     switchToVisualization,
     switchToDocument,
     switchToKnowledge,
+    switchToBoard,
     resetPanelState,
     showPanel,
     hidePanel,

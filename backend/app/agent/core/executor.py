@@ -69,6 +69,8 @@ class ToolExecutor:
         self.task_list = task_list
         self.llm_planner = llm_planner  # ✅ 存储llm_planner
         self.event_bus = event_bus  # Phase 3.1: 存储事件总线
+        self.runtime_mode: Optional[str] = None
+        self.user_identifier: Optional[str] = None
 
         # Initialize DataContextManager if memory_manager provided
         if memory_manager:
@@ -131,8 +133,7 @@ class ToolExecutor:
             logger.info(
                 "builtin_tools_registered",
                 tools=registered_tools,
-                count=len(real_tools),
-                has_unpack_office="unpack_office" in registered_tools
+                count=len(real_tools)
             )
 
             self._register_special_tools()
@@ -215,6 +216,29 @@ class ToolExecutor:
             has_context_manager=True
         )
 
+    def clone_for_run(
+        self,
+        memory_manager: "HybridMemoryManager",
+        task_list: Optional[Any] = None,
+        llm_planner: Optional[Any] = None,
+    ) -> "ToolExecutor":
+        """Create a run-scoped executor with isolated execution context.
+
+        Tool definitions are shared as immutable callables, while per-session
+        state such as memory_manager/data_context_manager/task_list is bound to
+        the returned executor only.
+        """
+        cloned = ToolExecutor(
+            tool_registry=dict(self.tool_registry),
+            memory_manager=memory_manager,
+            task_list=task_list if task_list is not None else self.task_list,
+            llm_planner=llm_planner if llm_planner is not None else self.llm_planner,
+            event_bus=self.event_bus,
+        )
+        cloned.runtime_mode = self.runtime_mode
+        cloned.user_identifier = self.user_identifier
+        return cloned
+
     async def execute_tool(
         self,
         tool_name: str,
@@ -262,7 +286,6 @@ class ToolExecutor:
                 "tool_not_found",
                 tool_name=tool_name,
                 available_tools=available_tools,
-                has_unpack_office="unpack_office" in available_tools,
                 registry_size=len(self.tool_registry)
             )
 
@@ -292,9 +315,10 @@ class ToolExecutor:
             logger.info("="*80)
             # ========================================
 
-            # Inject context if available (tool will ignore if not needed)
+            # Inject runtime context under an internal name so tool schemas can
+            # still expose user-facing parameters named "context" (e.g. grep).
             if execution_context:
-                result = await tool_func(context=execution_context, **tool_args)
+                result = await tool_func(__execution_context=execution_context, **tool_args)
             else:
                 result = await tool_func(**tool_args)
 
@@ -339,11 +363,13 @@ class ToolExecutor:
                  "data_id" in observation["metadata"])
             )
 
+            execution_success = observation.get("success", False)
             logger.info(
-                "tool_execution_success",
+                "tool_execution_success" if execution_success else "tool_execution_failed",
                 tool_name=tool_name,
                 has_data="data" in observation,
-                has_data_id=has_data_id
+                has_data_id=has_data_id,
+                success=execution_success,
             )
 
             return observation
@@ -809,24 +835,6 @@ class ToolExecutor:
                 "valid_values": ["end", "start", ...]
             }
         """
-        # 定义常见工具的参数提示信息
-        tool_hints = {
-            "word_edit": {
-                "insert": {
-                    "position": {
-                        "hint": "⚠️ position 参数说明:\n  - end: 文档末尾\n  - start: 文档开头\n  - after: 在目标文本之后（需提供target参数）\n  - before: 在目标文本之前（需提供target参数）",
-                        "valid_values": ["end", "start", "after", "before"]
-                    }
-                }
-            }
-        }
-
-        # 尝试从错误消息中推断参数类型
-        if result and isinstance(result, dict):
-            error = result.get("error", "")
-            if "position" in error and tool_name in tool_hints:
-                return tool_hints[tool_name].get("insert", {}).get("position", {})
-
         return {}
 
         return f"✅ {tool_name} 成功"
@@ -884,6 +892,8 @@ class ToolExecutor:
             context.memory_manager = self.memory_manager
             context.llm_planner = self.llm_planner
             context.tool_executor = self
+            context.runtime_mode = self.runtime_mode
+            context.user_identifier = self.user_identifier
 
             logger.debug(
                 "execution_context_created",

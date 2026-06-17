@@ -35,7 +35,7 @@ class ReActLoop:
         memory_manager: HybridMemoryManager,
         llm_planner,
         tool_executor,
-        max_iterations: int = 60,
+        max_iterations: int = 120,
         stream_enabled: bool = True,
         enable_agent_logging: bool = True,
         log_dir: str = "./logs/agent_runs",
@@ -43,6 +43,10 @@ class ReActLoop:
         is_interruption: bool = False,
         knowledge_base_ids: Optional[list] = None,
         cancel_event: Optional[asyncio.Event] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        llm_provider: Optional[str] = None,
+        llm_model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ):
         self.memory = memory_manager
         self.planner = llm_planner
@@ -52,6 +56,10 @@ class ReActLoop:
         self.is_interruption = is_interruption
         self.knowledge_base_ids = knowledge_base_ids
         self.cancel_event = cancel_event
+        self.attachments = attachments
+        self.llm_provider = llm_provider
+        self.llm_model = llm_model
+        self.auto_profile = auto_profile
 
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = (
@@ -114,6 +122,13 @@ class ReActLoop:
             agent_logger=self.agent_logger,
             schema_injector=self.schema_injector,
             cancel_event=self.cancel_event,
+            attachments=self.attachments,
+            llm_provider=self.llm_provider,
+            llm_model=self.llm_model,
+            auto_profile=self.auto_profile,
+            runtime_mode=self.current_mode,
+            user_identifier=getattr(self.executor, "user_identifier", None),
+            board_context=self.context_builder.board_context if self.current_mode == "chart" else None,
         ))
 
         async for event in runtime.run(

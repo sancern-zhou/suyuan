@@ -31,6 +31,7 @@ AgentMode = Literal[
     "social",
     "chart",
     "ops",
+    "memory_consolidator",
     "deliberation_meteorology",
     "deliberation_monitoring",
     "deliberation_chemistry",
@@ -48,7 +49,9 @@ def build_react_system_prompt(
     heartbeat_file_path: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 文件路径
     memory_context: Optional[str] = None,  # ✅ 记忆上下文内容（MEMORY.md）
     soul_context: Optional[str] = None,  # ✅ 新增：soul.md 内容（助理灵魂档案）
-    user_context: Optional[str] = None  # ✅ 新增：用户上下文内容（USER.md）
+    user_context: Optional[str] = None,  # ✅ 新增：用户上下文内容（USER.md）
+    backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
+    board_context: Optional[dict] = None,  # 图表模式 draw.io 画板上下文
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
@@ -64,6 +67,7 @@ def build_react_system_prompt(
         memory_context: 记忆上下文内容（从快照获取，直接注入到系统提示词）
         soul_context: soul.md 内容（助理灵魂档案，仅social模式使用）
         user_context: 用户上下文内容（从USER.md获取，仅social模式使用）
+        backend_host: 网关地址（仅social模式使用，优先使用API_BASE_URL配置，用于生成公网分享链接）
 
     Returns:
         系统提示词字符串
@@ -73,13 +77,9 @@ def build_react_system_prompt(
         tools_dict = get_tools_by_mode(mode)
         available_tools = list(tools_dict.keys())
 
-    # ⚠️ memory_consolidator模式不过滤工具，使用完整工具列表
-    if mode == "memory_consolidator":
-        filtered_tools = available_tools
-    else:
-        # 过滤：只保留该模式支持的工具
-        mode_tools = get_tools_by_mode(mode)
-        filtered_tools = [t for t in available_tools if t in mode_tools]
+    # 过滤：只保留该模式支持的工具
+    mode_tools = get_tools_by_mode(mode)
+    filtered_tools = [t for t in available_tools if t in mode_tools]
 
     logger.info(
         "building_prompt",
@@ -91,7 +91,8 @@ def build_react_system_prompt(
         user_file_path=user_file_path,  # ✅ 新增日志
         has_memory_context=memory_context is not None,
         has_soul_context=soul_context is not None,  # ✅ 新增日志
-        has_user_context=user_context is not None  # ✅ 新增日志
+        has_user_context=user_context is not None,  # ✅ 新增日志
+        has_board_context=board_context is not None,
     )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
@@ -104,9 +105,9 @@ def build_react_system_prompt(
     elif mode == "report":
         return build_report_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "social":
-        return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, heartbeat_file_path, memory_context, soul_context, user_context)
+        return build_social_prompt(filtered_tools, user_preferences, memory_file_path, soul_file_path, user_file_path, heartbeat_file_path, memory_context, soul_context, user_context, backend_host)
     elif mode == "chart":
-        return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
+        return build_chart_prompt(filtered_tools, memory_context, memory_file_path, board_context)
     elif mode == "ops":
         return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_meteorology":

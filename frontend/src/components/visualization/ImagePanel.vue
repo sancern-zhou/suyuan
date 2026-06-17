@@ -10,8 +10,14 @@
       v-else-if="imageSrc && !loadError"
       :src="imageSrc"
       :alt="alt"
+      title="点击放大"
+      role="button"
+      tabindex="0"
       @load="onLoad"
       @error="onError"
+      @click="openLightbox"
+      @keydown.enter="openLightbox"
+      @keydown.space.prevent="openLightbox"
     />
     <!-- 加载失败 -->
     <div v-else-if="loadError" class="image-error">
@@ -32,10 +38,18 @@
       <p>图片展示</p>
     </div>
   </div>
+
+  <ImageLightbox
+    v-model:visible="lightboxVisible"
+    :images="lightboxImages"
+    :start-index="0"
+  />
 </template>
 
 <script setup>
 import { ref, onMounted, watch, computed } from 'vue'
+import ImageLightbox from '@/components/ImageLightbox.vue'
+import { createImagePanelLightboxImage } from './imagePanelLightbox.js'
 
 const props = defineProps({
   src: {
@@ -56,6 +70,8 @@ const emit = defineEmits(['ready'])
 const imageSrc = ref('')
 const isLoading = ref(false)
 const loadError = ref(false)
+const lightboxVisible = ref(false)
+const lightboxImages = ref([])
 
 // 用于等待图片加载完成的 Promise
 let imageLoadPromise = null
@@ -186,6 +202,14 @@ const onError = () => {
   emit('ready')
 }
 
+const openLightbox = () => {
+  const lightboxImage = createImagePanelLightboxImage(imageSrc.value, props.alt)
+  if (!lightboxImage) return
+
+  lightboxImages.value = [lightboxImage]
+  lightboxVisible.value = true
+}
+
 onMounted(() => {
   updateImageSrc()
 })
@@ -203,6 +227,12 @@ onMounted(() => {
     width: 100%;
     height: auto;
     display: block;
+    cursor: zoom-in;
+
+    &:focus-visible {
+      outline: 2px solid #1976D2;
+      outline-offset: -2px;
+    }
   }
 }
 

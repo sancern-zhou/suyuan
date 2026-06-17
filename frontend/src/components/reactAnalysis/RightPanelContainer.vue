@@ -50,11 +50,24 @@
           <span>溯源</span>
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
+        <button
+          v-if="showBoardTab"
+          :class="['tab-btn', { active: activeTab === 'board' }]"
+          @click="handleTabChange('board')"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 5.5h16v13H4v-13Z" />
+            <path d="M8 9h3v3H8V9Z" />
+            <path d="M14 12h3v3h-3v-3Z" />
+            <path d="M11 10.5h3" />
+          </svg>
+          <span>画板</span>
+        </button>
       </div>
 
       <!-- 可视化面板 -->
       <VisualizationPanel
-        v-show="activeTab === 'visualization'"
+        v-if="activeTab === 'visualization'"
         ref="vizPanelRef"
         key="visualization-panel"
         class="panel-content"
@@ -65,9 +78,9 @@
         :expert-results="expertResults"
       />
 
-      <!-- Office文档预览面板（包含 PDF/Markdown/Notebook） -->
+      <!-- Office文档预览面板（包含 PDF/Markdown/HTML） -->
       <OfficeDocumentPanel
-        v-show="activeTab === 'document'"
+        v-if="activeTab === 'document'"
         ref="officePanelRef"
         key="document-panel"
         class="panel-content"
@@ -78,13 +91,30 @@
 
       <!-- 知识溯源面板 -->
       <KnowledgeSourcePanel
-        v-show="activeTab === 'knowledge'"
+        v-if="activeTab === 'knowledge'"
         ref="knowledgePanelRef"
         key="knowledge-panel"
         class="panel-content"
         :sources="knowledgeSources"
         :history="messages"
         :selected-message-id="selectedMessageId"
+      />
+
+      <!-- Draw.io画板面板 -->
+      <DrawioBoardPanel
+        v-if="showBoardTab && activeTab === 'board'"
+        ref="boardPanelRef"
+        key="board-panel"
+        class="panel-content"
+        :xml="board?.currentXml || board?.current_xml || board?.xml || ''"
+        :title="board?.title || '画板'"
+        :version-files="board?.versions || []"
+        :current-version-id="board?.currentVersionId || board?.current_version_id || ''"
+        :board-dirty="!!board?.dirty"
+        @xml-change="handleBoardXmlChange"
+        @selection-change="handleBoardSelectionChange"
+        @board-snapshot-confirm="handleBoardSnapshotConfirm"
+        @version-restore="handleBoardVersionRestore"
       />
     </template>
   </div>
@@ -96,6 +126,7 @@ import VisualizationPanel from '@/components/VisualizationPanel.vue'
 import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
+import DrawioBoardPanel from '@/components/board/DrawioBoardPanel.vue'
 
 const props = defineProps({
   visible: {
@@ -111,6 +142,10 @@ const props = defineProps({
     default: false
   },
   knowledgePanelVisible: {
+    type: Boolean,
+    default: false
+  },
+  boardPanelVisible: {
     type: Boolean,
     default: false
   },
@@ -149,12 +184,20 @@ const props = defineProps({
   knowledgeSources: {
     type: Array,
     default: () => []
+  },
+  board: {
+    type: Object,
+    default: null
   }
 })
 
 const emit = defineEmits([
   'tab-change',
-  'office-edit-submit'
+  'office-edit-submit',
+  'board-xml-change',
+  'board-selection-change',
+  'board-snapshot-confirm',
+  'board-version-restore'
 ])
 
 // 添加调试
@@ -169,10 +212,18 @@ watch(() => props.visible, (newVal) => {
 const vizPanelRef = ref(null)
 const officePanelRef = ref(null)
 const knowledgePanelRef = ref(null)
+const boardPanelRef = ref(null)
+
+const hasBoardXml = computed(() => !!(
+  props.board?.currentXml ||
+  props.board?.current_xml ||
+  props.board?.xml
+))
+const showBoardTab = computed(() => props.boardPanelVisible || hasBoardXml.value)
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible
+  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
 })
 
 const visualizationCount = computed(() => {
@@ -201,6 +252,22 @@ const handleTabChange = (tab) => {
 
 const handleOfficeEditSubmit = async (editData) => {
   emit('office-edit-submit', editData)
+}
+
+const handleBoardXmlChange = (xml) => {
+  emit('board-xml-change', xml)
+}
+
+const handleBoardSelectionChange = (selection) => {
+  emit('board-selection-change', selection)
+}
+
+const handleBoardSnapshotConfirm = (snapshot) => {
+  emit('board-snapshot-confirm', snapshot)
+}
+
+const handleBoardVersionRestore = (versionId) => {
+  emit('board-version-restore', versionId)
 }
 
 // 公开方法

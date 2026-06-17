@@ -21,6 +21,7 @@ from .memory.hybrid_manager import HybridMemoryManager
 from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
+from .runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
 
@@ -46,6 +47,9 @@ class ReActAgent:
         "例如排名并列、Top N截取规则、时间范围、统计口径、新旧标准、同比环比方向、"
         "缺失值处理、单位和表文一致性等。新标准需要使用报告视图的 "
         "pM2_5_Decimal、pM2_5_Decimal_Compare、o3_8h / O3_8h、AQI达标率字段。"
+        "涉及空气质量较好/较差或 PM2.5/PM10/O3 较低/较高城市排名、排名并列、Top N截取规则时，"
+        "必须使用 `analyze_city_pollutant_rankings` 进行排名分析，不要用模型自行排序，也不要用 "
+        "`execute_python` 临时复刻排名规则。"
         "如发现问题，请指出需要修正的地方；"
         "如无明显问题，请简要说明复核通过。"
         "这是自动复核轮，回复中不要输出 `<!-- report_final_complete -->` 标记，不要再次触发自动复核。"
@@ -53,9 +57,83 @@ class ReActAgent:
 
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
 
+    @staticmethod
+    def _select_auto_profile(
+        manual_mode: Optional[str],
+    ) -> Optional[str]:
+        """Choose the Auto capability profile for this run.
+
+        Profiles describe required model capabilities; they do not name a
+        concrete provider/model.
+        """
+        if supports_native_multimodal(manual_mode):
+            return "multimodal"
+        return None
+
+    @staticmethod
+    def _apply_session_store_entry_for_persistence(session, entry: Dict[str, Any]) -> None:
+        """Apply non-transcript runtime state to a persisted Session.
+
+        SessionMemory is an LLM runtime context and may be compacted or restored
+        from only part of the DB transcript. It can seed an empty transcript for
+        non-API callers, but it must not overwrite an existing persisted history.
+        """
+        from dataclasses import asdict, is_dataclass
+
+        display_history_persisted = bool(entry.get("display_history_persisted"))
+        memory_manager = entry.get("memory") if isinstance(entry, dict) else None
+        if memory_manager and hasattr(memory_manager, "session") and not display_history_persisted:
+            runtime_turns = getattr(memory_manager.session, "conversation_history", [])
+            runtime_history = [
+                asdict(turn) if is_dataclass(turn) else turn
+                for turn in runtime_turns
+            ]
+            if runtime_history and not session.conversation_history:
+                session.conversation_history = runtime_history
+                logger.debug(
+                    "conversation_history_seeded_from_runtime_memory",
+                    session_id=session.session_id,
+                    message_count=len(runtime_history),
+                )
+            elif runtime_history:
+                logger.info(
+                    "runtime_history_not_persisted_over_existing_db_history",
+                    session_id=session.session_id,
+                    runtime_count=len(runtime_history),
+                    persisted_count=len(session.conversation_history),
+                )
+
+        collected_data_ids = entry.get("collected_data_ids", [])
+        collected_visuals = entry.get("collected_visuals", [])
+
+        if collected_data_ids:
+            session.data_ids = collected_data_ids
+            logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
+
+        if collected_visuals:
+            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
+            session.metadata["visualizations"] = collected_visuals
+            session.metadata["visuals_count"] = len(collected_visuals)
+            logger.info(
+                "visualizations_set_in_metadata",
+                session_id=session.session_id,
+                visuals_count=len(collected_visuals)
+            )
+
+        office_docs = entry.get("office_documents", [])
+        if office_docs:
+            session.office_documents = office_docs
+
+        if entry.get("has_error"):
+            session.error = {
+                "type": entry.get("error_type", "unknown"),
+                "message": entry.get("error_message", "Unknown error"),
+                "timestamp": datetime.now().isoformat()
+            }
+
     def __init__(
         self,
-        max_iterations: int = 60,  # ✅ 默认60次（适应复杂分析任务）
+        max_iterations: int = 120,  # ✅ 默认120次（适应复杂分析任务）
         max_working_memory: int = 20,
         working_context_limit: int = 50000,
         large_data_threshold: int = 1000,
@@ -96,9 +174,9 @@ class ReActAgent:
             self.memory_manager = UnifiedMemoryManager()
             logger.info("unified_memory_manager_created")
 
-        # 初始化任务列表（用于 TodoWrite 工具）
-        from .task.todo_models import TodoList
-        self.task_list = TodoList()
+        # 初始化任务列表（用于 TaskCreate/TaskUpdate/TaskList/TaskGet 工具）
+        from .task.task_models import TaskList
+        self.task_list = TaskList()
 
         # 初始化工具执行器
         self.executor = ToolExecutor(tool_registry=tool_registry)
@@ -130,7 +208,7 @@ class ReActAgent:
         """
         # 工作流工具现在通过 app.tools.workflow 模块自动注册
         # 复杂的工作流（standard_analysis_workflow、quick_tracing_workflow）已删除
-        # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + TodoWrite）
+        # 现在使用任务清单驱动的流程（Agent 读取 md 模板 + Task 工具）
         pass
 
     async def analyze(
@@ -154,6 +232,7 @@ class ReActAgent:
         social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
+        board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -190,15 +269,23 @@ class ReActAgent:
         memory_context = ""
         unified_user_id = None
         memory_tool_mode = manual_mode or "expert"
+        memory_snapshot_created = False
+        active_run_id = None
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
         if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
             memory_store = social_memory_store
-            # ✅ 使用 ActiveMemoryRetriever 按关键词召回相关记忆（而非整块注入）
             try:
-                from .memory.active_memory_retriever import ActiveMemoryRetriever
+                memory_store.create_snapshot()
+                memory_snapshot_created = True
+            except Exception as e:
+                logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
-                memory_context = ActiveMemoryRetriever().retrieve(
+            # 社交模式：完整注入用户隔离 MEMORY.md，并单独追加 daily notes 历史会话召回。
+            try:
+                from .memory.active_memory_retriever import build_social_memory_context
+
+                memory_context = build_social_memory_context(
                     memory_store=social_memory_store,
                     query=user_query,
                     recent_messages=initial_messages or []
@@ -235,17 +322,21 @@ class ReActAgent:
                 memory_preview=memory_context[:200] if memory_context else ""
             )
 
+        runtime_attachments = []
+
         # ✅ 如果有附件，添加到查询中（保存到对话历史，确保后续能访问文件）
         if attachments and len(attachments) > 0:
             attachment_info = "\n\n**用户上传的附件**：\n"
             for i, att in enumerate(attachments, 1):
+                normalized_att = dict(att)
                 att_type = att.get("type", "file")
                 att_name = att.get("name", "unknown")
                 att_file_id = att.get("file_id")
                 att_url = att.get("url") or ""
+                att_mime_type = att.get("mime_type") or att.get("content_type")
 
-                # 对于图片和有file_id的附件，优先使用本地文件路径
-                # 因为analyze_image等工具可以直接读取本地文件
+                # 对于图片和有file_id的附件，优先使用本地文件路径。
+                # 社交模式会把本地图片编码为 Anthropic 原生 image block。
                 if att_file_id and (att_type == "image" or not att_url.startswith("/")):
                     try:
                         from app.db.database import async_session
@@ -254,14 +345,23 @@ class ReActAgent:
 
                         async with async_session() as db:
                             result = await db.execute(
-                                select(UploadedFile.file_path).where(UploadedFile.id == att_file_id)
+                                select(UploadedFile.file_path, UploadedFile.mime_type).where(UploadedFile.id == att_file_id)
                             )
-                            path = result.scalar_one_or_none()
-                            if path:
+                            row = result.one_or_none()
+                            if row:
+                                path, mime_type = row
                                 att_url = path
+                                normalized_att["local_path"] = path
+                                if mime_type:
+                                    normalized_att["mime_type"] = mime_type
                                 logger.info("using_local_file_path", file_id=att_file_id, path=path)
                     except Exception as e:
                         logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
+
+                normalized_att["url"] = att_url
+                if att_mime_type:
+                    normalized_att["mime_type"] = att_mime_type
+                runtime_attachments.append(normalized_att)
 
                 if att_type == "image":
                     attachment_info += f"{i}. 图片: {att_name}\n"
@@ -280,18 +380,33 @@ class ReActAgent:
 
         actual_session_id, memory_manager, created_new = await self._get_or_create_session(
             session_id,
-            reset_session
+            reset_session,
+            manual_mode=manual_mode,
         )
 
-        # Update executor's memory_manager and task_list to enable DataContextManager
-        self.executor.set_memory_manager(memory_manager, task_list=self.task_list)
+        from .task.task_models import TaskList
+
+        run_task_list = TaskList()
+        run_planner = ReActPlanner(
+            tool_registry=self.planner.tool_registry,
+            llm_client=self.planner.llm_service,
+            max_context_turns=self.planner.max_context_turns,
+        )
+        run_executor = self.executor.clone_for_run(
+            memory_manager,
+            task_list=run_task_list,
+            llm_planner=run_planner,
+        )
+        run_executor.runtime_mode = manual_mode or "expert"
+        run_executor.user_identifier = user_identifier
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
         # 其他模式：通过 UnifiedMemoryManager 获取
-        if self.enable_memory and memory_store:
+        if self.enable_memory and memory_store and not memory_snapshot_created:
             try:
                 memory_store.create_snapshot()  # 创建独立副本
+                memory_snapshot_created = True
             except Exception as e:
                 logger.warning("failed_to_create_memory_snapshot", error=str(e))
 
@@ -309,21 +424,24 @@ class ReActAgent:
         )
 
         try:
+            auto_profile = self._select_auto_profile(manual_mode)
             # 使用标准 ReAct 循环（LLM 自主决策调用工具）
             # 工具池包括：
             # - 原子工具（基础能力）
             # - 工作流工具（高级能力）
-            # - 任务清单驱动流程（Agent 读取 md 模板 + TodoWrite）
+            # - 任务清单驱动流程（Agent 读取 md 模板 + Task 工具）
             react_loop = ReActLoop(
                 memory_manager=memory_manager,
-                llm_planner=self.planner,
-                tool_executor=self.executor,
+                llm_planner=run_planner,
+                tool_executor=run_executor,
                 max_iterations=iteration_limit,
                 stream_enabled=True,
                 is_interruption=is_interruption,
                 enable_reasoning=enable_reasoning,
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
+                attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
+                auto_profile=auto_profile,
             )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
@@ -332,6 +450,18 @@ class ReActAgent:
                 logger.debug(
                     "memory_context_set_to_context_builder",
                     context_length=len(memory_context)
+                )
+
+            if manual_mode == "chart" and board_context:
+                react_loop.context_builder.board_context = board_context
+                logger.info(
+                    "board_context_set_to_context_builder",
+                    has_current_xml=bool(board_context.get("current_xml") or board_context.get("currentXml")),
+                    current_xml_length=len(board_context.get("current_xml") or board_context.get("currentXml") or ""),
+                    previous_xml_length=len(board_context.get("previous_xml") or board_context.get("previousXml") or ""),
+                    selected_count=len(board_context.get("selected_cells") or board_context.get("selectedCells") or []),
+                    version=board_context.get("version"),
+                    dirty=board_context.get("dirty"),
                 )
 
             # ✅ 设置记忆文件路径到上下文构建器（所有模式）
@@ -407,6 +537,8 @@ class ReActAgent:
                 initial_messages=initial_messages,
                 manual_mode=manual_mode
             ):
+                event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                active_run_id = event_data.get("run_id") or event.get("run_id") or active_run_id
                 self._capture_office_document(actual_session_id, event)
 
                 if self._should_run_report_auto_followup(
@@ -449,81 +581,48 @@ class ReActAgent:
             # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
-                    from app.agent.session import get_session_manager
-                    from dataclasses import asdict
-                    session_manager = get_session_manager()
+                    from app.agent.runtime.ownership import run_ownership_registry
+                    from app.agent.session.session_resolver import (
+                        load_session_for_mode,
+                        save_session_metadata_for_mode,
+                    )
 
-                    # ✅ 从数据库加载 session
-                    session = await session_manager.load_session(actual_session_id)
-
-                    if session:
-                        # 同步 memory.session.conversation_history 到 Session 对象
-                        if actual_session_id in self._session_store:
-                            entry = self._session_store[actual_session_id]
-                            memory_manager = entry.get("memory")
-                            if memory_manager and hasattr(memory_manager, "session"):
-                                # 将 ConversationTurn dataclass 转换为字典
-                                conversation_history_dicts = [
-                                    asdict(turn) for turn in memory_manager.session.conversation_history
-                                ]
-                                session.conversation_history = conversation_history_dicts
-                                logger.debug(
-                                    "conversation_history_converted",
-                                    session_id=actual_session_id,
-                                    message_count=len(conversation_history_dicts)
-                                )
-
-                            # ✅ 从 _session_store 读取 agent.py 收集的数据
-                            collected_data_ids = entry.get("collected_data_ids", [])
-                            collected_visuals = entry.get("collected_visuals", [])
-                            conversation_history_compressed = entry.get("conversation_history_compressed")
-
-                            # 设置 data_ids 和 visual_ids
-                            if collected_data_ids:
-                                session.data_ids = collected_data_ids
-                                logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
-
-                            if collected_visuals:
-                                session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-                                # ✅ 保存完整的可视化数据到 metadata
-                                session.metadata["visualizations"] = collected_visuals
-                                session.metadata["visuals_count"] = len(collected_visuals)
-                                logger.info(
-                                    "visualizations_set_in_metadata",
-                                    session_id=actual_session_id,
-                                    visuals_count=len(collected_visuals)
-                                )
-
-                            # 如果有压缩的历史，使用压缩版本
-                            if conversation_history_compressed:
-                                session.conversation_history = conversation_history_compressed
-
-                            # 同步 office_documents 到会话对象
-                            office_docs = entry.get("office_documents", [])
-                            if office_docs:
-                                session.office_documents = office_docs
-
-                            # 处理错误信息
-                            if entry.get("has_error"):
-                                session.error = {
-                                    "type": entry.get("error_type", "unknown"),
-                                    "message": entry.get("error_message", "Unknown error"),
-                                    "timestamp": datetime.now().isoformat()
-                                }
-
-                        # 保存会话
-                        await session_manager.save_session(session)
+                    can_save_metadata = await run_ownership_registry.can_write(
+                        actual_session_id,
+                        active_run_id,
+                    )
+                    if not can_save_metadata:
                         logger.info(
-                            "session_saved_after_analysis",
+                            "stale_run_metadata_save_skipped",
                             session_id=actual_session_id,
-                            message_count=len(session.conversation_history),
-                            metadata_keys=list(session.metadata.keys()) if session.metadata else []
+                            run_id=active_run_id,
                         )
-                        logger.info(
-                            "session_saved_after_analysis",
-                            session_id=actual_session_id,
-                            message_count=len(session.conversation_history)
+                    else:
+                        # ✅ 从数据库加载 session
+                        session = await load_session_for_mode(
+                            actual_session_id,
+                            mode=manual_mode,
+                            include_messages=False,
                         )
+
+                        if session:
+                            if actual_session_id in self._session_store:
+                                entry = self._session_store[actual_session_id]
+                                self._apply_session_store_entry_for_persistence(session, entry)
+
+                            # Route handlers own transcript persistence. Agent
+                            # finalization only refreshes metadata collected by
+                            # runtime tools.
+                            await save_session_metadata_for_mode(
+                                session,
+                                mode=manual_mode,
+                            )
+                            logger.info(
+                                "session_saved_after_analysis",
+                                session_id=actual_session_id,
+                                message_count=len(session.conversation_history),
+                                metadata_keys=list(session.metadata.keys()) if session.metadata else []
+                            )
                 except Exception as e:
                     logger.warning(
                         "failed_to_save_session_after_analysis",
@@ -574,7 +673,7 @@ class ReActAgent:
 
     def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
         """Persist document preview metadata emitted during a run."""
-        if event.get("type") not in {"office_document", "notebook_document"} or not event.get("data"):
+        if event.get("type") not in {"office_document", "html_document"} or not event.get("data"):
             return
 
         office_doc_data = event["data"]
@@ -587,11 +686,17 @@ class ReActAgent:
             "pdf_preview": office_doc_data.get("pdf_preview"),
             "markdown_preview": office_doc_data.get("markdown_preview"),
             "html_preview": office_doc_data.get("html_preview"),
+            "svg_preview": office_doc_data.get("svg_preview"),
             "file_path": office_doc_data.get("file_path"),
             "file_type": office_doc_data.get("file_type"),
             "generator": office_doc_data.get("generator"),
             "summary": office_doc_data.get("summary"),
             "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
+            "related_files": office_doc_data.get("related_files"),
+            "artifacts": office_doc_data.get("artifacts"),
+            "refs": office_doc_data.get("refs"),
+            "assets": office_doc_data.get("assets"),
+            "metadata": office_doc_data.get("metadata"),
         }
         doc_entry = {k: v for k, v in doc_entry.items() if v is not None}
 
@@ -599,11 +704,28 @@ class ReActAgent:
             doc_entry.get("file_path")
             or doc_entry.get("html_preview", {}).get("html_id")
             or doc_entry.get("pdf_preview", {}).get("pdf_id")
+            or doc_entry.get("svg_preview", {}).get("svg_path")
         )
         if file_path:
             doc_entry["file_path"] = file_path
         existing = self._session_store[session_id]["office_documents"]
-        if not any(d.get("file_path") == file_path for d in existing):
+        existing_index = next(
+            (index for index, item in enumerate(existing) if item.get("file_path") == file_path),
+            -1,
+        )
+        if existing_index >= 0:
+            existing[existing_index] = {
+                **existing[existing_index],
+                **doc_entry,
+            }
+            logger.info(
+                "office_document_updated_in_session",
+                session_id=session_id,
+                file_path=file_path,
+                generator=doc_entry["generator"],
+                total_documents=len(existing),
+            )
+        else:
             existing.append(doc_entry)
             logger.info(
                 "office_document_saved_to_session",
@@ -992,7 +1114,8 @@ class ReActAgent:
     async def _get_or_create_session(
         self,
         session_id: Optional[str],
-        reset_session: bool = False
+        reset_session: bool = False,
+        manual_mode: Optional[str] = None,
     ) -> Tuple[str, HybridMemoryManager, bool]:
         """
         获取或创建会话记忆管理器
@@ -1017,19 +1140,23 @@ class ReActAgent:
             # 清理过期会话
             self._cleanup_expired_sessions()
 
-            # ✅ 优先重用内存中的会话
-            if not reset_session and session_id and session_id in self._session_store:
-                entry = self._session_store[session_id]
-                entry["last_used"] = datetime.utcnow()
-                logger.info("react_session_reused", session_id=session_id)
-                return session_id, entry["memory"], False
-
-            # ✅ 新增：尝试从 SessionManager 恢复会话
+            # 有 session_id 的请求必须从持久化层恢复最新上下文。4 worker
+            # 部署下，worker 本地 _session_store 可能落后于其他 worker 已写入
+            # 的数据库历史，不能作为会话真源。
             if session_id and not reset_session:
                 try:
-                    from app.agent.session import get_session_manager
-                    session_manager = get_session_manager()
-                    saved_session = await session_manager.load_session(session_id)
+                    from app.agent.session.session_resolver import load_session_for_llm_mode
+
+                    logger.info(
+                        "react_session_restore_load_start",
+                        session_id=session_id,
+                        mode=manual_mode,
+                        include_messages="llm_light",
+                    )
+                    saved_session = await load_session_for_llm_mode(
+                        session_id,
+                        mode=manual_mode,
+                    )
 
                     if saved_session:
                         logger.info(
@@ -1053,10 +1180,19 @@ class ReActAgent:
                         # ✅ 立即加载历史消息到 memory_manager.session
                         if saved_session.conversation_history:
                             memory_manager.session.load_history_messages(saved_session.conversation_history)
+                            if isinstance(saved_session.metadata, dict):
+                                source_until_sequence = saved_session.metadata.get("llm_source_until_sequence")
+                                if isinstance(source_until_sequence, int):
+                                    memory_manager.session.llm_source_until_sequence = source_until_sequence
                             logger.info(
                                 "react_session_history_loaded",
                                 session_id=session_id,
-                                message_count=len(saved_session.conversation_history)
+                                message_count=len(saved_session.conversation_history),
+                                llm_source_until_sequence=getattr(
+                                    memory_manager.session,
+                                    "llm_source_until_sequence",
+                                    None,
+                                ),
                             )
 
                         saved_visualizations = []

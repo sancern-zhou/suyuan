@@ -7,6 +7,7 @@
 
 import json
 import structlog
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -80,6 +81,7 @@ class SessionManagerDB:
             是否保存成功
         """
         import traceback
+        started = time.monotonic()
         try:
             # 更新时间戳（除非明确禁止）
             if update_timestamp:
@@ -94,18 +96,22 @@ class SessionManagerDB:
             exists = await self.repository.get_session(session.session_id)
 
             if exists:
+                metadata = self._merge_preserved_metadata(
+                    getattr(exists, "session_metadata", None),
+                    session.metadata,
+                )
                 # 更新现有会话
                 await self.repository.update_session(
                     session.session_id,
                     query=session.query,
-                    mode=session.metadata.get("mode"),
+                    mode=metadata.get("mode"),
                     current_step=session.current_step,
                     current_expert=session.current_expert,
                     data_ids=session.data_ids,
                     visual_ids=session.visual_ids,
                     office_documents=session.office_documents,
                     error=session.error,
-                    metadata=session.metadata
+                    metadata=metadata
                 )
             else:
                 # 创建新会话
@@ -140,7 +146,8 @@ class SessionManagerDB:
                 "session_saved_to_db",
                 session_id=session.session_id,
                 message_count=len(session.conversation_history),
-                save_messages=save_messages
+                save_messages=save_messages,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
             )
 
             return True
@@ -155,19 +162,86 @@ class SessionManagerDB:
             )
             return False
 
-    async def load_session(self, session_id: str, include_messages: bool = True) -> Optional[Session]:
+    async def save_session_metadata(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+    ) -> bool:
+        """Persist only session metadata and artifact references."""
+        return await self.save_session(
+            session,
+            update_timestamp=update_timestamp,
+            save_messages=False,
+        )
+
+    async def append_session_transcript(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+    ) -> bool:
+        """Persist session metadata and append-only display transcript changes."""
+        return await self.save_session(
+            session,
+            update_timestamp=update_timestamp,
+            save_messages=True,
+            force_full_history_rewrite=False,
+        )
+
+    async def replace_session_transcript(
+        self,
+        session: Session,
+        update_timestamp: bool = True,
+    ) -> bool:
+        """Persist session metadata and explicitly replace the full transcript."""
+        return await self.save_session(
+            session,
+            update_timestamp=update_timestamp,
+            save_messages=True,
+            force_full_history_rewrite=True,
+        )
+
+    @staticmethod
+    def _merge_preserved_metadata(
+        existing_metadata: Optional[Dict[str, Any]],
+        incoming_metadata: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Merge DB-owned runtime metadata that ordinary session saves must not erase."""
+        merged = dict(incoming_metadata or {})
+        if not isinstance(existing_metadata, dict):
+            return merged
+
+        for key in ("llm_compact_state",):
+            if key in existing_metadata and key not in merged:
+                merged[key] = existing_metadata[key]
+
+        return merged
+
+    async def load_session(
+        self,
+        session_id: str,
+        include_messages: bool = True,
+        use_cache: bool = False,
+    ) -> Optional[Session]:
         """
         从数据库加载会话
 
         Args:
             session_id: 会话ID
             include_messages: 是否加载消息
+            use_cache: 是否允许使用本 worker 的进程内缓存。默认 False，
+                避免 4 worker 下读取到其他 worker 已更新前的旧历史。
 
         Returns:
             会话对象，如果不存在则返回None
         """
+        started = time.monotonic()
         # 先检查内存缓存
-        if self.enable_cache and session_id in self.sessions:
+        if use_cache and self.enable_cache and session_id in self.sessions:
+            logger.info(
+                "session_loaded_from_cache",
+                session_id=session_id,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
             return self.sessions[session_id]
 
         # 从数据库加载
@@ -204,7 +278,9 @@ class SessionManagerDB:
             logger.info(
                 "session_loaded_from_db",
                 session_id=session_id,
-                message_count=len(session.conversation_history)
+                message_count=len(session.conversation_history),
+                include_messages=include_messages,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
             )
 
             return session
@@ -217,10 +293,206 @@ class SessionManagerDB:
             )
             return None
 
+    def _session_from_dict(
+        self,
+        session_dict: Dict[str, Any],
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        metadata_updates: Optional[Dict[str, Any]] = None,
+    ) -> Session:
+        metadata = dict(session_dict["metadata"] or {})
+        if metadata_updates:
+            metadata.update(metadata_updates)
+
+        return Session(
+            session_id=session_dict["session_id"],
+            query=session_dict["query"],
+            created_at=datetime.fromisoformat(session_dict["created_at"]) if session_dict["created_at"] else None,
+            updated_at=datetime.fromisoformat(session_dict["updated_at"]) if session_dict["updated_at"] else None,
+            conversation_history=(
+                conversation_history
+                if conversation_history is not None
+                else session_dict["conversation_history"]
+            ),
+            data_ids=session_dict["data_ids"],
+            visual_ids=session_dict["visual_ids"],
+            office_documents=session_dict.get("office_documents", []),
+            metadata=metadata,
+            error=session_dict["error"],
+            current_step=session_dict.get("current_step"),
+            current_expert=session_dict.get("current_expert")
+        )
+
+    @staticmethod
+    def _max_sequence(messages: List[Dict[str, Any]]) -> Optional[int]:
+        sequence_numbers = [
+            msg.get("sequence_number")
+            for msg in messages
+            if isinstance(msg.get("sequence_number"), int)
+        ]
+        if not sequence_numbers:
+            return None
+        return max(sequence_numbers)
+
+    @staticmethod
+    def _compact_messages_for_restore(
+        compact_state: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        messages = compact_state.get("messages")
+        if not isinstance(messages, list):
+            return []
+        restored: List[Dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            if role not in {"user", "assistant"} or "content" not in msg:
+                continue
+            restored.append({
+                "role": role,
+                "content": msg.get("content"),
+            })
+        return restored
+
+    async def save_llm_compact_state(
+        self,
+        session_id: str,
+        messages: List[Dict[str, Any]],
+        *,
+        source_until_sequence: int,
+        token_estimate: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Persist compact LLM-only state without rewriting display transcript rows."""
+        compact_state = {
+            "active": True,
+            "version": 1,
+            "source_until_sequence": source_until_sequence,
+            "messages": messages,
+            "message_count": len(messages),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        if token_estimate is not None:
+            compact_state["token_estimate"] = token_estimate
+        if reason:
+            compact_state["reason"] = reason
+
+        return await self.repository.save_llm_compact_state(
+            session_id,
+            compact_state,
+        )
+
+    async def load_session_for_llm(self, session_id: str) -> Optional[Session]:
+        """Load session metadata plus lightweight transcript for LLM continuation."""
+        started = time.monotonic()
+        try:
+            session_dict = await self.repository.get_session_with_messages(
+                session_id,
+                include_messages=False,
+            )
+            if not session_dict:
+                logger.debug("session_not_found_in_db", session_id=session_id)
+                return None
+
+            from app.agent.memory.session_memory import SessionMemory
+
+            compact_state = await self.repository.get_active_llm_compact_state(session_id)
+            compact_source_sequence = None
+            if compact_state:
+                compact_source_sequence = compact_state.get("source_until_sequence")
+
+            if isinstance(compact_source_sequence, int):
+                raw_history = await self.repository.get_llm_history_messages_after(
+                    session_id,
+                    compact_source_sequence,
+                )
+                projected_incremental_history = SessionMemory.project_history_messages_for_llm(
+                    raw_history,
+                    session_id=session_id,
+                )
+                history = (
+                    self._compact_messages_for_restore(compact_state)
+                    + projected_incremental_history
+                )
+                max_incremental_sequence = self._max_sequence(raw_history)
+                source_until_sequence = (
+                    max_incremental_sequence
+                    if max_incremental_sequence is not None
+                    else compact_source_sequence
+                )
+                used_compact_state = True
+            else:
+                raw_history = await self.repository.get_llm_history_messages(session_id)
+                history = SessionMemory.project_history_messages_for_llm(
+                    raw_history,
+                    session_id=session_id,
+                )
+                source_until_sequence = self._max_sequence(raw_history)
+                used_compact_state = False
+
+            session = self._session_from_dict(
+                session_dict,
+                history,
+                metadata_updates={
+                    "llm_source_until_sequence": source_until_sequence,
+                    "llm_restored_from_compact_state": used_compact_state,
+                },
+            )
+
+            logger.info(
+                "session_loaded_for_llm",
+                session_id=session_id,
+                message_count=len(history),
+                raw_message_count=len(raw_history),
+                compact_state_used=used_compact_state,
+                source_until_sequence=source_until_sequence,
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
+            return session
+
+        except Exception as e:
+            logger.error(
+                "failed_to_load_session_for_llm",
+                session_id=session_id,
+                error=str(e)
+            )
+            return None
+
+    async def load_session_light(self, session_id: str) -> Optional[Session]:
+        """Load session metadata plus full-length lightweight display transcript."""
+        started = time.monotonic()
+        try:
+            session_dict = await self.repository.get_session_with_messages(
+                session_id,
+                include_messages=False,
+            )
+            if not session_dict:
+                logger.debug("session_not_found_in_db", session_id=session_id)
+                return None
+
+            history = await self.repository.get_display_history_messages_light(session_id)
+            session = self._session_from_dict(session_dict, history)
+
+            logger.info(
+                "session_loaded_light",
+                session_id=session_id,
+                message_count=len(history),
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
+            return session
+
+        except Exception as e:
+            logger.error(
+                "failed_to_load_session_light",
+                session_id=session_id,
+                error=str(e)
+            )
+            return None
+
     async def load_session_with_pagination(
         self,
         session_id: str,
-        message_limit: int = 5
+        message_limit: int = 5,
+        include_artifacts: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         加载会话（数据库层分页，只加载最新N条消息）
@@ -248,7 +520,8 @@ class SessionManagerDB:
             # 1. 先获取会话元数据（不加载消息）
             session_dict = await self.repository.get_session_with_messages(
                 session_id,
-                include_messages=False  # 不加载消息
+                include_messages=False,  # 不加载消息
+                include_artifacts=include_artifacts
             )
 
             if not session_dict:
@@ -265,7 +538,8 @@ class SessionManagerDB:
                 message_result = await self.repository.get_messages_before(
                     session_id=session_id,
                     before_sequence=None,  # None 表示获取最新消息
-                    limit=message_limit
+                    limit=message_limit,
+                    include_data=include_artifacts
                 )
                 session_dict["conversation_history"] = message_result["messages"]
 
@@ -299,10 +573,8 @@ class SessionManagerDB:
                 current_expert=session_dict.get("current_expert")
             )
 
-            # 加载到内存缓存
-            if self.enable_cache:
-                self.sessions[session_id] = session
-
+            # Do not cache this partial Session. Continuation paths use load_session()
+            # and expect cached sessions to contain the complete conversation history.
             logger.info(
                 "session_loaded_with_pagination",
                 session_id=session_id,
@@ -400,7 +672,8 @@ class SessionManagerDB:
                     updated_at=datetime.fromisoformat(summary["updated_at"]) if summary["updated_at"] else None,
                     data_count=summary["data_count"],
                     visual_count=summary["visual_count"],
-                    has_error=summary["has_error"]
+                    has_error=summary["has_error"],
+                    metadata=summary["metadata"]
                 ))
 
             return session_infos
@@ -416,22 +689,7 @@ class SessionManagerDB:
         Returns:
             统计信息字典
         """
-        all_sessions = await self.list_sessions(limit=10000)
-
-        stats: Dict[str, Any] = {
-            "total": len(all_sessions),
-            "total_data_count": 0,
-            "total_visual_count": 0,
-            "error_count": 0
-        }
-
-        for session_info in all_sessions:
-            stats["total_data_count"] += session_info.data_count
-            stats["total_visual_count"] += session_info.visual_count
-            if session_info.has_error:
-                stats["error_count"] += 1
-
-        return stats
+        return await self.repository.get_session_stats_summary()
 
     async def export_session(self, session_id: str, output_path: str) -> bool:
         """
@@ -485,8 +743,8 @@ class SessionManagerDB:
             session_data = json.loads(input_file.read_text(encoding='utf-8'))
             session = Session(**session_data)
 
-            # 保存到数据库
-            await self.save_session(session)
+            # Imported sessions are complete snapshots.
+            await self.replace_session_transcript(session)
 
             logger.info("session_imported", session_id=session.session_id)
             return session

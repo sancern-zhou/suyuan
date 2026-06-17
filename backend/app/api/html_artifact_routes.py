@@ -44,7 +44,7 @@ async def get_html_artifact_asset(artifact_id: str, asset_path: str):
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
     media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-    return FileResponse(path=str(file_path), media_type=media_type)
+    return FileResponse(path=str(file_path), media_type=media_type, filename=file_path.name)
 
 
 @router.get("/{artifact_id}/download/html")

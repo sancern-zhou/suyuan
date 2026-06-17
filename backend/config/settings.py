@@ -8,11 +8,14 @@ import yaml
 from pathlib import Path
 
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+
 class Settings(BaseSettings):
     """Application configuration settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(BACKEND_DIR / ".env", Path.cwd() / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
@@ -24,11 +27,59 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", description="Environment name")
     debug: bool = Field(default=True, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
+    app_role: str = Field(
+        default="web",
+        description="Application role: web, worker, or all. Web workers must not start background schedulers.",
+    )
 
     # Backend URL Configuration (用于生成图片等资源的完整URL)
     backend_host: str = Field(
         default="http://localhost:8000",
         description="Backend server host URL (for generating image URLs)"
+    )
+    signed_media_base_url: Optional[str] = Field(
+        default=None,
+        description="Public backend URL for temporary signed media links"
+    )
+    signed_media_secret: Optional[str] = Field(
+        default=None,
+        description="Secret used to sign temporary media URLs"
+    )
+    signed_media_ttl_seconds: int = Field(
+        default=600,
+        description="Temporary signed media URL lifetime in seconds"
+    )
+    media_object_store_enabled: bool = Field(
+        default=False,
+        description="Upload social media to an S3-compatible object store before sending to multimodal LLMs"
+    )
+    media_object_store_endpoint_url: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store endpoint URL"
+    )
+    media_object_store_access_key_id: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store access key ID"
+    )
+    media_object_store_secret_access_key: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store secret access key"
+    )
+    media_object_store_bucket: Optional[str] = Field(
+        default=None,
+        description="S3-compatible object store bucket"
+    )
+    media_object_store_region: str = Field(
+        default="auto",
+        description="S3-compatible object store region"
+    )
+    media_object_store_prefix: str = Field(
+        default="social-media",
+        description="Object key prefix for uploaded social media"
+    )
+    media_object_store_presign_ttl_seconds: int = Field(
+        default=600,
+        description="Object store presigned URL lifetime in seconds"
     )
     api_base_url: Optional[str] = Field(
         default=None,
@@ -131,11 +182,15 @@ class Settings(BaseSettings):
 
     minimax_api_key: Optional[str] = Field(default=None, description="MiniMax API key")
     minimax_base_url: str = Field(
-        default="https://api.minimax.chat/v1",
-        description="MiniMax API base URL"
+        default="https://api.minimaxi.com/v1",
+        description="MiniMax OpenAI-compatible API base URL"
+    )
+    minimax_anthropic_base_url: str = Field(
+        default="https://api.minimaxi.com/anthropic",
+        description="MiniMax Anthropic-compatible API base URL"
     )
     minimax_model: str = Field(
-        default="minimax-m2",
+        default="MiniMax-M3",
         description="MiniMax model name"
     )
 
@@ -195,11 +250,15 @@ class Settings(BaseSettings):
     )
     llm_flash_models: str = Field(
         default="",
-        description="Comma-separated Flash model priority chain, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2-flash"
+        description="Comma-separated Flash model priority chain, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2.5"
     )
     llm_pro_models: str = Field(
         default="",
         description="Comma-separated Pro model priority chain, e.g. mimo/mimo-v2.5-pro,deepseek/deepseek-v4-pro"
+    )
+    llm_multimodal_models: str = Field(
+        default="mimo/mimo-v2.5,minimax/MiniMax-M3",
+        description="Comma-separated Auto multimodal model priority chain"
     )
     llm_failover_cooldown_seconds: int = Field(
         default=60,
@@ -215,6 +274,33 @@ class Settings(BaseSettings):
     qwen_model: str = Field(
         default="qwen3",
         description="Qwen3 model name"
+    )
+    qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
+    qwen_vl_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        description="Qwen VL OpenAI-compatible API base URL"
+    )
+    qwen_vl_model: str = Field(default="qwen-vl-ocr", description="Qwen OCR model name")
+    qwen_vision_model: str = Field(default="qwen-vl-max", description="Qwen model for visual understanding tasks")
+    mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
+    mimo_vl_base_url: Optional[str] = Field(
+        default=None,
+        description="Mimo VL OpenAI-compatible API base URL"
+    )
+    mimo_vl_model: str = Field(default="mimo-v2.5", description="Mimo VL model name")
+    ops_attachment_root: Optional[str] = Field(default=None, description="Local root used to resolve /WebFiles attachments")
+    attachment_root: Optional[str] = Field(default=None, description="Fallback local attachment root")
+    ops_attachment_base_url: Optional[str] = Field(default=None, description="Base URL used to resolve /WebFiles attachments")
+    attachment_base_url: Optional[str] = Field(default=None, description="Fallback attachment base URL")
+
+    # 阿里云OCR配置
+    aliyun_ocr_access_key_id: Optional[str] = Field(
+        default=None,
+        description="Alibaba Cloud OCR AccessKey ID"
+    )
+    aliyun_ocr_access_key_secret: Optional[str] = Field(
+        default=None,
+        description="Alibaba Cloud OCR AccessKey Secret"
     )
 
     # Redis Configuration
@@ -355,6 +441,22 @@ class Settings(BaseSettings):
         default=False,
         description="Enable social platform integration"
     )
+    social_worker_internal_host: str = Field(
+        default="127.0.0.1",
+        description="Host for the worker-only social account internal API"
+    )
+    social_worker_internal_port: int = Field(
+        default=8011,
+        description="Port for the worker-only social account internal API"
+    )
+    social_worker_internal_url: str = Field(
+        default="http://127.0.0.1:8011",
+        description="Base URL used by web processes to reach the social worker internal API"
+    )
+    social_worker_internal_token: str = Field(
+        default="",
+        description="Shared token for web-to-worker social account API calls"
+    )
 
     @property
     def redis_url(self) -> str:
@@ -432,7 +534,6 @@ class Settings(BaseSettings):
                 "qq": {"enabled": False, "allow_from": ["*"]},
                 "weixin": {"enabled": False, "allow_from": ["*"]},
                 "dingtalk": {"enabled": False, "allow_from": ["*"]},
-                "wecom": {"enabled": False, "allow_from": ["*"]},
                 "channels": {
                     "send_progress": True,
                     "send_tool_hints": False,

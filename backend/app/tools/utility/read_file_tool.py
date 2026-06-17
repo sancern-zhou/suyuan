@@ -26,10 +26,13 @@ Word XML 三种模式：
 """
 import os
 import uuid
+from mimetypes import guess_type
 from pathlib import Path
+from urllib.parse import quote
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
+from app.tools.resource_refs import build_file_ref
 from app.utils.path_config import BACKEND_ROOT
 import structlog
 
@@ -50,9 +53,9 @@ class ReadFileTool(LLMTool):
     - 自动检测文件类型和大小
     """
 
-    # 支持的图片格式
+    # 支持的图片格式（SVG 作为文本/XML 读取，避免交给视觉模型）
     IMAGE_EXTENSIONS = {
-        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'
+        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'
     }
 
     # 支持的 PDF 格式
@@ -70,9 +73,6 @@ class ReadFileTool(LLMTool):
     # 支持的 Markdown 格式
     MARKDOWN_EXTENSIONS = {'.md', '.markdown', '.qmd'}
 
-    # 支持的 Jupyter Notebook 格式
-    NOTEBOOK_EXTENSIONS = {'.ipynb'}
-
     # 文本文件默认大小限制（100KB）
     DEFAULT_MAX_SIZE = 100 * 1024
 
@@ -83,11 +83,7 @@ class ReadFileTool(LLMTool):
         super().__init__(
             name="read_file",
             description=(
-                "读取文件或目录内容，支持文本分页、图片分析、PDF、DOCX、PPTX、Word XML、Markdown、Notebook。"
-                "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
-                "Excel文件不由 read_file 读取，需使用 execute_python。"
-                "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
-                "不返回base64，避免浪费上下文。"
+                "读取文件/目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
             ),
             category=ToolCategory.QUERY,
             version="4.0.0",
@@ -121,6 +117,7 @@ class ReadFileTool(LLMTool):
         extract_tables: bool = True,
         extract_images: bool = False,
         enable_preview: bool = True,
+        as_multimodal_attachment: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -141,6 +138,7 @@ class ReadFileTool(LLMTool):
             extract_tables: PDF是否提取表格（默认 True）
             extract_images: PDF是否提取图片（默认 False）
             enable_preview: PDF/DOCX是否生成预览（默认 True）
+            as_multimodal_attachment: 图片文件是否返回原生多模态附件（社交模式专用）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}
@@ -177,10 +175,11 @@ class ReadFileTool(LLMTool):
             is_docx = file_ext in self.DOCX_EXTENSIONS
             is_pptx = file_ext in self.PPTX_EXTENSIONS
             is_excel = file_ext in self.EXCEL_EXTENSIONS
-            is_notebook = file_ext in self.NOTEBOOK_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
 
             if is_image:
+                if as_multimodal_attachment:
+                    return await self._read_image_as_multimodal_attachment(resolved_path, file_size)
                 return await self._read_image(
                     resolved_path, file_size, auto_analyze, analysis_type
                 )
@@ -203,23 +202,6 @@ class ReadFileTool(LLMTool):
                 return await self._read_word_xml(
                     resolved_path, file_size, raw_mode, include_formatting, max_paragraphs
                 )
-            elif is_notebook:
-                # 读取 Jupyter Notebook（作为文本文件处理）
-                result = await self._read_text(
-                    resolved_path, encoding, file_size, offset, limit, max_size
-                )
-                # 标记为已读取（用于 notebook_edit 的 Read-Before-Edit 机制）
-                if result.get("success"):
-                    try:
-                        from app.tools.utility.notebook_edit_tool import mark_notebook_as_read
-                        full_content = resolved_path.read_text(encoding=encoding)
-                        mark_notebook_as_read(str(resolved_path), full_content)
-                    except ImportError:
-                        pass
-                # 生成 HTML 预览
-                if result.get("success") and enable_preview:
-                    await self._ensure_notebook_preview(resolved_path, result["data"])
-                return result
             else:
                 # 读取文本文件（支持分页）
                 return await self._read_text(
@@ -341,6 +323,26 @@ class ReadFileTool(LLMTool):
                 "total_lines": total_lines,
                 "is_truncated": is_truncated
             }
+            file_ref = build_file_ref(
+                file_path,
+                type="text",
+                format=data["format"],
+                size=file_size,
+                usage="read_file",
+                line_range=data["line_range"],
+                total_lines=total_lines,
+                is_truncated=is_truncated,
+            )
+            llm_resume = {
+                "content_preview": content[:2000],
+            }
+            if is_truncated:
+                llm_resume["tool_hint"] = (
+                    f"Use read_file(path='{file_path}', offset={end_line}, limit={effective_limit}) "
+                    "to continue reading."
+                )
+            else:
+                llm_resume["tool_hint"] = f"Use read_file(path='{file_path}') to reread this file."
 
             # Markdown文件添加预览字段
             if file_path.suffix.lower() in self.MARKDOWN_EXTENSIONS:
@@ -378,6 +380,8 @@ class ReadFileTool(LLMTool):
             return {
                 "success": True,
                 "data": data,
+                "refs": {"files": [file_ref]},
+                "llm_resume": llm_resume,
                 "summary": summary
             }
 
@@ -455,6 +459,52 @@ class ReadFileTool(LLMTool):
                 "data": {"error": str(e)},
                 "summary": f"读取图片失败: {str(e)[:50]}"
             }
+
+    async def _read_image_as_multimodal_attachment(
+        self,
+        file_path: Path,
+        file_size: int,
+    ) -> Dict[str, Any]:
+        """Return an image attachment directive for the runtime to send natively."""
+        if file_size > self.max_image_size:
+            return {
+                "success": False,
+                "status": "failed",
+                "type": "multimodal_attachment",
+                "data": {
+                    "error": f"图片文件过大: {file_size} bytes (最大 {self.max_image_size} bytes)"
+                },
+                "summary": "图片过大，超过5MB限制",
+            }
+
+        mime_type, _ = guess_type(file_path.name)
+        if not mime_type or not mime_type.startswith("image/"):
+            mime_type = "image/png"
+
+        attachment = {
+            "type": "image",
+            "name": file_path.name,
+            "local_path": str(file_path),
+            "mime_type": mime_type,
+        }
+        return {
+            "success": True,
+            "status": "success",
+            "type": "multimodal_attachment",
+            "data": {
+                "type": "multimodal_attachment",
+                "format": file_path.suffix[1:].lower(),
+                "size": file_size,
+                "attachments": [attachment],
+            },
+            "attachments": [attachment],
+            "summary": "图片已挂载，将在下一轮以原生多模态输入提供。",
+            "metadata": {
+                "schema_version": "v2.0",
+                "tool_name": "read_file",
+                "path": str(file_path),
+            },
+        }
 
     async def _read_pdf(
         self,
@@ -881,7 +931,7 @@ class ReadFileTool(LLMTool):
 
                 result_data["pdf_preview"] = {
                     "pdf_id": f"{uuid.uuid4()}",
-                    "pdf_url": f"/api/file/{str(file_path)}",
+                    "pdf_url": f"/api/file/{quote(str(file_path), safe='')}",
                     "pages": pages,
                     "size": file_path.stat().st_size
                 }
@@ -893,24 +943,6 @@ class ReadFileTool(LLMTool):
 
         except Exception as e:
             logger.warning("pdf_preview_generation_failed", path=str(file_path), error=str(e))
-            # 预览失败不影响主流程
-
-    async def _ensure_notebook_preview(self, notebook_path: Path, result_data: dict):
-        """确保Notebook HTML预览已生成"""
-        if "html_preview" in result_data:
-            return  # 已有预览
-
-        try:
-            from app.services.notebook_converter import notebook_converter
-            html_preview = await notebook_converter.convert_to_html(str(notebook_path))
-            result_data["html_preview"] = html_preview
-            logger.info(
-                "notebook_preview_generated",
-                notebook_path=str(notebook_path),
-                html_id=html_preview["html_id"]
-            )
-        except Exception as e:
-            logger.warning("notebook_preview_generation_failed", path=str(notebook_path), error=str(e))
             # 预览失败不影响主流程
 
     def _get_cached_tool(self, tool_class, tool_name: str):
@@ -1250,38 +1282,37 @@ class ReadFileTool(LLMTool):
         return {
             "name": "read_file",
             "description": (
-                "读取文件/目录；支持文本分页、图片、PDF、DOCX、Word XML、Markdown、Notebook。"
-                "PDF/DOCX可预览；Excel用execute_python；大文本用grep或分页；不返回base64。"
+                "读取文件/目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "文件或目录路径"
+                        "description": "路径"
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "起始行号，从0开始",
+                        "description": "起始行",
                         "default": 0
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "分页读取行数；仅当文件太大或只需读取部分内容时提供"
+                        "description": "行数"
                     },
                     "max_size": {
                         "type": "integer",
-                        "description": "最大读取字节，默认100KB",
+                        "description": "字节上限",
                         "default": 102400
                     },
                     "encoding": {
                         "type": "string",
-                        "description": "文本编码，默认utf-8",
+                        "description": "编码",
                         "default": "utf-8"
                     },
                     "auto_analyze": {
                         "type": "boolean",
-                        "description": "是否自动分析图片",
+                        "description": "分析图片",
                         "default": True
                     },
                     "analysis_type": {
@@ -1292,36 +1323,36 @@ class ReadFileTool(LLMTool):
                     },
                     "pages": {
                         "type": "string",
-                        "description": "PDF/DOCX页码范围，如1-5或3"
+                        "description": "页码范围"
                     },
                     "extract_tables": {
                         "type": "boolean",
-                        "description": "PDF是否提取表格",
+                        "description": "提取表格",
                         "default": True
                     },
                     "extract_images": {
                         "type": "boolean",
-                        "description": "PDF是否提取图片",
+                        "description": "提取图片",
                         "default": False
                     },
                     "enable_preview": {
                         "type": "boolean",
-                        "description": "PDF/DOCX是否生成前端预览",
+                        "description": "生成预览",
                         "default": True
                     },
                     "raw_mode": {
                         "type": "boolean",
-                        "description": "Word XML是否返回原始内容",
+                        "description": "Word XML原文",
                         "default": False
                     },
                     "include_formatting": {
                         "type": "boolean",
-                        "description": "Word XML是否保留格式信息",
+                        "description": "保留格式",
                         "default": False
                     },
                     "max_paragraphs": {
                         "type": "integer",
-                        "description": "最大段落数"
+                        "description": "段落上限"
                     }
                 },
                 "required": ["path"]

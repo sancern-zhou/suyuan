@@ -2,459 +2,150 @@
 
 ## 概述
 
-本指南介绍 PowerPoint 演示文稿（.pptx）的读取、分析和创建方法。
+本项目生成正式或业务型 PPT 时，使用 `create_pptx_with_ppt_master`。同一个工具通过 `operation=create/append/replace/patch/render` 区分新建、追加、替换、局部补丁和渲染预览。底层仍复用同一套 PPT Master 渲染逻辑：Agent 负责内容取舍、页面策略和 `slide_plan`/`plan_patch`，工具负责用 `python-pptx` 确定性绘制、登记产物、渲染 QA 和续改合并。
 
-**核心理念**：优先使用基于模板的方式创建PPT，保持设计风格一致性。
+模板槽位套版路径已从 Agent 工具体系移除。不要调用或建议 `analyze_pptx_template`、`create_pptx_from_template`，也不要回退到旧 deck 结构、底层 PptxGenJS 管线或手动 import PPT 工具类。
 
----
+## 工具选择
 
-## 核心原则
+| 任务类型 | 工具 | 说明 |
+|---------|------|------|
+| 从零生成正式业务 PPT | `create_pptx_with_ppt_master` | 主入口。优先由 Agent 提供 `slide_plan[].shapes` |
+| 续改 PPT Master 生成物 | `create_pptx_with_ppt_master(operation="patch")` + `base_plan_path`/`plan_patch` | 读取上一版 plan，只写局部 patch，未涉及页面保持原样 |
+| 读取 PPT 内容 | `read_pptx` | 提取文本、表格、图片信息、备注和基础元数据 |
+| 验证 PPT 质量 | `validate_pptx` | 渲染 PDF/PNG、montage，并检查字体、空页、越界、拥挤和文字密度 |
 
-### 1. 工具选择优先级
+## 从零生成流程
 
-| 任务类型 | 推荐工具 | 理由 |
-|---------|---------|------|
-| **基于模板创建PPT** | `create_pptx_from_template` | 保持设计风格，推荐 |
-| 从头创建PPT | `create_pptx` | 无模板时使用 |
-| 读取PPT内容 | `read_pptx` | 了解幻灯片内容 |
-| 分析模板结构 | `analyze_pptx_template` | 获取可替换槽位 |
-| 验证PPT质量 | `validate_pptx` | 检查设计质量 |
-
-### 2. 创建前必须分析
-
-在使用任何PPT创建工具之前，**必须**先执行：
-```python
-# 第一步：分析模板（如果使用模板）
-analyze_pptx_template(path="模板.pptx")
-
-# 第二步：根据分析结果创建PPT
+```text
+用户需求
+-> 明确用途、受众、页数范围、交付口径
+-> 查阅资料、读取附件、查询必要数据
+-> 形成 QMD 内容底稿或等价结构化大纲
+-> 生成必要图表、地图、复杂表格 PNG 资产
+-> 将内容规划为 slide_plan[].shapes
+-> 若预计超过 8 页或 shapes 很多，先 create_pptx_with_ppt_master 生成骨架
+-> create_pptx_with_ppt_master(operation="append"/"replace") 按 3-5 页一批插入或替换页面
+-> 简短 PPT 可直接 create_pptx_with_ppt_master 绘制完整 PPTX
+-> validate_pptx 渲染 PDF/PNG、montage 并生成 QA
+-> 结合 QA、单页 PNG 和上一版 slide_plan 写 plan_patch
+-> create_pptx_with_ppt_master(operation="patch") 合并 patch 并重绘
 ```
 
----
+用户明确要求“直接生成 PPT”或任务很小、内容已充分明确时，可以跳过内容底稿确认，但仍应保留 QA 和视觉检查。
 
-## 工具详解
+## PPT Master 规则
 
-### 1. read_pptx - 读取 PPT 内容
+调用 `create_pptx_with_ppt_master` 前必须先读：
 
-**功能**：读取 .pptx 文件的完整内容（文本、布局、图像）
+- `backend/app/tools/office/ppt_master_references/index.md`
 
-**用法**：
-```python
-read_pptx(
-    path="演示文稿.pptx",
-    max_slides=50  # 可选：限制幻灯片数量
-)
-```
+再按任务读取：
 
-**返回结果**：
-```json
-{
-  "success": true,
-  "data": {
-    "slides": [
-      {
-        "index": 0,
-        "layout": "Title Slide",
-        "title": "标题",
-        "content": [...]
-      }
-    ]
-  },
-  "summary": "共 25 页幻灯片"
-}
-```
+- `workflow.md`：正式业务 PPT 工作流
+- `slide-plan-rules.md`：`slide_plan` 输入合约、renderer 能力边界、QA 字段和示例
+- `layout-rules.md`：封面、目录、版式序列和内容密度
+- `chart-rules.md`：图表图片、原生图表和数据页规则
+- `qa-rules.md`：验证、质量门禁和字体规则
+- `output-contract.md`：返回字段和 project 产物检查
 
----
+## slide_plan 支持的 shape
 
-### 2. analyze_pptx_template - 分析模板结构
+`slide_plan` 是 body pages 数组。工具自动添加第 1 页封面，所以第一个 `slide_plan` item 会成为第 2 页。
 
-**功能**：分析PPT模板，识别可替换的槽位（slot_id）
+## 长 PPT 分批生成
 
-**用法**：
-```python
-analyze_pptx_template(
-    path="模板.pptx",
-    include_layouts=True,   # 可选：包含布局信息
-    write_report=True       # 可选：写入分析报告
-)
-```
+当 `slide_plan` 预计超过 8 页、正文页很多、每页 `shapes` 较多，或需要插入大量图表/表格时，不要一次把完整 `slide_plan` 直接内联传给 `create_pptx_with_ppt_master`。长 JSON 参数在流式 tool call 中容易被截断，导致工具参数解析失败。
 
-**返回结果**：
-```json
-{
-  "success": true,
-  "data": {
-    "slots": [
-      {
-        "slot_id": "s001_slot001",
-        "slide_index": 0,
-        "type": "title",
-        "current_text": "原标题"
-      }
-    ]
-  },
-  "summary": "发现 15 个可替换槽位"
-}
-```
+长 PPT 应按以下流程生成：
 
----
+1. 首次调用 `create_pptx_with_ppt_master` 只创建骨架 PPT：显式传 `title`、`purpose`、`audience`、`style`，并传短 `outline` 或少量章节/占位页。若已经有完整长 `slide_plan`，先用 `write_file` 写成 JSON 文件，再传 `slide_plan_path`，不要内联长数组。
+2. 从返回结果读取最新的 `data.slide_plan_path` 或 `data.page_plan_path`。
+3. 每次调用 `create_pptx_with_ppt_master(operation="append"/"replace"/"patch")` 只插入或替换 3-5 页。短批次可用 `batch_slides` + `after_slide`；页面内容较长、shape 较多或包含多表格/图表时，先写 `plan_patch` JSON 文件，再传 `plan_patch_path`。
+4. 每一批都必须基于上一批返回的新 `data.slide_plan_path`，不要反复基于最初版本，否则会覆盖或丢失前面批次。
+5. 所有批次完成后，再统一检查 `qa_status`、`quality_gate`、`validation.montage_path` 和单页 PNG；需要修复时继续用 `operation="patch"` 和局部 `plan_patch`。
 
-### 3. create_pptx_from_template - 基于模板创建（推荐）
+如果某一页的 `shapes` 特别多，应单页或两页一批续改。不要在一次 tool call 中生成 20 页以上的详细 `slide_plan`。
 
-**功能**：基于现有PPT模板，通过替换槽位生成新PPT
+支持的 shape 类型：
 
-**适用场景**：
-- ✅ 有现成的模板文件
-- ✅ 需要保持统一的设计风格
-- ✅ 批量生成相似结构的PPT
-- ✅ 公司标准模板
+- `text`、`textbox`、`title`、`body`
+- `image`、`picture`
+- `table`
+- `rect`、`rectangle`、`card`
 
-**用法**：
-```python
-create_pptx_from_template(
-    template_path="模板.pptx",
-    replacements={
-        "s001_slot001": "新标题",
-        "s001_slot002": "副标题内容",
-        "s002_slot003": "正文内容..."
-    },
-    output_file="新演示文稿.pptx"
-)
-```
+坐标单位：
 
-**完整示例**：
-```python
-# 第一步：分析模板
-analysis = analyze_pptx_template(path="公司模板.pptx")
+- 默认或 `unit: "in"`：英寸，16:9 页面为 `13.333 x 7.5`
+- `unit: "relative"`：`x/w` 为页面宽度比例，`y/h` 为页面高度比例
+- `unit: "emu"`：PowerPoint EMU 值
 
-# 第二步：提取槽位
-slots = {slot["slot_id"]: slot["current_text"] for slot in analysis["data"]["slots"]}
+图片 `fit`：
 
-# 第三步：替换内容
-create_pptx_from_template(
-    template_path="公司模板.pptx",
-    replacements={
-        "s001_slot001": "2026年度工作总结",
-        "s002_slot002": "项目背景与目标",
-        "s002_slot003": "本年度主要成果包括..."
-    },
-    output_file="年度总结_2026.pptx"
-)
-```
+- `contain`：保持比例完整放入目标框
+- `cover`：保持比例铺满目标框，使用 PowerPoint crop
+- `stretch`：强制拉伸到目标框
 
----
+表格字段：
 
-### 4. create_pptx - 从头创建（不推荐）
+- `rows`：二维数组，必填
+- `font_size`：表格字号，默认 11
+- `header_fill` / `header_color`：表头背景色和文字色
+- `cell_fill` / `text_color`：正文单元格背景色和文字色
 
-**功能**：使用 PptxGenJS 从结构化JSON一步生成可编辑PPTX
+复杂表格、强样式表格、超宽表格仍建议先渲染为 PNG，再用 `type: "image"` 插入。
 
-**适用场景**：
-- ⚠️ 仅在**没有模板**时使用
-- ⚠️ 需要完全自定义设计
-- ⚠️ 快速原型制作
-
-**用法**：
-```python
-create_pptx(
-    title="演示文稿标题",
-    slides=[
-        {
-            "type": "title",
-            "title": "主标题",
-            "subtitle": "副标题"
-        },
-        {
-            "type": "bullets",
-            "title": "要点列表",
-            "items": ["要点1", "要点2", "要点3"]
-        },
-        {
-            "type": "image",
-            "title": "配图说明",
-            "image_path": "/path/to/image.png"
-        }
-    ],
-    output_file="新演示文稿.pptx"
-)
-```
-
-**支持的幻灯片类型**：
-- `title` - 标题页
-- `bullets` - 要点列表
-- `key_message` - 核心信息
-- `image` - 图片页
-- `chart` - 图表页
-- `table` - 表格页
-- `comparison` - 对比页
-- `timeline` - 时间线
-- `process` - 流程图
-
----
-
-### 5. validate_pptx - 验证PPT质量
-
-**功能**：检查PPT的设计质量（字体、颜色、布局等）
-
-**用法**：
-```python
-validate_pptx(
-    path="演示文稿.pptx",
-    quality_level="standard"  # basic | standard | professional
-)
-```
-
-**返回结果**：
-```json
-{
-  "success": true,
-  "data": {
-    "score": 85,
-    "issues": [
-      {
-        "type": "font",
-        "message": "幻灯片3使用了过多字体（5种）"
-      }
-    ]
-  },
-  "summary": "质量评分：85/100，发现 2 个问题"
-}
-```
-
----
-
-## 标准操作流程
-
-### 场景 1：基于模板创建PPT（推荐）
+## 示例
 
 ```python
-# 第一步：分析模板
-analyze_pptx_template(path="公司标准模板.pptx")
-
-# 第二步：基于分析结果创建PPT
-create_pptx_from_template(
-    template_path="公司标准模板.pptx",
-    replacements={
-        "s001_slot001": "项目汇报",
-        "s002_slot002": "背景介绍",
-        "s002_slot003": "本项目旨在..."
-    },
-    output_file="项目汇报.pptx"
-)
-
-# 第三步：验证质量
-validate_pptx(path="项目汇报.pptx")
-```
-
----
-
-### 场景 2：从头创建PPT（无模板）
-
-```python
-create_pptx(
+create_pptx_with_ppt_master(
     title="产品介绍",
-    slides=[
+    purpose="product_launch",
+    audience="客户与销售团队",
+    style="business_clean",
+    slide_plan=[
         {
-            "type": "title",
-            "title": "新产品发布",
-            "subtitle": "2026年度旗舰产品"
-        },
-        {
-            "type": "bullets",
-            "title": "核心特性",
-            "items": [
-                "特性1：高性能处理器",
-                "特性2：超长续航",
-                "特性3：创新设计"
+            "title": "发布目标",
+            "message": "新产品聚焦高价值客户的效率提升场景",
+            "shapes": [
+                {"type": "title", "x": 0.55, "y": 0.35, "w": 7.5, "h": 0.5, "text": "发布目标", "font_size": 32, "bold": True},
+                {"type": "text", "x": 0.58, "y": 0.95, "w": 8.4, "h": 0.35, "text": "新产品聚焦高价值客户的效率提升场景", "font_size": 15, "color": "64748B"},
+                {"type": "card", "x": 0.75, "y": 1.75, "w": 3.45, "h": 3.3, "fill": "F8FAFC", "line": "CBD5E1"},
+                {"type": "table", "x": 4.8, "y": 1.55, "w": 7.6, "h": 2.1, "rows": [["指标", "当前", "同比"], ["转化率", "18.2%", "+2.1pp"], ["成本", "92", "-6%"]], "font_size": 12},
+                {"type": "image", "x": 4.8, "y": 4.0, "w": 7.6, "h": 2.2, "path": "/abs/path/product_chart.png", "fit": "contain"}
             ]
-        },
-        {
-            "type": "image",
-            "title": "产品外观",
-            "image_path": "/path/to/product.png"
         }
     ],
-    output_file="产品介绍.pptx"
+    output_file="产品介绍.pptx",
+    quality="standard",
+    run_validation=True
 )
 ```
 
----
+## 续改
 
-### 场景 3：批量生成PPT
+对 PPT Master 生成物继续编辑时：
 
-```python
-from pathlib import Path
+1. 读取上一次结果里的 `data.slide_plan_path` 或 `data.page_plan_path`。
+2. 根据用户要求、QA 问题和单页 PNG，只写局部修改。连续追加页面时优先使用 `batch_slides` + `after_slide`；复杂替换时使用局部 `plan_patch`。
+3. 调用 `create_pptx_with_ppt_master(operation="append", base_plan_path=..., batch_slides=[...], after_slide=...)`，或 `create_pptx_with_ppt_master(operation="patch", base_plan_path=..., plan_patch=...)`。
+4. 设置 `quality="standard"` 或 `run_validation=true` 重新验证。
+5. 续改结果会返回 `data.next_revision_base_plan_path`，下一批续改优先直接使用该路径。
 
-# 分析一次模板
-template_analysis = analyze_pptx_template(path="月报模板.pptx")
+不要每次重写整份 PPT。未涉及页面由工具从基线 plan 原样保留。
 
-# 批量生成
-for month in ["1月", "2月", "3月"]:
-    create_pptx_from_template(
-        template_path="月报模板.pptx",
-        replacements={
-            "s001_slot001": f"{month}工作总结",
-            "s002_slot002": f"{month}主要成果",
-            "s002_slot003": f"{month}完成..."
-        },
-        output_file=f"{month}月报.pptx"
-    )
-```
+## 验证和交付
 
----
+生成后必须检查：
 
-## 常见错误及解决
+- `data.file_path`
+- `data.project_dir`
+- `data.page_plan_path`
+- `data.slide_plan_path`
+- `data.qa_status`
+- `data.quality_gate`
+- `data.revision_tasks`
+- `data.validation.montage_path`
+- `data.validation.pages[].png_path`
 
-### 错误 1：工具选择不当
-
-❌ **错误**：有模板但用 `create_pptx` 从头创建
-```python
-# 浪费时间，设计风格不一致
-create_pptx(title="...", slides=[...])
-```
-
-✅ **正确**：使用 `create_pptx_from_template`
-```python
-# 保持设计风格，更高效
-create_pptx_from_template(
-    template_path="模板.pptx",
-    replacements={...}
-)
-```
-
----
-
-### 错误 2：未分析模板直接创建
-
-❌ **错误**：不知道 slot_id 就尝试替换
-```python
-# 这样会失败，slot_id 不存在
-create_pptx_from_template(
-    template_path="模板.pptx",
-    replacements={"slot001": "内容"}  # 错误的slot_id
-)
-```
-
-✅ **正确**：先分析再创建
-```python
-# 第一步：获取正确的 slot_id
-analysis = analyze_pptx_template(path="模板.pptx")
-
-# 第二步：使用正确的 slot_id
-create_pptx_from_template(
-    template_path="模板.pptx",
-    replacements={"s001_slot001": "内容"}  # 正确
-)
-```
-
----
-
-### 错误 3：槽位类型不匹配
-
-❌ **错误**：给图片槽位传入文本
-```python
-# 这样会失败或显示异常
-create_pptx_from_template(
-    template_path="模板.pptx",
-    replacements={"s003_image_slot": "文本内容"}  # 错误类型
-)
-```
-
-✅ **正确**：传入正确类型的值
-```python
-create_pptx_from_template(
-    template_path="模板.pptx",
-    replacements={"s003_image_slot": "/path/to/image.png"}  # 正确
-)
-```
-
----
-
-## 最佳实践
-
-### 1. 创建前检查清单
-
-- [ ] 是否有现成模板？（有 → 用 create_pptx_from_template）
-- [ ] 是否已分析模板了解槽位？
-- [ ] slot_id 是否正确？
-- [ ] 替换内容类型是否匹配？
-
-### 2. 设计原则
-
-- **一页一核心**：每页幻灯片只讲一个核心观点
-- **图文并茂**：避免纯文字堆砌
-- **配色统一**：使用主题色，不超过3种主色
-- **字体一致**：标题字体和正文字体保持一致
-
-### 3. 图片处理
-
-```python
-# 优先使用图片类型幻灯片
-{
-    "type": "image",
-    "title": "配图说明",
-    "image_path": "/path/to/image.png",
-    "caption": "图片说明文字"
-}
-```
-
-### 4. 批量生成建议
-
-```python
-# 复用分析结果，避免重复分析
-template_analysis = analyze_pptx_template(path="模板.pptx")
-
-for data in dataset:
-    create_pptx_from_template(
-        template_path="模板.pptx",
-        replacements=data,
-        output_file=f"输出_{data['id']}.pptx"
-    )
-```
-
----
-
-## 故障排查
-
-### 问题：slot 替换失败
-
-```
-warning: template_slot_replace_failed
-error: 目标槽位不是文本框
-```
-
-**原因**：槽位类型与传入值类型不匹配
-
-**解决**：
-1. 检查 `analyze_pptx_template` 返回的槽位类型
-2. 确保传入值类型正确（文本、图片、表格）
-
----
-
-### 问题：模板文件不存在
-
-```
-FileNotFoundError: 模板文件不存在
-```
-
-**解决**：
-1. 检查文件路径是否正确
-2. 使用绝对路径而非相对路径
-3. 确认文件扩展名是 .pptx
-
----
-
-### 问题：生成的PPT设计混乱
-
-**原因**：使用 `create_pptx` 从头创建，未指定主题
-
-**解决**：
-1. 使用 `create_pptx_from_template` 基于模板创建
-2. 或在 `create_pptx` 中指定 `theme` 参数
-
----
-
-## 相关资源
-
-- [python-pptx 文档](https://python-pptx.readthedocs.io/)
-- [PptxGenJS 文档](https://gitbrent.github.io/PptxGenJS/)
-- Anthropic PPT Skill: https://github.com/anthropics/skills/tree/main/skills/ppt
+`success=true` 只表示文件创建成功。只有 `qa_status=passed` 才能作为可交付版本；如果是 `needs_revision`，应根据结构化 QA 和单页 PNG 继续写 `plan_patch`。

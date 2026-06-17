@@ -13,7 +13,7 @@
  */
 
 import { ref } from 'vue'
-import { restoreSession, getSessionMessages } from '@/api/session'
+import { restoreSession as restoreSessionApi, getSessionMessages } from '@/api/session'
 
 /**
  * 统一的会话恢复逻辑
@@ -60,7 +60,7 @@ export function useSessionRestore(options) {
       console.log('[useSessionRestore] 开始恢复会话:', sessionId, '消息限制:', messageLimit)
 
       // 1. 调用后端 API
-      const response = await restoreSession(sessionId, messageLimit)
+      const response = await restoreSessionApi(sessionId, { messageLimit })
       console.log('[useSessionRestore] API响应:', response)
 
       const sessionData = response.session

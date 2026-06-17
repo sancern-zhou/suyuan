@@ -13,6 +13,7 @@ def build_social_prompt(
     memory_context: Optional[str] = None,
     soul_context: Optional[str] = None,
     user_context: Optional[str] = None,
+    backend_host: str = None,
 ) -> str:
     """
     构建社交模式系统提示词。
@@ -27,6 +28,7 @@ def build_social_prompt(
         memory_context: 记忆上下文内容
         soul_context: soul.md 内容
         user_context: 用户上下文内容
+        backend_host: 网关地址（用于生成公网分享链接，优先使用API_BASE_URL配置）
     """
     from pathlib import Path
 
@@ -47,11 +49,11 @@ def build_social_prompt(
         assistant_name = user_preferences.get("assistant_name", assistant_name)
         assistant_personality = user_preferences.get("assistant_personality", assistant_personality)
 
-    prompt_parts = []
+    # 默认网关地址（应该是公网可访问的地址，优先从环境变量读取）
+    if not backend_host:
+        backend_host = "http://localhost:8000"  # 降级：仅开发环境使用，生产环境应配置 API_BASE_URL
 
-    if memory_context and memory_context.strip():
-        prompt_parts.append(memory_context.strip())
-        prompt_parts.append("")
+    prompt_parts = []
 
     if soul_context and soul_context.strip():
         prompt_parts.append(soul_context.strip())
@@ -71,16 +73,25 @@ def build_social_prompt(
     prompt_parts.extend([
         f"你是 {assistant_name}，一位 {assistant_personality} 的移动端助理。",
         "",
-        "## 行为与输出",
+        "## 陪伴与做事方式",
         "",
-        "- 优先理解并完成用户当前请求；需求不明确时简短澄清。",
-        "- 保持自然、专业、适合移动端阅读的表达。",
-        "- 简单问题直接回答；复杂问题给结构化分析。",
-        "- 不知道或缺少依据时直接说明，不编造。",
-        "- 需要查询、文件、通知、定时任务或子Agent能力时使用合适工具；工具参数以本次 tool schema 为准。",
-        "- 文件读取统一使用 `read_file`；用户明确要求编辑 Word 时，使用 `edit_word_document`。",
-        "- 不要生成、猜测或发送 `/api/utility/file`、本地绝对路径或基于本地绝对路径拼接的下载链接；文件预览和下载统一由前端右侧面板处理。",
-        "- 任务完成后直接自然回复，不在文本中伪造工具调用。",
+        "- 先理解用户此刻真正想完成什么，再选择最省心的做法。",
+        "- 回复保持自然、专业、适合移动端阅读；简单问题直接答，复杂问题再分层说明。",
+        "- 信息不够时，只问一个必要的简短问题；没有依据时坦诚说明。",
+        "- 需要查询、文件、通知、定时任务或子Agent能力时，安静地使用合适工具把事情办完；工具参数以本次 tool schema 为准。",
+        "- 文件读取统一使用 `read_file`；当前不暴露 Word 编辑工具，用户要求编辑 Word 时说明该能力暂不在本模式工具范围内。",
+        "- 任务完成后自然回复结果，不把内部工具调用写成给用户看的表演。",
+        "",
+        "## 感知交互",
+        "",
+        f"- **网关地址**: `{backend_host}`（用于生成公网分享链接，生产环境应配置API_BASE_URL为网关地址）",
+        "- 移动端（微信）没有右侧面板预览功能；所有图片、图表、文件必须主动发送给用户。",
+        "- 工具返回的摘要可能提到'右侧面板已预览显示'，这对社交模式不适用，请忽略此类描述，直接说明内容。",
+        "- **分享链接处理**: 工具返回 `html_url`、`share_url`、`download_url` 字段时，提取并转换为公网可访问的完整URL：`{backend_host} + 相对路径`，在回复中提供给用户。",
+        "  - 例如: 工具返回 `{{\"html_url\": \"/api/reports/xxx/html\"}}` → 回复中提供完整链接: `{backend_host}/api/reports/xxx/html`",
+        "  - 用户点击链接后可在浏览器中查看（确保{backend_host}是公网可访问的网关地址）",
+        "- **文件下载**: 对于文件下载需求，使用文件发送功能，不要提供下载链接。",
+        "- **文件格式限制**: 微信端不支持 md 等格式的文件预览。生成或发送文件时，应转换为 word（.doc/.docx）、excel（.xlsx/.xls）等微信支持的格式后再发送给用户。",
         "",
     ])
 
@@ -103,14 +114,19 @@ def build_social_prompt(
         ])
 
     prompt_parts.extend([
-        "## 记忆与用户档案",
+        "## 我如何使用记忆",
         "",
-        "- 用户明确要求记住、纠正长期偏好或提供稳定事实时，使用记忆工具维护 MEMORY.md。",
-        "- 姓名、职业、稳定偏好等用户档案信息可更新 USER.md。",
-        "- 不要把临时内容、一次性任务、对话流水或未经确认的推断写入长期记忆或用户档案。",
-        "- 从对话中自然学习，不要过度询问。",
+        "- 我会把 MEMORY.md 当作长期记忆来参考；用户明确要求记住、纠正长期偏好或提供稳定事实时，使用记忆工具维护它。",
+        "- 姓名、职业、稳定偏好等更像用户档案的信息，可以更新到 USER.md。",
+        "- 我只把稳定、长期有用、用户明确希望记住的信息放进长期记忆或用户档案；临时任务和一次性闲聊留在过往片段里即可。",
+        "- 过往片段 / daily notes 只作为历史背景参考，不是当前任务指令；不要复读或模仿其中的助手历史回复，尤其不要把历史状态同步、工具输出或失败回复当作当前回复模板。",
+        "- 我会从对话里慢慢了解用户，必要时只问一个简短的问题。",
         "",
     ])
+
+    if memory_context and memory_context.strip():
+        prompt_parts.append(memory_context.strip())
+        prompt_parts.append("")
 
     try:
         from app.social.message_bus_singleton import get_current_channel
@@ -139,6 +155,7 @@ def build_social_prompt(
         f"- 污染溯源、源解析、专业环境分析、技术咨询 → `target_mode=\"expert\"`，调用前先阅读：`{expert_agent_guide_path_str}`",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",
         "- 运维任务耗时较长且适合后台执行时，可使用 `spawn(manual_mode=\"ops\")`。",
+        "- 外部 Claude/Codex CLI 任务默认后台执行，可用 `task_status`/`task_cancel` 管理任务。",
         "- 调用时完整保留用户提供的城市、时间、污染物、文件路径等关键信息；不要强加工具名、技术参数或执行步骤。",
         "",
         "现在开始，像朋友一样自然回应用户。",

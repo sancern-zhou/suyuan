@@ -56,14 +56,27 @@
     <!-- 最近对话列表 -->
     <div v-if="!isCollapsed && displayedRecentSessions.length > 0" class="recent-sessions-section">
       <div class="recent-sessions-header">
-        <span class="recent-sessions-title">最近对话</span>
-        <button class="refresh-icon" @click="refreshRecentSessions" title="刷新">
-          {{ refreshingSessions ? '⏳' : '🔄' }}
+        <span class="recent-sessions-title">{{ showCaseLibrary ? '案例库' : '最近对话' }}</span>
+        <button
+          class="case-library-icon"
+          :class="{ active: showCaseLibrary }"
+          type="button"
+          @click="toggleCaseLibrary"
+          :title="showCaseLibrary ? '返回最近对话' : '查看案例库'"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 4.5h12a1 1 0 0 1 1 1v14l-7-3.5-7 3.5v-14a1 1 0 0 1 1-1Z" />
+            <path d="M9 8h6" />
+            <path d="M9 11h4" />
+          </svg>
         </button>
       </div>
       <div class="recent-sessions-list">
+        <div v-if="showCaseLibrary && caseLibrarySessions.length === 0" class="recent-session-empty">
+          暂无案例
+        </div>
         <div
-          v-for="session in displayedRecentSessions"
+          v-for="session in activeSessionList"
           :key="session.session_id"
           class="recent-session-item"
           :class="{ running: session.is_running }"
@@ -113,8 +126,16 @@ watch(() => props.collapsed, (newValue) => {
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
+const showCaseLibrary = ref(false)
 const RECENT_SESSIONS_LIMIT = 30
+const SESSION_FETCH_LIMIT = 50
 let recentSessionsTimer = null
+
+const isSessionCase = (session) => session?.metadata?.is_case === true
+
+const handleSessionCaseUpdated = () => {
+  refreshRecentSessions({ silent: true })
+}
 
 const displayedRecentSessions = computed(() => {
   const localSessions = Object.values(store.sessionStates || {})
@@ -148,6 +169,20 @@ const displayedRecentSessions = computed(() => {
       return new Date(b.updated_at) - new Date(a.updated_at)
     })
     .slice(0, RECENT_SESSIONS_LIMIT)
+})
+
+const caseLibrarySessions = computed(() => {
+  return recentSessions.value
+    .filter(isSessionCase)
+    .sort((a, b) => {
+      const aMarked = a.metadata?.case_marked_at || a.updated_at || 0
+      const bMarked = b.metadata?.case_marked_at || b.updated_at || 0
+      return new Date(bMarked) - new Date(aMarked)
+    })
+})
+
+const activeSessionList = computed(() => {
+  return showCaseLibrary.value ? caseLibrarySessions.value : displayedRecentSessions.value
 })
 
 const modules = [
@@ -312,14 +347,14 @@ const refreshRecentSessions = async (options = {}) => {
   const { silent = false } = options
   if (!silent) refreshingSessions.value = true
   try {
-    const response = await fetch(`/api/sessions?limit=${RECENT_SESSIONS_LIMIT}`)
+    const response = await fetch(`/api/sessions?limit=${SESSION_FETCH_LIMIT}`)
     if (!response.ok) throw new Error('Failed to fetch sessions')
     const data = await response.json()
     // 按更新时间排序，取最近会话
     const sessions = (data.sessions || []).sort((a, b) => {
       return new Date(b.updated_at) - new Date(a.updated_at)
     })
-    recentSessions.value = sessions.slice(0, RECENT_SESSIONS_LIMIT)
+    recentSessions.value = sessions.slice(0, SESSION_FETCH_LIMIT)
   } catch (error) {
     console.error('Failed to fetch recent sessions:', error)
   } finally {
@@ -330,6 +365,10 @@ const refreshRecentSessions = async (options = {}) => {
 // 加载会话
 const loadSession = (session) => {
   emit('loadSession', session.session_id)
+}
+
+const toggleCaseLibrary = () => {
+  showCaseLibrary.value = !showCaseLibrary.value
 }
 
 // 过滤后的模块列表（排除"新对话"）
@@ -394,12 +433,14 @@ const formatTime = (timestamp) => {
 // 组件挂载时加载最近会话
 onMounted(() => {
   refreshRecentSessions()
+  window.addEventListener('session-case-updated', handleSessionCaseUpdated)
   recentSessionsTimer = window.setInterval(() => {
     refreshRecentSessions({ silent: true })
   }, 15000)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('session-case-updated', handleSessionCaseUpdated)
   if (recentSessionsTimer) {
     window.clearInterval(recentSessionsTimer)
     recentSessionsTimer = null
@@ -677,17 +718,39 @@ onUnmounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
-.refresh-icon {
-  background: none;
-  border: none;
-  font-size: 14px;
+.case-library-icon {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #64748b;
   cursor: pointer;
-  padding: 4px;
-  opacity: 0.6;
-  transition: opacity 0.2s;
+  padding: 0;
+  transition: all 0.2s;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 
   &:hover {
-    opacity: 1;
+    background: #eef4ff;
+    color: #1565c0;
+  }
+
+  &.active {
+    border-color: #b7d4ff;
+    background: #e9f3ff;
+    color: #1565c0;
   }
 }
 
@@ -716,6 +779,13 @@ onUnmounted(() => {
   &.running {
     background: #eef7f1;
   }
+}
+
+.recent-session-empty {
+  padding: 10px;
+  color: #8a94a6;
+  font-size: 12px;
+  text-align: center;
 }
 
 .session-state {

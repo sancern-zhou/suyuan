@@ -41,7 +41,13 @@
       @click="handleMessageClick(message, index)"
     >
       <!-- 用户消息 -->
-      <div v-if="getMessageType(message) === 'user'" class="message user-message">
+      <div
+        v-if="getMessageType(message) === 'user'"
+        class="message user-message"
+        :class="{
+          'steering-pending': isPendingSteeringMessage(message)
+        }"
+      >
         <!-- 附件显示 -->
         <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
           <div v-for="(attachment, idx) in message.attachments" :key="idx" class="message-attachment">
@@ -67,7 +73,19 @@
           </div>
         </div>
 
-        <div class="message-content user-message-content" v-if="message.content">
+        <div class="message-content user-message-content" v-if="getMessageContent(message)">
+          <div
+            v-if="isPendingSteeringMessage(message)"
+            class="user-message-status"
+            role="status"
+            aria-label="等待 Agent 接收"
+          >
+            <span class="pending-steering-icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+          </div>
           <div
             class="user-message-text"
             :class="{ collapsed: isUserMessageCollapsed(message) }"
@@ -75,7 +93,7 @@
             {{ getUserMessageDisplayText(message) }}
           </div>
           <button
-            v-if="isUserMessageLong(message.content)"
+            v-if="isUserMessageLong(getMessageContent(message))"
             class="user-message-expand"
             type="button"
             @click.stop="toggleUserMessageExpanded(message.id)"
@@ -156,11 +174,11 @@
           <!-- 【Vue 3 最佳实践】使用 key 强制重新渲染 -->
           <MarkdownRenderer
             :key="`${message.id}-${message.streaming === true ? 'streaming' : 'complete'}-${message.renderVersion || 0}`"
-            :content="contentToString(message.content)"
+            :content="contentToString(getMessageContent(message))"
             :streaming="message.streaming === true"
           />
         </div>
-        <div class="message-content" v-else>{{ contentToString(message.content) }}</div>
+        <div class="message-content" v-else>{{ contentToString(getMessageContent(message)) }}</div>
 
         <!-- 多专家系统：直接显示报告内容，无额外装饰 -->
         <div v-if="message.data?.expert_results?.report && reportContentCacheMap.get(message.data.expert_results.report)" class="expert-report-content">
@@ -195,7 +213,7 @@
       <!-- 错误消息 -->
       <div v-else-if="getMessageType(message) === 'error'" class="event-content error">
         <div class="event-icon">⚠️</div>
-        <div class="event-text">{{ contentToString(message.content) }}</div>
+        <div class="event-text">{{ contentToString(getMessageContent(message)) }}</div>
       </div>
     </div>
 
@@ -279,17 +297,14 @@
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import {
+  getExecutingProcessMessages,
+  getMessageType,
+  getUnifiedProcessMessages as collectUnifiedProcessMessages,
+  isProcessMessage
+} from './reactAnalysis/messageProcessGrouping.js'
 
 const reactStore = useReactStore()
-
-// 【修复】辅助函数：获取消息类型（兼容 type 和 role 字段）
-const getMessageType = (message) => {
-  // 优先使用 type 字段（后端返回的格式），如果没有则使用 role 字段（旧格式）
-  const type = message.type || message.role
-  // 将后端的 assistant 映射为 final
-  if (type === 'assistant') return 'final'
-  return type
-}
 
 // 【新增】辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -643,36 +658,9 @@ const welcomeContent = computed(() => {
   return contentMap[props.assistantMode] || contentMap['general-agent']
 })
 
-const PROCESS_MESSAGE_TYPES = new Set(['thought', 'tool_use', 'tool_result'])
-
-const isProcessMessage = (message) => PROCESS_MESSAGE_TYPES.has(getMessageType(message))
-
 // 执行中的过程消息：只显示当前用户消息之后、最终答案到达之前的过程。
 const executingProcessMessages = computed(() => {
-  let lastFinalIndex = -1
-  let lastUserIndex = -1
-  for (let i = props.messages.length - 1; i >= 0; i--) {
-    const type = getMessageType(props.messages[i])
-    if (lastFinalIndex === -1 && type === 'final') {
-      lastFinalIndex = i
-    }
-    if (lastUserIndex === -1 && type === 'user') {
-      lastUserIndex = i
-    }
-    if (lastFinalIndex !== -1 && lastUserIndex !== -1) {
-      break
-    }
-  }
-
-  if (lastUserIndex > lastFinalIndex) {
-    return props.messages.slice(lastUserIndex + 1).filter(isProcessMessage)
-  }
-
-  if (lastFinalIndex === -1) {
-    return props.messages.filter(isProcessMessage)
-  }
-
-  return []
+  return getExecutingProcessMessages(props.messages)
 })
 
 const displayedMessages = computed(() => {
@@ -725,6 +713,10 @@ const isProcessExpanded = (messageId) => {
   }
 }
 
+const getMessageContent = (message) => message?.content ?? message?.content_preview ?? ''
+
+const isPendingSteeringMessage = (message) => message?.steering && message?.steeringStatus === 'pending'
+
 const getUserMessageText = (content) => contentToString(content).trim()
 
 const isUserMessageLong = (content) => {
@@ -734,12 +726,12 @@ const isUserMessageLong = (content) => {
 }
 
 const isUserMessageCollapsed = (message) => {
-  if (!message?.id || !isUserMessageLong(message.content)) return false
+  if (!message?.id || !isUserMessageLong(getMessageContent(message))) return false
   return !expandedUserMessageIds.value.has(message.id)
 }
 
 const getUserMessageDisplayText = (message) => {
-  const text = getUserMessageText(message.content)
+  const text = getUserMessageText(getMessageContent(message))
   if (!isUserMessageCollapsed(message)) return text
 
   const lines = text.split(/\r?\n/)
@@ -776,7 +768,7 @@ const markUserMessageCopied = (messageId) => {
 }
 
 const copyUserMessage = async (message) => {
-  const text = getUserMessageText(message?.content)
+  const text = getUserMessageText(getMessageContent(message))
   if (!text) return
 
   try {
@@ -855,7 +847,7 @@ const getProcessToolName = (message) => {
   if (data.name) return data.name
   if (data.expert_type) return getExpertLabel(data.expert_type)
 
-  const text = contentToString(message?.content || '')
+  const text = contentToString(getMessageContent(message))
   const toolUseMatch = text.match(/Tool Use:\s*([^\s(]+)/i)
   if (toolUseMatch?.[1]) return toolUseMatch[1]
   const cnMatch = text.match(/执行【([^】]+)】/)
@@ -878,12 +870,12 @@ const getProcessResultSummary = (message) => {
   if (result?.error) return result.error
   if (data.status) return `状态: ${data.status}`
   if (Array.isArray(data.data_ids)) return `产生 ${data.data_ids.length} 个数据结果`
-  const text = contentToString(message?.content || '').trim()
+  const text = contentToString(getMessageContent(message)).trim()
   return text.replace(/^[\u{1F527}\u2705\u274C]\s*/u, '') || ''
 }
 
 const shouldShowThought = (message, previousThought = '') => {
-  const content = contentToString(message?.content || '').trim()
+  const content = contentToString(getMessageContent(message)).trim()
   if (!content) return false
   const isTemplateThinking =
     content.startsWith('准备调用工具:') ||
@@ -908,7 +900,7 @@ const buildProcessItems = (messages, options = {}) => {
     const type = getMessageType(message)
 
     if (type === 'thought') {
-      const content = contentToString(message.content)
+      const content = contentToString(getMessageContent(message))
       if (!shouldShowThought(message, previousThought)) continue
       previousThought = content.trim()
       items.push({
@@ -1024,39 +1016,7 @@ const formatProcessValue = (value) => {
 }
 
 const getUnifiedProcessMessages = (finalMessage, allMessages) => {
-  const messages = allMessages || []
-  const finalIndex = messages.findIndex(m =>
-    (finalMessage.id && m.id === finalMessage.id) || m === finalMessage
-  )
-  if (finalIndex === -1) {
-    return []
-  }
-
-  let previousBoundaryIndex = -1
-  for (let i = finalIndex - 1; i >= 0; i--) {
-    const type = getMessageType(messages[i])
-    if (type === 'final' || type === 'user') {
-      previousBoundaryIndex = i
-      break
-    }
-  }
-
-  const beforeFinal = messages
-    .slice(previousBoundaryIndex + 1, finalIndex)
-    .filter(isProcessMessage)
-
-  const afterFinal = []
-  for (let i = finalIndex + 1; i < messages.length; i++) {
-    const type = getMessageType(messages[i])
-    if (type === 'user' || type === 'final' || type === 'error') {
-      break
-    }
-    if (isProcessMessage(messages[i])) {
-      afterFinal.push(messages[i])
-    }
-  }
-
-  return [...beforeFinal, ...afterFinal]
+  return collectUnifiedProcessMessages(finalMessage, allMessages)
 }
 
 // 【修复】智能滚动控制
@@ -1064,6 +1024,7 @@ const scrollToBottom = () => {
   nextTick(() => {
     if (messagesContainer.value) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      lastScrollTop.value = messagesContainer.value.scrollTop
     }
   })
 }
@@ -1079,19 +1040,40 @@ const isAtBottom = () => {
 const userHasScrolled = ref(false)
 const showScrollToBottom = ref(false)
 const scrollTimeout = ref(null)
+const lastScrollTop = ref(0)
+const pendingLoadMoreScrollHeight = ref(null)
+const pendingLoadMoreScrollTop = ref(null)
 
 // 检测用户是否手动滚动
-const handleUserScroll = () => {
+const handleUserScroll = (event) => {
   // 只有当用户向上滚动（查看历史消息）时才标记
   if (messagesContainer.value) {
     const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
     const distanceToBottom = scrollHeight - scrollTop - clientHeight
+    const isUserEvent = event?.isTrusted === true
+    const isScrollingUp = scrollTop < lastScrollTop.value
+
     showScrollToBottom.value = distanceToBottom > 120
 
     // 只有距离底部超过50px时才认为用户在查看历史消息
-    if (distanceToBottom > 50) {
+    if (isUserEvent && distanceToBottom > 50) {
       userHasScrolled.value = true
     }
+
+    // 只有用户真实向上滚动到顶部附近时才分页加载，避免首屏恢复/程序滚动触发。
+    if (
+      isUserEvent &&
+      isScrollingUp &&
+      scrollTop <= 30 &&
+      props.hasMoreMessages &&
+      !props.loadingMore
+    ) {
+      pendingLoadMoreScrollHeight.value = scrollHeight
+      pendingLoadMoreScrollTop.value = scrollTop
+      emit('load-more')
+    }
+
+    lastScrollTop.value = scrollTop
   }
 
   // 清除之前的超时
@@ -1104,13 +1086,6 @@ const handleUserScroll = () => {
     userHasScrolled.value = false
   }, 2000)
 
-  // 滚动到顶部时自动加载更多历史消息
-  if (messagesContainer.value) {
-    const { scrollTop } = messagesContainer.value
-    if (scrollTop <= 30 && props.hasMoreMessages && !props.loadingMore) {
-      emit('load-more')
-    }
-  }
 }
 
 const scrollToBottomFromButton = () => {
@@ -1124,6 +1099,23 @@ const scrollToBottomFromButton = () => {
 watch(
   () => props.messages.length,
   (newLength, oldLength) => {
+    // 前置插入更早消息时保持用户当前视口位置，避免内容跳动。
+    if (
+      pendingLoadMoreScrollHeight.value !== null &&
+      oldLength > 0 &&
+      newLength > oldLength &&
+      messagesContainer.value
+    ) {
+      nextTick(() => {
+        const heightDelta = messagesContainer.value.scrollHeight - pendingLoadMoreScrollHeight.value
+        messagesContainer.value.scrollTop = (pendingLoadMoreScrollTop.value || 0) + heightDelta
+        lastScrollTop.value = messagesContainer.value.scrollTop
+        pendingLoadMoreScrollHeight.value = null
+        pendingLoadMoreScrollTop.value = null
+      })
+      return
+    }
+
     // 如果是首次加载（oldLength为0），滚动到底部
     if (oldLength === 0 && newLength > 0) {
       scrollToBottom()
@@ -1153,6 +1145,7 @@ watch(
 // mounted时绑定滚动事件
 onMounted(() => {
   if (messagesContainer.value) {
+    lastScrollTop.value = messagesContainer.value.scrollTop
     messagesContainer.value.addEventListener('scroll', handleUserScroll)
   }
   // 监听ESC键关闭图片预览
@@ -2052,6 +2045,44 @@ const closeImagePreview = () => {
   box-sizing: border-box;
   min-width: 0;
 
+  &.steering-pending {
+    background: #f7f8fa;
+    border-style: dashed;
+    border-color: #b7c0cc;
+    color: #6b7280;
+    opacity: 0.82;
+  }
+
+  .user-message-status {
+    margin-bottom: 4px;
+    display: inline-flex;
+    align-items: center;
+    height: 14px;
+
+    .pending-steering-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+
+      span {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #64748b;
+        opacity: 0.42;
+        animation: message-pending-steering-pulse 1.2s ease-in-out infinite;
+
+        &:nth-child(2) {
+          animation-delay: 0.16s;
+        }
+
+        &:nth-child(3) {
+          animation-delay: 0.32s;
+        }
+      }
+  }
+}
+
   .message-content {
     text-align: left;
     min-width: 0;
@@ -2156,6 +2187,20 @@ const closeImagePreview = () => {
     .badge-text {
       font-weight: 500;
     }
+  }
+}
+
+@keyframes message-pending-steering-pulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: translateY(-3px);
+    opacity: 0.9;
   }
 }
 

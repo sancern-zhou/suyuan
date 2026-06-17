@@ -47,7 +47,7 @@ class ReActPlanner:
     ):
         self._tool_registry = tool_registry
         self.context = context
-        self.llm_service = llm_service
+        self.llm_service = llm_client or llm_service
         self.max_context_turns = max_context_turns
         self.is_interruption = False
 
@@ -98,6 +98,28 @@ class ReActPlanner:
             )
         return conversation_history
 
+    @staticmethod
+    def _is_fetch_url_failure(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "fetch url failed" in message or "fetch_url_failed" in message
+
+    @staticmethod
+    def _base64_retry_content(user_content: Any, attachments: Optional[List[Dict[str, Any]]]) -> Any:
+        if not attachments:
+            return user_content
+        text = ""
+        if isinstance(user_content, list) and user_content:
+            first = user_content[0]
+            if isinstance(first, dict) and first.get("type") == "text":
+                text = str(first.get("text") or "")
+        elif isinstance(user_content, str):
+            text = user_content
+
+        from app.agent.runtime.multimodal import build_base64_user_content
+
+        retry_content = build_base64_user_content(text, attachments)
+        return retry_content if retry_content != text else user_content
+
     async def think_and_action(
         self,
         query: str,
@@ -107,6 +129,11 @@ class ReActPlanner:
         iteration: int = 0,
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        user_content: Optional[Any] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        llm_provider: Optional[str] = None,
+        llm_model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         """原生工具调用规划器（非流式）
 
@@ -136,7 +163,7 @@ class ReActPlanner:
 
         # 构建 messages（Anthropic API 不接受 system 在 messages 中）
         messages = conversation_history + [
-            {"role": "user", "content": user_conversation}
+            {"role": "user", "content": user_content if user_content is not None else user_conversation}
         ]
 
         # 转换工具为 Anthropic 格式
@@ -147,12 +174,38 @@ class ReActPlanner:
 
         logger.info("anthropic_planner_call", iteration=iteration, mode=mode, tool_count=len(tools))
 
-        llm_response = await self.llm_service.chat_anthropic(
-            messages=messages,
-            tools=anthropic_tools,
-            temperature=0.3,
-            system=system_prompt
-        )
+        try:
+            llm_response = await self.llm_service.chat_anthropic(
+                messages=messages,
+                tools=anthropic_tools,
+                temperature=0.3,
+                system=system_prompt,
+                provider=llm_provider,
+                model=llm_model,
+                auto_profile=auto_profile,
+            )
+        except Exception as exc:
+            retry_content = self._base64_retry_content(user_content, attachments)
+            if not self._is_fetch_url_failure(exc) or retry_content is user_content:
+                raise
+            logger.warning(
+                "anthropic_planner_retrying_with_base64_image",
+                provider=llm_provider,
+                model=llm_model,
+                error=str(exc)[:300],
+            )
+            retry_messages = conversation_history + [
+                {"role": "user", "content": retry_content}
+            ]
+            llm_response = await self.llm_service.chat_anthropic(
+                messages=retry_messages,
+                tools=anthropic_tools,
+                temperature=0.3,
+                system=system_prompt,
+                provider=llm_provider,
+                model=llm_model,
+                auto_profile=auto_profile,
+            )
 
         return self._parse_anthropic_response(llm_response)
 
@@ -165,6 +218,11 @@ class ReActPlanner:
         iteration: int = 0,
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        user_content: Optional[Any] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        llm_provider: Optional[str] = None,
+        llm_model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """流式规划器（按模式过滤 tools schema）
 
@@ -191,7 +249,7 @@ class ReActPlanner:
         conversation_history = self._fix_missing_tool_results(conversation_history)
 
         messages = conversation_history + [
-            {"role": "user", "content": user_conversation}
+            {"role": "user", "content": user_content if user_content is not None else user_conversation}
         ]
 
         # 转换工具为 Anthropic 格式
@@ -215,7 +273,10 @@ class ReActPlanner:
                 messages=messages,
                 tools=anthropic_tools,
                 temperature=0.3,
-                system=system_prompt
+                system=system_prompt,
+                provider=llm_provider,
+                model=llm_model,
+                auto_profile=auto_profile,
             ):
                 event_type = event["type"]
                 event_data = event["data"]
@@ -230,11 +291,15 @@ class ReActPlanner:
                     elif block.type == "text":
                         current_text_block = {"index": index, "text": ""}
                     elif block.type == "tool_use":
+                        initial_input = getattr(block, "input", None)
+                        if not isinstance(initial_input, dict):
+                            initial_input = {}
                         current_tool_block = {
                             "index": index,
                             "id": block.id,
                             "name": block.name,
-                            "input_json": ""
+                            "input_json": "",
+                            "input": initial_input,
                         }
 
                 elif event_type == "content_block_delta":
@@ -328,17 +393,27 @@ class ReActPlanner:
 
                     elif current_tool_block and current_tool_block["index"] == index:
                         # 解析完整的 tool_use input JSON
-                        tool_input = {}
+                        tool_input = current_tool_block.get("input", {})
                         if current_tool_block["input_json"]:
                             try:
                                 tool_input = json.loads(current_tool_block["input_json"])
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError as exc:
                                 logger.warning(
                                     "tool_use_input_json_parse_failed",
                                     tool_name=current_tool_block["name"],
-                                    raw_json=current_tool_block["input_json"][:200]
+                                    raw_json=current_tool_block["input_json"][:200],
+                                    error=str(exc),
                                 )
-                                tool_input = {}
+                                current_blocks.append({
+                                    "type": "text",
+                                    "text": (
+                                        f"Tool call for {current_tool_block['name']} was not executed because "
+                                        "the streamed tool input JSON was malformed. Retry with a smaller tool "
+                                        "input or write large payloads to a file and pass the file path."
+                                    ),
+                                })
+                                current_tool_block = None
+                                continue
 
                         tool_block = {
                             "type": "tool_use",
@@ -445,8 +520,12 @@ class ReActPlanner:
                 error=str(e),
                 error_type=type(e).__name__
             )
+            retry_content = self._base64_retry_content(user_content, attachments)
             # 降级到非流式
-            logger.info("anthropic_planner_fallback_to_non_streaming")
+            logger.info(
+                "anthropic_planner_fallback_to_non_streaming",
+                retry_with_base64=self._is_fetch_url_failure(e) and retry_content is not user_content,
+            )
             result = await self.think_and_action(
                 query=query,
                 system_prompt=system_prompt,
@@ -455,6 +534,10 @@ class ReActPlanner:
                 iteration=iteration,
                 mode=mode,
                 conversation_history=conversation_history,
+                user_content=retry_content if self._is_fetch_url_failure(e) else user_content,
+                attachments=attachments,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
             )
             yield {
                 "type": "streaming_text",

@@ -91,6 +91,7 @@ class CreateScheduledTaskTool(LLMTool):
                 "task_id": task_id,
                 "name": task_config["name"],
                 "description": task_config["description"],
+                "execution_mode": task_config.get("execution_mode", "expert"),
                 "schedule_type": ScheduleType(task_config["schedule_type"]),
                 "enabled": True,
                 "steps": [
@@ -168,7 +169,10 @@ class CreateScheduledTaskTool(LLMTool):
 
 1. name: 任务名称（简短，10字以内）
 2. description: 任务描述（详细说明任务目的）
-3. schedule_type: 调度类型，支持以下类型：
+3. execution_mode: 执行模式，支持 "assistant" 或 "expert"
+   - 广播、通知、社交文案生成任务优先使用 "assistant"
+   - 数据分析、专业推理任务优先使用 "expert"
+4. schedule_type: 调度类型，支持以下类型：
    预设类型：
    - "daily_8am": 每天早上8点
    - "every_2h": 每2小时
@@ -179,24 +183,25 @@ class CreateScheduledTaskTool(LLMTool):
    - "interval": 自定义间隔（需额外提供interval_minutes字段，如5表示每5分钟）
    - "daily_custom": 每天自定义时间（需额外提供hour和minute字段，如hour:9, minute:30表示每天9:30）
 
-4. 灵活调度参数（根据schedule_type选择）：
+5. 灵活调度参数（根据schedule_type选择）：
    - run_at: 一次性任务的执行时间（schedule_type=once时必填，格式："2026-02-13 14:30:00"）
    - interval_minutes: 间隔分钟数（schedule_type=interval时必填，如5表示每5分钟）
    - hour: 每天执行的小时（schedule_type=daily_custom时必填，0-23）
    - minute: 每天执行的分钟（schedule_type=daily_custom时必填，0-59）
 
-5. steps: 任务步骤列表，每个步骤包含：
+6. steps: 任务步骤列表，每个步骤包含：
    - description: 步骤描述
    - agent_prompt: 发送给Agent的提示词（详细、具体）
    - timeout_seconds: 超时时间（秒，默认300）
    - retry_on_failure: 失败时是否重试（默认false）
 
-6. tags: 标签列表（可选）
+7. tags: 标签列表（可选）
 
 示例1（预设类型）：
 {{
   "name": "每日O3污染分析",
   "description": "每天早上8点分析广州昨天的O3污染情况",
+  "execution_mode": "expert",
   "schedule_type": "daily_8am",
   "steps": [
     {{
@@ -213,6 +218,7 @@ class CreateScheduledTaskTool(LLMTool):
 {{
   "name": "臭氧报告分析",
   "description": "分析指定文档的臭氧数据",
+  "execution_mode": "expert",
   "schedule_type": "once",
   "run_at": "2026-02-13 14:30:00",
   "steps": [
@@ -259,6 +265,25 @@ class CreateScheduledTaskTool(LLMTool):
     }}
   ],
   "tags": ["污染分析"]
+}}
+
+示例5（广播任务）：
+{{
+  "name": "每日广播提醒",
+  "description": "每天上午9点向社交用户广播当天提醒内容",
+  "execution_mode": "assistant",
+  "schedule_type": "daily_custom",
+  "hour": 9,
+  "minute": 0,
+  "steps": [
+    {{
+      "description": "生成并广播消息",
+      "agent_prompt": "根据任务描述生成适合广播给社交用户的简短内容，然后调用 broadcast_social_users 工具发送。",
+      "timeout_seconds": 600,
+      "retry_on_failure": false
+    }}
+  ],
+  "tags": ["broadcast", "social"]
 }}
 
 请直接返回JSON，不要包含任何其他文字。"""

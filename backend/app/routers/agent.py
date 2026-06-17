@@ -9,13 +9,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 import asyncio
 import json
 import structlog
 
 from app.agent import create_react_agent
 from app.agent.session import Session, get_session_manager
+from app.agent.session.conversation_persistence import ConversationPersistenceService
 from app.agent.runtime.cancellation import cancellation_registry
+from app.agent.runtime.steering import steering_registry
+from app.agent.runtime.ownership import run_ownership_registry
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -23,16 +27,98 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
+def _safe_preview(value: Any, max_chars: int = 100) -> str:
+    if value is None:
+        return "empty"
+    if isinstance(value, str):
+        return value[:max_chars] if value else "empty"
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)[:max_chars]
+    except Exception:
+        return repr(value)[:max_chars]
+
+
+def _append_attachment_text_for_history(
+    query: str,
+    attachments: Optional[List[dict]],
+) -> str:
+    """Append lightweight attachment path text for restored display history."""
+    if not attachments:
+        return query
+
+    lines = ["", "", "**用户上传的附件**："]
+    for index, attachment in enumerate(attachments, start=1):
+        if not isinstance(attachment, dict):
+            continue
+
+        attachment_type = attachment.get("type", "file")
+        name = attachment.get("name") or attachment.get("filename") or "unknown"
+        path = (
+            attachment.get("local_path")
+            or attachment.get("file_path")
+            or attachment.get("path")
+            or attachment.get("url")
+            or attachment.get("file_id")
+            or ""
+        )
+
+        label = "图片" if attachment_type == "image" else "文件"
+        lines.append(f"{index}. {label}: {name}")
+        if path:
+            lines.append(f"   路径: {path}")
+
+    if len(lines) <= 3:
+        return query
+    return query + "\n".join(lines)
+
+
+def _event_run_id(event: Dict[str, Any]) -> Optional[str]:
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    return data.get("run_id") or event.get("run_id")
+
+
+def _drawio_xml_from_result(result: Dict[str, Any]) -> str:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    for field in ("current_xml", "currentXml", "xml", "drawio_xml", "mxfile"):
+        value = data.get(field)
+        if isinstance(value, str) and value:
+            return value
+
+    candidate_refs: List[Dict[str, Any]] = []
+    xml_ref = data.get("xml_ref")
+    if isinstance(xml_ref, dict):
+        candidate_refs.append(xml_ref)
+    refs = result.get("refs") if isinstance(result.get("refs"), dict) else {}
+    artifacts = refs.get("artifacts") if isinstance(refs.get("artifacts"), list) else []
+    candidate_refs.extend(item for item in artifacts if isinstance(item, dict))
+
+    for ref in candidate_refs:
+        path_value = ref.get("local_path") or ref.get("path") or ref.get("file_path")
+        if not isinstance(path_value, str) or not path_value:
+            continue
+        try:
+            path = Path(path_value).expanduser().resolve()
+            if path.is_file():
+                return path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning("drawio_board_xml_ref_read_failed", path=path_value, error=str(exc))
+    return ""
+
+
 # ========================================
 # Request/Response Models
 # ========================================
+
+DEFAULT_MAX_ITERATIONS = 120
+MAX_ITERATIONS_CAP = 200
+
 
 class AgentAnalyzeRequest(BaseModel):
     """Agent 分析请求"""
     query: str = Field(..., description="用户自然语言查询")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
-    max_iterations: int = Field(60, ge=1, le=60, description="最大迭代次数")
+    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
         description="✅ Agent模式：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化），'ops' - 运维管理模式（工单审核、异常分析）"
@@ -65,6 +151,11 @@ class AgentAnalyzeRequest(BaseModel):
         None,
         description="附件列表，包含用户上传的文件信息 [{file_id, name, type, url}]"
     )
+    board_context: Optional[Dict[str, Any]] = Field(
+        None,
+        validation_alias=AliasChoices("board_context", "boardContext"),
+        description="图表模式画板上下文，仅 mode=chart 时传入，例如 {current_xml, selected_cells}"
+    )
     model_tier: Optional[str] = Field(
         None,
         validation_alias=AliasChoices("model_tier", "modelTier"),
@@ -93,7 +184,7 @@ class AgentAnalyzeRequest(BaseModel):
 class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
     query: str = Field(..., description="用户查询")
-    max_iterations: int = Field(60, ge=1, le=60, description="最大迭代次数")
+    max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于保持会话连续性和记忆）")
     user_identifier: Optional[str] = Field(None, description="用户标识（可选，用于跨会话记忆共享）")
     assistant_mode: Optional[str] = Field(
@@ -113,6 +204,11 @@ class AgentQueryRequest(BaseModel):
                 "assistant_mode": "meteorology-expert"
             }
         }
+
+
+class AgentSteerRequest(BaseModel):
+    """执行中用户补充/纠偏输入。"""
+    message: str = Field(..., description="追加到当前 active run 的用户输入")
 
 
 class AgentQueryResponse(BaseModel):
@@ -150,12 +246,12 @@ class ToolListResponse(BaseModel):
 # Global Agent Instances
 # ========================================
 
-# 通用Agent实例（使用默认 max_iterations=60）
+# 通用Agent实例（使用默认 max_iterations=120）
 multi_expert_agent_instance = create_react_agent(
     with_test_tools=False
 )
 
-# 气象专家模式全局实例（使用默认 max_iterations=30）
+# 气象专家模式全局实例（使用默认 max_iterations=120）
 meteorology_expert_agent_instance = create_react_agent(
     with_test_tools=False,
     max_working_memory=25
@@ -310,19 +406,43 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
             "skip_auto_followup": request.skip_auto_followup
         }
+        if request.mode == "chart" and request.board_context:
+            analyze_kwargs["board_context"] = request.board_context
+            current_xml = request.board_context.get("current_xml") or request.board_context.get("currentXml") or ""
+            previous_xml = request.board_context.get("previous_xml") or request.board_context.get("previousXml") or ""
+            selected_cells = request.board_context.get("selected_cells") or request.board_context.get("selectedCells") or []
+            logger.info(
+                "chart_board_context_received",
+                session_id=request.session_id,
+                current_xml_length=len(current_xml),
+                previous_xml_length=len(previous_xml),
+                selected_count=len(selected_cells) if isinstance(selected_cells, list) else 0,
+                version=request.board_context.get("version"),
+                dirty=request.board_context.get("dirty"),
+                updated_at=request.board_context.get("updated_at") or request.board_context.get("updatedAt"),
+            )
+        drawio_board_context = request.board_context if request.mode == "chart" else None
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
         session_manager = get_session_manager()
+        persistence = ConversationPersistenceService()
         actual_session_id = request.session_id
         conversation_history = []
         collected_data_ids = []
         collected_visuals = []
+        latest_drawio_board = None
         seen_visual_ids = set()  # ✅ 用于去重：记录已添加的图表ID
+
+        if not actual_session_id:
+            import uuid
+            actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
+            analyze_kwargs["session_id"] = actual_session_id
 
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, seen_visual_ids
+            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, latest_drawio_board, drawio_board_context, seen_visual_ids
             cancel_event = None
+            latest_event_run_id = None
 
             # ✅ 用于统计（不输出日志）
             event_count = 0
@@ -330,7 +450,15 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
             # 创建或加载会话
             if actual_session_id:
-                session = await session_manager.load_session(actual_session_id)
+                logger.info(
+                    "route_session_load_start",
+                    session_id=actual_session_id,
+                    include_messages="display_light",
+                )
+                if hasattr(session_manager, "load_session_light"):
+                    session = await session_manager.load_session_light(actual_session_id)
+                else:
+                    session = await session_manager.load_session(actual_session_id)
                 if session:
                     session_already_exists = True
                     logger.info(
@@ -342,6 +470,33 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                         data_ids_count=len(session.data_ids) if session.data_ids else 0
                     )
                     conversation_history = session.conversation_history or []
+                    if (
+                        request.mode == "chart"
+                        and drawio_board_context is None
+                        and isinstance(session.metadata, dict)
+                    ):
+                        stored_drawio_board = session.metadata.get("drawio_board")
+                        if isinstance(stored_drawio_board, dict):
+                            drawio_board_context = stored_drawio_board
+                            analyze_kwargs["board_context"] = stored_drawio_board
+                            logger.info(
+                                "chart_board_context_restored_from_session_metadata",
+                                session_id=actual_session_id,
+                                current_xml_length=len(
+                                    stored_drawio_board.get("current_xml")
+                                    or stored_drawio_board.get("currentXml")
+                                    or stored_drawio_board.get("xml")
+                                    or ""
+                                ),
+                                selected_count=len(
+                                    stored_drawio_board.get("selected_cells")
+                                    or stored_drawio_board.get("selectedCells")
+                                    or []
+                                ),
+                                version=stored_drawio_board.get("version"),
+                                updated_at=stored_drawio_board.get("updated_at")
+                                or stored_drawio_board.get("updatedAt"),
+                            )
 
                     # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
                     # 避免重复加载历史消息
@@ -356,8 +511,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     conversation_history = []
             else:
                 session_already_exists = False
-                import uuid
-                actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
                 session = Session(session_id=actual_session_id, query=request.query)
                 conversation_history = []
                 logger.info("session_created", session_id=actual_session_id)
@@ -365,6 +518,9 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 analyze_kwargs["session_id"] = actual_session_id
 
             cancel_event = await cancellation_registry.register(actual_session_id)
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                await cancellation_registry.attach_run_task(actual_session_id, current_task)
             analyze_kwargs["cancel_event"] = cancel_event
 
             # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
@@ -373,7 +529,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             if session_already_exists:
                 async def _save_initial_session_metadata() -> None:
                     try:
-                        await session_manager.save_session(session, save_messages=False)
+                        await session_manager.save_session_metadata(session)
                     except Exception as save_err:
                         logger.warning(
                             "initial_session_metadata_save_failed",
@@ -383,12 +539,15 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
                 asyncio.create_task(_save_initial_session_metadata())
             else:
-                await session_manager.save_session(session, save_messages=False)
+                await session_manager.save_session_metadata(session)
 
             # ✅ 添加用户消息到对话历史
             user_message = {
                 "type": "user",
-                "content": request.query,
+                "content": _append_attachment_text_for_history(
+                    request.query,
+                    request.attachments,
+                ),
                 "timestamp": datetime.now().isoformat()
             }
             conversation_history.append(user_message)
@@ -399,6 +558,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     async for event in agent.analyze(**analyze_kwargs):
                         event_count += 1
                         event_type = event.get("type")
+                        latest_event_run_id = _event_run_id(event) or latest_event_run_id
 
                         # ✅ 关闭流式文本事件的所有日志
                         if event_type != "streaming_text":
@@ -424,6 +584,23 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                     has_visuals="visuals" in result,
                                     visuals_count=len(result.get("visuals") or [])
                                 )
+                                if (
+                                    request.mode == "chart"
+                                    and isinstance(result, dict)
+                                    and (
+                                        (result.get("metadata") or {}).get("generator") == "create_drawio_board"
+                                        or (result.get("data") or {}).get("artifact_kind") == "drawio_board"
+                                    )
+                                ):
+                                    result_data = result.get("data") or {}
+                                    if isinstance(result_data, dict):
+                                        drawio_xml = _drawio_xml_from_result(result)
+                                        if drawio_xml:
+                                            latest_drawio_board = {
+                                                **result_data,
+                                                "current_xml": drawio_xml,
+                                                "xml": drawio_xml,
+                                            }
 
                             frontend_message = {
                                 "type": event["type"],
@@ -439,12 +616,19 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
                             elif event["type"] == "tool_result":
                                 result_data = event_data.get("result", {})
-                                frontend_message["content"] = result_data.get("summary", "获得结果") if isinstance(result_data, dict) else str(result_data)
+                                if isinstance(result_data, dict):
+                                    frontend_message["content"] = (
+                                        result_data.get("summary_text")
+                                        or _safe_preview(result_data.get("summary"), 500)
+                                        or "获得结果"
+                                    )
+                                else:
+                                    frontend_message["content"] = str(result_data)
 
                             conversation_history.append(frontend_message)
                             # 防御性代码：确保 content 不为 None
                             content = frontend_message.get("content", "")
-                            content_preview = content[:50] if content else "empty"
+                            content_preview = _safe_preview(content, 50)
                             logger.debug("conversation_history_appended",
                                         event_type=event["type"],
                                         history_length=len(conversation_history),
@@ -509,9 +693,19 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
                         # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
                         if event["type"] == "complete":
+                            event_run_id = _event_run_id(event)
+                            if not await run_ownership_registry.can_write(actual_session_id, event_run_id):
+                                logger.info(
+                                    "stale_run_complete_discarded",
+                                    session_id=actual_session_id,
+                                    run_id=event_run_id,
+                                )
+                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                yield f"data: {event_data}\n\n"
+                                break
                             # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
                             # office_document 实时事件后无法打开预览面板。
-                            office_documents = multi_expert_agent_instance._session_store.get(
+                            office_documents = agent._session_store.get(
                                 actual_session_id, {}
                             ).get("office_documents", [])
                             if office_documents:
@@ -551,52 +745,77 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                        collected_visuals_count=len(collected_visuals))
 
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                            if actual_session_id not in multi_expert_agent_instance._session_store:
-                                multi_expert_agent_instance._session_store[actual_session_id] = {}
+                            if actual_session_id not in agent._session_store:
+                                agent._session_store[actual_session_id] = {}
 
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                            agent._session_store[actual_session_id]["collected_data_ids"] = list(dict.fromkeys(collected_data_ids))
+                            agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                             logger.info(
                                 "collected_data_stored",
                                 session_id=actual_session_id,
                                 data_ids_count=len(collected_data_ids),
                                 visuals_count=len(collected_visuals)
                             )
+
+                            persistence.apply_complete(
+                                session,
+                                display_history=conversation_history,
+                                collected_data_ids=collected_data_ids,
+                                collected_visuals=collected_visuals,
+                                office_documents=office_documents,
+                                drawio_board=latest_drawio_board or drawio_board_context,
+                            )
+                            await session_manager.append_session_transcript(session)
+                            agent._session_store[actual_session_id]["display_history_persisted"] = True
+                            await run_ownership_registry.complete(actual_session_id, event_run_id)
                         elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
-                            # ✅ 优化：压缩中间过程，只保留必要信息
-                            compressed_history = []
-                            for msg in conversation_history:
-                                if msg.get("type") in ["user", "final"]:
-                                    compressed_history.append(msg)
-                                elif msg.get("type") in ["thought", "tool_use", "tool_result"]:
-                                    compressed_history.append({
-                                        "type": msg.get("type"),
-                                        "content": msg.get("content", "")[:200],
-                                        "timestamp": msg.get("timestamp")
-                                    })
-                            session.conversation_history = compressed_history
-                            session.data_ids = list(set(collected_data_ids))
-                            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-
+                            event_run_id = _event_run_id(event)
+                            if not await run_ownership_registry.can_write(actual_session_id, event_run_id):
+                                logger.info(
+                                    "stale_run_terminal_discarded",
+                                    session_id=actual_session_id,
+                                    run_id=event_run_id,
+                                    event_type=event["type"],
+                                )
+                                event_data = json.dumps(event, ensure_ascii=False, default=str)
+                                yield f"data: {event_data}\n\n"
+                                break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                            if actual_session_id not in multi_expert_agent_instance._session_store:
-                                multi_expert_agent_instance._session_store[actual_session_id] = {}
+                            if actual_session_id not in agent._session_store:
+                                agent._session_store[actual_session_id] = {}
 
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_data_ids"] = list(set(collected_data_ids))
-                            multi_expert_agent_instance._session_store[actual_session_id]["collected_visuals"] = collected_visuals
-                            multi_expert_agent_instance._session_store[actual_session_id]["conversation_history_compressed"] = compressed_history
-                            multi_expert_agent_instance._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
-                            multi_expert_agent_instance._session_store[actual_session_id]["error_type"] = event["type"]
-                            if "data" in event and "error" in event["data"]:
-                                multi_expert_agent_instance._session_store[actual_session_id]["error_message"] = event["data"].get("error", "Unknown error")
+                            agent._session_store[actual_session_id]["collected_data_ids"] = list(dict.fromkeys(collected_data_ids))
+                            agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
+                            agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
+                            agent._session_store[actual_session_id]["error_type"] = event["type"]
+                            event_data = event.get("data") or {}
+                            if "error" in event_data:
+                                agent._session_store[actual_session_id]["error_message"] = event_data.get("error", "Unknown error")
                             if event["type"] == "interrupted":
-                                event_data = event.get("data") or {}
-                                compressed_history.append({
-                                    "type": "interrupted",
-                                    "content": event_data.get("reason", "用户已暂停本轮分析"),
-                                    "timestamp": datetime.now().isoformat()
-                                })
-                            await session_manager.save_session(session)
+                                terminal_content = event_data.get("reason", "用户已暂停本轮分析")
+                            elif event["type"] == "incomplete":
+                                terminal_content = event_data.get(
+                                    "reason",
+                                    "分析任务较复杂，在限定步骤内未完成，是否继续？",
+                                )
+                            else:
+                                terminal_content = event_data.get("error") or event_data.get("message") or "分析失败"
+                            persistence.apply_terminal(
+                                session,
+                                display_history=conversation_history,
+                                terminal_message={
+                                    "type": event["type"],
+                                    "content": terminal_content,
+                                    "data": event_data,
+                                    "timestamp": event_data.get("timestamp") or datetime.now().isoformat(),
+                                },
+                                collected_data_ids=collected_data_ids,
+                                collected_visuals=collected_visuals,
+                                drawio_board=latest_drawio_board or drawio_board_context,
+                            )
+                            await session_manager.append_session_transcript(session)
+                            agent._session_store[actual_session_id]["display_history_persisted"] = True
+                            await run_ownership_registry.complete(actual_session_id, event_run_id)
 
                             logger.info("collected_data_stored_on_error", session_id=actual_session_id, error_type=event["type"])
 
@@ -611,14 +830,23 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             except asyncio.CancelledError:
                 if actual_session_id:
                     await cancellation_registry.cancel(actual_session_id)
-                    session.conversation_history = conversation_history + [{
-                        "type": "interrupted",
-                        "content": "客户端已断开，本轮分析已取消",
-                        "timestamp": datetime.now().isoformat()
-                    }]
-                    session.data_ids = list(set(collected_data_ids))
-                    session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-                    await session_manager.save_session(session)
+                    if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
+                        persistence.apply_terminal(
+                            session,
+                            display_history=conversation_history,
+                            terminal_message={
+                                "type": "interrupted",
+                                "content": "客户端已断开，本轮分析已取消",
+                                "timestamp": datetime.now().isoformat(),
+                            },
+                            collected_data_ids=collected_data_ids,
+                            collected_visuals=collected_visuals,
+                            drawio_board=latest_drawio_board or drawio_board_context,
+                        )
+                        await session_manager.append_session_transcript(session)
+                        if actual_session_id not in agent._session_store:
+                            agent._session_store[actual_session_id] = {}
+                        agent._session_store[actual_session_id]["display_history_persisted"] = True
                 raise
             except Exception as e:
                 logger.error(
@@ -626,16 +854,31 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     error=str(e),
                     exc_info=True
                 )
-                # 保存失败会话
-                session.conversation_history = conversation_history
-                session.data_ids = list(set(collected_data_ids))
-                session.error = {
-                    "type": "stream_error",
-                    "message": str(e),
-                    "timestamp": datetime.now().isoformat()
-                }
-                await session_manager.save_session(session)
-                logger.info("session_saved_on_exception", session_id=actual_session_id)
+                if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
+                    # 保存失败会话
+                    persistence.apply_terminal(
+                        session,
+                        display_history=conversation_history,
+                        terminal_message={
+                            "type": "fatal_error",
+                            "content": str(e),
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        collected_data_ids=collected_data_ids,
+                        collected_visuals=collected_visuals,
+                        drawio_board=latest_drawio_board or drawio_board_context,
+                    )
+                    session.error = {
+                        "type": "stream_error",
+                        "message": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    await session_manager.append_session_transcript(session)
+                    if actual_session_id:
+                        if actual_session_id not in agent._session_store:
+                            agent._session_store[actual_session_id] = {}
+                        agent._session_store[actual_session_id]["display_history_persisted"] = True
+                    logger.info("session_saved_on_exception", session_id=actual_session_id)
 
                 error_event = {
                     "type": "fatal_error",
@@ -674,12 +917,26 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 @router.post("/{session_id}/cancel")
 async def cancel_analysis(session_id: str):
     """Cancel an in-flight streaming analysis for a session."""
+    active_run_id = await run_ownership_registry.current_run_id(session_id)
     cancelled = await cancellation_registry.cancel(session_id)
     return {
         "success": True,
         "cancelled": cancelled,
         "session_id": session_id,
+        "revoked_run_id": active_run_id,
         "message": "已发送取消信号" if cancelled else "没有找到运行中的分析任务",
+    }
+
+
+@router.post("/{session_id}/steer")
+async def steer_analysis(session_id: str, request: AgentSteerRequest):
+    """Append user steering input to an active steerable run."""
+    accepted = await steering_registry.add_input(session_id, request.message)
+    return {
+        "success": True,
+        "accepted": accepted,
+        "session_id": session_id,
+        "message": "已追加到当前执行任务" if accepted else "没有找到可追加的运行中任务",
     }
 
 

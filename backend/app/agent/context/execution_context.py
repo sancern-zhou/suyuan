@@ -80,7 +80,6 @@ class ExecutionContext:
         iteration: int,
         data_manager: DataContextManager,
         task_list: Optional[Any] = None,
-        todo_list: Optional[Any] = None,
     ) -> None:
         """
         Initialize execution context.
@@ -89,13 +88,12 @@ class ExecutionContext:
             session_id: Current session identifier
             iteration: Current iteration number in ReAct loop
             data_manager: Data context manager instance
-            task_list: Task list instance for task management tools (legacy)
-            todo_list: Todo list instance for new TodoWrite tool
+            task_list: Task list instance for task management tools
         """
         self.session_id = session_id
         self.iteration = iteration
         self.data_manager = data_manager
-        self.task_list = task_list or todo_list  # Support both old and new
+        self.task_list = task_list
         # 跟踪最近一次保存的data_id
         self.current_data_id: Optional[str] = None
         # 跟踪所有可用的data_id列表
@@ -106,7 +104,6 @@ class ExecutionContext:
             session_id=session_id,
             iteration=iteration,
             has_task_list=task_list is not None,
-            has_todo_list=todo_list is not None
         )
 
     def get_data(
@@ -275,20 +272,6 @@ class ExecutionContext:
                 tasks = task_list.get_tasks(context.session_id)
         """
         return self.task_list  # ✅ 返回None而不是抛异常，支持"无任务"场景
-
-    def get_todo_list(self) -> Optional[Any]:
-        """
-        Get todo list instance for TodoWrite tool.
-
-        Returns:
-            TodoList instance if available, None otherwise
-
-        Example:
-            todo_list = context.get_todo_list()
-            if todo_list:
-                items = todo_list.get_items()
-        """
-        return self.task_list  # TodoList uses the same slot as TaskList
 
     def list_data(self, schema: Optional[str] = None) -> List[str]:
         """

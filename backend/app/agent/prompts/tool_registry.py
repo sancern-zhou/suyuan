@@ -21,25 +21,25 @@ ASSISTANT_TOOL_NAMES = {
     "bash",
 
     # 文件操作
-    "read_file", "edit_file", "grep", "write_file", "list_directory",
-    "search_files", "notebook_edit", "list_skills",
+    "read_file", "edit_file", "grep", "write_file", "present_artifact", "list_directory",
+    "search_files", "list_skills", "view_skill", "create_skill_draft",
 
     # Office工具
-    "edit_word_document",
-    "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx", "validate_pptx",
+    "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
-    "create_report_package", "validate_report_package", "create_html_artifact",
-
-    # 任务管理
-    "TodoWrite",
+    "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
+    "create_report_chart",
 
     # 代码执行
     "execute_python",
 
     # 其他工具
-    "create_scheduled_task", "analyze_image", "browser", "call_sub_agent",
+    "create_scheduled_task", "broadcast_social_users", "analyze_image", "browser", "call_sub_agent",
+    "web_search", "web_fetch", "wait_task", "get_platform_weather_image",
+
+    # 知识库检索
+    "knowledge_qa_workflow", "knowledge_document_reader",
 
     # CLI会话管理
     "cli_session", "terminal_session",
@@ -49,7 +49,7 @@ ASSISTANT_TOOL_NAMES = {
 EXPERT_TOOL_NAMES = {
     # 数据查询工具
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
+    "get_weather_forecast", "get_platform_weather_image", "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day",
     "query_gd_suncere_district_report",
@@ -63,13 +63,13 @@ EXPERT_TOOL_NAMES = {
     "calculate_crustal", "calculate_trace", "predict_air_quality",
 
     # 可视化
-    "revise_chart", "generate_map",
+    "revise_chart", "generate_map", "create_report_chart",
 
     # 代码执行
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
 }
 
@@ -87,6 +87,7 @@ QUERY_TOOL_NAMES = {
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
     "query_gd_suncere_district_report",
+    "analyze_city_pollutant_rankings",
 
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
@@ -120,17 +121,20 @@ REPORT_TOOL_NAMES = {
     "query_gd_suncere_district_report",    # 区县统计报表（月度/年度/任意时段）
     "query_station_standard_report",       # 站点新/旧国标统计报表
     "query_station_standard_yoy_report",   # 站点新/旧国标同比/环比统计报表
+    "analyze_city_pollutant_rankings",     # 城市污染物较低/较高排名确定性分析
 
     # === 数据读取 ===
     "read_data_registry",
 
     # === 文件操作 ===
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
     # === 报告/展示产物 ===
+    "present_artifact",            # 将任意已生成文件推送到右侧预览面板
     "create_report_package",       # 正式报告收口为标准 ReportPackage，并触发右侧预览
     "validate_report_package",     # 检查 report.qmd、图片引用和已生成格式
+    "create_report_chart",         # 正式报告静态图表，优先于自由 execute_python 绘图
 
     # === 代码执行 ===
     "execute_python",
@@ -151,24 +155,36 @@ CHART_TOOL_NAMES = {
     # SQL Server通用查询
     "execute_sql_query",
 
-    # 知识库检索
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
     # 数据读取
     "read_data_registry",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash",
 
-    # 代码执行
-    "execute_python",
+    # 代码执行和原生多模态视觉参考
+    "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
 }
 
 # ===== 运维管理模式工具 =====
 OPS_TOOL_NAMES = {
     # 运维工单与通用SQL查询
     "execute_ops_sql_query",
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
+
+    # 展示型流程图
+    "create_diagram_artifact",
+    "create_report_chart",
+    "present_artifact",
+
+    # 报告产物
+    "create_report_package",
+    "validate_report_package",
+
+    # 子 Agent 复核
+    "call_sub_agent",
 
     # 站点小时/日数据核对
     "query_gd_suncere_station_hour_new",
@@ -177,8 +193,11 @@ OPS_TOOL_NAMES = {
     # 数据读取
     "read_data_registry",
 
+    # 代码执行
+    "execute_python",
+
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files", "list_skills", "view_skill",
 }
 
 # ===== 社交模式工具（移动端助理） =====
@@ -187,17 +206,11 @@ SOCIAL_TOOL_NAMES = {
     "bash",
 
     # === 文件操作 ===
-    "read_file", "edit_file", "edit_word_document", "grep", "write_file",
-    "list_directory", "search_files", "list_skills",
-
-    # === 图片分析 ===
-    "analyze_image",
+    "read_file", "edit_file", "grep", "write_file",
+    "list_directory", "search_files", "list_skills", "view_skill",
 
     # === 知识库检索 ===
     "knowledge_qa_workflow", "knowledge_document_reader",
-
-    # === 记忆管理 ===
-    "remember_fact", "replace_memory", "remove_memory",
 
     # === 数据查询（统一通过 call_sub_agent 调用问数模式） ===
     "get_weather_forecast",
@@ -209,13 +222,10 @@ SOCIAL_TOOL_NAMES = {
     "call_sub_agent",
 
     # === 呼吸式特有工具 ===
-    "schedule_task", "send_notification", "spawn",
+    "schedule_task", "send_notification", "spawn", "wait_task",
 
     # === 网络搜索 ===
-    "web_search", "web_fetch",
-
-    # === 任务管理 ===
-    "TodoWrite",
+    "web_search", "web_fetch", "browser",
 
     # === CLI会话管理 ===
     "cli_session", "terminal_session",
@@ -239,7 +249,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = {
     "get_weather_forecast", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
-    "read_data_registry", "TodoWrite",
+    "read_data_registry", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 DELIBERATION_MONITORING_TOOL_NAMES = {
@@ -247,7 +257,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = {
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
     "query_city_standard_report", "query_city_standard_yoy_report",
-    "read_data_registry", "execute_python", "TodoWrite",
+    "read_data_registry", "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = {
@@ -255,12 +265,12 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = {
     "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
     "calculate_crustal", "calculate_trace", "read_data_registry",
-    "execute_python", "TodoWrite",
+    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 DELIBERATION_REVIEWER_TOOL_NAMES = {
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "execute_python",
-    "list_directory", "search_files", "TodoWrite",
+    "read_file", "write_file", "edit_file", "grep", "execute_python",
+    "list_directory", "search_files", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 }
 
 # ========================================
@@ -272,21 +282,22 @@ ASSISTANT_TOOL_ORDER = [
     "list_directory", "search_files", "read_file",
 
     # Office
-    "edit_word_document",
-    "analyze_pptx_template", "create_pptx_from_template",
-    "edit_pptx", "create_pptx", "validate_pptx",
+    "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
-    "create_report_package", "validate_report_package", "create_html_artifact",
+    "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
 
     # 编辑
-    "write_file", "edit_file", "grep", "notebook_edit",
+    "write_file", "edit_file", "grep",
 
     # 执行
-    "bash", "execute_python", "analyze_image", "browser",
+    "bash", "create_report_chart", "execute_python",
+    "get_platform_weather_image", "analyze_image", "browser",
 
-    # 任务管理
-    "TodoWrite", "create_scheduled_task", "list_skills",
+    # 知识库检索
+    "knowledge_qa_workflow", "knowledge_document_reader",
+
+    "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
 
     # 模式互调
     "call_sub_agent"
@@ -296,7 +307,7 @@ EXPERT_TOOL_ORDER = [
     # 数据查询
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast",
+    "get_weather_forecast", "get_platform_weather_image",
     "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
@@ -311,13 +322,13 @@ EXPERT_TOOL_ORDER = [
     "predict_air_quality",
 
     # 可视化
-    "revise_chart", "generate_map",
+    "revise_chart", "generate_map", "create_report_chart",
 
     # 代码执行
     "execute_python",
 
     # 文件操作
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
 
 ]
 
@@ -369,12 +380,13 @@ REPORT_TOOL_ORDER = [
     # 文件和执行
     "read_file",
     "write_file",
+    "present_artifact",
     "edit_file",
-    "edit_word_document",
     "grep",
     "list_directory",
     "search_files",
     "bash",
+    "create_report_chart",
     "execute_python",
 
     # 报告产物收口
@@ -383,8 +395,25 @@ REPORT_TOOL_ORDER = [
 ]
 
 OPS_TOOL_ORDER = [
+    # 技能发现与按需读取
+    "list_skills",
+    "view_skill",
+    "read_file",
+
     # 工单查询
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
     "execute_ops_sql_query",
+
+    # 展示型流程图
+    "create_diagram_artifact",
+    "create_report_chart",
+    "present_artifact",
+
+    # 报告产物收口
+    "create_report_package",
+    "validate_report_package",
 
     # 站点小时/日数据核对
     "query_gd_suncere_station_hour_new",
@@ -393,30 +422,32 @@ OPS_TOOL_ORDER = [
     # 数据读取
     "read_data_registry",
 
+    # 代码执行
+    "execute_python",
+
     # 文件操作
-    "grep", "read_file", "write_file", "edit_file", "edit_word_document", "list_directory", "search_files",
+    "grep", "write_file", "present_artifact", "edit_file", "list_directory", "search_files",
 ]
 
 CHART_TOOL_ORDER = [
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep", "list_directory", "search_files",
-    "bash", "execute_python",
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "bash", "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
     "read_data_registry",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
-    "execute_sql_query", "knowledge_qa_workflow", "knowledge_document_reader",
+    "execute_sql_query",
 ]
 
 SOCIAL_TOOL_ORDER = [
-    "read_file", "edit_file", "edit_word_document", "grep", "write_file",
-    "list_directory", "search_files", "list_skills",
-    "analyze_image", "knowledge_qa_workflow", "knowledge_document_reader",
+    "read_file", "edit_file", "grep", "write_file",
+    "list_directory", "search_files", "list_skills", "view_skill",
+    "knowledge_qa_workflow", "knowledge_document_reader",
     "get_weather_forecast", "execute_python", "call_sub_agent",
-    "web_search", "web_fetch", "TodoWrite",
-    "schedule_task", "send_notification", "spawn",
+    "web_search", "web_fetch", "browser",
+    "schedule_task", "send_notification", "spawn", "wait_task",
     "cli_session", "terminal_session", "session_search",
-    "remember_fact", "replace_memory", "remove_memory",
     "bash",
 ]
 
@@ -429,8 +460,9 @@ MEMORY_CONSOLIDATOR_TOOL_ORDER = [
 ]
 
 DELIBERATION_REVIEWER_TOOL_ORDER = [
-    "read_file", "write_file", "edit_file", "edit_word_document", "grep",
-    "list_directory", "search_files", "execute_python", "TodoWrite",
+    "read_file", "write_file", "edit_file", "grep",
+    "list_directory", "search_files", "execute_python",
+    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
 # ========================================

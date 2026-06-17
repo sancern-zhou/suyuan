@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -27,16 +28,32 @@ def _file_fingerprint(path: Path) -> Dict[str, Any]:
 
 
 def get_report_id_from_qmd_path(path: str | Path) -> Optional[str]:
-    """Return report_id when path is reports/{report_id}/report.qmd."""
+    """Return report_id when path is reports/{report_id}/report.qmd or source_qmd."""
     try:
         qmd_path = Path(path).expanduser().resolve()
         reports_root = quarto_report_renderer.report_root.resolve()
         relative = qmd_path.relative_to(reports_root)
     except (OSError, ValueError):
-        return None
+        relative = None
 
-    if len(relative.parts) == 2 and relative.parts[1] == "report.qmd":
+    if relative and len(relative.parts) == 2 and relative.parts[1] == "report.qmd":
         return relative.parts[0]
+
+    for meta_path in reports_root.glob("*/meta.json"):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        files = meta.get("files") if isinstance(meta.get("files"), dict) else {}
+        raw_source_qmd = files.get("source_qmd") or meta.get("source_qmd")
+        if not raw_source_qmd:
+            continue
+        try:
+            source_qmd = Path(raw_source_qmd).expanduser().resolve()
+        except OSError:
+            continue
+        if source_qmd == qmd_path:
+            return meta_path.parent.name
     return None
 
 
@@ -72,6 +89,11 @@ def write_report_meta(report_id: str, meta: Dict[str, Any]) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _source_qmd_report_id(qmd_path: Path) -> str:
+    digest = hashlib.sha1(str(qmd_path).encode("utf-8")).hexdigest()[:12]
+    return f"source_qmd_{digest}"
+
+
 def record_report_update(
     report_id: str,
     *,
@@ -81,8 +103,11 @@ def record_report_update(
 ) -> Dict[str, Any]:
     """Update ReportPackage metadata after creation, render, or managed edits."""
     report_dir = quarto_report_renderer.get_report_dir(report_id)
-    qmd_path = report_dir / "report.qmd"
     meta = read_report_meta(report_id)
+    try:
+        qmd_path = quarto_report_renderer.get_qmd_path(report_id)
+    except FileNotFoundError:
+        qmd_path = report_dir / "report.qmd"
     now = _now_iso()
     previous_version = int(meta.get("version") or 0)
     next_version = previous_version + 1 if increment_version else max(previous_version, 1)
@@ -100,17 +125,26 @@ def record_report_update(
         event["html_size"] = fingerprint["size"]
         meta["preview_version"] = fingerprint["preview_version"]
 
+    files = dict(meta.get("files") or {})
+    files.update(
+        {
+            "qmd": str(report_dir / "report.qmd"),
+            "html": str(report_dir / "report.html"),
+            "docx": str(report_dir / "report.docx"),
+        }
+    )
+    if qmd_path != (report_dir / "report.qmd").resolve():
+        files["source_qmd"] = str(qmd_path)
+    else:
+        files.pop("source_qmd", None)
+
     history.append(event)
     meta.update(
         {
             "report_id": report_id,
             "updated_at": now,
             "version": next_version,
-            "files": {
-                "qmd": str(qmd_path),
-                "html": str(report_dir / "report.html"),
-                "docx": str(report_dir / "report.docx"),
-            },
+            "files": files,
             "download_urls": {
                 "qmd": f"/api/reports/{report_id}/download/qmd",
                 "docx": f"/api/reports/{report_id}/download/docx",
@@ -189,3 +223,81 @@ def refresh_report_preview_for_qmd_path(path: str | Path) -> Optional[Dict[str, 
         except Exception:
             pass
         return data
+
+
+def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any]:
+    """Create/update a transient report preview package for an arbitrary source qmd."""
+    qmd_path = Path(path).expanduser().resolve()
+    report_id = _source_qmd_report_id(qmd_path)
+    report_dir = quarto_report_renderer.get_report_dir(report_id)
+    now = _now_iso()
+    existing_meta = read_report_meta(report_id)
+    meta = {
+        **existing_meta,
+        "report_id": report_id,
+        "title": qmd_path.stem,
+        "created_at": existing_meta.get("created_at") or now,
+        "updated_at": now,
+        "source": "present_artifact_source_qmd",
+        "files": {
+            "qmd": str(report_dir / "report.qmd"),
+            "source_qmd": str(qmd_path),
+            "html": str(report_dir / "report.html"),
+            "docx": str(report_dir / "report.docx"),
+        },
+        "download_urls": {
+            "qmd": f"/api/reports/{report_id}/download/qmd",
+            "docx": f"/api/reports/{report_id}/download/docx",
+        },
+    }
+    write_report_meta(report_id, meta)
+
+    try:
+        html_path = quarto_report_renderer.render_preview_html(report_id)
+        preview = build_html_preview(report_id, html_path)
+        meta = record_report_update(
+            report_id,
+            source="present_artifact_source_qmd_render",
+            html_path=html_path,
+        )
+        logger.info(
+            "source_qmd_preview_created",
+            report_id=report_id,
+            qmd_path=str(qmd_path),
+            html_path=str(html_path),
+            preview_version=preview.get("preview_version"),
+        )
+        return {
+            "report_id": report_id,
+            "file_path": str(qmd_path),
+            "file_name": qmd_path.name,
+            "file_type": "report",
+            "html_preview": preview,
+            "version": meta.get("version"),
+            "report_preview_refresh": {
+                "success": True,
+                "report_id": report_id,
+                "html_path": str(html_path),
+                "preview_version": preview.get("preview_version"),
+                "version": meta.get("version"),
+            },
+        }
+    except Exception as exc:
+        logger.warning(
+            "source_qmd_preview_create_failed",
+            report_id=report_id,
+            qmd_path=str(qmd_path),
+            error=str(exc),
+        )
+        return {
+            "report_id": report_id,
+            "file_path": str(qmd_path),
+            "file_name": qmd_path.name,
+            "file_type": "report",
+            "render_error": str(exc),
+            "report_preview_refresh": {
+                "success": False,
+                "report_id": report_id,
+                "error": str(exc),
+            },
+        }

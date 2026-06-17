@@ -19,6 +19,7 @@ import structlog
 
 from app.schemas.common import DataQualityReport, FieldStats, ValidationIssue, ValidationSeverity
 from app.services.data_registry import data_registry
+from app.agent.memory.tool_protocol_repair import repair_tool_result_pairing
 
 logger = structlog.get_logger()
 
@@ -27,6 +28,16 @@ _llm_service = None
 MAX_TOOL_RESULT_RECORDS = 24
 MAX_TOOL_RESULT_STRING_CHARS = 8_000
 MAX_TOOL_RESULT_JSON_CHARS = 200_000  # 支持完整的21城市统计对比结果
+MAX_RESTORED_CONTENT_PREVIEW_CHARS = 2_000
+
+CONTENT_PREVIEW_TOOL_NAMES = {
+    "read_file",
+    "parse_pdf",
+    "read_docx",
+    "read_pptx",
+    "knowledge_document_reader",
+    "web_fetch",
+}
 
 
 def _todo_status_counts(items: Any) -> Dict[str, int]:
@@ -105,16 +116,18 @@ def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, A
     summary = result.get("summary")
     if not summary:
         if all_completed:
-            summary = "TodoWrite completed; active todo list cleared. Continue with final answer, not TodoWrite."
+            summary = "Legacy task list completed; active task list cleared."
         elif no_op:
-            summary = "TodoWrite no-op; continue business work, not TodoWrite."
+            summary = "Legacy task list unchanged; continue business work."
         else:
-            summary = "TodoWrite updated active todo list."
+            summary = "Legacy task list updated."
+    else:
+        summary = str(summary).replace("TodoWrite", "legacy task list")
 
     return {
         "status": result.get("status", "success"),
         "success": bool(result.get("success", True)),
-        "tool_name": "TodoWrite",
+        "tool_name": "LegacyTaskState",
         "housekeeping": True,
         "no_op": no_op,
         "all_completed": all_completed,
@@ -123,7 +136,7 @@ def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, A
         "active_items": active_summary,
         "summary": summary,
         "metadata": {
-            "generator": "TodoWrite",
+            "generator": "legacy_task_state",
             "history_compacted": True,
             "omitted_fields": ["rendered", "items", "old_items", "new_items"],
         },
@@ -133,12 +146,100 @@ def _compact_todowrite_result_for_history(result: Dict[str, Any]) -> Dict[str, A
 def _prepare_tool_input_for_history(tool_name: str, tool_input: Any) -> Any:
     """Return a compact assistant tool_use input for LLM-facing history.
 
-    ⚠️ 不再压缩 tool_input，保持与工具 schema 定义一致。
-    压缩只在 tool_result 层面进行（_prepare_tool_result_for_history），
-    避免 LLM 从历史记录中学习到错误的参数格式。
+    Current-turn draw.io create history intentionally preserves XML. Edit calls
+    receive current_xml from runtime state, so that injected XML is never useful
+    LLM-facing context and should not be echoed back into history.
     """
-    # 直接返回原始 tool_input，不做任何压缩
+    if (
+        tool_name == "create_drawio_board"
+        and isinstance(tool_input, dict)
+        and str(tool_input.get("operation") or "").strip().lower() == "edit"
+    ):
+        return _compact_drawio_tool_input_for_history(tool_input)
     return tool_input
+
+
+def _compact_drawio_tool_input_for_history(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, list):
+        compacted_items = []
+        for item in value:
+            compacted = _compact_drawio_tool_input_for_history(item)
+            if compacted != {}:
+                compacted_items.append(compacted)
+        return compacted_items
+
+    if not isinstance(value, dict):
+        return value
+
+    compacted: Dict[str, Any] = {}
+    for key, item in value.items():
+        if key in {"xml", "current_xml", "currentXml", "drawio_xml"}:
+            continue
+        compacted_value = _compact_drawio_tool_input_for_history(item)
+        if compacted_value == {}:
+            continue
+        compacted[key] = compacted_value
+    return compacted
+
+
+def _compact_drawio_payload_for_history(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, list):
+        return [_compact_drawio_payload_for_history(item) for item in value]
+
+    if not isinstance(value, dict):
+        return value
+
+    compacted: Dict[str, Any] = {}
+    for key, item in value.items():
+        if key in {"xml", "current_xml", "currentXml", "drawio_xml"} and isinstance(item, str):
+            compacted[f"{key}_omitted"] = True
+            compacted[f"{key}_length"] = len(item)
+            continue
+        compacted[key] = _compact_drawio_payload_for_history(item)
+    return compacted
+
+
+def _is_drawio_board_result(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    metadata = result.get("metadata")
+    data = result.get("data")
+    return (
+        isinstance(metadata, dict)
+        and metadata.get("generator") == "create_drawio_board"
+    ) or (
+        isinstance(data, dict)
+        and data.get("artifact_kind") == "drawio_board"
+    )
+
+
+def _compact_drawio_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
+    compacted = _compact_drawio_payload_for_history(result)
+    if not isinstance(compacted, dict):
+        return compacted
+
+    data = compacted.get("data") if isinstance(compacted.get("data"), dict) else {}
+    title = data.get("title") or result.get("summary") or "Draw.io Board"
+    artifact_id = data.get("artifact_id") or data.get("board_id")
+    compacted["llm_resume"] = {
+        "artifact_ready": bool(compacted.get("success", True)),
+        "artifact_kind": "drawio_board",
+        "artifact_id": artifact_id,
+        "title": title,
+        "xml_omitted": True,
+        "next_action": "answer_user_without_recreating_board",
+        "instruction": (
+            "create_drawio_board 已成功生成可编辑画板并返回给前端；"
+            "不要再次调用 create_drawio_board 仅为了确认生成结果。"
+        ),
+    }
+    return compacted
 
 
 def _safe_content_preview(value: Any, max_chars: int = 500) -> str:
@@ -237,6 +338,7 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         "data_ids", "report_data_id", "report_data_ids", "file_path", "count", "total_count", "sample_count",
         "original_count", "metadata", "has_chart", "chart_summary",
         "source_data_ids", "source_report_data_ids",
+        "refs", "context_refs", "llm_resume", "content_preview", "visual_ids",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
     if "summary" not in minimal:
@@ -244,6 +346,138 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
     minimal["tool_result_truncated"] = True
     minimal["truncation_reason"] = "serialized tool_result exceeded history budget"
     return minimal
+
+
+def _append_unique(items: List[Dict[str, Any]], item: Dict[str, Any], key: str) -> None:
+    value = item.get(key)
+    if not value:
+        return
+    if any(existing.get(key) == value for existing in items):
+        return
+    items.append({k: v for k, v in item.items() if v is not None})
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return value
+    if value:
+        return [value]
+    return []
+
+
+def _compact_data_ref(data_id: Any, usage: str) -> Dict[str, Any]:
+    return {
+        "data_id": str(data_id),
+        "usage": usage,
+        "tool": "read_data_registry",
+    }
+
+
+def _explicit_refs(value: Any) -> Dict[str, Any]:
+    """Return only tool-declared refs with list-of-dict buckets."""
+    if not isinstance(value, dict):
+        return {}
+    refs: Dict[str, Any] = {}
+    for key, items in value.items():
+        if not isinstance(items, list):
+            continue
+        compacted = [item for item in items if isinstance(item, dict)]
+        if compacted:
+            refs[key] = compacted
+    return refs
+
+
+def _merge_context_refs(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for refs in (base, extra):
+        if not isinstance(refs, dict):
+            continue
+        for key, items in refs.items():
+            if not isinstance(items, list):
+                continue
+            bucket = merged.setdefault(key, [])
+            for item in items:
+                if isinstance(item, dict) and item not in bucket:
+                    bucket.append(item)
+    return merged
+
+
+def _collect_visuals(result_dict: Dict[str, Any], data_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    visuals: List[Dict[str, Any]] = []
+    for candidate in [result_dict.get("visuals"), data_payload.get("visuals")]:
+        if isinstance(candidate, list):
+            for visual in candidate:
+                if isinstance(visual, dict):
+                    _append_unique(visuals, visual, "id")
+    return visuals
+
+
+def _extract_context_refs(result_dict: Dict[str, Any]) -> Dict[str, Any]:
+    data_payload = _as_dict(result_dict.get("data"))
+    refs: Dict[str, Any] = _merge_context_refs(
+        _explicit_refs(result_dict.get("refs")),
+        _explicit_refs(data_payload.get("refs")),
+    )
+
+    data_refs: List[Dict[str, Any]] = []
+    for key, usage in (
+        ("data_id", "primary"),
+        ("report_data_id", "report"),
+    ):
+        value = result_dict.get(key) or data_payload.get(key)
+        if value:
+            _append_unique(data_refs, _compact_data_ref(value, usage), "data_id")
+    for key, usage in (
+        ("data_ids", "primary"),
+        ("report_data_ids", "report"),
+        ("source_data_ids", "source"),
+    ):
+        for value in _as_list(result_dict.get(key) or data_payload.get(key)):
+            if value:
+                _append_unique(data_refs, _compact_data_ref(value, usage), "data_id")
+    if data_refs:
+        refs = _merge_context_refs(refs, {"data": data_refs})
+
+    return refs
+
+
+def _llm_resume_for_restore(result_dict: Dict[str, Any]) -> Dict[str, Any]:
+    resume = result_dict.get("llm_resume")
+    if not isinstance(resume, dict):
+        return {}
+    compacted: Dict[str, Any] = {}
+    for key, value in resume.items():
+        if isinstance(value, str):
+            compacted[key] = _truncate_string(value, MAX_RESTORED_CONTENT_PREVIEW_CHARS)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            compacted[key] = value
+        elif isinstance(value, list):
+            compacted[key] = _compact_tool_result_value(value)
+        elif isinstance(value, dict):
+            compacted[key] = _compact_tool_result_value(value)
+        else:
+            compacted[key] = str(value)
+    return compacted
+
+
+def _content_preview_for_restore(tool_name: str | None, result_dict: Dict[str, Any]) -> str | None:
+    llm_resume = _llm_resume_for_restore(result_dict)
+    resume_preview = llm_resume.get("content_preview")
+    if isinstance(resume_preview, str) and resume_preview:
+        return resume_preview
+
+    if tool_name not in CONTENT_PREVIEW_TOOL_NAMES:
+        return None
+
+    data_payload = _as_dict(result_dict.get("data"))
+    content = data_payload.get("content") or result_dict.get("content")
+    if not isinstance(content, str) or not content:
+        return None
+    return _truncate_string(content, MAX_RESTORED_CONTENT_PREVIEW_CHARS)
 
 
 def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -383,6 +617,7 @@ class SessionMemory:
         self.data_files: Dict[str, str] = {}
         self.data_registry_refs: Dict[str, str] = {}
         self.conversation_history: List[ConversationTurn] = []
+        self.llm_source_until_sequence: Optional[int] = None
 
         # ✅ 修复：初始化 data_registry 引用（溯源模式需要）
         # 使用全局单例，确保所有模式兼容
@@ -868,13 +1103,65 @@ class SessionMemory:
 
         return dict(self.data_files)
 
-    def add_user_message(self, content: str) -> None:
+    def compact_completed_drawio_turns_for_next_user_turn(self) -> None:
+        """Compact completed draw.io XML before a new user turn starts.
+
+        The active agent turn keeps full XML so the model can reason over the
+        exact tool output. Once a new user message arrives, frontend
+        board_context.current_xml becomes the authoritative XML source and old
+        tool XML must leave ordinary conversation history.
+        """
+        compacted_count = 0
+        for turn in self.conversation_history:
+            if turn.type == "tool_use" and isinstance(turn.content, list):
+                for block in turn.content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_use" or block.get("name") != "create_drawio_board":
+                        continue
+                    tool_input = block.get("input")
+                    if isinstance(tool_input, dict) and any(
+                        key in tool_input for key in ("xml", "current_xml", "currentXml", "drawio_xml")
+                    ):
+                        block["input"] = _compact_drawio_tool_input_for_history(tool_input)
+                        compacted_count += 1
+
+            if turn.type == "tool_result" and isinstance(turn.content, list):
+                for block in turn.content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    content = block.get("content")
+                    if not isinstance(content, str):
+                        continue
+                    try:
+                        payload = json.loads(content)
+                    except Exception:
+                        continue
+                    if not _is_drawio_board_result(payload):
+                        continue
+                    compacted_payload = _compact_drawio_result_for_history(payload)
+                    block["content"] = json.dumps(compacted_payload, ensure_ascii=False, indent=2, default=str)
+                    compacted_count += 1
+                    if isinstance(turn.data, dict):
+                        result_data = turn.data.get("result")
+                        if isinstance(result_data, dict) and _is_drawio_board_result(result_data):
+                            turn.data["result"] = _compact_drawio_result_for_history(result_data)
+
+        if compacted_count:
+            logger.info(
+                "drawio_history_compacted_for_next_user_turn",
+                session_id=self.session_id,
+                compacted_count=compacted_count,
+            )
+
+    def add_user_message(self, content: str | List[Dict[str, Any]]) -> None:
         """Record a user utterance."""
+        self.compact_completed_drawio_turns_for_next_user_turn()
         self._append_conversation_turn("user", content, type="user")
         logger.debug(
             "add_user_message_called",
             session_id=self.session_id,
-            content_preview=content[:100],
+            content_preview=_safe_content_preview(content, 100),
             history_length=len(self.conversation_history)
         )
 
@@ -1118,13 +1405,212 @@ class SessionMemory:
             history_length=len(self.conversation_history),
         )
 
+    def _display_tool_use_block(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        data = msg.get("data")
+        if not isinstance(data, dict):
+            return None
+
+        tool_use_id = data.get("tool_use_id")
+        tool_name = data.get("tool_name")
+        tool_input = data.get("input")
+
+        if tool_input is None:
+            tool_use = data.get("tool_use")
+            tools = tool_use.get("tools") if isinstance(tool_use, dict) else None
+            if isinstance(tools, list) and tools:
+                first_tool = tools[0] if isinstance(tools[0], dict) else {}
+                tool_use_id = tool_use_id or first_tool.get("tool_call_id")
+                tool_name = tool_name or first_tool.get("tool")
+                tool_input = first_tool.get("args")
+
+        if not tool_use_id or not tool_name:
+            return None
+
+        return {
+            "type": "tool_use",
+            "id": tool_use_id,
+            "name": tool_name,
+            "input": _prepare_tool_input_for_history(tool_name, tool_input or {}),
+        }
+
+    def _display_tool_use_id(self, msg: Dict[str, Any]) -> Optional[str]:
+        block = self._display_tool_use_block(msg)
+        if not block:
+            return None
+        return block.get("id")
+
+    def _display_tool_result_id(self, msg: Dict[str, Any]) -> Optional[str]:
+        data = msg.get("data")
+        if not isinstance(data, dict):
+            return None
+        if "result" not in data and not isinstance(data.get("results"), list):
+            return None
+        tool_use_id = data.get("tool_use_id")
+        return tool_use_id if isinstance(tool_use_id, str) and tool_use_id else None
+
+    def _paired_display_tool_ids(self, messages: List[Dict[str, Any]]) -> set[str]:
+        tool_use_ids = {
+            tool_use_id
+            for tool_use_id in (
+                self._display_tool_use_id(msg)
+                for msg in messages
+                if msg.get("type") == "tool_use"
+            )
+            if tool_use_id
+        }
+        tool_result_ids = {
+            tool_result_id
+            for tool_result_id in (
+                self._display_tool_result_id(msg)
+                for msg in messages
+                if msg.get("type") == "tool_result"
+            )
+            if tool_result_id
+        }
+        return tool_use_ids & tool_result_ids
+
+    def _lightweight_tool_result_for_restore(
+        self,
+        data: Dict[str, Any],
+        result: Any,
+    ) -> Dict[str, Any]:
+        result_dict = result if isinstance(result, dict) else {}
+        tool_name = data.get("tool_name") or result_dict.get("tool_name")
+        tool_use_id = data.get("tool_use_id")
+        is_error = bool(data.get("is_error", False))
+
+        lightweight: Dict[str, Any] = {
+            "tool_name": tool_name,
+            "tool_use_id": tool_use_id,
+            "status": result_dict.get("status") or ("error" if is_error else "success"),
+            "is_error": is_error,
+        }
+
+        summary_text = (
+            result_dict.get("summary_text")
+            or result_dict.get("summary")
+            or result_dict.get("message")
+            or result_dict.get("error")
+        )
+        if summary_text:
+            summary_key = "summary_text" if result_dict.get("summary_text") else "summary"
+            lightweight[summary_key] = _truncate_string(str(summary_text), 2_000)
+
+        for key in ("data_id", "data_ids", "report_data_id", "report_data_ids"):
+            value = result_dict.get(key) or data.get(key)
+            if value:
+                lightweight[key] = value
+
+        context_refs = _extract_context_refs(result_dict)
+        if context_refs:
+            lightweight["context_refs"] = context_refs
+
+        llm_resume = _llm_resume_for_restore(result_dict)
+        if llm_resume:
+            lightweight["llm_resume"] = llm_resume
+
+        content_preview = _content_preview_for_restore(tool_name, result_dict)
+        if content_preview:
+            lightweight["content_preview"] = content_preview
+
+        visual_ids = []
+        data_payload = _as_dict(result_dict.get("data"))
+        visuals = _collect_visuals(result_dict, data_payload)
+        if visuals:
+            visual_ids = [
+                visual.get("id")
+                for visual in visuals
+                if isinstance(visual, dict) and visual.get("id")
+            ]
+        if visual_ids:
+            lightweight["visual_ids"] = visual_ids
+
+        has_reference = any(
+            lightweight.get(key)
+            for key in ("data_id", "data_ids", "report_data_id", "report_data_ids", "visual_ids")
+        )
+        if "summary" not in lightweight and "summary_text" not in lightweight:
+            if lightweight.get("data_id"):
+                lightweight["summary"] = (
+                    f"结果已保存为 data_id={lightweight['data_id']}，可用 read_data_registry 读取。"
+                )
+            elif lightweight.get("data_ids"):
+                lightweight["summary"] = (
+                    f"结果已保存为 data_ids={lightweight['data_ids']}，可用 read_data_registry 读取。"
+                )
+            elif lightweight.get("visual_ids"):
+                lightweight["summary"] = f"结果包含 visual_ids={lightweight['visual_ids']}，可在前端查看。"
+            elif result:
+                lightweight["summary"] = _safe_content_preview(result, 800)
+            else:
+                lightweight["summary"] = "工具结果已恢复为轻量摘要；原始结果未包含可提取摘要。"
+
+        keep_keys = {
+            "status", "summary", "summary_text", "message", "error",
+            "data_id", "data_ids", "report_data_id", "report_data_ids",
+            "tool_name", "tool_use_id", "is_error", "visuals",
+            "context_refs", "content_preview", "llm_resume",
+        }
+        result_keys = set(result_dict.keys()) if isinstance(result, dict) else set()
+        if result_keys - keep_keys or visual_ids or not has_reference:
+            lightweight["result_truncated"] = True
+
+        return {key: value for key, value in lightweight.items() if value is not None}
+
+    def _display_tool_result_blocks(self, msg: Dict[str, Any]) -> List[Dict[str, Any]]:
+        data = msg.get("data")
+        if not isinstance(data, dict):
+            return []
+
+        tool_use_id = data.get("tool_use_id")
+        result_values: List[Any]
+        if isinstance(data.get("results"), list):
+            result_values = data["results"]
+        elif "result" in data:
+            result_values = [data.get("result")]
+        else:
+            result_values = []
+
+        if not tool_use_id or not result_values:
+            return []
+
+        blocks: List[Dict[str, Any]] = []
+        for result in result_values:
+            history_result = self._lightweight_tool_result_for_restore(data, result)
+            blocks.append({
+                "type": "tool_result",
+                "content": json.dumps(history_result, ensure_ascii=False, indent=2, default=str),
+                "is_error": bool(data.get("is_error", False)),
+                "tool_use_id": tool_use_id,
+            })
+        return blocks
+
+    @classmethod
+    def project_history_messages_for_llm(
+        cls,
+        messages: List[Dict[str, Any]],
+        *,
+        session_id: str = "llm_history_projection",
+    ) -> List[Dict[str, Any]]:
+        """Project persisted transcript rows into LLM-native message format."""
+        projector = cls.__new__(cls)
+        projector.session_id = session_id
+        projector.use_llm_compression = False
+        projector.compressed_iterations = []
+        projector.data_files = {}
+        projector.data_registry_refs = {}
+        projector.conversation_history = []
+        projector.load_history_messages(messages)
+        return projector.get_messages_for_llm(repair_strategy="conservative")
+
     def load_history_messages(self, messages: List[Dict[str, Any]]) -> None:
         """
         批量导入历史对话消息（用于会话恢复）
 
         Args:
-            messages: 历史消息列表，格式为 [{"type": "thought/action/observation/...", "data": {...}}]
-                     或标准格式 [{"role": "user/assistant", "content": "..."}]
+            messages: 历史消息列表。前端展示型 thought/tool_use/tool_result
+                     事件不会作为普通文本恢复到 LLM 上下文；只有用户消息、
+                     最终回复和原生 Anthropic content blocks 会被恢复。
         """
         if not messages:
             logger.warning("load_history_messages_empty", session_id=self.session_id)
@@ -1139,59 +1625,135 @@ class SessionMemory:
             current_history_length=len(self.conversation_history)
         )
 
+        max_source_sequence = max(
+            (
+                msg.get("sequence_number")
+                for msg in messages
+                if isinstance(msg.get("sequence_number"), int)
+            ),
+            default=None,
+        )
+        if max_source_sequence is not None:
+            self.llm_source_until_sequence = max_source_sequence
+
         loaded_count = 0
         skipped_count = 0
         error_count = 0
+        paired_display_tool_ids = self._paired_display_tool_ids(messages)
+        pending_tool_uses: List[Dict[str, Any]] = []
+        pending_tool_results: List[Dict[str, Any]] = []
+
+        def flush_tool_uses(timestamp: Optional[str] = None) -> None:
+            nonlocal loaded_count
+            if not pending_tool_uses:
+                return
+            self.conversation_history.append(
+                ConversationTurn(
+                    role="assistant",
+                    content=list(pending_tool_uses),
+                    timestamp=timestamp or datetime.utcnow().isoformat(),
+                    type="tool_use",
+                    tool_use_id=pending_tool_uses[0].get("id") if len(pending_tool_uses) == 1 else None,
+                    data={"restored_from_display_transcript": True},
+                )
+            )
+            pending_tool_uses.clear()
+            loaded_count += 1
+
+        def flush_tool_results(timestamp: Optional[str] = None) -> None:
+            nonlocal loaded_count
+            if not pending_tool_results:
+                return
+            self.conversation_history.append(
+                ConversationTurn(
+                    role="user",
+                    content=list(pending_tool_results),
+                    timestamp=timestamp or datetime.utcnow().isoformat(),
+                    type="tool_result",
+                    tool_use_id=pending_tool_results[0].get("tool_use_id") if len(pending_tool_results) == 1 else None,
+                    is_error=any(bool(block.get("is_error")) for block in pending_tool_results),
+                    data={"restored_from_display_transcript": True},
+                )
+            )
+            pending_tool_results.clear()
+            loaded_count += 1
 
         for msg in messages:
             try:
+                msg_type = msg.get("type")
+                timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
+
+                is_native_content_blocks = isinstance(msg.get("content"), list)
+
+                if msg_type == "tool_use" and not is_native_content_blocks:
+                    tool_use_block = self._display_tool_use_block(msg)
+                    if tool_use_block:
+                        if tool_use_block.get("id") not in paired_display_tool_ids:
+                            skipped_count += 1
+                            continue
+                        flush_tool_results(timestamp)
+                        pending_tool_uses.append(tool_use_block)
+                        continue
+
+                if msg_type == "tool_result" and not is_native_content_blocks:
+                    tool_result_id = self._display_tool_result_id(msg)
+                    if tool_result_id not in paired_display_tool_ids:
+                        skipped_count += 1
+                        continue
+                    tool_result_blocks = self._display_tool_result_blocks(msg)
+                    if tool_result_blocks:
+                        flush_tool_uses(timestamp)
+                        pending_tool_results.extend(tool_result_blocks)
+                        continue
+
+                flush_tool_uses(timestamp)
+                flush_tool_results(timestamp)
+
+                if "role" in msg and "content" in msg:
+                    content = msg["content"]
+                    role = msg["role"]
+
+                    # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
+                    if isinstance(content, list):
+                        content_types = {
+                            block.get("type")
+                            for block in content
+                            if isinstance(block, dict)
+                        }
+                        if "tool_result" in content_types:
+                            role = "user"
+                            msg_type = "tool_result"
+                        elif "tool_use" in content_types:
+                            role = "assistant"
+                            msg_type = "tool_use"
+                    elif msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
+                        # These rows are UI/display transcript events. Replaying
+                        # them as assistant/user text teaches the model to emit
+                        # pseudo tool calls such as "[思考] 准备调用工具...".
+                        skipped_count += 1
+                        continue
+
+                    self.conversation_history.append(
+                        ConversationTurn(
+                            role=role,
+                            content=content,
+                            timestamp=timestamp,
+                            type=msg_type,
+                            data=msg.get("data") if isinstance(msg.get("data"), dict) else None,
+                            tool_use_id=msg.get("tool_use_id"),
+                            is_error=msg.get("is_error"),
+                        )
+                    )
+                    loaded_count += 1
+                    continue
+
                 # 支持 ReAct 事件格式
                 if "type" in msg:
-                    msg_type = msg.get("type")
                     data = msg.get("data", {})
 
                     # 提取消息内容
-                    if msg_type == "thought":
-                        content = data.get("thought", "")
-                        if content:
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="assistant",
-                                    content=f"[思考] {content}",
-                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
-                    elif msg_type == "tool_use":
-                        tool_calls = data.get("tool_calls", [])
-                        if tool_calls:
-                            content = f"[工具调用] 调用工具: {', '.join([t.get('tool_name', '') for t in tool_calls])}"
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="assistant",
-                                    content=content,
-                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
-                    elif msg_type == "tool_result":
-                        result = data.get("result", "")
-                        if result:
-                            summary = _safe_content_preview(result, 500)
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="user",
-                                    content=f"[工具结果] {summary}",
-                                    timestamp=data.get("timestamp", datetime.utcnow().isoformat())
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
+                    if msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
+                        skipped_count += 1
                     elif msg_type == "complete":
                         answer = data.get("answer", "")
                         if answer:
@@ -1228,7 +1790,7 @@ class SessionMemory:
                                 ConversationTurn(
                                     role="user",
                                     content=content,
-                                    timestamp=msg.get("timestamp", datetime.utcnow().isoformat())
+                                    timestamp=timestamp
                                 )
                             )
                             loaded_count += 1
@@ -1242,35 +1804,6 @@ class SessionMemory:
                             msg_keys=list(msg.keys())
                         )
                         skipped_count += 1
-                # 支持标准消息格式
-                elif "role" in msg and "content" in msg:
-                    content = msg["content"]
-                    role = msg["role"]
-                    msg_type = msg.get("type")
-
-                    # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
-                    if isinstance(content, list):
-                        content_types = {
-                            block.get("type")
-                            for block in content
-                            if isinstance(block, dict)
-                        }
-                        if "tool_result" in content_types:
-                            role = "user"
-                            msg_type = "tool_result"
-                        elif "tool_use" in content_types:
-                            role = "assistant"
-                            msg_type = "tool_use"
-
-                    self.conversation_history.append(
-                        ConversationTurn(
-                            role=role,
-                            content=content,
-                            timestamp=msg.get("timestamp", datetime.utcnow().isoformat()),
-                            type=msg_type,
-                        )
-                    )
-                    loaded_count += 1
                 else:
                     logger.debug(
                         "load_history_messages_unrecognized_format",
@@ -1288,6 +1821,9 @@ class SessionMemory:
                     error=str(e)
                 )
 
+        flush_tool_uses()
+        flush_tool_results()
+
         logger.info(
             "history_messages_loaded",
             session_id=self.session_id,
@@ -1299,7 +1835,7 @@ class SessionMemory:
             previous_history_length=len(self.conversation_history) - loaded_count
         )
 
-    def _append_conversation_turn(self, role: str, content: str, thought: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
+    def _append_conversation_turn(self, role: str, content: str | List[Dict[str, Any]], thought: Optional[str] = None, type: Optional[str] = None, data: Optional[Dict[str, Any]] = None) -> None:
         self.conversation_history.append(
             ConversationTurn(
                 role=role,
@@ -1320,7 +1856,7 @@ class SessionMemory:
         selected = self.conversation_history[-last_n_turns * 2 :]
         return "\n".join(f"{turn.role}: {turn.content}" for turn in selected)
 
-    def get_messages_for_llm(self) -> List[Dict[str, Any]]:
+    def get_messages_for_llm(self, *, repair_strategy: str = "api_safe") -> List[Dict[str, Any]]:
         """
         Return conversation history in Anthropic Messages API format.
 
@@ -1388,6 +1924,8 @@ class SessionMemory:
                 "role": turn.role,
                 "content": turn.content,
             })
+
+        messages = repair_tool_result_pairing(messages, strategy=repair_strategy)
 
         logger.info(
             "get_messages_for_llm_success",

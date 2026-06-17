@@ -30,6 +30,7 @@ from app.tools.analysis.calculate_pm_pmf.calculator import PMFCalculator
 from app.tools.analysis.calculate_pm_pmf.pmf_weights import PMFWeightCalculator, PMFWeights
 from app.tools.analysis.calculate_pm_pmf.factor_analyzer import FactorAnalyzer, FactorAnalysisResult
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_resume_context, merge_refs
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
@@ -879,8 +880,24 @@ class CalculatePMFTool(LLMTool):
             summary_length=len(final_result["summary"])
         )
 
+        self._attach_resume_context(final_result)
         _log_exit(logger, "success", "completed", data_id=final_result["data_id"], sources_count=len(sources))
         return final_result
+
+    def _attach_resume_context(self, result: Dict[str, Any]) -> None:
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        generated_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        source_ids = []
+        for key in ("data_id", "gas_data_id"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value and value != generated_id:
+                source_ids.append(value)
+        context = build_data_resume_context(
+            source_data_ids=source_ids,
+            generated_data_ids=[generated_id] if generated_id else [],
+        )
+        result["refs"] = merge_refs(result.get("refs"), context["refs"])
+        result["llm_resume"] = context["llm_resume"]
 
     def _transform_particulate_to_pmf_input(
         self,

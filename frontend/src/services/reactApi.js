@@ -1,7 +1,7 @@
 // ReAct Agent API客户端
 // 处理与ReAct Agent的SSE流式通信
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 class ReactAgentAPI {
   constructor() {
@@ -23,13 +23,14 @@ class ReactAgentAPI {
     const {
       sessionId = null,
       enhanceWithHistory = true,
-      maxIterations = 30,
+      maxIterations = 120,
       debugMode = false,
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
       modelTier = 'auto',
       attachments = null,  // ✅ 附件列表
+      boardContext = null,
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
       skipAutoFollowup = false,
@@ -54,6 +55,10 @@ class ReactAgentAPI {
       is_interruption: isInterruption,
       skip_auto_followup: skipAutoFollowup,
       skipAutoFollowup
+    }
+
+    if (boardContext !== null) {
+      body.board_context = boardContext
     }
 
     return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)
@@ -189,18 +194,25 @@ class ReactAgentAPI {
     }
   }
 
-  // 取消请求
-  async cancel(requestKey = null) {
-    if (requestKey) {
-      try {
-        await fetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
-          method: 'POST'
-        })
-      } catch (error) {
-        console.warn('Failed to cancel backend analysis:', error)
-      }
+  async steer(sessionId, message) {
+    const url = `${API_BASE_URL}/agent/${encodeURIComponent(sessionId)}/steer`
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
     }
 
+    return await response.json()
+  }
+
+  // 取消请求
+  async cancel(requestKey = null) {
     if (requestKey) {
       const controller = this.controllers.get(requestKey)
       if (controller) {
@@ -210,6 +222,12 @@ class ReactAgentAPI {
       if (this.controller === controller) {
         this.controller = null
       }
+      const backendCancelPromise = fetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
+        method: 'POST'
+      }).catch((error) => {
+        console.warn('Failed to cancel backend analysis:', error)
+      })
+      void backendCancelPromise
       return
     }
 

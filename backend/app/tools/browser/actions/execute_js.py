@@ -7,10 +7,12 @@ Useful for:
 - Custom page interactions
 - Debugging and testing
 
-v2.2: Fixed double arrow function issue - detect if user code already contains () =>
+v2.3: Fixed 'return var' syntax error - removed 'return' keyword to allow declarations
 """
 import structlog
 import re
+
+from ..services.frame_target import resolve_frame
 
 logger = structlog.get_logger()
 
@@ -41,10 +43,22 @@ def _has_arrow_function(code: str) -> bool:
     return False
 
 
+def _is_statement_script(code: str) -> bool:
+    stripped = code.strip()
+    return bool(re.match(r"^(var|let|const|for|if|while|switch|try|return|class|function)\b", stripped))
+
+
+def _expression_code(code: str) -> str:
+    return code.strip().rstrip(";")
+
+
 def handle_execute_js(
     manager,
     code: str,
     session_id: str = "default",
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Execute JavaScript code in the browser context
@@ -65,20 +79,16 @@ def handle_execute_js(
         }
     """
     page = manager.get_active_page(session_id)
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=frame_index)
 
     try:
         # Check if refs parameter is provided
         refs = kwargs.get('refs')
 
         if refs is not None:
-            # Execute JavaScript with refs parameter
-            # The user code should expect (refs) as parameter
-            # Check if user code already has arrow function
             if _has_arrow_function(code):
-                # User code already has arrow function, pass directly with parameter
-                # Replace () => with (refs) =>
                 modified_code = re.sub(r'^\(\s*\)\s*=>', '(refs) =>', code.lstrip())
-                result = page.evaluate(modified_code, refs)
+                result = context.evaluate(modified_code, refs)
                 refs_provided = True
                 logger.info(
                     "browser_execute_js_with_refs_direct",
@@ -86,33 +96,46 @@ def handle_execute_js(
                     refs_count=len(refs) if isinstance(refs, (dict, list)) else 1,
                     session_id=session_id
                 )
-            else:
-                # Wrap user code with arrow function
-                result = page.evaluate(f"(refs) => {{ {code} }}", refs)
+            elif _is_statement_script(code):
+                result = context.evaluate(f"(refs) => {{\n{code}\n}}", refs)
                 refs_provided = True
                 logger.info(
-                    "browser_execute_js_with_refs_wrapped",
+                    "browser_execute_js_with_refs_script",
+                    code_length=len(code),
+                    refs_count=len(refs) if isinstance(refs, (dict, list)) else 1,
+                    session_id=session_id
+                )
+            else:
+                result = context.evaluate(f"(refs) => ({_expression_code(code)})", refs)
+                refs_provided = True
+                logger.info(
+                    "browser_execute_js_with_refs_expression",
                     code_length=len(code),
                     refs_count=len(refs) if isinstance(refs, (dict, list)) else 1,
                     session_id=session_id
                 )
         else:
-            # Execute JavaScript without parameters
             if _has_arrow_function(code):
-                # User code already has arrow function, evaluate directly
-                result = page.evaluate(code)
+                result = context.evaluate(code)
                 refs_provided = False
                 logger.info(
                     "browser_execute_js_direct",
                     code_length=len(code),
                     session_id=session_id
                 )
-            else:
-                # Wrap user code with arrow function
-                result = page.evaluate(f"() => {{ {code} }}")
+            elif _is_statement_script(code):
+                result = context.evaluate(f"() => {{\n{code}\n}}")
                 refs_provided = False
                 logger.info(
-                    "browser_execute_js_wrapped",
+                    "browser_execute_js_script",
+                    code_length=len(code),
+                    session_id=session_id
+                )
+            else:
+                result = context.evaluate(f"() => ({_expression_code(code)})")
+                refs_provided = False
+                logger.info(
+                    "browser_execute_js_expression",
                     code_length=len(code),
                     session_id=session_id
                 )

@@ -59,8 +59,8 @@ Agent调用：execute_sql_query(sql="SELECT DDWORKINGORDERTYPE, COUNT(*) as cnt 
 - 以及`SQLValidator`中定义的其他表
 
 ### 3. LIMIT限制
-- 默认限制1000条
-- 最大限制10000条
+- 默认限制50条
+- 最大限制1000条
 - 自动添加或调整LIMIT子句
 
 ## 可用数据表
@@ -143,7 +143,7 @@ Agent调用：execute_sql_query(sql="SELECT DDWORKINGORDERTYPE, COUNT(*) as cnt 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | sql | string | 是 | - | SQL查询语句 |
-| limit | integer | 否 | 1000 | 返回记录数限制（最大10000） |
+| limit | integer | 否 | 50 | 返回记录数限制（最大1000） |
 
 ## 返回格式
 

@@ -94,6 +94,26 @@ class SessionManager:
             logger.error(f"Failed to save session {session.session_id}: {e}")
             return False
 
+    def save_session_metadata(self, session: Session, update_timestamp: bool = True) -> bool:
+        """保存会话元数据。
+
+        文件存储是单文件快照，无法像数据库一样只写 metadata；这里保持
+        API 兼容，保存完整 session 快照。
+        """
+        return self.save_session(session, update_timestamp=update_timestamp)
+
+    def append_session_transcript(self, session: Session, update_timestamp: bool = True) -> bool:
+        """保存 append-only transcript 快照。
+
+        文件存储没有分表增量写入，调用方负责先合并/去重 transcript，
+        这里保存完整 session 文件作为本地真源。
+        """
+        return self.save_session(session, update_timestamp=update_timestamp)
+
+    def replace_session_transcript(self, session: Session, update_timestamp: bool = True) -> bool:
+        """替换 transcript 快照。"""
+        return self.save_session(session, update_timestamp=update_timestamp)
+
     def load_session(self, session_id: str) -> Optional[Session]:
         """
         从磁盘加载会话
@@ -243,6 +263,7 @@ class SessionManager:
             "session_*.json", "assistant_session_*.json", "query_session_*.json",
             "report_session_*.json", "tracing_session_*.json", "chart_session_*.json",
             "code_session_*.json",
+            "social_session_*.json",
             "*__to__*.json"  # ✅ 新增：子Agent session (parent__to__child__timestamp.json)
         ]
         for pattern in patterns:
@@ -302,6 +323,7 @@ class SessionManager:
             "session_*.json", "assistant_session_*.json", "query_session_*.json",
             "report_session_*.json", "tracing_session_*.json", "chart_session_*.json",
             "code_session_*.json",
+            "social_session_*.json",
             "*__to__*.json"  # ✅ 新增：子Agent session (parent__to__child__timestamp.json)
         ]
         for pattern in patterns:

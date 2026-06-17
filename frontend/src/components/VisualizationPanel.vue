@@ -1,19 +1,28 @@
 ﻿<template>
-  <div class="viz-panel" :class="{ 'has-content': visualizations.length }">
+  <div class="viz-panel" :class="{ 'has-content': hasPanelContent }">
     <!-- 可视化内容 -->
-    <div v-if="visualizations.length > 0" class="viz-content-section">
+    <div v-if="hasPanelContent" class="viz-content-section">
       <div class="panel-header">
         <div class="panel-title-group">
           <h3>{{ visualizationPanelTitle }}</h3>
           <span v-if="visualizations.length" class="viz-count">共 {{ visualizations.length }} 个结果</span>
         </div>
         <div class="header-actions">
-          <!-- 右侧面板不需要操作按钮 -->
+          <button
+            v-for="file in relatedFiles"
+            :key="file.key"
+            type="button"
+            class="related-file-btn"
+            :title="file.downloadLabel"
+            @click="downloadRelatedFile(file)"
+          >
+            {{ file.downloadLabel }}
+          </button>
         </div>
       </div>
 
       <!-- 可视化内容列表 -->
-      <div class="panel-body">
+      <div v-if="visualizations.length > 0" class="panel-body">
         <div
           v-for="(viz, index) in visualizations"
           :key="viz.id || `${viz.type || 'viz'}_${index}`"
@@ -93,7 +102,7 @@
     </div>
 
     <!-- 空状态 -->
-    <div v-if="visualizations.length === 0" class="empty-state">
+    <div v-if="!hasPanelContent" class="empty-state">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M3 9h18" />
@@ -114,6 +123,11 @@ import ChartPanel from './visualization/ChartPanel.vue'
 import DataTable from './visualization/DataTable.vue'
 import ImagePanel from './visualization/ImagePanel.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import {
+  buildArtifactDownloadPayload,
+  hasRelatedArtifactFiles,
+  normalizeRelatedArtifactFiles
+} from '@/utils/artifactRelatedFiles'
 
 const store = useReactStore()
 
@@ -458,6 +472,27 @@ const isDirectUrlImage = (viz) => {
   return false
 }
 
+const normalizeVisual = (visual) => {
+  if (!visual || typeof visual !== 'object') return null
+  if (visual.payload) {
+    return {
+      ...visual.payload,
+      meta: visual.meta || visual.payload.meta
+    }
+  }
+  return visual
+}
+
+const appendVisuals = (target, visuals) => {
+  if (!Array.isArray(visuals) || visuals.length === 0) return
+  visuals.forEach(visual => {
+    const normalized = normalizeVisual(visual)
+    if (normalized) {
+      target.push(normalized)
+    }
+  })
+}
+
 const visualizations = computed(() => {
   let allVisualizations = []
 
@@ -476,8 +511,11 @@ const visualizations = computed(() => {
       return v
     })
   }
-  // 普通模式：从 messages 的 tool_result 事件中提取visuals
+  // 普通模式：优先使用恢复/懒加载后的图表历史，再兼容从消息事件中提取 visuals
   else {
+    appendVisuals(allVisualizations, props.content?.visuals)
+    appendVisuals(allVisualizations, store.currentState.visualizationHistory)
+
     if (props.history && Array.isArray(props.history)) {
       props.history.forEach((msg, msgIndex) => {
         // 只处理 tool_result 类型的消息
@@ -493,33 +531,14 @@ const visualizations = computed(() => {
 
         // 格式1：单个工具 result.visuals
         if (result && result.visuals && Array.isArray(result.visuals) && result.visuals.length > 0) {
-          // 兼容两种格式：
-          // 1. VisualBlock格式: {payload: {...}, meta: {...}}
-          // 2. 直接格式: {id, type, data, meta, ...}
-          const extractedVisuals = result.visuals.map((v) => {
-            if (v.payload) {
-              return { ...v.payload, meta: v.meta }
-            } else {
-              return v
-            }
-          })
-
-          allVisualizations = allVisualizations.concat(extractedVisuals)
+          appendVisuals(allVisualizations, result.visuals)
         }
 
         // 格式2：多个工具 results[].visuals
         if (results && Array.isArray(results)) {
           results.forEach((r, rIdx) => {
             if (r.visuals && Array.isArray(r.visuals) && r.visuals.length > 0) {
-              const extractedVisuals = r.visuals.map((v) => {
-                if (v.payload) {
-                  return { ...v.payload, meta: v.meta }
-                } else {
-                  return v
-                }
-              })
-
-              allVisualizations = allVisualizations.concat(extractedVisuals)
+              appendVisuals(allVisualizations, r.visuals)
             }
           })
         }
@@ -589,13 +608,62 @@ const latestVisualization = computed(() => {
   return list[list.length - 1]
 })
 
+const selectedMessage = computed(() => {
+  if (!props.selectedMessageId || !Array.isArray(props.history)) return null
+  return props.history.find(msg => msg?.id === props.selectedMessageId) || null
+})
+
+const latestArtifactMessage = computed(() => {
+  if (!Array.isArray(props.history)) return null
+
+  for (let index = props.history.length - 1; index >= 0; index -= 1) {
+    const msg = props.history[index]
+    const result = msg?.data?.result
+    const data = result?.data || {}
+    if (hasRelatedArtifactFiles({
+      artifact: {
+        ...data,
+        ...result
+      },
+      refs: data.refs || result?.refs
+    })) {
+      return msg
+    }
+  }
+
+  return null
+})
+
+const artifactSourceMessage = computed(() => selectedMessage.value || latestArtifactMessage.value)
+
+const currentArtifactPayload = computed(() => {
+  const result = artifactSourceMessage.value?.data?.result
+  return buildArtifactDownloadPayload({
+    result,
+    latestVisualization: latestVisualization.value,
+    content: props.content
+  })
+})
+
+const currentArtifactRefs = computed(() => {
+  return currentArtifactPayload.value?.refs || {}
+})
+
+const relatedFiles = computed(() => normalizeRelatedArtifactFiles({
+  artifact: currentArtifactPayload.value,
+  refs: currentArtifactRefs.value
+}))
+
+const hasPanelContent = computed(() => {
+  return visualizations.value.length > 0 || relatedFiles.value.length > 0
+})
+
 const panelTitle = computed(() => {
-  return latestVisualization.value?.title || '可视化内容'
+  return latestVisualization.value?.title || currentArtifactPayload.value?.title || '可视化内容'
 })
 
 const visualizationPanelTitle = computed(() => {
-  // 可视化部分标题（仅当有可视化时显示）
-  return latestVisualization.value?.title || '可视化内容'
+  return latestVisualization.value?.title || currentArtifactPayload.value?.title || '可视化内容'
 })
 
 const typeLabelMap = {
@@ -614,6 +682,7 @@ const typeLabelMap = {
   table: '表格',
   image: '图片',
   text: '文本',
+  graph: '关系图',
   // 颗粒物分析图表类型
   ternary_SNA: '三元图',
   sor_nor_scatter: 'SOR/NOR散点图',
@@ -642,6 +711,7 @@ const isChartType = (viz) => {
     'chart', 'pie', 'bar', 'polar_bar', 'line', 'timeseries',
     'stacked_timeseries', 'weather_timeseries', 'pressure_pbl_timeseries',
     'facet_timeseries', 'radar', 'wind_rose', 'scatter',
+    'graph',
     'scatter3d', 'surface3d', 'line3d', 'bar3d', 'volume3d',
     'profile', 'heatmap', 'polar_line', 'polar_heatmap'
   ]
@@ -799,6 +869,26 @@ const triggerRegenerate = async (query, options) => {
   console.log('触发重新生成:', { query, options })
 }
 
+const downloadRelatedFile = (file) => {
+  if (!file?.file_path && !file?.url) {
+    console.error('[VisualizationPanel] Related file path not available')
+    return
+  }
+
+  try {
+    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = file.file_path.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  } catch (error) {
+    console.error('[VisualizationPanel] Related file download failed:', error)
+  }
+}
+
 // 复制到剪贴板
 const copyToClipboard = async (text) => {
   try {
@@ -893,7 +983,30 @@ const debugUnknownViz = (viz) => {
 .header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+}
+
+.related-file-btn {
+  max-width: 180px;
+  padding: 5px 10px;
+  border: 1px solid #d5e3f6;
+  background: #fff;
+  color: #1976d2;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1976d2;
+    background: #f3f8ff;
+  }
 }
 
 .expand-btn {

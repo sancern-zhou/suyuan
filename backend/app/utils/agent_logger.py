@@ -202,6 +202,8 @@ class AgentLogger:
         if self.enable_file_logging and self.log_file:
             self._save_to_file()
 
+        self._index_social_session_run()
+
         # 记录核心统计日志
         logger.info(
             "agent_run_ended",
@@ -227,6 +229,40 @@ class AgentLogger:
 
         except Exception as e:
             logger.error("agent_log_save_failed", error=str(e))
+
+    def _index_social_session_run(self):
+        """Incrementally index completed social runs for user-scoped search."""
+        if not self.current_run:
+            return
+
+        metadata = self.current_run.get("metadata") or {}
+        runtime_mode = metadata.get("runtime_mode") or metadata.get("mode")
+        user_identifier = metadata.get("user_identifier") or metadata.get("user_id")
+        if runtime_mode != "social" or not user_identifier:
+            return
+
+        try:
+            from app.tools.social.session_search.fts_index import get_fts_index
+
+            get_fts_index().add_record(
+                self.current_run,
+                owner_type="social",
+                owner_id=str(user_identifier),
+                source_path=str(self.log_file) if self.log_file else "",
+            )
+            logger.info(
+                "social_session_run_indexed",
+                run_id=self.current_run.get("run_id"),
+                session_id=self.current_run.get("session_id"),
+                owner_id=str(user_identifier),
+            )
+        except Exception as e:
+            logger.warning(
+                "social_session_run_index_failed",
+                run_id=self.current_run.get("run_id"),
+                session_id=self.current_run.get("session_id"),
+                error=str(e),
+            )
 
     def get_log_file_path(self) -> Optional[str]:
         """获取当前日志文件路径"""

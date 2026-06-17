@@ -1,13 +1,16 @@
 """社交 Agent 桥接模块，负责连接消息总线与 ReActAgent。"""
 
 import asyncio
+import mimetypes
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import structlog
 
 from app.agent.react_agent import ReActAgent
+from app.services.media_object_store import get_media_object_store
 from app.social.events import InboundMessage, OutboundMessage
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
@@ -15,6 +18,13 @@ from app.social.heartbeat_service import HeartbeatService
 from app.social.memory_store import MemoryStore
 from app.social.task_status_store import TaskStatusStore
 from app.social.user_preferences import UserPreferences
+from app.agent.runtime.steering import steering_registry
+from app.agent.session import Session
+from app.agent.session.conversation_persistence import ConversationPersistenceService
+from app.agent.session.session_resolver import (
+    append_session_transcript_for_mode,
+    load_session_for_mode,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -57,6 +67,8 @@ class AgentBridge:
 
         self._running = False
         self._consume_task: Optional[asyncio.Task] = None
+        self._message_tasks: set[asyncio.Task] = set()
+        self._active_social_sessions: set[str] = set()
 
         
         # 初始化用户心跳管理器
@@ -99,6 +111,19 @@ class AgentBridge:
             set_subagent_manager(self.subagent_manager)
             logger.info("subagent_manager_initialized")
 
+            from app.social.cli_task_manager import CliTaskManager
+            from app.social.cli_task_singleton import set_cli_task_manager
+            from app.social.cli_task_store import CliTaskStore
+
+            self.cli_task_manager = CliTaskManager(
+                task_store=CliTaskStore(),
+                message_bus=message_bus,
+            )
+            set_cli_task_manager(self.cli_task_manager)
+            logger.info("cli_task_manager_initialized")
+        else:
+            self.cli_task_manager = None
+
         
         self._channel_map: Dict[str, "BaseChannel"] = {}
 
@@ -114,6 +139,9 @@ class AgentBridge:
         # ✅ 启动子Agent管理器
         if self.subagent_manager:
             await self.subagent_manager.start()
+
+        if self.cli_task_manager:
+            await self.cli_task_manager.start()
 
         # ✅ 后端重启后恢复已有用户的社交定时任务心跳循环
         if self.user_heartbeat_manager and self.mode == "social":
@@ -144,6 +172,12 @@ class AgentBridge:
             except asyncio.CancelledError:
                 pass
 
+        for task in list(self._message_tasks):
+            task.cancel()
+        if self._message_tasks:
+            await asyncio.gather(*self._message_tasks, return_exceptions=True)
+            self._message_tasks.clear()
+
         
         if self.user_heartbeat_manager:
             await self.user_heartbeat_manager.shutdown()
@@ -151,6 +185,9 @@ class AgentBridge:
         
         if self.subagent_manager:
             await self.subagent_manager.shutdown()
+
+        if self.cli_task_manager:
+            await self.cli_task_manager.shutdown()
 
         logger.info("AgentBridge stopped")
 
@@ -172,6 +209,81 @@ class AgentBridge:
             return channel.bot_account
         return "default"
 
+    @staticmethod
+    def _is_image_media(media_path: str) -> bool:
+        mime_type, _ = mimetypes.guess_type(media_path)
+        if mime_type and mime_type.startswith("image/"):
+            return True
+        return Path(media_path).suffix.lower() in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".bmp",
+            ".tif",
+            ".tiff",
+        }
+
+    def _build_agent_attachments(self, media: Optional[List[str]]) -> List[Dict[str, Any]]:
+        """Convert social channel media references into agent attachments."""
+        attachments: List[Dict[str, Any]] = []
+        for item in media or []:
+            if not item:
+                continue
+            media_type = "image" if self._is_image_media(item) else "file"
+            attachment: Dict[str, Any] = {
+                "type": media_type,
+                "name": Path(item).name or "attachment",
+            }
+            if item.startswith(("http://", "https://")):
+                attachment["url"] = item
+            else:
+                attachment["local_path"] = item
+                mime_type, _ = mimetypes.guess_type(item)
+                if media_type == "image":
+                    try:
+                        object_url = get_media_object_store().upload_and_presign(
+                            item,
+                            content_type=mime_type,
+                        )
+                        if object_url:
+                            attachment["url"] = object_url
+                    except Exception as exc:
+                        logger.warning(
+                            "media_object_store_upload_failed",
+                            path=item,
+                            error=str(exc),
+                        )
+                    try:
+                        from app.services.signed_media import get_signed_media_service
+
+                        signed_url = get_signed_media_service().create_url(item)
+                        if signed_url and not attachment.get("url"):
+                            attachment["url"] = signed_url
+                    except Exception as exc:
+                        logger.warning(
+                            "signed_media_url_generation_failed",
+                            path=item,
+                            error=str(exc),
+                        )
+            mime_type, _ = mimetypes.guess_type(item)
+            if mime_type:
+                attachment["mime_type"] = mime_type
+            attachments.append(attachment)
+        return attachments
+
+    @staticmethod
+    def _strip_media_source_markers(content: str) -> str:
+        """Remove local/remote media source paths that are supplied as attachments."""
+        cleaned = re.sub(
+            r"(?im)^\[(?:Image|Audio|Video|File):\s*source:\s*[^\]]+\]\s*$",
+            "",
+            content or "",
+        )
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
     async def _consume_loop(self) -> None:
         """Main consumption loop."""
         logger.info("AgentBridge consume loop started", running=self._running)
@@ -185,7 +297,9 @@ class AgentBridge:
                            channel=msg.channel,
                            sender_id=msg.sender_id,
                            content_preview=msg.content[:50])
-                await self._process_message(msg)
+                task = asyncio.create_task(self._route_message(msg))
+                self._message_tasks.add(task)
+                task.add_done_callback(self._message_tasks.discard)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -198,7 +312,95 @@ class AgentBridge:
                            error=str(e),
                            exc_info=True)
 
-    async def _process_message(self, msg: InboundMessage) -> None:
+    async def _route_message(self, msg: InboundMessage) -> None:
+        bot_account = await self._get_bot_account(msg.channel)
+        social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+
+        if self.mode == "social":
+            from app.social.user_registry import BIND_CODE_PATTERN, get_social_user_registry
+
+            registry = get_social_user_registry()
+            if BIND_CODE_PATTERN.match(msg.content or ""):
+                bound_user = await registry.bind_by_code(
+                    message_text=msg.content,
+                    channel=msg.channel,
+                    bot_account=bot_account,
+                    sender_id=msg.sender_id,
+                )
+                if bound_user:
+                    await self.message_bus.publish_outbound(
+                        OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=f"绑定成功，{bound_user.name}。现在可以正常使用了。",
+                            reply_to=msg.sender_id,
+                        )
+                    )
+                    logger.info(
+                        "social_user_bound",
+                        social_user_id=bound_user.social_user_id,
+                        user_id=bound_user.id,
+                    )
+                else:
+                    await self.message_bus.publish_outbound(
+                        OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="绑定码无效、已使用，或当前微信已经绑定过用户。",
+                            reply_to=msg.sender_id,
+                        )
+                    )
+                    logger.warning(
+                        "social_user_bind_failed",
+                        channel=msg.channel,
+                        sender_id=msg.sender_id,
+                        content_preview=msg.content[:40],
+                    )
+                return
+
+            social_user = await registry.touch_social_user(social_user_id)
+            if social_user and social_user.status == "disabled":
+                await self.message_bus.publish_outbound(
+                    OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="当前用户已被禁用，请联系管理员。",
+                        reply_to=msg.sender_id,
+                    )
+                )
+                return
+
+        session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+
+        if self.mode == "social" and session_id in self._active_social_sessions:
+            accepted = await steering_registry.add_input(session_id, msg.content)
+            if not accepted:
+                await asyncio.sleep(0.2)
+                accepted = await steering_registry.add_input(session_id, msg.content)
+            if accepted:
+                logger.info(
+                    "social_message_steered_to_active_run",
+                    channel=msg.channel,
+                    sender_id=msg.sender_id,
+                    session_id=session_id,
+                    content_preview=msg.content[:80],
+                )
+                return
+
+        await self._process_message(
+            msg,
+            bot_account=bot_account,
+            social_user_id=social_user_id,
+            session_id=session_id,
+        )
+
+    async def _process_message(
+        self,
+        msg: InboundMessage,
+        bot_account: Optional[str] = None,
+        social_user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> None:
         """
         Process an inbound message through the agent.
 
@@ -212,11 +414,13 @@ class AgentBridge:
                        content_length=len(msg.content))
 
             
-            bot_account = await self._get_bot_account(msg.channel)
-            social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+            bot_account = bot_account or await self._get_bot_account(msg.channel)
+            social_user_id = social_user_id or f"{msg.channel}:{bot_account}:{msg.sender_id}"
 
             
-            session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+            session_id = session_id or await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+            if self.mode == "social":
+                self._active_social_sessions.add(session_id)
 
             logger.info("Session obtained",
                        channel=msg.channel,
@@ -261,19 +465,33 @@ class AgentBridge:
                 social_soul_context = social_context["social_soul_context"]
                 social_user_context = social_context["social_user_context"]
 
+            agent_attachments = self._build_agent_attachments(msg.media) if self.mode == "social" else []
+            agent_content = (
+                self._strip_media_source_markers(msg.content)
+                if agent_attachments
+                else msg.content
+            )
+
+            # ✅ 加载 Session 对象，用于持久化对话历史
+            session = await load_session_for_mode(session_id, mode=self.mode)
+            if not session:
+                session = Session(session_id=session_id, query=agent_content)
+
             response_text, reasoning_content = await self._aggregate_agent_events(
-                content=msg.content,
+                content=agent_content,
                 session_id=session_id,
                 chat_id=msg.chat_id,
                 channel=msg.channel,
+                attachments=agent_attachments,
                 social_user_id=social_user_id if self.mode == "social" else None,
                 social_memory_store=social_memory_store,
                 social_user_preferences=social_user_prefs,
                 social_soul_file_path=social_soul_file_path,
                 social_user_file_path=social_user_file_path,
-                social_heartbeat_file_path=social_heartbeat_file_path,  # ✅ 新增
+                social_heartbeat_file_path=social_heartbeat_file_path,
                 social_soul_context=social_soul_context,
-                social_user_context=social_user_context
+                social_user_context=social_user_context,
+                session=session  # ✅ 传递 session 对象
             )
 
             logger.info("Agent analysis completed",
@@ -344,6 +562,9 @@ class AgentBridge:
                 reply_to=msg.sender_id
             )
             await self.message_bus.publish_outbound(error_msg)
+        finally:
+            if self.mode == "social" and session_id:
+                self._active_social_sessions.discard(session_id)
 
     async def _aggregate_agent_events(
         self,
@@ -357,9 +578,11 @@ class AgentBridge:
         social_user_preferences: dict = None,
         social_soul_file_path: str = None,
         social_user_file_path: str = None,
-        social_heartbeat_file_path: str = None,  # ✅ 新增
+        social_heartbeat_file_path: str = None,
         social_soul_context: str = None,
-        social_user_context: str = None
+        social_user_context: str = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        session: Optional[Session] = None,
     ) -> tuple[str, str]:
         """聚合 Agent 事件并生成最终回复。
 
@@ -371,10 +594,70 @@ class AgentBridge:
         events_buffer = []
         streaming_text_parts = []
         tool_calls = []
-        stream_segments = []
-        current_buffer = []
-        reasoning_parts = []  # ✅ 新增：收集思考内容
-        sent_text_contents = set()  # ✅ 新增：跟踪已发送的 text_content，避免重复
+        reasoning_parts = []
+        sent_text_contents = set()
+
+        conversation_history = []
+        collected_data_ids = []
+        collected_visuals = []
+        seen_visual_ids = set()
+
+        persistence = ConversationPersistenceService()
+
+        user_message = {
+            "type": "user",
+            "content": content,
+            "timestamp": datetime.now().isoformat()
+        }
+        conversation_history.append(user_message)
+        logger.debug("user_message_added_to_history",
+                    session_id=session_id,
+                    content_preview=content[:100])
+
+        async def persist_turn(
+            *,
+            terminal_message: Optional[Dict[str, Any]] = None,
+            office_documents: Optional[List[Dict[str, Any]]] = None,
+            log_event: str = "social_session_transcript_persisted",
+            **log_fields: Any,
+        ) -> None:
+            if not session:
+                return
+            if terminal_message is None:
+                persistence.append_complete(
+                    session,
+                    display_history=conversation_history,
+                    collected_data_ids=collected_data_ids,
+                    collected_visuals=collected_visuals,
+                    office_documents=office_documents,
+                )
+            else:
+                persistence.append_terminal(
+                    session,
+                    display_history=conversation_history,
+                    terminal_message=terminal_message,
+                    collected_data_ids=collected_data_ids,
+                    collected_visuals=collected_visuals,
+                    office_documents=office_documents,
+                )
+            await append_session_transcript_for_mode(session, mode=self.mode)
+
+            if session_id not in self.agent._session_store:
+                self.agent._session_store[session_id] = {}
+            self.agent._session_store[session_id]["collected_data_ids"] = list(
+                dict.fromkeys(collected_data_ids)
+            )
+            self.agent._session_store[session_id]["collected_visuals"] = collected_visuals
+            self.agent._session_store[session_id]["display_history_persisted"] = True
+
+            logger.info(
+                log_event,
+                session_id=session_id,
+                conversation_history_length=len(conversation_history),
+                collected_data_ids_count=len(collected_data_ids),
+                collected_visuals_count=len(collected_visuals),
+                **log_fields,
+            )
 
         try:
             
@@ -390,14 +673,62 @@ class AgentBridge:
                 social_user_preferences=social_user_preferences if self.mode == "social" else None,
                 social_soul_file_path=social_soul_file_path if self.mode == "social" else None,
                 social_user_file_path=social_user_file_path if self.mode == "social" else None,
-                social_heartbeat_file_path=social_heartbeat_file_path if self.mode == "social" else None,  # ✅ 新增
+                social_heartbeat_file_path=social_heartbeat_file_path if self.mode == "social" else None,
                 social_soul_context=social_soul_context if self.mode == "social" else None,
-                social_user_context=social_user_context if self.mode == "social" else None
+                social_user_context=social_user_context if self.mode == "social" else None,
+                attachments=attachments if self.mode == "social" else None,
             ):
                 events_buffer.append(event)
 
                 # Process different event types
                 event_type = event.get("type", "")
+
+                if event_type in ["thought", "tool_use", "tool_result"]:
+                    event_data = event.get("data", {})
+                    frontend_message = {
+                        "type": event_type,
+                        "data": event_data,
+                        "timestamp": event_data.get("timestamp") if "timestamp" in event_data else None
+                    }
+
+                    if event_type == "thought":
+                        frontend_message["content"] = event_data.get("text_content", "思考中...")
+                    elif event_type == "tool_use":
+                        tool_name = event_data.get("tool_name", "")
+                        frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
+                    elif event_type == "tool_result":
+                        result_data = event_data.get("result", {})
+                        if isinstance(result_data, dict):
+                            frontend_message["content"] = (
+                                result_data.get("summary_text")
+                                or (result_data.get("summary", "")[:500] if result_data.get("summary") else "")
+                                or "获得结果"
+                            )
+                        else:
+                            frontend_message["content"] = str(result_data)
+
+                    conversation_history.append(frontend_message)
+                    logger.debug("conversation_history_appended",
+                                event_type=event_type,
+                                history_length=len(conversation_history))
+
+                # 收集数据ID
+                if event_type == "tool_result" and "data" in event:
+                    data = event.get("data", {})
+                    if "data_id" in data:
+                        collected_data_ids.append(data["data_id"])
+                    if "data_ids" in data:
+                        collected_data_ids.extend(data["data_ids"])
+
+                # 收集可视化（基于ID去重）
+                if "visuals" in event.get("data", {}):
+                    visuals = event["data"]["visuals"]
+                    if isinstance(visuals, list):
+                        for visual in visuals:
+                            visual_id = visual.get("id")
+                            if visual_id and visual_id not in seen_visual_ids:
+                                collected_visuals.append(visual)
+                                seen_visual_ids.add(visual_id)
 
                 if event_type == "streaming_text":
                     # Accumulate streaming text
@@ -483,6 +814,28 @@ class AgentBridge:
                         response_text = final_data.get("answer", "")
                         if response_text:
                             reasoning_content = self._format_reasoning_content(reasoning_parts)
+
+                            final_message = {
+                                "type": "final",
+                                "content": response_text,
+                                "data": final_data,
+                                "timestamp": final_data.get("timestamp", datetime.now().isoformat())
+                            }
+                            conversation_history.append(final_message)
+
+                            if "visuals" in final_data and isinstance(final_data["visuals"], list):
+                                final_message["visuals"] = final_data["visuals"]
+
+                            if session:
+                                office_documents = self.agent._session_store.get(
+                                    session_id, {}
+                                ).get("office_documents", [])
+
+                                await persist_turn(
+                                    office_documents=office_documents,
+                                    log_event="social_session_transcript_persisted",
+                                )
+
                             return response_text, reasoning_content
 
                 elif event_type == "error":
@@ -490,17 +843,54 @@ class AgentBridge:
                     error_data = event.get("data", {})
                     error_msg = error_data.get("error", "Unknown error")
                     logger.warning("Agent error event", error=error_msg)
+
+                    if session:
+                        terminal_message = {
+                            "type": "error",
+                            "content": f"处理查询时出错: {error_msg}",
+                            "data": error_data,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                        await persist_turn(
+                            terminal_message=terminal_message,
+                            log_event="social_session_transcript_persisted_on_error",
+                            error_type="error",
+                        )
+
                     return f"处理查询时出错: {error_msg}", ""
 
-                elif event_type == "fatal_error":
-                    # Handle fatal error events
+                elif event_type in ["incomplete", "fatal_error", "interrupted"]:
+                    # Handle terminal events
                     error_data = event.get("data", {})
-                    if isinstance(error_data, dict):
-                        error_msg = error_data.get("error", "未知错误")
-                        logger.error("Agent fatal error event", error=error_msg)
+
+                    if event_type == "interrupted":
+                        terminal_content = error_data.get("reason", "用户已暂停本轮分析")
+                    elif event_type == "incomplete":
+                        terminal_content = error_data.get(
+                            "reason",
+                            "分析任务较复杂，在限定步骤内未完成，是否继续？",
+                        )
+                    else:
+                        terminal_content = error_data.get("error") or error_data.get("message") or "分析失败"
+
+                    if session:
+                        terminal_message = {
+                            "type": event_type,
+                            "content": terminal_content,
+                            "data": error_data,
+                            "timestamp": error_data.get("timestamp") or datetime.now().isoformat(),
+                        }
+                        await persist_turn(
+                            terminal_message=terminal_message,
+                            log_event="social_session_transcript_persisted_on_terminal",
+                            terminal_type=event_type,
+                        )
+
+                    if event_type == "fatal_error":
+                        error_msg = error_data.get("error", "未知错误") if isinstance(error_data, dict) else str(error_data)
                         return f"系统遇到致命错误: {error_msg}\n\n请稍后重试或联系技术支持。", ""
 
-                    return "系统遇到致命错误，但未提供详细信息。", ""
+                    return terminal_content, ""
 
             # If no complete event, aggregate streaming text
             if streaming_text_parts:
@@ -537,6 +927,25 @@ class AgentBridge:
                         session_id=session_id,
                         error=str(e),
                         exc_info=True)
+
+            if session:
+                terminal_message = {
+                    "type": "fatal_error",
+                    "content": str(e),
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+                try:
+                    await persist_turn(
+                        terminal_message=terminal_message,
+                        log_event="social_session_transcript_persisted_on_exception",
+                        error=str(e),
+                    )
+                except Exception as persist_err:
+                    logger.error("failed_to_persist_session_on_exception",
+                               session_id=session_id,
+                               persist_error=str(persist_err))
+
             return f"处理请求时出错: {str(e)}", ""
 
     def _filter_technical_details(self, thought: str) -> str:
@@ -780,6 +1189,27 @@ class AgentBridge:
                 context["social_memory_store"] = await self.user_memory_manager.get_user_memory(user_id)
                 logger.debug("user_memory_loaded", user_id=user_id)
 
+            try:
+                from app.social.user_registry import get_social_user_registry
+
+                social_user = await get_social_user_registry().get_by_social_user_id(user_id)
+                if social_user:
+                    structured_user_context = [
+                        "## 结构化用户档案",
+                        f"- 用户姓名：{social_user.name}",
+                        f"- 用户状态：{social_user.status}",
+                    ]
+                    if social_user.email:
+                        structured_user_context.append(f"- 邮箱：{social_user.email}")
+
+                    existing_user_context = context.get("social_user_context") or ""
+                    context["social_user_context"] = "\n".join(
+                        [*structured_user_context, "", existing_user_context]
+                    ).strip()
+                    context["social_user_profile"] = social_user.model_dump()
+            except Exception as e:
+                logger.warning("failed_to_load_structured_social_user", user_id=user_id, error=str(e))
+
             # 2. 加载用户偏好和文件路径
             preferences_manager = UserPreferences(user_id)
             user_preferences = preferences_manager.get_preferences()
@@ -792,7 +1222,13 @@ class AgentBridge:
 
                 # 加载 soul.md 和 USER.md 内容
                 context["social_soul_context"] = preferences_manager.load_soul_md()
-                context["social_user_context"] = preferences_manager.load_user_md()
+                user_md_context = preferences_manager.load_user_md()
+                if context["social_user_context"] and user_md_context:
+                    context["social_user_context"] = (
+                        context["social_user_context"] + "\n\n" + user_md_context
+                    )
+                elif user_md_context:
+                    context["social_user_context"] = user_md_context
 
                 has_soul = len(context["social_soul_context"].strip()) > 0 if context["social_soul_context"] else False
 

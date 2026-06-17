@@ -102,6 +102,8 @@ class SQLValidator:
         Returns:
             (is_valid, error_message): 验证结果和错误信息
         """
+        sql = self.normalize_sql(sql)
+
         if not sql or not sql.strip():
             return False, "SQL语句为空"
 
@@ -137,6 +139,79 @@ class SQLValidator:
 
         return True, ""
 
+    def normalize_sql(self, sql: str) -> str:
+        """
+        归一化LLM常见输出格式，避免合法只读SQL因包装格式被误拒。
+
+        只移除外层展示包装，不改变SQL主体语义：
+        - Markdown代码块 ```sql ... ```
+        - 单层包裹整个查询的外层括号
+        - 首尾空白
+        """
+        if sql is None:
+            return ""
+
+        normalized = sql.strip()
+        normalized = self._strip_markdown_code_fence(normalized)
+        normalized = self._strip_single_outer_parentheses(normalized)
+        return normalized.strip()
+
+    def _strip_markdown_code_fence(self, sql: str) -> str:
+        """移除包裹整段SQL的Markdown代码块。"""
+        fence_match = re.fullmatch(r"```(?:sql|tsql|mssql)?\s*\n?(.*?)\n?```", sql, re.IGNORECASE | re.DOTALL)
+        if fence_match:
+            return fence_match.group(1).strip()
+        return sql
+
+    def _strip_single_outer_parentheses(self, sql: str) -> str:
+        """如果整段SQL只被一层外部括号包裹，则去掉这一层。"""
+        if not (sql.startswith("(") and sql.endswith(")")):
+            return sql
+
+        depth = 0
+        in_single_quote = False
+        in_bracket_identifier = False
+        index = 0
+        length = len(sql)
+
+        while index < length:
+            char = sql[index]
+            next_char = sql[index + 1] if index + 1 < length else ""
+
+            if in_single_quote:
+                if char == "'" and next_char == "'":
+                    index += 2
+                    continue
+                if char == "'":
+                    in_single_quote = False
+                index += 1
+                continue
+
+            if in_bracket_identifier:
+                if char == "]":
+                    in_bracket_identifier = False
+                index += 1
+                continue
+
+            if char == "'":
+                in_single_quote = True
+            elif char == "[":
+                in_bracket_identifier = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0 and index != length - 1:
+                    return sql
+                if depth < 0:
+                    return sql
+
+            index += 1
+
+        if depth == 0:
+            return sql[1:-1].strip()
+        return sql
+
     def _validate_table_names(self, sql: str) -> Tuple[bool, str]:
         """
         验证表名是否在白名单中
@@ -147,6 +222,7 @@ class SQLValidator:
         Returns:
             (is_valid, error_message): 验证结果和错误信息
         """
+        sql = self.normalize_sql(sql)
         referenced_tables = self.extract_tables(sql)
         if not referenced_tables:
             return True, ""
@@ -183,6 +259,7 @@ class SQLValidator:
         Returns:
             (is_valid, error_message): 验证结果和错误信息
         """
+        sql = self.normalize_sql(sql)
         sql_lower = sql.lower()
 
         # 检查是否有LIMIT
@@ -242,6 +319,7 @@ class SQLValidator:
         Returns:
             表名列表
         """
+        sql = self.normalize_sql(sql)
         tables = []
         pattern = r'\b(?:from|join)\s+(?!\()(\[?\w+\]?(?:\s*\.\s*\[?\w+\]?)?)'
 

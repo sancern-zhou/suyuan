@@ -368,70 +368,52 @@ class TerminalSessionTool(LLMTool):
     def __init__(self) -> None:
         function_schema = {
             "name": "terminal_session",
-            "description": (
-                "托管长期运行的交互式命令行进程。pipe 适合猜数字游戏、简单REPL、等待stdin的脚本；"
-                "Linux pty 适合 shell、Claude Code 交互式CLI、简单TUI。"
-                "不是Claude/Codex委托工具；如需外部编程Agent请用cli_session。"
-            ),
+            "description": "托管长期运行的交互式命令行进程；不是 Claude/Codex 委托工具，外部编程 Agent 用 cli_session。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["start", "send", "read", "status", "stop", "list"],
-                        "description": "操作：start启动进程，send写入一行输入，read读取输出，status查看状态，stop终止，list列出。"
+                        "description": "操作类型：start/send/read/status/stop/list。"
                     },
                     "session_name": {
                         "type": "string",
-                        "description": "当前社交用户下的会话名，默认 default。"
+                        "description": "当前社交用户下的会话名，默认default。"
                     },
                     "command": {
                         "type": "string",
-                        "description": "start 时必填，要启动的命令。使用普通命令和参数，不支持管道/重定向/shell连接符。"
+                        "description": "start时必填；不支持管道/重定向/shell连接符。"
                     },
-                    "input": {
-                        "type": "string",
-                        "description": "send 时写入进程的内容。默认自动补换行；PTY 下可配合 append_newline=false 发送 Ctrl+C(\\u0003)、Tab(\\t)、方向键等原始按键。"
-                    },
+                    "input": {"type": "string", "description": "send时写入进程的内容。"},
                     "backend": {
                         "type": "string",
                         "enum": ["pipe", "pty", "auto"],
-                        "description": "start 时选择后端。pipe 兼容脚本；pty 仅 Linux/macOS，提供真实终端行为；auto 在非 Windows 选 pty，Windows 选 pipe。",
-                        "default": "pipe"
+                        "description": "start后端，默认pipe。"
                     },
-                    "cwd": {
-                        "type": "string",
-                        "description": "工作目录，必须在项目目录内。默认项目根目录。"
-                    },
+                    "cwd": {"type": "string", "description": "工作目录，必须在项目目录内，默认项目根目录。"},
                     "append_newline": {
                         "type": "boolean",
-                        "description": "send 时是否自动追加换行。执行 shell 命令/脚本输入通常 true；发送 Ctrl+C、Tab、方向键等原始按键时设 false。",
-                        "default": True
+                        "description": "send时是否追加换行，默认true。"
                     },
                     "columns": {
                         "type": "integer",
-                        "description": "PTY 终端列数，默认 120。",
-                        "default": 120
+                        "description": "PTY终端列数，默认120。"
                     },
                     "rows": {
                         "type": "integer",
-                        "description": "PTY 终端行数，默认 30。",
-                        "default": 30
+                        "description": "PTY终端行数，默认30。"
                     },
                     "restart": {
                         "type": "boolean",
-                        "description": "start 时如同名会话存在，是否先停止再重启。",
-                        "default": False
+                        "description": "start时如同名会话存在是否先停止再重启，默认false。"
                     },
                     "read_timeout": {
                         "type": "number",
-                        "description": "写入或启动后等待输出的秒数，默认 1.0，范围 0-10。",
-                        "default": DEFAULT_READ_TIMEOUT
+                        "description": "等待输出秒数，默认1.0。"
                     },
                     "max_output_chars": {
                         "type": "integer",
-                        "description": "本次返回的最大输出字符数，默认 6000。",
-                        "default": DEFAULT_MAX_OUTPUT_CHARS
+                        "description": "本次返回的最大输出字符数，默认6000。"
                     }
                 },
                 "required": ["action"]

@@ -30,11 +30,15 @@ def inspect_pptx_geometry(pptx_path: Path) -> Dict[str, object]:
             if width > 0 and height > 0:
                 visible_count += 1
             if left < 0 or top < 0 or left + width > slide_w or top + height > slide_h:
+                shape_name = str(getattr(shape, "name", "") or "")
+                shape_id = shape_name.removeprefix("pptm:") if shape_name.startswith("pptm:") else None
                 issues.append(
                     {
                         "type": "shape_out_of_bounds",
                         "slide": slide_index,
                         "shape": shape_index,
+                        "shape_name": shape_name or None,
+                        "shape_id": shape_id,
                         "bounds": {
                             "left": left,
                             "top": top,

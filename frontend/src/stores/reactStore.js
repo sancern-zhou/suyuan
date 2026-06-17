@@ -3,9 +3,23 @@
 
 import { defineStore } from 'pinia'
 import { agentAPI } from '@/services/reactApi'
+import { uploadChatFile } from '@/services/uploadApi'
 import { autoSaveSession } from '@/api/session'
+import {
+  convertStreamingAnswerToThoughtIfToolPlanning,
+  freezeActiveAssistantOutput
+} from './reactStoreStreaming'
+import {
+  addPendingSteeringInput,
+  applyPendingSteeringInputs,
+  promoteUnappliedSteeringInputsToQueue,
+  removePendingSteeringInput
+} from './reactStoreSteering'
+import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership'
+import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue'
 
 const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -41,10 +55,219 @@ const getContentPreview = (content, maxLength = 100) => {
   return text.substring(0, maxLength)
 }
 
+const isPresentedImageArtifact = (payload = {}, metadata = {}) => {
+  const generator = payload.generator || metadata.generator || metadata.tool_name
+  const fileType = payload.file_type || payload.html_preview?.file_type
+  return generator === 'present_artifact' && fileType === 'image'
+}
+
+const getFilenameFromPath = (filePath = '') => {
+  if (!filePath || typeof filePath !== 'string') return ''
+  return filePath.split('/').pop() || filePath
+}
+
+const buildPresentedImageVisual = (payload = {}, metadata = {}) => {
+  if (!isPresentedImageArtifact(payload, metadata)) return null
+  const imageUrl = payload.html_preview?.html_url || payload.html_url
+  if (!imageUrl) return null
+
+  const filePath = payload.file_path || payload.path || ''
+  const fileName = payload.file_name || getFilenameFromPath(filePath) || '图片'
+  const stableId = payload.html_preview?.html_id || filePath || imageUrl
+
+  return {
+    id: `present_artifact_image_${String(stableId).replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+    type: 'image',
+    title: fileName,
+    image_url: imageUrl,
+    data: { url: imageUrl },
+    meta: {
+      generator: 'present_artifact',
+      file_path: filePath,
+      file_type: 'image',
+      schema_version: 'present_artifact.v1'
+    }
+  }
+}
+
+const ensurePresentedImageVisual = (result = {}) => {
+  const payload = result.data || {}
+  const visual = buildPresentedImageVisual(payload, result.metadata || {})
+  if (!visual) return false
+  if (!Array.isArray(result.visuals)) {
+    result.visuals = []
+  }
+  const exists = result.visuals.some(item => item?.id === visual.id)
+  if (!exists) {
+    result.visuals.push(visual)
+  }
+  return true
+}
+
+const hasVisualizationRecord = (targetState, visualId) => {
+  return !!visualId && Array.isArray(targetState?.visualizationHistory) &&
+    targetState.visualizationHistory.some(item => item?.id === visualId)
+}
+
+const createEmptyDrawioBoardState = () => ({
+  activeBoardId: null,
+  title: '',
+  currentXml: '',
+  previousXml: '',
+  undoStack: [],
+  redoStack: [],
+  applyingHistory: false,
+  versions: [],
+  currentVersionId: null,
+  baseVersionId: null,
+  selectedCells: [],
+  pendingSnapshotAttachment: null,
+  version: 0,
+  dirty: false,
+  updatedAt: null
+})
+
+const isDrawioBoardToolResult = (result = {}) => {
+  const data = result?.data || {}
+  const metadata = result?.metadata || {}
+  return metadata?.generator === 'create_drawio_board' ||
+    metadata.generator === 'create_drawio_board' ||
+    data?.artifact_kind === 'drawio_board' ||
+    data.artifact_kind === 'drawio_board'
+}
+
+const getDrawioBoardPayload = (result = {}) => {
+  const data = result?.data || {}
+  return data.board || data
+}
+
+const getDrawioBoardXml = (payload = {}) => {
+  return payload.currentXml ||
+    payload.current_xml ||
+    payload.xml ||
+    payload.drawio_xml ||
+    payload.mxfile ||
+    ''
+}
+
+const getDrawioBoardXmlRef = (payload = {}, result = {}) => {
+  if (payload.xml_ref && typeof payload.xml_ref === 'object') {
+    return payload.xml_ref
+  }
+  const artifacts = result?.refs?.artifacts
+  if (Array.isArray(artifacts)) {
+    return artifacts.find(item => item?.kind === 'drawio_board_xml' || item?.artifact_kind === 'drawio_board') || null
+  }
+  return null
+}
+
+const readDrawioBoardXmlFromRef = async (xmlRef = {}) => {
+  const directUrl = xmlRef.read_url || xmlRef.url || xmlRef.download_url
+  const localPath = xmlRef.local_path || xmlRef.path || xmlRef.file_path
+  const normalizedDirectUrl = directUrl?.startsWith('/api/') && API_BASE_URL !== '/api'
+    ? `${API_BASE_URL}${directUrl.slice(4)}`
+    : directUrl
+  const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
+  if (!url) return ''
+  const response = await fetch(url, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error(`Failed to read drawio xml ref: ${response.status}`)
+  }
+  return await response.text()
+}
+
+const sanitizeDrawioVersionFileName = (title = 'drawio-board') => {
+  const safeTitle = String(title || 'drawio-board')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .trim() || 'drawio-board'
+  return safeTitle
+}
+
+const createDrawioBoardVersionRecord = ({
+  board = {},
+  payload = {},
+  result = {},
+  xml = '',
+  source = 'agent'
+} = {}) => {
+  const versions = Array.isArray(board.versions) ? board.versions : []
+  const requestedVersionNumber = Number(payload.version_number || payload.version || 0)
+  const versionNumber = requestedVersionNumber > versions.length
+    ? requestedVersionNumber
+    : versions.length + 1
+  const stableId = payload.version_id ||
+    payload.versionId ||
+    `${payload.artifact_id || payload.board_id || board.activeBoardId || 'drawio'}_v${versionNumber}_${Date.now()}`
+  const title = payload.title || payload.name || board.title || 'Draw.io Board'
+  const fileName = payload.file_name ||
+    payload.fileName ||
+    `${sanitizeDrawioVersionFileName(title)}-v${versionNumber}.drawio`
+
+  return {
+    id: String(stableId),
+    version_id: String(stableId),
+    versionNumber,
+    version_number: versionNumber,
+    title,
+    xml,
+    file_name: fileName,
+    file_path: payload.file_path || payload.path || `drawio_versions/${fileName}`,
+    format: 'drawio',
+    source,
+    downloadLabel: fileName,
+    summary: result.summary || payload.summary || '',
+    created_at: payload.created_at || payload.createdAt || result.timestamp || new Date().toISOString(),
+    is_current: true
+  }
+}
+
+const getDrawioBoardResultsFromMessage = (message = {}) => {
+  if (!message || message.type !== 'tool_result') return []
+
+  const data = message.data || {}
+  const candidates = []
+  if (data.result) {
+    candidates.push(data.result)
+  }
+  if (Array.isArray(data.results)) {
+    candidates.push(...data.results)
+  }
+  if (isDrawioBoardToolResult(data)) {
+    candidates.push(data)
+  }
+  return candidates.filter(candidate => isDrawioBoardToolResult(candidate))
+}
+
+const findLatestDrawioBoardResultFromMessages = (messages = []) => {
+  if (!Array.isArray(messages)) return null
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const results = getDrawioBoardResultsFromMessage(messages[index])
+    if (results.length > 0) {
+      return results[results.length - 1]
+    }
+  }
+  return null
+}
+
+const getOfficeDocumentIdentity = (doc = {}) => {
+  return doc.file_path ||
+    doc.path ||
+    doc.pdf_preview?.pdf_id ||
+    doc.html_preview?.html_id ||
+    doc.html_preview?.html_url ||
+    doc.svg_preview?.svg_url ||
+    doc.svg_preview?.svg_path ||
+    doc.markdown_preview?.content ||
+    ''
+}
+
 // 辅助函数：创建空的模式状态
 const createEmptyModeState = () => ({
   // 基础状态
   sessionId: null,
+  activeRunId: null,
+  ignoredRunIds: [],
   isAnalyzing: false,
   error: null,
   isInterruption: false,
@@ -56,7 +279,7 @@ const createEmptyModeState = () => ({
   // 分析状态
   isComplete: false,
   iterations: 0,
-  maxIterations: 30,
+  maxIterations: 120,
 
   // 增强功能
   showReflexion: false,
@@ -70,6 +293,7 @@ const createEmptyModeState = () => ({
 
   // Office文档预览状态
   lastOfficeDocument: null,
+  officeDocumentHistory: [],
 
   // 结果
   finalAnswer: '',
@@ -79,6 +303,7 @@ const createEmptyModeState = () => ({
   // 可视化
   currentVisualization: null,
   visualizationHistory: [],
+  board: createEmptyDrawioBoardState(),
   groupedVisualizations: {
     weather: [],
     component: []
@@ -95,6 +320,8 @@ const createEmptyModeState = () => ({
   // 原有工作流字段
   sessionRound: 0,
   interventionQueue: [],
+  pendingUserInputs: [],
+  pendingSteeringInputs: [],
 
   // 消息分页加载状态
   pagination: {
@@ -102,6 +329,20 @@ const createEmptyModeState = () => ({
     totalMessageCount: 0,
     oldestSequence: null,
     loadingMore: false
+  },
+
+  lazyArtifacts: {
+    hasVisualizations: false,
+    visualizationCount: 0,
+    visualizationsLoaded: false,
+    loadingVisualizations: false,
+    hasOfficeDocuments: false,
+    officeDocumentCount: 0,
+    officeDocumentsLoaded: false,
+    loadingOfficeDocuments: false,
+    hasDrawioBoard: false,
+    drawioBoardLoaded: false,
+    loadingDrawioBoard: false
   },
 
   // 流式渲染状态
@@ -135,7 +376,8 @@ export const useReactStore = defineStore('react', {
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
         report: createEmptyModeState(),
-        chart: createEmptyModeState()
+        chart: createEmptyModeState(),
+        ops: createEmptyModeState()
       },
 
       // 同一模式下的多会话状态，key 为完整 sessionId
@@ -203,6 +445,10 @@ export const useReactStore = defineStore('react', {
     // ✅ 向后兼容：lastOfficeDocument
     lastOfficeDocument() {
       return this.currentState?.lastOfficeDocument || null
+    },
+
+    officeDocumentHistory() {
+      return this.currentState?.officeDocumentHistory || []
     },
 
     // ✅ 向后兼容：groupedVisualizations
@@ -302,6 +548,19 @@ export const useReactStore = defineStore('react', {
 
     _getModeForSessionId(sessionId) {
       return this.extractModeFromSessionId(sessionId) || this.currentMode
+    },
+
+    _resolveEventMode(eventData = {}, sessionId = null) {
+      const explicitMode = eventData?.mode
+      if (VALID_MODES.includes(explicitMode)) {
+        return explicitMode
+      }
+
+      if (sessionId && this.sessionStates[sessionId]?.mode && VALID_MODES.includes(this.sessionStates[sessionId].mode)) {
+        return this.sessionStates[sessionId].mode
+      }
+
+      return this.extractModeFromSessionId(sessionId)
     },
 
     _ensureSessionState(sessionId, mode = null) {
@@ -433,15 +692,21 @@ export const useReactStore = defineStore('react', {
         lastExpertResults: modeState.lastExpertResults,
         selectedExperts: modeState.selectedExperts,
         lastOfficeDocument: modeState.lastOfficeDocument,
+        officeDocumentHistory: modeState.officeDocumentHistory,
         finalAnswer: modeState.finalAnswer,
         finalAnswers: modeState.finalAnswers,
         hasResults: modeState.hasResults,
         currentVisualization: modeState.currentVisualization,
         visualizationHistory: modeState.visualizationHistory,
+        board: modeState.board
+          ? { ...modeState.board, pendingSnapshotAttachment: null }
+          : modeState.board,
         groupedVisualizations: modeState.groupedVisualizations,
+        lazyArtifacts: modeState.lazyArtifacts,
         results: modeState.results,
         sessionRound: modeState.sessionRound,
         interventionQueue: modeState.interventionQueue,
+        pendingSteeringInputs: modeState.pendingSteeringInputs,
         streamingAnswerMessageId: modeState.streamingAnswerMessageId,
         _forceRenderCount: modeState._forceRenderCount,
         _lastProcessedExpertResultsHash: modeState._lastProcessedExpertResultsHash
@@ -482,6 +747,10 @@ export const useReactStore = defineStore('react', {
         savedState.isAnalyzing = false
         savedState.isInterruption = false
         savedState.streamingAnswerMessageId = null
+        promoteUnappliedSteeringInputsToQueue(savedState, {
+          agentMode: mode,
+          queuedAlreadyShown: true
+        })
         const lastMessage = savedState.messages && savedState.messages[savedState.messages.length - 1]
         if (lastMessage?.type === 'final' && !lastMessage.streaming) {
           savedState.isComplete = true
@@ -628,8 +897,57 @@ export const useReactStore = defineStore('react', {
      */
     setLastOfficeDocument(doc) {
       if (!doc) return
-      this.currentState.lastOfficeDocument = doc
+      this.recordOfficeDocument(doc, this.currentState)
       console.log(`[setLastOfficeDocument] Set office document for mode ${this.currentMode}`)
+    },
+
+    setOfficeDocumentHistory(documents) {
+      if (!Array.isArray(documents)) {
+        console.warn('[setOfficeDocumentHistory] Invalid documents:', documents)
+        return
+      }
+      this.currentState.officeDocumentHistory = []
+      documents
+        .slice()
+        .sort((a, b) => {
+          const aTime = new Date(a?.timestamp || 0).getTime()
+          const bTime = new Date(b?.timestamp || 0).getTime()
+          return aTime - bTime
+        })
+        .forEach(doc => this.recordOfficeDocument(doc, this.currentState))
+      console.log(`[setOfficeDocumentHistory] Set ${documents.length} office documents for mode ${this.currentMode}`)
+    },
+
+    recordOfficeDocument(doc, targetState = this.currentState) {
+      if (!doc || !targetState) return
+      const normalizedDoc = {
+        ...doc,
+        file_path: doc.file_path || doc.path || doc.pdf_preview?.pdf_path || doc.svg_preview?.svg_path,
+        file_type: doc.file_type || doc.html_preview?.file_type || doc.svg_preview?.file_type,
+        related_files: doc.related_files,
+        artifacts: doc.artifacts,
+        refs: doc.refs,
+        assets: doc.assets,
+        timestamp: doc.timestamp || new Date().toISOString()
+      }
+      const identity = getOfficeDocumentIdentity(normalizedDoc)
+      targetState.lastOfficeDocument = normalizedDoc
+      if (!Array.isArray(targetState.officeDocumentHistory)) {
+        targetState.officeDocumentHistory = []
+      }
+      const existingIndex = targetState.officeDocumentHistory.findIndex(item =>
+        getOfficeDocumentIdentity(item) === identity
+      )
+      if (existingIndex >= 0) {
+        const updatedDoc = {
+          ...targetState.officeDocumentHistory[existingIndex],
+          ...normalizedDoc
+        }
+        targetState.officeDocumentHistory.splice(existingIndex, 1)
+        targetState.officeDocumentHistory.push(updatedDoc)
+      } else {
+        targetState.officeDocumentHistory.push(normalizedDoc)
+      }
     },
 
     /**
@@ -671,6 +989,8 @@ export const useReactStore = defineStore('react', {
         this.setVisualizationHistory(sessionData.visualizations)
       }
 
+      this.restoreDrawioBoardFromSession(sessionData)
+
       if (sessionData.last_result) {
         this.currentState.lastExpertResults = sessionData.last_result
       }
@@ -696,6 +1016,13 @@ export const useReactStore = defineStore('react', {
      */
     setPagination(state) {
       Object.assign(this.currentState.pagination, state)
+    },
+
+    setLazyArtifacts(state) {
+      if (!this.currentState.lazyArtifacts) {
+        this.currentState.lazyArtifacts = createEmptyModeState().lazyArtifacts
+      }
+      Object.assign(this.currentState.lazyArtifacts, state)
     },
 
     /**
@@ -981,32 +1308,7 @@ export const useReactStore = defineStore('react', {
     },
 
     _convertStreamingAnswerToThoughtIfToolPlanning(modeState) {
-      const messageId = modeState?.streamingAnswerMessageId
-      if (!messageId) return
-
-      const message = modeState.messages.find(m => m.id === messageId)
-      if (!message || message.type !== 'final') return
-
-      const content = contentToString(message.content).trim()
-      if (!content) {
-        modeState.streamingAnswerMessageId = null
-        modeState.finalAnswer = ''
-        return
-      }
-
-      Object.assign(message, {
-        type: 'thought',
-        content,
-        streaming: false,
-        data: {
-          ...(message.data || {}),
-          converted_from: 'pre_tool_streaming_text'
-        }
-      })
-
-      modeState.streamingAnswerMessageId = null
-      modeState.finalAnswer = ''
-      modeState._forceRenderCount++
+      convertStreamingAnswerToThoughtIfToolPlanning(modeState, contentToString)
     },
 
     /**
@@ -1014,13 +1316,13 @@ export const useReactStore = defineStore('react', {
      */
     getEventTargetState(eventData) {
       const sessionId = eventData?.session_id
+      const eventMode = this._resolveEventMode(eventData, sessionId)
       if (sessionId) {
-        return this._ensureSessionState(sessionId)
+        return this._ensureSessionState(sessionId, eventMode)
       }
-      const eventMode = this.extractModeFromSessionId(sessionId)
 
       if (!eventMode) {
-        // 无法从 sessionId 提取模式，使用当前模式
+        // 无法从事件或 sessionId 提取模式，使用当前模式
         return this.currentState
       }
 
@@ -1047,13 +1349,13 @@ export const useReactStore = defineStore('react', {
       const sessionId = data?.session_id || event?.session_id
       console.log('[handleEvent] sessionId:', sessionId)
 
-      const eventMode = this.extractModeFromSessionId(sessionId)
+      const eventMode = this._resolveEventMode(data, sessionId)
       console.log('[handleEvent] Extracted eventMode:', eventMode)
 
       // 【关键修复】路由逻辑：
-      // 1. 优先使用session_id提取的模式（支持并行任务）
-      // 2. 如果没有session_id，使用currentMode（兼容旧版事件）
-      // 3. 否则使用currentMode作为默认值
+      // 1. 优先使用事件中的 mode
+      // 2. 再使用已知 session 状态或 session_id 前缀
+      // 3. 否则使用 currentMode 作为默认值
       const targetMode = eventMode || this.currentMode
       console.log('[handleEvent] targetMode:', targetMode)
 
@@ -1078,6 +1380,16 @@ export const useReactStore = defineStore('react', {
       console.log('[handleEvent] targetState:', targetState)
       console.log('[handleEvent] targetState.messages.length:', targetState?.messages?.length)
 
+      if (!shouldApplyRunEvent(targetState, event)) {
+        console.warn('[handleEvent] Ignoring stale run event', {
+          eventRunId: getEventRunId(event),
+          activeRunId: targetState.activeRunId,
+          sessionId,
+          type
+        })
+        return
+      }
+
       // 如果事件属于非当前模式，记录日志
       if (eventMode && eventMode !== this.currentMode) {
         console.log(`[handleEvent] ⚠️ ROUTING event to mode ${eventMode} (current: ${this.currentMode}, type: ${type})`)
@@ -1098,6 +1410,10 @@ export const useReactStore = defineStore('react', {
       switch (type) {
         case 'start': {
           // 分析开始
+          const runId = getEventRunId(event)
+          if (runId) {
+            targetState.activeRunId = runId
+          }
           addMessage('start', `开始分析: ${data?.query || ''}`)
           if (data?.session_id) {
             targetState.sessionId = data.session_id
@@ -1181,10 +1497,15 @@ export const useReactStore = defineStore('react', {
 
         case 'tool_result': {
           // ✅ V3: Anthropic tool_result 事件
+          // task_guard 等虚拟工具不会先发送 tool_use；如果它拦截了已流出的
+          // PLAIN_TEXT_REPLY，需要先把该文本降级为过程消息，避免下一轮重复追加。
+          this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
+
           const toolResultData = data || {}
           const resultToolUseId = toolResultData.tool_use_id
           const result = toolResultData.result || {}
           const isError = toolResultData.is_error || false
+          const isPresentedImage = ensurePresentedImageVisual(result)
 
           // 格式化工具结果信息
           let toolResultContent = isError ? 'Tool Error' : 'Tool Result'
@@ -1207,18 +1528,37 @@ export const useReactStore = defineStore('react', {
             timestamp: toolResultData.timestamp
           })
 
+          if (isPresentedImage && Array.isArray(result.visuals)) {
+            result.visuals.forEach(visual => {
+              if (!hasVisualizationRecord(targetState, visual?.id)) {
+                this.recordVisualization(visual, targetState)
+              }
+            })
+            targetState.hasResults = true
+          }
+
           const resultData = result?.data || {}
-          if (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview) {
-            targetState.lastOfficeDocument = {
+          const appliedDrawioBoard = this.applyDrawioBoardToolResult(result, targetState)
+          if (!appliedDrawioBoard) {
+            this.applyDrawioBoardToolResultFromRef(result, targetState)
+          }
+
+          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview)) {
+            this.recordOfficeDocument({
               pdf_preview: resultData.pdf_preview,
               markdown_preview: resultData.markdown_preview,
               html_preview: resultData.html_preview,
-              file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path,
-              file_type: resultData.file_type || resultData.html_preview?.file_type,
+              svg_preview: resultData.svg_preview,
+              file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path || resultData.svg_preview?.svg_path,
+              file_type: resultData.file_type || resultData.html_preview?.file_type || resultData.svg_preview?.file_type,
+              related_files: resultData.related_files,
+              artifacts: resultData.artifacts,
+              refs: resultData.refs,
+              assets: resultData.assets,
               generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
               summary: result.summary,
               timestamp: toolResultData.timestamp
-            }
+            }, targetState)
           }
           break
         }
@@ -1226,14 +1566,30 @@ export const useReactStore = defineStore('react', {
         case 'office_document': {
           // Office文档PDF预览事件（用于驱动文档预览面板）
           // 【修复】使用targetState而不是currentState
-          targetState.lastOfficeDocument = {
+          const imageVisual = buildPresentedImageVisual(data || {}, { generator: data?.generator })
+          if (imageVisual) {
+            if (!hasVisualizationRecord(targetState, imageVisual.id)) {
+              this.recordVisualization(imageVisual, targetState)
+            }
+            targetState.hasResults = true
+            break
+          }
+
+          this.recordOfficeDocument({
             pdf_preview: data?.pdf_preview,
             markdown_preview: data?.markdown_preview,
-            file_path: data?.file_path,
+            html_preview: data?.html_preview,
+            svg_preview: data?.svg_preview,
+            file_path: data?.file_path || data?.svg_preview?.svg_path,
+            file_type: data?.file_type || data?.svg_preview?.file_type,
+            related_files: data?.related_files,
+            artifacts: data?.artifacts,
+            refs: data?.refs,
+            assets: data?.assets,
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
-          }
+          }, targetState)
           console.log('[reactStore] office_document事件:', {
             generator: data?.generator,
             pdf_id: data?.pdf_preview?.pdf_id,
@@ -1244,16 +1600,30 @@ export const useReactStore = defineStore('react', {
           break
         }
 
-        case 'notebook_document': {
-          // Notebook HTML预览事件
-          targetState.lastOfficeDocument = {
+        case 'html_document': {
+          // HTML预览事件
+          const imageVisual = buildPresentedImageVisual(data || {}, { generator: data?.generator })
+          if (imageVisual) {
+            if (!hasVisualizationRecord(targetState, imageVisual.id)) {
+              this.recordVisualization(imageVisual, targetState)
+            }
+            targetState.hasResults = true
+            break
+          }
+
+          this.recordOfficeDocument({
             html_preview: data?.html_preview,
+            markdown_preview: data?.markdown_preview,
             file_path: data?.file_path,
-            file_type: data?.file_type || 'notebook',
+            file_type: data?.file_type || 'html',
+            related_files: data?.related_files,
+            artifacts: data?.artifacts,
+            refs: data?.refs,
+            assets: data?.assets,
             generator: data?.generator,
             summary: data?.summary,
             timestamp: data?.timestamp
-          }
+          }, targetState)
           break
         }
 
@@ -1456,21 +1826,6 @@ export const useReactStore = defineStore('react', {
             console.log('[event:complete] lastExpertResults已设置')
           }
 
-          // ✅ 兜底处理Office文档预览：后端会在complete事件中附带本轮文档元数据
-          // 避免前端错过实时office_document事件时无法打开预览面板。
-          const officeDoc = data?.last_office_document ||
-            (Array.isArray(data?.office_documents) && data.office_documents.length > 0
-              ? data.office_documents[data.office_documents.length - 1]
-              : null)
-          if (officeDoc?.pdf_preview || officeDoc?.markdown_preview || officeDoc?.html_preview) {
-            targetState.lastOfficeDocument = officeDoc
-            console.log('[event:complete] Office文档预览已从complete事件恢复:', {
-              generator: officeDoc.generator,
-              pdf_id: officeDoc.pdf_preview?.pdf_id,
-              file_path: officeDoc.file_path
-            })
-          }
-
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）
           if (data?.sources && Array.isArray(data.sources) && data.sources.length > 0) {
             console.log('[event:complete] 保存sources到最后消息，count:', data.sources.length)
@@ -1491,12 +1846,31 @@ export const useReactStore = defineStore('react', {
             console.log('[event:complete] 没有sources字段或为空')
           }
 
+          if (Array.isArray(data?.office_documents)) {
+            data.office_documents.forEach(doc => this.recordOfficeDocument(doc, targetState))
+            targetState.lazyArtifacts = {
+              ...(targetState.lazyArtifacts || createEmptyModeState().lazyArtifacts),
+              hasOfficeDocuments: data.office_documents.length > 0,
+              officeDocumentCount: targetState.officeDocumentHistory?.length || data.office_documents.length,
+              officeDocumentsLoaded: true,
+              loadingOfficeDocuments: false
+            }
+          } else if (data?.last_office_document) {
+            this.recordOfficeDocument(data.last_office_document, targetState)
+          }
+
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          targetState.activeRunId = null
           if (data?.auto_followup_pending && data?.auto_followup_prompt) {
             targetState._pendingAutoFollowupPrompt = data.auto_followup_prompt
             targetState._pendingAutoFollowupHookName = data.auto_followup_hook_name || 'report_final_review'
           }
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           this._persistModeState(targetMode)
           break
         }
@@ -1549,6 +1923,12 @@ export const useReactStore = defineStore('react', {
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
+          targetState.activeRunId = null
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           break
         }
 
@@ -1565,6 +1945,12 @@ export const useReactStore = defineStore('react', {
           targetState.isInterruption = true
           targetState.streamingAnswerMessageId = null
           targetState.streamingThinkingMessageId = null
+          targetState.activeRunId = null
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           break
         }
 
@@ -1574,6 +1960,12 @@ export const useReactStore = defineStore('react', {
           targetState.error = data?.error || '致命错误'
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
+          targetState.activeRunId = null
+          promoteUnappliedSteeringInputsToQueue(targetState, {
+            agentMode: targetMode,
+            queuedAlreadyShown: true,
+            timestamp: data?.timestamp || new Date().toISOString()
+          })
           break
         }
 
@@ -1722,6 +2114,16 @@ export const useReactStore = defineStore('react', {
           break
         }
 
+        case 'steering_applied': {
+          const appliedMessages = Array.isArray(data?.messages) ? data.messages : []
+          applyPendingSteeringInputs(targetState, appliedMessages, data?.timestamp || new Date().toISOString())
+          console.log('[event:steering_applied] 执行中补充已应用', {
+            count: data?.count,
+            session_id: data?.session_id
+          })
+          break
+        }
+
         default:
           console.warn('Unknown event type:', type)
       }
@@ -1744,6 +2146,342 @@ export const useReactStore = defineStore('react', {
 
       targetState.currentVisualization = record
       targetState.visualizationHistory.push(record)
+    },
+
+    ensureDrawioBoardState(targetState = this.currentState) {
+      if (!targetState.board) {
+        targetState.board = createEmptyDrawioBoardState()
+      }
+      if (!Array.isArray(targetState.board.selectedCells)) {
+        targetState.board.selectedCells = []
+      }
+      if (!Array.isArray(targetState.board.undoStack)) {
+        targetState.board.undoStack = []
+      }
+      if (!Array.isArray(targetState.board.redoStack)) {
+        targetState.board.redoStack = []
+      }
+      if (!Array.isArray(targetState.board.versions)) {
+        targetState.board.versions = []
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'currentVersionId')) {
+        targetState.board.currentVersionId = null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'baseVersionId')) {
+        targetState.board.baseVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'applyingHistory')) {
+        targetState.board.applyingHistory = false
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'pendingSnapshotAttachment')) {
+        targetState.board.pendingSnapshotAttachment = null
+      }
+      return targetState.board
+    },
+
+    pushDrawioBoardHistory(xml, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const previousXml = String(xml || '')
+      if (!previousXml || previousXml === board.currentXml) return board
+
+      const lastUndo = board.undoStack[board.undoStack.length - 1]
+      if (lastUndo !== previousXml) {
+        board.undoStack.push(previousXml)
+      }
+      if (board.undoStack.length > 50) {
+        board.undoStack = board.undoStack.slice(board.undoStack.length - 50)
+      }
+      board.redoStack = []
+      return board
+    },
+
+    addDrawioBoardVersion(payload = {}, result = {}, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const xml = getDrawioBoardXml(payload)
+      if (!xml) return null
+
+      const existing = board.versions.find(version => version.xml === xml)
+      const record = existing || createDrawioBoardVersionRecord({
+        board,
+        payload,
+        result,
+        xml,
+        source: payload.source || 'agent'
+      })
+
+      board.versions = board.versions
+        .map(version => ({ ...version, is_current: false }))
+        .filter(version => version.id !== record.id && version.version_id !== record.version_id)
+      board.versions.push({ ...record, is_current: true })
+      board.currentVersionId = record.version_id || record.id
+      board.baseVersionId = board.currentVersionId
+      return record
+    },
+
+    applyDrawioBoardToolResult(result = {}, targetState = this.currentState) {
+      if (!isDrawioBoardToolResult(result)) return false
+
+      const payload = getDrawioBoardPayload(result)
+      const xml = getDrawioBoardXml(payload)
+      if (!xml) return false
+
+      const board = this.ensureDrawioBoardState(targetState)
+      const nextVersion = Number(payload.version ?? board.version ?? 0)
+      const selectedCells = payload.selectedCells || payload.selected_cells || board.selectedCells || []
+
+      if (!board.applyingHistory && board.currentXml && board.currentXml !== xml) {
+        this.pushDrawioBoardHistory(board.currentXml, targetState)
+      }
+      const versionRecord = this.addDrawioBoardVersion({ ...payload, xml }, result, targetState)
+      board.previousXml = board.currentXml || ''
+      board.currentXml = xml
+      board.activeBoardId = payload.activeBoardId || payload.active_board_id || payload.board_id || payload.artifact_id || payload.id || board.activeBoardId || null
+      board.title = payload.title || payload.name || board.title || 'Draw.io Board'
+      board.selectedCells = Array.isArray(selectedCells) ? selectedCells : []
+      board.version = versionRecord?.versionNumber || (Number.isFinite(nextVersion) ? nextVersion : board.version)
+      board.dirty = Boolean(payload.dirty ?? false)
+      board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
+      targetState.hasResults = true
+      return true
+    },
+
+    async applyDrawioBoardToolResultFromRef(result = {}, targetState = this.currentState) {
+      if (!isDrawioBoardToolResult(result)) return false
+
+      const payload = getDrawioBoardPayload(result)
+      if (getDrawioBoardXml(payload)) return this.applyDrawioBoardToolResult(result, targetState)
+
+      const xmlRef = getDrawioBoardXmlRef(payload, result)
+      if (!xmlRef) return false
+
+      try {
+        const xml = await readDrawioBoardXmlFromRef(xmlRef)
+        if (!xml) return false
+        return this.applyDrawioBoardToolResult({
+          ...result,
+          data: {
+            ...(result.data || {}),
+            xml
+          }
+        }, targetState)
+      } catch (error) {
+        console.warn('[drawio-board] failed to read xml_ref', {
+          xmlRef,
+          error: error?.message || error
+        })
+        return false
+      }
+    },
+
+    restoreDrawioBoardFromSession(sessionData = {}, targetState = this.currentState) {
+      if (!sessionData || !targetState) return false
+
+      const metadataBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
+      const metadataResult = metadataBoard
+        ? {
+            metadata: { generator: 'create_drawio_board' },
+            data: metadataBoard,
+            timestamp: metadataBoard.updated_at || metadataBoard.updatedAt
+          }
+        : null
+      const latestMessageResult = metadataResult
+        ? null
+        : findLatestDrawioBoardResultFromMessages(sessionData.conversation_history || sessionData.messages || [])
+
+      const restored = this.applyDrawioBoardToolResult(metadataResult || latestMessageResult || {}, targetState)
+      if (!restored) return false
+
+      const board = this.ensureDrawioBoardState(targetState)
+      board.previousXml = ''
+      board.undoStack = []
+      board.redoStack = []
+      board.applyingHistory = false
+      board.baseVersionId = board.currentVersionId || board.baseVersionId || null
+      board.pendingSnapshotAttachment = null
+      console.log('[drawio-board] restored from session', {
+        source: metadataResult ? 'metadata.drawio_board' : 'tool_result',
+        currentXmlLength: board.currentXml.length,
+        boardId: board.activeBoardId,
+        title: board.title
+      })
+      return true
+    },
+
+    updateDrawioBoardXml(xml, options = {}, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const nextXml = xml || ''
+      if (nextXml === board.currentXml) return board
+      if (!board.applyingHistory && board.currentXml) {
+        this.pushDrawioBoardHistory(board.currentXml, targetState)
+      }
+      board.previousXml = board.currentXml || ''
+      board.currentXml = nextXml
+      board.activeBoardId = options.activeBoardId || options.active_board_id || options.board_id || board.activeBoardId
+      board.title = options.title || board.title
+      board.version = Number.isFinite(Number(options.version)) ? Number(options.version) : board.version + 1
+      board.dirty = options.dirty !== undefined ? Boolean(options.dirty) : true
+      board.baseVersionId = board.currentVersionId || board.baseVersionId || null
+      board.updatedAt = options.updatedAt || options.updated_at || new Date().toISOString()
+      console.log('[drawio-board] XML updated from editor', {
+        previousXmlLength: board.previousXml.length,
+        currentXmlLength: board.currentXml.length,
+        version: board.version,
+        dirty: board.dirty,
+        updatedAt: board.updatedAt
+      })
+      return board
+    },
+
+    restoreDrawioBoardVersion(versionId, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      const version = board.versions.find(item => (
+        item.id === versionId ||
+        item.version_id === versionId ||
+        String(item.versionNumber) === String(versionId) ||
+        String(item.version_number) === String(versionId)
+      ))
+      if (!version?.xml) return board
+
+      if (board.currentXml && board.currentXml !== version.xml) {
+        this.pushDrawioBoardHistory(board.currentXml, targetState)
+      }
+      board.previousXml = board.currentXml || ''
+      board.currentXml = version.xml
+      board.currentVersionId = version.version_id || version.id
+      board.baseVersionId = board.currentVersionId
+      board.versions = board.versions.map(item => ({
+        ...item,
+        is_current: (item.version_id || item.id) === board.currentVersionId
+      }))
+      board.version = Number(version.version_number || version.versionNumber || board.version)
+      board.title = version.title || board.title
+      board.dirty = false
+      board.updatedAt = new Date().toISOString()
+      return board
+    },
+
+    undoDrawioBoard(targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      if (!board.currentXml || board.undoStack.length === 0) return board
+
+      const previousXml = board.undoStack.pop()
+      board.redoStack.push(board.currentXml)
+      board.previousXml = board.currentXml
+      board.applyingHistory = true
+      board.currentXml = previousXml
+      board.version += 1
+      board.dirty = true
+      board.updatedAt = new Date().toISOString()
+      board.applyingHistory = false
+      return board
+    },
+
+    redoDrawioBoard(targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      if (!board.currentXml || board.redoStack.length === 0) return board
+
+      const nextXml = board.redoStack.pop()
+      board.undoStack.push(board.currentXml)
+      if (board.undoStack.length > 50) {
+        board.undoStack = board.undoStack.slice(board.undoStack.length - 50)
+      }
+      board.previousXml = board.currentXml
+      board.applyingHistory = true
+      board.currentXml = nextXml
+      board.version += 1
+      board.dirty = true
+      board.updatedAt = new Date().toISOString()
+      board.applyingHistory = false
+      return board
+    },
+
+    updateDrawioBoardSelection(selectedCells = [], targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      board.selectedCells = Array.isArray(selectedCells) ? selectedCells : []
+      board.updatedAt = new Date().toISOString()
+      console.log('[drawio-board] selection updated in store', {
+        selectedCount: board.selectedCells.length,
+        selectedIds: board.selectedCells.map((cell) => cell?.id).filter(Boolean),
+        updatedAt: board.updatedAt
+      })
+      return board
+    },
+
+    setDrawioBoardSnapshotAttachment(attachment = null, targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      board.pendingSnapshotAttachment = attachment
+      board.updatedAt = new Date().toISOString()
+      return board
+    },
+
+    async confirmDrawioBoardSnapshot(snapshot = {}, targetState = this.currentState) {
+      if (!snapshot?.file) return null
+
+      const uploadResult = await uploadChatFile(snapshot.file, targetState?.sessionId || null)
+      const attachment = {
+        id: uploadResult.file_id || `drawio_board_snapshot_${Date.now()}`,
+        file_id: uploadResult.file_id,
+        name: uploadResult.filename || snapshot.filename || snapshot.file.name || 'drawio-board.png',
+        filename: uploadResult.filename || snapshot.filename || snapshot.file.name || 'drawio-board.png',
+        type: uploadResult.file_type || 'image',
+        file_type: uploadResult.file_type || 'image',
+        mime_type: uploadResult.mime_type || snapshot.file.type || 'image/png',
+        size: uploadResult.file_size || uploadResult.size || snapshot.file.size || 0,
+        url: uploadResult.url || uploadResult.file_url || '',
+        source: 'drawio_board_snapshot',
+        title: snapshot.title || targetState?.board?.title || '画板',
+        xml_length: snapshot.xmlLength || 0,
+        confirmed_at: snapshot.confirmedAt || new Date().toISOString()
+      }
+
+      this.setDrawioBoardSnapshotAttachment(attachment, targetState)
+      console.log('[drawio-board] confirmed snapshot uploaded', {
+        fileId: attachment.file_id,
+        url: attachment.url,
+        size: attachment.size
+      })
+      return attachment
+    },
+
+    consumeDrawioBoardSnapshotAttachment(mode = this.currentMode, targetState = this.currentState) {
+      if (mode !== 'chart') return null
+      const board = this.ensureDrawioBoardState(targetState)
+      const attachment = board.pendingSnapshotAttachment
+      board.pendingSnapshotAttachment = null
+      return attachment || null
+    },
+
+    buildBoardContext(mode = this.currentMode, targetState = null) {
+      if (mode !== 'chart') return null
+
+      const state = targetState || this.currentState
+      const board = state?.board
+      if (!board?.currentXml) return null
+
+      return {
+        artifact_kind: 'drawio_board',
+        board_id: board.activeBoardId,
+        active_board_id: board.activeBoardId,
+        title: board.title,
+        current_xml: board.currentXml,
+        selected_cells: board.selectedCells || [],
+        version: board.version,
+        current_version_id: board.currentVersionId || null,
+        base_version_id: board.baseVersionId || board.currentVersionId || null,
+        version_files: (board.versions || []).map(version => ({
+          version_id: version.version_id || version.id,
+          version_number: version.version_number || version.versionNumber,
+          title: version.title,
+          file_name: version.file_name,
+          file_path: version.file_path,
+          format: version.format || 'drawio',
+          source: version.source,
+          created_at: version.created_at,
+          is_current: (version.version_id || version.id) === board.currentVersionId
+        })),
+        dirty: board.dirty,
+        updated_at: board.updatedAt
+      }
     },
 
     // 处理结果（UDF v2.0格式 + v3.0图表格式）
@@ -1882,22 +2620,63 @@ export const useReactStore = defineStore('react', {
         attachments = null,  // ✅ 附件列表
         skipAutoFollowup = false,
         synthetic = false,
-        syntheticMeta = null
+        syntheticMeta = null,
+        queuedAlreadyShown = false
       } = options
 
-      if (!query.trim() && (!attachments || attachments.length === 0)) {
-        return
+      const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
+      if (requestedMode !== this.currentMode) {
+        this.switchMode(requestedMode)
       }
 
-      // 【修复】确定使用的模式：优先从 sessionId 提取，否则使用 currentMode
-      let actualMode = agentMode
+      // 【修复】确定使用的模式：优先尊重本次请求的显式模式，继续已有会话时再使用会话自身记录的模式
+      let actualMode = requestedMode
       let sessionState = this.currentState
       if (sessionState.sessionId) {
-        const sessionMode = this.extractModeFromSessionId(sessionState.sessionId)
+        const sessionMode = VALID_MODES.includes(sessionState.mode)
+          ? sessionState.mode
+          : this.extractModeFromSessionId(sessionState.sessionId)
         if (sessionMode) {
           actualMode = sessionMode
           console.log(`[startAnalysis] sessionId=${sessionState.sessionId}, 提取模式=${sessionMode}, currentMode=${this.currentMode}`)
         }
+      }
+
+      const boardSnapshotAttachment = actualMode === 'chart'
+        ? this.consumeDrawioBoardSnapshotAttachment(actualMode, sessionState)
+        : null
+      const outgoingAttachments = [
+        ...(Array.isArray(attachments) ? attachments : []),
+        ...(boardSnapshotAttachment ? [boardSnapshotAttachment] : [])
+      ]
+
+      if (!query.trim() && outgoingAttachments.length === 0) {
+        return
+      }
+
+      if (sessionState.isAnalyzing) {
+        if (actualMode === 'assistant' && outgoingAttachments.length === 0 && sessionState.sessionId) {
+          await this.steerActiveAnalysis(query, sessionState)
+          return
+        }
+
+        freezeActiveAssistantOutput(sessionState, { reason: 'queued_input' }, contentToString)
+        enqueueUserInput(sessionState, {
+          query,
+          options: {
+            ...options,
+            agentMode: actualMode,
+            attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,
+          },
+          data: syntheticMeta,
+          attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null
+        })
+        sessionState.currentMessage = ''
+        console.log('[startAnalysis] 当前模式运行中，用户输入已排队', {
+          mode: actualMode,
+          queuedCount: sessionState.pendingUserInputs.length
+        })
+        return
       }
 
       // 首次分析或继续分析
@@ -1912,14 +2691,21 @@ export const useReactStore = defineStore('react', {
       }
 
       // 重置状态
-      this._addMessageToState(
-        sessionState,
-        'user',
-        query,
-        syntheticMeta,
-        attachments,
-        synthetic ? { synthetic: true } : {}
-      )
+      const clientMessageId = options.clientMessageId || null
+      const wasAlreadyShown = queuedAlreadyShown || hasShownClientMessage(sessionState, clientMessageId)
+      if (!wasAlreadyShown) {
+        this._addMessageToState(
+          sessionState,
+          'user',
+          query,
+          syntheticMeta,
+          outgoingAttachments.length > 0 ? outgoingAttachments : null,
+          {
+            ...(synthetic ? { synthetic: true } : {}),
+            ...(clientMessageId ? { clientMessageId } : {})
+          }
+        )
+      }
       sessionState.currentMessage = ''
       sessionState.isAnalyzing = true
       sessionState.isComplete = false
@@ -1946,6 +2732,18 @@ export const useReactStore = defineStore('react', {
       }
 
       try {
+        const boardContext = actualMode === 'chart' ? this.buildBoardContext(actualMode, sessionState) : null
+        if (boardContext) {
+          console.log('[drawio-board] board_context will be sent', {
+            sessionId: sessionState.sessionId,
+            currentXmlLength: boardContext.current_xml?.length || 0,
+            selectedCount: boardContext.selected_cells?.length || 0,
+            version: boardContext.version,
+            dirty: boardContext.dirty,
+            updatedAt: boardContext.updated_at
+          })
+        }
+
         // 调用新架构 ReAct Agent
         await agentAPI.analyze(query, {
           sessionId: sessionState.sessionId,
@@ -1960,7 +2758,8 @@ export const useReactStore = defineStore('react', {
           agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
           modelTier,
-          attachments: attachments,  // ✅ 传递附件列表
+          attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,  // ✅ 传递附件列表
+          ...(boardContext !== null ? { boardContext } : {}),
           skipAutoFollowup,
           onEvent: (event) => {
             if (!event.data) event.data = {}
@@ -1990,6 +2789,8 @@ export const useReactStore = defineStore('react', {
             }
           })
         }
+
+        await this._runNextQueuedInput(sessionState, actualMode)
       } catch (error) {
         // 检查是否为用户主动取消
         if (error.name === 'AbortError' || error.message === 'The user aborted a request.') {
@@ -2003,6 +2804,47 @@ export const useReactStore = defineStore('react', {
           this._addMessageToState(sessionState, 'error', `分析失败: ${error.message}`)
         }
       }
+    },
+
+    async steerActiveAnalysis(query, sessionState = this.currentState) {
+      const text = (query || '').trim()
+      if (!text || !sessionState.sessionId) return
+
+      addPendingSteeringInput(sessionState, text)
+      sessionState.currentMessage = ''
+
+      let accepted = false
+      try {
+        const result = await agentAPI.steer(sessionState.sessionId, text)
+        accepted = !!result.accepted
+      } catch (error) {
+        console.warn('[steerActiveAnalysis] 追加指令失败，已转入队列', error)
+      }
+
+      if (!accepted) {
+        removePendingSteeringInput(sessionState, text)
+        freezeActiveAssistantOutput(sessionState, { reason: 'steering_fallback' }, contentToString)
+        enqueueUserInput(sessionState, {
+          query: text,
+          options: { agentMode: 'assistant' },
+          data: { source: 'steering_fallback' }
+        })
+        console.warn('[steerActiveAnalysis] 后端没有可追加任务，已转入队列')
+      }
+    },
+
+    async _runNextQueuedInput(sessionState, actualMode) {
+      const next = sessionState.pendingUserInputs?.shift()
+      if (!next) return
+
+      console.log('[runNextQueuedInput] 开始处理排队输入', {
+        mode: actualMode,
+        remaining: sessionState.pendingUserInputs.length
+      })
+      await this.startAnalysis(next.query, {
+        ...next.options,
+        agentMode: next.options?.agentMode || actualMode
+      })
     },
 
     // 继续分析（新问题）
@@ -2022,6 +2864,12 @@ export const useReactStore = defineStore('react', {
 
     // 停止分析
     async stopAnalysis() {
+      freezeActiveAssistantOutput(this.currentState, { reason: 'stopped' }, contentToString)
+      const activeRunId = this.currentState.activeRunId
+      if (activeRunId) {
+        this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
+        this.currentState.activeRunId = null
+      }
       await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       // 不添加系统消息
@@ -2029,6 +2877,12 @@ export const useReactStore = defineStore('react', {
 
     // 暂停分析（与stopAnalysis相同）
     async pauseAnalysis() {
+      freezeActiveAssistantOutput(this.currentState, { reason: 'paused' }, contentToString)
+      const activeRunId = this.currentState.activeRunId
+      if (activeRunId) {
+        this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
+        this.currentState.activeRunId = null
+      }
       await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       this.currentState.isComplete = false

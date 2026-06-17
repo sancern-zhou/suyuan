@@ -63,7 +63,12 @@ class ScheduledTaskExecutor:
                 self.execution_storage.update(execution)
 
                 # 执行步骤（传入 session_id 以保持上下文连续）
-                step_result = await self._execute_step(step, execution, task_session_id)
+                step_result = await self._execute_step(
+                    step,
+                    execution,
+                    task_session_id,
+                    task.execution_mode
+                )
                 execution.steps.append(step_result)
 
                 # 更新统计
@@ -123,7 +128,8 @@ class ScheduledTaskExecutor:
         self,
         step,
         execution: TaskExecution,
-        session_id: str  # ✅ 接收 session_id 参数
+        session_id: str,  # ✅ 接收 session_id 参数
+        manual_mode: str
     ) -> StepExecution:
         """执行单个步骤"""
         step_exec = StepExecution(
@@ -141,7 +147,7 @@ class ScheduledTaskExecutor:
         try:
             # 执行步骤（带超时，并传入 session_id）
             result = await asyncio.wait_for(
-                self._run_agent_step(step.agent_prompt, session_id),
+                self._run_agent_step(step.agent_prompt, session_id, manual_mode=manual_mode),
                 timeout=step.timeout_seconds
             )
 
@@ -176,7 +182,7 @@ class ScheduledTaskExecutor:
 
         return step_exec
 
-    async def _run_agent_step(self, prompt: str, session_id: str) -> dict:
+    async def _run_agent_step(self, prompt: str, session_id: str, manual_mode: str) -> dict:
         """
         运行Agent步骤
 
@@ -207,7 +213,11 @@ class ScheduledTaskExecutor:
         iterations = 0
 
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
-        async for event in agent.analyze(prompt, session_id=session_id):
+        async for event in agent.analyze(
+            prompt,
+            session_id=session_id,
+            manual_mode=manual_mode
+        ):
             event_type = event.get("type")
 
             # 记录思考过程

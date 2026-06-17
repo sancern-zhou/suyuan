@@ -44,6 +44,7 @@
       v-show="!showManagementPanel"
       ref="inputBoxRef"
       v-model="inputValue"
+      :pending-steering-inputs="pendingSteeringInputs"
       :session-id="sessionId"
       :disabled="inputDisabled"
       :is-analyzing="isAnalyzing"
@@ -65,6 +66,10 @@ import InputBox from '@/components/InputBox.vue'
 
 const props = defineProps({
   messages: {
+    type: Array,
+    default: () => []
+  },
+  pendingSteeringInputs: {
     type: Array,
     default: () => []
   },

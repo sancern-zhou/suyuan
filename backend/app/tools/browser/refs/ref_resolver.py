@@ -53,9 +53,16 @@ class RefResolver:
         if normalized.startswith('ref='):
             normalized = normalized[4:]
 
-        # Check if it's a standard ref (e1, e2, etc.)
-        if not re.match(r'^e\d+$', normalized):
-            raise ValueError(f"Invalid ref format: {ref}. Expected e1, e2, etc.")
+        if not re.match(r'^(f\d+:)?e\d+$', normalized):
+            raise ValueError(f"Invalid ref format: {ref}. Expected e1 or f1:e1, etc.")
+
+        if re.match(r'^e\d+$', normalized):
+            frame_matches = [key for key in self._refs if key.endswith(f":{normalized}")]
+            if frame_matches:
+                raise ValueError(
+                    f"AMBIGUOUS_REF: Bare ref '{ref}' is not accepted when frame-qualified refs exist. "
+                    f"Use one of: {frame_matches[:10]}"
+                )
 
         # Get ref info
         ref_info = self._refs.get(normalized)
@@ -81,8 +88,17 @@ class RefResolver:
             kwargs['name'] = name
             kwargs['exact'] = True
 
-        # Get locator
+        # Prefer semantic role lookup, but fall back to the stable selector
+        # captured by snapshot when the accessible name changes or is missing.
         locator = page.get_by_role(role, **kwargs)
+        selector = ref_info.get("selector")
+        if selector:
+            try:
+                role_matches = locator.count()
+                if role_matches == 0:
+                    locator = page.locator(selector)
+            except Exception:
+                locator = page.locator(selector)
 
         # Apply nth if specified
         if nth and nth > 0:

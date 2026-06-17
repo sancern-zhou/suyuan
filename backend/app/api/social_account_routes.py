@@ -17,6 +17,14 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/social/accounts", tags=["social-accounts"])
 
+_channel_manager_override = None
+
+
+def set_channel_manager_override(manager):
+    """Set the in-process channel manager used by worker internal APIs."""
+    global _channel_manager_override
+    _channel_manager_override = manager
+
 
 # ============================================================================
 # 请求/响应模型
@@ -66,6 +74,9 @@ def get_channel_manager():
     Returns:
         ChannelManager实例或None
     """
+    if _channel_manager_override is not None:
+        return _channel_manager_override
+
     try:
         # 从FastAPI app.state获取
         from app.main import app

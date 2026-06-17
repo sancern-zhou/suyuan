@@ -6,6 +6,7 @@ PM2.5组分分析工具
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List, Union
 import structlog
 
@@ -203,11 +204,12 @@ class GetParticulateComponentsTool(LLMTool):
 
         try:
             headers = token_manager.get_auth_headers()
-            response = requests.post(
+            response = await asyncio.to_thread(
+                requests.post,
                 url,
                 json=params,
                 headers=headers,
-                timeout=120
+                timeout=120,
             )
             response.raise_for_status()
             api_response = response.json()

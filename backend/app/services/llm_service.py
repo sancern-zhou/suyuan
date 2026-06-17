@@ -8,6 +8,7 @@ import asyncio
 import json
 import html
 import os
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Dict, Any, Optional, Tuple, AsyncGenerator, List
@@ -117,13 +118,43 @@ class LLMService:
         state = _llm_request_state.get()
         if state is not None:
             return state.get("fallbacks")
-        return None
+        return getattr(self, "_request_fallbacks", None)
 
     @request_fallbacks.setter
     def request_fallbacks(self, value: Optional[str]) -> None:
         state = _llm_request_state.get()
         if state is not None:
             state["fallbacks"] = value
+        else:
+            self._request_fallbacks = value
+
+    @contextmanager
+    def use_provider_model(self, provider: str, model: Optional[str] = None):
+        """Temporarily select a concrete provider/model for the current async request."""
+        selected_provider = (provider or "").strip().lower()
+        if not selected_provider:
+            yield
+            return
+
+        token = _llm_request_state.set({})
+        try:
+            self.provider = selected_provider
+            self._load_provider_config()
+            if model:
+                self.model = model
+            self.request_fallbacks = None
+            logger.info(
+                "llm_request_provider_model_selected",
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+            )
+            yield
+        finally:
+            temporary_client = self.anthropic_client
+            _llm_request_state.reset(token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
 
     @contextmanager
     def use_model_tier(self, model_tier: Optional[str]):
@@ -144,6 +175,10 @@ class LLMService:
 
         token = _llm_request_state.set({})
         try:
+            state = _llm_request_state.get()
+            if state is not None:
+                state["selection_source"] = "tier"
+                state["model_tier"] = tier
             if tier_config.strip():
                 candidates = parse_fallback_candidates("", "", tier_config)
                 candidates = [
@@ -173,6 +208,76 @@ class LLMService:
             logger.info(
                 "llm_request_model_tier_selected",
                 tier=tier,
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+                fallbacks=self.request_fallbacks,
+            )
+            yield
+        finally:
+            _llm_request_state.reset(token)
+
+    @contextmanager
+    def use_auto_profile(self, auto_profile: Optional[str]):
+        """Temporarily select a model chain for Auto based on capability profile.
+
+        Explicit provider/model calls and explicit Flash/Pro tier selections win
+        over Auto profile routing.
+        """
+        profile = (auto_profile or "").strip().lower()
+        if not profile or profile == "default":
+            yield
+            return
+
+        active_state = _llm_request_state.get()
+        if active_state is not None and (
+            active_state.get("selection_source") == "tier"
+            or active_state.get("provider")
+            or active_state.get("model")
+        ):
+            yield
+            return
+
+        profile_configs = {
+            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
+        }
+        profile_config = profile_configs.get(profile)
+        if profile_config is None:
+            logger.warning("llm_auto_profile_unsupported", auto_profile=profile)
+            yield
+            return
+        if not profile_config.strip():
+            logger.warning("llm_auto_profile_unconfigured", auto_profile=profile)
+            yield
+            return
+
+        candidates = [
+            candidate
+            for candidate in parse_fallback_candidates("", "", profile_config)
+            if candidate.provider
+        ]
+        if not candidates:
+            raise ValueError(f"No candidates configured for Auto profile: {profile}")
+
+        token = _llm_request_state.set({})
+        try:
+            state = _llm_request_state.get()
+            if state is not None:
+                state["selection_source"] = "auto_profile"
+                state["auto_profile"] = profile
+            primary = candidates[0]
+            self.provider = primary.provider
+            self._load_provider_config()
+            if primary.model:
+                self.model = primary.model
+            fallback_items = [
+                f"{candidate.provider}/{candidate.model}" if candidate.model else candidate.provider
+                for candidate in candidates[1:]
+            ]
+            self.request_fallbacks = ",".join(fallback_items)
+            logger.info(
+                "llm_request_auto_profile_selected",
+                auto_profile=profile,
                 provider=self.provider,
                 model=self.model,
                 base_url=self.base_url,
@@ -499,7 +604,7 @@ class LLMService:
         if system:
             api_params["system"] = system
 
-        if self.provider in ["mimo", "anthropic"] or "claude" in self.model.lower():
+        if self.provider in ["mimo", "minimax", "anthropic"] or "claude" in self.model.lower():
             api_params = self._add_cache_control(api_params)
             logger.info(
                 "prompt_cache_enabled",
@@ -851,10 +956,10 @@ class LLMService:
         },
         "minimax": {
             "url_env": "MINIMAX_BASE_URL",
-            "url_default": "https://api.minimax.chat/v1",
+            "url_default": "https://api.minimaxi.com/v1",
             "key_env": "MINIMAX_API_KEY",
             "model_env": "MINIMAX_MODEL",
-            "model_default": "minimax-m2",
+            "model_default": "MiniMax-M3",
         },
         "openai": {
             "url_env": "OPENAI_BASE_URL",
@@ -869,7 +974,7 @@ class LLMService:
             "url_default": "https://api.xiaomimimo.com/v1",
             "key_env": "MIMO_API_KEY",
             "model_env": "MIMO_MODEL",
-            "model_default": "mimo-v2-flash",
+            "model_default": "mimo-v2.5",
         },
         # 千问3本地部署（OpenAI 兼容协议）
         "qwen": {
@@ -923,11 +1028,54 @@ class LLMService:
         }
 
     def _restore_provider_state(self, state: Dict[str, Any]) -> None:
+        current_client = getattr(self, "anthropic_client", None)
+        target_client = state["anthropic_client"]
+        if current_client is not None and current_client is not target_client:
+            self._schedule_anthropic_client_close(current_client)
         self.provider = state["provider"]
         self.base_url = state["base_url"]
         self.api_key = state["api_key"]
         self.model = state["model"]
         self.anthropic_client = state["anthropic_client"]
+
+    def _schedule_anthropic_client_close(self, client: Any) -> None:
+        """Close a temporary Anthropic SDK client without leaking task errors."""
+        close = getattr(client, "close", None)
+        if not callable(close):
+            return
+
+        async def close_client() -> None:
+            try:
+                await close()
+            except asyncio.CancelledError:
+                logger.debug("llm_anthropic_client_close_cancelled")
+                return
+            except RuntimeError as exc:
+                if "handler is closed" in str(exc):
+                    logger.debug("llm_anthropic_client_close_ignored", error=str(exc))
+                    return
+                raise
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        task = loop.create_task(close_client())
+
+        def consume_close_result(done_task: asyncio.Task) -> None:
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                logger.debug("llm_anthropic_client_close_task_cancelled")
+            except Exception as exc:
+                logger.warning(
+                    "llm_anthropic_client_close_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+
+        task.add_done_callback(consume_close_result)
 
     def _switch_provider_for_attempt(self, provider: str, model: Optional[str] = None) -> None:
         """Switch this service instance to a fallback candidate for one attempt."""
@@ -943,8 +1091,38 @@ class LLMService:
             model=self.model,
         )
 
+    def _create_provider_override_service(self, provider: Optional[str], model: Optional[str]) -> Optional["LLMService"]:
+        """Create an isolated service instance for an explicit provider/model call."""
+        selected_provider = (provider or "").strip().lower()
+        selected_model = (model or "").strip()
+        if not selected_provider and not selected_model:
+            return None
+
+        service = self.__class__()
+        if selected_provider:
+            service.provider = selected_provider
+            service._load_provider_config()
+        if selected_model:
+            service.model = selected_model
+        service.request_fallbacks = ""
+        logger.info(
+            "llm_call_provider_model_selected",
+            provider=service.provider,
+            model=service.model,
+            base_url=service.base_url,
+        )
+        return service
+
+    def _schedule_provider_override_service_close(self, service: Optional["LLMService"]) -> None:
+        if service is None:
+            return
+        temporary_client = getattr(service, "anthropic_client", None)
+        if temporary_client is not None:
+            self._schedule_anthropic_client_close(temporary_client)
+
     async def _run_llm_request_with_global_limit(self, operation: str, call):
         semaphore = get_llm_pool_semaphore(self.provider, self.model)
+        wait_started = time.monotonic()
         logger.debug(
             "llm_pool_concurrency_waiting",
             provider=self.provider,
@@ -957,6 +1135,7 @@ class LLMService:
                 provider=self.provider,
                 model=self.model,
                 operation=operation,
+                wait_ms=round((time.monotonic() - wait_started) * 1000, 2),
             )
             return await call()
 
@@ -1206,13 +1385,19 @@ class LLMService:
 
         # Anthropic Native Client (always initialized for V3 architecture)
         self.anthropic_client = None
-        if self.provider in ["deepseek", "mimo", "glm"]:  # 支持 Anthropic 格式的提供商
+        if self.provider in ["deepseek", "mimo", "glm", "minimax"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
                 # 完全从环境变量读取 base_url
                 if self.provider == "mimo":
                     anthropic_base_url = settings.mimo_base_url
+                elif self.provider == "minimax":
+                    anthropic_base_url = (
+                        getattr(settings, "minimax_anthropic_base_url", None)
+                        or os.getenv("MINIMAX_ANTHROPIC_BASE_URL")
+                        or "https://api.minimaxi.com/anthropic"
+                    )
                 elif self.provider == "deepseek":
                     # DeepSeek 的 Anthropic 格式端点
                     anthropic_base_url = settings.deepseek_base_url.replace("/v1", "/anthropic")
@@ -1238,6 +1423,8 @@ class LLMService:
                     original_url=(
                         settings.mimo_base_url
                         if self.provider == "mimo"
+                        else getattr(settings, "minimax_anthropic_base_url", None)
+                        if self.provider == "minimax"
                         else settings.deepseek_base_url
                         if self.provider == "deepseek"
                         else settings.glm_anthropic_base_url
@@ -1773,9 +1960,96 @@ class LLMService:
         Returns:
             解析后的JSON响应
         """
+        original_state = self._snapshot_provider_state()
+        candidates = parse_fallback_candidates(
+            original_state["provider"],
+            original_state["model"],
+            self.request_fallbacks,
+        )
+        attempts = []
+
+        try:
+            for index, candidate in enumerate(candidates, start=1):
+                if not (
+                    candidate.provider == original_state["provider"].lower()
+                    and (candidate.model or original_state["model"]) == original_state["model"]
+                ):
+                    self._switch_provider_for_attempt(candidate.provider, candidate.model)
+
+                cooldown_failure = get_cooldown_failure(self.provider)
+                if cooldown_failure and index < len(candidates):
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": cooldown_failure.reason,
+                        "status": cooldown_failure.status,
+                        "code": cooldown_failure.code,
+                        "error": "provider is in cooldown",
+                    })
+                    logger.warning(
+                        "llm_json_fallback_candidate_skipped_cooldown",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=cooldown_failure.reason,
+                    )
+                    continue
+
+                try:
+                    result = await self._run_llm_request_with_global_limit(
+                        "json_response",
+                        lambda: self._call_llm_with_json_response_once(prompt, max_retries=max_retries),
+                    )
+                    if attempts:
+                        logger.warning(
+                            "llm_json_fallback_candidate_succeeded",
+                            provider=self.provider,
+                            model=self.model,
+                            attempts=summarize_attempts(attempts),
+                        )
+                    return result
+                except Exception as exc:
+                    failure = classify_llm_failure(exc)
+                    attempts.append({
+                        "provider": self.provider,
+                        "model": self.model,
+                        "reason": failure.reason,
+                        "status": failure.status,
+                        "code": failure.code,
+                        "error": failure.message,
+                    })
+                    if failure.reason == "context_overflow":
+                        raise
+                    if should_fallback(failure):
+                        mark_provider_cooldown(self.provider, failure)
+                    has_next = index < len(candidates)
+                    logger.warning(
+                        "llm_json_fallback_candidate_failed",
+                        provider=self.provider,
+                        model=self.model,
+                        reason=failure.reason,
+                        status=failure.status,
+                        code=failure.code,
+                        has_next=has_next,
+                        error=failure.message[:300],
+                    )
+                    if not has_next or not should_fallback(failure):
+                        raise
+            raise LLMFailoverError(summarize_attempts(attempts))
+        except Exception:
+            if attempts:
+                logger.error("llm_json_fallback_failed", attempts=summarize_attempts(attempts))
+            raise
+        finally:
+            self._restore_provider_state(original_state)
+
+    async def _call_llm_with_json_response_once(
+        self,
+        prompt: str,
+        max_retries: int = 2,
+    ) -> Dict[str, Any]:
+        """Call the currently selected provider and parse a JSON object response."""
         import httpx
 
-        # 调试日志：打印 JSON 调用的 prompt 长度与部分内容
         try:
             logger.info(
                 "llm_json_request_debug",
@@ -1815,7 +2089,8 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
+                timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
                     data = response.json()
@@ -2354,7 +2629,10 @@ class LLMService:
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: float = 0.3,
-        system: Optional[str] = None
+        system: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Anthropic 格式聊天，支持原生工具调用
 
@@ -2374,13 +2652,36 @@ class LLMService:
                 "usage": {...}
             }
         """
-        if not self.anthropic_client:
-            raise RuntimeError(
-                "Anthropic client not initialized. "
-                f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
-            )
+        override_service = self._create_provider_override_service(provider, model)
+        if override_service is not None:
+            try:
+                return await override_service.chat_anthropic(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
+            finally:
+                self._schedule_provider_override_service_close(override_service)
+
+        if auto_profile:
+            with self.use_auto_profile(auto_profile):
+                return await self.chat_anthropic(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
 
         try:
+            if not self.anthropic_client:
+                raise RuntimeError(
+                    "Anthropic client not initialized. "
+                    f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
+                )
+
             async def create_message():
                 if not self.anthropic_client:
                     raise RuntimeError(
@@ -2495,7 +2796,7 @@ class LLMService:
                             tools=tools,
                             max_tokens=max_tokens,
                             temperature=temperature,
-                            system=system
+                            system=system,
                         )
                         return result
                     finally:
@@ -2515,7 +2816,10 @@ class LLMService:
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: float = 0.3,
-        system: Optional[str] = None
+        system: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        auto_profile: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Anthropic 格式流式聊天，支持原生工具调用
 
@@ -2533,6 +2837,33 @@ class LLMService:
             - {"type": "message_delta", "data": {"stop_reason": str, "usage": {...}}}
             - {"type": "message_stop", "data": {}}
         """
+        override_service = self._create_provider_override_service(provider, model)
+        if override_service is not None:
+            try:
+                async for event in override_service.chat_anthropic_streaming(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                ):
+                    yield event
+            finally:
+                self._schedule_provider_override_service_close(override_service)
+            return
+
+        if auto_profile:
+            with self.use_auto_profile(auto_profile):
+                async for event in self.chat_anthropic_streaming(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                ):
+                    yield event
+            return
+
         if not self.anthropic_client:
             raise RuntimeError(
                 "Anthropic client not initialized. "
@@ -2599,7 +2930,21 @@ class LLMService:
                         has_tools=bool(api_params.get("tools")),
                     )
                     semaphore = get_llm_pool_semaphore(self.provider, self.model)
+                    pool_wait_started = time.monotonic()
+                    logger.info(
+                        "llm_pool_concurrency_waiting",
+                        provider=self.provider,
+                        model=self.model,
+                        operation="anthropic_stream",
+                    )
                     async with semaphore:
+                        logger.info(
+                            "llm_pool_concurrency_acquired",
+                            provider=self.provider,
+                            model=self.model,
+                            operation="anthropic_stream",
+                            wait_ms=round((time.monotonic() - pool_wait_started) * 1000, 2),
+                        )
                         async with self.anthropic_client.messages.stream(**api_params) as stream:
                             async for event in stream:
                                 event_type = event.type

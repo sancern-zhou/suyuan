@@ -14,6 +14,38 @@ logger = structlog.get_logger()
 class ContextCompressor:
     """上下文压缩器（使用 LLM）"""
 
+    COMPACT_MEMORY_PREFIX = (
+        "Runtime memory summary from earlier turns.\n"
+        "This is compressed context, not ground truth.\n"
+        "The session history and persisted files remain authoritative; re-read data or files when exact details matter.\n\n"
+    )
+
+    COMPACT_MEMORY_PROMPT = """You compress older tool-using agent history into short working memory for continued execution.
+Return plain text only. Do not call tools. Do not invent facts.
+
+Original task:
+{original_task}
+
+Write a concise working memory with these sections:
+- Goal
+- Constraints
+- Files and artifacts
+- Evidence and results
+- Open issues
+- Next useful actions
+
+Rules:
+- Prefer concrete data_id/report_data_id values, file paths, numeric results, URLs, and grounded facts.
+- Mention uncertainty when details may need to be re-read from files or tool results.
+- Merge any prior compressed memory with the newer history below into one refreshed memory.
+- Deduplicate repeated sections and do not repeat earlier summaries verbatim.
+- The session history and persisted files remain authoritative.
+
+{prior_memory_block}
+Older history to compress:
+{history_text}
+"""
+
     # ⭐ 新版压缩提示词：保留消息类型结构
     COMPRESSION_PROMPT = """你是一个对话上下文压缩专家。你的任务是压缩以下对话历史，保留关键信息，移除冗余内容。
 
@@ -102,6 +134,9 @@ class ContextCompressor:
     # ✅ 阶段七：Snip Compact 配置（轻量裁剪，零 token 消耗）
     SNIP_HEAD_COUNT = 2  # 头部保留消息数（系统提示 + 初始上下文）
     SNIP_TAIL_TURNS = 4  # 尾部保留轮数（最近 N 轮对话）
+    COMPACT_RECENT_GROUPS = 4
+    MAX_RENDERED_HISTORY_CHARS = 64_000
+    COMPACT_SUMMARY_MAX_TOKENS = 2048
 
     def __init__(self, llm_client):
         """
@@ -137,17 +172,51 @@ class ContextCompressor:
             return "assistant"
         return ""
 
+    def _content_to_text(self, content: Any, max_chars: int = 4000) -> str:
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if not isinstance(block, dict):
+                    parts.append(str(block))
+                    continue
+                block_type = block.get("type")
+                if block_type == "text":
+                    parts.append(str(block.get("text", "")))
+                elif block_type == "tool_use":
+                    parts.append(
+                        f"[tool_use name={block.get('name', '')} id={block.get('id', '')} input={block.get('input', {})}]"
+                    )
+                elif block_type == "tool_result":
+                    parts.append(
+                        f"[tool_result id={block.get('tool_use_id', '')} content={block.get('content', '')}]"
+                    )
+                elif block_type == "image_url":
+                    parts.append("[image_url]")
+                elif block_type == "thinking":
+                    parts.append("[thinking]")
+                else:
+                    parts.append(str(block))
+            text = " ".join(part for part in parts if part)
+        else:
+            try:
+                text = json.dumps(content, ensure_ascii=False, default=str)
+            except Exception:
+                text = str(content)
+
+        text = " ".join(text.split())
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 16].rstrip() + "...[truncated]"
+
     def _extract_user_anchor(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Preserve the first substantive user request as an anchor for compaction."""
         for msg in messages:
             if self._message_kind(msg) != "user":
                 continue
 
-            content = msg.get("content", "")
-            if not isinstance(content, str):
-                continue
-
-            text = content.strip()
+            text = self._content_to_text(msg.get("content", ""), max_chars=4000).strip()
             if not text or text.startswith("[系统提示]"):
                 continue
 
@@ -167,6 +236,198 @@ class ContextCompressor:
 
         needle = anchor_text[:200]
         return any(needle in str(msg.get("content", "")) for msg in messages)
+
+    def _is_compact_memory_message(self, msg: Dict[str, Any]) -> bool:
+        content = msg.get("content", "")
+        return (
+            msg.get("type") == "compact_memory"
+            or (
+                isinstance(content, str)
+                and content.startswith(self.COMPACT_MEMORY_PREFIX)
+            )
+        )
+
+    def _split_existing_compact_memory(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        summaries = []
+        remaining = []
+        for msg in messages:
+            if self._is_compact_memory_message(msg):
+                content = str(msg.get("content", ""))
+                summaries.append(content.replace(self.COMPACT_MEMORY_PREFIX, "", 1).strip())
+                continue
+            remaining.append(msg)
+        return "\n\n".join(summary for summary in summaries if summary).strip(), remaining
+
+    def _turn_groups(self, messages: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        groups: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role", "")
+            if role == "assistant" and current:
+                groups.append(current)
+                current = [msg]
+                continue
+            current.append(msg)
+        if current:
+            groups.append(current)
+        return groups
+
+    def _split_recent_groups(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> tuple[List[List[Dict[str, Any]]], List[List[Dict[str, Any]]]]:
+        groups = self._turn_groups(messages)
+        if not groups:
+            return [], []
+
+        recent_groups = groups[-self.COMPACT_RECENT_GROUPS:]
+        if len(recent_groups) >= len(groups):
+            recent_groups = recent_groups[1:]
+        compacted_count = max(0, len(groups) - len(recent_groups))
+        return groups[:compacted_count], recent_groups
+
+    def _render_history_text(self, groups: List[List[Dict[str, Any]]]) -> str:
+        parts = []
+        used = 0
+        max_chars_per_message = 3000
+        for index, group in enumerate(groups, start=1):
+            lines = [f"[Turn group {index}]"]
+            for msg in group:
+                role = msg.get("role", "unknown")
+                kind = self._message_kind(msg)
+                content = self._content_to_text(msg.get("content", ""), max_chars=max_chars_per_message)
+                lines.append(f"{role}/{kind}: {content}")
+            rendered = "\n".join(lines)
+            if parts and used + len(rendered) > self.MAX_RENDERED_HISTORY_CHARS:
+                remaining = self.MAX_RENDERED_HISTORY_CHARS - used
+                if remaining > 80:
+                    parts.append(rendered[: remaining - 40].rstrip() + "\n...[history truncated]")
+                break
+            parts.append(rendered)
+            used += len(rendered)
+        return "\n\n".join(parts).strip()
+
+    def _create_compact_memory_message(
+        self,
+        summary_text: str,
+        original_count: int,
+        compacted_group_count: int,
+        kept_group_count: int,
+        existing_memory_text: str = "",
+    ) -> Dict[str, Any]:
+        from datetime import datetime
+
+        return {
+            "type": "compact_memory",
+            "role": "user",
+            "content": self.COMPACT_MEMORY_PREFIX + summary_text.strip(),
+            "metadata": {
+                "compact_memory": True,
+                "compression_type": "harness_summary",
+                "original_count": original_count,
+                "compacted_group_count": compacted_group_count,
+                "kept_group_count": kept_group_count,
+                "had_existing_memory": bool(existing_memory_text),
+                "compressed_at": datetime.now().isoformat(),
+            },
+        }
+
+    def _flatten_groups(self, groups: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        flattened = []
+        for group in groups:
+            flattened.extend(dict(msg) for msg in group)
+        return flattened
+
+    def _fallback_compact(
+        self,
+        messages: List[Dict[str, Any]],
+        anchor_messages: List[Dict[str, Any]],
+        original_count: int,
+        error: Exception,
+    ) -> List[Dict[str, Any]]:
+        compacted_groups, recent_groups = self._split_recent_groups(messages)
+        recent_messages = self._flatten_groups(recent_groups)
+        boundary_msg = self._create_compaction_boundary(
+            original_count=original_count,
+            compressed_count=len(anchor_messages) + 1 + len(recent_messages),
+            compression_type="fallback",
+        )
+        boundary_msg["content"] = (
+            f"[系统提示] 上下文压缩失败，已保留原始任务锚点和最近消息。错误: {str(error)[:200]}"
+        )
+        return anchor_messages + [boundary_msg] + recent_messages
+
+    async def _harness_compact(
+        self,
+        messages_to_compress: List[Dict[str, Any]],
+        protected_messages: List[Dict[str, Any]],
+        anchor_messages: List[Dict[str, Any]],
+        original_count: int,
+        model: str = None,
+    ) -> List[Dict[str, Any]]:
+        existing_memory_text, eligible_messages = self._split_existing_compact_memory(messages_to_compress)
+        compacted_groups, recent_groups = self._split_recent_groups(eligible_messages)
+
+        if not compacted_groups:
+            logger.info("[ContextCompressor] 没有可摘要的旧轮次，使用确定性裁剪")
+            return self._fallback_compact(
+                messages_to_compress + protected_messages,
+                anchor_messages,
+                original_count,
+                RuntimeError("no older turn groups to summarize"),
+            )
+
+        history_text = self._render_history_text(compacted_groups)
+        original_task = self._content_to_text(anchor_messages[0].get("content", ""), max_chars=4000) if anchor_messages else ""
+        prior_memory_block = ""
+        if existing_memory_text:
+            prior_memory_block = (
+                "Previously compressed memory to preserve and refine:\n"
+                f"{self._content_to_text(existing_memory_text, max_chars=12000)}\n\n"
+            )
+
+        prompt = self.COMPACT_MEMORY_PROMPT.format(
+            original_task=original_task,
+            prior_memory_block=prior_memory_block,
+            history_text=history_text,
+        )
+        chat_params = {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.COMPACT_SUMMARY_MAX_TOKENS,
+            "timeout": 300.0,
+        }
+        if model:
+            chat_params["model"] = model
+
+        response = await self.llm_client.chat(**chat_params)
+        summary_text = str(response or "").strip()
+        if not summary_text:
+            raise ValueError("context compaction summary call returned empty text")
+
+        compact_memory = self._create_compact_memory_message(
+            summary_text=summary_text,
+            original_count=original_count,
+            compacted_group_count=len(compacted_groups),
+            kept_group_count=len(recent_groups) + (1 if protected_messages else 0),
+            existing_memory_text=existing_memory_text,
+        )
+
+        recent_messages = self._flatten_groups(recent_groups)
+        final_messages = anchor_messages + [compact_memory] + recent_messages + protected_messages
+
+        logger.info(
+            "[ContextCompressor] Harness Compact 完成",
+            original_count=original_count,
+            compressed_count=len(final_messages),
+            compacted_group_count=len(compacted_groups),
+            recent_group_count=len(recent_groups),
+            protected_count=len(protected_messages),
+            summary_length=len(summary_text),
+        )
+        return final_messages
 
     async def compress(
         self,
@@ -261,63 +522,13 @@ class ContextCompressor:
             return messages_to_compress + protected_messages
 
         try:
-            # 构造压缩提示
-            conversation_json = json.dumps(messages_to_compress, ensure_ascii=False, indent=2)
-            prompt = self.COMPRESSION_PROMPT.format(conversation_json=conversation_json)
-
-            # 调用 LLM 进行压缩
-            # 压缩操作处理大量上下文，需要更长的超时时间（300秒）
-            chat_params = {
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 16384,  # ✅ 增加到 16384，避免压缩响应被截断
-                "timeout": 300.0  # 5分钟超时，处理大量上下文
-            }
-
-            # 如果指定了模型，则使用指定模型
-            if model:
-                chat_params["model"] = model
-
-            response = await self.llm_client.chat(**chat_params)
-
-            # 尝试日志：记录响应信息
-            logger.debug(
-                f"[ContextCompressor] LLM 压缩响应: 长度={len(response)}, "
-                f"预览={response[:200]}..."
-            )
-
-            # 解析压缩结果
-            compressed = self._parse_compression_result(response)
-
-            if force and anchor_messages and not self._contains_anchor_equivalent(compressed, anchor_messages[0]):
-                compressed = anchor_messages + compressed
-
-            if force and original_count >= 10 and len(compressed) + len(protected_messages) < 4:
-                logger.warning(
-                    "[ContextCompressor] LLM 压缩结果过短，补充任务锚点",
-                    original_count=original_count,
-                    compressed_count=len(compressed),
-                    protected_count=len(protected_messages),
-                )
-                if anchor_messages and not self._contains_anchor_equivalent(compressed, anchor_messages[0]):
-                    compressed = anchor_messages + compressed
-
-            # 阶段三：添加压缩边界标记
-            boundary_msg = self._create_compaction_boundary(
+            return await self._harness_compact(
+                messages_to_compress=messages_to_compress,
+                protected_messages=protected_messages,
+                anchor_messages=anchor_messages,
                 original_count=original_count,
-                compressed_count=len(compressed) + len(protected_messages),
-                compression_type="full"
+                model=model,
             )
-
-            # 合并：边界标记 + 压缩后的消息 + 保护段消息
-            final_messages = [boundary_msg] + compressed + protected_messages
-
-            # 记录压缩后的状态
-            compressed_count = len(final_messages)
-            compression_ratio = (1 - compressed_count / original_count) * 100 if original_count > 0 else 0
-            logger.info(f"[ContextCompressor] 压缩完成: {original_count} → {compressed_count} 条消息 "
-                       f"(压缩率: {compression_ratio:.1f}%)")
-
-            return final_messages
 
         except Exception as e:
             import traceback
@@ -330,10 +541,8 @@ class ContextCompressor:
                 f"llm_client_type={type(self.llm_client).__name__ if self.llm_client else None}"
             )
             logger.debug(f"[ContextCompressor] 压缩失败堆栈:\n{traceback.format_exc()}")
-            # 降级策略：简单截断，保留最近的消息
-            fallback_count = max(10, len(messages) // 2)
-            logger.warning(f"[ContextCompressor] 使用降级策略，保留最近 {fallback_count} 条消息")
-            return messages[-fallback_count:]
+            logger.warning("[ContextCompressor] 使用 Harness 降级策略，保留任务锚点和最近消息")
+            return self._fallback_compact(messages, anchor_messages, original_count, e)
 
     async def compress_messages(
         self,
@@ -720,18 +929,20 @@ class ContextCompressor:
             if not all(isinstance(value, int) for value in counts.values()):
                 counts = todo_counts(submitted_items)
 
+            summary = payload.get("summary", "Legacy task housekeeping result compacted.")
+            summary = str(summary).replace("TodoWrite", "legacy task list")
             return {
                 "status": payload.get("status", "success"),
                 "success": bool(payload.get("success", True)),
-                "tool_name": "TodoWrite",
+                "tool_name": "LegacyTaskState",
                 "housekeeping": True,
                 "no_op": bool(payload.get("no_op") or data.get("no_op")),
                 "all_completed": bool(payload.get("all_completed") or data.get("all_completed")),
                 **counts,
                 "active_items": compact_todo_items(active_items),
-                "summary": payload.get("summary", "TodoWrite housekeeping result compacted."),
+                "summary": summary,
                 "metadata": {
-                    "generator": "TodoWrite",
+                    "generator": "legacy_task_state",
                     "history_compacted": True,
                     "omitted_fields": ["rendered", "items", "old_items", "new_items"],
                 },
@@ -761,18 +972,8 @@ class ContextCompressor:
                     blocks.append(block)
                     continue
                 block_copy = dict(block)
-                tool_input = block_copy.get("input") if isinstance(block_copy.get("input"), dict) else {}
-                items = tool_input.get("items")
-                if isinstance(items, str):
-                    try:
-                        parsed_items = json.loads(items)
-                        items = parsed_items if isinstance(parsed_items, list) else []
-                    except Exception:
-                        items = []
-                # ✅ 修复：保留 items 参数（符合TodoWriteTool.execute()签名），只压缩其内容
-                block_copy["input"] = {
-                    "items": compact_todo_items(items),  # 保留 items 字段，压缩内容
-                }
+                block_copy["name"] = "TaskList"
+                block_copy["input"] = {}
                 blocks.append(block_copy)
                 changed = True
             return blocks, changed

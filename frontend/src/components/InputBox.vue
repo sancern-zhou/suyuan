@@ -2,8 +2,14 @@
   <div class="input-area">
     <div class="input-container">
       <!-- 附件预览区域 -->
-      <div v-if="attachments.length > 0" class="attachments-preview">
-        <div v-for="(attachment, index) in attachments" :key="index" class="attachment-item">
+      <div v-if="visibleAttachments.length > 0" class="attachments-preview">
+        <div
+          v-for="(attachment, index) in visibleAttachments"
+          :key="attachment.id || attachment.file_id || index"
+          class="attachment-item"
+          :class="{ 'context-attachment': attachment.readonlySource === 'drawio_board_selection' }"
+          :title="attachment.title || attachment.name"
+        >
           <img
             v-if="attachment.type === 'image' && attachment.preview"
             :src="attachment.preview"
@@ -20,7 +26,12 @@
             </svg>
             <span class="attachment-file-name">{{ attachment.name }}</span>
           </div>
-          <button class="attachment-remove" @click="removeAttachment(index)" :disabled="attachment.uploading">
+          <button
+            v-if="attachment.readonlySource !== 'drawio_board_selection'"
+            class="attachment-remove"
+            @click="removeVisibleAttachment(index)"
+            :disabled="attachment.uploading"
+          >
             <svg viewBox="0 0 24 24" class="remove-icon">
               <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
               <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2"/>
@@ -51,6 +62,29 @@
           </span>
         </div>
 
+        <div
+          v-if="pendingSteeringInputs.length > 0"
+          class="pending-steering-indicator"
+          role="status"
+          aria-label="等待 Agent 接收"
+        >
+          <div class="pending-steering-icon" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div
+            v-if="pendingSteeringDisplay.text"
+            class="pending-steering-text"
+            :title="pendingSteeringDisplay.text"
+          >
+            <span class="pending-steering-content">{{ pendingSteeringDisplay.text }}</span>
+            <span v-if="pendingSteeringDisplay.extraCount > 0" class="pending-steering-count">
+              +{{ pendingSteeringDisplay.extraCount }}
+            </span>
+          </div>
+        </div>
+
         <textarea
           ref="textareaRef"
           v-model="localValue"
@@ -73,7 +107,7 @@
           />
 
           <div class="action-group">
-            <div class="model-tier-wrapper">
+            <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
                 v-model="modelTier"
                 class="model-tier-select"
@@ -129,15 +163,23 @@
 
             <button
               class="action-button"
-              :class="{ 'pause-button': isAnalyzing, 'send-button': !isAnalyzing }"
-              @click="isAnalyzing ? handlePause() : handleSend()"
+              :class="{ 'send-button': !isAnalyzing, 'steer-button': isAnalyzing }"
+              @click="handleSend()"
               :disabled="actionButtonDisabled"
-              :title="isAnalyzing ? '暂停分析 (Esc)' : '发送 (Enter)'"
+              :title="isAnalyzing ? runningActionTitle : '发送 (Enter)'"
             >
               <svg v-if="!isAnalyzing" viewBox="0 0 24 24" class="send-icon">
                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
               </svg>
-              <span v-else>暂停</span>
+              <span v-else>{{ runningActionLabel }}</span>
+            </button>
+            <button
+              v-if="isAnalyzing"
+              class="action-button pause-button"
+              @click="handlePause"
+              title="暂停分析 (Esc)"
+            >
+              <span>暂停</span>
             </button>
           </div>
         </div>
@@ -152,11 +194,18 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
+import { useReactStore } from '@/stores/reactStore'
 import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
 import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
+import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
+import {
+  getEffectiveModelTier,
+  shouldShowModelTierSelector
+} from '@/components/inputBoxModelTier.js'
 
 const kbStore = useKnowledgeBaseStore()
+const reactStore = useReactStore()
 
 const props = defineProps({
   modelValue: {
@@ -174,6 +223,10 @@ const props = defineProps({
   isAnalyzing: {
     type: Boolean,
     default: false
+  },
+  pendingSteeringInputs: {
+    type: Array,
+    default: () => []
   },
   assistantMode: {
     type: String,
@@ -202,7 +255,10 @@ const useReranker = ref(props.useReranker)  // 精准检索开关状态
 const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 // ✅ 使用统一的模式键名，与 store.currentMode 保持一致
 const cachedMode = localStorage.getItem('current-mode') || 'assistant'
-const agentMode = ref(validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
+const initialAgentMode = validAgentModes.includes(reactStore.currentMode)
+  ? reactStore.currentMode
+  : (validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
+const agentMode = ref(initialAgentMode)
 const validModelTiers = ['auto', 'flash', 'pro']
 const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
 const draftModelTierKey = 'llm-model-tier:draft'
@@ -232,12 +288,73 @@ const modelTier = ref(readStoredModelTier(props.sessionId))
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
+const pendingBoardSnapshotAttachment = computed(() => {
+  if (reactStore.currentMode !== 'chart') return null
+  const attachment = reactStore.currentState?.board?.pendingSnapshotAttachment
+  if (!attachment) return null
+  return {
+    ...attachment,
+    id: attachment.id || attachment.file_id || 'drawio-board-snapshot',
+    name: attachment.name || attachment.filename || '画板截图.png',
+    type: attachment.type || attachment.file_type || 'image',
+    preview: attachment.preview || attachment.url || null,
+    uploading: false,
+    readonlySource: 'drawio_board_snapshot'
+  }
+})
+
+const getSelectedCellLabel = (cell = {}) => {
+  return String(cell.value || cell.label || cell.id || cell.cell_id || '选中项').trim() || '选中项'
+}
+
+const boardSelectionContextAttachment = computed(() => {
+  if (reactStore.currentMode !== 'chart') return null
+  const selectedCells = reactStore.currentState?.board?.selectedCells || []
+  if (!Array.isArray(selectedCells) || selectedCells.length === 0) return null
+
+  const firstLabel = getSelectedCellLabel(selectedCells[0])
+  const name = selectedCells.length === 1
+    ? `当前选中：${firstLabel}`
+    : `当前选中：${selectedCells.length} 项`
+  const detail = selectedCells
+    .map(cell => getSelectedCellLabel(cell))
+    .filter(Boolean)
+    .slice(0, 6)
+    .join('、')
+
+  return {
+    id: 'drawio-board-selection-context',
+    name,
+    type: 'context',
+    uploading: false,
+    readonlySource: 'drawio_board_selection',
+    title: detail ? `当前选中：${detail}` : name
+  }
+})
+
+const visibleAttachments = computed(() => [
+  ...attachments.value,
+  ...(boardSelectionContextAttachment.value ? [boardSelectionContextAttachment.value] : []),
+  ...(pendingBoardSnapshotAttachment.value ? [pendingBoardSnapshotAttachment.value] : [])
+])
+const sendableAttachmentCount = computed(() => (
+  attachments.value.length + (pendingBoardSnapshotAttachment.value ? 1 : 0)
+))
+const activeModelTierMode = computed(() => (
+  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : agentMode.value
+))
+const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
+const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
+const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
+const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
+const pendingSteeringDisplay = computed(() => getPendingSteeringDisplay(props.pendingSteeringInputs))
 
 const actionButtonDisabled = computed(() => {
   if (props.isAnalyzing) {
-    return false
+    if (!canSteerWhileRunning.value) return false
+    return (!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled
   }
-  return (!localValue.value.trim() && attachments.value.length === 0) || props.disabled
+  return (!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled
 })
 
 // 工作流工具列表
@@ -251,8 +368,16 @@ const toggleKnowledgeBase = () => {
 }
 
 const handleAgentModeChange = (newMode) => {
+  if (!validAgentModes.includes(newMode)) {
+    console.warn('[InputBox] Invalid agent mode:', newMode)
+    return
+  }
+
   // ✅ 处理Agent模式变化
   agentMode.value = newMode
+  if (reactStore.currentMode !== newMode) {
+    reactStore.switchMode(newMode)
+  }
   emit('update:agentMode', newMode)
   console.log('[InputBox] Agent mode changed:', newMode)
 }
@@ -345,6 +470,16 @@ watch(() => props.modelValue, (newValue) => {
   localValue.value = newValue
 })
 
+watch(
+  () => reactStore.currentMode,
+  (newMode) => {
+    if (validAgentModes.includes(newMode) && agentMode.value !== newMode) {
+      agentMode.value = newMode
+    }
+  },
+  { immediate: true }
+)
+
 watch(localValue, async (newValue) => {
   emit('update:modelValue', newValue)
   await nextTick()
@@ -361,6 +496,7 @@ watch(
 
 watch([modelTier, () => props.sessionId], ([newTier, newSessionId]) => {
   if (!validModelTiers.includes(newTier)) return
+  if (!showModelTierSelector.value) return
   if (newSessionId) {
     localStorage.setItem(getSessionModelTierKey(newSessionId), newTier)
     return
@@ -402,7 +538,7 @@ const handleKeydown = (e) => {
     }
   }
 
-  if (e.key === 'Enter' && !e.shiftKey && !props.isAnalyzing) {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
   } else if (e.key === 'Escape' && props.isAnalyzing) {
@@ -425,7 +561,7 @@ const handleBlur = () => {
 }
 
 const handleSend = () => {
-  if ((!localValue.value.trim() && attachments.value.length === 0) || props.disabled || props.isAnalyzing) return
+  if ((!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled) return
 
   // 检查是否有附件还在上传中
   const uploadingAttachments = attachments.value.filter(a => a.uploading)
@@ -451,11 +587,16 @@ const handleSend = () => {
   }))
 
   // 将查询、知识库ID、Agent模式、附件一起发送
+  const activeAgentMode = validAgentModes.includes(reactStore.currentMode)
+    ? reactStore.currentMode
+    : agentMode.value
+  agentMode.value = activeAgentMode
+
   emit('send', {
     query: localValue.value,
     knowledgeBaseIds: knowledgeBaseIds,
-    agentMode: agentMode.value,
-    modelTier: modelTier.value,
+    agentMode: activeAgentMode,
+    modelTier: getEffectiveModelTier(modelTier.value, activeAgentMode),
     attachments: attachmentsData
   })
 
@@ -586,6 +727,17 @@ const removeAttachment = (index) => {
     return
   }
   attachments.value.splice(index, 1)
+}
+
+const removeVisibleAttachment = (index) => {
+  const attachment = visibleAttachments.value[index]
+  if (!attachment) return
+  if (attachment.readonlySource === 'drawio_board_selection') return
+  if (attachment.readonlySource === 'drawio_board_snapshot') {
+    reactStore.setDrawioBoardSnapshotAttachment(null)
+    return
+  }
+  removeAttachment(index)
 }
 
 const previewImage = (attachment) => {
@@ -760,6 +912,77 @@ defineExpose({
     background: #f5f5f5;
     cursor: not-allowed;
     color: #999;
+  }
+}
+
+.pending-steering-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 0;
+  min-height: 18px;
+  min-width: 0;
+}
+
+.pending-steering-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 14px;
+
+  span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #64748b;
+    opacity: 0.42;
+    animation: pending-steering-pulse 1.2s ease-in-out infinite;
+
+    &:nth-child(2) {
+      animation-delay: 0.16s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.32s;
+    }
+  }
+}
+
+.pending-steering-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  color: #475569;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.pending-steering-content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-steering-count {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 12px;
+}
+
+@keyframes pending-steering-pulse {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: translateY(-3px);
+    opacity: 0.9;
   }
 }
 
@@ -952,6 +1175,22 @@ defineExpose({
   }
 }
 
+.steer-button {
+  width: auto;
+  padding: 0 12px;
+  background: #1976D2;
+  color: white;
+
+  &:hover:not(:disabled) {
+    background: #1565C0;
+  }
+
+  &:disabled {
+    background: #e0e0e0;
+    color: #999;
+  }
+}
+
 .pause-button {
   width: auto;
   padding: 0 12px;
@@ -1010,6 +1249,16 @@ defineExpose({
   border-radius: 999px;
   position: relative;
   color: #5f6f89;
+}
+
+.attachment-item.context-attachment {
+  border-color: #b7d6ff;
+  background: #f4f9ff;
+  color: #23527c;
+}
+
+.attachment-item.context-attachment .attachment-file-name {
+  color: #23527c;
 }
 
 .attachment-preview-image {

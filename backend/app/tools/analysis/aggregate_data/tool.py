@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import pandas as pd
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_resume_context
 from app.db.database import async_session
 from app.agent.context.data_context_manager import DataContextManager
 from app.utils.rounding_rules import apply_rounding, ROUNDING_PRECISION
@@ -650,7 +651,7 @@ class AggregateDataTool(LLMTool):
             # 步骤5：生成返回结果（UDF v2.0格式）
             agg_desc = self._format_aggregation_description(aggregations)
 
-            return {
+            response = {
                 "status": "success",
                 "success": True,
                 "data": result["aggregated_data"],
@@ -669,6 +670,13 @@ class AggregateDataTool(LLMTool):
                 },
                 "summary": f"聚合完成：{agg_desc}，返回{len(result['aggregated_data'])}条结果"
             }
+            response.update(
+                build_data_resume_context(
+                    source_data_ids=[data_id],
+                    generated_data_ids=[aggregated_data_id] if aggregated_data_id else [],
+                )
+            )
+            return response
 
         except Exception as e:
             logger.error("data_aggregation_failed", error=str(e))

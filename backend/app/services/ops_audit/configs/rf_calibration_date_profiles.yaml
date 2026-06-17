@@ -1,0 +1,91 @@
+# RF calibration date validity profiles.
+
+tables:
+  RF_W_GASEOUSCHECK_O3:
+    reference_time_fields:
+      - CHECKDATE
+      - CALIBRATIONDATE
+      - CREATEDATE
+    pairs:
+      - label: 臭氧传递标准有效期
+        prev_field: CDDATE
+        next_field: YXQDATE
+        prev_must_not_after_reference: true
+
+  RF_Q_GaseousFlowCheck:
+    reference_time_fields:
+      - SdtTime
+      - CHECKDATE
+      - CALIBRATIONDATE
+      - CREATEDATE
+    pairs:
+      - label: 温度计校准有效期
+        prev_field: T_CalibrateDatePrev
+        next_field: T_CalibrateDateNext
+      - label: 压力计校准有效期
+        prev_field: P_CalibrateDatePrev
+        next_field: P_CalibrateDateNext
+      - label: 流量计1校准有效期
+        prev_field: F_CalibrateDatePrev1
+        next_field: F_CalibrateDateNext1
+      - label: 流量计2校准有效期
+        prev_field: F_CalibrateDatePrev2
+        next_field: F_CalibrateDateNext2
+      - label: 动态校准仪校准有效期
+        prev_field: D_CalibrateDatePrev
+        next_field: D_CalibrateDateNext
+
+  RF_TW_PmFlowCheck:
+    reference_time_fields:
+      - CHECKDATE
+      - CheckSdt
+      - CREATEDATE
+    pairs:
+      - label: 流量计校准有效期
+        prev_field: F_PrevDate
+        next_field: F_NextDate
+      - label: 颗粒物仪器校准有效期
+        prev_field: PM_PrevDate
+        next_field: PM_NextDate
+
+  RF_TW_PmFlowCalibrate:
+    reference_time_fields:
+      - CHECKDATE
+      - CheckSdt
+      - CREATEDATE
+    pairs:
+      - label: 流量计校准有效期
+        prev_field: F_PrevDate
+        next_field: F_NextDate
+      - label: 颗粒物仪器校准有效期
+        prev_field: PM_PrevDate
+        next_field: PM_NextDate
+
+  RF_Q_GASEOUSMULTIPOINT_CO:
+    reference_time_fields:
+      - CALIBRATIONDATE
+      - CREATEDATE
+    pairs:
+      - label: 标气有效期
+        next_field: PPMCODEDATE
+  RF_Q_GASEOUSMULTIPOINT_NO2:
+    reference_time_fields:
+      - CALIBRATIONDATE
+      - CREATEDATE
+    pairs:
+      - label: 标气有效期
+        next_field: PPMCODEDATE
+  RF_Q_GASEOUSMULTIPOINT_O3:
+    reference_time_fields:
+      - CALIBRATIONDATE
+      - CREATEDATE
+    pairs:
+      - label: 标气有效期
+        next_field: PPMCODEDATE
+  RF_Q_GASEOUSMULTIPOINT_SO2:
+    reference_time_fields:
+      - CALIBRATIONDATE
+      - CREATEDATE
+    pairs:
+      - label: 标气有效期
+        next_field: PPMCODEDATE

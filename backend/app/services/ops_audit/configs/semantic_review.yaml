@@ -1,0 +1,66 @@
+thresholds:
+  remark_complete: 0.75
+  attachment_complete: 0.8
+  photo_watermark: 0.75
+  value_consistency: 0.8
+
+remark_keywords:
+  cause:
+    - 原因
+    - 由于
+    - 因
+    - 因为
+    - 受
+    - 故障
+    - 异常
+    - 停机
+    - 损坏
+    - 缺失
+    - 误差
+  action:
+    - 已
+    - 进行了
+    - 采取
+    - 更换
+    - 修复
+    - 调整
+    - 处理
+    - 整改
+    - 复测
+    - 清洗
+  result:
+    - 恢复
+    - 正常
+    - 合格
+    - 完成
+    - 通过
+    - 无异常
+    - 达标
+    - 有效
+
+attachment_keywords:
+  certificate_cover:
+    - 封面
+    - 首页
+    - 目录
+    - 证书编号
+    - certificate
+  report_toc:
+    - 目录
+    - contents
+    - 目录页
+    - 报告目录
+  watermark:
+    - 水印
+    - 拍摄时间
+    - 时间
+    - 日期
+    - 现场
+
+date_patterns:
+  - "\\d{4}[-/年]\\d{1,2}[-/月]\\d{1,2}(?:日)?"
+  - "\\d{4}-\\d{2}-\\d{2}"
+  - "\\d{4}/\\d{2}/\\d{2}"
+
+value_tolerance: 0.05
+min_ocr_text_length: 8
