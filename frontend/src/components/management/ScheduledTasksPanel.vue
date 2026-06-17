@@ -2,6 +2,9 @@
   <div class="management-panel scheduled-tasks-panel">
     <div class="panel-header">
       <h3>定时任务管理</h3>
+      <button class="panel-btn small primary" @click="showCreateDialog = true">
+        新建广播任务
+      </button>
       <button class="panel-btn small" @click="$emit('refresh-tasks')" :disabled="scheduledTasksRefreshing">
         {{ scheduledTasksRefreshing ? '刷新中...' : '刷新' }}
       </button>
@@ -68,6 +71,7 @@
             <span class="scheduled-meta-item">⏰ {{ formatScheduledNextRun(task.next_run_at) }}</span>
             <span class="scheduled-meta-item">📋 {{ task.steps?.length || 0 }} 个步骤</span>
             <span class="scheduled-meta-item">✅ {{ task.success_runs || 0 }}/{{ task.total_runs || 0 }}</span>
+            <span class="scheduled-meta-item">🧠 {{ getExecutionModeLabel(task.execution_mode) }}</span>
           </div>
 
           <!-- 标签 -->
@@ -97,12 +101,112 @@
         </div>
       </div>
     </div>
+
+    <!-- 新建广播任务弹窗 -->
+    <div v-if="showCreateDialog" class="modal-backdrop" @click.self="showCreateDialog = false">
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h4>新建广播任务</h4>
+          <button class="panel-btn small" @click="showCreateDialog = false">关闭</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-grid">
+            <label class="form-field">
+              <span>任务名称</span>
+              <input v-model="createForm.name" type="text" placeholder="例如：每日广播提醒" />
+            </label>
+
+            <label class="form-field">
+              <span>执行模式</span>
+              <select v-model="createForm.execution_mode">
+                <option value="assistant">assistant</option>
+                <option value="expert">expert</option>
+              </select>
+            </label>
+
+            <label class="form-field form-wide">
+              <span>任务描述</span>
+              <textarea v-model="createForm.description" rows="4" placeholder="描述广播主题、语气、目标人群"></textarea>
+            </label>
+
+            <label class="form-field">
+              <span>调度类型</span>
+              <select v-model="createForm.schedule_type">
+                <option value="daily_8am">每天 8 点</option>
+                <option value="every_2h">每 2 小时</option>
+                <option value="every_30min">每 30 分钟</option>
+                <option value="once">一次性</option>
+                <option value="interval">自定义间隔</option>
+                <option value="daily_custom">每天自定义时间</option>
+              </select>
+            </label>
+
+            <label class="form-field" v-if="createForm.schedule_type === 'once'">
+              <span>执行时间</span>
+              <input v-model="createForm.run_at" type="datetime-local" />
+            </label>
+
+            <label class="form-field" v-if="createForm.schedule_type === 'interval'">
+              <span>间隔分钟</span>
+              <input v-model.number="createForm.interval_minutes" type="number" min="1" />
+            </label>
+
+            <label class="form-field" v-if="createForm.schedule_type === 'daily_custom'">
+              <span>小时</span>
+              <input v-model.number="createForm.hour" type="number" min="0" max="23" />
+            </label>
+
+            <label class="form-field" v-if="createForm.schedule_type === 'daily_custom'">
+              <span>分钟</span>
+              <input v-model.number="createForm.minute" type="number" min="0" max="59" />
+            </label>
+
+            <div class="form-field form-wide">
+              <span>目标渠道</span>
+              <div class="channel-checks">
+                <label v-for="channel in channelOptions" :key="channel.value" class="channel-check">
+                  <input v-model="createForm.channels" type="checkbox" :value="channel.value" />
+                  <span>{{ channel.label }}</span>
+                </label>
+              </div>
+            </div>
+
+            <label class="form-field form-wide">
+              <span>标签</span>
+              <input v-model="createForm.tagsText" type="text" placeholder="广播,提醒,日报" />
+            </label>
+          </div>
+
+          <div class="task-preview">
+            <div class="task-preview-title">执行步骤预览</div>
+            <div class="task-preview-body">
+              <p>助手将先根据任务描述生成广播内容，再调用广播工具发送给选中的社交渠道。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <label class="switch-field">
+            <input v-model="createForm.enabled" type="checkbox" />
+            <span>启用任务</span>
+          </label>
+          <button class="panel-btn" @click="showCreateDialog = false">取消</button>
+          <button class="panel-btn primary" :disabled="creatingTask" @click="createBroadcastTask">
+            {{ creatingTask ? '创建中...' : '创建任务' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
+import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+
 // Props
-const props = defineProps({
+defineProps({
   tasks: {
     type: Array,
     default: () => []
@@ -119,6 +223,32 @@ const props = defineProps({
     type: Boolean,
     default: false
   }
+})
+
+const emit = defineEmits(['close', 'refresh-tasks', 'toggle-task', 'execute-task', 'edit-task', 'delete-task'])
+
+const scheduledTasksStore = useScheduledTasksStore()
+const showCreateDialog = ref(false)
+const creatingTask = ref(false)
+
+const channelOptions = [
+  { label: '微信', value: 'weixin' },
+  { label: 'QQ', value: 'qq' },
+  { label: '钉钉', value: 'dingtalk' }
+]
+
+const createForm = ref({
+  name: '广播任务',
+  description: '根据任务描述生成广播内容并发送给社交用户',
+  execution_mode: 'assistant',
+  schedule_type: 'daily_custom',
+  enabled: true,
+  hour: 9,
+  minute: 0,
+  interval_minutes: 30,
+  run_at: '',
+  channels: ['weixin'],
+  tagsText: 'broadcast'
 })
 
 // Methods
@@ -144,6 +274,16 @@ const getScheduledTaskTagClass = (type) => {
   return classMap[type] || 'default'
 }
 
+const getExecutionModeLabel = (mode) => {
+  const labels = {
+    assistant: '助手模式',
+    expert: '专家模式',
+    query: '问数模式',
+    social: '社交模式'
+  }
+  return labels[mode] || mode || '默认'
+}
+
 const formatScheduledNextRun = (time) => {
   if (!time) return '未设置'
   try {
@@ -165,8 +305,74 @@ const formatScheduledNextRun = (time) => {
   }
 }
 
-// Emit events
-defineEmits(['close', 'refresh-tasks', 'toggle-task', 'execute-task', 'edit-task', 'delete-task'])
+const buildBroadcastPrompt = () => {
+  const channelsText = createForm.value.channels.length > 0
+    ? createForm.value.channels.join('、')
+    : '所有已知社交用户'
+
+  return [
+    `你正在执行一个广播定时任务。`,
+    `任务名称：${createForm.value.name}`,
+    `任务描述：${createForm.value.description}`,
+    `目标渠道：${channelsText}`,
+    `请先根据任务描述生成一段适合广播给社交用户的内容，然后调用 broadcast_social_users 工具发送。`,
+    `要求内容简洁、明确、避免提及内部实现过程。`
+  ].join('\n')
+}
+
+const createBroadcastTask = async () => {
+  if (!createForm.value.name.trim()) {
+    alert('请填写任务名称')
+    return
+  }
+  if (!createForm.value.description.trim()) {
+    alert('请填写任务描述')
+    return
+  }
+
+  creatingTask.value = true
+  try {
+    const payload = {
+      name: createForm.value.name.trim(),
+      description: createForm.value.description.trim(),
+      execution_mode: createForm.value.execution_mode,
+      schedule_type: createForm.value.schedule_type,
+      enabled: createForm.value.enabled,
+      steps: [
+        {
+          step_id: 'step_1',
+          description: '生成并广播消息',
+          agent_prompt: buildBroadcastPrompt(),
+          timeout_seconds: 600,
+          retry_on_failure: false
+        }
+      ],
+      tags: createForm.value.tagsText
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean),
+    }
+
+    if (payload.schedule_type === 'once') {
+      payload.run_at = createForm.value.run_at
+    } else if (payload.schedule_type === 'interval') {
+      payload.interval_minutes = Number(createForm.value.interval_minutes) || 30
+    } else if (payload.schedule_type === 'daily_custom') {
+      payload.hour = Number(createForm.value.hour) || 9
+      payload.minute = Number(createForm.value.minute) || 0
+    }
+
+    await scheduledTasksStore.createTask(payload)
+    showCreateDialog.value = false
+    emit('refresh-tasks')
+  } catch (error) {
+    console.error('Failed to create broadcast task:', error)
+    alert('创建失败: ' + (error.message || '未知错误'))
+  } finally {
+    creatingTask.value = false
+  }
+}
+
 </script>
 
 <style scoped>
@@ -206,6 +412,16 @@ defineEmits(['close', 'refresh-tasks', 'toggle-task', 'execute-task', 'edit-task
 
 .panel-btn:hover:not(:disabled) {
   background: #1976d2;
+  color: white;
+}
+
+.panel-btn.primary {
+  background: #1976d2;
+  color: white;
+}
+
+.panel-btn.primary:hover:not(:disabled) {
+  background: #1565c0;
   color: white;
 }
 
@@ -479,5 +695,130 @@ defineEmits(['close', 'refresh-tasks', 'toggle-task', 'execute-task', 'edit-task
 
 .scheduled-btn-danger:hover:not(:disabled) {
   background: #f8d7da;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-panel {
+  width: min(840px, calc(100vw - 32px));
+  max-height: min(90vh, 860px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #dbe3ea;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2);
+  padding: 18px;
+}
+
+.modal-header,
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-header {
+  margin-bottom: 14px;
+}
+
+.modal-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field span {
+  font-size: 12px;
+  color: #475569;
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 9px 10px;
+  font-size: 13px;
+  color: #0f172a;
+  background: white;
+}
+
+.form-field textarea {
+  resize: vertical;
+}
+
+.form-wide {
+  grid-column: 1 / -1;
+}
+
+.channel-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.channel-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #334155;
+}
+
+.task-preview {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #f8fafc;
+}
+
+.task-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.task-preview-body {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.switch-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
 }
 </style>

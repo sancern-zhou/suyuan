@@ -1,511 +1,183 @@
-# 浏览器工具技能指导（v3.4）
+# 浏览器工具使用指南（v3.9）
 
-> **MANDATORY**: 复杂浏览任务或浏览器调用失败后必读；简单打开网页、截图、提取页面文本等任务可直接调用工具
->
-> **v3.4更新**: 新增百度搜索企业官网最佳实践，修正搜索引擎推荐优先级
->
-> **v3.3更新**: 修复execute_js工具使用方法，移除错误的arguments用法
+## 核心原则
 
-## 🚀 核心原则（MANDATORY）
+1. 先观察，再操作：陌生页面先 `snapshot`，确认元素、frame、弹窗和当前页面状态。
+2. 优先用 `snapshot` 返回的 `ref`，少用宽泛 selector；iframe 内元素使用 `fN:eM` 形式。
+3. 浏览器操作必须顺序执行。不要并发点击、并发截图、并发等待。
+4. 一次交互后不要只看 URL。必须确认页面状态是否变化：新 context、frame、overlay、DOM、history、network 都可能是结果。
+5. 失败后先重新 `snapshot` 或截图，不要反复尝试同一个选择器。
 
-```
-1. 陌生页面必先 snapshot
-2. 优先使用 ref 而非 selector
-3. 顺序执行，禁止并发
-4. Wait失败立即snapshot，不要重试相同选择器
-5. Element blocked立即用execute_js，不要尝试其他选择器
-```
+## 交互后的状态模型
 
-**绝对禁止**：
-```
-❌ .btn, .el-button, .ant-btn, button, input, div
-❌ 并发浏览器操作
-❌ execute_js中使用 arguments[0]  ⚠️ 新增禁止项
-```
+任何 click、submit、keypress、select、drag、JS 调用后，都不要预设结果一定是页面跳转。把结果理解为浏览器状态变化，并按下面顺序收敛：
 
----
+1. **Browsing context**：是否出现新 tab、新窗口、新 iframe；frame URL 是否变化。
+2. **Viewport layer**：是否出现 modal、dialog、drawer、popover、toast、遮罩或侧边面板。
+3. **DOM state**：目标文本、表单、表格、展开区、按钮状态、loading 状态是否变化。
+4. **History state**：主页面 URL、hash、query、title 是否变化。
+5. **Network/load state**：请求是否完成，loading 是否消失，内容是否异步刷新。
 
-## ⚡ 激进模式（常用网站）⭐ 推荐
-
-**对于常用标准网站，直接操作，无需snapshot**，节省时间和token：
-
-### 搜索引擎
-
-**百度 (Baidu)** ⭐⭐⭐⭐⭐ 搜索中文企业官网首选：
-```python
-# 直接搜索（推荐用于查找企业官网）
-from urllib.parse import quote
-search_url = f"https://www.baidu.com/s?wd={quote('广东旭诚科技有限公司 官网')}"
-browser(action="navigate", url=search_url)
-browser(action="wait", load_state="domcontentloaded", timeout=5000)
-```
-
-**必应 (Bing)** ⭐⭐⭐ 通用搜索：
-```python
-# 直接搜索
-from urllib.parse import quote
-search_url = f"https://www.bing.com/search?q={quote('广东旭诚科技有限公司')}"
-browser(action="navigate", url=search_url)
-browser(action="wait", load_state="domcontentloaded", timeout=5000)
-```
-
-### 搜索结果操作
-
-#### 百度搜索结果提取 ⭐⭐⭐⭐⭐ 推荐（查找企业官网）
-
-**重要经验**：百度搜索结果中，每个结果容器的 `mu` 属性直接存储目标网址，比必应的跳转链接更可靠！
-
-**方法1：通过snapshot的refs提取mu属性** ⭐⭐⭐⭐⭐ 最可靠：
-```python
-# 第1步：获取snapshot
-snapshot = browser(action="snapshot", format="ai", compact=True)
-refs = snapshot['data']['refs']
-
-# 第2步：从refs中提取官网URL（mu属性存储真实网址）
-browser(action="execute_js", code="""
-    (refs) => {
-        for (const [refId, refData] of Object.entries(refs)) {
-            if (refData.html_attrs && refData.html_attrs.mu) {
-                const mu = refData.html_attrs.mu;
-                // 过滤掉百度内部链接和广告链接
-                if (mu.startsWith('http') && !mu.includes('baidu.com') && !mu.includes('recommend')) {
-                    return mu;
-                }
-            }
-        }
-        return null;
-    }
-""", refs=refs)
-```
-
-**方法2：直接DOM提取mu属性** ⭐⭐⭐⭐：
-```python
-browser(action="execute_js", code="""
-    () => {
-        const results = [];
-        document.querySelectorAll('div.result[mu], div.c-container[mu]').forEach(container => {
-            const mu = container.getAttribute('mu');
-            const h3 = container.querySelector('h3');
-            if (mu && h3 && mu.startsWith('http')) {
-                results.push({
-                    title: h3.textContent.trim(),
-                    url: mu
-                });
-            }
-        });
-        return results;
-    }
-""")
-```
-
-#### 必应搜索结果提取 ⭐⭐⭐
-
-**⚠️ 重要限制**：必应搜索结果的链接是跳转URL（如 `http://www.baidu.com/link?url=...`），不包含目标网站的真实域名，无法通过关键词过滤找到特定企业官网！
+判断交互是否成功时，优先等待“目标状态特征”，而不是等待“某一种导航形态”：
 
 ```python
-# 提取搜索结果（注意：链接是跳转URL，不是真实网址）
-browser(action="execute_js", code="""
-    () => {
-        const results = [];
-        document.querySelectorAll('li.b_algo').forEach(item => {
-            const link = item.querySelector('a');
-            if (link) {
-                const href = link.getAttribute('href');
-                const title = link.textContent.trim();
-                if (href && title) {
-                    results.push({title: title, url: href});
-                }
-            }
-        });
-        return results;
-    }
-""")
-```
-```
-
-**方法1：直接DOM提取** ⭐⭐⭐⭐⭐
-
-```python
-# 执行JavaScript提取mu属性
-browser(action="execute_js", code="""
-    () => {
-        const results = [];
-        document.querySelectorAll('div.result[mu]').forEach(container => {
-            const mu = container.getAttribute('mu');
-            const h3 = container.querySelector('h3');
-            if (mu && h3) {
-                results.push({
-                    title: h3.textContent.trim(),
-                    url: mu
-                });
-            }
-        });
-        return results;
-    }
-""")
-```
-
-
-
-**示例：提取特定关键词的搜索结果**
-```python
-# 执行JavaScript提取并过滤
-browser(action="execute_js", code="""
-    () => {
-        const keyword = '旭诚科技';  // 目标关键词
-        const results = [];
-
-        document.querySelectorAll('div.result[mu]').forEach(container => {
-            const mu = container.getAttribute('mu');
-            const h3 = container.querySelector('h3');
-            const title = h3 ? h3.textContent.trim() : '';
-
-            // 按关键词过滤
-            if (mu && title.includes(keyword)) {
-                results.push({
-                    title: title,
-                    url: mu
-                });
-            }
-        });
-
-        return results[0] || null;  // 返回第一个匹配，或null
-    }
-""")
-```
-
-**方法2：混合方法（先snapshot了解结构，再DOM提取）** ⭐⭐⭐⭐
-
-```python
-# 第1步：获取页面结构了解（可选）
+browser(action="act", ref="目标控件ref", click=True)
+browser(action="wait", text="目标状态中的稳定文本", timeout=10000)
 browser(action="snapshot", format="ai", compact=True)
+```
 
-# 第2步：直接DOM提取（推荐）
+如果预期文本不确定，先检查结构性状态变化：
+
+```python
+browser(action="wait", selector="iframe, [role='dialog'], .modal, .drawer, .popover, .toast", timeout=5000)
+browser(action="snapshot", format="ai", compact=True)
+```
+
+主 URL 没变不等于失败；新 tab 没出现也不等于失败。必须重新观察页面状态后再判断。
+
+## iframe 规则
+
+`snapshot` 默认包含 frame 信息，元素 ref 形如 `f0:e1`、`f1:e3`。
+
+```python
+# 直接操作 iframe 内元素
+browser(action="act", ref="f1:e3", text="查询条件")
+
+# 或显式指定 frame
+browser(action="act", frame_index=1, selector="#search", click=True)
+browser(action="execute_js", frame_index=1, code='document.title')
+browser(action="screenshot", frame_index=1)
+```
+
+原则：
+
+- 看到 iframe 页面时，不要只在主 frame 找元素。
+- 点击后如果出现新 iframe，继续在新 iframe 中等待文本、截图或操作。
+- frame URL 通常比主 URL 更能说明真实页面位置。
+
+## 选择器策略
+
+优先级：
+
+1. `ref="fN:eM"`：从 snapshot 获取，最可靠。
+2. 稳定唯一属性：`#id`、`[name=...]`、`[placeholder*=...]`。
+3. 文本选择器：`button:has-text("提交")`、`a:has-text("打开")`。
+4. 组合选择器：`tr:has-text("目标值") a[onclick]`。
+
+避免：
+
+- `.btn`、`.el-button`、`.ant-btn`、`button`、`input`、`div` 这类宽泛选择器。
+- 多个元素匹配时直接点第一个，除非已经确认上下文。
+- 表格中脱离行上下文点击重复控件，应优先绑定到目标行。
+
+## 事件入口规则
+
+页面控件不一定是普通链接。常见入口包括：
+
+- 标准 `<button>`、`<a>`、`input[type=button]`。
+- `href="javascript:void(0)"`。
+- `onclick` 或框架绑定事件。
+- 只有图标、title、aria-label，没有明显文本。
+- 行内操作控件，需要结合所在行数据确认目标。
+
+普通点击失败时，不要盲目换选择器。先检查元素的 `href`、`onclick`、role、title、aria-label、所在行文本，再决定是否用 `execute_js` 触发同一 DOM 事件。
+
+`act` 参数语义必须区分清楚：
+
+- `text`：只表示向可编辑控件填值，如 textbox、searchbox、combobox。
+- `click=True`：用于 link、button、menu item、图标按钮、行内操作等动作控件。
+- 元素的可见文字不是要填入的值；不要对 link/button 传 `text`。
+
+```python
 browser(action="execute_js", code="""
-    () => {
-        // 根据snapshot了解的结构，精准提取
-        const containers = document.querySelectorAll('div.result');
-        const results = [];
-
-        containers.forEach(container => {
-            const mu = container.getAttribute('mu');
-            if (mu) {
-                results.push(mu);
-            }
-        });
-
-        return results;
-    }
+() => {
+  const btn = [...document.querySelectorAll('tr')]
+    .find(row => row.textContent.includes('目标值'))
+    ?.querySelector('a[onclick], button, input[type=button]');
+  btn?.click();
+  return !!btn;
+}
 """)
 ```
 
-**方法3：refs参数（高级用法）** ⭐⭐⭐
+## wait 使用
 
 ```python
-# 第1步：获取snapshot
-snapshot_result = browser(action="snapshot", format="ai", compact=True)
+# 固定等待 3 秒
+browser(action="wait", timeout=3)
 
-# 第2步：从snapshot中提取refs
-refs = snapshot_result['data']['refs']
-
-# 第3步：使用refs参数（注意：需要传递refs参数）
-browser(action="execute_js", code="""
-    (refs) => {
-        for (const [refId, refData] of Object.entries(refs)) {
-            if (refData.html_attrs && refData.html_attrs.mu) {
-                const mu = refData.html_attrs.mu;
-                if (mu.includes('目标关键词')) {
-                    return mu;
-                }
-            }
-        }
-        return null;
-    }
-""", refs=refs)  # ⚠️ 必须传递refs参数
-```
-
-**⚠️ 禁止的错误用法**：
-```python
-# ❌ 错误：使用arguments[0]（会导致"arguments is not defined"错误）
-browser(action="execute_js", code="""
-    () => {
-        const refs = arguments[0];  # ❌ 错误！
-        // ...
-    }
-""")
-
-# ❌ 错误：期望refs自动注入
-browser(action="execute_js", code="""
-    () => {
-        // 期望refs变量自动可用  # ❌ 错误！refs不会自动注入
-        for (const [refId, refData] of Object.entries(refs)) {
-            // ...
-        }
-    }
-""")
-```
-
-**最佳实践总结**：
-1. **优先使用方法1**（直接DOM提取）- 最简单、最可靠
-2. 只在需要详细元素信息时使用方法2（混合方法）
-3. 方法3（refs参数）仅用于高级场景
-
-### 常用网站
-
-**必应 (Bing)** - 搜索引擎 ⭐ 推荐：
-```python
-from urllib.parse import quote
-search_url = f"https://www.bing.com/search?q={quote('搜索内容')}"
-browser(action="navigate", url=search_url)
+# 条件等待
+browser(action="wait", text="加载完成", timeout=10000)
+browser(action="wait", selector=".result", timeout=10000)
 browser(action="wait", load_state="domcontentloaded", timeout=5000)
-# 提取搜索结果使用 execute_js (参见上方)
 ```
 
-**知乎** (www.zhihu.com)：
+原则：
+
+- 固定等待只用于短暂过渡。
+- 条件等待失败后立刻 `snapshot`。
+- 不要把等待主 URL 变化作为唯一成功条件。
+
+## execute_js 规则
+
+普通表达式可以直接写：
+
 ```python
-browser(action="navigate", url="https://www.zhihu.com")
-browser(action="wait", selector="input[placeholder*='搜索']", timeout=5000)
-browser(action="act", selector="input[placeholder*='搜索']", text="搜索内容")
+browser(action="execute_js", code="document.title")
 ```
 
----
+多语句代码可写成箭头函数并显式 `return`：
 
-## 🛠️ Execute JS 使用规范（v3.3新增）
-
-
-### 基本语法
-
-**格式1：包含箭头函数**（推荐，更清晰）：
 ```python
 browser(action="execute_js", code="""
-    () => {
-        // 直接访问DOM
-        return document.title;
-    }
+() => {
+  const title = document.title;
+  return title;
+}
 """)
 ```
 
-**格式2：不包含箭头函数**（兼容旧版本）：
+也支持常规脚本语句；需要结果时写 `return`：
+
 ```python
 browser(action="execute_js", code="""
-    document.title
+var title = document.title;
+return title;
 """)
 ```
 
-**带参数版本**：
+禁止：
+
+- `arguments[0]`。
+- 返回 DOM 对象本身。返回字符串、数字、布尔值、数组或普通对象。
+
+传参时使用函数参数：
+
 ```python
-# 传递自定义参数
-browser(action="execute_js", code="""
-    (param) => {
-        return param * 2;
-    }
-""", refs=21)
+browser(action="execute_js", code="(refs) => Object.keys(refs).length", refs=refs)
 ```
 
-**refs参数版本**：
-```python
-# 从snapshot获取refs后使用
-snapshot = browser(action="snapshot", format="ai", compact=True)
-refs = snapshot['data']['refs']
+## 错误恢复
 
-browser(action="execute_js", code="""
-    (refs) => {
-        return Object.keys(refs).length;
-    }
-""", refs=refs)
-```
+| 现象 | 处理 |
+| --- | --- |
+| 找不到输入框或按钮 | `snapshot`，检查 frame 和 ref |
+| 交互后 URL 不变 | 检查 context、frame、overlay、DOM、history、network |
+| 点击被遮挡 | 用 `execute_js` 点击或移除遮罩 |
+| 等待失败 | 立刻截图或 snapshot，不重复同一等待 |
+| 选择器匹配多个 | 绑定目标行或改用 ref |
+| execute_js 没有返回值 | 脚本语句需要显式 `return` |
 
-**重要**：execute_js v2.2会自动检测代码格式，两种格式都支持！
+## 最小工作流
 
-### 常见任务示例
-
-**1. 点击被遮挡的元素**：
-```python
-browser(action="execute_js", code="""
-    () => {
-        const btn = document.querySelector('button:has-text("确定")');
-        if (btn) btn.click();
-        return !!btn;
-    }
-""")
-```
-
-**2. 移除遮挡对话框**：
-```python
-browser(action="execute_js", code="""
-    () => {
-        document.querySelectorAll('.el-dialog').forEach(d => d.remove());
-        return 'removed';
-    }
-""")
-```
-
-**3. 提取页面数据**：
-```python
-browser(action="execute_js", code="""
-    () => {
-        const data = [];
-        document.querySelectorAll('.item').forEach(item => {
-            data.push({
-                title: item.querySelector('.title')?.textContent,
-                price: item.querySelector('.price')?.textContent
-            });
-        });
-        return data;
-    }
-""")
-```
-
-**4. 滚动到页面底部**：
-```python
-browser(action="execute_js", code="""
-    () => {
-        window.scrollTo(0, document.body.scrollHeight);
-        return 'scrolled';
-    }
-""")
-```
-
-### 重要约束
-
-1. **必须使用箭头函数或函数声明**
-   ```python
-   # ✅ 正确
-   code="() => { return document.title; }"
-   code="function() { return document.title; }"
-
-   # ❌ 错误（裸代码）
-   code="return document.title;"
-   ```
-
-2. **禁止使用arguments对象**
-   ```python
-   # ❌ 错误
-   code="() => { const args = arguments[0]; }"
-
-   # ✅ 正确（使用参数）
-   code="(param) => { return param; }", refs=my_data
-   ```
-
-3. **返回值必须是JSON可序列化**
-   ```python
-   # ✅ 正确
-   code="() => { return {title: 'test', count: 5}; }"
-
-   # ❌ 错误
-   code="() => { return document.body; }"  # DOM对象无法序列化
-   ```
-
----
-
-## 📋 保守模式（陌生页面）
-
-**标准流程**（适用于陌生/定制页面）：
 ```python
 browser(action="start")
 browser(action="navigate", url="...")
-browser(action="snapshot", format="ai", compact=True)  # 获取refs
-browser(action="act", ref="e1", text="用户名")
-browser(action="act", ref="e2", text="密码")
-browser(action="act", ref="e3", click=True)
-browser(action="wait", text_gone="登录中", timeout=10000)
-browser(action="stop")
+browser(action="snapshot", format="ai", compact=True)
+browser(action="act", ref="f0:e1", click=True)
+browser(action="wait", text="目标页面特征文本", timeout=10000)
+browser(action="snapshot", format="ai", compact=True)
+browser(action="screenshot", full_page=True)
 ```
 
-**必须snapshot场景**：
-- 陌生内网系统
-- 定制业务系统
-- 动态SPA页面（React/Vue/Angular）
-- 中文企业内部系统
-- wait失败后
-
----
-
-## 🎯 决策树
-
-```
-访问常用网站？
-├─ 是 → 在激进模式列表中？→ 直接操作（无需snapshot）
-│        └─ 否 → 尝试直接wait，失败则snapshot
-└─ 否（陌生页面）→ 必须先snapshot
-```
-
----
-
-## 🔍 选择器优先级
-
-```
-激进模式（常用网站）：
-1. 标准属性：#kw, input[name='login']        ⭐⭐⭐⭐⭐
-2. 文本选择器：button:has-text("登录")      ⭐⭐⭐⭐⭐
-3. execute_js直接DOM查询                    ⭐⭐⭐⭐⭐  (v3.3新增)
-
-保守模式（陌生页面）：
-1. ref="e1"（从snapshot获取）              ⭐⭐⭐⭐⭐
-2. button:has-text("登录")                  ⭐⭐⭐⭐⭐
-3. [placeholder*="用户"]                    ⭐⭐⭐⭐
-
-❌ 禁止：.btn, .el-button, .ant-btn, button, input, div
-❌ 禁止：execute_js中使用arguments[0]       ⚠️ v3.3新增
-```
-
----
-
-## ⚡ 错误恢复（MANDATORY）
-
-| 错误 | 解决方法 |
-|------|----------|
-| **Wait Timeout** | ⚠️ 激进模式→改用selector<br>⚠️ 保守模式→立即snapshot |
-| **Element blocked** | ⚠️ 立即 `execute_js` 绕过 |
-| **arguments is not defined** | ⚠️ 使用箭头函数参数或直接DOM查询<br>⚠️ 不要使用arguments[0] |
-| **Thread error** | 禁止并发操作 |
-| **No context** | 先 `action="start"` |
-
-### Execute JS 错误恢复
-
-```
-错误：arguments is not defined
-原因：使用了 arguments[0] 获取参数
-解决：使用函数参数 (param) => { ... } 并传递参数
-
-错误：Cannot read property 'xxx' of null
-原因：选择器未找到元素
-解决：先snapshot确认元素存在，或使用 try-catch
-```
-
----
-
-## 🔧 核心操作
-
-### 生命周期
-- `start/stop/status`: 浏览器管理
-
-### 导航
-- `navigate`: 打开URL
-- `open/tabs/focus/close`: 标签页管理
-
-### 获取信息
-- `snapshot`: 页面结构（陌生页面必用）⭐
-- `screenshot`: 截图
-- `extract`: 提取数据
-
-### 交互
-- `act`: 元素操作
-  - `selector="..."`: 激进模式使用
-  - `ref="e1"`: 保守模式使用（从snapshot获取）
-  - `click=True`: 点击
-  - `text="..."`: 输入
-  - `press="Enter"`: 按键
-- `execute_js`: JS代码执行 ⭐ v3.3增强
-  - **无参数**: `code="() => { ... }"`
-  - **带参数**: `code="(param) => { ... }", refs=value`
-  - **refs参数**: `code="(refs) => { ... }", refs=refs_dict`
-
-### 等待
-- `wait`: 条件等待
-  - `selector="..."`: 元素可见
-  - `text="..."`: 文本出现
-  - `load_state="domcontentloaded"`: 加载状态
-  - `timeout=5000`: 超时时间（激进模式用5000，保守用20000）
-
----
+完成任务前，用截图或 snapshot 证明页面状态，而不是只依赖工具调用成功。

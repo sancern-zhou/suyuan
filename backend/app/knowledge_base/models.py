@@ -272,7 +272,7 @@ class UploadedFile(Base):
     file_size = Column(BigInteger, default=0)  # 文件大小（字节）
 
     # 会话关联（可选）
-    session_id = Column(String(36), nullable=True, index=True)  # 关联的会话ID
+    session_id = Column(String(255), nullable=True, index=True)  # 关联的会话ID
 
     # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow, index=True)

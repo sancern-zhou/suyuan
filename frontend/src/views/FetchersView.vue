@@ -317,8 +317,14 @@ export default {
       loading.value = true
       error.value = null
       try {
-        const data = await api.getSystemStatus()
-        systemStatus.value = data
+        const [systemData, fetchersData] = await Promise.all([
+          api.getSystemStatus(),
+          api.getFetchersStatus()
+        ])
+        systemStatus.value = {
+          ...systemData,
+          fetchers: fetchersData
+        }
       } catch (err) {
         error.value = err.message
         console.error('Failed to fetch system status:', err)

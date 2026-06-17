@@ -3,6 +3,7 @@ Database connection and session management for PostgreSQL + TimescaleDB.
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
 from typing import AsyncGenerator
 import os
 from dotenv import load_dotenv
@@ -46,6 +47,31 @@ async_session = async_sessionmaker(
 
 # Base class for all models
 Base = declarative_base()
+
+
+def _uploaded_files_session_id_alter_sql(dialect_name: str) -> str | None:
+    """Return dialect-specific SQL for widening uploaded_files.session_id."""
+    if dialect_name == "postgresql":
+        return "ALTER TABLE uploaded_files ALTER COLUMN session_id TYPE VARCHAR(255)"
+    if dialect_name in {"mysql", "mariadb"}:
+        return "ALTER TABLE uploaded_files MODIFY session_id VARCHAR(255)"
+    return None
+
+
+async def _ensure_uploaded_files_schema(conn) -> None:
+    """Apply lightweight compatibility fixes for existing uploaded_files tables."""
+    sql = _uploaded_files_session_id_alter_sql(conn.dialect.name)
+    if not sql:
+        return
+
+    try:
+        await conn.execute(text(sql))
+        logger.info("uploaded_files_session_id_column_ensured", dialect=conn.dialect.name)
+    except Exception as exc:
+        message = str(exc).lower()
+        if "uploaded_files" in message and ("does not exist" in message or "undefinedtable" in message):
+            return
+        logger.warning("uploaded_files_session_id_column_migration_failed", error=str(exc))
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -117,8 +143,14 @@ async def init_db():
     Initialize database tables.
     Should be called on application startup.
     """
+    # Import optional model modules so their tables are registered on Base.metadata
+    # before create_all runs.
+    import app.social.models  # noqa: F401
+    import app.knowledge_base.models  # noqa: F401
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_uploaded_files_schema(conn)
     logger.info("database_initialized")
 
 
@@ -135,7 +167,7 @@ async def close_db():
         logger.warning("database_close_timeout", message="Database close timed out, forcing disposal")
         # 超时后尝试强制关闭（忽略错误）
         try:
-            engine.dispose(close_wake_up=True)
+            engine.dispose(close=True)  # ✅ 修复：使用正确的参数名
         except Exception as e:
             logger.warning("database_force_close_failed", error=str(e))
     except Exception as e:

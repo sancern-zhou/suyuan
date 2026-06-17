@@ -27,10 +27,91 @@ class ToolCoordinator:
         self.schema_injector = schema_injector
         self.events = RuntimeEventBus()
 
-    def normalize_tool_input(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    def normalize_tool_input(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        mode: str | None = None,
+        board_context: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        normalized = tool_input or {}
         if self.knowledge_base_ids and tool_name == "knowledge_qa_workflow":
-            return {**(tool_input or {}), "knowledge_base_ids": self.knowledge_base_ids}
-        return tool_input or {}
+            normalized = {**normalized, "knowledge_base_ids": self.knowledge_base_ids}
+        normalized = self._inject_drawio_board_context(tool_name, normalized, mode, board_context)
+        return normalized
+
+    def prepare_tool_input_for_state(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        state: RunState,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
+        normalized = self.normalize_tool_input(
+            tool_name,
+            tool_input,
+            mode=state.mode,
+            board_context=state.board_context,
+        )
+        if self._is_drawio_edit_without_current_xml(tool_name, normalized, state.mode):
+            return normalized, self._missing_drawio_current_xml_observation()
+        return normalized, None
+
+    def _inject_drawio_board_context(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        mode: str | None,
+        board_context: Dict[str, Any] | None,
+    ) -> Dict[str, Any]:
+        if mode != "chart" or tool_name != "create_drawio_board":
+            return tool_input
+        operation = str(tool_input.get("operation") or "create").strip().lower()
+        if operation != "edit":
+            return tool_input
+        if not isinstance(board_context, dict):
+            return {key: value for key, value in tool_input.items() if key not in {"current_xml", "currentXml"}}
+
+        current_xml = (
+            board_context.get("current_xml")
+            or board_context.get("currentXml")
+            or board_context.get("xml")
+            or board_context.get("drawio_xml")
+        )
+        if not current_xml:
+            return {key: value for key, value in tool_input.items() if key not in {"current_xml", "currentXml"}}
+
+        selected_cells = (
+            tool_input.get("selected_cells")
+            or tool_input.get("selectedCells")
+            or board_context.get("selected_cells")
+            or board_context.get("selectedCells")
+            or []
+        )
+        clean_input = {key: value for key, value in tool_input.items() if key not in {"current_xml", "currentXml"}}
+        return {
+            **clean_input,
+            "current_xml": current_xml,
+            "selected_cells": selected_cells,
+        }
+
+    def _is_drawio_edit_without_current_xml(
+        self,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+        mode: str | None,
+    ) -> bool:
+        if mode != "chart" or tool_name != "create_drawio_board":
+            return False
+        operation = str(tool_input.get("operation") or "create").strip().lower()
+        return operation == "edit" and not (tool_input.get("current_xml") or tool_input.get("currentXml"))
+
+    def _missing_drawio_current_xml_observation(self) -> Dict[str, Any]:
+        return {
+            "status": "error",
+            "success": False,
+            "error": "missing_current_xml_for_edit",
+            "summary": "当前请求没有可编辑画板 current_xml，无法执行局部编辑。",
+        }
 
     async def execute_legacy_action(
         self,
@@ -45,8 +126,12 @@ class ToolCoordinator:
         if action_type == "TOOL_CALLS":
             tools = action.get("tools", [])
             for tool in tools:
-                if tool.get("tool") == "knowledge_qa_workflow":
-                    tool["args"] = self.normalize_tool_input(tool.get("tool", ""), tool.get("args", {}))
+                tool["args"] = self.normalize_tool_input(
+                    tool.get("tool", ""),
+                    tool.get("args", {}),
+                    mode=state.mode,
+                    board_context=state.board_context,
+                )
 
             # ⚠️ 方案A：检测并发的 call_sub_agent 调用，强制 session 隔离
             sub_agent_tools = [t for t in tools if t.get("tool") == "call_sub_agent"]
@@ -94,10 +179,37 @@ class ToolCoordinator:
             return {"success": True, "summary": f"无需工具执行: {action_type}"}, [], []
 
         tool_name = action.get("tool", "")
-        tool_args = self.normalize_tool_input(tool_name, action.get("args", {}))
+        tool_args, preparation_error = self.prepare_tool_input_for_state(tool_name, action.get("args", {}), state)
+        if preparation_error is not None:
+            tool_call_id = action.get("tool_call_id", f"fallback_{tool_name}")
+            tool_records.append({
+                "tool_name": tool_name,
+                "tool_use_id": tool_call_id,
+                "tool_input": tool_args,
+                "result": preparation_error,
+                "is_error": True,
+            })
+            tool_events.append(self.events.tool_result(state, tool_call_id, preparation_error, True, tool_name))
+            return preparation_error, tool_records, tool_events
         guarded = self.loop_guard.before_call(tool_name, tool_args)
-        if guarded:
+        if guarded and guarded.get("severity") == "block":
             observation = guarded
+        elif guarded:
+            logger.warning(
+                "tool_loop_guard_warning",
+                tool_name=tool_name,
+                summary=guarded.get("summary") if isinstance(guarded, dict) else None,
+            )
+            observation = await self.executor.execute_tool_with_retry(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_call_id=action.get("tool_call_id", f"fallback_{tool_name}"),
+                iteration=state.iteration,
+            ) if action.get("tool_call_id") else await self.executor.execute_tool(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                iteration=state.iteration,
+            )
         elif action.get("tool_call_id"):
             observation = await self.executor.execute_tool_with_retry(
                 tool_name=tool_name,

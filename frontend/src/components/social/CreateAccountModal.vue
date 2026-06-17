@@ -7,14 +7,50 @@
       </div>
 
       <div class="modal-body">
-        <div v-if="creating" class="loading">
+        <form v-if="currentStep === 'profile'" class="profile-form" @submit.prevent="submitProfile">
+          <div class="instruction-text">
+            <p class="step">第1步：填写用户资料</p>
+            <p class="hint">资料会生成一个绑定码，用于把微信联系人和系统用户关联起来</p>
+          </div>
+
+          <label class="form-field">
+            <span>姓名</span>
+            <input
+              v-model.trim="profileForm.name"
+              type="text"
+              maxlength="100"
+              placeholder="请输入姓名"
+              :disabled="profileSubmitting"
+              required
+            />
+          </label>
+
+          <label class="form-field">
+            <span>邮箱</span>
+            <input
+              v-model.trim="profileForm.email"
+              type="email"
+              maxlength="255"
+              placeholder="可选"
+              :disabled="profileSubmitting"
+            />
+          </label>
+
+          <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
+
+          <button class="btn-primary" type="submit" :disabled="profileSubmitting || !profileForm.name">
+            {{ profileSubmitting ? '创建中...' : '生成绑定码并继续' }}
+          </button>
+        </form>
+
+        <div v-else-if="accountCreating" class="loading">
           <div class="spinner"></div>
-          <p>正在初始化...</p>
+          <p>正在初始化微信账号...</p>
         </div>
 
-        <div v-else-if="tempAccountId && !loginSuccess" class="qrcode-container">
+        <div v-else-if="currentStep === 'qrcode'" class="qrcode-container">
           <div class="instruction-text">
-            <p class="step">第1步：使用微信扫描下方二维码</p>
+            <p class="step">第2步：使用微信扫描下方二维码</p>
             <p class="hint">扫描后请在手机上确认登录</p>
           </div>
 
@@ -34,6 +70,8 @@
             {{ statusText }}
           </div>
 
+          <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
+
           <div class="actions">
             <button
               @click="refreshQRCode"
@@ -45,17 +83,40 @@
           </div>
         </div>
 
-        <div v-else-if="loginSuccess" class="success-container">
-          <div class="success-icon">✅</div>
-          <h3>登录成功！</h3>
-          <p>账号已自动创建并启动</p>
+        <div v-else-if="currentStep === 'binding'" class="binding-container">
+          <div class="instruction-text">
+            <p class="step">第3步：发送绑定码</p>
+            <p class="hint">请在微信里直接发送下面 4 位数字</p>
+          </div>
+
+          <div class="bind-code">{{ bindInstruction }}</div>
+
           <div class="account-info">
             <p><strong>账号ID：</strong>{{ createdAccountId }}</p>
             <p><strong>显示名称：</strong>{{ accountName }}</p>
+            <p><strong>用户：</strong>{{ pendingUser?.name }}</p>
           </div>
-          <button @click="close" class="btn-done">
-            完成
-          </button>
+
+          <div class="status status-waiting">{{ bindingStatusText }}</div>
+          <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
+
+          <div class="actions">
+            <button class="btn-refresh" @click="checkBindStatus" :disabled="bindChecking">
+              {{ bindChecking ? '检查中...' : '检查绑定状态' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-else-if="currentStep === 'complete'" class="success-container">
+          <div class="success-icon">✓</div>
+          <h3>绑定成功</h3>
+          <p>{{ pendingUser?.name }} 已可以通过微信正常使用</p>
+          <div class="account-info">
+            <p><strong>账号ID：</strong>{{ createdAccountId }}</p>
+            <p><strong>显示名称：</strong>{{ accountName }}</p>
+            <p><strong>绑定用户：</strong>{{ pendingUser?.name }}</p>
+          </div>
+          <button @click="close" class="btn-done">完成</button>
         </div>
 
         <div v-else-if="errorMessage" class="error">
@@ -69,12 +130,18 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import axios from 'axios'
+import {
+  buildBindInstruction,
+  getOnboardingStep,
+  isUserBound,
+} from './createAccountFlow'
 
 const emit = defineEmits(['close', 'created'])
 
-const creating = ref(true)
+const profileSubmitting = ref(false)
+const accountCreating = ref(false)
 const tempAccountId = ref('')
 const qrCodeUrl = ref('')
 const qrLoading = ref(true)
@@ -84,9 +151,24 @@ const loginSuccess = ref(false)
 const errorMessage = ref('')
 const createdAccountId = ref('')
 const accountName = ref('')
+const pendingUser = ref(null)
+const bindInstruction = ref('')
+const bound = ref(false)
+const bindChecking = ref(false)
+const bindingStatusText = ref('等待用户发送绑定码...')
+const profileForm = ref({
+  name: '',
+  email: ''
+})
 
 let statusCheckInterval = null
-let accountIdCounter = 0
+let bindStatusInterval = null
+
+const currentStep = computed(() => getOnboardingStep({
+  pendingUser: pendingUser.value,
+  loginSuccess: loginSuccess.value,
+  bound: bound.value
+}))
 
 const statusText = computed(() => {
   switch (loginStatus.value) {
@@ -120,9 +202,31 @@ const generateTempAccountId = () => {
   return `auto_${timestamp}`
 }
 
+const submitProfile = async () => {
+  profileSubmitting.value = true
+  errorMessage.value = ''
+
+  try {
+    const payload = {
+      name: profileForm.value.name,
+      email: profileForm.value.email || null
+    }
+    const response = await axios.post('/api/social/users', payload)
+    pendingUser.value = response.data
+    bindInstruction.value = buildBindInstruction(response.data)
+
+    await initializeTempAccount()
+  } catch (error) {
+    console.error('[ERROR] 创建社交用户失败:', error)
+    errorMessage.value = error.response?.data?.detail || error.message || '创建用户失败，请重试'
+  } finally {
+    profileSubmitting.value = false
+  }
+}
+
 // 初始化临时账号并获取二维码
 const initializeTempAccount = async () => {
-  creating.value = true
+  accountCreating.value = true
   errorMessage.value = ''
 
   try {
@@ -153,7 +257,7 @@ const initializeTempAccount = async () => {
     })
     errorMessage.value = error.response?.data?.detail || error.message || '创建失败，请重试'
   } finally {
-    creating.value = false
+    accountCreating.value = false
   }
 }
 
@@ -195,6 +299,7 @@ const fetchQRCode = async () => {
 
 // 开始检查登录状态
 const startStatusCheck = () => {
+  stopStatusCheck()
   statusCheckInterval = setInterval(checkLoginStatus, 3000)
 }
 
@@ -203,6 +308,19 @@ const stopStatusCheck = () => {
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
     statusCheckInterval = null
+  }
+}
+
+const startBindStatusCheck = () => {
+  stopBindStatusCheck()
+  checkBindStatus()
+  bindStatusInterval = setInterval(checkBindStatus, 3000)
+}
+
+const stopBindStatusCheck = () => {
+  if (bindStatusInterval) {
+    clearInterval(bindStatusInterval)
+    bindStatusInterval = null
   }
 }
 
@@ -246,11 +364,34 @@ const finalizeAccount = async (statusData) => {
     createdAccountId.value = tempAccountId.value
     loginSuccess.value = true
 
-    // 通知父组件
-    emit('created')
+    startBindStatusCheck()
   } catch (error) {
     console.error('Failed to finalize account:', error)
     errorMessage.value = error.response?.data?.detail || error.message || '账号创建失败'
+  }
+}
+
+const checkBindStatus = async () => {
+  if (!pendingUser.value?.id || bindChecking.value) return
+
+  bindChecking.value = true
+  try {
+    const response = await axios.get(`/api/social/users/${pendingUser.value.id}`)
+    pendingUser.value = response.data
+
+    if (isUserBound(response.data)) {
+      bound.value = true
+      bindingStatusText.value = '绑定成功'
+      stopBindStatusCheck()
+      emit('created')
+    } else {
+      bindingStatusText.value = '等待用户发送绑定码...'
+    }
+  } catch (error) {
+    console.error('Failed to check bind status:', error)
+    errorMessage.value = error.response?.data?.detail || error.message || '绑定状态检查失败'
+  } finally {
+    bindChecking.value = false
   }
 }
 
@@ -270,6 +411,12 @@ const refreshQRCode = async () => {
 
 // 重置
 const reset = () => {
+  stopStatusCheck()
+  stopBindStatusCheck()
+  if (qrCodeUrl.value && qrCodeUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(qrCodeUrl.value)
+  }
+
   tempAccountId.value = ''
   qrCodeUrl.value = ''
   loginStatus.value = 'waiting'
@@ -277,22 +424,27 @@ const reset = () => {
   errorMessage.value = ''
   createdAccountId.value = ''
   accountName.value = ''
+  pendingUser.value = null
+  bindInstruction.value = ''
+  bound.value = false
+  bindingStatusText.value = '等待用户发送绑定码...'
+  profileForm.value = {
+    name: '',
+    email: ''
+  }
 
-  // 重新初始化
-  initializeTempAccount()
+  // 回到资料填写步骤
 }
 
 const close = () => {
   stopStatusCheck()
+  stopBindStatusCheck()
   emit('close')
 }
 
-onMounted(() => {
-  initializeTempAccount()
-})
-
 onUnmounted(() => {
   stopStatusCheck()
+  stopBindStatusCheck()
 
   // 释放blob URL
   if (qrCodeUrl.value && qrCodeUrl.value.startsWith('blob:')) {
@@ -388,6 +540,11 @@ onUnmounted(() => {
   text-align: center;
 }
 
+.profile-form,
+.binding-container {
+  text-align: center;
+}
+
 .instruction-text {
   margin-bottom: 20px;
 }
@@ -406,6 +563,63 @@ onUnmounted(() => {
 
 .qr-loading {
   padding: 60px 20px;
+}
+
+.form-field {
+  display: block;
+  text-align: left;
+  margin: 0 auto 16px;
+  max-width: 320px;
+}
+
+.form-field span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.form-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 15px;
+}
+
+.form-field input:focus {
+  outline: none;
+  border-color: #2196f3;
+}
+
+.inline-error {
+  max-width: 320px;
+  margin: 12px auto;
+  color: #f44336;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.btn-primary {
+  padding: 12px 24px;
+  background: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #0b7dda;
+}
+
+.btn-primary:disabled {
+  background: #ccc;
+  cursor: not-allowed;
 }
 
 .qrcode-image {
@@ -499,6 +713,19 @@ onUnmounted(() => {
 
 .account-info strong {
   color: #333;
+}
+
+.bind-code {
+  display: inline-block;
+  padding: 14px 20px;
+  margin: 8px auto 16px;
+  border: 1px solid #b7d8ff;
+  border-radius: 6px;
+  background: #f2f8ff;
+  color: #0b5cad;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .btn-done {

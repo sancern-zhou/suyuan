@@ -4,10 +4,72 @@
 支持多微信账号配置
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from pathlib import Path
 import yaml
+
+
+def _decrypt_config_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Decrypt supported social credentials while keeping plaintext configs compatible."""
+    try:
+        from app.utils.config_crypto import get_config_crypto
+
+        crypto = get_config_crypto()
+        if "weixin" in data and isinstance(data["weixin"], dict):
+            weixin = data["weixin"].copy()
+            accounts = []
+            for account in weixin.get("accounts", []) or []:
+                if isinstance(account, dict):
+                    account = account.copy()
+                    if "token" in account and isinstance(account["token"], str):
+                        account["token"] = crypto.decrypt(account["token"])
+                accounts.append(account)
+            weixin["accounts"] = accounts
+            data["weixin"] = weixin
+
+        if "dingtalk" in data and isinstance(data["dingtalk"], dict):
+            dingtalk = data["dingtalk"].copy()
+            for key in ("app_secret", "token"):
+                if key in dingtalk and isinstance(dingtalk[key], str):
+                    dingtalk[key] = crypto.decrypt(dingtalk[key])
+            data["dingtalk"] = dingtalk
+    except Exception:
+        pass
+    return data
+
+
+def _encrypt_config_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Encrypt supported social credentials before writing config files."""
+    try:
+        from app.utils.config_crypto import get_config_crypto
+
+        crypto = get_config_crypto()
+        data = data.copy()
+
+        if "weixin" in data and isinstance(data["weixin"], dict):
+            weixin = data["weixin"].copy()
+            accounts = []
+            for account in weixin.get("accounts", []) or []:
+                if isinstance(account, dict):
+                    account = account.copy()
+                    token = account.get("token")
+                    if isinstance(token, str) and token:
+                        account["token"] = crypto.encrypt(token)
+                accounts.append(account)
+            weixin["accounts"] = accounts
+            data["weixin"] = weixin
+
+        if "dingtalk" in data and isinstance(data["dingtalk"], dict):
+            dingtalk = data["dingtalk"].copy()
+            for key in ("app_secret", "token"):
+                value = dingtalk.get(key)
+                if isinstance(value, str) and value:
+                    dingtalk[key] = crypto.encrypt(value)
+            data["dingtalk"] = dingtalk
+    except Exception:
+        pass
+    return data
 
 
 class WeixinAccountConfig(BaseModel):
@@ -45,7 +107,6 @@ class SocialConfig(BaseModel):
     qq: dict = Field(default_factory=lambda: {"enabled": False, "allow_from": ["*"]})
     weixin: WeixinConfig = Field(default_factory=WeixinConfig)
     dingtalk: dict = Field(default_factory=lambda: {"enabled": False, "allow_from": ["*"]})
-    wecom: dict = Field(default_factory=lambda: {"enabled": False, "allow_from": ["*"]})
 
 
 def _merge_orphan_accounts(config: SocialConfig) -> SocialConfig:
@@ -101,7 +162,6 @@ def load_social_config(config_path: str = "config/social_config.yaml") -> Social
 
     Args:
         config_path: 配置文件路径
-
     Returns:
         SocialConfig对象
     """
@@ -118,6 +178,7 @@ def load_social_config(config_path: str = "config/social_config.yaml") -> Social
         if not data:
             return _merge_orphan_accounts(SocialConfig())
 
+        data = _decrypt_config_data(data)
         config = SocialConfig(**data)
         return _merge_orphan_accounts(config)
 
@@ -146,7 +207,7 @@ def save_social_config(config: SocialConfig, config_path: str = "config/social_c
         config_file.parent.mkdir(parents=True, exist_ok=True)
 
         # 转换为字典并保存
-        data = config.model_dump()
+        data = _encrypt_config_data(config.model_dump())
 
         with open(config_file, 'w', encoding='utf-8') as f:
             yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False)

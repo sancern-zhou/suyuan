@@ -4,16 +4,107 @@ Quarto report preview, asset, download, and share routes.
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+import yaml
 
 from app.services.quarto_report_renderer import ReportRenderError, quarto_report_renderer
 from app.services.report_preview_refresh import build_html_preview, record_report_update
 
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(errors="ignore")
+
+
+def _sanitize_download_stem(value: str, fallback: str) -> str:
+    stem = INVALID_FILENAME_CHARS.sub("_", value or "").strip().strip(".")
+    stem = re.sub(r"\s+", " ", stem)
+    return stem[:120] or fallback
+
+
+def _extract_qmd_title(qmd_path: Path) -> str | None:
+    if not qmd_path.exists():
+        return None
+
+    content = _read_text(qmd_path)
+    normalized_content = content.lstrip("\ufeff\r\n\t ")
+    body = normalized_content
+
+    if normalized_content.startswith("---"):
+        end_index = normalized_content.find("\n---", 3)
+        if end_index >= 0:
+            front_matter = normalized_content[3:end_index]
+            body = normalized_content[end_index + 4 :]
+            try:
+                metadata = yaml.safe_load(front_matter) or {}
+            except yaml.YAMLError:
+                metadata = {}
+            if isinstance(metadata, dict):
+                title = metadata.get("title")
+                if isinstance(title, str) and title.strip():
+                    return title.strip()
+
+    for line in body.splitlines():
+        match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+        if match:
+            return match.group(1).strip()
+
+    return None
+
+
+def _report_download_filename(qmd_path: Path, stored_filename: str, report_id: str) -> str:
+    extension = Path(stored_filename).suffix
+    if stored_filename == "report.qmd":
+        title = _extract_qmd_title(qmd_path)
+    elif stored_filename == "report.docx":
+        title = _extract_qmd_title(qmd_path)
+    else:
+        title = None
+
+    stem = _sanitize_download_stem(title or report_id, Path(stored_filename).stem)
+    return f"{stem}{extension}"
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    safe_name = Path(filename).name or "download"
+    ascii_fallback = "".join(
+        ch if 32 <= ord(ch) < 127 and ch not in {'"', "\\", ";"} else "_"
+        for ch in safe_name
+    ).strip(" .")
+    if not ascii_fallback:
+        ascii_fallback = f"download{Path(safe_name).suffix}"
+    elif ascii_fallback.startswith("."):
+        ascii_fallback = f"download{ascii_fallback}"
+    encoded_name = quote(safe_name.encode("utf-8"))
+    return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
+
+
+def _refresh_report_html_if_stale(report_id: str, html_path: Path) -> Path:
+    qmd_path = quarto_report_renderer.get_qmd_path(report_id)
+    html_missing = not html_path.exists()
+    html_stale = (
+        not html_missing
+        and qmd_path.exists()
+        and qmd_path.stat().st_mtime_ns > html_path.stat().st_mtime_ns
+    )
+    if not html_missing and not html_stale:
+        return html_path
+
+    refreshed_html_path = quarto_report_renderer.render_preview_html(report_id)
+    record_report_update(report_id, source="api_html_auto_refresh", html_path=refreshed_html_path)
+    return refreshed_html_path
 
 
 @router.post("/{report_id}/render/html")
@@ -24,7 +115,7 @@ async def render_report_html(report_id: str):
         return {
             "success": True,
             "report_id": report_id,
-            "file_path": str(quarto_report_renderer.get_report_dir(report_id) / "report.qmd"),
+            "file_path": str(quarto_report_renderer.get_qmd_path(report_id)),
             "html_preview": build_html_preview(report_id, html_path),
             "path": str(html_path),
             "version": meta.get("version"),
@@ -59,6 +150,13 @@ async def get_report_html(report_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     html_path = report_dir / "report.html"
+    try:
+        html_path = _refresh_report_html_if_stale(report_id, html_path)
+    except FileNotFoundError as exc:
+        if not html_path.exists():
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ReportRenderError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="report.html not found")
     return FileResponse(
@@ -117,15 +215,27 @@ async def download_report(report_id: str, format_name: str):
     }
     if format_name not in formats:
         raise HTTPException(status_code=400, detail="Unsupported report format")
-    filename, media_type = formats[format_name]
+    stored_filename, media_type = formats[format_name]
     try:
         report_dir = quarto_report_renderer.get_report_dir(report_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    file_path = report_dir / filename
+    try:
+        qmd_path = quarto_report_renderer.get_qmd_path(report_id)
+    except FileNotFoundError as exc:
+        if format_name == "qmd":
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        qmd_path = report_dir / "report.qmd"
+    file_path = qmd_path if format_name == "qmd" else report_dir / stored_filename
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"{filename} not found")
-    return FileResponse(path=str(file_path), media_type=media_type, filename=filename)
+        raise HTTPException(status_code=404, detail=f"{stored_filename} not found")
+    download_filename = _report_download_filename(qmd_path, stored_filename, report_id)
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=download_filename,
+        headers={"Content-Disposition": _content_disposition("attachment", download_filename)},
+    )
 
 
 @router.post("/{report_id}/share/html")

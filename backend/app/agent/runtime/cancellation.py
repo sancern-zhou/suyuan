@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 import structlog
 
+from .ownership import run_ownership_registry
+
 logger = structlog.get_logger()
 
 
@@ -22,6 +24,7 @@ class RunHandle:
     cancel_event: asyncio.Event
     started_at: datetime
     streaming_executor: Optional[Any] = None
+    run_task: Optional[asyncio.Task] = None
 
 
 class CancellationRegistry:
@@ -36,6 +39,8 @@ class CancellationRegistry:
                 previous.cancel_event.set()
                 if previous.streaming_executor:
                     previous.streaming_executor.discard()
+                if previous.run_task and not previous.run_task.done():
+                    previous.run_task.cancel()
 
             cancel_event = asyncio.Event()
             self._handles[session_id] = RunHandle(
@@ -55,14 +60,27 @@ class CancellationRegistry:
             if handle.cancel_event.is_set():
                 executor.discard()
 
+    async def attach_run_task(self, session_id: str, task: asyncio.Task) -> None:
+        async with self._lock:
+            handle = self._handles.get(session_id)
+            if not handle:
+                return
+            handle.run_task = task
+            if handle.cancel_event.is_set() and not task.done():
+                task.cancel()
+
     async def cancel(self, session_id: str) -> bool:
         async with self._lock:
             handle = self._handles.get(session_id)
             if not handle:
+                await run_ownership_registry.revoke(session_id)
                 return False
+            await run_ownership_registry.revoke(session_id)
             handle.cancel_event.set()
             if handle.streaming_executor:
                 handle.streaming_executor.discard()
+            if handle.run_task and not handle.run_task.done():
+                handle.run_task.cancel()
             logger.info("agent_run_cancelled", session_id=session_id)
             return True
 

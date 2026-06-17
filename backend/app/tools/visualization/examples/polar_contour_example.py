@@ -29,7 +29,7 @@
             "title": "PM10浓度极坐标等值线图（平滑版）",
             "image_url": f"data:image/png;base64,{img_base64}",
             "meta": {
-                "generator": "polar_contour_generator",
+                "generator": "create_report_chart.domain.pollutant_wind_rose",
                 "smooth_mode": true,
                 "interpolation_method": "cubic"
             }

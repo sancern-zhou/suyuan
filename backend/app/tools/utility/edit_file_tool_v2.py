@@ -19,8 +19,8 @@ EditFile 工具 V2 - 完整对标 Claude Code 官方实现
 - 替换文档内容（.txt, .md 等）
 
 ⚠️ 不适用于：
-- Word 文档（.docx）→ 使用 find_replace_word 或 word_edit
-- Word XML（document.xml）→ 使用 find_replace_word 或 word_edit
+- Word 文档（.docx）→ 当前助手模式不暴露 Word 编辑工具
+- Word XML（document.xml）→ 不要手动编辑 Office XML
 
 参考：
 - Claude Code: src/tools/FileEditTool/FileEditTool.ts
@@ -275,11 +275,9 @@ class EditFileToolV2(LLMTool):
 
 ⚠️ 重要限制：
 - ❌ 不适用于编辑 Word 文档（.docx）！
-  - 简单替换 → 使用 find_replace_word 工具
-  - 复杂编辑 → 使用 word_edit 工具
+  - 当前助手模式不暴露 Word 编辑工具
 - ❌ 不适用于编辑 Word XML 文件（document.xml）！
-  - 简单替换 → 使用 find_replace_word 工具
-  - 复杂编辑 → 使用 word_edit 工具
+  - 不要手动编辑 Office XML
 - ✅ 适用于：代码文件（.py, .js, .ts 等）、配置文件（.json, .yaml, .xml 等）、文本文件（.txt, .md 等）
 
 核心功能：
@@ -294,7 +292,7 @@ class EditFileToolV2(LLMTool):
 - ✅ 修改代码（函数体、变量值、导入语句）
 - ✅ 更新配置文件（端口、路径、参数）
 - ✅ 编辑文本文件（Markdown、TXT、JSON、YAML 等）
-- ❌ 编辑 Word 文档（简单替换用 find_replace_word，复杂编辑用 word_edit）
+- ❌ 编辑 Word 文档或 Office XML
 
 示例：
 - edit_file(path="D:/work/config.py", old_string="PORT = 8000", new_string="PORT = 9000")
@@ -319,7 +317,7 @@ class EditFileToolV2(LLMTool):
 - old_string 在文件中不存在时会提供详细诊断信息
 - old_string 在文件中出现多次且 replace_all=False 时报错
 - 自动处理引号规范化和trailing空格
-- 工作目录限制：D:/溯源/ 及其子目录
+- 路径限制：项目后端目录及 /tmp 目录
 """,
             category=ToolCategory.QUERY,
             version="2.0.0",
@@ -327,7 +325,8 @@ class EditFileToolV2(LLMTool):
         )
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
-        self.working_dir = BACKEND_ROOT
+        self.working_dir = BACKEND_ROOT.resolve()
+        self.allowed_dirs = [self.working_dir, Path("/tmp").resolve()]
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()
@@ -541,7 +540,7 @@ class EditFileToolV2(LLMTool):
     # ========================================================================
 
     def _resolve_path(self, path: str) -> Optional[Path]:
-        """解析文件路径，确保在工作目录范围内"""
+        """解析文件路径，确保在允许目录范围内"""
         try:
             file_path = Path(path)
 
@@ -550,11 +549,11 @@ class EditFileToolV2(LLMTool):
 
             file_path = file_path.resolve()
 
-            if not file_path.is_relative_to(self.working_dir):
+            if not any(file_path.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs):
                 logger.warning(
                     "edit_file_v2_path_escape",
                     requested_path=path,
-                    allowed_dir=str(self.working_dir)
+                    allowed_dirs=", ".join(str(allowed_dir) for allowed_dir in self.allowed_dirs)
                 )
                 return None
 
@@ -737,8 +736,7 @@ class EditFileToolV2(LLMTool):
         # 如果是 Word XML，添加特殊提示
         if is_word_xml:
             hints.insert(0, "⚠️ 检测到这是 Word XML 文件！")
-            hints.insert(1, "   简单文本替换：使用 find_replace_word 工具（直接操作 .docx 文件）")
-            hints.insert(2, "   复杂结构编辑：使用 word_edit 工具（自动解包/编辑/打包）")
+            hints.insert(1, "   不要手动编辑 Office XML；当前助手模式不暴露 Word 编辑工具")
 
         # 尝试引号规范化后的匹配
         normalized_old = normalize_quotes(old_string)
@@ -778,6 +776,7 @@ class EditFileToolV2(LLMTool):
                 "精确替换代码、配置、文本文件内容；必须先read_file。"
                 "不用于docx或Word XML；多行old_string/new_string在JSON中用\\n转义。"
                 "会检查文件是否被修改，并支持引号规范化容错匹配。"
+                "允许编辑项目后端目录和/tmp目录下的文件。"
                 "如果编辑的是标准报告包 reports/{report_id}/report.qmd 或 HTML展示页 html_artifacts/{artifact_id}/index.html，后端会自动刷新右侧预览并返回html_preview。"
             ),
             "parameters": {

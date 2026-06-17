@@ -2,7 +2,7 @@
  * 会话管理API模块
  */
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const API_BASE_URL = ((import.meta.env && import.meta.env.VITE_API_BASE_URL) || '/api').replace(/\/$/, '')
 const BASE_URL = `${API_BASE_URL}/sessions`
 
 /**
@@ -41,8 +41,12 @@ async function request(url, options = {}) {
 /**
  * 获取会话列表
  */
-export async function listSessions() {
-  return await request(`${BASE_URL}/`)
+export async function listSessions(options = {}) {
+  const { limit = 50 } = options
+  const params = new URLSearchParams()
+  if (limit) params.set('limit', limit)
+  const query = params.toString()
+  return await request(`${BASE_URL}/${query ? `?${query}` : ''}`)
 }
 
 /**
@@ -64,15 +68,17 @@ export async function getSessionStats() {
  * @param {string} sessionId - 会话ID
  * @param {object} options - 选项
  * @param {number} options.messageLimit - 首屏消息数量限制（默认30，更多历史通过分页加载）
+ * @param {boolean} options.lazyArtifacts - 是否延迟加载图表/文档预览（默认true）
  */
 export async function restoreSession(sessionId, options = {}) {
-  const { messageLimit = 30 } = options
+  const { messageLimit = 30, lazyArtifacts = true } = options
 
   // 构建查询参数
   const params = new URLSearchParams()
   if (messageLimit) {
     params.set('message_limit', messageLimit)
   }
+  params.set('lazy_artifacts', lazyArtifacts ? 'true' : 'false')
 
   return await request(`${BASE_URL}/${sessionId}/restore?${params}`, {
     method: 'POST'
@@ -87,6 +93,27 @@ export async function getSessionMessages(sessionId, beforeSequence, limit = 30) 
   if (beforeSequence != null) params.set('before', beforeSequence)
   if (limit) params.set('limit', limit)
   return await request(`${BASE_URL}/${sessionId}/messages?${params}`)
+}
+
+/**
+ * 按需加载会话图表数据
+ */
+export async function getSessionVisualizations(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/visualizations`)
+}
+
+/**
+ * 按需加载会话文档/报告预览元数据
+ */
+export async function getSessionOfficeDocuments(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/office-documents`)
+}
+
+/**
+ * 按需加载会话 Draw.io 画板状态
+ */
+export async function getSessionDrawioBoard(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/drawio-board`)
 }
 
 /**
@@ -112,6 +139,24 @@ export async function exportSession(sessionId) {
  */
 export async function deleteSession(sessionId) {
   return await request(`${BASE_URL}/${sessionId}`, {
+    method: 'DELETE'
+  })
+}
+
+/**
+ * 标记会话为案例
+ */
+export async function markSessionCase(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/case`, {
+    method: 'POST'
+  })
+}
+
+/**
+ * 取消会话案例标记
+ */
+export async function unmarkSessionCase(sessionId) {
+  return await request(`${BASE_URL}/${sessionId}/case`, {
     method: 'DELETE'
   })
 }

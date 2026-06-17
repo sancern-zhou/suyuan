@@ -71,6 +71,19 @@ class RuntimeEventBus:
             },
         }
 
+    def steering_applied(self, state: RunState, messages: list[str]) -> Dict[str, Any]:
+        return {
+            "type": "steering_applied",
+            "stream": "lifecycle",
+            "data": {
+                "messages": messages,
+                "count": len(messages),
+                "session_id": state.session_id,
+                "run_id": state.run_id,
+                "timestamp": datetime.now().isoformat(),
+            },
+        }
+
     def tool_use(self, state: RunState, tool_use_id: str, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "type": "tool_use",
@@ -125,8 +138,8 @@ class RuntimeEventBus:
     def office_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
         return {"type": "office_document", "stream": "result", "data": data}
 
-    def notebook_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"type": "notebook_document", "stream": "result", "data": data}
+    def html_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        return {"type": "html_document", "stream": "result", "data": data}
 
     def agent_finish(self, state: RunState, thought: Any = None) -> Dict[str, Any]:
         return {

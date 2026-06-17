@@ -3,20 +3,20 @@
     <!-- Empty state -->
     <div v-if="!hasOfficeDocuments || officeDocuments.length === 0" class="empty-state">
       <p class="empty-title">暂无文档</p>
-      <p class="empty-tip">编辑Word/PPT文档时，将在此处显示预览</p>
+      <p class="empty-tip">触发文件预览后，将在此处显示预览</p>
     </div>
 
     <!-- Panel content -->
     <template v-else>
-      <!-- Document list -->
+      <!-- Active document preview -->
       <div class="doc-list">
-        <div v-for="doc in officeDocuments" :key="doc.pdf_id || doc.file_path" class="doc-item">
+        <div v-for="doc in activeDocumentList" :key="getDocumentKey(doc)" class="doc-item">
           <!-- Preview mode: PDF preview (with transition animation) -->
           <div v-if="!isEditMode" class="doc-preview">
             <!-- Action buttons in top-right corner -->
             <div class="action-buttons">
               <button
-                v-if="!['notebook', 'report', 'html_artifact'].includes(doc.doc_type)"
+                v-if="isEditableDoc(doc)"
                 @click="toggleEditMode"
                 class="action-btn edit-btn"
                 title="编辑模式"
@@ -62,8 +62,19 @@
                   <button v-if="doc.doc_type === 'report'" @click="downloadReportFormat(doc, 'docx')" class="download-item">
                     下载 Word 文档
                   </button>
-                  <button v-if="doc.doc_type === 'html_artifact'" @click="downloadHtmlArtifact(doc)" class="download-item">
+                  <button v-if="doc.doc_type === 'html_artifact' && !isDiagramDocument(doc)" @click="downloadHtmlArtifact(doc)" class="download-item">
                     下载 HTML 文件
+                  </button>
+                  <button
+                    v-for="file in getRelatedDownloadFiles(doc)"
+                    :key="file.key"
+                    @click="downloadRelatedFile(file)"
+                    class="download-item"
+                  >
+                    {{ getRelatedDownloadLabel(file) }}
+                  </button>
+                  <button v-if="doc.file_path && doc.generator === 'present_artifact'" @click="downloadOriginalFile(doc)" class="download-item">
+                    下载原文件
                   </button>
                   <button v-if="doc.doc_type === 'markdown'" @click="downloadMarkdown(doc)" class="download-item">
                     下载 Markdown 文件
@@ -115,33 +126,15 @@
               ></iframe>
             </div>
 
-            <!-- HTML preview (Notebook/Quarto报告/HTML展示页使用iframe显示) -->
-            <div v-else-if="['notebook', 'report', 'html_artifact'].includes(doc.doc_type) && doc.html_url" class="notebook-wrapper">
+            <!-- HTML/Image preview (iframe displays HTML pages and browser-renderable media URLs) -->
+            <div v-else-if="doc.html_url" class="html-wrapper">
               <iframe
                 :src="doc.html_url"
                 :key="doc.html_url"
-                class="notebook-iframe"
+                class="html-iframe"
                 type="text/html"
                 @load="onPdfLoaded(doc)"
               ></iframe>
-            </div>
-
-            <!-- Notebook with share button (如果有file_path) -->
-            <div v-else-if="doc.doc_type === 'notebook' && doc.file_path" class="notebook-with-share">
-              <div class="notebook-actions">
-                <button
-                  @click="handleNotebookShare(doc)"
-                  class="share-button"
-                  :disabled="doc.sharing"
-                >
-                  <span v-if="doc.sharing">生成中...</span>
-                  <span v-else>分享报告</span>
-                </button>
-              </div>
-              <div class="notebook-placeholder">
-                <p>📝 Notebook文件：{{ doc.file_name }}</p>
-                <p class="hint">点击"分享报告"生成可分享的HTML链接</p>
-              </div>
             </div>
 
             <!-- Markdown preview -->
@@ -180,28 +173,58 @@
         </div>
       </div>
 
-      <!-- Edit history (默认隐藏) -->
-      <div class="edit-history-section">
-        <div class="edit-history-header" @click="toggleHistory">
-          <span class="section-title">编辑历史</span>
-          <span class="history-toggle-icon">{{ showHistory ? '▼' : '▶' }}</span>
+      <!-- File history (默认隐藏) -->
+      <div class="file-history-section">
+        <div class="file-history-header" @click="toggleFileHistory">
+          <span class="section-title">文件历史</span>
+          <span class="history-toggle-icon">{{ showFileHistory ? '▼' : '▶' }}</span>
         </div>
-        <div v-if="showHistory" class="history-list">
-          <div
-            v-for="(action, index) in editHistory.slice(-5)"
-            :key="index"
-            class="history-item"
+        <div v-if="showFileHistory" class="history-list">
+          <button
+            v-for="doc in fileHistory"
+            :key="getDocumentKey(doc)"
+            type="button"
+            class="history-item file-history-item"
+            :class="{ active: getDocumentKey(doc) === activeDocumentId }"
+            @click="selectDocument(doc)"
           >
-            <span class="history-icon">{{ getActionIcon(action.tool) }}</span>
-            <span class="history-text">{{ action.summary }}</span>
-            <span class="history-time">{{ formatTime(action.timestamp) }}</span>
-          </div>
-          <div v-if="editHistory.length === 0" class="history-empty">
-            暂无编辑历史
+            <span class="history-icon">{{ getDocIcon(doc.doc_type) }}</span>
+            <span class="history-text">
+              <span class="history-file-name">{{ doc.file_name || getFileName(doc.file_path) }}</span>
+              <span v-if="doc.last_action?.summary" class="history-file-summary">{{ doc.last_action.summary }}</span>
+            </span>
+            <span class="history-time">{{ formatTime(doc.last_action?.timestamp || doc.timestamp) }}</span>
+          </button>
+          <div v-if="fileHistory.length === 0" class="history-empty">
+            暂无文件历史
           </div>
         </div>
       </div>
     </template>
+
+    <transition name="share-toast">
+      <div
+        v-if="shareToast.visible"
+        class="share-toast"
+        :class="shareToast.type"
+        role="status"
+        aria-live="polite"
+      >
+        <div class="share-toast-indicator" aria-hidden="true"></div>
+        <div class="share-toast-content">
+          <div class="share-toast-title">{{ shareToast.title }}</div>
+          <div v-if="shareToast.message" class="share-toast-message">{{ shareToast.message }}</div>
+          <div v-if="shareToast.link" class="share-toast-link" :title="shareToast.link">
+            {{ shareToast.link }}
+          </div>
+          <div v-if="shareToast.link" class="share-toast-actions">
+            <button type="button" @click="copyShareToastLink">复制链接</button>
+            <a :href="shareToast.link" target="_blank" rel="noopener noreferrer">打开</a>
+          </div>
+        </div>
+        <button type="button" class="share-toast-close" @click="hideShareToast" aria-label="关闭提示">x</button>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -209,6 +232,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import { normalizeArtifactUrl, normalizeRelatedArtifactFiles } from '@/utils/artifactRelatedFiles'
 
 const reactStore = useReactStore()
 const emit = defineEmits(['submit-edit'])
@@ -227,11 +251,18 @@ const props = defineProps({
 // 状态
 const isEditMode = ref(false)
 const isExpanded = ref(true)
-const showHistory = ref(false)
+const showFileHistory = ref(false)
 const showDownloadMenu = ref(false)
-const officeDocuments = ref([])
-const editHistory = ref([])
+const activeDocumentId = ref(null)
 const refreshTimeouts = ref(new Map())
+const shareToast = ref({
+  visible: false,
+  type: 'success',
+  title: '',
+  message: '',
+  link: ''
+})
+let shareToastTimer = null
 
 // 点击外部关闭下载菜单
 function handleClickOutside(event) {
@@ -250,11 +281,110 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (shareToastTimer) {
+    clearTimeout(shareToastTimer)
+  }
 })
 
 const hasOfficeDocuments = computed(() => {
   return officeDocuments.value.length > 0
 })
+
+const officeDocuments = computed(() => {
+  return (reactStore.officeDocumentHistory || [])
+    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.pdf_url || doc?.html_url || doc?.svg_url || doc?.markdown_content)
+    .map(normalizeDocument)
+})
+
+const activeDocument = computed(() => {
+  if (officeDocuments.value.length === 0) {
+    return null
+  }
+  return officeDocuments.value.find(doc => getDocumentKey(doc) === activeDocumentId.value) || officeDocuments.value[officeDocuments.value.length - 1]
+})
+
+const activeDocumentList = computed(() => {
+  return activeDocument.value ? [activeDocument.value] : []
+})
+
+const fileHistory = computed(() => {
+  return officeDocuments.value.slice().reverse()
+})
+
+function getDocumentKey(doc) {
+  return doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.svg_url || doc?.file_name || ''
+}
+
+function getDocumentSignature(doc) {
+  if (!doc) return ''
+  return [
+    getDocumentKey(doc),
+    doc.html_url,
+    doc.svg_url,
+    doc.pdf_url,
+    doc.preview_version,
+    doc.timestamp
+  ].filter(Boolean).join('|')
+}
+
+function selectDocument(doc) {
+  const key = getDocumentKey(doc)
+  if (!key) return
+  activeDocumentId.value = key
+  isEditMode.value = false
+  showDownloadMenu.value = false
+}
+
+function normalizeDocument(doc) {
+  const filePath = doc.file_path || doc.path || doc.pdf_preview?.pdf_path || doc.svg_preview?.svg_path
+  const fileName = doc.file_name || (filePath ? filePath.split(/[/\\]/).pop() : 'unknown')
+  const svgPreviewUrl = getSvgPreviewUrl(doc)
+  const htmlPreviewUrl = doc.html_url || withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version) || svgPreviewUrl
+  return {
+    doc_type: doc.doc_type || getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type || doc.svg_preview?.file_type),
+    file_name: fileName,
+    file_path: filePath,
+    generator: doc.generator,
+    pdf_url: normalizeArtifactUrl(doc.pdf_url || doc.pdf_preview?.pdf_url),
+    pdf_id: doc.pdf_id || doc.pdf_preview?.pdf_id,
+    html_url: normalizeArtifactUrl(htmlPreviewUrl),
+    html_id: doc.html_id || doc.html_preview?.html_id,
+    svg_url: normalizeArtifactUrl(svgPreviewUrl),
+    svg_preview: doc.svg_preview,
+    preview_version: doc.preview_version || doc.html_preview?.preview_version,
+    related_files: doc.related_files,
+    artifacts: doc.artifacts,
+    refs: doc.refs,
+    assets: doc.assets,
+    metadata: doc.metadata,
+    markdown_content: doc.markdown_content || doc.markdown_preview?.content,
+    loading: doc.loading || false,
+    sharing: doc.sharing || false,
+    editContent: doc.editContent || '',
+    submitting: doc.submitting || false,
+    editMessage: doc.editMessage || null,
+    timestamp: doc.timestamp,
+    last_action: doc.last_action || {
+      tool: doc.generator,
+      summary: doc.summary,
+      timestamp: doc.timestamp || new Date()
+    }
+  }
+}
+
+function getSvgPreviewUrl(doc) {
+  const directUrl = doc.svg_url || doc.svg_preview?.svg_url
+  if (directUrl) {
+    return directUrl
+  }
+
+  const svgFile = getRelatedDownloadFiles(doc).find(file => {
+    const format = String(file.format || '').toLowerCase()
+    return format === 'svg' || format === 'drawio_svg'
+  })
+
+  return svgFile?.url || ''
+}
 
 function withPreviewVersion(url, version) {
   if (!url || !version) {
@@ -268,83 +398,18 @@ function withPreviewVersion(url, version) {
   }
 }
 
-// 监听 store.lastOfficeDocument，直接更新文档列表
-watch(() => reactStore.lastOfficeDocument, (doc, oldDoc) => {
-  if (!doc?.pdf_preview && !doc?.markdown_preview && !doc?.html_preview) {
+watch(officeDocuments, (docs, oldDocs = []) => {
+  if (docs.length === 0) {
+    activeDocumentId.value = null
     return
   }
-
-  const filePath = doc.file_path
-  const fileName = filePath ? filePath.split(/[/\\]/).pop() : 'unknown'
-
-  // 检测是否切换到了不同的文档（会话切换）
-  if (oldDoc?.file_path && oldDoc.file_path !== filePath) {
-    officeDocuments.value = []
-    editHistory.value = []
-    showHistory.value = false
-    isEditMode.value = false
+  const latestDoc = docs[docs.length - 1]
+  const previousLatestDoc = oldDocs[oldDocs.length - 1]
+  const latestChanged = getDocumentSignature(latestDoc) !== getDocumentSignature(previousLatestDoc)
+  const activeStillExists = docs.some(doc => getDocumentKey(doc) === activeDocumentId.value)
+  if (!activeStillExists || docs.length > oldDocs.length || latestChanged) {
+    activeDocumentId.value = getDocumentKey(latestDoc)
   }
-
-  // 查找现有文档
-  const existingDoc = officeDocuments.value.find(d =>
-    d.file_path === filePath || d.file_name === fileName
-  )
-
-  if (existingDoc) {
-    // 更新现有文档
-    if (doc.pdf_preview && existingDoc.pdf_id !== doc.pdf_preview.pdf_id) {
-      existingDoc.pdf_url = doc.pdf_preview.pdf_url
-      existingDoc.pdf_id = doc.pdf_preview.pdf_id
-      existingDoc.file_path = filePath
-      triggerPdfRefresh(existingDoc)
-    }
-    // 更新markdown内容
-    if (doc.markdown_preview) {
-      existingDoc.markdown_content = doc.markdown_preview.content
-      existingDoc.file_path = filePath
-    }
-    // 更新 Notebook HTML预览
-    if (doc.html_preview) {
-      existingDoc.html_url = withPreviewVersion(doc.html_preview.html_url, doc.html_preview.preview_version)
-      existingDoc.html_id = doc.html_preview.html_id
-      existingDoc.preview_version = doc.html_preview.preview_version
-      existingDoc.file_path = filePath
-      existingDoc.doc_type = getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type)
-      existingDoc.loading = false
-    }
-  } else {
-    // 添加新文档
-    const newDoc = {
-      doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
-      file_name: fileName,
-      file_path: filePath,
-      pdf_url: doc.pdf_preview?.pdf_url,
-      pdf_id: doc.pdf_preview?.pdf_id,
-      html_url: withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
-      html_id: doc.html_preview?.html_id,
-      preview_version: doc.html_preview?.preview_version,
-      markdown_content: doc.markdown_preview?.content,
-      loading: false,
-      sharing: false,
-      editContent: '',
-      submitting: false,
-      editMessage: null,
-      last_action: {
-        tool: doc.generator,
-        summary: doc.summary,
-        timestamp: doc.timestamp || new Date()
-      }
-    }
-
-    officeDocuments.value.push(newDoc)
-  }
-
-  // 添加到编辑历史
-  editHistory.value.push({
-    tool: doc.generator,
-    summary: doc.summary,
-    timestamp: doc.timestamp || new Date()
-  })
 }, { immediate: true })
 
 // 监听 sessionId 变化，切换会话时清空文档列表
@@ -353,9 +418,8 @@ watch(() => props.sessionId, (newSessionId, oldSessionId) => {
     // 如果store中没有新的office document，说明是切换到空会话，需要清空
     // 如果store中有新的office document，会在lastOfficeDocument的watch中处理，这里不清空
     if (!reactStore.lastOfficeDocument) {
-      officeDocuments.value = []
-      editHistory.value = []
-      showHistory.value = false
+      activeDocumentId.value = null
+      showFileHistory.value = false
       isEditMode.value = false
     }
   }
@@ -395,6 +459,10 @@ function toggleEditMode() {
 // Toggle download menu
 function toggleDownloadMenu() {
   showDownloadMenu.value = !showDownloadMenu.value
+}
+
+function isEditableDoc(doc) {
+  return doc.generator !== 'present_artifact' && !['report', 'html_artifact'].includes(doc.doc_type)
 }
 
 function getResponseFilename(response, fallback) {
@@ -675,6 +743,76 @@ async function downloadHtmlArtifact(doc) {
   }
 }
 
+function getRelatedDownloadFiles(doc) {
+  return normalizeRelatedArtifactFiles({
+    artifact: {
+      related_files: doc.related_files,
+      artifacts: doc.artifacts,
+      assets: doc.assets
+    },
+    refs: doc.refs
+  })
+}
+
+function getRelatedDownloadLabel(file) {
+  const format = String(file.format || '').toLowerCase()
+  if (format === 'drawio') return '下载 Draw.io 源文件（可继续编辑）'
+  if (format === 'drawio_svg' || format === 'svg') return '下载 SVG 矢量图'
+  if (format === 'png') return '下载 PNG 图片'
+  return file.downloadLabel || '下载附件'
+}
+
+function isDiagramDocument(doc) {
+  return doc?.generator === 'create_diagram_artifact' ||
+    doc?.metadata?.artifact_kind === 'diagram' ||
+    doc?.refs?.drawio ||
+    getRelatedDownloadFiles(doc).some(file => file.format === 'drawio')
+}
+
+function downloadRelatedFile(file) {
+  if (!file?.file_path && !file?.url) {
+    console.error('[OfficeDocumentPanel] Related file not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = file.file_path?.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Related file download failed:', error)
+  }
+}
+
+function downloadOriginalFile(doc) {
+  if (!doc.file_path || doc.file_path === '') {
+    console.error('[OfficeDocumentPanel] Original file path not available')
+    showDownloadMenu.value = false
+    return
+  }
+
+  try {
+    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = doc.file_name || 'artifact'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    showDownloadMenu.value = false
+  } catch (error) {
+    console.error('[OfficeDocumentPanel] Original file download failed:', error)
+  }
+}
+
 // Download Markdown file
 function downloadMarkdown(doc) {
   if (!doc.file_path || doc.file_path === '') {
@@ -735,10 +873,8 @@ function downloadExcel(doc) {
 function cancelEdit() {
   isEditMode.value = false
   // Clear edit content
-  officeDocuments.value.forEach(doc => {
-    doc.editContent = ''
-    doc.editMessage = null
-  })
+  activeDocument.value && (activeDocument.value.editContent = '')
+  activeDocument.value && (activeDocument.value.editMessage = null)
 }
 
 // Edit content change
@@ -785,10 +921,12 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
   if (['report', 'html_report', 'quarto_report'].includes(explicitType)) {
     return 'report'
   }
-  if (explicitType === 'notebook') {
-    return 'notebook'
+  if (['html', 'image'].includes(explicitType)) {
+    return explicitType
   }
-
+  if (explicitType === 'pdf') {
+    return 'pdf'
+  }
   // 先根据 generator 判断
   if (generator === 'quarto_report' || filePath?.endsWith('report.qmd')) {
     return 'report'
@@ -798,8 +936,6 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
     return 'word'
   } else if (['add_ppt_slide'].includes(generator)) {
     return 'ppt'
-  } else if (filePath?.endsWith('.ipynb')) {
-    return 'notebook'
   } else if (markdownPreview) {
     return 'markdown'
   }
@@ -815,6 +951,12 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
       return 'excel'
     } else if (['md', 'markdown', 'qmd'].includes(ext)) {
       return 'markdown'
+    } else if (['html', 'htm'].includes(ext)) {
+      return 'html'
+    } else if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) {
+      return 'image'
+    } else if (ext === 'pdf') {
+      return 'pdf'
     }
   }
 
@@ -826,27 +968,14 @@ function getDocIcon(docType) {
   return icons[docType] || icons.unknown
 }
 
-function getActionIcon(tool) {
-  const icons = {
-    word_edit: '✏️',
-    find_replace_word: '🔍',
-    accept_word_changes: '✅',
-    add_ppt_slide: '➕',
-    unpack_office: '📦',
-    pack_office: '📦',
-    recalc_excel: '📊'
-  }
-  return icons[tool] || '⚙️'
-}
-
 function formatTime(timestamp) {
   if (!timestamp) return ''
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-function toggleHistory() {
-  showHistory.value = !showHistory.value
+function toggleFileHistory() {
+  showFileHistory.value = !showFileHistory.value
 }
 
 // 【新增】从历史数据加载文档列表（用于历史对话恢复）
@@ -858,47 +987,9 @@ function loadDocuments(documents) {
 
   console.log('[OfficeDocumentPanel] 开始加载历史文档，数量:', documents.length)
 
-  documents.forEach((doc, index) => {
-    // 检查是否有有效的预览数据（PDF、Markdown或HTML）
-    if ((!doc.pdf_preview && !doc.markdown_preview && !doc.html_preview) || !doc.file_path) {
-      console.warn('[OfficeDocumentPanel] 跳过无效文档:', index, doc)
-      return
-    }
-
-    const filePath = doc.file_path
-    const fileName = filePath ? filePath.split(/[/\\]/).pop() : 'unknown'
-
-    // 检查是否已存在
-    const existingDoc = officeDocuments.value.find(d =>
-      d.file_path === filePath || d.file_name === fileName
-    )
-
-    if (!existingDoc) {
-      // 添加新文档（不触发动画，因为这是历史数据）
-      console.log('[OfficeDocumentPanel] 加载历史文档:', index + 1, fileName)
-      officeDocuments.value.push({
-        doc_type: getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type),
-        file_name: fileName,
-        file_path: filePath,
-        pdf_url: doc.pdf_preview?.pdf_url,
-        pdf_id: doc.pdf_preview?.pdf_id,
-        html_url: withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version),
-        html_id: doc.html_preview?.html_id,
-        preview_version: doc.html_preview?.preview_version,
-        markdown_content: doc.markdown_preview?.content,
-        loading: false,
-        sharing: false,
-        editContent: '',
-        submitting: false,
-        editMessage: null,
-        last_action: {
-          tool: doc.generator,
-          summary: doc.summary,
-          timestamp: doc.timestamp || new Date()
-        }
-      })
-    }
-  })
+  if (typeof reactStore.setOfficeDocumentHistory === 'function') {
+    reactStore.setOfficeDocumentHistory(documents)
+  }
 
   console.log('[OfficeDocumentPanel] 历史文档加载完成，当前总数:', officeDocuments.value.length)
 }
@@ -922,11 +1013,89 @@ async function copyTextToClipboard(text) {
   document.body.removeChild(textarea)
 }
 
+function showShareToast({ type = 'success', title, message = '', link = '', duration = 5200 }) {
+  if (shareToastTimer) {
+    clearTimeout(shareToastTimer)
+  }
+
+  shareToast.value = {
+    visible: true,
+    type,
+    title,
+    message,
+    link
+  }
+
+  if (duration > 0) {
+    shareToastTimer = setTimeout(() => {
+      hideShareToast()
+    }, duration)
+  }
+}
+
+function hideShareToast() {
+  if (shareToastTimer) {
+    clearTimeout(shareToastTimer)
+    shareToastTimer = null
+  }
+  shareToast.value.visible = false
+}
+
+async function showGeneratedShareLink(shareLink) {
+  try {
+    await copyTextToClipboard(shareLink)
+    showShareToast({
+      type: 'success',
+      title: '分享链接已生成',
+      message: '链接已自动复制到剪贴板。',
+      link: shareLink
+    })
+  } catch (error) {
+    console.warn('[OfficeDocumentPanel] 分享链接复制失败:', error)
+    showShareToast({
+      type: 'warning',
+      title: '分享链接已生成',
+      message: '自动复制失败，可在这里手动复制。',
+      link: shareLink,
+      duration: 0
+    })
+  }
+}
+
+async function copyShareToastLink() {
+  if (!shareToast.value.link) {
+    return
+  }
+
+  try {
+    await copyTextToClipboard(shareToast.value.link)
+    showShareToast({
+      type: 'success',
+      title: '链接已复制',
+      message: '分享链接已复制到剪贴板。',
+      link: shareToast.value.link
+    })
+  } catch (error) {
+    console.warn('[OfficeDocumentPanel] 手动复制分享链接失败:', error)
+    showShareToast({
+      type: 'warning',
+      title: '复制失败',
+      message: '请选中链接后手动复制。',
+      link: shareToast.value.link,
+      duration: 0
+    })
+  }
+}
+
 // 处理Quarto报告分享
 async function handleReportShare(doc) {
   const reportId = getReportId(doc)
   if (!reportId) {
-    alert('无法分享：缺少报告ID')
+    showShareToast({
+      type: 'error',
+      title: '无法分享',
+      message: '缺少报告ID。'
+    })
     return
   }
 
@@ -943,11 +1112,14 @@ async function handleReportShare(doc) {
     }
 
     const shareLink = `${window.location.origin}${result.share_url}`
-    await copyTextToClipboard(shareLink)
-    alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
+    await showGeneratedShareLink(shareLink)
   } catch (error) {
     console.error('[OfficeDocumentPanel] 生成报告分享链接失败:', error)
-    alert('❌ 生成分享链接失败：' + error.message)
+    showShareToast({
+      type: 'error',
+      title: '生成分享链接失败',
+      message: error.message
+    })
   } finally {
     doc.sharing = false
   }
@@ -957,7 +1129,11 @@ async function handleReportShare(doc) {
 async function handleHtmlArtifactShare(doc) {
   const artifactId = getHtmlArtifactId(doc)
   if (!artifactId) {
-    alert('无法分享：缺少HTML展示页ID')
+    showShareToast({
+      type: 'error',
+      title: '无法分享',
+      message: '缺少HTML展示页ID。'
+    })
     return
   }
 
@@ -974,60 +1150,14 @@ async function handleHtmlArtifactShare(doc) {
     }
 
     const shareLink = `${window.location.origin}${result.share_url}`
-    await copyTextToClipboard(shareLink)
-    alert(`✅ 分享链接已复制到剪贴板：\n${shareLink}`)
+    await showGeneratedShareLink(shareLink)
   } catch (error) {
     console.error('[OfficeDocumentPanel] 生成HTML展示页分享链接失败:', error)
-    alert('❌ 生成分享链接失败：' + error.message)
-  } finally {
-    doc.sharing = false
-  }
-}
-
-// 处理Notebook分享
-async function handleNotebookShare(doc) {
-  if (!doc.file_path) {
-    alert('无法分享：缺少Notebook文件路径')
-    return
-  }
-
-  doc.sharing = true
-
-  try {
-    // 调用后端API生成分享HTML
-    const response = await fetch('/api/tools/execute', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        tool: 'generate_shareable_notebook',
-        parameters: {
-          notebook_path: doc.file_path
-        }
-      })
+    showShareToast({
+      type: 'error',
+      title: '生成分享链接失败',
+      message: error.message
     })
-
-    const result = await response.json()
-
-    if (result.success) {
-      // 显示分享链接
-      const shareLink = result.data.share_link
-      const userCopy = confirm(`分享链接已生成：\n\n${shareLink}\n\n点击"确定"复制链接到剪贴板`)
-
-      if (userCopy) {
-        copyTextToClipboard(shareLink).then(() => {
-          alert('✅ 链接已复制到剪贴板！')
-        }).catch(() => {
-          alert('链接已生成，但复制失败，请手动复制：\n' + shareLink)
-        })
-      }
-    } else {
-      alert('❌ 生成分享链接失败：' + (result.summary || '未知错误'))
-    }
-  } catch (error) {
-    console.error('[OfficeDocumentPanel] 生成分享链接失败:', error)
-    alert('❌ 生成分享链接失败：' + error.message)
   } finally {
     doc.sharing = false
   }
@@ -1051,6 +1181,7 @@ defineExpose({
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .doc-list {
@@ -1222,7 +1353,7 @@ defineExpose({
   transition: height 0.3s ease;
 }
 
-.notebook-wrapper {
+.html-wrapper {
   width: 100%;
   flex: 1;
   min-height: 600px;
@@ -1230,44 +1361,11 @@ defineExpose({
   flex-direction: column;
 }
 
-.notebook-iframe {
+.html-iframe {
   width: 100%;
   flex: 1;
   border: none;
   display: block;
-}
-
-.notebook-with-share {
-  padding: 20px;
-  text-align: center;
-  background: #f9f9f9;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  margin: 12px;
-}
-
-.notebook-actions {
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: center;
-}
-
-.notebook-placeholder {
-  padding: 40px 20px;
-  background: white;
-  border-radius: 8px;
-  border: 2px dashed #e0e0e0;
-}
-
-.notebook-placeholder p {
-  margin: 10px 0;
-  color: #666;
-  font-size: 14px;
-}
-
-.notebook-placeholder .hint {
-  color: #999;
-  font-size: 13px;
 }
 
 .markdown-wrapper {
@@ -1361,13 +1459,13 @@ defineExpose({
   }
 }
 
-.edit-history-section {
+.file-history-section {
   padding: 12px;
   border-top: 1px solid #f0f0f0;
   background: #fafafa;
 }
 
-.edit-history-header {
+.file-history-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1397,8 +1495,23 @@ defineExpose({
   gap: 8px;
   padding: 6px 8px;
   background: #fff;
+  border: 1px solid transparent;
   border-radius: 4px;
+  color: inherit;
+  cursor: pointer;
   font-size: 12px;
+  text-align: left;
+  width: 100%;
+
+  &:hover {
+    background: #f8fbff;
+    border-color: #d8e8fb;
+  }
+
+  &.active {
+    background: #eef6ff;
+    border-color: #90caf9;
+  }
 }
 
 .history-empty {
@@ -1408,9 +1521,16 @@ defineExpose({
   font-size: 12px;
 }
 
-.history-icon { font-size: 14px; }
-.history-text { flex: 1; color: #333; }
-.history-time { color: #999; font-size: 11px; }
+.history-icon { flex: 0 0 auto; font-size: 14px; }
+.history-text { display: flex; flex: 1; flex-direction: column; min-width: 0; color: #333; }
+.history-file-name,
+.history-file-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-file-summary { margin-top: 2px; color: #7b8796; font-size: 11px; }
+.history-time { flex: 0 0 auto; color: #999; font-size: 11px; }
 
 .empty-state {
   flex: 1;
@@ -1426,4 +1546,115 @@ defineExpose({
 
 .empty-title { font-size: 15px; font-weight: 500; color: #526173; margin: 0; }
 .empty-tip { font-size: 13px; margin: 0; line-height: 1.6; color: #8a96a8; }
+
+.share-toast {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 120;
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  gap: 12px;
+  width: min(420px, calc(100% - 24px));
+  padding: 12px;
+  border: 1px solid #d8deea;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 38px rgba(31, 45, 68, 0.18);
+  color: #243044;
+}
+
+.share-toast.success .share-toast-indicator { background: #19a06b; }
+.share-toast.warning .share-toast-indicator { background: #d08a00; }
+.share-toast.error .share-toast-indicator { background: #d14343; }
+
+.share-toast-indicator {
+  width: 4px;
+  border-radius: 999px;
+}
+
+.share-toast-content {
+  min-width: 0;
+}
+
+.share-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.share-toast-message {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5e6b7c;
+}
+
+.share-toast-link {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid #e3e8f2;
+  border-radius: 6px;
+  background: #f7f9fc;
+  color: #2c5f9e;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-toast-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.share-toast-actions button,
+.share-toast-actions a,
+.share-toast-close {
+  border: 1px solid #d8deea;
+  background: #fff;
+  color: #526173;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.share-toast-actions button,
+.share-toast-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  text-decoration: none;
+}
+
+.share-toast-actions button:hover,
+.share-toast-actions a:hover,
+.share-toast-close:hover {
+  color: #1976d2;
+  border-color: #90caf9;
+  background: #f8fbff;
+}
+
+.share-toast-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  line-height: 1;
+}
+
+.share-toast-enter-active,
+.share-toast-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.share-toast-enter-from,
+.share-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
 </style>

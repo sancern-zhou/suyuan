@@ -696,7 +696,7 @@ class ImprovedMemoryStore(MemoryStore):
     async def consolidate_improved(
         self,
         messages: List[Dict[str, Any]],
-        model: str = "mimo-v2-flash",
+        model: str = "mimo-v2.5",
     ) -> bool:
         """
         改进版记忆合并（使用 JSON 响应）
@@ -1202,7 +1202,7 @@ class MemoryConsolidator:
         user_id: str,
         mode: str,
         messages: List[Dict[str, Any]],
-        model: str = "mimo-v2-flash",
+        model: str = "mimo-v2.5",
     ) -> bool:
         """
         合并消息到持久化存储
@@ -1226,7 +1226,7 @@ class MemoryConsolidator:
         user_id: str,
         mode: str,
         messages: List[Dict[str, Any]],
-        model: str = "mimo-v2-flash",
+        model: str = "mimo-v2.5",
     ) -> bool:
         """
         根据 Token预算自动触发合并

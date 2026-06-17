@@ -7,6 +7,7 @@ import base64
 from datetime import datetime
 
 from ..config import config
+from ..services.frame_target import resolve_frame
 from app.services.image_cache import get_image_cache
 
 logger = structlog.get_logger()
@@ -15,6 +16,9 @@ logger = structlog.get_logger()
 def handle_screenshot(
     manager,
     session_id: str = "default",
+    frame_url: str = None,
+    frame_name: str = None,
+    frame_index: int = None,
     **kwargs
 ) -> dict:
     """Capture page screenshot with AI description (SYNC version)
@@ -27,6 +31,8 @@ def handle_screenshot(
         {
             "image_id": str,  # Image ID for retrieval
             "image_url": str,  # Full URL to access the image (for LLM)
+            "local_path": str,  # Local file path for backend tools like analyze_image
+            "size_kb": float,  # Image file size in KB
             "markdown_image": str,  # Markdown format image link (for LLM)
             "description": str,  # Text description of the page
             "url": str,  # Page URL
@@ -34,16 +40,21 @@ def handle_screenshot(
         }
     """
     page = manager.get_active_page(session_id)
+    frame_targeted = frame_url or frame_name or frame_index is not None
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=frame_index)
 
     # Get page info
     url = page.url
     title = page.title()
 
     # Capture screenshot as bytes
-    screenshot_bytes = page.screenshot(
-        full_page=kwargs.get("full_page", False),
-        type="png"
-    )
+    if frame_targeted:
+        screenshot_bytes = context.frame_element().screenshot(type="png")
+    else:
+        screenshot_bytes = page.screenshot(
+            full_page=kwargs.get("full_page", False),
+            type="png"
+        )
 
     # Convert to base64
     base64_data = base64.b64encode(screenshot_bytes).decode("utf-8")
@@ -52,13 +63,13 @@ def handle_screenshot(
     image_cache = get_image_cache()
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     image_id = f"screenshot_{timestamp}"
-    image_cache.save(base64_data, chart_id=image_id)
+    save_result = image_cache.save(base64_data, chart_id=image_id)
 
     # Generate description from page content
-    description = _generate_page_description(page)
+    description = _generate_page_description(context)
 
     # 【修复】使用相对路径，让前端通过vite代理或同域访问
-    image_url = f"/api/image/{image_id}"
+    image_url = save_result.get("url") or f"/api/image/{image_id}"
 
     # Generate markdown image format (for LLM output)
     markdown_image = f"![{title}]({image_url})"
@@ -75,6 +86,8 @@ def handle_screenshot(
     return {
         "image_id": image_id,
         "image_url": image_url,
+        "local_path": save_result.get("local_path"),
+        "size_kb": save_result.get("size_kb"),
         "markdown_image": markdown_image,
         "description": description,
         "url": url,

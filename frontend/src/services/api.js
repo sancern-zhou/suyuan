@@ -85,7 +85,7 @@ class ApiClient {
 
   // 获取Fetchers调度器状态
   async getFetchersStatus() {
-    return this.request('/system/status')
+    return this.request('/fetchers/status')
   }
 
   // 手动触发Fetcher

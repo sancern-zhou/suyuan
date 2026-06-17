@@ -1,0 +1,60 @@
+low_value_field_groups:
+  人员:
+    - PERSON
+    - PERSONNEL
+    - INSPECTOR
+    - CHECKUSER
+    - CHECKUSERID
+    - PATROLUSER
+    - PREPARERUSERID
+  车辆:
+    - CAR
+    - CARNUMBER
+    - VEHICLE
+    - VEHICLENO
+    - VEHICLEPLATE
+  备注:
+    - REMARK
+    - REMARKS
+    - CHECKREMARK
+    - CleaningRemark
+    - SUBMITREMARK
+temperature_fields:
+  - INDOORTEMPERATURE
+  - INDOORTEMP
+  - ROOMTEMPERATURE
+  - ROOMTEMP
+  - TEMPERATURE
+  - TEMP
+  - WD
+humidity_fields:
+  - INDOORHUMIDITY
+  - INDOORHUMID
+  - ROOMHUMIDITY
+  - ROOMHUMID
+  - HUMIDITY
+  - HUMID
+  - DAMP
+  - SD
+check_time_fields:
+  - CHECKTIME
+  - CHECKDATETIME
+  - CHECKDATE
+  - CALIBRATIONDATE
+start_time_fields:
+  - STARTTIME
+  - STARTDATETIME
+  - BEGINTIME
+  - BEGIN_TIME
+  - StartTime
+  - SdtTime
+  - CheckSdt
+end_time_fields:
+  - ENDTIME
+  - ENDDATETIME
+  - FINISHTIME
+  - END_TIME
+  - EndTime
+  - EdtTime
+  - CheckEdt
+near_deadline_hours: 4

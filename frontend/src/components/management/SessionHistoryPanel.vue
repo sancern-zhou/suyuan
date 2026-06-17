@@ -65,12 +65,20 @@
               <div class="session-query">{{ truncateQuery(session.query) }}</div>
               <div class="session-meta">
                 <span class="session-id">{{ getShortId(session.session_id) }}</span>
+                <span v-if="isSessionCase(session)" class="session-case-badge">案例</span>
                 <span class="session-status" :class="`status-${getSessionStatus(session).key}`">
                   {{ getSessionStatus(session).label }}
                 </span>
                 <span class="session-time">{{ formatTime(session.updated_at) }}</span>
               </div>
             </div>
+            <button
+              class="session-case-action"
+              type="button"
+              @click.stop="$emit('toggle-session-case', session)"
+            >
+              {{ isSessionCase(session) ? '取消案例' : '标记案例' }}
+            </button>
           </div>
         </div>
       </div>
@@ -120,6 +128,8 @@ const getSessionStatus = (session) => {
   return { key: 'completed', label: '完成' }
 }
 
+const isSessionCase = (session) => session?.metadata?.is_case === true
+
 const formatTime = (timestamp) => {
   if (!timestamp) return '未知'
   try {
@@ -162,7 +172,8 @@ defineEmits([
   'close',
   'refresh-sessions',
   'cleanup-sessions',
-  'restore-session'
+  'restore-session',
+  'toggle-session-case'
 ])
 </script>
 
@@ -228,6 +239,31 @@ defineEmits([
 .panel-btn.danger:hover:not(:disabled) {
   background: #dc3545;
   color: white;
+}
+
+.session-case-action {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1px solid #1976d2;
+  border-radius: 4px;
+  background: white;
+  color: #1976d2;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.session-case-action:hover {
+  background: #1976d2;
+  color: white;
+}
+
+.session-case-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fff4db;
+  color: #9a6500;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .session-history-content {
@@ -307,6 +343,9 @@ defineEmits([
 }
 
 .session-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   background: white;
   border: 1px solid #dee2e6;
   border-radius: 8px;

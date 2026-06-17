@@ -80,6 +80,9 @@ class SimplifiedContextBuilder:
         # ✅ 新增：HEARTBEAT文件路径（仅social模式使用）
         self.heartbeat_file_path = None
 
+        # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
+        self.board_context = None
+
         logger.info(
             "context_builder_initialized",
             max_context=self.max_context_tokens,
@@ -227,6 +230,16 @@ class SimplifiedContextBuilder:
         """
         # ✅ 使用新的提示词构建器，传递记忆上下文、soul上下文和用户上下文
         from ..prompts.prompt_builder import build_react_system_prompt
+        from config.settings import settings
+
+        # 仅social模式需要backend_host（使用公网可访问的网关地址）
+        backend_host = None
+        if self.current_mode == "social":
+            # 优先使用 api_base_url（网关地址，如 http://219.135.180.51:56041）
+            # 其次使用 signed_media_base_url（公网后端地址）
+            # 最后使用 backend_host（本地地址，仅开发环境）
+            backend_host = settings.api_base_url or settings.signed_media_base_url or settings.backend_host
+
         mode_prompt = build_react_system_prompt(
             mode=self.current_mode,
             user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
@@ -236,7 +249,9 @@ class SimplifiedContextBuilder:
             heartbeat_file_path=self.heartbeat_file_path,  # ✅ 传递 HEARTBEAT.md 文件路径
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
-            user_context=self.user_context  # ✅ 传递用户上下文内容（USER.md）
+            user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
+            backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
+            board_context=self.board_context if self.current_mode == "chart" else None,
         )
         return f"{mode_prompt.rstrip()}\n\n{self._build_agent_control_prompt()}"
 
@@ -244,9 +259,9 @@ class SimplifiedContextBuilder:
         """Build system-level loop control rules for every agent mode."""
         return (
             "<agent_control>\n"
-            "本轮开始前先判断用户任务是否已经完成。\n"
-            "如果已有对话和工具结果足以回答，直接给出最终答案。\n"
-            "如果仍缺少必要信息，才调用工具；不要重复调用已成功且结果仍有效的工具。\n"
+            "每轮开始前，我先整理眼前的对话、工具结果和刚刚完成的动作，判断用户这件事是否已经可以交代清楚。\n"
+            "如果现有信息已经足够，就直接给出自然、明确的回复；如果用户问“刚才在做什么”，优先依据真实对话历史和工具结果回顾。\n"
+            "需要补信息时，再安静地调用合适的工具；同一份仍然有效的结果已经拿到后，就继续使用它，不在原地反复查询。\n"
             "</agent_control>"
         )
 
@@ -260,6 +275,7 @@ class SimplifiedContextBuilder:
             explicitly cleared even if an upstream caller accidentally sets them.
         """
         if mode == "social":
+            self.board_context = None
             return
 
         if any([
@@ -288,6 +304,13 @@ class SimplifiedContextBuilder:
         self.user_file_path = None
         self.heartbeat_file_path = None
 
+        if mode != "chart" and self.board_context is not None:
+            logger.warning(
+                "non_chart_board_context_stripped",
+                mode=mode,
+            )
+            self.board_context = None
+
     def _estimate_messages_tokens(self, conversation_history: Optional[List[Dict[str, Any]]]) -> int:
         """Best-effort token estimate for structured message history."""
         if not conversation_history:
@@ -307,6 +330,48 @@ class SimplifiedContextBuilder:
         tool_names = list(self.tool_registry.keys())
         return f"**可用工具**：{', '.join(tool_names[:20])}..."
 
+    def _build_board_selection_user_summary(self) -> str:
+        """Build a compact current-turn summary for chart board selection."""
+        if self.current_mode != "chart" or not isinstance(self.board_context, dict):
+            return ""
+
+        selected_cells = (
+            self.board_context.get("selected_cells")
+            or self.board_context.get("selectedCells")
+            or []
+        )
+        if not isinstance(selected_cells, list) or not selected_cells:
+            return ""
+
+        lines = [
+            "## 当前画板选中状态",
+            f"当前已选中 {len(selected_cells)} 个元素。",
+        ]
+
+        for index, cell in enumerate(selected_cells[:5], start=1):
+            if not isinstance(cell, dict):
+                lines.append(f"{index}. {cell}")
+                continue
+
+            cell_id = cell.get("id") or cell.get("cell_id") or cell.get("cellId") or "unknown"
+            value = cell.get("value") or cell.get("label") or ""
+            cell_type = "edge" if cell.get("edge") else "vertex" if cell.get("vertex") else "cell"
+            geometry = cell.get("geometry") if isinstance(cell.get("geometry"), dict) else {}
+            geometry_text = ""
+            if geometry:
+                geometry_text = (
+                    f" geometry=(x={geometry.get('x')}, y={geometry.get('y')}, "
+                    f"w={geometry.get('width')}, h={geometry.get('height')})"
+                )
+
+            label_text = f" value={value}" if value else ""
+            lines.append(f"{index}. id={cell_id} type={cell_type}{label_text}{geometry_text}")
+
+        if len(selected_cells) > 5:
+            lines.append(f"...另有 {len(selected_cells) - 5} 个选中元素，详见系统提示词 selected_cells JSON。")
+
+        return "\n".join(lines)
+
     def _build_user_conversation(
         self,
         query: str,
@@ -321,7 +386,7 @@ class SimplifiedContextBuilder:
         包括：
         1. 当前查询
         2. 当前运行状态
-        3. 必要的中断提示/附件提示
+        3. 必要的附件提示
 
         Args:
             query: 用户查询
@@ -352,18 +417,6 @@ class SimplifiedContextBuilder:
             )
 
         sections = []
-
-        # ✅ 检测到中断时，在对话历史前添加明确提示
-        if is_interruption:
-            sections.append("""⚠️ **用户已中断对话并重新输入**
-
-用户之前中断了对话，这通常意味着之前的分析方向不符合预期。请：
-1. **优先理解用户新输入的完整意图**，而不是继续之前的方向
-2. 结合对话历史中的数据和结果，但**不要被之前的分析思路限制**
-3. 如果对话历史中已有TodoWrite任务清单，仅在计划确有变化时更新；不要为同一清单重复调用TodoWrite
-4. 优先执行实际业务工具或直接回答；TodoWrite只是状态面板，不是任务进展
-
----""")
 
         if not conversation_history:
             logger.warning("context_builder_no_conversation_history", iteration=iteration)
@@ -433,6 +486,10 @@ class SimplifiedContextBuilder:
             )
             sections.append(status_section)
 
+            board_selection_summary = self._build_board_selection_user_summary()
+            if board_selection_summary:
+                sections.append(board_selection_summary)
+
             # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
             if iteration == 1:
@@ -451,6 +508,9 @@ class SimplifiedContextBuilder:
                 )
         else:
             # 首次迭代：显示完整查询
+            board_selection_summary = self._build_board_selection_user_summary()
+            if board_selection_summary:
+                sections.append(board_selection_summary)
             sections.append(f"{current_input_section}\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）
@@ -486,6 +546,10 @@ class SimplifiedContextBuilder:
 
             # ✅ 关键修复：将压缩后的消息写回 session
             self.memory.session.update_messages(compressed_messages)
+            await self._save_llm_compact_state(
+                compressed_messages,
+                reason="context_tokens_exceeded",
+            )
 
             logger.info(
                 "conversation_history_persisted",
@@ -504,6 +568,10 @@ class SimplifiedContextBuilder:
 
             # 即使降级也要写回 session
             self.memory.session.update_messages(truncated)
+            await self._save_llm_compact_state(
+                truncated,
+                reason="context_tokens_exceeded_fallback_truncate",
+            )
 
             logger.warning(
                 "conversation_history_truncated_fallback",
@@ -512,6 +580,53 @@ class SimplifiedContextBuilder:
             )
 
             return truncated
+
+    async def _save_llm_compact_state(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        reason: str,
+    ) -> None:
+        source_until_sequence = getattr(
+            self.memory.session,
+            "llm_source_until_sequence",
+            None,
+        )
+        if not isinstance(source_until_sequence, int):
+            logger.warning(
+                "llm_compact_state_not_persisted_missing_source_boundary",
+                session_id=self.memory.session_id,
+                mode=self.current_mode,
+                reason=reason,
+            )
+            return
+
+        try:
+            from app.agent.session.session_resolver import save_llm_compact_state_for_mode
+
+            persisted = await save_llm_compact_state_for_mode(
+                self.memory.session_id,
+                messages,
+                mode=self.current_mode,
+                source_until_sequence=source_until_sequence,
+                token_estimate=self._estimate_messages_tokens(messages),
+                reason=reason,
+            )
+            logger.info(
+                "llm_compact_state_persisted",
+                session_id=self.memory.session_id,
+                mode=self.current_mode,
+                source_until_sequence=source_until_sequence,
+                message_count=len(messages),
+                persisted=persisted,
+            )
+        except Exception as exc:
+            logger.error(
+                "llm_compact_state_persist_failed",
+                session_id=self.memory.session_id,
+                mode=self.current_mode,
+                error=str(exc),
+            )
 
     def _simple_truncate(self, text: str) -> str:
         """

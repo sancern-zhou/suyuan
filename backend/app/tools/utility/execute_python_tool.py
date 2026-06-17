@@ -36,6 +36,7 @@ from typing import Dict, Any, Optional, List
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
 from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir
 from app.tools.system.data_registry_read_state import get_data_registry_read_state
 
@@ -73,142 +74,14 @@ class ExecutePythonTool(LLMTool):
 
         super().__init__(
             name="execute_python",
-            description=f"""执行 Python 代码（用于数据处理、可视化、中间资源生成）
-
-    重要说明：
-    - 每次调用都是独立执行环境；上一次 execute_python 中定义的变量、函数、DataFrame 不会保留
-    - 使用工具返回的 data_id/report_data_id 计算前，必须先调用 read_data_registry 读取所需视图/字段；execute_python 的 get_raw_data 只返回已读取的数据快照
-    - 需要跨多次工具调用复用的中间结果，必须显式调用 `save_data(...)` 保存为 data_id，后续先用 read_data_registry 读取再计算
-- 不要在后续 execute_python 调用中直接引用前一次脚本里的变量名（如 city_map、df、report_data）
-- 统一数据目录：{get_data_registry()}
-- 当前工作目录：{self.PERMANENT_DIR}
-- 图表保存目录：{self.CHARTS_DIR}
-- 报告资源保存目录：{self.REPORTS_DIR}
-- 生成图表、表格、临时文件、Office 文件必须保存到上述统一数据目录下；不要使用 `/home/xckj/suyuan/backend_data_registry/...`
-- 推荐使用相对路径（如：'report.docx'）或统一目录绝对路径（如：'{self.CHARTS_DIR}/report.docx'）
-- 工具会自动将生成的文件保存到永久目录，并返回完整路径
-- 支持 python-docx, matplotlib, pandas, openpyxl 等所有 Python 库
-- 超时时间：30秒（可调整）
-
-📄 正式报告工具边界：
-- 正式报告默认使用 `create_report_package` 保存 `reports/{{report_id}}/report.qmd` 并触发右侧面板预览。
-- execute_python 主要用于计算、制图、整理表格、生成报告包所需的本地相对路径资源，不作为正式报告最终交付工具。
-- 不要在 Python 脚本里手写正式报告的 HTML/Word/PPT 转换流程；下载 HTML/Word/PPT/QMD 和分享 HTML 链接由右侧面板按钮触发固定后端报告 API。
-- 只有用户明确要求“一次性 Word/Office 文件”且不需要 qmd/HTML/PPT 同源报告包时，才直接用 python-docx/openpyxl/python-pptx 生成 Office 文件。
-- 用户明确要求演讲材料、展示页、数据大屏、交互网页或可视化叙事时，先用本工具准备图表/数据/资源，再用 create_html_artifact 收口为 HTML 展示产物。
-
-📊 图表保存与前端渲染：
-- 系统自动注入 save_chart() 辅助函数
-- 使用 save_chart(fig, 'chart.png') 保存图表，自动生成 /api/image/{{image_id}} URL
-- 也可以直接使用 plt.savefig()，系统会智能识别路径并缓存
-- 示例代码见下方
-
-📄 HTML输出兼容说明：
-- 系统仍兼容 save_html_report(report_id, html_content, assets_dir=None)，用于轻量 HTML 或旧流程。
-- 正式报告不要优先使用 save_html_report 交付；应生成 qmd 内容和相对路径资源后调用 create_report_package。
-- qmd 图片最终必须使用报告包内相对路径，如 `assets/charts/chart_01.png`，不要使用 `/api/image/...`。
-  生成报告包时不要自行根据 `/api/image/{{image_id}}` 或缓存 id 推断该路径；应把真实图片文件路径作为
-  `create_report_package.assets[].path` 传入，并用可选 `name` 指定稳定文件名，由 create_report_package 复制和规范化引用。
-
-    📊 数据访问功能（自动注入）：
-    当工具检测到 context 时，会自动注入 `get_raw_data(data_id)` 和 `save_data(data, ...)` 函数：
-    - `get_raw_data(data_id)`: 返回 read_data_registry 已读取的数据快照；未先读取会报错。
-    - `save_data(data, schema='python_result', metadata=None)`: 将中间结果保存到数据注册表并返回 data_id
-
-    使用示例：
-    ```python
-    # 先用 read_data_registry 读取数据，再把已返回的小规模数据用于计算
-    data = [
-        {{'city': '广州', 'o3_primary_days': 120, 'valid_days': 365}},
-        {{'city': '深圳', 'o3_primary_days': 110, 'valid_days': 365}},
-    ]
-    ratio = sum(row['o3_primary_days'] for row in data) / sum(row['valid_days'] for row in data)
-    print(f"臭氧首要污染物占比: {{ratio:.2%}}")
-
-    # 保存后续还要复用的中间结果
-    result_id = save_data(
-        [{{'metric': 'o3_primary_ratio', 'value': ratio}}],
-        schema='python_result',
-        metadata={{'purpose': 'report_check_intermediate'}}
-    )
-    print(f"中间结果 data_id: {{result_id}}")
-```
-
-📈 Excel 处理最佳实践：
-使用 pandas 和 openpyxl 标准库（无需自定义辅助函数）：
-```python
-# 读取 Excel
-import pandas as pd
-df = pd.read_excel('file.xlsx')  # 第一个工作表
-all_sheets = pd.read_excel('file.xlsx', sheet_name=None)  # 所有工作表
-
-# 创建 Excel（使用公式）
-from openpyxl import Workbook, load_workbook
-wb = Workbook()
-ws = wb.active
-ws['A1'] = '标题'
-ws['B2'] = '=SUM(A1:A10)'  # ✅ 使用公式，不要硬编码计算结果
-wb.save('output.xlsx')
-
-# 编辑现有 Excel
-wb = load_workbook('existing.xlsx')
-ws = wb.active
-ws['A1'] = '新值'
-wb.save('modified.xlsx')
-```
-
-核心原则：
-- ✅ 使用标准库（pandas/openpyxl），不要依赖自定义辅助函数
-- ✅ 公式优先：使用 Excel 公式（如 '=SUM(A1:A10)'），不要在 Python 中计算后硬编码
-- ✅ 详细文档：backend/docs/skills/excel.md
-
-中文字体设置（matplotlib图表）：
-```python
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from matplotlib.font_manager import FontProperties
-
-# ✅ 推荐方法：直接指定字体文件（最稳定）
-chinese_font = FontProperties(fname='/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc')
-fig, ax = plt.subplots()
-ax.set_title('中文标题', fontproperties=chinese_font)
-ax.set_xlabel('横轴', fontproperties=chinese_font)
-ax.set_ylabel('纵轴', fontproperties=chinese_font)
-```
-
-📊 图表保存示例（推荐使用save_chart辅助函数）：
-```python
-import matplotlib.pyplot as plt
-import numpy as np
-
-# 创建图表
-fig, ax = plt.subplots()
-x = np.linspace(0, 10, 100)
-ax.plot(x, np.sin(x))
-ax.set_xlabel('横轴')
-ax.set_ylabel('纵轴')
-ax.set_title('示例图表')
-
-# ✅ 推荐：使用save_chart辅助函数（自动生成 /api/image/{{image_id}} URL）
-save_chart(fig, 'example_chart.png', dpi=150)
-
-# ✅ 也支持：直接使用plt.savefig（系统会智能识别路径）
-plt.savefig('chart2.png', dpi=150)
-print('图表已保存: chart2.png')  # 系统会自动提取路径
-```
-
-示例：
-```python
-# ✅ 正确：使用相对路径
-from docx import Document
-doc = Document()
-doc.add_paragraph('Hello')
-doc.save('report.docx')  # 保存到当前工作目录
-
-# ❌ 错误：使用绝对路径（可能导致权限问题）
-doc.save('/root/report.docx')
-```""",
+            description=(
+                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理中间资源生成。"
+                "每次调用是独立环境；跨调用复用结果请用 save_data(...) 保存 data_id。"
+                "使用 data_id 前先用 read_data_registry 读取。"
+                "正式报告静态图表优先使用 create_report_chart，流程/架构图优先使用 create_diagram_artifact；"
+                "execute_python 只保留通用计算和临时资源生成职责。"
+                f"生成文件保存到统一数据目录：{get_data_registry()}。"
+            ),
             category=ToolCategory.QUERY,
             version="1.0.3",
             requires_context=True  # ✅ 需要上下文以支持数据访问功能
@@ -218,6 +91,7 @@ doc.save('/root/report.docx')
         self.use_ipython = HAS_IPYTHON
         self.default_timeout = 30
         self.max_output_size = 1024 * 1024  # 1MB
+        self.enable_echarts_visuals = False
 
         logger.info(
             "execute_python_tool_initialized",
@@ -280,12 +154,17 @@ doc.save('/root/report.docx')
         except SyntaxError:
             # Let the Python executor surface syntax errors. Only catch obvious
             # pre-read bypasses in unparsable snippets.
-            direct_registry_access.extend(
-                token for token in ("app.services.data_registry", "backend_data_registry")
-                if token in code
-            )
+            # 使用更精确的模式匹配，避免路径字符串误报
+            # 检测 import 语句
+            if re.search(r"\bimport\s+backend_data_registry\b", code):
+                direct_registry_access.append("import backend_data_registry")
+            if re.search(r"\bfrom\s+(backend_data_registry|app\.services\.data_registry)\s+import\b", code):
+                direct_registry_access.append("import from data_registry")
+            # 检测函数调用（但不检测字符串中的函数名）
             if re.search(r"\bget_raw_data\s*\(", code):
                 unknown_get_raw_data = True
+            if re.search(r"\.(load_dataset|load_payload)\s*\(", code):
+                direct_registry_access.append("direct data registry method call")
             return {
                 "get_raw_data_ids": get_raw_data_ids,
                 "unknown_get_raw_data": unknown_get_raw_data,
@@ -454,14 +333,11 @@ doc.save('/root/report.docx')
                 original_code = code
                 code = self._inject_data_context(code, context)
 
-                # ✅ 自动注册中文字体（避免用户代码中字体设置错误）
-                code = self._inject_chinese_font_support(code)
+                # ✅ 注入 matplotlib 保存路径捕获（不接管图表视觉设计）
+                code = self._inject_matplotlib_save_support(code)
 
                 # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
                 code = self._inject_excel_helpers(code)
-
-                # ✅ 注入标准报告保存辅助函数
-                code = self._inject_report_helpers(code)
 
                 logger.info(
                     "code_injection_completed",
@@ -469,7 +345,7 @@ doc.save('/root/report.docx')
                     injected_code_length=len(code),
                     code_modified=(code != original_code),
                     has_matplotlib_import='import matplotlib' in original_code or 'from matplotlib' in original_code,
-                    has_chinese_font_setup='FontProperties' in original_code or 'font.sans-serif' in original_code or 'Noto' in original_code,
+                    has_matplotlib_save_support='import matplotlib' in original_code or 'from matplotlib' in original_code,
                     has_excel_usage='openpyxl' in original_code or 'pandas' in original_code and 'read_excel' in original_code or '.xlsx' in original_code,
                     has_context=context is not None,
                     available_data_count=len(context.available_data_ids) if context and hasattr(context, 'available_data_ids') else 0
@@ -486,14 +362,11 @@ doc.save('/root/report.docx')
                 original_code = code
                 code = self._inject_data_context(code, context)
 
-                # ✅ 自动注册中文字体
-                code = self._inject_chinese_font_support(code)
+                # ✅ 注入 matplotlib 保存路径捕获（不接管图表视觉设计）
+                code = self._inject_matplotlib_save_support(code)
 
                 # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
                 code = self._inject_excel_helpers(code)
-
-                # ✅ 注入标准报告保存辅助函数
-                code = self._inject_report_helpers(code)
 
                 logger.info(
                     "code_injection_completed",
@@ -600,36 +473,7 @@ doc.save('/root/report.docx')
                     if result.get("success", False):
                         result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
 
-            # ✅ 处理 Notebook 文件：生成 HTML 预览
-            notebook_files = [f for f in final_files if f.endswith('.ipynb')]
-
-            if notebook_files and "file_path" not in result["data"]:
-                # 只处理第一个 notebook 文件
-                notebook_file = notebook_files[0]
-                try:
-                    from app.services.notebook_converter import notebook_converter
-                    html_preview = await notebook_converter.convert_to_html(notebook_file)
-                    result["data"]["html_preview"] = html_preview
-                    result["data"]["file_path"] = notebook_file
-                    result["data"]["file_type"] = "notebook"
-                    # ✅ 只在执行成功时覆盖 summary
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成Notebook：{Path(notebook_file).name}"
-                    logger.info(
-                        "execute_python_notebook_html_generated",
-                        html_id=html_preview["html_id"],
-                        notebook_file=notebook_file,
-                        execution_success=result.get("success", False)
-                    )
-                except Exception as html_error:
-                    logger.warning("execute_python_notebook_conversion_failed", error=str(html_error))
-                    # HTML 转换失败时，仍然返回文件信息
-                    result["data"]["file_path"] = notebook_file
-                    result["data"]["file_type"] = "notebook"
-                    # ✅ 只在执行成功时覆盖 summary
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成Notebook：{Path(notebook_file).name}"
-            elif final_files and "file_path" not in result["data"]:
+            if final_files and "file_path" not in result["data"]:
                 # ✅ 只在执行成功时覆盖 summary
                 if result.get("success", False):
                     file_names = [Path(f).name for f in final_files]
@@ -638,27 +482,6 @@ doc.save('/root/report.docx')
                 # ✅ 只在执行成功时覆盖 summary
                 if result.get("success", False):
                     result["summary"] = "✅ 工具已执行完成，计算任务已完成"
-
-            # ✅ 处理展示型 HTML：统一归档到 html_artifacts/{artifact_id}/index.html 并返回 html_preview
-            html_files = [f for f in final_files if Path(f).suffix.lower() in {'.html', '.htm'}]
-            if html_files and "html_preview" not in result["data"] and "file_path" not in result["data"]:
-                html_report = self._standardize_html_report(html_files[0], backend_dir)
-                if html_report:
-                    report_path = html_report["file_path"]
-                    result["data"]["html_preview"] = html_report["html_preview"]
-                    result["data"]["file_path"] = report_path
-                    result["data"]["file_type"] = "html_artifact"
-                    if report_path not in result["data"]["files"]:
-                        result["data"]["files"].append(report_path)
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成HTML展示页：{Path(report_path).name}"
-                    logger.info(
-                        "execute_python_html_artifact_standardized",
-                        source_file=html_files[0],
-                        artifact_id=html_report.get("artifact_id"),
-                        report_path=report_path,
-                        html_url=html_report["html_preview"]["html_url"],
-                    )
 
             # ✅ 检测图表输出（CHART_SAVED:xxx.png 或 CHART_SAVED:data:image/png;base64,...）
             chart_data = self._extract_chart_paths(result["data"].get("output", ""))
@@ -676,14 +499,19 @@ doc.save('/root/report.docx')
                         f"已保存中间结果 data_id: {', '.join(python_data_refs)}"
                     )
 
-            # ✅ 新增：检测 ECharts 标准格式 JSON 输出
-            echarts_data = self._extract_echarts_format(result["data"].get("output", ""))
+            # ECharts 标准 JSON 只由 execute_echarts_python 专用工具处理。
+            echarts_options = (
+                self._extract_echarts_formats(result["data"].get("output", ""))
+                if self.enable_echarts_visuals
+                else []
+            )
 
             logger.info(
                 "chart_paths_extracted",
                 chart_paths=chart_data.get("paths", []),
                 base64_count=len(chart_data.get("base64_data", [])),
-                echarts_found=echarts_data is not None,
+                echarts_found=bool(echarts_options),
+                echarts_count=len(echarts_options),
                 output_preview=result["data"].get("output", "")[:200]
             )
 
@@ -865,62 +693,13 @@ doc.save('/root/report.docx')
                         result["summary"] = "✅ 工具已执行完成，图表生成成功（缓存失败）"
 
             # ✅ 新增：处理 ECharts 标准格式 JSON 数据
-            if echarts_data:
-                try:
-                    # 检测图表类型
-                    if "series" in echarts_data:
-                        series_list = echarts_data["series"]
-                        if isinstance(series_list, list) and len(series_list) > 0:
-                            first_series = series_list[0]
-                            series_type = first_series.get("type", "chart").lower()
+            if echarts_options:
+                visuals = self._build_echarts_visuals(echarts_options, generator="execute_python")
+                result.setdefault("visuals", []).extend(visuals)
+                if not chart_data.get("paths") and not chart_data.get("base64_data"):
+                    result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
-                            # ✅ 检测极坐标图表（风向玫瑰图）
-                            if first_series.get("coordinateSystem") == "polar":
-                                chart_type = f"polar_{series_type}"
-                            else:
-                                chart_type = series_type
-                        else:
-                            chart_type = "chart"
-                    else:
-                        chart_type = "chart"
-
-                    # ✅ 从ECharts配置中提取display title
-                    echarts_title = echarts_data.get("title", {})
-                    if isinstance(echarts_title, dict):
-                        display_title = echarts_title.get("text", f"{chart_type.upper()}图表")
-                    else:
-                        display_title = echarts_title or f"{chart_type.upper()}图表"
-
-                    # ✅ 直接使用 ECharts 标准格式
-                    # 使用计数器确保同一工具生成的多个图表有唯一ID
-                    echarts_count = len([v for v in result.get("visuals", []) if v.get("id", "").startswith("echarts_")])
-                    result.setdefault("visuals", []).append({
-                        "id": f"echarts_{time.time_ns()}_{echarts_count}",
-                        "type": chart_type,
-                        "title": display_title,
-                        "data": echarts_data,  # 直接使用ECharts格式（包含完整title、yAxis.name等）
-                        "meta": {
-                            "generator": "execute_python",
-                            "schema_version": "echarts_standard"
-                        }
-                    })
-                    logger.info(
-                        "echarts_format_added",
-                        chart_type=chart_type,
-                        display_title=display_title,
-                        has_title_text="title" in echarts_data,
-                        data_format=list(echarts_data.keys()) if isinstance(echarts_data, dict) else type(echarts_data).__name__
-                    )
-                    # 更新摘要
-                    if not chart_data.get("paths") and not chart_data.get("base64_data"):  # 如果没有matplotlib图表，使用ECharts摘要
-                        result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{display_title}"
-                except Exception as e:
-                    logger.warning(
-                        "echarts_processing_failed",
-                        error=str(e),
-                        echarts_data=echarts_data
-                    )
-
+            self._attach_resume_context(result)
             return result
 
         except Exception as e:
@@ -1114,6 +893,93 @@ doc.save('/root/report.docx')
                         generated_files.append(file_path)
         return generated_files
 
+    def _attach_resume_context(self, result: Dict[str, Any]) -> None:
+        if not isinstance(result, dict) or not result.get("success"):
+            return
+
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        file_paths = []
+        for path in data.get("files") or []:
+            if path:
+                file_paths.append(str(path))
+        if data.get("file_path"):
+            file_paths.insert(0, str(data["file_path"]))
+        file_paths = list(dict.fromkeys(file_paths))
+
+        file_refs = []
+        for path in file_paths:
+            path_obj = Path(path)
+            file_refs.append(
+                build_file_ref(
+                    path,
+                    type=self._resource_type_for_path(path_obj),
+                    format=path_obj.suffix.lstrip(".").lower() or None,
+                    size=path_obj.stat().st_size if path_obj.exists() else None,
+                    usage="generated_file",
+                    preferred_for=["present_artifact", "read_file"],
+                )
+            )
+
+        data_refs = [
+            build_data_ref(data_id, usage="generated")
+            for data_id in (result.get("data_ids") or data.get("data_ids") or [])
+            if data_id
+        ]
+
+        visual_refs = []
+        for visual in result.get("visuals") or []:
+            if not isinstance(visual, dict):
+                continue
+            visual_data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
+            visual_meta = visual.get("meta") if isinstance(visual.get("meta"), dict) else {}
+            image_url = visual.get("image_url") or visual_data.get("url") or visual_data.get("image_url") or visual_meta.get("image_url")
+            local_path = visual.get("local_path") or visual_data.get("local_path") or visual_meta.get("local_path")
+            file_path = visual.get("file_path") or visual_data.get("source_file_path") or visual_data.get("file_path") or visual_meta.get("file_path")
+            visual_refs.append(
+                build_visual_ref(
+                    id=visual.get("id"),
+                    type=visual.get("type"),
+                    title=visual.get("title"),
+                    image_url=image_url,
+                    local_path=local_path,
+                    file_path=file_path,
+                )
+            )
+
+        refs = {}
+        if file_refs:
+            refs["files"] = file_refs
+        if data_refs:
+            refs["data"] = data_refs
+        visual_refs = [ref for ref in visual_refs if ref]
+        if visual_refs:
+            refs["visuals"] = visual_refs
+        if refs:
+            result["refs"] = merge_refs(result.get("refs"), refs)
+
+        llm_resume: Dict[str, Any] = {}
+        if file_paths:
+            llm_resume["generated_files"] = file_paths
+            llm_resume["tool_hint"] = f"Use present_artifact(file_path='{file_paths[0]}') to preview the primary generated file."
+        if data_refs:
+            llm_resume["data_ids"] = [ref["data_id"] for ref in data_refs]
+        if visual_refs and "tool_hint" not in llm_resume:
+            first_visual_path = visual_refs[0].get("tool_path")
+            if first_visual_path:
+                llm_resume["tool_hint"] = f"Use analyze_image(path='{first_visual_path}') for image analysis."
+        if llm_resume:
+            result["llm_resume"] = llm_resume
+
+    def _resource_type_for_path(self, path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}:
+            return "image"
+        if suffix in {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".qmd", ".md", ".html", ".htm"}:
+            return "document"
+        if suffix in {".json", ".csv", ".parquet", ".xlsx", ".xls"}:
+            return "data"
+        return "file"
+
     def _move_to_permanent_dir(self, files: list) -> list:
         """移动文件到永久目录"""
         final_files = []
@@ -1142,54 +1008,7 @@ doc.save('/root/report.docx')
             "files": "All generated local files as absolute paths.",
             "file_path": "Primary generated file for preview/download.",
             "pdf_preview": "Office/PDF preview metadata for docx/xlsx/pptx/pdf artifacts.",
-            "html_preview": "HTML preview metadata. Notebook uses /api/notebook/html/{html_id}; HTML artifacts use /api/html-artifacts/{artifact_id}/html; reports use /api/reports/{report_id}/html.",
             "visuals": "Image/ECharts blocks for frontend rendering. Matplotlib images are cached under /api/image/{image_id}.",
-            "html_artifact_layout": "Presentation HTML artifacts live at backend_data_registry/html_artifacts/{artifact_id}/index.html.",
-        }
-
-    def _safe_report_id(self, raw_id: str) -> str:
-        """Normalize an HTML artifact id."""
-        report_id = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_id.strip())
-        report_id = report_id.strip("_")
-        return report_id or f"html_report_{int(time.time())}"
-
-    def _standardize_html_report(self, html_file: str, backend_dir: str) -> Optional[Dict[str, Any]]:
-        """
-        Move/copy a generated standalone HTML file into the HTML artifact store.
-
-        This is a compatibility fallback for older execute_python snippets that wrote
-        a bare .html file instead of using create_html_artifact.
-        """
-        source = Path(html_file).resolve()
-        if not source.exists() or not source.is_file():
-            return None
-
-        artifact_id = self._safe_report_id(source.stem)
-        assets = []
-        for sibling_name in ("assets", "images", "report_files"):
-            sibling = source.parent / sibling_name
-            if sibling.exists() and sibling.is_dir():
-                assets.append({"path": str(sibling), "name": sibling.name})
-
-        try:
-            from app.services.html_artifact_service import html_artifact_service
-
-            data = html_artifact_service.create_artifact(
-                artifact_id,
-                source.read_text(encoding="utf-8", errors="replace"),
-                title=source.stem,
-                assets=assets,
-                metadata={"source": "execute_python_html_file"},
-            )
-        except Exception as exc:
-            logger.warning("execute_python_html_artifact_standardize_failed", source_file=str(source), error=str(exc))
-            return None
-
-        return {
-            "report_id": data["artifact_id"],
-            "artifact_id": data["artifact_id"],
-            "file_path": data["file_path"],
-            "html_preview": data["html_preview"],
         }
 
     def _extract_chart_paths(self, output: str) -> dict:
@@ -1259,8 +1078,13 @@ doc.save('/root/report.docx')
         return refs
 
     def _extract_echarts_format(self, output: str) -> dict:
+        """Backward-compatible single-option extractor."""
+        options = self._extract_echarts_formats(output)
+        return options[0] if options else None
+
+    def _extract_echarts_formats(self, output: str) -> List[Dict[str, Any]]:
         """
-        从 Python 代码输出中提取 ECharts 标准格式 JSON 数据
+        从 Python 代码输出中提取一个或多个 ECharts 标准格式 JSON 数据
 
         检测格式：
         1. 标准格式：JSON字符串包含 series 字段（ECharts标准格式）
@@ -1271,11 +1095,11 @@ doc.save('/root/report.docx')
             output: Python 代码输出
 
         Returns:
-            ECharts 配置字典，如果未找到则返回 None
+            ECharts 配置字典列表；每个有效 JSON 行对应一个图表
         """
         import json
-        import re
 
+        options: List[Dict[str, Any]] = []
         output_lines = output.split('\n')
 
         for line in output_lines:
@@ -1299,7 +1123,8 @@ doc.save('/root/report.docx')
                             has_yAxis="yAxis" in chart_data,
                             series_count=len(chart_data.get("series", []))
                         )
-                        return chart_data
+                        options.append(chart_data)
+                        continue
 
                 # ✅ 检测方式2：嵌套格式（包含 echarts_option 字段）
                 if isinstance(chart_data, dict) and "echarts_option" in chart_data:
@@ -1316,7 +1141,8 @@ doc.save('/root/report.docx')
                                 original_fields=list(chart_data.keys())
                             )
                             # ✅ 直接返回 echarts_option（标准 ECharts 格式）
-                            return echarts_option
+                            options.append(echarts_option)
+                            continue
 
                 # ✅ 检测方式3：嵌套格式（包含 data 字段，data 内有 series）
                 if isinstance(chart_data, dict) and "data" in chart_data:
@@ -1333,13 +1159,68 @@ doc.save('/root/report.docx')
                                 original_fields=list(chart_data.keys())
                             )
                             # ✅ 直接返回 inner_data（标准 ECharts 格式）
-                            return inner_data
+                            options.append(inner_data)
+                            continue
 
             except (json.JSONDecodeError, ValueError):
                 # 不是有效的 JSON，继续下一行
                 continue
 
-        return None
+        return options
+
+    def _build_echarts_visuals(
+        self,
+        echarts_options: List[Dict[str, Any]],
+        *,
+        generator: str,
+    ) -> List[Dict[str, Any]]:
+        """Convert parsed ECharts options into frontend visuals."""
+        visuals: List[Dict[str, Any]] = []
+        for index, echarts_data in enumerate(echarts_options):
+            try:
+                chart_type = self._detect_echarts_chart_type(echarts_data)
+                display_title = self._detect_echarts_title(echarts_data, chart_type)
+                visuals.append({
+                    "id": f"echarts_{time.time_ns()}_{index}",
+                    "type": chart_type,
+                    "title": display_title,
+                    "data": echarts_data,
+                    "meta": {
+                        "generator": generator,
+                        "schema_version": "echarts_standard"
+                    }
+                })
+                logger.info(
+                    "echarts_format_added",
+                    chart_type=chart_type,
+                    display_title=display_title,
+                    has_title_text="title" in echarts_data,
+                    data_format=list(echarts_data.keys()) if isinstance(echarts_data, dict) else type(echarts_data).__name__
+                )
+            except Exception as e:
+                logger.warning(
+                    "echarts_processing_failed",
+                    error=str(e),
+                    echarts_data=echarts_data
+                )
+        return visuals
+
+    def _detect_echarts_chart_type(self, echarts_data: Dict[str, Any]) -> str:
+        series_list = echarts_data.get("series")
+        if isinstance(series_list, list) and len(series_list) > 0:
+            first_series = series_list[0]
+            if isinstance(first_series, dict):
+                series_type = first_series.get("type", "chart").lower()
+                if first_series.get("coordinateSystem") == "polar":
+                    return f"polar_{series_type}"
+                return series_type
+        return "chart"
+
+    def _detect_echarts_title(self, echarts_data: Dict[str, Any], chart_type: str) -> str:
+        echarts_title = echarts_data.get("title", {})
+        if isinstance(echarts_title, dict):
+            return echarts_title.get("text", f"{chart_type.upper()}图表")
+        return echarts_title or f"{chart_type.upper()}图表"
 
     def _inject_data_context(self, code: str, context) -> str:
         """
@@ -1479,87 +1360,6 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         )
 
         return injected_code
-
-    def _inject_report_helpers(self, code: str) -> str:
-        """Inject helpers for standardized report artifact output."""
-        html_artifacts_dir = str(get_data_registry() / "html_artifacts").replace("\\", "\\\\").replace("'", "\\'")
-        helper_code = f'''# ===== 报告输出辅助函数（自动注入） =====
-# 展示型HTML统一保存为 backend_data_registry/html_artifacts/{{artifact_id}}/index.html
-def save_html_artifact(artifact_id: str, html_content: str, assets_dir=None, extra_assets=None):
-    """保存展示型 HTML 并打印标准预览标记。
-
-    适用于演讲材料、数据大屏、交互说明页、可视化叙事等。
-    正式报告请使用 create_report_package，不要用本函数交付。
-    """
-    import json
-    import re
-    import shutil
-    from pathlib import Path
-
-    artifacts_root = Path('{html_artifacts_dir}')
-    safe_id = re.sub(r'[^A-Za-z0-9_-]+', '_', str(artifact_id).strip()).strip('_')
-    if not safe_id:
-        raise ValueError('artifact_id 不能为空')
-
-    artifact_dir = artifacts_root / safe_id
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    artifact_path = artifact_dir / 'index.html'
-    artifact_path.write_text(html_content, encoding='utf-8')
-
-    def _copy_dir(src, dst):
-        src = Path(src)
-        dst = Path(dst)
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
-
-    if assets_dir:
-        src = Path(assets_dir)
-        if src.exists() and src.is_dir():
-            assets_target = artifact_dir / 'assets'
-            assets_target.mkdir(parents=True, exist_ok=True)
-            if src.name == 'assets':
-                _copy_dir(src, assets_target)
-            else:
-                _copy_dir(src, assets_target / src.name)
-
-    for asset in (extra_assets or []):
-        src = Path(asset)
-        if not src.exists():
-            continue
-        assets_target = artifact_dir / 'assets'
-        assets_target.mkdir(parents=True, exist_ok=True)
-        if src.is_dir():
-            _copy_dir(src, assets_target / src.name)
-        else:
-            shutil.copy2(src, assets_target / src.name)
-
-    html_preview = {{
-        'html_id': safe_id,
-        'html_url': f'/api/html-artifacts/{{safe_id}}/html',
-        'file_type': 'html_artifact',
-        'schema_version': 'html_artifact.v1',
-        'preview_version': str(int(artifact_path.stat().st_mtime)),
-    }}
-    result = {{
-        'success': True,
-        'artifact_id': safe_id,
-        'file_path': str(artifact_path),
-        'file_type': 'html_artifact',
-        'html_preview': html_preview,
-    }}
-    print('HTML_ARTIFACT_SAVED:' + str(artifact_path))
-    print('HTML_PREVIEW:' + json.dumps(html_preview, ensure_ascii=False))
-    return result
-
-# 兼容旧名称：轻量HTML/展示页走 html_artifact；正式报告仍应使用 create_report_package。
-def save_html_report(report_id: str, html_content: str, assets_dir=None, extra_assets=None):
-    return save_html_artifact(report_id, html_content, assets_dir=assets_dir, extra_assets=extra_assets)
-
-# ===== 报告输出辅助函数注入完成 =====
-
-'''
-        return helper_code + code
 
     def _convert_unicode_subscript_to_latex(self, code: str) -> str:
         """
@@ -1714,36 +1514,132 @@ def save_html_report(report_id: str, html_content: str, assets_dir=None, extra_a
 
         return converted_code
 
-    def _inject_chinese_font_support(self, code: str) -> str:
-        """
-        自动注入中文字体支持代码
-
-        策略：
-        1. 在代码开头注册字体
-        2. 自动转换Unicode下标/上标字符为LaTeX格式
-        3. 替换用户错误的字体设置
-        """
-        # 检测是否使用了matplotlib
-        has_matplotlib_import = any([
-            'import matplotlib' in code,
-            'from matplotlib' in code,
-        ])
-
+    def _inject_matplotlib_save_support(self, code: str) -> str:
+        """Inject only matplotlib image save detection and save_chart()."""
+        has_matplotlib_import = "import matplotlib" in code or "from matplotlib" in code
         if not has_matplotlib_import:
-            logger.debug("font_injection_skipped", reason="no matplotlib import")
+            logger.debug("matplotlib_save_injection_skipped", reason="no matplotlib import")
             return code
 
-        logger.info("font_injection_started", has_matplotlib_import=has_matplotlib_import)
-
-        # 步骤1：在代码开头注册字体文件并设置为默认字体
-        # 使用与 calendar_renderer.py 相同的字体优先级
         images_dir_literal = repr(str(get_images_dir()))
-        font_registration_code = """# ===== 自动注入中文字体支持 =====
+        save_support_code = """# ===== Matplotlib 图片保存捕获（自动注入） =====
 import os
-from pathlib import Path
+from matplotlib.figure import Figure
+from matplotlib.text import Text
 
-# ===== Matplotlib 图片保存兜底（自动注入） =====
+_SUYUAN_CHINESE_FONT_PROP = None
+_SUYUAN_FONT_WARNING_EMITTED = False
+_SUYUAN_LAST_CONFIGURED_FONT = None
+
+def _suyuan_configure_matplotlib_chinese_font(force_default=False):
+    '''默认方正小标宋简；显式字体支持中文时优先显式字体。'''
+    try:
+        global _SUYUAN_CHINESE_FONT_PROP, _SUYUAN_FONT_WARNING_EMITTED, _SUYUAN_LAST_CONFIGURED_FONT
+        import matplotlib.pyplot as _suyuan_plt
+        from matplotlib import font_manager as _suyuan_font_manager
+        from matplotlib.ft2font import FT2Font
+        current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
+        default_font_path = '/home/xckj/.local/share/fonts/方正小标宋简.TTF'
+        if not os.path.exists(default_font_path):
+            return
+        _suyuan_font_manager.fontManager.addfont(default_font_path)
+        default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
+        default_font_name = default_font_prop.get_name()
+
+        def _font_supports_chinese(font_name):
+            try:
+                prop = _suyuan_font_manager.FontProperties(family=[font_name])
+                path = _suyuan_font_manager.findfont(prop, fallback_to_default=False)
+                charmap = FT2Font(path).get_charmap()
+                return ord('中') in charmap, _suyuan_font_manager.FontProperties(fname=path)
+            except Exception:
+                return False, None
+
+        selected_name = default_font_name
+        selected_prop = default_font_prop
+        requested_font = current_fonts[0] if current_fonts else None
+        user_requested_font = (
+            not force_default
+            and requested_font
+            and requested_font != default_font_name
+            and requested_font != _SUYUAN_LAST_CONFIGURED_FONT
+        )
+        if user_requested_font:
+            supports_chinese, font_prop = _font_supports_chinese(requested_font) if requested_font else (False, None)
+            if supports_chinese:
+                selected_name = font_prop.get_name()
+                selected_prop = font_prop
+            elif requested_font and not _SUYUAN_FONT_WARNING_EMITTED:
+                print(f'字体提示：指定字体不支持中文，已回退为方正小标宋简。font={requested_font}')
+                _SUYUAN_FONT_WARNING_EMITTED = True
+
+        if not selected_name:
+            return
+        merged_fonts = [selected_name] + [f for f in current_fonts if f != selected_name]
+        _suyuan_plt.rcParams['font.family'] = 'sans-serif'
+        _suyuan_plt.rcParams['font.sans-serif'] = merged_fonts
+        _suyuan_plt.rcParams['axes.unicode_minus'] = False
+        _SUYUAN_CHINESE_FONT_PROP = selected_prop
+        _SUYUAN_LAST_CONFIGURED_FONT = selected_name
+    except Exception:
+        pass
+
+_suyuan_configure_matplotlib_chinese_font(force_default=True)
+
 _SUYUAN_CHART_PATHS_EMITTED = set()
+_suyuan_original_figure_savefig = getattr(Figure.savefig, '_suyuan_original_savefig', Figure.savefig)
+
+def _suyuan_normalize_matplotlib_label_text(value):
+    '''将常见污染物 Unicode 下标/上标转为 Matplotlib mathtext，避免字体缺字显示黑框。'''
+    if not isinstance(value, str) or not value:
+        return value
+    replacements = [
+        ('PM₂.₅', 'PM$_{2.5}$'),
+        ('PM₂₅', 'PM$_{2.5}$'),
+        ('PM₁₀', 'PM$_{10}$'),
+        ('O₃', 'O$_3$'),
+        ('NO₂', 'NO$_2$'),
+        ('SO₂', 'SO$_2$'),
+        ('CO₂', 'CO$_2$'),
+        ('CH₄', 'CH$_4$'),
+        ('N₂O', 'N$_2$O'),
+        ('μg/m³', 'μg/m$^3$'),
+        ('ug/m³', 'ug/m$^3$'),
+        ('/m³', '/m$^3$'),
+        ('m³', 'm$^3$'),
+        ('km²', 'km$^2$'),
+        ('m²', 'm$^2$'),
+    ]
+    normalized = value
+    for old, new in replacements:
+        normalized = normalized.replace(old, new)
+    return normalized
+
+def _suyuan_normalize_matplotlib_figure_text(fig):
+    try:
+        for text in fig.findobj(match=Text):
+            original = text.get_text()
+            normalized = _suyuan_normalize_matplotlib_label_text(original)
+            if normalized != original:
+                text.set_text(normalized)
+    except Exception:
+        pass
+
+def _suyuan_text_contains_cjk(value):
+    return isinstance(value, str) and any('\\u4e00' <= ch <= '\\u9fff' for ch in value)
+
+def _suyuan_apply_chinese_font_to_figure(fig):
+    try:
+        if _SUYUAN_CHINESE_FONT_PROP is None:
+            return
+        for text in fig.findobj(match=Text):
+            if not _suyuan_text_contains_cjk(text.get_text()):
+                continue
+            current_size = text.get_fontsize()
+            text.set_fontproperties(_SUYUAN_CHINESE_FONT_PROP)
+            text.set_fontsize(current_size)
+    except Exception:
+        pass
 
 def _suyuan_emit_chart_saved(path):
     '''输出标准图片保存标记，供 execute_python 后处理缓存到 /api/image/{image_id}。'''
@@ -1753,7 +1649,6 @@ def _suyuan_emit_chart_saved(path):
         if isinstance(path, (str, os.PathLike)):
             chart_path = os.path.abspath(os.fspath(path))
         else:
-            # BytesIO 等文件对象无法直接作为前端图片缓存路径处理。
             return
         if chart_path not in _SUYUAN_CHART_PATHS_EMITTED:
             _SUYUAN_CHART_PATHS_EMITTED.add(chart_path)
@@ -1761,155 +1656,52 @@ def _suyuan_emit_chart_saved(path):
     except Exception:
         pass
 
-# ===== 图表保存辅助函数（自动注入） =====
-def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
-    '''
-    保存图表并触发前端缓存(自动通过ImageCache生成URL)
-
-    Args:
-        fig: matplotlib图表对象
-        filename: 文件名(如 'chart.png')
-        dpi: 分辨率(默认150)
-        bbox_inches: 边界框(默认'tight')
-        facecolor: 背景色(默认'white')
-
-    Returns:
-        str: 保存的文件路径
-
-    Example:
-        >>> import matplotlib.pyplot as plt
-        >>> fig, ax = plt.subplots()
-        >>> ax.plot([1, 2, 3], [1, 4, 9])
-        >>> save_chart(fig, 'my_chart.png')  # 自动生成 /api/image/xxx URL
-    '''
-    # 确保图表目录存在
-    charts_dir = __SUYUAN_IMAGES_DIR__
-    try:
-        os.makedirs(charts_dir, exist_ok=True)
-    except PermissionError:
-        # 如果默认目录无权限，使用临时目录
-        import tempfile
-        charts_dir = tempfile.gettempdir()
-        os.makedirs(charts_dir, exist_ok=True)
-
-    # 构建完整路径
-    filepath = os.path.join(charts_dir, filename)
-
-    # 保存图表。优先使用原始 savefig，避免自动拦截层重复输出标记。
-    savefig_func = globals().get('_suyuan_original_figure_savefig')
-    if savefig_func:
-        savefig_func(fig, filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
-    else:
-        fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches, facecolor=facecolor)
-
-    # 关键：输出标准格式标记，触发 ImageCache 缓存
-    _suyuan_emit_chart_saved(filepath)
-
-    return filepath
-
-# ===== 字体注册 =====
-from matplotlib import font_manager
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-
-_suyuan_original_figure_savefig = Figure.savefig
-
 def _suyuan_patched_figure_savefig(self, fname, *args, **kwargs):
+    _suyuan_configure_matplotlib_chinese_font()
+    _suyuan_normalize_matplotlib_figure_text(self)
+    _suyuan_apply_chinese_font_to_figure(self)
     result = _suyuan_original_figure_savefig(self, fname, *args, **kwargs)
     _suyuan_emit_chart_saved(fname)
     return result
 
-if getattr(Figure.savefig, '__name__', '') != '_suyuan_patched_figure_savefig':
-    Figure.savefig = _suyuan_patched_figure_savefig
+_suyuan_patched_figure_savefig._suyuan_original_savefig = _suyuan_original_figure_savefig
+Figure.savefig = _suyuan_patched_figure_savefig
 
-# 字体优先级（与 calendar_renderer.py 一致）
-_font_configs = [
-    # 1. 方正小标宋简体 - 最高优先级
-    Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
-    # 2. Noto Sans CJK - 系统字体
-    Path('/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'),
-]
+def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
+    '''
+    保存 matplotlib 图表并输出 CHART_SAVED 标记，便于工具缓存为 /api/image/{image_id}。
+    本函数不修改字体、字号、画布、布局或其他视觉设计。
+    '''
+    charts_dir = __SUYUAN_IMAGES_DIR__
+    try:
+        os.makedirs(charts_dir, exist_ok=True)
+    except PermissionError:
+        import tempfile
+        charts_dir = tempfile.gettempdir()
+        os.makedirs(charts_dir, exist_ok=True)
 
-_font_registered = False
-for _font_path in _font_configs:
-    if _font_path.exists():
-        try:
-            font_manager.fontManager.addfont(str(_font_path))
-            _font_prop = font_manager.FontProperties(fname=str(_font_path))
-            _font_name = _font_prop.get_name()
-            plt.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
-            plt.rcParams['axes.unicode_minus'] = False
-
-            # 配置matplotlib的mathtext以支持LaTeX格式上下标
-            # 注意：由于中文字体不支持LaTeX数学符号，系统会自动将Unicode下标转换为简写格式
-            # 例如：PM2.5，ug/m3
-            # 这样可以避免LaTeX与中文混合导致的显示问题
-            # 如果需要严格科学符号，可以手动使用LaTeX格式（但要确保不与中文混合）
-            plt.rcParams['mathtext.fontset'] = 'dejavusans'  # 使用dejavu字体渲染数学公式
-            plt.rcParams['mathtext.default'] = 'it'  # 数学公式默认斜体（更符合数学符号惯例）
-
-            # 确保中文字体和数学符号字体共存
-            # 中文字体用于普通文本，mathtext用于数学符号
-            plt.rcParams['axes.titlesize'] = 12  # 标题字体大小
-            plt.rcParams['axes.labelsize'] = 11  # 轴标签字体大小
-            plt.rcParams['xtick.labelsize'] = 10  # x轴刻度字体大小
-            plt.rcParams['ytick.labelsize'] = 10  # y轴刻度字体大小
-            # 注意：不使用 text.usetex=True，因为需要安装完整的LaTeX系统，速度较慢
-
-            _font_registered = True
-            break
-        except Exception:
-            pass
-
-# ✅ 回退机制：如果字体文件注册失败，使用系统中已知的中文字体名称
-if not _font_registered:
-    # 使用系统已安装的 Noto Sans CJK 字体（支持中文和数字）
-    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK JP', 'Noto Sans CJK SC', 'DejaVu Sans', 'sans-serif']
-    plt.rcParams['axes.unicode_minus'] = False
-    plt.rcParams['mathtext.fontset'] = 'dejavusans'
-    plt.rcParams['mathtext.default'] = 'it'
-    plt.rcParams['axes.titlesize'] = 12
-    plt.rcParams['axes.labelsize'] = 11
-    plt.rcParams['xtick.labelsize'] = 10
-    plt.rcParams['ytick.labelsize'] = 10
-
-# ===== 字体注册完成 =====
+    filepath = os.path.join(charts_dir, filename)
+    _suyuan_configure_matplotlib_chinese_font()
+    _suyuan_normalize_matplotlib_figure_text(fig)
+    _suyuan_apply_chinese_font_to_figure(fig)
+    _suyuan_original_figure_savefig(
+        fig,
+        filepath,
+        dpi=dpi,
+        bbox_inches=bbox_inches,
+        facecolor=facecolor,
+    )
+    _suyuan_emit_chart_saved(filepath)
+    return filepath
 
 """.replace("__SUYUAN_IMAGES_DIR__", images_dir_literal)
 
-        lines = code.split('\n')
-        modified_lines = [font_registration_code]
-
-        # 步骤2：处理每一行，删除错误的字体设置
-        for line in lines:
-            # 检测并删除错误的字体设置（已在注册代码中统一配置）
-            # 同时检测 plt.rcParams 和 matplotlib.rcParams，以及可能覆盖中文字体的字体设置。
-            has_font_setting = (
-                ("font.sans-serif" in line or "font.family" in line)
-                and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
-            ) or (
-                "axes.unicode_minus" in line and ("plt.rcParams" in line or "matplotlib.rcParams" in line)
-            )
-
-            if has_font_setting:
-                logger.debug("font_setting_removed", original_line=line.strip())
-                continue  # 跳过这行，不添加到结果中
-            else:
-                modified_lines.append(line)
-
-        # 步骤3：拼接代码
-        injected_code = '\n'.join(modified_lines)
-
-        # 步骤4：自动转换Unicode下标/上标字符为LaTeX格式
-        injected_code = self._convert_unicode_subscript_to_latex(injected_code)
-
+        injected_code = save_support_code + "\n" + code
         logger.info(
-            "font_injection_completed",
+            "matplotlib_save_injection_completed",
             original_length=len(code),
             injected_length=len(injected_code),
-            injection_type="replace_font_settings"
         )
-
         return injected_code
 
     def _inject_excel_helpers(self, code: str) -> str:
@@ -2304,11 +2096,11 @@ def merge_excel_with_charts(file_paths, output_path):
         # 常见的文件保存模式（支持中文路径）
         patterns = [
             # WORD_SAVED:/path/to/file.docx, WORD_REPORT_SAVED:/path/to/file.docx, EXCEL_SAVED:/path/to/file.xlsx
-            r'(?:WORD_SAVED|WORD_REPORT_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED|HTML_REPORT_SAVED)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
+            r'(?:WORD_SAVED|WORD_REPORT_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
             # 报告已生成：/path/to/文件名.docx
-            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))',
+            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
             # 文件名.xlsx（带中文的后缀）
-            r'(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt|html|htm))\s*[已]*[保存生成]*',
+            r'(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
         ]
 
         for pattern in patterns:
@@ -2551,36 +2343,231 @@ def merge_excel_with_charts(file_paths, output_path):
         return {
             "name": "execute_python",
             "description": (
-                "执行 Python 代码，用于数据处理、数值计算、可视化、Excel处理和中间资源生成。"
-                "助手Agent和社交Agent在处理复杂 Python、Excel、图表或文件生成前，"
-                "必须先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "正式报告最终交付必须优先使用 create_report_package："
-                "先准备 report.qmd 内容和真实资源路径，再由 create_report_package 复制资源、规范化报告包内相对路径并触发右侧面板预览；"
-                "HTML/Word/PPT/QMD下载和HTML分享链接由前端右侧面板调用固定后端报告API处理。"
-                "不要把 execute_python 作为正式报告最终交付工具，也不要在 Python 脚本里手写正式报告格式转换。"
-                "演讲材料、展示页、数据大屏、交互网页或可视化叙事等非正式报告，应使用 create_html_artifact 收口，"
-                "右侧面板仅提供HTML预览、下载HTML和分享链接。"
-                "只有用户明确要求一次性 Word/Office 文件且不需要 qmd/HTML/PPT 同源报告包时，才直接生成 Office 文件。"
-                "优先使用专用统计/查询工具；只有专用工具无法满足自定义计算时再使用本工具。"
-                "使用工具返回的 data_id/report_data_id 计算前必须先调用 read_data_registry 读取数据；"
-                "execute_python 的 get_raw_data 只返回 read_data_registry 已读取的数据快照，未读取会报错；"
-                "不要在代码中绕过 read_data_registry 直接导入 data_registry 或 backend_data_registry。"
-                "生成中间文件保存到 backend_data_registry，并打印输出路径供后续工具使用。默认超时30秒。"
-                "输出artifact schema：files为生成文件列表，file_path为主文件；"
-                "Office/PDF返回pdf_preview，Notebook返回html_preview，"
-                "轻量HTML兼容流程可使用save_html_report()，正式报告不要优先使用该流程，"
-                "图片/ECharts返回visuals。"
+                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理中间资源生成。"
+                "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
+                "每次调用是独立环境；跨调用复用请用 save_data(...) 保存 data_id。"
+                "使用 data_id 前先通过 read_data_registry 读取。"
+                "正式报告静态图表优先使用 create_report_chart，流程/架构图优先使用 create_diagram_artifact。"
+                "生成文件保存到 backend_data_registry；默认超时30秒。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "code": {
                         "type": "string",
-                        "description": "要执行的 Python 代码"
+                        "description": (
+                            "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
+                            "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
+                            "工具只捕获保存路径，不接管图表字号、画布或布局。"
+                        )
                     },
                     "timeout": {
                         "type": "integer",
                         "description": "超时时间（秒），默认30"
+                    }
+                },
+                "required": ["code"]
+            }
+        }
+
+
+class ExecuteEChartsPythonTool(ExecutePythonTool):
+    """ECharts-only Python execution wrapper with a strict visuals contract."""
+
+    def __init__(self):
+        super().__init__()
+        self.name = "execute_echarts_python"
+        self.category = ToolCategory.VISUALIZATION
+        self.enable_echarts_visuals = True
+        self.description = (
+            "执行 Python 代码并将 stdout 中的一行一个纯 JSON ECharts option 转换为前端 visuals。"
+            "用于图表模式的最终渲染步骤；通用计算和文件生成仍使用 execute_python。"
+        )
+
+    async def execute(
+        self,
+        context=None,
+        code: str = None,
+        timeout: Optional[int] = None,
+        expected_charts: Optional[int] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        result = await super().execute(context=context, code=code, timeout=timeout, **kwargs)
+        echarts_visuals = [
+            visual for visual in result.get("visuals", [])
+            if visual.get("meta", {}).get("schema_version") == "echarts_standard"
+        ]
+
+        for visual in echarts_visuals:
+            visual.setdefault("meta", {})
+            visual["meta"]["generator"] = "execute_echarts_python"
+
+        if not result.get("success"):
+            result["visuals"] = echarts_visuals
+            return result
+
+        if not echarts_visuals:
+            result["status"] = "failed"
+            result["success"] = False
+            result["visuals"] = []
+            result["summary"] = (
+                "❌ 未解析到有效的 ECharts option。"
+                "请确保 Python stdout 每行只输出一个纯 JSON 对象，且顶层包含 series 数组。"
+            )
+            result.setdefault("metadata", {})
+            result["metadata"]["tool_name"] = "execute_echarts_python"
+            result["metadata"]["error_type"] = "NO_ECHARTS_OPTIONS"
+            return result
+
+        if expected_charts is not None and len(echarts_visuals) != expected_charts:
+            result["status"] = "failed"
+            result["success"] = False
+            result["visuals"] = echarts_visuals
+            result["summary"] = (
+                f"❌ ECharts 图表数量不匹配：期望 {expected_charts} 个，"
+                f"实际解析到 {len(echarts_visuals)} 个。"
+            )
+            result.setdefault("metadata", {})
+            result["metadata"]["tool_name"] = "execute_echarts_python"
+            result["metadata"]["error_type"] = "ECHARTS_COUNT_MISMATCH"
+            result["metadata"]["expected_charts"] = expected_charts
+            result["metadata"]["actual_charts"] = len(echarts_visuals)
+            return result
+
+        await self._attach_static_preview_urls(echarts_visuals)
+
+        result["visuals"] = echarts_visuals
+        result.setdefault("metadata", {})
+        result["metadata"]["tool_name"] = "execute_echarts_python"
+        result["metadata"]["visuals_count"] = len(echarts_visuals)
+        markdown_images = [
+            visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
+            for visual in echarts_visuals
+            if visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
+        ]
+        result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
+        if markdown_images:
+            result["summary"] = f"{result['summary']}\n\n" + "\n".join(markdown_images)
+        return result
+
+    async def _attach_static_preview_urls(self, visuals: List[Dict[str, Any]]) -> None:
+        """Attach /api/image previews while preserving the interactive ECharts payload."""
+        for visual in visuals:
+            echarts_data = visual.get("data")
+            if not isinstance(echarts_data, dict):
+                continue
+
+            image_info = await self._render_echarts_preview_to_cache(visual)
+            if not image_info:
+                continue
+
+            image_url = image_info["url"]
+            title = visual.get("title") or "ECharts 图表"
+            markdown_image = f"![{title}]({image_url})"
+
+            visual["image_url"] = image_url
+            visual["markdown_image"] = markdown_image
+            visual.setdefault("data", {})
+            visual["data"]["image_url"] = image_url
+            visual["data"]["markdown_image"] = markdown_image
+            visual["data"]["image_id"] = image_info.get("image_id")
+            visual["data"]["local_path"] = image_info.get("local_path")
+            visual.setdefault("meta", {})
+            visual["meta"]["image_url"] = image_url
+            visual["meta"]["markdown_image"] = markdown_image
+            visual["meta"]["image_id"] = image_info.get("image_id")
+            visual["meta"]["static_preview"] = {
+                "url": image_url,
+                "image_id": image_info.get("image_id"),
+                "local_path": image_info.get("local_path"),
+                "size_kb": image_info.get("size_kb"),
+            }
+
+    async def _render_echarts_preview_to_cache(self, visual: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        echarts_data = visual.get("data")
+        if not isinstance(echarts_data, dict):
+            return None
+
+        temp_path = None
+        try:
+            from app.services.image_cache import get_image_cache
+            from app.tools.visualization.chart_image_renderer.tool import ChartImageRenderer
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                temp_path = tmp_file.name
+
+            renderer = ChartImageRenderer()
+            success = await renderer._render_with_playwright(
+                echarts_option=echarts_data,
+                output_path=temp_path,
+                width=1000,
+                height=650,
+            )
+            if not success or not os.path.exists(temp_path):
+                logger.warning(
+                    "echarts_static_preview_render_failed",
+                    visual_id=visual.get("id"),
+                    chart_type=visual.get("type"),
+                )
+                return None
+
+            with open(temp_path, "rb") as image_file:
+                encoded = base64.b64encode(image_file.read()).decode("utf-8")
+
+            image_id = f"{visual.get('id', f'echarts_{time.time_ns()}')}_preview"
+            image_info = get_image_cache().save(encoded, chart_id=image_id)
+            logger.info(
+                "echarts_static_preview_cached",
+                visual_id=visual.get("id"),
+                image_id=image_info.get("image_id"),
+                image_url=image_info.get("url"),
+            )
+            return image_info
+        except Exception as e:
+            logger.warning(
+                "echarts_static_preview_failed",
+                visual_id=visual.get("id"),
+                chart_type=visual.get("type"),
+                error=str(e),
+                exc_info=True,
+            )
+            return None
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
+    def get_function_schema(self) -> Dict[str, Any]:
+        """获取 ECharts 专用 Function Calling Schema"""
+        return {
+            "name": "execute_echarts_python",
+            "description": (
+                "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
+                "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
+                "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
+                "工具会同时生成静态预览 image_url/markdown_image，聊天正文必须直接使用该 /api/image/{image_id} 链接。"
+                "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
+                "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": (
+                            "要执行的 Python 代码。必须在 stdout 中逐行 print 纯 JSON ECharts option；"
+                            "不要打印 CHART_1:、Markdown、自然语言说明或本地路径作为图表协议。"
+                        )
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "超时时间（秒），默认30"
+                    },
+                    "expected_charts": {
+                        "type": "integer",
+                        "description": "可选。期望生成的 ECharts 图表数量；不匹配时工具返回失败。"
                     }
                 },
                 "required": ["code"]

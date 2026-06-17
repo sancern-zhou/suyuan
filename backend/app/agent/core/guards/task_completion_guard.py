@@ -19,7 +19,7 @@ class TaskCompletionGuard:
 
         Args:
             memory_manager: 混合记忆管理器
-            task_list: 当前 ReAct runtime 共享的 TodoList/TaskList 实例
+            task_list: 当前 ReAct runtime 共享的 TaskList 实例
         """
         self.memory = memory_manager
         self.task_list = task_list
@@ -93,14 +93,14 @@ class TaskCompletionGuard:
 
 ## 必须执行的操作
 
-根据任务清单管理规范，你必须先完成实际业务动作。只有任务真实完成后，才能调用 TodoWrite
-用完整 items 列表把对应任务标记为 completed。
+根据任务清单管理规范，你必须先完成实际业务动作。只有任务真实完成后，才能调用 TaskUpdate
+把对应任务标记为 completed。
 
 注意：
-- TodoWrite 是状态管理工具，不是业务进展工具。
-- 不要为了消除警告而重复提交相同 items。
+- TaskUpdate 是状态管理工具，不是业务进展工具。
+- 不要为了消除警告而重复提交无变化更新。
 - 如果仍有 pending/in_progress 任务，应优先继续执行对应业务工具。
-- 如果所有任务已经真实完成，更新一次 TodoWrite 后直接给出最终回答。
+- 如果所有任务已经真实完成，更新一次 TaskUpdate 后直接给出最终回答。
 """
                 logger.warning(
                     "task_guard_incomplete_found",

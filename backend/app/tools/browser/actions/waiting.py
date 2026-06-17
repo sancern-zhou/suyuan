@@ -13,13 +13,16 @@ Implements 7 types of wait conditions:
 
 from typing import Optional, List
 from ..config import config
+from ..services.frame_target import resolve_frame
 
 
 def handle_wait(manager, session_id: str = "default", time_ms: Optional[int] = None,
                 text: Optional[str] = None, text_gone: Optional[str] = None,
                 selector: Optional[str] = None, url: Optional[str] = None,
                 load_state: Optional[str] = None, fn: Optional[str] = None,
-                timeout: Optional[int] = None, **kwargs) -> dict:
+                timeout: Optional[int] = None, frame_url: Optional[str] = None,
+                frame_name: Optional[str] = None, frame_index: Optional[int] = None,
+                **kwargs) -> dict:
     """
     Wait condition handler - supports multiple conditions executed sequentially.
 
@@ -45,10 +48,16 @@ def handle_wait(manager, session_id: str = "default", time_ms: Optional[int] = N
         ValueError: If invalid parameters are provided
     """
     page = manager.get_active_page(session_id)
+    context = resolve_frame(page, frame_url=frame_url, frame_name=frame_name, frame_index=frame_index)
     timeout_ms = _normalize_timeout(timeout)
     conditions_applied = []
 
     try:
+        if _has_no_wait_condition(time_ms, text, text_gone, selector, url, load_state, fn) and timeout is not None:
+            wait_time = _normalize_fixed_wait(timeout)
+            page.wait_for_timeout(wait_time)
+            conditions_applied.append(f"timeMs({wait_time}ms)")
+
         # Execute each wait condition in order
         if time_ms is not None:
             wait_time = max(0, int(time_ms))
@@ -56,19 +65,19 @@ def handle_wait(manager, session_id: str = "default", time_ms: Optional[int] = N
             conditions_applied.append(f"timeMs({wait_time}ms)")
 
         if text:
-            page.get_by_text(text).first.wait_for(state="visible", timeout=timeout_ms)
+            context.get_by_text(text).first.wait_for(state="visible", timeout=timeout_ms)
             conditions_applied.append(f"text('{text}')")
 
         if text_gone:
-            page.get_by_text(text_gone).first.wait_for(state="hidden", timeout=timeout_ms)
+            context.get_by_text(text_gone).first.wait_for(state="hidden", timeout=timeout_ms)
             conditions_applied.append(f"textGone('{text_gone}')")
 
         if selector:
-            page.locator(selector).first.wait_for(state="visible", timeout=timeout_ms)
+            context.locator(selector).first.wait_for(state="visible", timeout=timeout_ms)
             conditions_applied.append(f"selector('{selector}')")
 
         if url:
-            page.wait_for_url(url, timeout=timeout_ms)
+            context.wait_for_url(url, timeout=timeout_ms)
             conditions_applied.append(f"url('{url}')")
 
         if load_state:
@@ -78,7 +87,7 @@ def handle_wait(manager, session_id: str = "default", time_ms: Optional[int] = N
                     f"Invalid loadState: '{load_state}'. "
                     f"Must be one of: {', '.join(valid_states)}"
                 )
-            page.wait_for_load_state(load_state, timeout=timeout_ms)
+            context.wait_for_load_state(load_state, timeout=timeout_ms)
             conditions_applied.append(f"loadState('{load_state}')")
 
         if fn:
@@ -87,7 +96,7 @@ def handle_wait(manager, session_id: str = "default", time_ms: Optional[int] = N
                     "wait fn is disabled by config. "
                     "Set config.WAIT_FN_ENABLED=True to enable JavaScript function waits."
                 )
-            page.wait_for_function(fn, timeout=timeout_ms)
+            context.wait_for_function(fn, timeout=timeout_ms)
             fn_preview = fn[:50] + "..." if len(fn) > 50 else fn
             conditions_applied.append(f"fn('{fn_preview}')")
 
@@ -147,6 +156,27 @@ def _normalize_timeout(timeout: Optional[int]) -> int:
     elif timeout > config.WAIT_MAX_TIMEOUT:
         return config.WAIT_MAX_TIMEOUT
     return timeout
+
+
+def _has_no_wait_condition(
+    time_ms: Optional[int],
+    text: Optional[str],
+    text_gone: Optional[str],
+    selector: Optional[str],
+    url: Optional[str],
+    load_state: Optional[str],
+    fn: Optional[str],
+) -> bool:
+    return not any([time_ms is not None, text, text_gone, selector, url, load_state, fn])
+
+
+def _normalize_fixed_wait(value: int) -> int:
+    wait_time = int(value)
+    if wait_time <= 0:
+        return 0
+    if wait_time < 1000:
+        wait_time *= 1000
+    return min(wait_time, config.WAIT_MAX_TIMEOUT)
 
 
 def get_wait_summary(result: dict) -> str:

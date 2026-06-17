@@ -14,6 +14,7 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
+import copy
 import structlog
 
 # 单一工具注册源
@@ -23,15 +24,58 @@ from app.tools import global_tool_registry
 from app.tools.observed_weather_tool import observed_tool_registry
 from app.tools.openmeteo_current_tool import openmeteo_current_tool
 from app.tools.weatherapi_com_tool import weatherapi_com_tool
+from app.agent.runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
+
+
+def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose native multimodal image attachment while hiding legacy image analysis."""
+    multimodal_schema = copy.deepcopy(schema)
+    multimodal_schema["description"] = (
+        "读取文件或目录内容，支持文本分页、PDF、DOCX、PPTX、Word XML、Markdown。"
+        "图片文件默认按普通文件读取；只有明确需要查看历史或工具生成的本地图片时，才设置 as_multimodal_attachment=true。"
+        "PDF/DOCX/PPTX 默认会生成前端可查看的预览；预览失败不影响文本读取。"
+        "Excel文件不由 read_file 读取，需使用 execute_python。"
+        "大文本默认100KB限制，超限会截断并提示用 grep 或 offset/limit 分页。"
+        "不返回base64，避免浪费上下文。"
+    )
+    properties = multimodal_schema.get("parameters", {}).get("properties", {})
+    properties.pop("auto_analyze", None)
+    properties.pop("analysis_type", None)
+    properties["as_multimodal_attachment"] = {
+        "type": "boolean",
+        "description": "社交模式/图表模式等原生多模态模式下，仅在需要查看历史或工具生成的本地图片时设置为 true；本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "default": False,
+    }
+    return multimodal_schema
 
 
 # ========================================
 # 核心工具适配器（基于LLMTool）
 # ========================================
 
-async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any]:
+def convert_openai_to_anthropic_schema(tool_schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    将 OpenAI Function Calling schema 转换为 Anthropic tools schema。
+
+    兼容输入：
+    - {"name": "...", "description": "...", "parameters": {...}}
+    - {"type": "function", "function": {...}}
+    """
+    if not isinstance(tool_schema, dict):
+        return tool_schema
+
+    if tool_schema.get("type") == "function" and isinstance(tool_schema.get("function"), dict):
+        tool_schema = tool_schema["function"]
+
+    return {
+        "name": tool_schema.get("name", "unknown_tool"),
+        "description": tool_schema.get("description", ""),
+        "input_schema": tool_schema.get("parameters", {"type": "object", "properties": {}}),
+    }
+
+async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
     """
     通用LLM工具调用适配器（符合UDF v1.0规范）
 
@@ -49,6 +93,14 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
             "summary": str
         }
     """
+    if len(args) > 1:
+        raise TypeError(f"call_llm_tool expected at most 1 positional context argument, got {len(args)}")
+
+    context = args[0] if args else None
+    runtime_context = kwargs.pop("__execution_context", None)
+    if runtime_context is not None:
+        context = runtime_context
+
     start_time = datetime.now()
     try:
         # 从单一注册源获取工具
@@ -92,6 +144,12 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
                 "summary": f"❌ {error_msg}"
             }
 
+        tool_data = global_tool_registry.get_tool_data(tool_name)
+        requires_context = tool_data.get("requires_context", False) if tool_data else False
+
+        if context is None and requires_context and "context" in kwargs:
+            context = kwargs.pop("context")
+
         # 执行工具（传递context，如果工具需要的话）
         # 【修复】对于需要data_context_manager的工具，正确处理已注入的data_context_manager
         # 注意：expert_executor通过位置参数传递execution_context，需要在这里正确处理
@@ -127,7 +185,6 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
 
         # 注入依赖（基于工具属性动态判断）
         if data_context_manager is not None:
-            tool_data = global_tool_registry.get_tool_data(tool_name)
             requires_context = tool_data.get("requires_context", False) if tool_data else False
 
             # ✅ 只为数据分析工具注入 data_context_manager
@@ -148,9 +205,6 @@ async def call_llm_tool(tool_name: str, context=None, **kwargs) -> Dict[str, Any
 
         # 执行工具
         # 根据 requires_context 标志决定是否传递 ExecutionContext
-        tool_data = global_tool_registry.get_tool_data(tool_name)
-        requires_context = tool_data.get("requires_context", False) if tool_data else False
-
         if execution_context is not None and requires_context:
             # 数据分析工具：需要 ExecutionContext
             # execute(self, context, ...)
@@ -216,12 +270,6 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
     - summary: 摘要信息
     - data或visuals: 数据内容（v2.0工具使用visuals，v1.0工具使用data）
     """
-    def normalize_standard_result(payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize collection fields at the tool boundary."""
-        if payload.get("visuals") is None:
-            payload["visuals"] = []
-        return payload
-
     # 验证标准格式
     if isinstance(result, dict):
         # 检查核心必需字段
@@ -239,7 +287,7 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
             # ✅ 标准格式验证通过
             global_tool_registry.record_success(tool_name)
             global_tool_registry._update_execution_time(tool_name, execution_time)
-            return normalize_standard_result(result)
+            return result
         else:
             # ❌ 非标准格式，需要转换
             missing_fields = [k for k in required_core_fields if k not in result]
@@ -257,7 +305,7 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
 
             # 转换为标准格式
             converted_result = _convert_to_standard_format(result, tool_name, execution_time)
-            return normalize_standard_result(converted_result)
+            return converted_result
 
     # 非字典结果，包装为标准格式（容错处理）
     logger.warning(
@@ -271,7 +319,6 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
         "status": "success",
         "success": True,
         "data": result,
-        "visuals": [],
         "metadata": {
             "tool_name": tool_name,
             "execution_time": execution_time
@@ -294,22 +341,18 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
     """
     try:
         # 提取基本信息
-        # ✅ 修复：更安全的默认值策略
-        # 如果工具返回了 success 字段，优先使用它来推断 status
+        status = result.get("status", "success")
+        # ✅ 修复：根据 status 字段推断 success 值，而不是默认为 True
+        # 如果工具没有返回 success 字段，通过 status 推断
         if "success" in result:
             success = result["success"]
-            # 如果 success 为 False，默认 status 为 "failed"
-            if result.get("status"):
-                status = result["status"]
-            else:
-                status = "failed" if not success else "success"
+            if success is False and status == "success":
+                status = "failed"
         else:
-            # 如果工具没有返回 success 字段，根据 status 推断
-            status = result.get("status", "success")
             # 如果有 error 字段，标记为失败
             if "error" in result:
                 success = False
-                status = "failed"
+                status = result.get("status", "failed")
             else:
                 # 根据 status 推断
                 success = (status == "success")
@@ -320,29 +363,20 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         metadata = result.get("metadata", {})
 
         # ✅ 修复：根据 success 状态生成默认 summary
-        # 对于返回 result 字段的工具（详细结果已传递给LLM），不需要 summary
         if "summary" in result:
             summary = result["summary"]
-        elif "result" in result:
-            # 有 result 字段，不生成 summary（不添加到返回结果中）
-            summary = None
         else:
             if success:
                 summary = f"✅ {tool_name} 执行完成"
             else:
                 summary = f"❌ {tool_name} 执行失败"
                 if "error" in result:
-                    # ✅ 修复：增加截断长度到200字符，确保 data_id 等关键信息完整
-                    summary += f": {result['error'][:200]}"
+                    summary += f": {result['error'][:50]}"
 
         # 【修复】保留 data_id 字段（用于参数绑定）
         data_id = result.get("data_id")
         if data_id and "data_id" not in metadata:
             metadata["data_id"] = data_id
-
-        report_data_id = result.get("report_data_id")
-        if report_data_id and "report_data_id" not in metadata:
-            metadata["report_data_id"] = report_data_id
 
         # 确保metadata包含必要信息
         if "tool_name" not in metadata:
@@ -358,18 +392,33 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         standard_result = {
             "status": status,
             "success": success,
-            "metadata": metadata
+            "metadata": metadata,
+            "summary": summary
         }
 
-        # 只在 summary 非空时才添加（对于返回 result 字段的工具，summary 为 None）
-        if summary is not None:
-            standard_result["summary"] = summary
+        for key in ("error", "error_code", "required_action", "current_refs", "diagnostics"):
+            if key in result:
+                standard_result[key] = result[key]
 
         # 【修复】保留 data_id 到顶层（供 parameter_binder 使用）
         if data_id:
             standard_result["data_id"] = data_id
-        if report_data_id:
-            standard_result["report_data_id"] = report_data_id
+
+        passthrough_fields = (
+            "refs",
+            "llm_resume",
+            "context_refs",
+            "content_preview",
+            "data_ids",
+            "report_data_id",
+            "report_data_ids",
+            "source_data_ids",
+            "source_report_data_ids",
+            "visual_ids",
+        )
+        for key in passthrough_fields:
+            if key in result:
+                standard_result[key] = result[key]
 
         # 添加数据字段（优先使用visuals，如果不存在则使用data）
         if visuals is not None:
@@ -378,13 +427,6 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
         elif data is not None:
             standard_result["data"] = data
             standard_result["visuals"] = []  # v1.0格式不包含visuals
-        else:
-            standard_result["visuals"] = []
-
-        # 保留 result 字段（包含详细的结构化数据，如对比结果）
-        # 例如：compare_standard_reports 工具返回的详细对比数据
-        if "result" in result:
-            standard_result["result"] = result["result"]
 
         logger.info(
             "tool_result_converted_to_standard_format",
@@ -541,7 +583,7 @@ def register_observed_weather_tools():
 
 def _smart_sample_data_for_load(data: List[Dict], max_records: int) -> Tuple[List[Dict], Dict[str, Any]]:
     """
-    智能采样数据（用于大数据集采样）
+    智能采样数据（用于load_data_from_memory工具）
 
     策略：
     1. 优先保留首尾数据（时间序列的起点和终点）
@@ -598,86 +640,6 @@ def _smart_sample_data_for_load(data: List[Dict], max_records: int) -> Tuple[Lis
     }
 
 
-# ========================================
-# Anthropic Format Support (Phase 1.2)
-# ========================================
-
-def convert_openai_to_anthropic_schema(tool_schema: Dict) -> Dict:
-    """将 OpenAI Function Calling 格式转换为 Anthropic 格式
-
-    OpenAI 格式:
-    {
-        "name": "tool_name",
-        "description": "...",
-        "parameters": {
-            "type": "object",
-            "properties": {...},
-            "required": [...]
-        }
-    }
-
-    Anthropic 格式:
-    {
-        "name": "tool_name",
-        "description": "...",
-        "input_schema": {
-            "type": "object",
-            "properties": {...}
-        }
-    }
-
-    Args:
-        tool_schema: 工具 schema（OpenAI 或 Anthropic 格式）
-
-    Returns:
-        Anthropic 格式的工具 schema（如果已经是 Anthropic 格式则直接返回）
-    """
-    # 如果已经是 Anthropic 格式（有 input_schema 字段），直接返回
-    if "input_schema" in tool_schema:
-        return tool_schema
-
-    # 如果是 OpenAI 格式（有 parameters 字段），进行转换
-    if "parameters" in tool_schema:
-        return {
-            "name": tool_schema["name"],
-            "description": tool_schema["description"],
-            "input_schema": {
-                "type": tool_schema["parameters"]["type"],
-                "properties": tool_schema["parameters"]["properties"],
-                # 可选：保留 required 字段
-                **({"required": tool_schema["parameters"].get("required", [])}
-                   if "required" in tool_schema.get("parameters", {}) else {})
-            }
-        }
-
-    # 如果格式未知，记录错误并返回带警告的 schema
-    schema_name = tool_schema.get("name")
-    if not schema_name or not isinstance(schema_name, str):
-        logger.error(
-            "invalid_tool_schema_no_name",
-            schema_preview=str(tool_schema)[:200],
-            message="工具 Schema 缺少 name 字段，这不应该发生（工具注册时应该被拦截）"
-        )
-        return {
-            "name": "unknown",
-            "description": "[ERROR] Invalid tool schema - missing name field",
-            "input_schema": {
-                "type": "object",
-                "properties": {}
-            }
-        }
-
-    # 有 name 但格式不完整，返回基础格式
-    return {
-        "name": schema_name,
-        "description": tool_schema.get("description", ""),
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    }
-
-
 def get_react_agent_tool_registry() -> Dict[str, Callable]:
     """
     获取ReAct Agent可用的工具注册表（单一注册源）
@@ -698,18 +660,14 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     logger.info(
         "get_react_agent_tool_registry_debug",
         total_global_tools=len(global_tools),
-        has_unpack_office="unpack_office" in global_tools,
         all_tools=global_tools
     )
 
     for tool_name in global_tools:
         # 为每个工具创建一个闭包，避免延迟绑定问题
         def make_tool_wrapper(name: str):
-            async def tool_wrapper(context=None, **kwargs):
-                # 移除 kwargs 中的 tool_name 和 context 参数，避免重复传递
-                kwargs.pop('tool_name', None)
-                kwargs.pop('context', None)
-                return await call_llm_tool(name, context=context, **kwargs)
+            async def tool_wrapper(**kwargs):
+                return await call_llm_tool(name, **kwargs)
             tool_wrapper.__name__ = name
             # 从注册表获取工具描述
             tool_data = global_tool_registry.get_tool_data(name)
@@ -724,21 +682,103 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
     # 2. 天气观测工具（特殊的独立工具）
     # ========================================
     # 包装 get_observed_weather 以支持 context 参数
-    async def get_observed_weather_wrapper(context=None, **kwargs):
+    async def get_observed_weather_wrapper(**kwargs):
         """包装器：支持context参数但不使用它"""
+        kwargs.pop("__execution_context", None)
         return await get_observed_weather(**kwargs)
 
     get_observed_weather_wrapper.__name__ = "get_observed_weather"
     get_observed_weather_wrapper.__doc__ = get_observed_weather.__doc__
     tool_registry["get_observed_weather"] = get_observed_weather_wrapper
 
+    # ========================================
+    # 3. 数据加载工具（内置工具）
+    # ========================================
+    async def load_data_from_memory(data_id: str, max_records: int = 100, context=None, **kwargs):
+        """
+        从外部化存储读取数据（智能采样，避免token超限）
+
+        Args:
+            data_id: 数据引用ID（完整ID，如 'vocs_unified:v1:abc123'）
+            max_records: 最大返回记录数（默认100，用于控制token消耗）
+            context: ExecutionContext实例
+            **kwargs: 其他参数
+
+        Returns:
+            包含采样后数据的字典
+        """
+        runtime_context = kwargs.pop("__execution_context", None)
+        if runtime_context is not None:
+            context = runtime_context
+
+        if not context:
+            return {
+                "status": "failed",
+                "success": False,
+                "error": "需要ExecutionContext来加载数据",
+                "data": [],
+                "summary": "❌ 缺少上下文"
+            }
+
+        try:
+            data = context.get_data(data_id)
+            original_count = len(data) if isinstance(data, list) else 1
+            truncated = False
+            sampling_info = None
+
+            # 智能采样：如果数据量超过max_records，进行智能采样
+            if isinstance(data, list) and len(data) > max_records:
+                truncated = True
+                logger.info(
+                    "load_data_sampling_required",
+                    data_id=data_id,
+                    original_count=original_count,
+                    max_records=max_records
+                )
+
+                # 使用智能采样策略
+                sampled_data, sampling_info = _smart_sample_data_for_load(data, max_records)
+
+                logger.info(
+                    "load_data_sampling_completed",
+                    data_id=data_id,
+                    original_count=original_count,
+                    sampled_count=len(sampled_data),
+                    strategy=sampling_info.get("strategy"),
+                    retention_ratio=sampling_info.get("retention_ratio")
+                )
+
+                data = sampled_data
+
+            return {
+                "status": "success",
+                "success": True,
+                "data": data,
+                "metadata": {
+                    "data_id": data_id,
+                    "original_count": original_count,
+                    "loaded_at": datetime.now().isoformat(),
+                    "truncated": truncated,
+                    "sampling_info": sampling_info
+                },
+                "summary": f"✅ 成功加载数据 {data_id}（共{original_count}条记录，返回{len(data) if isinstance(data, list) else 1}条）"
+            }
+        except Exception as e:
+            return {
+                "status": "failed",
+                "success": False,
+                "error": str(e),
+                "data": [],
+                "summary": f"❌ 数据加载失败: {str(e)[:50]}"
+            }
+
+    tool_registry["load_data_from_memory"] = load_data_from_memory
 
     # 🔍 调试日志：输出最终工具注册表
     final_tools = list(tool_registry.keys())
     logger.info(
         "react_agent_tool_registry_created",
         total_tools=len(tool_registry),
-        has_unpack_office="unpack_office" in final_tools,
         tools=final_tools
     )
 
@@ -751,76 +791,125 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 
 def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    获取工具的Schema定义（支持按模式过滤）
-
-    Args:
-        mode: Agent模式 ("assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops")
-              如果为None，返回所有工具的schema
+    获取工具Schema定义（单一注册源）
 
     Returns:
         Schema列表，用于LLM Function Calling
     """
     schemas = []
 
-    # 如果指定了模式，获取该模式的工具列表
+    allowed_tools = None
     if mode:
         from app.agent.prompts.tool_registry import get_tools_by_mode
-        mode_tools = get_tools_by_mode(mode)
-        allowed_tools = set(mode_tools.keys())
-    else:
-        allowed_tools = None
+        allowed_tools = set(get_tools_by_mode(mode).keys())
 
     # ========================================
-    # 从 global_tool_registry 获取工具的 Schema
+    # 1. 从 global_tool_registry 获取所有工具的 Schema
     # ========================================
     for tool_data in global_tool_registry.get_all_tools():
         tool = tool_data["tool"]
-        if not tool.is_available():
-            continue
-
-        # 按模式过滤
-        if allowed_tools and tool.name not in allowed_tools:
-            continue
-
-        # 特别处理图表工具的Schema，添加职责说明
-        if tool.name in ["smart_chart_generator", "generate_chart"]:
+        if tool.is_available():
+            if allowed_tools is not None and tool.name not in allowed_tools:
+                continue
             schema = tool.get_function_schema()
-            # 在描述中添加职责分工信息
-            if "description" in schema:
-                if tool.name == "smart_chart_generator":
-                    schema["description"] = (
-                        "智能图表生成器 - 固定格式数据专用\n"
-                        "适用：PMF/OBM分析结果、组分数据、已存储数据（有data_id）\n"
-                        "特征：从统一存储加载数据，智能推荐图表类型\n"
-                        "决策：有data_id或需要智能推荐时使用此工具"
-                    )
-                elif tool.name == "generate_chart":
-                    schema["description"] = (
-                        "通用图表生成工具 - 动态数据专用\n"
-                        "适用：直接传入的原始数据、自定义场景、预定义场景模板\n"
-                        "特征：直接传入数据，使用模板库+LLM生成\n"
-                        "决策：无data_id或需要LLM分析数据特征时使用此工具"
-                    )
+            if supports_native_multimodal(mode) and tool.name == "read_file":
+                schema = _native_multimodal_read_file_schema(schema)
             schemas.append(schema)
-        else:
-            schemas.append(tool.get_function_schema())
 
-    logger.info("tool_schemas_generated", mode=mode, count=len(schemas))
+    # ========================================
+    # 2. 添加天气观测工具 schema（特殊工具）
+    # ========================================
+    if allowed_tools is None or "get_observed_weather" in allowed_tools:
+        schemas.append({
+        "name": "get_observed_weather",
+        "description": "获取指定位置的实时天气观测数据（原始观测数据，非预报），包括温度、湿度、风速、风向、气压等信息",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lat": {
+                    "type": "number",
+                    "description": "纬度，范围 -90 到 90"
+                },
+                "lon": {
+                    "type": "number",
+                    "description": "经度，范围 -180 到 180"
+                },
+                "station_id": {
+                    "type": "string",
+                    "description": "站点ID（可选），用于标识和记录"
+                },
+                "preferred_source": {
+                    "type": "string",
+                    "description": "优先数据源（可选），如 'openmeteo_current' 或 'weatherapi_com'"
+                }
+            },
+            "required": ["lat", "lon"]
+        }
+        })
+
+    # ========================================
+    # 3. 添加数据加载工具 schema（内置工具）
+    # ========================================
+    if allowed_tools is None or "load_data_from_memory" in allowed_tools:
+        schemas.append({
+        "name": "load_data_from_memory",
+        "description": (
+            "从外部化存储读取数据（智能采样，避免token超限）。"
+            "当你在观察结果中看到'data_id: schema:v1:hash'格式的数据引用时，"
+            "说明数据已被外部化存储，使用此工具可以加载数据。"
+            "工具会自动智能采样：保留首尾30%数据+中间40%均匀采样，适合时间序列分析。"
+            "例如: 如果看到'data_id: pmf_result:v1:a1b2c3d4e5f6789012345678901234567890abcd'，"
+            "调用 load_data_from_memory(data_id='pmf_result:v1:a1b2c3d4e5f6789012345678901234567890abcd', max_records=100) 可以加载数据。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "data_id": {
+                    "type": "string",
+                    "description": (
+                        "数据引用ID（完整的data_id值）。"
+                        "通常在观察结果中显示为'data_id: schema:v1:hash'格式，"
+                        "例如：'pmf_result:v1:abc123'或'vocs_unified:v1:def456'"
+                    )
+                },
+                "max_records": {
+                    "type": "integer",
+                    "description": (
+                        "最大返回记录数，用于控制token消耗（默认100）。"
+                        "如果数据总量超过此值，工具会智能采样："
+                        "- 保留前30%数据（时间序列起点）"
+                        "- 保留后30%数据（时间序列终点）"
+                        "- 中间40%均匀采样"
+                        "对于小数据集（<max_records），返回全部数据。"
+                        "建议值：50-200，根据需要调整"
+                    ),
+                    "default": 100
+                }
+            },
+            "required": ["data_id"]
+        }
+        })
+
+    logger.info("tool_schemas_generated", count=len(schemas))
 
     return schemas
 
 
-def get_detailed_schemas_for_tools(tool_names: List[str]) -> List[Dict[str, Any]]:
+def get_detailed_schemas_for_tools(
+    tool_names: List[str],
+    mode: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
-    按需获取指定工具的详细Schema
+    按需获取指定工具的详细Schema（第二阶段）
 
     Args:
         tool_names: 需要详细Schema的工具名称列表
+        mode: 可选Agent模式，用于应用该模式的schema适配
 
     Returns:
         指定工具的完整Schema列表
     """
-    all_schemas = get_tool_schemas()
+    all_schemas = get_tool_schemas(mode=mode)
     detailed_schemas = [
         schema for schema in all_schemas
         if schema["name"] in tool_names
@@ -850,6 +939,7 @@ def get_tool_metadata() -> Dict[str, Any]:
                 "version": tool_data.get("version"),
                 "category": tool_data.get("category"),
                 "requires_context": tool_data.get("requires_context"),
+                "input_adapter_rules": tool_data.get("input_adapter_rules", {}),
                 "return_schema": tool_data.get("return_schema", {}),
                 "metadata": tool_data.get("metadata", {}),
                 "test_samples": tool_data.get("test_samples", []),
@@ -858,3 +948,4 @@ def get_tool_metadata() -> Dict[str, Any]:
             }
 
     return metadata
+

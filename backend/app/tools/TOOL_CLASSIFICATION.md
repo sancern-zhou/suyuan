@@ -123,45 +123,44 @@ class ReadFileTool(LLMTool):
 ### 3. 任务管理工具
 
 **特征**：
-- 管理任务清单
-- 只需要 TaskList 依赖
-- 不涉及数据管理
+- 管理当前会话的任务清单状态
+- housekeeping 工具，不代表业务进展
+- 不涉及数据管理，不应连续重复调用
 
 **架构要求**：
-- ⚠️ `requires_context=False`（不需要完整 ExecutionContext）
-- ✅ 添加 `requires_task_list=True` 属性
-- ✅ 签名：`async def execute(self, task_list: TaskList, **kwargs)`
-- ❌ **不支持 activeForm 参数**（项目不需要）
+- ✅ `requires_context=True`，通过 `ExecutionContext.get_task_list()` 访问 TaskList
+- ✅ 增量更新模式，TaskCreate 创建任务，TaskUpdate 更新单个任务
+- ✅ 返回 `taskId/updatedFields/statusChange/no_op` 等结构化状态
+- ✅ 支持 `activeForm`
 
 **工具列表**：
-- `create_task` - 创建任务
-- `update_task` - 更新任务状态
-- `get_task` - 获取任务详情
-- `list_tasks` - 列出任务清单
+- `TaskCreate` - 创建当前会话任务
+- `TaskUpdate` - 更新单个任务字段或状态
+- `TaskList` - 列出当前会话任务
+- `TaskGet` - 按 ID 获取单个任务
 
 **代码示例**：
 ```python
-class CreateTaskTool(LLMTool):
+class TaskUpdateTool(LLMTool):
     def __init__(self):
         super().__init__(
-            name="create_task",
-            description="创建任务",
+            name="TaskUpdate",
+            description="更新单个任务（housekeeping状态管理，增量模式）",
             category=ToolCategory.TASK_MANAGEMENT,
-            requires_context=False  # ✅ 不需要 ExecutionContext
+            requires_context=True,
         )
-        self.requires_task_list = True  # ✅ 需要 TaskList
 
     async def execute(
         self,
-        task_list: TaskList,  # ✅ 第一个参数
-        subject: str,
-        description: str
-        # ❌ 移除 activeForm 参数
+        context: ExecutionContext,
+        taskId: str,
+        status: str | None = None,
     ) -> Dict[str, Any]:
-        task = task_list.create_task(...)
+        task_list = context.get_task_list()
+        task = task_list.update(taskId, status=status)
         return {
             "status": "success",
-            "data": {"task_id": task.id, ...},
+            "data": {"task": task.to_dict()},
             "summary": "..."
         }
 ```
@@ -171,9 +170,9 @@ class CreateTaskTool(LLMTool):
 ## 重构检查清单
 
 ### ❌ 要删除的内容
-- [ ] 所有任务管理工具中的 `activeForm` 参数
-- [ ] 提示词中的 `activeForm` 参数说明
-- [ ] `tool_adapter.py` 中的硬编码工具名单（TOOLS_NEEDING_DATA_CONTEXT、TASK_MANAGEMENT_TOOLS）
+- [x] 所有任务管理工具中的 `activeForm` 参数
+- [x] 提示词中的 `activeForm` 参数说明
+- [x] 旧 `create_task/update_task/get_task/list_tasks` 文案
 
 ### ✅ 要保留的内容
 - [x] 现有 `LLMTool` 基类

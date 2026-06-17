@@ -9,7 +9,7 @@ Bash Command Execution Tool
 
 安全措施（防止命令注入）：
 1. 禁用 shell=True：使用参数列表执行命令，防止shell元字符注入
-2. Shell元字符黑名单：禁止 ; | & $ ` 等特殊字符（使用引号状态追踪）
+2. Shell元字符黑名单：禁止 ; & $ ` 等危险字符；允许受限管道（逐段校验）
 3. 危险命令黑名单：禁止 rm -rf /、sudo、shutdown 等
 4. 命令白名单验证：只允许特定类别的命令
 5. 工作目录限制：只能在工作目录内操作
@@ -19,6 +19,7 @@ Bash Command Execution Tool
 安全改进（v2.0 - 减少误报）：
 - 引号状态追踪：正确识别引号内/外的元字符
 - 允许引号内的安全元字符（如 grep "pattern\|other"）
+- 允许管道符 |，但会拆分管道并对每一段命令单独校验
 - 改进的转义字符处理
 """
 
@@ -182,6 +183,53 @@ def strip_safe_redirections(command: str) -> str:
     return result
 
 
+def split_unquoted_pipeline(command: str) -> List[str]:
+    """
+    按引号外、未转义的管道符拆分命令。
+
+    shell=False 不会解释管道，这里显式拆分后用 Popen 串接 stdout/stdin。
+    引号内的 | 作为普通参数保留，例如 grep "a|b"。
+    """
+    segments: List[str] = []
+    current: List[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+
+    for c in command:
+        if escaped:
+            current.append(c)
+            escaped = False
+            continue
+
+        if c == '\\':
+            current.append(c)
+            if not in_single_quote:
+                escaped = True
+            continue
+
+        if c == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            current.append(c)
+            continue
+
+        if c == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            current.append(c)
+            continue
+
+        if c == '|' and not in_single_quote and not in_double_quote:
+            segment = ''.join(current).strip()
+            segments.append(segment)
+            current = []
+            continue
+
+        current.append(c)
+
+    segments.append(''.join(current).strip())
+    return segments
+
+
 class BashTool(LLMTool):
     """
     Bash 命令执行工具（安全版本）
@@ -279,6 +327,14 @@ class BashTool(LLMTool):
         # 其他安全工具
         "echo", "date", "which", "whereis", "type", "test", "timeout"
     }
+
+    # 管道链路中只允许偏只读/过滤类命令，避免把执行器和写操作串起来。
+    PIPELINE_ALLOWED_COMMANDS = {
+        "cat", "grep", "rg", "find", "ls", "head", "tail", "sort", "uniq",
+        "wc", "cut", "ps", "pwd", "du", "df", "free", "awk", "sed",
+        "locate", "which", "whereis", "date", "echo",
+    }
+    MAX_PIPELINE_SEGMENTS = 5
 
     def __init__(self):
         # 调用父类构造函数
@@ -404,55 +460,65 @@ class BashTool(LLMTool):
                 timeout=timeout_val
             )
 
-            # 使用shlex分词命令（安全处理引号）
-            # posix=True确保Unix风格引号处理，Windows下也会正确处理
-            try:
-                command_parts = shlex.split(command, posix=True)
-            except ValueError as e:
-                self._log_command(command, f"命令分词失败: {e}")
+            parse_result = self._parse_command_pipeline(command)
+            if not parse_result["valid"]:
+                self._log_command(command, parse_result["error"])
                 return {
                     "status": "failed",
                     "success": False,
-                    "error": f"命令格式错误（引号不匹配）: {e}",
+                    "error": parse_result["error"],
                     "data": {"command": command},
                     "metadata": {
                         "tool_name": "bash",
                         "error_type": "COMMAND_PARSE_ERROR"
                     },
-                    "summary": f"❌ 命令格式错误: {e}"
+                    "summary": f"❌ 命令格式错误: {parse_result['error']}"
                 }
+
+            pipeline_parts = parse_result["pipeline"]
+            first_command_parts = pipeline_parts[0]
 
             # 确定编码方式
             is_windows = platform.system() == "Windows"
-            output_encoding = 'gbk' if (is_windows and not any(cmd in command_parts[0] for cmd in ['python', 'node', 'java', 'hyts_std', 'wrf'])) else 'utf-8'
+            output_encoding = 'gbk' if (is_windows and not any(cmd in first_command_parts[0] for cmd in ['python', 'node', 'java', 'hyts_std', 'wrf'])) else 'utf-8'
 
-            # ✅ 关键安全改进：不使用shell=True，使用参数列表
-            # 这防止了shell元字符注入攻击
-            result = subprocess.run(
-                command_parts,  # 参数列表，而非字符串
-                shell=False,    # ✅ 明确禁用shell（默认就是False）
-                cwd=work_dir,
-                capture_output=True,
-                encoding=output_encoding,
-                errors='replace',
-                timeout=timeout_val
-            )
+            if len(pipeline_parts) == 1:
+                # ✅ 关键安全改进：不使用shell=True，使用参数列表
+                result = subprocess.run(
+                    first_command_parts,
+                    shell=False,
+                    cwd=work_dir,
+                    capture_output=True,
+                    encoding=output_encoding,
+                    errors='replace',
+                    timeout=timeout_val
+                )
+                stdout = result.stdout or ""
+                stderr = result.stderr or ""
+                returncode = result.returncode
+            else:
+                stdout, stderr, returncode = self._run_pipeline(
+                    pipeline_parts,
+                    work_dir,
+                    output_encoding,
+                    timeout_val
+                )
 
             # 4. 处理输出（完全不截断，依赖上下文压缩策略）
-            stdout = result.stdout or ""
-            stderr = result.stderr or ""
+            stdout = stdout or ""
+            stderr = stderr or ""
 
             # 记录命令历史
             self._log_command(
                 command,
-                "success" if result.returncode == 0 else "failed",
-                exit_code=result.returncode
+                "success" if returncode == 0 else "failed",
+                exit_code=returncode
             )
 
             logger.info(
                 "bash_command_completed",
                 command=command,
-                exit_code=result.returncode,
+                exit_code=returncode,
                 stdout_length=len(stdout),
                 stderr_length=len(stderr),
                 stderr_preview=stderr[:50] if stderr else "",
@@ -462,12 +528,12 @@ class BashTool(LLMTool):
             # ✅ 完整输出，不生成 summary，让上层格式化器决定如何呈现
             # 依赖系统的上下文压缩策略管理 token 消耗
             return {
-                "status": "success" if result.returncode == 0 else "failed",
-                "success": result.returncode == 0,
+                "status": "success" if returncode == 0 else "failed",
+                "success": returncode == 0,
                 "data": {
                     "stdout": stdout,
                     "stderr": stderr,
-                    "exit_code": result.returncode,
+                    "exit_code": returncode,
                     "command": command,
                     "working_directory": str(work_dir)
                 },
@@ -580,9 +646,7 @@ class BashTool(LLMTool):
         # 使用 fully_unquoted（移除所有引号内容）检测引号外的危险字符
         _, fully_unquoted, _ = extract_unquoted_content(command_stripped)
 
-        shell_metacharacters = [';', '|', '&', '\n', '\r', '\t',
-                                '(', ')', '[', ']', '{', '}', '!',
-                                '~', '%', '#']
+        shell_metacharacters = [';', '&', '\n', '\r', '\t']
 
         for char in shell_metacharacters:
             if char in fully_unquoted:
@@ -610,13 +674,6 @@ class BashTool(LLMTool):
                 "error": "禁止使用输入重定向（<）（防止文件读取攻击）"
             }
 
-        # 检测管道（在fully_unquoted中）
-        if '|' in safe_unquoted:
-            return {
-                "valid": False,
-                "error": "禁止使用管道（|）（防止命令链接）"
-            }
-
         # 检测命令连接符（&&, ||）
         if '&&' in safe_command or '||' in safe_command:
             return {
@@ -624,10 +681,18 @@ class BashTool(LLMTool):
                 "error": "禁止使用命令连接符（&&, ||）（防止多命令执行）"
             }
 
+        pipeline_validation = self._validate_pipeline(command_stripped)
+        if not pipeline_validation["valid"]:
+            return pipeline_validation
+
         # ========== 第五层：智能命令验证 ==========
+        if pipeline_validation["is_pipeline"]:
+            return {"valid": True}
+
+        segment = pipeline_validation["segments"][0]
         try:
             # 使用shlex安全分词（处理引号）
-            parts = shlex.split(command_stripped, posix=True)
+            parts = shlex.split(segment, posix=True)
         except ValueError as e:
             return {
                 "valid": False,
@@ -677,6 +742,167 @@ class BashTool(LLMTool):
             "valid": False,
             "error": f"命令不存在或不在白名单中: {first_command}"
         }
+
+    def _validate_pipeline(self, command: str) -> Dict[str, Any]:
+        """校验管道结构，并对每一段命令独立执行命令/参数校验。"""
+        segments = split_unquoted_pipeline(command)
+        is_pipeline = len(segments) > 1
+
+        if any(not segment for segment in segments):
+            return {
+                "valid": False,
+                "error": "管道格式错误：管道符两侧都必须有命令"
+            }
+
+        if len(segments) > self.MAX_PIPELINE_SEGMENTS:
+            return {
+                "valid": False,
+                "error": f"管道段数过多：最多允许 {self.MAX_PIPELINE_SEGMENTS} 段"
+            }
+
+        for segment in segments:
+            segment_validation = self._validate_single_command_segment(
+                segment,
+                require_pipeline_safe=is_pipeline
+            )
+            if not segment_validation["valid"]:
+                return segment_validation
+
+        return {
+            "valid": True,
+            "is_pipeline": is_pipeline,
+            "segments": segments,
+        }
+
+    def _validate_single_command_segment(
+        self,
+        segment: str,
+        require_pipeline_safe: bool = False
+    ) -> Dict[str, Any]:
+        try:
+            parts = shlex.split(segment, posix=True)
+        except ValueError as e:
+            return {
+                "valid": False,
+                "error": f"命令格式错误（引号不匹配）: {e}"
+            }
+
+        if not parts:
+            return {
+                "valid": False,
+                "error": "命令为空"
+            }
+
+        first_command = parts[0]
+        command_name = Path(first_command).name
+
+        if require_pipeline_safe and command_name not in self.PIPELINE_ALLOWED_COMMANDS:
+            return {
+                "valid": False,
+                "error": f"管道中不允许使用命令: {first_command}"
+            }
+
+        if shutil.which(first_command):
+            logger.debug(
+                "command_allowed_via_path",
+                command=first_command,
+                path=shutil.which(first_command)
+            )
+            return self._validate_command_args(parts)
+
+        if first_command in self.ALLOWED_CATEGORIES:
+            return self._validate_command_args(parts)
+
+        if any(first_command.endswith(ext) for ext in ['.exe', '.bat', '.cmd', '.ps1']):
+            return self._validate_command_args(parts)
+
+        if first_command.startswith("/") or (len(first_command) > 1 and first_command[1] == ':'):
+            if command_name in self.ALLOWED_CATEGORIES or shutil.which(command_name):
+                if require_pipeline_safe and command_name not in self.PIPELINE_ALLOWED_COMMANDS:
+                    return {
+                        "valid": False,
+                        "error": f"管道中不允许使用命令: {first_command}"
+                    }
+                return self._validate_command_args(parts)
+            return {
+                "valid": False,
+                "error": f"命令不在白名单中: {first_command}"
+            }
+
+        return {
+            "valid": False,
+            "error": f"命令不存在或不在白名单中: {first_command}"
+        }
+
+    def _parse_command_pipeline(self, command: str) -> Dict[str, Any]:
+        pipeline_parts: List[List[str]] = []
+        for segment in split_unquoted_pipeline(command):
+            try:
+                parts = shlex.split(segment, posix=True)
+            except ValueError as e:
+                return {
+                    "valid": False,
+                    "error": f"命令格式错误（引号不匹配）: {e}"
+                }
+            if not parts:
+                return {
+                    "valid": False,
+                    "error": "命令为空"
+                }
+            pipeline_parts.append(parts)
+
+        return {
+            "valid": True,
+            "pipeline": pipeline_parts,
+        }
+
+    def _run_pipeline(
+        self,
+        pipeline_parts: List[List[str]],
+        work_dir: Path,
+        output_encoding: str,
+        timeout_val: int
+    ) -> Tuple[str, str, int]:
+        processes = []
+        prev_stdout = None
+
+        for parts in pipeline_parts:
+            process = subprocess.Popen(
+                parts,
+                shell=False,
+                cwd=work_dir,
+                stdin=prev_stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if prev_stdout is not None:
+                prev_stdout.close()
+            prev_stdout = process.stdout
+            processes.append(process)
+
+        try:
+            stdout_bytes, stderr_bytes = processes[-1].communicate(timeout=timeout_val)
+            stderr_chunks = [stderr_bytes or b""]
+
+            for process in processes[:-1]:
+                process.wait(timeout=1)
+                stderr = process.stderr.read() if process.stderr else b""
+                stderr_chunks.append(stderr or b"")
+
+            returncode = processes[-1].returncode
+            for process in processes[:-1]:
+                if process.returncode not in (0, None) and returncode == 0:
+                    returncode = process.returncode
+
+            stdout = (stdout_bytes or b"").decode(output_encoding, errors="replace")
+            stderr = b"".join(stderr_chunks).decode(output_encoding, errors="replace")
+            return stdout, stderr, returncode
+        except subprocess.TimeoutExpired:
+            for process in processes:
+                process.kill()
+            for process in processes:
+                process.wait()
+            raise
 
     def _validate_command_args(self, parts: List[str]) -> Dict[str, Any]:
         """
@@ -903,7 +1129,7 @@ class BashTool(LLMTool):
             "name": "bash",
             "description": (
                 "执行安全命令，用于文件查看、数据处理、外部程序和系统检查。"
-                "禁止重定向、管道、命令替换和危险命令；默认超时60秒、输出1MB。"
+                "支持受限管道（逐段校验），禁止重定向、命令替换、命令连接符和危险命令；默认超时60秒、输出1MB。"
                 "路径优先使用正斜杠；复杂脚本或文件写入优先用execute_python/write_file。"
             ),
             "parameters": {
@@ -911,7 +1137,7 @@ class BashTool(LLMTool):
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "要执行的 Bash 命令（不能包含重定向、管道等Shell特性）"
+                        "description": "要执行的 Bash 命令（支持 cat/grep/find/head 等只读命令管道；不能包含重定向、命令连接符或命令替换）"
                     },
                     "timeout": {
                         "type": "integer",

@@ -51,7 +51,7 @@ class ReadDocxTool(LLMTool):
 ⚠️ 格式说明：
 - 标题会转换为 Markdown 格式（如 ## 标题），便于理解层级
 - 这是工具添加的格式标记，实际文档不包含 # 符号
-- find_replace_word 会自动处理，无需手动移除 # 符号
+- 不要把这些 Markdown 标记当作文档原始内容
 
 参数：
 - path: DOCX 文件路径
@@ -244,7 +244,7 @@ class ReadDocxTool(LLMTool):
             elif image_count > 0:
                 # 如果检测到图片但提取失败
                 result_data["image_note"] = f"文档包含 {image_count} 张图片，但提取失败。"
-                result_data["image_suggestion"] = "请使用 unpack_office 工具手动解包文档后，再使用 analyze_image 工具分析图片。"
+                result_data["image_suggestion"] = "图片未能自动提取；当前不暴露 Office XML 解包工具。"
 
             # 生成PDF预览
             try:

@@ -4,7 +4,9 @@ Validate PPTX deliverables by rendering and running lightweight QA checks.
 from __future__ import annotations
 
 import json
+import re
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -105,6 +107,16 @@ class ValidatePptxTool(LLMTool):
                         "issues": rendered_checks["issues"],
                         "recommendations": ["安装 PyMuPDF/fitz 后可启用渲染级视觉质量检查。"],
                     }
+            page_pngs = [Path(path) for path in render_result.get("page_pngs", [])]
+            pages = [
+                {
+                    "slide": index,
+                    "page_number": index,
+                    "file_name": page_path.name,
+                    "png_path": str(page_path),
+                }
+                for index, page_path in enumerate(page_pngs, start=1)
+            ]
 
             issues = []
             issues.extend(geometry.get("issues", []))
@@ -120,6 +132,12 @@ class ValidatePptxTool(LLMTool):
                 "qa_dir": str(qa_dir),
                 "render": render_result,
                 "montage_path": str(montage_path) if montage_path else None,
+                "page_index_base": 1,
+                "pages": pages,
+                "usage_notes": [
+                    "pages 中的 slide/page_number 与 page-XXX.png 文件名均为 1-based。",
+                    "montage_path 仅用于全局总览；修复或核查指定页时应读取 pages 中对应 slide 的 png_path。",
+                ],
                 "geometry": geometry,
                 "rendered_pages": rendered_checks,
                 "rendered_overflow": overflow_checks,
@@ -129,6 +147,7 @@ class ValidatePptxTool(LLMTool):
                 "issues": issues,
                 "issue_count": len(issues),
             }
+            report.update(self._build_structured_quality_sections(report))
 
             report_path = qa_dir / "report.json"
             report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -165,6 +184,171 @@ class ValidatePptxTool(LLMTool):
                 path = self.working_dir / path
             return path.resolve()
         return (self.default_qa_root / f"{pptx_path.stem}_{uuid.uuid4().hex[:8]}").resolve()
+
+    def _build_structured_quality_sections(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        raw_issues = [issue for issue in report.get("issues", []) if isinstance(issue, dict)]
+        structured_issues = [
+            self._structure_issue(issue, index, report)
+            for index, issue in enumerate(raw_issues, start=1)
+        ]
+        issue_summary = dict(sorted(Counter(issue["type"] for issue in structured_issues).items()))
+        affected_slides = sorted(
+            {
+                issue["slide"]
+                for issue in structured_issues
+                if isinstance(issue.get("slide"), int)
+            }
+        )
+        blocking_issue_count = sum(1 for issue in structured_issues if issue["severity"] == "high")
+        qa_failed = bool(structured_issues) and all(
+            issue["type"] in {"validation_error", "rendered_visual_qa_unavailable"}
+            for issue in structured_issues
+        )
+        status = "qa_failed" if qa_failed else ("needs_revision" if structured_issues else "passed")
+        return {
+            "metrics": self._build_quality_metrics(report),
+            "structured_issues": structured_issues,
+            "issue_summary": issue_summary,
+            "gate": {
+                "status": status,
+                "passed": status == "passed",
+                "blocking": status == "qa_failed" or blocking_issue_count > 0,
+                "blocking_issue_count": blocking_issue_count,
+                "issue_count": len(structured_issues),
+                "affected_slides": affected_slides,
+            },
+        }
+
+    def _build_quality_metrics(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        design_quality = report.get("design_quality") if isinstance(report.get("design_quality"), dict) else {}
+        visual_quality = report.get("visual_quality") if isinstance(report.get("visual_quality"), dict) else {}
+        rendered_pages = report.get("rendered_pages") if isinstance(report.get("rendered_pages"), dict) else {}
+        geometry = report.get("geometry") if isinstance(report.get("geometry"), dict) else {}
+        fonts = report.get("fonts") if isinstance(report.get("fonts"), dict) else {}
+        pages = report.get("pages") if isinstance(report.get("pages"), list) else []
+        return {
+            "slide_count": len(pages),
+            "design_score": design_quality.get("score"),
+            "design_grade": design_quality.get("grade"),
+            "visual_score": visual_quality.get("score"),
+            "visual_grade": visual_quality.get("grade"),
+            "blank_pages": rendered_pages.get("blank_pages", []),
+            "empty_slides": geometry.get("empty_slides", []),
+            "missing_expected_fonts": fonts.get("missing_expected_fonts", []),
+        }
+
+    def _structure_issue(self, issue: Dict[str, Any], index: int, report: Dict[str, Any]) -> Dict[str, Any]:
+        issue_type = str(issue.get("type") or "unknown")
+        slide = issue.get("slide")
+        if not isinstance(slide, int):
+            slide = None
+        structured = {
+            "id": f"pptqa-{index:03d}",
+            "type": issue_type,
+            "category": self._issue_category(issue_type),
+            "severity": self._issue_severity(issue_type),
+            "message": self._issue_message(issue_type, issue),
+            "slide": slide,
+            "location": self._issue_location(issue),
+            "evidence": self._issue_evidence(issue),
+            "artifacts": self._issue_artifacts(slide, report),
+            "raw_issue": issue,
+        }
+        return structured
+
+    def _issue_category(self, issue_type: str) -> str:
+        if issue_type in {"shape_out_of_bounds", "empty_slide"}:
+            return "geometry"
+        if issue_type.startswith("rendered_"):
+            return "rendered_visual"
+        if issue_type in {"high_text_density", "moderate_text_density", "text_only_slide", "tiny_text", "weak_title_hierarchy", "low_typographic_contrast"}:
+            return "design_structure"
+        if issue_type in {"expected_font_missing", "font_detection_unavailable"}:
+            return "font"
+        if issue_type in {"validation_error", "validation_failed"}:
+            return "qa_runtime"
+        return "general"
+
+    def _issue_severity(self, issue_type: str) -> str:
+        high = {
+            "shape_out_of_bounds",
+            "empty_slide",
+            "rendered_blank_page",
+            "rendered_content_overflow",
+            "rendered_low_margin",
+            "rendered_visual_overcrowding",
+            "high_text_density",
+            "validation_error",
+            "rendered_visual_qa_unavailable",
+        }
+        medium = {
+            "text_only_slide",
+            "tiny_text",
+            "expected_font_missing",
+            "repeated_layout_pattern",
+            "rendered_dense_composition",
+        }
+        if issue_type in high:
+            return "high"
+        if issue_type in medium:
+            return "medium"
+        return "low"
+
+    def _issue_message(self, issue_type: str, issue: Dict[str, Any]) -> str:
+        messages = {
+            "shape_out_of_bounds": "形状边界超出幻灯片画布。",
+            "empty_slide": "页面没有可见形状。",
+            "rendered_blank_page": "渲染结果接近空白。",
+            "rendered_content_overflow": "渲染后页面边缘检测到非背景内容。",
+            "rendered_low_margin": "渲染内容距离页面边缘过近。",
+            "rendered_visual_overcrowding": "渲染视觉占用过高。",
+            "high_text_density": "页面文字行数或字符数超过高密度阈值。",
+            "moderate_text_density": "页面文字行数或字符数接近密集阈值。",
+            "text_only_slide": "页面主要由文本框组成，缺少图表、图片、表格或形状等视觉元素。",
+            "tiny_text": "页面存在小于可读阈值的字号。",
+            "expected_font_missing": "PDF 字体检测未发现期望字体。",
+            "validation_error": "PPT 验证流程执行异常。",
+            "rendered_visual_qa_unavailable": "渲染级视觉 QA 不可用。",
+        }
+        message = messages.get(issue_type, "检测到 PPT 质量问题。")
+        detail = issue.get("message")
+        if detail:
+            return f"{message} {detail}"
+        return message
+
+    def _issue_location(self, issue: Dict[str, Any]) -> Dict[str, Any]:
+        location: Dict[str, Any] = {}
+        if isinstance(issue.get("shape"), int):
+            location["shape_index"] = issue["shape"]
+        if issue.get("shape_id"):
+            location["shape_id"] = issue["shape_id"]
+        if issue.get("shape_name"):
+            location["shape_name"] = issue["shape_name"]
+        if isinstance(issue.get("bounds"), dict):
+            location["bounds"] = issue["bounds"]
+        if isinstance(issue.get("edges"), list):
+            location["edges"] = issue["edges"]
+        return location
+
+    def _issue_evidence(self, issue: Dict[str, Any]) -> Dict[str, Any]:
+        excluded = {"type", "slide", "shape", "bounds", "message"}
+        return {
+            key: value
+            for key, value in issue.items()
+            if key not in excluded
+        }
+
+    def _issue_artifacts(self, slide: Optional[int], report: Dict[str, Any]) -> Dict[str, Any]:
+        artifacts: Dict[str, Any] = {}
+        if report.get("montage_path"):
+            artifacts["montage"] = report["montage_path"]
+        if not isinstance(slide, int):
+            return artifacts
+        for page in report.get("pages", []):
+            if isinstance(page, dict) and page.get("slide") == slide and page.get("png_path"):
+                artifacts["page_png"] = page["png_path"]
+                break
+        return artifacts
 
     def _inspect_rendered_visual_quality(self, page_pngs: List[Path]) -> Dict[str, Any]:
         try:
@@ -304,6 +488,7 @@ class ValidatePptxTool(LLMTool):
             charts = 0
             font_sizes: List[float] = []
             shape_signature = []
+            slide_text_parts: List[str] = []
 
             for shape in slide.shapes:
                 left = round(int(getattr(shape, "left", 0) or 0) / 914400, 1)
@@ -315,6 +500,7 @@ class ValidatePptxTool(LLMTool):
                 if getattr(shape, "has_text_frame", False):
                     text = (getattr(shape, "text", "") or "").strip()
                     if text:
+                        slide_text_parts.append(text)
                         text_boxes += 1
                         text_chars += len(text)
                         text_lines += max(1, len([line for line in text.splitlines() if line.strip()]))
@@ -354,7 +540,9 @@ class ValidatePptxTool(LLMTool):
                 slide_issues.append(
                     {"type": "moderate_text_density", "slide": slide_index, "chars": text_chars, "lines": text_lines}
                 )
-            if visual_shapes == 0 and text_boxes >= 2 and slide_index > 1:
+            slide_text = "\n".join(slide_text_parts)
+            is_toc_like = self._is_toc_like_slide(slide_text)
+            if visual_shapes == 0 and text_boxes >= 2 and slide_index > 1 and not is_toc_like:
                 score -= 20
                 slide_issues.append({"type": "text_only_slide", "slide": slide_index})
             if font_sizes:
@@ -402,6 +590,18 @@ class ValidatePptxTool(LLMTool):
             "issues": issues,
             "recommendations": self._design_recommendations(slide_scores, repeated_layouts),
         }
+
+    def _is_toc_like_slide(self, text: str) -> bool:
+        if not text:
+            return False
+        patterns = [
+            r"目录",
+            r"大纲",
+            r"汇报大纲",
+            r"agenda",
+            r"toc",
+        ]
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
     def _design_grade(self, score: float) -> str:
         if score >= 90:

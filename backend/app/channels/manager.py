@@ -24,7 +24,7 @@ class ChannelManager:
     Manages chat channels and coordinates message routing.
 
     Responsibilities:
-    - Initialize enabled channels (QQ, WeChat, DingTalk, WeCom)
+    - Initialize enabled channels (QQ, WeChat, DingTalk)
     - Start/stop channels
     - Route outbound messages
     """
@@ -53,8 +53,8 @@ class ChannelManager:
         Supports multi-instance channels (e.g., multiple WeChat accounts).
         Channel keys use format: "type:instance_id" (e.g., "weixin:account_1")
         """
-        # 单实例渠道（QQ、钉钉、企业微信）
-        for name in ['qq', 'dingtalk', 'wecom']:
+        # 单实例渠道（QQ、钉钉）
+        for name in ['qq', 'dingtalk']:
             channel_config = getattr(self.config, name, None)
             if not channel_config:
                 logger.debug(f"Channel {name}: no config found")
@@ -143,7 +143,7 @@ class ChannelManager:
         Create a channel instance by name.
 
         Args:
-            name: Channel name (qq, weixin, dingtalk, wecom)
+            name: Channel name (qq, weixin, dingtalk)
             config: Channel configuration
             instance_id: Optional instance ID for multi-instance channels
 
@@ -161,9 +161,6 @@ class ChannelManager:
             elif name == "dingtalk":
                 from app.channels.dingtalk import DingTalkChannel
                 return DingTalkChannel(config, self.bus)
-            elif name == "wecom":
-                from app.channels.wecom import WeComChannel
-                return WeComChannel(config, self.bus)
             else:
                 logger.warning("Unknown channel", name=name)
                 return None

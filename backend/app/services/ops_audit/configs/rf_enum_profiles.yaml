@@ -1,0 +1,66 @@
+profiles:
+  - tables:
+      - RF_W_OTHERDEVICECHECK
+    fields:
+      - name: IsOk1
+        label: 气象仪是否正常
+        allowed_values: ["0", "1", "0.0", "1.0"]
+        disallow_range_like: true
+        severity: 中
+      - name: IsOk2
+        label: 能见度仪是否正常
+        allowed_values: ["0", "1", "0.0", "1.0"]
+        disallow_range_like: true
+        severity: 中
+      - name: IsOk3
+        label: 城市摄影是否正常
+        allowed_values: ["0", "1", "0.0", "1.0"]
+        disallow_range_like: true
+        severity: 中
+      - name: IsOk4
+        label: 数据采集仪是否正常
+        allowed_values: ["0", "1", "0.0", "1.0"]
+        disallow_range_like: true
+        severity: 中
+  - tables:
+      - RF_TW_PmFlowCalibrate
+    fields:
+      - name: IsCalibrate
+        label: 是否校准
+        allowed_values: ["0", "1", "0.0", "1.0", "是", "否"]
+        disallow_range_like: true
+        severity: 中
+
+pollutant_type_profiles:
+  - table: RF_W_GASEOUSCHECK_CO
+    expected: CO
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_W_GASEOUSCHECK_NOX
+    expected: NOX
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_W_GASEOUSCHECK_O3
+    expected: O3
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_W_GASEOUSCHECK_SO2
+    expected: SO2
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_Q_GASEOUSMULTIPOINT_CO
+    expected: CO
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_Q_GASEOUSMULTIPOINT_NO2
+    expected: NO2
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_Q_GASEOUSMULTIPOINT_O3
+    expected: O3
+    fields: [POLLUTANTTYPE]
+    severity: 高
+  - table: RF_Q_GASEOUSMULTIPOINT_SO2
+    expected: SO2
+    fields: [POLLUTANTTYPE]
+    severity: 高

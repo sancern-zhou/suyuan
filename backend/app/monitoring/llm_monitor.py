@@ -56,7 +56,7 @@ class LLMMonitor:
         "deepseek-chat": (0.00014, 0.00028),
         "deepseek-reasoner": (0.00055, 0.002),
         "minimax-m2": (0.001, 0.002),
-        "mimo-v2-flash": (0.0001, 0.0002),
+        "mimo-v2.5": (0.0001, 0.0002),
     }
 
     def __init__(self, persistence_file: Optional[str] = None):

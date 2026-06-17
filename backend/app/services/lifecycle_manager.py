@@ -15,6 +15,12 @@ from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityF
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
 from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultationFileFetcher  # 会商文件批量更新、月度完整会商文件
 from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
+from app.fetchers.consultation.monthly_supplement_fetchers import (
+    MonthlyDistrictPollutantRankingFetcher,
+    MonthlyMeteorologySupportFetcher,
+    MonthlyPollutionEventsComponentsFetcher,
+    MonthlyStationHighValuesFetcher,
+)
 # 导入单一工具注册源
 from app.tools import global_tool_registry
 
@@ -60,6 +66,12 @@ def initialize_fetchers():
 
         # 注册年度累计会商文件Fetcher（每月4号早上7点20分）
         fetcher_scheduler.register(AnnualYtdConsultationFileFetcher())
+
+        # 注册月度补充数据Fetcher（每月4号早上7点30-50分）
+        fetcher_scheduler.register(MonthlyDistrictPollutantRankingFetcher())
+        fetcher_scheduler.register(MonthlyStationHighValuesFetcher())
+        fetcher_scheduler.register(MonthlyPollutionEventsComponentsFetcher())
+        fetcher_scheduler.register(MonthlyMeteorologySupportFetcher())
 
         logger.info(
             "fetchers_registered",

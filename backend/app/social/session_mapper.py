@@ -336,6 +336,34 @@ class SessionMapper:
                 "total_message_count": self._message_count_cache.get(social_user_id, 0)
             }
 
+    async def get_all_social_user_ids(self) -> list[str]:
+        """
+        获取所有已知的社交用户ID。
+
+        该方法不按24小时TTL过滤，用于广播和管理场景。
+        """
+        async with self._lock:
+            if self.db_manager:
+                try:
+                    from sqlalchemy import select
+                    from app.social.models import SocialSessionMapping
+
+                    async with self.db_manager() as session:
+                        result = await session.execute(select(SocialSessionMapping.social_user_id))
+                        return [row[0] for row in result.all()]
+                except Exception as e:
+                    logger.warning("get_all_social_user_ids_from_db_failed", error=str(e))
+
+            if self.mappings_file.exists():
+                try:
+                    data = json.loads(self.mappings_file.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        return list(data.keys())
+                except Exception as e:
+                    logger.warning("get_all_social_user_ids_from_file_failed", error=str(e))
+
+            return list(self._mappings.keys())
+
     async def update_consolidation_offset(
         self,
         social_user_id: str,

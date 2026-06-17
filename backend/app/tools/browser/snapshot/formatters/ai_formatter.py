@@ -137,7 +137,8 @@ class AIFormatter:
         max_refs: int = 100,
         interactive_only: bool = False,
         depth: int = 10,
-        compact: bool = False
+        compact: bool = False,
+        ref_prefix: str = ""
     ) -> Dict:
         """Generate AI format snapshot
 
@@ -147,6 +148,7 @@ class AIFormatter:
             interactive_only: Only include interactive elements
             depth: DOM traversal depth (not used in current implementation)
             compact: Remove unnamed structural elements (generic, group, etc.)
+            ref_prefix: Optional prefix for frame refs, e.g. "f1:"
 
         Returns:
             {
@@ -174,7 +176,7 @@ class AIFormatter:
 
                 try:
                     # Create role reference from element
-                    ref_id = f"e{ref_count + 1}"
+                    ref_id = f"{ref_prefix}e{ref_count + 1}"
                     role_ref = RoleRef.from_element(ref_id, element)
 
                     # Filter non-interactive elements if requested

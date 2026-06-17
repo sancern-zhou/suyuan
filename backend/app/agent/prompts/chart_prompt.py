@@ -2,10 +2,49 @@
 图表模式系统提示词 - LLM 驱动的灵活图表生成
 """
 
-from typing import List, Optional
+import json
+from typing import Any, Dict, List, Optional
 
 
-def build_chart_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
+DRAWIO_GUIDE_PATHS = [
+    "app/agent/guides/drawio_board_workflow.md",
+    "app/agent/guides/drawio_xml_rules.md",
+    "app/agent/guides/drawio_edit_policy.md",
+]
+
+
+def _build_board_context_prompt(board_context: Optional[Dict[str, Any]]) -> str:
+    if not board_context:
+        return ""
+
+    current_xml = board_context.get("current_xml") or board_context.get("currentXml") or ""
+    selected_cells = board_context.get("selected_cells") or board_context.get("selectedCells") or []
+    viewport = board_context.get("viewport") or {}
+
+    selected_json = json.dumps(selected_cells, ensure_ascii=False, indent=2, default=str)
+    viewport_json = json.dumps(viewport, ensure_ascii=False, indent=2, default=str)
+
+    return (
+        "## Draw.io 画板上下文（仅图表模式）\n\n"
+        "- `board_context.current_xml` 是前端 draw.io 编辑器当前画布的权威状态；如果它与历史工具结果冲突，以这里为准。\n"
+        "- 如果用户要求修改现有画板，必须基于当前 XML 增量更新，不要凭历史重新生成旧版本。\n"
+        "- 调用 `create_drawio_board(operation=\"edit\")` 时，只传结构化 `operations`。\n"
+        "- 如果存在选中元素，优先把用户的“这个/这里/选中的模块”等指代绑定到 selected_cells。\n"
+        "- `selected_cells[*].id` 是选中 mxCell 的精确 ID；`selected_cells[*].xml` 是该 mxCell 的完整 XML；`selected_cells[*].geometry` 是其当前位置和尺寸。\n"
+        "- 修改选中模块时，优先使用 `target=\"selected\"` 和结构化操作 `update_label`、`update_style`、`move_resize`、`connect`、`delete_with_edges`；只有复杂替换时才写完整 `new_xml`。\n"
+        "- 需要创建或更新可编辑画板时，输出应保持为前端画板模块可继续编辑的 draw.io XML。\n\n"
+        f"### selected_cells\n```json\n{selected_json}\n```\n\n"
+        f"### viewport\n```json\n{viewport_json}\n```\n\n"
+        f"### current_xml\n```xml\n{current_xml}\n```\n\n"
+    )
+
+
+def build_chart_prompt(
+    available_tools: List[str],
+    memory_context: Optional[str] = None,
+    memory_file_path: Optional[str] = None,
+    board_context: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     构建图表模式系统提示词
 
@@ -30,6 +69,19 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
             "\n",
         ])
 
+    board_context_prompt = _build_board_context_prompt(board_context)
+    if board_context_prompt:
+        prompt_parts.append(board_context_prompt)
+
+    if "create_drawio_board" in available_tools:
+        prompt_parts.extend([
+            "## Draw.io 画板截图与原生多模态输入\n\n",
+            "- 用户在前端点击“确认画板修改”后，下一轮图表模式请求可能会附带当前画板 PNG 截图。\n",
+            "- 本轮上传图片和画板截图已经作为原生多模态输入提供；直接基于可见图片理解图表类型、样式、配色和布局。\n",
+            "- 截图只用于视觉质量检查和参考复刻；XML 仍然是权威状态，继续编辑画板必须基于 `board_context.current_xml` 理解现状。\n",
+            "- 只有当需要读取历史文件路径或工具生成的本地图片时，才调用 `read_file(as_multimodal_attachment=true)` 将图片挂载到下一轮原生多模态输入。\n\n",
+        ])
+
     prompt_parts.extend([
         "你是数据可视化专家，擅长基于 ECharts 模板生成灵活的图表代码。\n",
         "## 核心工作流程\n\n",
@@ -44,22 +96,22 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "   - ⚠️ **重要**：展示方案时用自然语言描述图表类型、数据映射、样式特点\n",
         "   - **不要生成代码**，用户看不懂代码\n",
         "   - 等待用户确认后再执行第5步\n",
-        "5. **生成图表**：使用 `execute_python` 执行 Python 代码\n",
+        "5. **生成图表**：使用 `execute_echarts_python` 执行 Python 代码并返回前端 visuals\n",
         "   - ⚠️ **数据访问**：使用 `get_raw_data(data_id)` 函数获取数据（系统自动注入）\n",
         "   - ⚠️ **禁止硬编码路径**：不要构造文件路径，如 `/home/.../data.json`\n",
         "   - ✅ **正确做法**：直接使用刚才查询返回的 data_id，如 `get_raw_data('air_quality_5min:v1:...')`\n",
         "   - 生成 ECharts 配置：基于参考样式编写代码\n",
-        "   - 返回格式：返回完整的图表配置（JSON格式）\n\n",
+        "   - 返回格式：stdout 每行输出一个完整、纯 JSON 的 ECharts option；多图输出多行\n\n",
 
         "**场景2：用户未提供 data_id**\n",
         "1. **查询数据**：使用数据查询工具获取数据（获得 data_id），然后继续场景1的第2-6步\n\n",
 
         "**场景3：用户提供参考图片**（⭐ 看图生成图表）\n",
-        "1. **分析参考图片**：使用 `read_file(path, analysis_type=\"chart\")` 分析图表类型、样式、配色\n",
+        "1. **直接理解参考图片**：本轮图片已作为原生多模态输入提供，直接观察图表类型、结构、样式、配色和布局\n",
         "2. **查询数据**：根据参考图表需求使用数据查询工具获取数据\n",
         "3. **分析数据结构**：使用 `read_data_registry(data_id, list_fields=true)` 查看字段\n",
         "4. **展示设计方案**：向用户展示基于参考图片的设计方案并等待确认\n",
-        "5. **生成图表**：使用 `execute_python` 生成与参考图片相同风格的图表\n\n",
+        "5. **生成图表**：使用 `execute_echarts_python` 生成与参考图片相同风格的 ECharts 图表\n\n",
 
         "## 工具参数来源\n\n",
         "可用工具、参数结构和参数说明由本次请求的原生 tool schema 提供；系统提示词不再重复注入工具目录。\n\n",
@@ -106,7 +158,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "2. 提取 option 配置部分\n",
         "3. 直接使用 ECharts 配置（xAxis/yAxis/series结构）\n\n",
         "**⚠️ 重要**：\n",
-        "- 参考内置样式或自定义模板，使用 `execute_python` 编写代码生成图表\n",
+        "- 参考内置样式或自定义模板，使用 `execute_echarts_python` 编写代码生成 ECharts 图表\n",
         "- 如果所有模板都不满足，可以直接生成 ECharts 标准格式数据，不需要强制使用模板\n\n",
 
         "## Python 代码生成规范\n\n",
@@ -115,9 +167,9 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "   - ❌ **禁止**：硬编码文件路径，如 `data = open('/home/.../data.json')`\n",
         "   - ✅ **正确**：`data = get_raw_data('air_quality_5min:v1:...')`\n",
         "   - 💡 **来源**：从之前的工具调用结果中复制 data_id\n",
-        "   - ⚠️ **Python无状态**：每次 `execute_python` 都是独立环境，不保留上次脚本变量；跨调用复用中间结果必须先 `save_data(...)`，后续再 `get_raw_data(data_id)`\n",
+        "   - ⚠️ **Python无状态**：每次 `execute_python` / `execute_echarts_python` 都是独立环境，不保留上次脚本变量；跨调用复用中间结果必须先 `save_data(...)`，后续再 `get_raw_data(data_id)`\n",
         "2. 按照 ECharts 标准格式转换数据（xAxis/yAxis/series结构）\n",
-        "3. 使用 print(json.dumps(result, ensure_ascii=False)) 输出结果\n",
+        "3. 使用 `print(json.dumps(result, ensure_ascii=False))` 输出结果；多图时一行输出一个纯 JSON ECharts option\n",
         "4. 禁止硬编码数据\n",
         "5. 使用 record.get(key, default) 避免 KeyError\n\n",
         "**⚠️ 禁止事项**（CRITICAL）：\n",
@@ -126,7 +178,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- ❌ 禁止任何 Python 函数：所有配置必须是纯 JSON 可序列化的\n",
         "- ✅ 正确做法：使用静态值、字符串模板或预先计算的列表\n\n",
 
-        "## execute_python 图表生成示例\n\n",
+        "## execute_echarts_python 图表生成示例\n\n",
         "### ✅ 正确示例：数据访问\n\n",
         "```python\n",
         "# ✅ 正确：使用系统注入的函数访问数据\n",
@@ -161,7 +213,6 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 代码无法复用（每次 data_id 变化都要修改路径）\n\n",
 
         "### ✅ 正确示例：series 在顶层\n\n",
-        "### ✅ 正确示例：series 在顶层\n\n",
         "```python\n",
         "# ✅ 正确：series 在顶层，可被系统识别\n",
         "result = {\n",
@@ -171,6 +222,12 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "}\n",
         "print(json.dumps(result, ensure_ascii=False))\n",
         "```\n\n",
+        "### ❌ 错误示例：给 JSON 加 CHART_1 前缀\n\n",
+        "```python\n",
+        "# ❌ 错误：execute_echarts_python 要求 stdout 每行是纯 JSON\n",
+        "print('CHART_1: ' + json.dumps(result, ensure_ascii=False))\n",
+        "```\n",
+        "**问题**：前缀会破坏 JSON 协议，工具不会把它作为标准 ECharts option。\n\n",
         "### ❌ 错误示例1：series 嵌套在 data 内\n\n",
         "```python\n",
         "# ❌ 错误：series 在 data 字段内，系统无法识别\n",
@@ -226,6 +283,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "**并发调用**：多个无依赖关系的工具调用应并发执行，有依赖关系的必须顺序执行。\n\n",
 
         "## 图片生成与渲染\n\n",
+        "- 面向 QMD/Word 正式报告的静态数据图表优先使用 `create_report_chart`；调用前按工具 schema 中的 references/index.md 渐进读取视觉规范，避免复杂子图、长文本和饼图小占比标签拥挤。\n",
         "- 使用 `execute_python` 生成 matplotlib 图片时，工具层会自动缓存 `save_chart`、`fig.savefig`、`plt.savefig` 保存的图片，并生成 `/api/image/{image_id}` URL。\n",
         "- 工具返回 `markdown_image` 字段时，最终回复必须原样复制该字段。\n",
         "- 工具 `summary` 中包含 `![...](...)` 图片 Markdown 时，最终回复必须保留这段 Markdown。\n",
@@ -242,9 +300,9 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "   - **保存模板**：如果生成了独特的图表设计，询问用户是否保存为新模板（使用 `write_file` 保存到 config/chart_templates/{category}/{template_id}.json）\n",
         "   - **删除模板**：如果用户需要删除旧模板，使用 `bash(command=\"rm config/chart_templates/...\")`\n",
         "   - **模板积累**：鼓励保存有复用价值的图表设计\n",
-        "7. **看图生成**：用户提供参考图片时，先用 `read_file(path, analysis_type=\"chart\")` 分析图表样式，再基于用户数据生成相同风格的图表\n",
+        "7. **看图生成**：用户提供参考图片时，直接基于本轮原生多模态输入理解图表样式，再基于用户数据生成相同风格的图表\n",
         "\n",
-        "        \"## ⚠️ 子Agent返回格式规范（CRITICAL）\n\n",
+        "## ⚠️ 子Agent返回格式规范（CRITICAL）\n\n",
         "**当作为子Agent被调用时**，必须在最终回复中明确列出所有data_id：\n\n",
         "```markdown\n",
         "## 图表生成结果\n\n",
@@ -259,7 +317,7 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 如果图表工具返回了新的data_id，也需列出\n",
         "- 必须在回复中明确列出，父Agent才能收集\n\n",
         "\n",
-        "        \"## 支持的图表类型\n\n",
+        "## 支持的图表类型\n\n",
         "**基础图表**：pie, bar, line, timeseries, radar\n",
         "**气象图表**：wind_rose, profile, weather_timeseries\n",
         "**空间图表**：map, heatmap\n",
@@ -276,15 +334,15 @@ def build_chart_prompt(available_tools: List[str], memory_context: Optional[str]
         "- 桑基图：sankey_simple, sankey_vertical\n\n",
         "**总计**：37种内置样式（使用 read_file 读取模板文件参考样式）\n",
         "\n",
-        "## 高级图表技能文档\n\n",
-        "**⚠️ 重要**：当需要生成以下高级图表时，**必须先查阅对应技能文档**：\n\n",
-        "| 图表类型 | 技能文档路径 | 触发关键词 |\n",
+        "## 高级图表设计文档\n\n",
+        "**⚠️ 重要**：正式报告静态高级图表统一使用 `create_report_chart`，调用前必须先查阅对应设计文档：\n\n",
+        "| 图表类型 | create_report_chart设计文档路径 | 触发关键词 |\n",
         "|---------|-------------|-----------|\n",
-        "| 极坐标污染玫瑰图 | `app/tools/visualization/polar_contour_guide.md` | 污染玫瑰、极坐标、风向玫瑰、风场图、风场-污染物浓度 |\n",
-        "| AQI日历热力图 | `app/tools/visualization/generate_aqi_calendar/aqi_calendar_guide.md` | AQI日历、日历热力图、月度日历、月度回顾 |\n",
+        "| 极坐标污染玫瑰图 | `backend/app/tools/visualization/create_report_chart/references/pollutant-wind-rose.md` | 污染玫瑰、极坐标、风向玫瑰、风场图、风场-污染物浓度 |\n",
+        "| AQI日历热力图 | `backend/app/tools/visualization/create_report_chart/references/aqi-calendar.md` | AQI日历、日历热力图、月度日历、月度回顾 |\n",
         "| ECharts示例检索 | `app/tools/visualization/generate_chart/echarts_search_guide.md` | ECharts示例、官方示例、查找示例、参考样式 |\n\n",
         "**使用方法**：\n",
-        "调用 read_file 工具读取对应技能文档，如 `read_file(path=\"app/tools/visualization/polar_contour_guide.md\")`\n\n",
+        "调用 read_file 工具读取对应设计文档，如 `read_file(path=\"backend/app/tools/visualization/create_report_chart/references/pollutant-wind-rose.md\")`，然后调用 `create_report_chart`。\n\n",
         "**⚠️ 查阅时机**：\n",
         "- 用户明确提到上述关键词时，必须先查阅文档\n",
         "- 不确定如何生成某种图表时，查阅对应文档\n",
