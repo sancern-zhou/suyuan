@@ -43,6 +43,7 @@
 第一阶段不做以下内容：
 
 - 不引入独立图数据库作为强依赖。
+- 不自建完整知识图谱构建算法体系；优先封装成熟开源项目，项目内只保留稳定适配层。
 - 不要求所有工具立即改造成结构化证据输出。
 - 不全面改造助手、社交、办公模式。
 - 不追求 LLM 自动抽取结果完全正确。
@@ -67,6 +68,22 @@ Agent 按任务检索 CognitiveMapView
 注入 ExecutionContext / Prompt
   ↓
 Agent 生成证据化输出
+```
+
+第三方开源能力只接入后端，不嵌入其前端。项目自己的前端工作台、API、数据模型和 Agent contract 保持稳定，开源项目作为可替换 provider：
+
+```text
+Vue 认知地图工作台
+  ↓
+FastAPI Cognitive Map API
+  ↓
+backend/app/agent/cognition/
+  ├─ DocumentParserProvider   # MarkItDown / Unstructured / Docling
+  ├─ GraphExtractorProvider   # LlamaIndex Property Graph / Cognee / 自研兜底
+  ├─ GraphStoreProvider       # JSON/关系表 / Kuzu / Neo4j / FalkorDB
+  └─ ViewBuilder              # 项目内稳定实现，输出 CognitiveMapView
+  ↓
+Agent ExecutionContext / Prompt / claims.evidence_refs
 ```
 
 系统分为三层：
@@ -97,6 +114,122 @@ Agent 应用层
 - Tool Observation
 - Data Registry
 ```
+
+## 开源能力封装策略
+
+本项目不直接依赖某个外部知识图谱产品的数据结构，而是在 `backend/app/agent/cognition/providers/` 下封装第三方能力。封装目标是：可以跟随社区项目迭代，同时避免前端、Agent 和业务数据模型被外部项目绑死。
+
+### Provider 边界
+
+```text
+DocumentParserProvider
+- 输入：SourceFile
+- 输出：DocumentChunk[]
+- 候选实现：MarkItDown、Unstructured、Docling
+
+GraphExtractorProvider
+- 输入：DocumentChunk[]、CognitiveSchema、ExtractionOptions
+- 输出：ExtractionResult(candidate_entities, candidate_relations, candidate_rules, evidence)
+- 候选实现：LlamaIndex Property Graph、Cognee、自研规则兜底
+
+GraphStoreProvider
+- 输入：已审核 Entity/Relation/Evidence/Rule
+- 输出：存储结果和查询能力
+- 候选实现：本地 JSON/关系表、Kuzu、Neo4j、FalkorDB
+
+GraphRetrieverProvider
+- 输入：task、agent_mode、entity_hints、data_ids
+- 输出：与任务相关的实体、关系、规则、证据
+- 候选实现：项目内检索、LlamaIndex retriever、Cognee search、图数据库查询
+```
+
+所有 provider 的输出都必须转换为项目内模型：
+
+```text
+Entity
+Relation
+Evidence
+Rule
+CognitiveMapView
+```
+
+前端和 Agent 不直接消费 LlamaIndex、Cognee、Neo4j、FalkorDB 等外部项目的原始对象。
+
+### 推荐第一阶段组合
+
+第一阶段推荐组合：
+
+```text
+文档解析：MarkItDown 或 Unstructured
+实体关系抽取：LlamaIndex Property Graph，使用 schema-guided extraction
+存储：项目本地 JSON/关系表
+检索：项目内 ViewBuilder + 简单关键词/实体类型过滤
+前端：项目 Vue 工作台
+Agent 接入：CognitiveMapView
+```
+
+选择理由：
+
+- Python 生态，容易嵌入当前 FastAPI 后端。
+- 支持先定义实体类型、关系类型和约束，再在约束内抽取候选图谱。
+- 不强制绑定独立图数据库。
+- 前端完全由项目控制，保持交互和视觉一致。
+- 后续可以把 provider 替换为 Cognee、Kuzu、Neo4j、FalkorDB，不影响前端和 Agent。
+
+### 备选演进组合
+
+如果后续更重视 Agent 长期记忆和跨会话知识积累，可以引入 Cognee 作为 `GraphExtractorProvider` 和 `GraphRetrieverProvider`。
+
+如果图谱规模变大、关系查询复杂，可以引入 Kuzu、Neo4j 或 FalkorDB 作为 `GraphStoreProvider`。
+
+如果需要完整 GraphRAG 社区摘要和多层检索，可以借鉴 Microsoft GraphRAG 的 TextUnit、Entity、Relationship、Claim、Community Report 结构，但仍然转换为项目内模型。
+
+### 禁止耦合点
+
+为了避免再次形成难以替换的体系，第一阶段禁止：
+
+- 前端直接调用第三方图谱项目 API。
+- Agent prompt 直接引用第三方原始 JSON。
+- 把第三方项目的实体类型作为项目唯一 schema。
+- 把外部图数据库作为发布地图的唯一事实来源。
+- 绕过审核队列把 LLM 抽取结果直接发布。
+
+### 开源项目选型矩阵
+
+| 能力 | 第一选择 | 备选 | 项目内封装点 | 说明 |
+| --- | --- | --- | --- | --- |
+| 文档转 Markdown/文本块 | MarkItDown | Unstructured、Docling | `DocumentParserProvider` | 第一阶段优先跑通常见文档；复杂 PDF 和表格后续增强 |
+| 结构化切块 | Unstructured | Docling | `DocumentParserProvider` | 需要保留标题、页码、表格位置时优先 |
+| Schema-guided KG 抽取 | LlamaIndex Property Graph | LangChain LLMGraphTransformer | `GraphExtractorProvider` | 第一阶段核心 provider，必须输出候选实体、关系、证据 |
+| Agent 图记忆 | Cognee | Graphiti | `GraphExtractorProvider` / `GraphRetrieverProvider` | 第二阶段评估，用于长期记忆和跨会话检索 |
+| 本地图存储 | 本地 JSON/关系表 | Kuzu | `GraphStoreProvider` | 第一阶段避免运维新数据库 |
+| 图数据库 | Kuzu | Neo4j、FalkorDB、Memgraph | `GraphStoreProvider` | 关系查询复杂后再引入 |
+| GraphRAG 检索 | 项目内 ViewBuilder | Microsoft GraphRAG 思路、FalkorDB GraphRAG-SDK | `GraphRetrieverProvider` | 先输出 Agent 可用 view，再逐步增强 |
+
+### 第一阶段 Spike
+
+正式实现前先做一个独立 Spike，目标是验证 provider 方案是否能稳定产出项目模型：
+
+1. 选 2-3 份大气环境业务文档。
+2. 用 MarkItDown 或 Unstructured 解析为 `DocumentChunk`。
+3. 定义最小 `CognitiveSchema`：
+   - 实体：`Station`、`Pollutant`、`Metric`、`Region`、`DataSource`、`AnalysisMethod`、`EmissionSource`、`Finding`。
+   - 关系：`located_in`、`measures`、`affects`、`indicates`、`requires_data`、`derived_from`、`supports`。
+4. 用 LlamaIndex Property Graph provider 抽取候选实体、关系和证据。
+5. 转换为项目内 `CandidateEntity`、`CandidateRelation`、`Evidence`。
+6. 人工抽样检查 30 条候选项：
+   - 名称是否正确。
+   - 类型是否合理。
+   - 关系方向是否正确。
+   - 是否有可回溯证据。
+7. 生成一个最小 `CognitiveMapView`，注入 expert/report prompt 做一次端到端试跑。
+
+Spike 通过标准：
+
+- 至少 70% 的高置信候选实体可直接确认。
+- 每条关系都能回溯到 chunk 或人工创建说明。
+- Provider 失败时不会污染已发布地图。
+- 输出能被前端工作台和 Agent 同时消费。
 
 ## 前端工作台设计
 
@@ -376,6 +509,7 @@ prompt_summary
 - 对 Excel 保留 sheet、行列范围。
 - 对 Markdown 保留标题层级。
 - 对 PDF 保留页码和段落位置。
+- 文档解析通过 `DocumentParserProvider` 完成，第一阶段优先封装 MarkItDown 或 Unstructured，不在项目内自建复杂解析器。
 
 ### 3. 候选抽取
 
@@ -389,6 +523,28 @@ prompt_summary
    - 从文档段落中抽取业务实体、关系、规则、机制、限制条件。
    - 输出必须绑定证据片段。
    - 结果只进入候选区，不能直接发布。
+   - 通过 `GraphExtractorProvider` 调用成熟开源框架，第一阶段优先封装 LlamaIndex Property Graph 的 schema-guided extraction。
+
+抽取时必须传入项目定义的 `CognitiveSchema`：
+
+```text
+allowed_entity_types
+allowed_relation_types
+allowed_relation_triplets
+required_evidence
+domain_aliases
+normalization_rules
+```
+
+`GraphExtractorProvider` 可以使用第三方框架完成抽取，但返回结果必须转换为项目候选对象：
+
+```text
+CandidateEntity
+CandidateRelation
+CandidateRule
+Evidence
+ExtractionDiagnostic
+```
 
 ### 4. 人工审核
 
@@ -511,13 +667,63 @@ backend/app/agent/cognition/
 ├── __init__.py
 ├── models.py              # Pydantic 模型
 ├── repository.py          # 持久化访问
-├── document_parser.py     # 文件解析与切块
-├── extractor.py           # 候选实体/关系/规则抽取
+├── schema.py              # CognitiveSchema 与领域约束
+├── document_parser.py     # provider 门面：文件解析与切块
+├── extractor.py           # provider 门面：候选实体/关系/规则抽取
+├── graph_store.py         # provider 门面：图谱存储与查询
+├── retriever.py           # provider 门面：任务相关图谱检索
 ├── reviewer.py            # 审核状态与合并逻辑
 ├── map_builder.py         # 构建任务编排
 ├── view_builder.py        # Agent 任务视图构建
 ├── serializers.py         # prompt/json 序列化
-└── evidence.py            # 证据引用与校验
+├── evidence.py            # 证据引用与校验
+└── providers/
+    ├── __init__.py
+    ├── base.py            # provider 协议定义
+    ├── markitdown_parser.py
+    ├── unstructured_parser.py
+    ├── llamaindex_extractor.py
+    ├── cognee_extractor.py
+    ├── local_store.py
+    ├── kuzu_store.py
+    └── neo4j_store.py
+```
+
+Provider 协议草案：
+
+```python
+class DocumentParserProvider:
+    async def parse(self, source_file: SourceFile) -> list[DocumentChunk]:
+        ...
+
+
+class GraphExtractorProvider:
+    async def extract(
+        self,
+        chunks: list[DocumentChunk],
+        schema: CognitiveSchema,
+        options: ExtractionOptions,
+    ) -> ExtractionResult:
+        ...
+
+
+class GraphStoreProvider:
+    async def save_published_graph(self, map_version: CognitiveMapVersion) -> None:
+        ...
+
+    async def query_related(
+        self,
+        request: CognitiveMapQuery,
+    ) -> GraphQueryResult:
+        ...
+
+
+class GraphRetrieverProvider:
+    async def retrieve_view(
+        self,
+        request: CognitiveMapQuery,
+    ) -> CognitiveMapView:
+        ...
 ```
 
 新增 API：
@@ -580,7 +786,7 @@ POST   /api/cognitive-maps/query-context
 
 ## 持久化策略
 
-第一阶段优先使用现有后端数据目录和数据库能力，不强制引入图数据库。
+第一阶段优先使用现有后端数据目录和数据库能力，不强制引入图数据库。图存储能力通过 `GraphStoreProvider` 封装，外部图数据库只是 provider 实现，不是项目核心数据模型。
 
 建议持久化路径：
 
@@ -605,6 +811,25 @@ cognitive_map_evidence
 cognitive_map_rules
 cognitive_map_versions
 ```
+
+Provider 状态也需要持久化：
+
+```text
+cognitive_map_provider_runs
+- run_id
+- map_id
+- provider_type
+- provider_name
+- provider_version
+- input_file_ids
+- options
+- status
+- diagnostics
+- started_at
+- finished_at
+```
+
+这样可以追踪每次抽取使用了哪个开源 provider、哪个版本、哪些参数，便于复现和升级回归。
 
 ## 前端模块规划
 
@@ -634,12 +859,13 @@ frontend/src/api/cognitiveMap.js
 
 - 创建认知地图。
 - 上传文件。
-- 解析文件为 chunks。
-- 抽取候选实体、关系、证据。
+- 通过 `DocumentParserProvider` 解析文件为 chunks。
+- 通过 `GraphExtractorProvider` 抽取候选实体、关系、证据，默认优先封装 LlamaIndex Property Graph。
 - 前端展示图谱和表格。
 - 支持实体和关系的增删改。
 - 支持候选项审核。
 - 支持发布地图版本。
+- 通过 `GraphStoreProvider` 保存发布后的地图，第一阶段默认本地存储。
 - 支持 `query-context` 为 Agent 返回压缩地图视图。
 - 在 `expert` 和 `report` prompt 中注入地图摘要。
 - 专家/报告输出支持 `claims.evidence_refs`。
@@ -649,6 +875,7 @@ frontend/src/api/cognitiveMap.js
 功能验收：
 
 - 用户能上传至少一个 Markdown 或 TXT 文件并生成候选实体。
+- 构建任务记录中能看到使用的 parser/extractor provider 名称和版本。
 - 用户能在前端确认、修改、删除实体。
 - 用户能创建或修改实体关系。
 - 用户能查看每个候选实体或关系对应的证据片段。
