@@ -5,7 +5,13 @@ import pytest
 from app.agent.cognition.models import (
     CognitiveMapQuery,
     CognitiveSchema,
+    ExtractionDiagnostic,
+    ExtractionResult,
     SourceFile,
+)
+from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
+from app.agent.cognition.providers.llamaindex_extractor import (
+    LlamaIndexPropertyGraphExtractorProvider,
 )
 from app.agent.cognition.providers.local_extractor import LocalRuleBasedExtractorProvider
 from app.agent.cognition.providers.text_parser import TextParserProvider
@@ -116,3 +122,119 @@ async def test_local_spike_pipeline_writes_extraction_and_view_json(tmp_path: Pa
     assert result.extraction.candidate_entities
     assert result.view.prompt_summary
     assert "臭氧" in result.view_path.read_text(encoding="utf-8")
+
+
+def test_provider_factory_selects_local_defaults():
+    assert create_parser_provider("text").__class__.__name__ == "TextParserProvider"
+    assert create_extractor_provider("local").__class__.__name__ == "LocalRuleBasedExtractorProvider"
+
+
+def test_provider_factory_selects_optional_adapters_without_importing_dependencies():
+    assert create_parser_provider("markitdown").__class__.__name__ == "MarkItDownParserProvider"
+    assert (
+        create_extractor_provider("llamaindex").__class__.__name__
+        == "LlamaIndexPropertyGraphExtractorProvider"
+    )
+
+
+def test_llamaindex_provider_maps_extraction_result_payload_to_project_models():
+    provider = LlamaIndexPropertyGraphExtractorProvider()
+    payload = {
+        "entities": [
+            {
+                "name": "臭氧",
+                "type": "Pollutant",
+                "aliases": ["O3"],
+                "evidence_id": "ev_1",
+            },
+            {
+                "name": "光化学反应",
+                "type": "ProcessMechanism",
+                "evidence_id": "ev_1",
+            },
+        ],
+        "relations": [
+            {
+                "source": "光化学反应",
+                "source_type": "ProcessMechanism",
+                "target": "臭氧",
+                "target_type": "Pollutant",
+                "type": "affects",
+                "evidence_id": "ev_1",
+            }
+        ],
+    }
+
+    extraction = provider.map_payload_to_extraction(
+        map_id="map_1",
+        payload=payload,
+        evidence_by_id={
+            "ev_1": {
+                "source_file_id": "file_1",
+                "chunk_id": "chunk_1",
+                "location": "paragraph 1",
+                "text_span": "臭氧受光化学反应影响。",
+            }
+        },
+        diagnostic=ExtractionDiagnostic(provider_name="llamaindex_property_graph"),
+    )
+
+    assert isinstance(extraction, ExtractionResult)
+    assert len(extraction.candidate_entities) == 2
+    assert extraction.candidate_relations[0].relation_type == "affects"
+    assert extraction.candidate_relations[0].source_evidence_ids == ["ev_1"]
+    assert extraction.evidence[0].ref == "map_evidence:ev_1"
+
+
+def test_llamaindex_payload_relation_mapping_falls_back_to_entity_name_lookup():
+    provider = LlamaIndexPropertyGraphExtractorProvider()
+    payload = {
+        "entities": [
+            {"name": "臭氧", "type": "Pollutant", "evidence_id": "ev_1"},
+            {"name": "光化学反应", "type": "ProcessMechanism", "evidence_id": "ev_1"},
+        ],
+        "relations": [
+            {
+                "source": "光化学反应",
+                "target": "臭氧",
+                "type": "affects",
+                "evidence_id": "ev_1",
+            }
+        ],
+    }
+
+    extraction = provider.map_payload_to_extraction(
+        map_id="map_1",
+        payload=payload,
+        evidence_by_id={
+            "ev_1": {
+                "source_file_id": "file_1",
+                "chunk_id": "chunk_1",
+                "location": "paragraph 1",
+                "text_span": "臭氧受光化学反应影响。",
+            }
+        },
+    )
+
+    assert len(extraction.candidate_relations) == 1
+    assert extraction.candidate_relations[0].relation_type == "affects"
+
+
+def test_llamaindex_provider_builds_schema_components_from_cognitive_schema():
+    provider = LlamaIndexPropertyGraphExtractorProvider(llm=object())
+    schema = CognitiveSchema.default_air_quality_schema()
+
+    components = provider.build_schema_components(schema)
+
+    assert components.possible_entities is not None
+    assert components.possible_relations is not None
+    assert ("ProcessMechanism", "affects", "Pollutant") in components.validation_schema
+
+
+@pytest.mark.asyncio
+async def test_llamaindex_provider_reports_missing_llm_cleanly():
+    provider = LlamaIndexPropertyGraphExtractorProvider()
+    schema = CognitiveSchema.default_air_quality_schema()
+
+    with pytest.raises(RuntimeError, match="requires an LLM"):
+        await provider.extract(chunks=[], schema=schema)

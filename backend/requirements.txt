@@ -29,6 +29,7 @@ openai==1.54.4
 anthropic==0.39.0
 tiktoken>=0.8.0  # Token counting for LLM monitoring
 json-repair>=0.57.0  # Automatically repair malformed JSON from LLMs
+llama-index-core>=0.14.22,<0.15  # Optional cognitive map schema-guided extraction provider
 
 # Async & Concurrency
 celery==5.4.0
