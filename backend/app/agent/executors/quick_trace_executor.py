@@ -94,7 +94,7 @@ class SimpleExecutionContext:
         self.session_id = f"quick_trace_{uuid.uuid4().hex[:12]}"
         self.iteration = 1
 
-    async def save_data(self, data, schema, metadata=None):
+    def save_data(self, data, schema, metadata=None):
         """空实现，仅返回一个假的data_id"""
         return f"quick_trace_{schema}:{uuid.uuid4().hex[:8]}"
 
@@ -121,6 +121,43 @@ class QuickTraceExecutor:
         "菏泽市", "枣庄市", "临沂市",
         "泰安市", "徐州市", "商丘市", "开封市"
     ]
+
+    POLLUTANT_SQL_FIELDS = {
+        "PM2.5": "PM2_5",
+        "PM10": "PM10",
+        "O3": "O3",
+        "NO2": "NO2",
+        "SO2": "SO2",
+        "CO": "CO",
+    }
+
+    POLLUTANT_THRESHOLDS = {
+        "PM2.5": 75.0,
+        "PM10": 150.0,
+        "O3": 160.0,
+        "NO2": 200.0,
+        "SO2": 150.0,
+        "CO": 10.0,
+    }
+
+    PRIMARY_POLLUTANT_ALIASES = {
+        "PM2.5": "PM2.5",
+        "PM25": "PM2.5",
+        "PM2_5": "PM2.5",
+        "细颗粒物": "PM2.5",
+        "PM10": "PM10",
+        "O3": "O3",
+        "O₃": "O3",
+        "臭氧": "O3",
+        "NO2": "NO2",
+        "NO₂": "NO2",
+        "二氧化氮": "NO2",
+        "SO2": "SO2",
+        "SO₂": "SO2",
+        "二氧化硫": "SO2",
+        "CO": "CO",
+        "一氧化碳": "CO",
+    }
 
     def __init__(self):
         """初始化执行器"""
@@ -240,18 +277,16 @@ class QuickTraceExecutor:
                     start_time=start_time_hist.strftime("%Y-%m-%d %H:%M:%S"),
                     end_time=end_time_hist.strftime("%Y-%m-%d %H:%M:%S")
                 ),
-                "forecast": self.tools["weather_forecast"].execute(
-                    context=context,  # 添加必需的context参数
+                "forecast": self._get_weather_forecast_for_alert(
+                    context=context,
                     lat=coords["lat"],
                     lon=coords["lon"],
                     location_name=city,
-                    forecast_days=15,  # 延长至15天预报
-                    past_days=1,  # 获取昨天+今天00:00~当前时刻完整数据（包含边界层高度）
-                    hourly=True,
-                    daily=True
+                    alert_dt=alert_dt
                 ),
                 "regional_comparison": self._get_air_quality_from_db(
-                    city=city
+                    city=city,
+                    reference_time=alert_dt
                 ),
                 "trajectory": self._get_trajectory_analysis(
                     context=context,
@@ -318,6 +353,268 @@ class QuickTraceExecutor:
     def _parse_coordinates(self, city: str) -> Optional[Dict[str, float]]:
         """解析城市经纬度"""
         return self.CITY_COORDINATES.get(city)
+
+    def _safe_float(self, value: Any) -> Optional[float]:
+        """安全转换为浮点数。"""
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _normalize_primary_pollutant(self, value: Any) -> Optional[str]:
+        """标准化首要污染物名称。"""
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw or raw in {"-", "--", "无", "暂无", "NA", "N/A"}:
+            return None
+
+        for separator in [",", "，", "/", "、", ";", "；"]:
+            if separator in raw:
+                raw = raw.split(separator)[0].strip()
+                break
+
+        normalized = raw.upper().replace(" ", "")
+        normalized = normalized.replace("PM2.5", "PM25").replace("PM2_5", "PM25")
+
+        for alias, pollutant in self.PRIMARY_POLLUTANT_ALIASES.items():
+            alias_key = alias.upper().replace(" ", "")
+            alias_key = alias_key.replace("PM2.5", "PM25").replace("PM2_5", "PM25")
+            if normalized == alias_key or alias_key in normalized:
+                return pollutant
+        return None
+
+    def _pollutant_value_from_record(
+        self,
+        record: Dict[str, Any],
+        pollutant: str
+    ) -> Optional[float]:
+        """从监测记录中读取指定污染物浓度。"""
+        field_name = self.POLLUTANT_SQL_FIELDS.get(pollutant)
+        if not field_name:
+            return None
+        return self._safe_float(record.get(field_name))
+
+    def _select_analysis_event_from_records(
+        self,
+        city: str,
+        analysis_date: str,
+        records: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """从单日监测记录中选择本次分析事件。"""
+        if not records:
+            raise ValueError(f"{city} {analysis_date} 无监测数据，无法推断分析事件")
+
+        best = None
+        for record in records:
+            time_point = record.get("TimePoint")
+            if not isinstance(time_point, datetime):
+                continue
+            for pollutant, threshold in self.POLLUTANT_THRESHOLDS.items():
+                value = self._pollutant_value_from_record(record, pollutant)
+                if value is None or threshold <= 0:
+                    continue
+                ratio = value / threshold
+                if best is None or ratio > best["ratio"]:
+                    best = {
+                        "record": record,
+                        "time_point": time_point,
+                        "pollutant": pollutant,
+                        "alert_value": value,
+                        "ratio": ratio,
+                    }
+
+        if best is None:
+            raise ValueError(f"{city} {analysis_date} 无有效污染物浓度，无法推断分析事件")
+
+        record = best["record"]
+        return {
+            "success": True,
+            "city": city,
+            "analysis_date": analysis_date,
+            "alert_time": best["time_point"].strftime("%Y-%m-%d %H:%M:%S"),
+            "pollutant": best["pollutant"],
+            "alert_value": best["alert_value"],
+            "aqi": self._safe_float(record.get("AQI")),
+            "quality": record.get("Quality"),
+            "primary_pollutant": record.get("PrimaryPollutant"),
+            "selection_reason": "max_threshold_ratio",
+        }
+
+    async def infer_analysis_event_from_sqlserver(
+        self,
+        city: str,
+        analysis_date: str
+    ) -> Dict[str, Any]:
+        """按分析日期从SQL Server推断实际分析污染事件。"""
+        import pyodbc
+
+        analysis_day = datetime.strptime(analysis_date, "%Y-%m-%d")
+        start_time = analysis_day.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = start_time + timedelta(days=1)
+
+        sql_server_config = {
+            'driver': '{ODBC Driver 17 for SQL Server}',
+            'server': '180.184.30.94',
+            'port': 1433,
+            'database': 'XcAiDb',
+            'uid': 'sa',
+            'pwd': '#Ph981,6J2bOkWYT7p?5slH$I~g_0itR'
+        }
+
+        conn = None
+        cursor = None
+        try:
+            conn_str = (
+                f"DRIVER={sql_server_config['driver']};"
+                f"SERVER={sql_server_config['server']},{sql_server_config['port']};"
+                f"DATABASE={sql_server_config['database']};"
+                f"UID={sql_server_config['uid']};"
+                f"PWD={sql_server_config['pwd']};"
+                f"TrustServerCertificate=yes;"
+            )
+            conn = pyodbc.connect(conn_str, timeout=10)
+            cursor = conn.cursor()
+
+            sql_query = """
+                SELECT
+                    TimePoint, Area, CityCode,
+                    CO, NO2, O3, PM10, PM2_5, SO2,
+                    AQI, PrimaryPollutant, Quality
+                FROM CityAQIPublishHistory WITH (NOLOCK)
+                WHERE Area = ?
+                    AND TimePoint >= ?
+                    AND TimePoint < ?
+                ORDER BY TimePoint ASC
+            """
+            cursor.execute(sql_query, [city, start_time, end_time])
+            columns = [column[0] for column in cursor.description]
+            records = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            event = self._select_analysis_event_from_records(city, analysis_date, records)
+            logger.info(
+                "analysis_event_inferred",
+                city=city,
+                analysis_date=analysis_date,
+                alert_time=event["alert_time"],
+                pollutant=event["pollutant"],
+                alert_value=event["alert_value"],
+                selection_reason=event["selection_reason"],
+                record_count=len(records)
+            )
+            return event
+
+        except Exception as e:
+            logger.error(
+                "analysis_event_inference_failed",
+                city=city,
+                analysis_date=analysis_date,
+                error=str(e),
+                exc_info=True
+            )
+            return {
+                "success": False,
+                "city": city,
+                "analysis_date": analysis_date,
+                "error": str(e),
+            }
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+    async def execute_for_analysis_date(
+        self,
+        city: str,
+        analysis_date: str
+    ) -> Dict[str, Any]:
+        """仅按分析日期执行快速溯源，自动推断污染物、浓度和告警时间。"""
+        event = await self.infer_analysis_event_from_sqlserver(city, analysis_date)
+        if not event.get("success"):
+            return self._error_result(event.get("error", "无法推断分析事件"))
+
+        result = await self.execute(
+            city=city,
+            alert_time=event["alert_time"],
+            pollutant=event["pollutant"],
+            alert_value=event["alert_value"],
+        )
+        result["inferred_event"] = event
+        return result
+
+    def _air_quality_forecast_window(
+        self,
+        reference_time: Optional[datetime] = None
+    ) -> tuple[date, date]:
+        """返回空气质量预报查询日期窗口。"""
+        start_date = reference_time.date() if reference_time else date.today()
+        end_date = start_date + timedelta(days=6)
+        return start_date, end_date
+
+    def _history_time_window(
+        self,
+        reference_time: Optional[datetime] = None,
+        hours: int = 12
+    ) -> tuple[datetime, datetime]:
+        """返回历史监测查询时间窗口。"""
+        end_time = reference_time if reference_time else datetime.now()
+        start_time = end_time - timedelta(hours=hours)
+        return start_time, end_time
+
+    def _is_historical_backfill(
+        self,
+        alert_dt: datetime,
+        now: Optional[datetime] = None
+    ) -> bool:
+        """判断是否为历史报告回填。"""
+        current_time = now if now else datetime.now()
+        return alert_dt.date() < current_time.date()
+
+    def _historical_forecast_unavailable_result(
+        self,
+        alert_dt: datetime,
+        now: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """历史回填时跳过实时预报，避免混入运行当天数据。"""
+        current_time = now if now else datetime.now()
+        alert_date = alert_dt.strftime("%Y-%m-%d")
+        current_date = current_time.strftime("%Y-%m-%d")
+        return {
+            "status": "skipped",
+            "success": False,
+            "data": [],
+            "summary": (
+                f"历史回填报告日期为{alert_date}，当前运行日期为{current_date}。"
+                "实时预报接口无法回溯该日期的当时预报，已跳过以避免混入运行当天数据。"
+            )
+        }
+
+    async def _get_weather_forecast_for_alert(
+        self,
+        context,
+        lat: float,
+        lon: float,
+        location_name: str,
+        alert_dt: datetime
+    ) -> Dict[str, Any]:
+        """按告警日期决定是否调用实时天气预报接口。"""
+        if self._is_historical_backfill(alert_dt):
+            return self._historical_forecast_unavailable_result(alert_dt)
+
+        return await self.tools["weather_forecast"].execute(
+            context=context,
+            lat=lat,
+            lon=lon,
+            location_name=location_name,
+            forecast_days=15,
+            past_days=1,
+            hourly=True,
+            daily=True
+        )
 
     async def _execute_parallel(
         self,
@@ -389,7 +686,8 @@ class QuickTraceExecutor:
 
     async def _get_air_quality_from_db(
         self,
-        city: str
+        city: str,
+        reference_time: Optional[datetime] = None
     ) -> Dict[str, Any]:
         """
         从数据库获取空气质量数据
@@ -400,6 +698,7 @@ class QuickTraceExecutor:
 
         Args:
             city: 城市名称
+            reference_time: 分析基准时间，历史回填时使用告警时间
 
         Returns:
             Dict: 空气质量数据
@@ -414,12 +713,11 @@ class QuickTraceExecutor:
             async with async_session() as session:
                 # 1. 查询未来7天日预报数据（包含今天，共计7条）
                 try:
-                    today = date.today()
-                    end_date = today + timedelta(days=6)  # 今天 + 6天 = 7天
+                    start_date, end_date = self._air_quality_forecast_window(reference_time)
 
                     forecast_query = select(AirQualityForecast).where(
                         and_(
-                            AirQualityForecast.forecast_date >= today,
+                            AirQualityForecast.forecast_date >= start_date,
                             AirQualityForecast.forecast_date <= end_date,
                             AirQualityForecast.source.in_(["qweather", "waqi", "combined", "open-meteo", "sql-server"])
                         )
@@ -476,7 +774,10 @@ class QuickTraceExecutor:
 
                 # 2. 查询周边8城市历史12小时数据 (从SQL Server数据库)
                 try:
-                    history_records = await self._get_city_history_from_sqlserver(city)
+                    history_records = await self._get_city_history_from_sqlserver(
+                        city,
+                        reference_time=reference_time
+                    )
                     all_records.extend(history_records)
 
                     if history_records:
@@ -886,10 +1187,10 @@ class QuickTraceExecutor:
 
 【数据说明】
 气象数据包含多个来源，请注意：
-1. ERA5历史数据：前3天（D-3 ~ D-1）
-2. Open-Meteo预报数据：昨天 + 今天00:00~当前 + 未来15天
-3. 昨天数据在两个数据源中重复，但来源不同（ERA5再分析 vs Open-Meteo分析场），可交叉验证
-4. 今天数据：从00:00到当前时刻的完整小时数据（Open-Meteo分析场，包含边界层高度）
+1. ERA5历史数据：告警日前3天至前1天（D-3 ~ D-1）
+2. Open-Meteo实时预报数据仅适用于当天或未来告警；历史回填报告如显示该项已跳过，不得使用运行当天数据替代
+3. 空气质量历史数据应以告警时间为基准，覆盖告警前12小时
+4. 空气质量预报数据应以告警日期为起点，覆盖告警日起7天；如数据库无对应日期数据，需明确说明缺失
 
 【完整数据】
 {summaries.get('historical_weather', '无数据')}
@@ -948,7 +1249,7 @@ class QuickTraceExecutor:
 
 首先明确污染来源方向，基于后向轨迹分析指出主要源区和传输贡献强度（强/中/弱）。
 
-然后判断气象条件影响，说明当前大气扩散能力（强/中/弱）及是否为静稳天气，评估气象条件对污染积累的促进作用。**重点分析今天00:00到当前时刻的边界层高度和风速变化趋势**。
+然后判断气象条件影响，说明告警时段大气扩散能力（强/中/弱）及是否为静稳天气，评估气象条件对污染积累的促进作用。**重点分析告警当天截至告警时刻的边界层高度和风速变化趋势**。
 
 接着评估区域传输作用，基于周边城市浓度数据判断本地污染是局地生成主导还是区域传输主导。
 
@@ -970,13 +1271,13 @@ class QuickTraceExecutor:
 
 [本节详细分析当前气象条件对污染形成和扩散的影响]
 
-**关键分析点**：利用今天00:00~当前时刻的完整小时数据，分析边界层高度和风速的日变化规律。
+**关键分析点**：利用告警当天截至告警时刻的小时数据，分析边界层高度和风速的日变化规律。
 
-首先评估大气扩散能力。根据边界层高度（PBLH）判断垂直扩散条件，结合风速评估水平输送能力，综合给出扩散能力评价（强/中/弱）。**分析今天凌晨边界层是否持续偏低导致污染累积**。
+首先评估大气扩散能力。根据边界层高度（PBLH）判断垂直扩散条件，结合风速评估水平输送能力，综合给出扩散能力评价（强/中/弱）。**分析告警日前后边界层是否持续偏低导致污染累积**。
 
 然后分析气象要素对污染的影响。说明温度对化学反应的作用、湿度对二次生成的影响、降水的清除作用（如有）。判断当前是否为静稳天气（低边界层、小风速）。
 
-最后总结气象条件的总体影响，指出是否存在不利扩散条件。**基于今天完整数据判断污染是从何时开始积累的**。
+最后总结气象条件的总体影响，指出是否存在不利扩散条件。**基于告警日前后数据判断污染是从何时开始积累的**。
 
 ---
 
@@ -1031,7 +1332,7 @@ class QuickTraceExecutor:
 2. 定量数据与定性分析相结合，避免空洞描述
 3. 各章节内容要有区分，避免重复表述
 4. 数据缺失时明确说明，不编造信息
-5. 使用政府公文常用表达，专业规范
+5. 使用政府公文常用表达，专业规范；预报数据被标记为跳过或缺失时，必须明确说明，不能编造未来趋势
 6. 时间格式统一为"月日时:分"或"X月X日X时"
 7. 不要前后矛盾，上下文要逻辑统一
 """
@@ -1240,7 +1541,8 @@ class QuickTraceExecutor:
 
     async def _get_city_history_from_sqlserver(
         self,
-        city: str
+        city: str,
+        reference_time: Optional[datetime] = None
     ) -> List[Dict[str, Any]]:
         """
         从SQL Server数据库查询周边城市历史12小时空气质量数据
@@ -1250,14 +1552,13 @@ class QuickTraceExecutor:
 
         Args:
             city: 城市名称
+            reference_time: 分析基准时间，历史回填时使用告警时间
 
         Returns:
             List[Dict]: 历史空气质量数据列表
         """
         import pyodbc
         import os
-        from datetime import datetime, timedelta
-
         records = []
         cities = [city] + self.NEARBY_CITIES
 
@@ -1289,9 +1590,8 @@ class QuickTraceExecutor:
             conn = pyodbc.connect(conn_str, timeout=10)
             cursor = conn.cursor()
 
-            # 计算时间范围 (前12小时)
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=12)
+            # 计算时间范围 (基准时间前12小时)
+            start_time, end_time = self._history_time_window(reference_time)
 
             # 构建SQL查询
             # CityAQIPublishHistory表字段: TimePoint, Area, CityCode, CO, NO2, O3, PM10, PM2_5, SO2, AQI, PrimaryPollutant, Quality, CreateTime, Id
@@ -2069,45 +2369,48 @@ class DailyQuickTraceScheduler:
 # 独立运行入口
 # ============================================================================
 
-async def run_once(city: str = "济宁市", pollutant: str = "PM2.5", alert_value: float = 75.0):
+async def run_once(city: str = "济宁市", analysis_date: str = None):
     """
-    单次执行快速溯源分析
+    单次执行快速溯源分析，按分析日期自动推断污染事件
 
     Args:
         city: 城市名称
-        pollutant: 污染物类型
-        alert_value: 告警浓度值
+        analysis_date: 分析日期 (YYYY-MM-DD)
     """
-    executor = QuickTraceExecutor()
+    if not analysis_date:
+        raise ValueError("单次执行必须提供 analysis_date，格式 YYYY-MM-DD")
 
-    # 使用当前时间作为告警时间
-    alert_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    executor = QuickTraceExecutor()
 
     logger.info(
         "quick_trace_manual_run",
         city=city,
-        pollutant=pollutant,
-        alert_value=alert_value,
-        alert_time=alert_time
+        analysis_date=analysis_date
     )
 
-    result = await executor.execute(
+    result = await executor.execute_for_analysis_date(
         city=city,
-        alert_time=alert_time,
-        pollutant=pollutant,
-        alert_value=alert_value
+        analysis_date=analysis_date
     )
 
     # 保存报告
     if result.get("summary_text"):
-        filepath = executor.save_report(
+        event = result.get("inferred_event", {})
+        save_result = await executor.save_report(
             summary_text=result["summary_text"],
             city=city,
-            alert_time=alert_time
+            alert_time=event["alert_time"],
+            pollutant=event["pollutant"],
+            alert_value=event["alert_value"],
+            visuals=result.get("visuals", []),
+            has_trajectory=result.get("has_trajectory", False),
+            warning_message=result.get("warning_message"),
         )
 
         print(f"\n{'='*60}")
-        print(f"报告已保存到: {filepath}")
+        print(f"报告已保存到: {save_result.get('filepath')}")
+        print(f"数据库ID: {save_result.get('db_id')}")
+        print(f"推断事件: {event.get('alert_time')} {event.get('pollutant')}={event.get('alert_value')}")
         print(f"{'='*60}\n")
 
         # 打印报告摘要
@@ -2126,17 +2429,17 @@ def main():
     parser = argparse.ArgumentParser(description="快速溯源执行器")
     parser.add_argument("--mode", choices=["once", "schedule"], default="once", help="运行模式: once(单次执行) 或 schedule(定时调度)")
     parser.add_argument("--city", default="济宁市", help="城市名称")
-    parser.add_argument("--pollutant", default="PM2.5", help="污染物类型")
-    parser.add_argument("--alert-value", type=float, default=75.0, help="告警浓度值")
+    parser.add_argument("--analysis-date", help="分析日期，格式 YYYY-MM-DD；once 模式必填")
 
     args = parser.parse_args()
 
     if args.mode == "once":
+        if not args.analysis_date:
+            parser.error("--mode once 必须提供 --analysis-date，格式 YYYY-MM-DD")
         # 单次执行
         asyncio.run(run_once(
             city=args.city,
-            pollutant=args.pollutant,
-            alert_value=args.alert_value
+            analysis_date=args.analysis_date
         ))
     elif args.mode == "schedule":
         # 定时调度模式

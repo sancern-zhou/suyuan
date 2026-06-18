@@ -594,7 +594,7 @@ def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> 
     cover_formatted = _format_cover_page(doc)
     figure_captions = _format_figure_captions(doc)
 
-    heading_numbers = 0
+    heading_numbers = _apply_heading_numbering(doc)
     image_paragraphs = 0
     for paragraph in doc.paragraphs:
         if paragraph_has_drawing(paragraph):
