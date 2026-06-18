@@ -25,6 +25,7 @@ Word XML 三种模式：
 - 自动降级策略确保鲁棒性
 """
 import os
+import tempfile
 import uuid
 from mimetypes import guess_type
 from pathlib import Path
@@ -63,6 +64,9 @@ class ReadFileTool(LLMTool):
 
     # 支持的 DOCX 格式
     DOCX_EXTENSIONS = {'.docx'}
+
+    # 支持的旧版 Word 二进制格式
+    DOC_EXTENSIONS = {'.doc'}
 
     # 支持的 PPTX 格式
     PPTX_EXTENSIONS = {'.pptx'}
@@ -173,6 +177,7 @@ class ReadFileTool(LLMTool):
             is_image = file_ext in self.IMAGE_EXTENSIONS
             is_pdf = file_ext in self.PDF_EXTENSIONS
             is_docx = file_ext in self.DOCX_EXTENSIONS
+            is_doc = file_ext in self.DOC_EXTENSIONS
             is_pptx = file_ext in self.PPTX_EXTENSIONS
             is_excel = file_ext in self.EXCEL_EXTENSIONS
             is_word_xml = self._is_word_xml(resolved_path)
@@ -190,6 +195,10 @@ class ReadFileTool(LLMTool):
             elif is_docx:
                 return await self._read_docx_delegated(
                     resolved_path, file_size, pages, max_paragraphs, enable_preview
+                )
+            elif is_doc:
+                return await self._read_doc_delegated(
+                    resolved_path, file_size, offset, limit
                 )
             elif is_pptx:
                 return await self._read_pptx_delegated(
@@ -859,6 +868,147 @@ class ReadFileTool(LLMTool):
                 "data": {"error": str(e)},
                 "summary": f"读取DOCX失败: {str(e)[:50]}"
             }
+
+    async def _read_doc_delegated(
+        self,
+        file_path: Path,
+        file_size: int,
+        offset: int = 0,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """读取旧版 Word .doc 文件：先用 LibreOffice 转为文本，再按行返回。"""
+        try:
+            if file_size > self.max_docx_size:
+                return {
+                    "success": False,
+                    "data": {"error": f"DOC文件过大: {file_size} bytes (最大 {self.max_docx_size} bytes)"},
+                    "summary": "DOC过大，超过20MB限制"
+                }
+
+            from app.tools.office.soffice import run_soffice
+
+            with tempfile.TemporaryDirectory(prefix="read_doc_") as temp_dir:
+                temp_path = Path(temp_dir)
+                result = run_soffice(
+                    [
+                        "--headless",
+                        "--convert-to",
+                        "txt:Text",
+                        "--outdir",
+                        str(temp_path),
+                        str(file_path),
+                    ],
+                    timeout=60,
+                )
+
+                if result.returncode != 0:
+                    error = (result.stderr or result.stdout or "LibreOffice conversion failed").strip()
+                    return {
+                        "success": False,
+                        "data": {"error": error},
+                        "summary": f"DOC转换失败: {file_path.name}"
+                    }
+
+                converted_path = temp_path / f"{file_path.stem}.txt"
+                if not converted_path.exists():
+                    candidates = sorted(temp_path.glob("*.txt"))
+                    converted_path = candidates[0] if candidates else converted_path
+
+                if not converted_path.exists():
+                    return {
+                        "success": False,
+                        "data": {"error": "LibreOffice未生成文本文件"},
+                        "summary": f"DOC转换失败: {file_path.name}"
+                    }
+
+                content = self._read_converted_text(converted_path)
+
+            lines = content.splitlines()
+            total_lines = len(lines)
+            effective_limit = limit
+            start_line = max(offset, 0)
+            end_line = (
+                min(start_line + effective_limit, total_lines)
+                if effective_limit is not None
+                else total_lines
+            )
+            selected_lines = lines[start_line:end_line]
+            selected_content = "\n".join(selected_lines)
+            is_truncated = effective_limit is not None and end_line < total_lines
+
+            line_range = [start_line + 1, end_line]
+            data = {
+                "type": "document",
+                "format": "doc",
+                "content": selected_content,
+                "path": str(file_path),
+                "size": file_size,
+                "line_range": line_range,
+                "total_lines": total_lines,
+                "is_truncated": is_truncated,
+            }
+
+            file_ref = build_file_ref(
+                file_path,
+                type="document",
+                format="doc",
+                size=file_size,
+                usage="read_file",
+                line_range=line_range,
+                total_lines=total_lines,
+                is_truncated=is_truncated,
+            )
+            llm_resume = {"content_preview": selected_content[:2000]}
+            if is_truncated:
+                llm_resume["tool_hint"] = (
+                    f"Use read_file(path='{file_path}', offset={end_line}, limit={effective_limit}) "
+                    "to continue reading."
+                )
+            else:
+                llm_resume["tool_hint"] = f"Use read_file(path='{file_path}') to reread this file."
+
+            if effective_limit is not None and end_line < total_lines:
+                summary = (
+                    f"读取DOC成功: {file_path.name} ({file_size} bytes)\n"
+                    f"已返回第 {start_line + 1}-{end_line} 行（共{total_lines}行）"
+                )
+            else:
+                summary = f"读取DOC成功: {file_path.name} ({file_size} bytes, {total_lines} 行)"
+
+            return {
+                "success": True,
+                "data": data,
+                "refs": {"files": [file_ref]},
+                "llm_resume": llm_resume,
+                "summary": summary,
+                "metadata": {
+                    "generator": "read_file",
+                    "delegated_to": "soffice_doc_text",
+                },
+            }
+
+        except FileNotFoundError as e:
+            return {
+                "success": False,
+                "data": {"error": f"LibreOffice不可用: {str(e)}"},
+                "summary": "DOC读取失败：LibreOffice不可用"
+            }
+        except Exception as e:
+            logger.error("read_doc_delegated_failed", path=str(file_path), error=str(e))
+            return {
+                "success": False,
+                "data": {"error": str(e)},
+                "summary": f"读取DOC失败: {str(e)[:50]}"
+            }
+
+    def _read_converted_text(self, converted_path: Path) -> str:
+        """读取 LibreOffice 转出的文本，兼容 BOM 和常见中文编码。"""
+        for encoding in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
+            try:
+                return converted_path.read_text(encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+        return converted_path.read_text(encoding="utf-8", errors="replace")
 
     async def _read_pptx_delegated(
         self,
