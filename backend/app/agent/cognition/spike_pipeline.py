@@ -6,8 +6,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from app.agent.cognition.models import CognitiveMapQuery, CognitiveSchema, ExtractionResult, SourceFile
-from app.agent.cognition.providers.local_extractor import LocalRuleBasedExtractorProvider
-from app.agent.cognition.providers.text_parser import TextParserProvider
+from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
 from app.agent.cognition.view_builder import CognitiveMapViewBuilder
 
 
@@ -27,6 +26,8 @@ async def run_local_spike(
     entity_hints: list[str] | None = None,
     map_id: str = "spike_map",
     file_id: str = "spike_file",
+    parser_provider: str = "text",
+    extractor_provider: str = "local",
 ) -> SpikeRunResult:
     source_path = Path(source_path)
     output_dir = Path(output_dir)
@@ -40,8 +41,10 @@ async def run_local_spike(
         storage_path=str(source_path),
     )
     schema = CognitiveSchema.default_air_quality_schema()
-    chunks = await TextParserProvider().parse(source_file)
-    extraction = await LocalRuleBasedExtractorProvider().extract(chunks, schema)
+    parser = create_parser_provider(parser_provider)
+    extractor = create_extractor_provider(extractor_provider)
+    chunks = await parser.parse(source_file)
+    extraction = await extractor.extract(chunks, schema)
     query = CognitiveMapQuery(
         task=task,
         agent_mode="expert",
@@ -75,6 +78,8 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True, help="Directory for JSON outputs")
     parser.add_argument("--task", default="构建认知地图", help="Task text for CognitiveMapView")
     parser.add_argument("--hint", action="append", default=[], help="Entity hint, can be repeated")
+    parser.add_argument("--parser-provider", default="text", choices=["text", "markitdown"])
+    parser.add_argument("--extractor-provider", default="local", choices=["local", "llamaindex"])
     args = parser.parse_args()
 
     import asyncio
@@ -85,6 +90,8 @@ def main() -> None:
             output_dir=args.output_dir,
             task=args.task,
             entity_hints=args.hint,
+            parser_provider=args.parser_provider,
+            extractor_provider=args.extractor_provider,
         )
     )
     print(f"extraction: {result.extraction_path}")
