@@ -25,7 +25,6 @@
           @click="toggleMapList"
         >
           地图列表
-          <span>{{ maps.length }}</span>
         </button>
 
         <template v-else>
@@ -1128,11 +1127,6 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
-}
-
-.rail-btn span {
-  color: #64748b;
-  font-size: 11px;
 }
 
 .map-detail-panel {
