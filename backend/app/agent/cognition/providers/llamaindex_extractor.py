@@ -31,9 +31,15 @@ class LlamaIndexPropertyGraphExtractorProvider:
 
     provider_name = "llamaindex_property_graph"
 
-    def __init__(self, llm: Any | None = None, max_triplets_per_chunk: int = 10) -> None:
+    def __init__(
+        self,
+        llm: Any | None = None,
+        max_triplets_per_chunk: int = 10,
+        num_workers: int = 1,
+    ) -> None:
         self.llm = llm
         self.max_triplets_per_chunk = max_triplets_per_chunk
+        self.num_workers = num_workers
 
     async def extract(
         self,
@@ -59,6 +65,8 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 "LlamaIndexPropertyGraphExtractorProvider requires an LLM instance. "
                 "Configure one before selecting extractor_provider='llamaindex'."
             )
+        if hasattr(self.llm, "set_cognitive_schema"):
+            self.llm.set_cognitive_schema(schema)
 
         components = self.build_schema_components(schema)
         extractor = SchemaLLMPathExtractor(
@@ -68,6 +76,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
             kg_validation_schema=components.validation_schema,
             strict=True,
             max_triplets_per_chunk=self.max_triplets_per_chunk,
+            num_workers=self.num_workers,
         )
         nodes = [
             TextNode(

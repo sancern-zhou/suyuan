@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from app.agent.cognition.evaluation import write_evaluation
+from app.agent.cognition.llm_factory import create_llamaindex_llm
 from app.agent.cognition.models import CognitiveMapQuery, CognitiveSchema, ExtractionResult, SourceFile
 from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
 from app.agent.cognition.view_builder import CognitiveMapViewBuilder
@@ -28,6 +30,8 @@ async def run_local_spike(
     file_id: str = "spike_file",
     parser_provider: str = "text",
     extractor_provider: str = "local",
+    llm_provider: str | None = None,
+    evaluation_output: Path | None = None,
 ) -> SpikeRunResult:
     source_path = Path(source_path)
     output_dir = Path(output_dir)
@@ -42,7 +46,8 @@ async def run_local_spike(
     )
     schema = CognitiveSchema.default_air_quality_schema()
     parser = create_parser_provider(parser_provider)
-    extractor = create_extractor_provider(extractor_provider)
+    llm = create_llamaindex_llm(llm_provider) if extractor_provider == "llamaindex" else None
+    extractor = create_extractor_provider(extractor_provider, llm=llm)
     chunks = await parser.parse(source_file)
     extraction = await extractor.extract(chunks, schema)
     query = CognitiveMapQuery(
@@ -64,6 +69,8 @@ async def run_local_spike(
         view.model_dump_json(indent=2),
         encoding="utf-8",
     )
+    if evaluation_output is not None:
+        write_evaluation(extraction_path=extraction_path, output_path=evaluation_output)
     return SpikeRunResult(
         extraction=extraction,
         view=view,
@@ -80,6 +87,8 @@ def main() -> None:
     parser.add_argument("--hint", action="append", default=[], help="Entity hint, can be repeated")
     parser.add_argument("--parser-provider", default="text", choices=["text", "markitdown"])
     parser.add_argument("--extractor-provider", default="local", choices=["local", "llamaindex"])
+    parser.add_argument("--llm-provider", default=None, choices=["project", "none"])
+    parser.add_argument("--evaluation-output", type=Path, default=None)
     args = parser.parse_args()
 
     import asyncio
@@ -92,6 +101,8 @@ def main() -> None:
             entity_hints=args.hint,
             parser_provider=args.parser_provider,
             extractor_provider=args.extractor_provider,
+            llm_provider=args.llm_provider,
+            evaluation_output=args.evaluation_output,
         )
     )
     print(f"extraction: {result.extraction_path}")

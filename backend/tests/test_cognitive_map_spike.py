@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from llama_index.core.llms import ChatMessage, CompletionResponse
 
 from app.agent.cognition.models import (
     CognitiveMapQuery,
@@ -9,6 +10,8 @@ from app.agent.cognition.models import (
     ExtractionResult,
     SourceFile,
 )
+from app.agent.cognition.evaluation import generate_evaluation_markdown
+from app.agent.cognition.llm_factory import ProjectLLMAdapter, create_llamaindex_llm
 from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
 from app.agent.cognition.providers.llamaindex_extractor import (
     LlamaIndexPropertyGraphExtractorProvider,
@@ -124,6 +127,25 @@ async def test_local_spike_pipeline_writes_extraction_and_view_json(tmp_path: Pa
     assert "臭氧" in result.view_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.asyncio
+async def test_local_spike_pipeline_can_write_evaluation_markdown(tmp_path: Path):
+    source_path = tmp_path / "source.txt"
+    output_dir = tmp_path / "out"
+    evaluation_path = tmp_path / "evaluation.md"
+    source_path.write_text("臭氧受光化学反应影响。", encoding="utf-8")
+
+    await run_local_spike(
+        source_path=source_path,
+        output_dir=output_dir,
+        task="分析臭氧污染过程",
+        entity_hints=["臭氧"],
+        evaluation_output=evaluation_path,
+    )
+
+    assert evaluation_path.exists()
+    assert "认知地图抽取评估" in evaluation_path.read_text(encoding="utf-8")
+
+
 def test_provider_factory_selects_local_defaults():
     assert create_parser_provider("text").__class__.__name__ == "TextParserProvider"
     assert create_extractor_provider("local").__class__.__name__ == "LocalRuleBasedExtractorProvider"
@@ -135,6 +157,13 @@ def test_provider_factory_selects_optional_adapters_without_importing_dependenci
         create_extractor_provider("llamaindex").__class__.__name__
         == "LlamaIndexPropertyGraphExtractorProvider"
     )
+
+
+def test_provider_factory_passes_llm_to_llamaindex_provider():
+    llm = object()
+    provider = create_extractor_provider("llamaindex", llm=llm)
+
+    assert provider.llm is llm
 
 
 def test_llamaindex_provider_maps_extraction_result_payload_to_project_models():
@@ -238,3 +267,133 @@ async def test_llamaindex_provider_reports_missing_llm_cleanly():
 
     with pytest.raises(RuntimeError, match="requires an LLM"):
         await provider.extract(chunks=[], schema=schema)
+
+
+@pytest.mark.asyncio
+async def test_project_llm_adapter_uses_project_llm_service_chat():
+    class FakeLLMService:
+        provider = "fake"
+        model = "fake-model"
+
+        async def chat(self, messages, temperature=None, max_tokens=None):
+            assert messages == [{"role": "user", "content": "hello"}]
+            assert temperature == 0.2
+            assert max_tokens == 128
+            return "world"
+
+    llm = ProjectLLMAdapter(
+        llm_service=FakeLLMService(),
+        model_name="fake-model",
+        temperature=0.2,
+        max_tokens=128,
+    )
+
+    response = await llm.acomplete("hello")
+
+    assert isinstance(response, CompletionResponse)
+    assert response.text == "world"
+    assert llm.metadata.model_name == "fake-model"
+
+
+@pytest.mark.asyncio
+async def test_project_llm_adapter_async_chat_uses_project_llm_service_chat():
+    class FakeLLMService:
+        provider = "fake"
+        model = "fake-model"
+
+        async def chat(self, messages, temperature=None, max_tokens=None):
+            assert messages == [
+                {"role": "system", "content": "extract"},
+                {"role": "user", "content": "hello"},
+            ]
+            return "structured"
+
+    llm = ProjectLLMAdapter(llm_service=FakeLLMService(), model_name="fake-model")
+
+    response = await llm.achat(
+        [
+            ChatMessage(role="system", content="extract"),
+            ChatMessage(role="user", content="hello"),
+        ]
+    )
+
+    assert response.message.content == "structured"
+
+
+@pytest.mark.asyncio
+async def test_project_llm_adapter_structured_predict_uses_project_json_service():
+    class FakeOutputModel:
+        payload = None
+
+        @classmethod
+        def model_validate(cls, payload):
+            cls.payload = payload
+            return cls()
+
+    class FakeLLMService:
+        provider = "fake"
+        model = "fake-model"
+
+        async def call_llm_with_json_response(self, prompt, max_retries=2):
+            assert "triplets" in prompt
+            assert "臭氧受光化学反应影响" in prompt
+            return {
+                "triplets": [
+                    {
+                        "subject": {"type": "ProcessMechanism", "name": "光化学反应"},
+                        "relation": {"type": "affects"},
+                        "object": {"type": "Pollutant", "name": "臭氧"},
+                    }
+                ]
+            }
+
+    llm = ProjectLLMAdapter(llm_service=FakeLLMService(), model_name="fake-model")
+
+    result = await llm.astructured_predict(
+        FakeOutputModel,
+        prompt=None,
+        text="臭氧受光化学反应影响。",
+        max_triplets_per_chunk=3,
+    )
+
+    assert isinstance(result, FakeOutputModel)
+    assert FakeOutputModel.payload["triplets"][0]["relation"]["type"] == "affects"
+
+
+def test_create_llamaindex_llm_project_provider_returns_project_adapter():
+    llm = create_llamaindex_llm("project")
+
+    assert isinstance(llm, ProjectLLMAdapter)
+
+
+def test_project_llm_adapter_includes_allowed_triplets_in_structured_prompt():
+    llm = ProjectLLMAdapter(llm_service=object(), model_name="fake-model")
+    llm.set_cognitive_schema(CognitiveSchema.default_air_quality_schema())
+
+    prompt = llm._build_structured_kg_prompt("臭氧受光化学反应影响。", max_triplets=3)
+
+    assert "ProcessMechanism --affects--> Pollutant" in prompt
+
+
+def test_project_llm_adapter_normalizes_common_triplet_keys():
+    llm = ProjectLLMAdapter(llm_service=object(), model_name="fake-model")
+
+    payload = llm._normalize_structured_payload({"relations": [{"subject": {}}]})
+
+    assert payload["triplets"] == [{"subject": {}}]
+
+
+def test_generate_evaluation_markdown_summarizes_extraction():
+    extraction = LocalRuleBasedExtractorProvider().extract_sync_from_text(
+        text="深圳市监测站监测臭氧。臭氧受光化学反应影响，机动车排放支持本地生成假设。",
+        schema=CognitiveSchema.default_air_quality_schema(),
+        map_id="map_1",
+        file_id="file_1",
+    )
+
+    markdown = generate_evaluation_markdown(extraction, sample_size=3)
+
+    assert "# 认知地图抽取评估" in markdown
+    assert "候选实体数量" in markdown
+    assert "有证据实体比例" in markdown
+    assert "Pollutant" in markdown
