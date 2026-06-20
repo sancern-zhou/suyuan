@@ -142,24 +142,14 @@
             {{ formatError(latestRun?.error || currentMap.build_error) }}
           </div>
 
-          <div class="workspace-toolbar">
-            <div class="metric-strip">
-              <span class="metric-pill">文件 {{ files.length }}</span>
-              <span class="metric-pill">实体 {{ entities.length }}</span>
-              <span class="metric-pill">关系 {{ relations.length }}</span>
-              <span class="metric-pill">证据 {{ evidence.length }}</span>
-              <span class="metric-pill">状态 {{ getStatusText(latestRun?.status || currentMap.status) }}</span>
-              <span class="metric-pill">覆盖 {{ formatRatio(evaluation?.entity_evidence_ratio) }}</span>
-            </div>
-            <input
-              ref="fileInput"
-              class="hidden-file-input"
-              type="file"
-              multiple
-              accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.html,.htm,.txt,.md,.csv,.json"
-              @change="handleFileSelect"
-            />
-          </div>
+          <input
+            ref="fileInput"
+            class="hidden-file-input"
+            type="file"
+            multiple
+            accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.html,.htm,.txt,.md,.csv,.json"
+            @change="handleFileSelect"
+          />
           <div
             v-if="isUploadDropExpanded || isDragging"
             class="drop-strip"
@@ -1316,41 +1306,6 @@ onBeforeUnmount(() => {
   justify-content: flex-start;
 }
 
-.workspace-toolbar {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 0;
-  pointer-events: none;
-}
-
-.metric-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.metric-pill {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 4px;
-  background: transparent;
-  color: #475569;
-  font-size: 12px;
-  white-space: nowrap;
-  box-shadow: none;
-}
-
 .compact-upload {
   flex: 0 0 auto;
 }
@@ -1409,14 +1364,13 @@ onBeforeUnmount(() => {
 
 .graph-toolbar {
   position: absolute;
-  top: 66px;
-  left: 62px;
-  right: 12px;
+  left: 12px;
+  bottom: 12px;
   z-index: 9;
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
   pointer-events: none;
 }
 
@@ -1432,7 +1386,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px 12px;
   min-width: 0;
-  max-width: calc(100% - 180px);
+  max-width: min(520px, calc(100vw - 64px));
   padding: 6px 8px;
   border: 1px solid rgba(226, 232, 240, 0.92);
   border-radius: 6px;
@@ -1469,13 +1423,13 @@ onBeforeUnmount(() => {
 
 .relation-filter {
   position: absolute;
-  top: 110px;
-  left: 62px;
-  right: 12px;
+  left: 12px;
+  bottom: 78px;
   z-index: 8;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-width: min(560px, calc(100vw - 64px));
   pointer-events: none;
 }
 
@@ -1688,9 +1642,10 @@ onBeforeUnmount(() => {
   }
 
   .graph-toolbar {
-    top: 120px;
+    top: auto;
     left: 8px;
     right: 8px;
+    bottom: 8px;
     align-items: flex-start;
     flex-direction: column;
   }
@@ -1700,9 +1655,10 @@ onBeforeUnmount(() => {
   }
 
   .relation-filter {
-    top: 188px;
+    top: auto;
     left: 8px;
     right: 8px;
+    bottom: 86px;
   }
 
   .drop-strip {
@@ -1726,10 +1682,5 @@ onBeforeUnmount(() => {
     max-height: 48%;
   }
 
-  .workspace-toolbar {
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-  }
 }
 </style>
