@@ -40,6 +40,8 @@ class LlamaIndexPropertyGraphExtractorProvider:
         self.llm = llm
         self.max_triplets_per_chunk = max_triplets_per_chunk
         self.num_workers = num_workers
+        self._entity_type_lookup: dict[str, str] = {}
+        self._relation_type_lookup: dict[str, str] = {}
 
     async def extract(
         self,
@@ -147,14 +149,29 @@ class LlamaIndexPropertyGraphExtractorProvider:
         )
 
     def build_schema_components(self, schema: CognitiveSchema) -> LlamaIndexSchemaComponents:
-        entity_values = tuple(schema.allowed_entity_types or ["Entity"])
-        relation_values = tuple(schema.allowed_relation_types or ["related_to"])
+        self._entity_type_lookup = {
+            self._llamaindex_label(entity_type): entity_type
+            for entity_type in (schema.allowed_entity_types or ["Entity"])
+        }
+        self._relation_type_lookup = {
+            self._llamaindex_label(relation_type): relation_type
+            for relation_type in (schema.allowed_relation_types or ["related_to"])
+        }
+        entity_values = tuple(self._entity_type_lookup)
+        relation_values = tuple(self._relation_type_lookup)
         possible_entities = Literal.__getitem__(entity_values)
         possible_relations = Literal.__getitem__(relation_values)
         return LlamaIndexSchemaComponents(
             possible_entities=possible_entities,
             possible_relations=possible_relations,
-            validation_schema=list(schema.allowed_relation_triplets),
+            validation_schema=[
+                (
+                    self._llamaindex_label(source),
+                    self._llamaindex_label(relation),
+                    self._llamaindex_label(target),
+                )
+                for source, relation, target in schema.allowed_relation_triplets
+            ],
         )
 
     def map_payload_to_extraction(
@@ -180,7 +197,9 @@ class LlamaIndexPropertyGraphExtractorProvider:
 
         entities: dict[tuple[str, str], CandidateEntity] = {}
         for item in payload.get("entities", []):
-            entity_type = str(item.get("type") or item.get("entity_type") or "Entity")
+            entity_type = self._project_entity_type(
+                str(item.get("type") or item.get("entity_type") or "Entity")
+            )
             name = str(item.get("name") or item.get("label") or "").strip()
             if not name:
                 continue
@@ -202,11 +221,13 @@ class LlamaIndexPropertyGraphExtractorProvider:
 
         relations: list[CandidateRelation] = []
         for item in payload.get("relations", []):
-            relation_type = str(item.get("type") or item.get("relation_type") or "").strip()
+            relation_type = self._project_relation_type(
+                str(item.get("type") or item.get("relation_type") or "").strip()
+            )
             source_name = str(item.get("source") or "").strip()
             target_name = str(item.get("target") or "").strip()
-            source_type = str(item.get("source_type") or "Entity")
-            target_type = str(item.get("target_type") or "Entity")
+            source_type = self._project_entity_type(str(item.get("source_type") or "Entity"))
+            target_type = self._project_entity_type(str(item.get("target_type") or "Entity"))
             if not relation_type or not source_name or not target_name:
                 continue
 
@@ -264,3 +285,12 @@ class LlamaIndexPropertyGraphExtractorProvider:
     def _stable_id(self, prefix: str, *parts: str) -> str:
         digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]
         return f"{prefix}_{digest}"
+
+    def _llamaindex_label(self, value: str) -> str:
+        return value.replace(" ", "_").upper()
+
+    def _project_entity_type(self, value: str) -> str:
+        return self._entity_type_lookup.get(self._llamaindex_label(value), value)
+
+    def _project_relation_type(self, value: str) -> str:
+        return self._relation_type_lookup.get(self._llamaindex_label(value), value)
