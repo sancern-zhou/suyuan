@@ -214,27 +214,54 @@
           </section>
 
           <section v-else-if="activeTab === 'graph'" class="graph-section">
-            <div v-if="graphNodes.length === 0" class="state-text">暂无可视化数据</div>
+            <div v-if="entities.length === 0" class="state-text">暂无可视化数据</div>
             <template v-else>
               <div class="graph-toolbar">
                 <div class="graph-legend">
-                  <span
+                  <button
                     v-for="category in graphCategories"
                     :key="category.name"
                     class="legend-item"
+                    :class="{ muted: isEntityTypeHidden(category.name) }"
+                    type="button"
+                    @click="toggleEntityType(category.name)"
                   >
                     <i :style="{ backgroundColor: category.itemStyle.color }"></i>
                     {{ category.name }}
-                  </span>
+                  </button>
                 </div>
-                <button class="panel-btn" type="button" @click="fitGraph">适配视图</button>
+                <div class="graph-toolbar-actions">
+                  <button class="panel-btn" type="button" @click="clearGraphFilters">显示全部</button>
+                  <button class="panel-btn" type="button" @click="fitGraph">适配视图</button>
+                </div>
               </div>
+              <div v-if="relationTypes.length" class="relation-filter">
+                <button
+                  v-for="type in relationTypes"
+                  :key="type"
+                  type="button"
+                  :class="{ muted: isRelationTypeHidden(type) }"
+                  @click="toggleRelationType(type)"
+                >
+                  {{ type }}
+                </button>
+              </div>
+              <div v-if="graphNodes.length === 0" class="state-text">当前筛选条件下暂无节点</div>
               <div ref="graphContainer" class="graph-canvas"></div>
-              <div v-if="selectedGraphNode" class="graph-inspector">
-                <div class="row-title">{{ selectedGraphNode.name }}</div>
-                <div class="row-meta">{{ selectedGraphNode.entity_type || '未分类' }}</div>
-                <p v-if="selectedGraphNode.description">{{ selectedGraphNode.description }}</p>
-                <p v-else>证据数：{{ selectedGraphNode.source_evidence_ids?.length || 0 }}</p>
+              <div v-if="selectedGraphItem" class="graph-inspector">
+                <div class="row-title">{{ selectedGraphTitle }}</div>
+                <div class="row-meta">{{ selectedGraphMeta }}</div>
+                <p v-if="selectedGraphDescription">{{ selectedGraphDescription }}</p>
+                <div v-if="selectedGraphEvidence.length" class="graph-evidence-list">
+                  <div
+                    v-for="item in selectedGraphEvidence"
+                    :key="item.evidence_id || item.id || item.chunk_id"
+                    class="graph-evidence-item"
+                  >
+                    {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                  </div>
+                </div>
+                <p v-else>暂无关联证据</p>
               </div>
             </template>
           </section>
@@ -288,7 +315,9 @@ const evidence = ref([])
 const buildRuns = ref([])
 const evaluation = ref(null)
 const graphChart = ref(null)
-const selectedGraphNode = ref(null)
+const selectedGraphItem = ref(null)
+const hiddenEntityTypes = ref([])
+const hiddenRelationTypes = ref([])
 const activeTab = ref('files')
 const createForm = ref({ name: '' })
 const createError = ref('')
@@ -332,40 +361,58 @@ const graphCategories = computed(() => {
   }))
 })
 
+const relationTypes = computed(() => (
+  Array.from(new Set(relations.value.map(relation => relation.relation_type || relation.type || 'related_to')))
+))
+
+const evidenceById = computed(() => {
+  const index = new Map()
+  evidence.value.forEach(item => {
+    const id = item.evidence_id || item.id
+    if (id) index.set(id, item)
+  })
+  return index
+})
+
 const graphNodes = computed(() => {
   const categoryIndex = new Map(graphCategories.value.map((category, index) => [category.name, index]))
-  return entities.value.map(entity => {
-    const type = entity.entity_type || entity.type || '未分类'
-    const evidenceCount = entity.source_evidence_ids?.length || 0
-    return {
-      id: entity.entity_id || entity.id || `${type}:${entity.name}`,
-      name: entity.name,
-      value: evidenceCount,
-      category: categoryIndex.get(type) || 0,
-      symbolSize: Math.max(34, Math.min(62, 34 + evidenceCount * 6)),
-      raw: entity,
-      label: {
-        show: true,
-        formatter: '{b}'
+  return entities.value
+    .filter(entity => !isEntityTypeHidden(entity.entity_type || entity.type || '未分类'))
+    .map(entity => {
+      const type = entity.entity_type || entity.type || '未分类'
+      const evidenceCount = entity.source_evidence_ids?.length || 0
+      return {
+        id: entity.entity_id || entity.id || `${type}:${entity.name}`,
+        name: entity.name,
+        value: evidenceCount,
+        category: categoryIndex.get(type) || 0,
+        symbolSize: Math.max(34, Math.min(62, 34 + evidenceCount * 6)),
+        raw: entity,
+        label: {
+          show: true,
+          formatter: '{b}'
+        }
       }
-    }
-  })
+    })
 })
 
 const graphLinks = computed(() => {
   const nodeIds = new Set(graphNodes.value.map(node => node.id))
   return relations.value
     .map(relation => {
+      const type = relation.relation_type || relation.type || 'related_to'
+      if (isRelationTypeHidden(type)) return null
       const source = relation.source_entity_id || relation.source || relation.source_id
       const target = relation.target_entity_id || relation.target || relation.target_id
       if (!nodeIds.has(source) || !nodeIds.has(target)) return null
       return {
         source,
         target,
-        value: relation.relation_type || relation.type || 'related_to',
+        value: type,
+        raw: relation,
         label: {
           show: true,
-          formatter: relation.relation_type || relation.type || ''
+          formatter: type
         },
         lineStyle: {
           width: 1.5,
@@ -381,7 +428,8 @@ const graphOption = computed(() => ({
     trigger: 'item',
     formatter: (params) => {
       if (params.dataType === 'edge') {
-        return `${params.data.source} -> ${params.data.target}<br/>${params.data.value || ''}`
+        const raw = params.data.raw || {}
+        return `${raw.source_name || params.data.source} -> ${raw.target_name || params.data.target}<br/>${params.data.value || ''}<br/>证据：${raw.source_evidence_ids?.length || 0}`
       }
       const raw = params.data.raw || {}
       return `${raw.name || params.name}<br/>类型：${raw.entity_type || raw.type || '未分类'}<br/>证据：${raw.source_evidence_ids?.length || 0}`
@@ -426,6 +474,33 @@ const graphOption = computed(() => ({
     }
   ]
 }))
+
+const selectedGraphTitle = computed(() => {
+  if (!selectedGraphItem.value) return ''
+  const raw = selectedGraphItem.value.raw || {}
+  if (selectedGraphItem.value.kind === 'relation') {
+    return `${raw.source_name || raw.source || raw.source_entity_id} -> ${raw.target_name || raw.target || raw.target_entity_id}`
+  }
+  return raw.name || ''
+})
+
+const selectedGraphMeta = computed(() => {
+  if (!selectedGraphItem.value) return ''
+  const raw = selectedGraphItem.value.raw || {}
+  return selectedGraphItem.value.kind === 'relation'
+    ? raw.relation_type || raw.type || 'related_to'
+    : raw.entity_type || raw.type || '未分类'
+})
+
+const selectedGraphDescription = computed(() => {
+  const raw = selectedGraphItem.value?.raw || {}
+  return raw.description || ''
+})
+
+const selectedGraphEvidence = computed(() => {
+  const evidenceIds = selectedGraphItem.value?.raw?.source_evidence_ids || []
+  return evidenceIds.map(id => evidenceById.value.get(id)).filter(Boolean)
+})
 
 const normalizeList = (payload, keys) => {
   if (Array.isArray(payload)) return payload
@@ -506,7 +581,8 @@ const selectMap = async (map) => {
   buildError.value = ''
   buildMessage.value = ''
   uploadError.value = ''
-  selectedGraphNode.value = null
+  selectedGraphItem.value = null
+  clearGraphFilters()
   await refreshCurrentMapData()
 }
 
@@ -622,15 +698,38 @@ const formatSeconds = (value) => {
   return `${Number(value)}s`
 }
 
+const isEntityTypeHidden = (type) => hiddenEntityTypes.value.includes(type)
+
+const isRelationTypeHidden = (type) => hiddenRelationTypes.value.includes(type)
+
+const toggleEntityType = (type) => {
+  hiddenEntityTypes.value = isEntityTypeHidden(type)
+    ? hiddenEntityTypes.value.filter(item => item !== type)
+    : [...hiddenEntityTypes.value, type]
+}
+
+const toggleRelationType = (type) => {
+  hiddenRelationTypes.value = isRelationTypeHidden(type)
+    ? hiddenRelationTypes.value.filter(item => item !== type)
+    : [...hiddenRelationTypes.value, type]
+}
+
+const clearGraphFilters = () => {
+  hiddenEntityTypes.value = []
+  hiddenRelationTypes.value = []
+}
+
 const renderGraph = async () => {
   if (activeTab.value !== 'graph') return
   await nextTick()
-  if (!graphContainer.value || graphNodes.value.length === 0) return
+  if (!graphContainer.value) return
   if (!graphChart.value) {
     graphChart.value = echarts.init(graphContainer.value)
     graphChart.value.on('click', (params) => {
       if (params.dataType === 'node') {
-        selectedGraphNode.value = params.data.raw || null
+        selectedGraphItem.value = { kind: 'entity', raw: params.data.raw || {} }
+      } else if (params.dataType === 'edge') {
+        selectedGraphItem.value = { kind: 'relation', raw: params.data.raw || {} }
       }
     })
   }
@@ -651,6 +750,11 @@ watch(activeTab, async () => {
 })
 
 watch([entities, relations], async () => {
+  await renderGraph()
+})
+
+watch([hiddenEntityTypes, hiddenRelationTypes], async () => {
+  selectedGraphItem.value = null
   await renderGraph()
 })
 
@@ -1021,6 +1125,12 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
+.graph-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .graph-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1032,7 +1142,11 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #475569;
+  cursor: pointer;
   font-size: 12px;
 }
 
@@ -1041,6 +1155,28 @@ onBeforeUnmount(() => {
   height: 9px;
   flex: 0 0 auto;
   border-radius: 50%;
+}
+
+.legend-item.muted,
+.relation-filter button.muted {
+  opacity: 0.38;
+  text-decoration: line-through;
+}
+
+.relation-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.relation-filter button {
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
 }
 
 .graph-canvas {
@@ -1064,6 +1200,21 @@ onBeforeUnmount(() => {
   margin: 0;
   color: #475569;
   font-size: 13px;
+  line-height: 1.5;
+}
+
+.graph-evidence-list {
+  display: grid;
+  gap: 6px;
+}
+
+.graph-evidence-item {
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
   line-height: 1.5;
 }
 
