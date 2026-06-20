@@ -83,6 +83,9 @@ class SimplifiedContextBuilder:
         # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
         self.board_context = None
 
+        # 认知地图上下文，由 Agent 入口按模式绑定注入。
+        self.cognitive_map_context = None
+
         logger.info(
             "context_builder_initialized",
             max_context=self.max_context_tokens,
@@ -253,7 +256,11 @@ class SimplifiedContextBuilder:
             backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
             board_context=self.board_context if self.current_mode == "chart" else None,
         )
-        return f"{mode_prompt.rstrip()}\n\n{self._build_agent_control_prompt()}"
+        sections = [mode_prompt.rstrip()]
+        if self.cognitive_map_context:
+            sections.append(str(self.cognitive_map_context).strip())
+        sections.append(self._build_agent_control_prompt())
+        return "\n\n".join(section for section in sections if section)
 
     def _build_agent_control_prompt(self) -> str:
         """Build system-level loop control rules for every agent mode."""
