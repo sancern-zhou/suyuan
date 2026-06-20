@@ -56,26 +56,39 @@
           <template v-else>
             <div v-if="loading" class="state-text">加载中...</div>
             <div v-else-if="maps.length === 0" class="state-text">暂无认知地图</div>
-            <button
+            <div
               v-for="map in maps"
               v-else
               :key="map.id"
-              class="map-item"
+              class="map-item-row"
               :class="{ active: currentMap?.id === map.id }"
-              type="button"
-              @click="selectMap(map)"
             >
-              <span class="map-name">{{ map.name }}</span>
-              <span class="map-meta">
-                {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
-              </span>
-              <span
-                class="map-status-dot"
-                :class="`status-${map.status || 'unknown'}`"
-                :title="getStatusText(map.status)"
-                :aria-label="getStatusText(map.status)"
-              ></span>
-            </button>
+              <button
+                class="map-item"
+                type="button"
+                @click="selectMap(map)"
+              >
+                <span class="map-name">{{ map.name }}</span>
+                <span class="map-meta">
+                  {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
+                </span>
+                <span
+                  class="map-status-dot"
+                  :class="`status-${map.status || 'unknown'}`"
+                  :title="getStatusText(map.status)"
+                  :aria-label="getStatusText(map.status)"
+                ></span>
+              </button>
+              <button
+                class="map-delete-btn"
+                type="button"
+                :disabled="deletingMap"
+                @click="handleDeleteMap(map)"
+              >
+                删除
+              </button>
+            </div>
+            <div v-if="mapListError" class="form-error">{{ mapListError }}</div>
           </template>
         </div>
       </aside>
@@ -388,6 +401,7 @@ import * as echarts from 'echarts'
 import {
   buildCognitiveMap,
   createCognitiveMap,
+  deleteCognitiveMap,
   deleteCognitiveMapEntity,
   deleteCognitiveMapRelation,
   getCognitiveMapEvaluation,
@@ -409,6 +423,7 @@ const creating = ref(false)
 const building = ref(false)
 const uploading = ref(false)
 const managing = ref(false)
+const deletingMap = ref(false)
 const apiUnavailable = ref(false)
 const isDragging = ref(false)
 const isMapListExpanded = ref(false)
@@ -440,6 +455,7 @@ const buildError = ref('')
 const buildMessage = ref('')
 const managementError = ref('')
 const managementMessage = ref('')
+const mapListError = ref('')
 const buildOptions = ref({
   extractorProvider: 'local',
   timeoutSeconds: 300
@@ -764,6 +780,17 @@ const refreshCurrentMapData = async () => {
   await renderGraph()
 }
 
+const clearCurrentMapData = () => {
+  currentMap.value = null
+  files.value = []
+  entities.value = []
+  relations.value = []
+  evidence.value = []
+  buildRuns.value = []
+  evaluation.value = null
+  selectedGraphItem.value = null
+}
+
 const refreshAll = async () => {
   await refreshMaps()
   await refreshCurrentMapData()
@@ -780,6 +807,7 @@ const selectMap = async (map) => {
   uploadError.value = ''
   managementError.value = ''
   managementMessage.value = ''
+  mapListError.value = ''
   selectedGraphItem.value = null
   inspectorTab.value = 'selection'
   isGraphActionsExpanded.value = false
@@ -812,6 +840,33 @@ const handleCreate = async () => {
     createError.value = error?.message || '新建认知地图失败'
   } finally {
     creating.value = false
+  }
+}
+
+const handleDeleteMap = async (map) => {
+  if (!map?.id) return
+  if (!window.confirm(`确认删除认知地图“${map.name || map.id}”？`)) return
+
+  deletingMap.value = true
+  mapListError.value = ''
+  try {
+    const deletedCurrentMap = currentMap.value?.id === map.id
+    await deleteCognitiveMap(map.id)
+    if (deletedCurrentMap) {
+      clearCurrentMapData()
+    }
+    await refreshMaps()
+    if (deletedCurrentMap && maps.value.length > 0) {
+      await selectMap(maps.value[0])
+    }
+    if (maps.value.length === 0) {
+      clearCurrentMapData()
+      await renderGraph()
+    }
+  } catch (error) {
+    mapListError.value = error?.message || '删除认知地图失败'
+  } finally {
+    deletingMap.value = false
   }
 }
 
@@ -1018,6 +1073,7 @@ const toggleMapList = async () => {
   if (isMapListExpanded.value) {
     isCreateMapExpanded.value = false
     createError.value = ''
+    mapListError.value = ''
   }
   await resizeGraphSoon()
 }
@@ -1026,6 +1082,7 @@ const toggleCreateMap = async () => {
   isMapListExpanded.value = true
   isCreateMapExpanded.value = !isCreateMapExpanded.value
   createError.value = ''
+  mapListError.value = ''
   await resizeGraphSoon()
 }
 
@@ -1365,25 +1422,48 @@ onBeforeUnmount(() => {
   margin-top: -6px;
 }
 
-.map-item {
+.map-item-row {
   width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  border-left: 2px solid transparent;
+  background: transparent;
+}
+
+.map-item {
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
-  margin-bottom: 2px;
-  padding: 7px 10px;
+  padding: 7px 8px;
   text-align: left;
   border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0;
   background: transparent;
   cursor: pointer;
 }
 
-.map-item.active {
+.map-item-row.active {
   border-left-color: #2563eb;
   background: transparent;
+}
+
+.map-delete-btn {
+  padding: 7px 4px;
+  border: 0;
+  background: transparent;
+  color: #dc2626;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.map-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .map-name {
