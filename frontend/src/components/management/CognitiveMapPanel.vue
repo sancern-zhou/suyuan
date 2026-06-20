@@ -1104,7 +1104,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #f8fafc;
+  background: transparent;
 }
 
 .map-list-panel {
@@ -1116,7 +1116,7 @@ onBeforeUnmount(() => {
   max-height: calc(100% - 20px);
   overflow: auto;
   padding: 12px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+  box-shadow: none;
 }
 
 .map-list-panel.collapsed {
@@ -1140,7 +1140,7 @@ onBeforeUnmount(() => {
   padding: 8px 0;
   border: 1px solid #dbeafe;
   border-radius: 4px;
-  background: #eff6ff;
+  background: transparent;
   color: #1d4ed8;
   cursor: pointer;
   font-size: 12px;
@@ -1163,7 +1163,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   padding: 0;
-  background: #fff;
+  background: transparent;
 }
 
 .section-header {
@@ -1190,6 +1190,7 @@ onBeforeUnmount(() => {
   padding: 7px 9px;
   border: 1px solid #d1d5db;
   border-radius: 4px;
+  background: transparent;
   font-size: 13px;
 }
 
@@ -1222,13 +1223,13 @@ onBeforeUnmount(() => {
   text-align: left;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff;
+  background: transparent;
   cursor: pointer;
 }
 
 .map-item.active {
   border-color: #2563eb;
-  background: #eff6ff;
+  background: transparent;
 }
 
 .map-name {
@@ -1268,9 +1269,9 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border: 1px solid rgba(226, 232, 240, 0.92);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(8px);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .compact-header {
@@ -1286,9 +1287,9 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: rgba(248, 250, 252, 0.96);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(8px);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .inline-actions {
@@ -1323,11 +1324,11 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border: 1px solid #e5e7eb;
   border-radius: 4px;
-  background: rgba(248, 250, 252, 0.95);
+  background: transparent;
   color: #475569;
   font-size: 12px;
   white-space: nowrap;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+  box-shadow: none;
 }
 
 .compact-upload {
@@ -1353,16 +1354,16 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border: 1px dashed #cbd5e1;
   border-radius: 4px;
-  background: rgba(248, 250, 252, 0.96);
+  background: transparent;
   color: #64748b;
   font-size: 12px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(8px);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .drop-strip.dragging {
   border-color: #16a34a;
-  background: #f0fdf4;
+  background: transparent;
   color: #166534;
 }
 
@@ -1415,9 +1416,9 @@ onBeforeUnmount(() => {
   padding: 6px 8px;
   border: 1px solid rgba(226, 232, 240, 0.92);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(8px);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
   pointer-events: auto;
 }
 
@@ -1462,11 +1463,11 @@ onBeforeUnmount(() => {
   padding: 4px 8px;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.92);
+  background: transparent;
   color: #475569;
   cursor: pointer;
   font-size: 12px;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: none;
   pointer-events: auto;
 }
 
@@ -1492,11 +1493,11 @@ onBeforeUnmount(() => {
   padding: 0 16px;
   border: 1px dashed #cbd5e1;
   border-radius: 6px;
-  background: rgba(248, 250, 252, 0.96);
+  background: transparent;
   color: #64748b;
   font-size: 13px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(8px);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .inspector-panel {
@@ -1511,9 +1512,9 @@ onBeforeUnmount(() => {
   padding: 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(8px);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .inspector-tabs {
@@ -1525,7 +1526,7 @@ onBeforeUnmount(() => {
   margin: -10px -10px 10px;
   padding: 10px 10px 8px;
   border-bottom: 1px solid #e5e7eb;
-  background: #fff;
+  background: transparent;
   overflow-x: auto;
 }
 
@@ -1542,7 +1543,7 @@ onBeforeUnmount(() => {
 
 .inspector-tabs button.active {
   border-color: #bfdbfe;
-  background: #eff6ff;
+  background: transparent;
   color: #1d4ed8;
 }
 
