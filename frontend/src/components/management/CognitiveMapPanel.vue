@@ -1042,7 +1042,7 @@ onBeforeUnmount(() => {
 .primary-btn,
 .create-form button,
 .text-btn {
-  border: 1px solid #2563eb;
+  border: 0;
   background: #fff;
   color: #2563eb;
   border-radius: 4px;
@@ -1138,7 +1138,7 @@ onBeforeUnmount(() => {
   width: 28px;
   min-height: 88px;
   padding: 8px 0;
-  border: 1px solid #dbeafe;
+  border: 0;
   border-radius: 4px;
   background: transparent;
   color: #1d4ed8;
@@ -1461,7 +1461,7 @@ onBeforeUnmount(() => {
 
 .relation-filter button {
   padding: 4px 8px;
-  border: 1px solid #cbd5e1;
+  border: 0;
   border-radius: 4px;
   background: transparent;
   color: #475569;
@@ -1533,7 +1533,7 @@ onBeforeUnmount(() => {
 .inspector-tabs button {
   flex: 0 0 auto;
   padding: 5px 8px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 4px;
   background: transparent;
   color: #475569;
@@ -1542,7 +1542,6 @@ onBeforeUnmount(() => {
 }
 
 .inspector-tabs button.active {
-  border-color: #bfdbfe;
   background: transparent;
   color: #1d4ed8;
 }
