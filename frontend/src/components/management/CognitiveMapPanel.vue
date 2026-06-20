@@ -38,18 +38,20 @@
         </div>
 
         <div v-if="isMapListExpanded" class="map-list-dropdown">
-          <form v-if="isCreateMapExpanded" class="create-form" @submit.prevent="handleCreate">
-            <input
-              v-model="createForm.name"
-              type="text"
-              placeholder="新建地图名称"
-              @input="createError = ''"
-            />
-            <button type="submit" :disabled="creating">
-              {{ creating ? '创建中' : '新建' }}
-            </button>
-          </form>
-          <div v-if="createError" class="form-error">{{ createError }}</div>
+          <template v-if="isCreateMapExpanded">
+            <form class="create-form" @submit.prevent="handleCreate">
+              <input
+                v-model="createForm.name"
+                type="text"
+                placeholder="新建地图名称"
+                @input="createError = ''"
+              />
+              <button type="submit" :disabled="creating">
+                {{ creating ? '创建中' : '新建' }}
+              </button>
+            </form>
+            <div v-if="createError" class="form-error">{{ createError }}</div>
+          </template>
 
           <template v-else>
             <div v-if="loading" class="state-text">加载中...</div>
