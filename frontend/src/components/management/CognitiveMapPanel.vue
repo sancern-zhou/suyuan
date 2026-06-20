@@ -28,17 +28,6 @@
         </button>
 
         <div v-if="isMapListExpanded" class="map-list-dropdown">
-          <div class="section-header dropdown-header">
-            <button
-              class="text-btn collapse-icon-btn"
-              type="button"
-              aria-label="收起地图列表"
-              @click="toggleMapList"
-            >
-              ‹
-            </button>
-          </div>
-
           <form class="create-form" @submit.prevent="handleCreate">
             <input
               v-model="createForm.name"
@@ -1061,15 +1050,6 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.collapse-icon-btn {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  font-size: 20px;
-  line-height: 1;
-}
-
 .service-notice {
   display: flex;
   gap: 12px;
@@ -1153,10 +1133,6 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
   font-size: 14px;
   font-weight: 600;
-}
-
-.dropdown-header {
-  justify-content: flex-end;
 }
 
 .count {
