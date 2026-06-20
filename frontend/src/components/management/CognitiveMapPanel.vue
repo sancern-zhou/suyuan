@@ -1235,7 +1235,7 @@ onBeforeUnmount(() => {
 .detail-header {
   position: absolute;
   top: 10px;
-  left: 62px;
+  right: 12px;
   z-index: 12;
   justify-content: flex-start;
   width: max-content;
@@ -1260,7 +1260,7 @@ onBeforeUnmount(() => {
 .graph-actions-popover {
   position: absolute;
   top: 34px;
-  left: 0;
+  right: 0;
   z-index: 14;
   max-width: min(640px, calc(100vw - 96px));
 }
@@ -1608,7 +1608,7 @@ onBeforeUnmount(() => {
   }
 
   .detail-header {
-    left: 56px;
+    right: 8px;
     width: max-content;
   }
 
