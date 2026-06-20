@@ -17,10 +17,10 @@ def create_parser_provider(name: str | None = None):
     raise ValueError(f"Unknown cognitive map parser provider: {name}")
 
 
-def create_extractor_provider(name: str | None = None):
+def create_extractor_provider(name: str | None = None, llm=None):
     provider_name = (name or "local").strip().lower()
     if provider_name == "local":
         return LocalRuleBasedExtractorProvider()
     if provider_name == "llamaindex":
-        return LlamaIndexPropertyGraphExtractorProvider()
+        return LlamaIndexPropertyGraphExtractorProvider(llm=llm)
     raise ValueError(f"Unknown cognitive map extractor provider: {name}")
