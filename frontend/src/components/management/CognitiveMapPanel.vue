@@ -213,6 +213,32 @@
             </div>
           </section>
 
+          <section v-else-if="activeTab === 'graph'" class="graph-section">
+            <div v-if="graphNodes.length === 0" class="state-text">暂无可视化数据</div>
+            <template v-else>
+              <div class="graph-toolbar">
+                <div class="graph-legend">
+                  <span
+                    v-for="category in graphCategories"
+                    :key="category.name"
+                    class="legend-item"
+                  >
+                    <i :style="{ backgroundColor: category.itemStyle.color }"></i>
+                    {{ category.name }}
+                  </span>
+                </div>
+                <button class="panel-btn" type="button" @click="fitGraph">适配视图</button>
+              </div>
+              <div ref="graphContainer" class="graph-canvas"></div>
+              <div v-if="selectedGraphNode" class="graph-inspector">
+                <div class="row-title">{{ selectedGraphNode.name }}</div>
+                <div class="row-meta">{{ selectedGraphNode.entity_type || '未分类' }}</div>
+                <p v-if="selectedGraphNode.description">{{ selectedGraphNode.description }}</p>
+                <p v-else>证据数：{{ selectedGraphNode.source_evidence_ids?.length || 0 }}</p>
+              </div>
+            </template>
+          </section>
+
           <section v-else class="data-section">
             <div v-if="evidence.length === 0" class="state-text">暂无证据</div>
             <div v-for="item in evidence" v-else :key="item.evidence_id || item.id || item.chunk_id" class="evidence-row">
@@ -227,7 +253,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as echarts from 'echarts'
 import {
   buildCognitiveMap,
   createCognitiveMap,
@@ -250,6 +277,7 @@ const uploading = ref(false)
 const apiUnavailable = ref(false)
 const isDragging = ref(false)
 const fileInput = ref(null)
+const graphContainer = ref(null)
 const uploadProgress = ref({ current: 0, total: 0 })
 const maps = ref([])
 const currentMap = ref(null)
@@ -259,6 +287,8 @@ const relations = ref([])
 const evidence = ref([])
 const buildRuns = ref([])
 const evaluation = ref(null)
+const graphChart = ref(null)
+const selectedGraphNode = ref(null)
 const activeTab = ref('files')
 const createForm = ref({ name: '' })
 const createError = ref('')
@@ -274,11 +304,128 @@ const tabs = computed(() => [
   { id: 'files', name: `文件 ${files.value.length}` },
   { id: 'entities', name: `实体 ${entities.value.length}` },
   { id: 'relations', name: `关系 ${relations.value.length}` },
+  { id: 'graph', name: `图谱 ${entities.value.length}` },
   { id: 'evidence', name: `证据 ${evidence.value.length}` }
 ])
 
 const latestRun = computed(() => buildRuns.value[0] || currentMap.value?.latest_run || null)
 const canRetryBuild = computed(() => currentMap.value?.status === 'failed' || latestRun.value?.status === 'failed')
+
+const graphPalette = [
+  '#2563eb',
+  '#16a34a',
+  '#dc2626',
+  '#9333ea',
+  '#ea580c',
+  '#0891b2',
+  '#4f46e5',
+  '#64748b'
+]
+
+const graphCategories = computed(() => {
+  const types = Array.from(new Set(entities.value.map(entity => entity.entity_type || entity.type || '未分类')))
+  return types.map((type, index) => ({
+    name: type,
+    itemStyle: {
+      color: graphPalette[index % graphPalette.length]
+    }
+  }))
+})
+
+const graphNodes = computed(() => {
+  const categoryIndex = new Map(graphCategories.value.map((category, index) => [category.name, index]))
+  return entities.value.map(entity => {
+    const type = entity.entity_type || entity.type || '未分类'
+    const evidenceCount = entity.source_evidence_ids?.length || 0
+    return {
+      id: entity.entity_id || entity.id || `${type}:${entity.name}`,
+      name: entity.name,
+      value: evidenceCount,
+      category: categoryIndex.get(type) || 0,
+      symbolSize: Math.max(34, Math.min(62, 34 + evidenceCount * 6)),
+      raw: entity,
+      label: {
+        show: true,
+        formatter: '{b}'
+      }
+    }
+  })
+})
+
+const graphLinks = computed(() => {
+  const nodeIds = new Set(graphNodes.value.map(node => node.id))
+  return relations.value
+    .map(relation => {
+      const source = relation.source_entity_id || relation.source || relation.source_id
+      const target = relation.target_entity_id || relation.target || relation.target_id
+      if (!nodeIds.has(source) || !nodeIds.has(target)) return null
+      return {
+        source,
+        target,
+        value: relation.relation_type || relation.type || 'related_to',
+        label: {
+          show: true,
+          formatter: relation.relation_type || relation.type || ''
+        },
+        lineStyle: {
+          width: 1.5,
+          opacity: 0.62
+        }
+      }
+    })
+    .filter(Boolean)
+})
+
+const graphOption = computed(() => ({
+  tooltip: {
+    trigger: 'item',
+    formatter: (params) => {
+      if (params.dataType === 'edge') {
+        return `${params.data.source} -> ${params.data.target}<br/>${params.data.value || ''}`
+      }
+      const raw = params.data.raw || {}
+      return `${raw.name || params.name}<br/>类型：${raw.entity_type || raw.type || '未分类'}<br/>证据：${raw.source_evidence_ids?.length || 0}`
+    }
+  },
+  legend: {
+    show: false
+  },
+  series: [
+    {
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      categories: graphCategories.value,
+      data: graphNodes.value,
+      links: graphLinks.value,
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: 8,
+      force: {
+        repulsion: 220,
+        gravity: 0.08,
+        edgeLength: [80, 150],
+        friction: 0.35
+      },
+      label: {
+        color: '#111827',
+        fontSize: 11,
+        overflow: 'truncate',
+        width: 86
+      },
+      edgeLabel: {
+        color: '#475569',
+        fontSize: 10
+      },
+      emphasis: {
+        focus: 'adjacency',
+        lineStyle: {
+          width: 3
+        }
+      }
+    }
+  ]
+}))
 
 const normalizeList = (payload, keys) => {
   if (Array.isArray(payload)) return payload
@@ -342,6 +489,7 @@ const refreshCurrentMapData = async () => {
     buildRuns.value = []
     evaluation.value = null
   }
+  await renderGraph()
 }
 
 const refreshAll = async () => {
@@ -358,6 +506,7 @@ const selectMap = async (map) => {
   buildError.value = ''
   buildMessage.value = ''
   uploadError.value = ''
+  selectedGraphNode.value = null
   await refreshCurrentMapData()
 }
 
@@ -473,7 +622,48 @@ const formatSeconds = (value) => {
   return `${Number(value)}s`
 }
 
-onMounted(refreshMaps)
+const renderGraph = async () => {
+  if (activeTab.value !== 'graph') return
+  await nextTick()
+  if (!graphContainer.value || graphNodes.value.length === 0) return
+  if (!graphChart.value) {
+    graphChart.value = echarts.init(graphContainer.value)
+    graphChart.value.on('click', (params) => {
+      if (params.dataType === 'node') {
+        selectedGraphNode.value = params.data.raw || null
+      }
+    })
+  }
+  graphChart.value.setOption(graphOption.value, true)
+  graphChart.value.resize()
+}
+
+const fitGraph = async () => {
+  await renderGraph()
+}
+
+const handleResize = () => {
+  graphChart.value?.resize()
+}
+
+watch(activeTab, async () => {
+  await renderGraph()
+})
+
+watch([entities, relations], async () => {
+  await renderGraph()
+})
+
+onMounted(() => {
+  window.addEventListener('resize', handleResize)
+  refreshMaps()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  graphChart.value?.dispose()
+  graphChart.value = null
+})
 </script>
 
 <style scoped>
@@ -818,6 +1008,65 @@ onMounted(refreshMaps)
   gap: 8px;
 }
 
+.graph-section {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.graph-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.legend-item i {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.graph-canvas {
+  width: 100%;
+  height: 420px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.graph-inspector {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #eff6ff;
+}
+
+.graph-inspector p {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .data-row,
 .evidence-row {
   padding: 10px 12px;
@@ -853,6 +1102,10 @@ onMounted(refreshMaps)
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .graph-canvas {
+    height: 340px;
   }
 }
 </style>
