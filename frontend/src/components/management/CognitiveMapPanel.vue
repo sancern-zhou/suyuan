@@ -28,8 +28,7 @@
         </button>
 
         <div v-if="isMapListExpanded" class="map-list-dropdown">
-          <div class="section-header">
-            <span>地图列表</span>
+          <div class="section-header dropdown-header">
             <button
               class="text-btn collapse-icon-btn"
               type="button"
@@ -1154,6 +1153,10 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
   font-size: 14px;
   font-weight: 600;
+}
+
+.dropdown-header {
+  justify-content: flex-end;
 }
 
 .count {
