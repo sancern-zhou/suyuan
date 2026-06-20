@@ -1093,9 +1093,9 @@ onBeforeUnmount(() => {
   width: 280px;
   max-height: calc(100% - 20px);
   overflow: auto;
-  padding: 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
   box-shadow: none;
 }
 
@@ -1194,17 +1194,18 @@ onBeforeUnmount(() => {
   width: 100%;
   display: grid;
   gap: 4px;
-  margin-bottom: 8px;
-  padding: 10px;
+  margin-bottom: 2px;
+  padding: 7px 10px;
   text-align: left;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
 }
 
 .map-item.active {
-  border-color: #2563eb;
+  border-left-color: #2563eb;
   background: transparent;
 }
 
