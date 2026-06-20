@@ -119,7 +119,7 @@
                 class="panel-btn danger-action"
                 type="button"
                 :disabled="deletingMap"
-                @click="handleDeleteMap"
+                @click="handleDeleteMap()"
               >
                 {{ deletingMap ? '删除中' : '删除地图' }}
               </button>
