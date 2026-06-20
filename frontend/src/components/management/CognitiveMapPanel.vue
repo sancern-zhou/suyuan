@@ -51,28 +51,30 @@
           </form>
           <div v-if="createError" class="form-error">{{ createError }}</div>
 
-          <div v-if="loading" class="state-text">加载中...</div>
-          <div v-else-if="maps.length === 0" class="state-text">暂无认知地图</div>
-          <button
-            v-for="map in maps"
-            v-else
-            :key="map.id"
-            class="map-item"
-            :class="{ active: currentMap?.id === map.id }"
-            type="button"
-            @click="selectMap(map)"
-          >
-            <span class="map-name">{{ map.name }}</span>
-            <span class="map-meta">
-              {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
-            </span>
-            <span
-              class="map-status-dot"
-              :class="`status-${map.status || 'unknown'}`"
-              :title="getStatusText(map.status)"
-              :aria-label="getStatusText(map.status)"
-            ></span>
-          </button>
+          <template v-else>
+            <div v-if="loading" class="state-text">加载中...</div>
+            <div v-else-if="maps.length === 0" class="state-text">暂无认知地图</div>
+            <button
+              v-for="map in maps"
+              v-else
+              :key="map.id"
+              class="map-item"
+              :class="{ active: currentMap?.id === map.id }"
+              type="button"
+              @click="selectMap(map)"
+            >
+              <span class="map-name">{{ map.name }}</span>
+              <span class="map-meta">
+                {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
+              </span>
+              <span
+                class="map-status-dot"
+                :class="`status-${map.status || 'unknown'}`"
+                :title="getStatusText(map.status)"
+                :aria-label="getStatusText(map.status)"
+              ></span>
+            </button>
+          </template>
         </div>
       </aside>
 
@@ -879,6 +881,10 @@ const resizeGraphSoon = async () => {
 
 const toggleMapList = async () => {
   isMapListExpanded.value = !isMapListExpanded.value
+  if (isMapListExpanded.value) {
+    isCreateMapExpanded.value = false
+    createError.value = ''
+  }
   await resizeGraphSoon()
 }
 
