@@ -54,6 +54,24 @@ export async function deleteCognitiveMap(mapId) {
   })
 }
 
+export async function getCognitiveMapBindings(mapId) {
+  return await request(`${BASE_URL}/${mapId}/bindings`)
+}
+
+export async function updateCognitiveMapBindings(mapId, params) {
+  return await request(`${BASE_URL}/${mapId}/bindings`, {
+    method: 'PUT',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function queryCognitiveMaps(params) {
+  return await request(`${BASE_URL}/query`, {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
 export async function uploadCognitiveMapFile(mapId, file) {
   const formData = new FormData()
   formData.append('file', file)
@@ -79,6 +97,13 @@ export async function listCognitiveMapEntities(mapId) {
   return await request(`${BASE_URL}/${mapId}/entities`)
 }
 
+export async function createCognitiveMapEntity(mapId, params) {
+  return await request(`${BASE_URL}/${mapId}/entities`, {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
 export async function updateCognitiveMapEntity(mapId, entityId, params) {
   return await request(`${BASE_URL}/${mapId}/entities/${entityId}`, {
     method: 'PATCH',
@@ -92,8 +117,22 @@ export async function deleteCognitiveMapEntity(mapId, entityId) {
   })
 }
 
+export async function mergeCognitiveMapEntity(mapId, entityId, params) {
+  return await request(`${BASE_URL}/${mapId}/entities/${entityId}/merge`, {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
 export async function listCognitiveMapRelations(mapId) {
   return await request(`${BASE_URL}/${mapId}/relations`)
+}
+
+export async function createCognitiveMapRelation(mapId, params) {
+  return await request(`${BASE_URL}/${mapId}/relations`, {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
 }
 
 export async function updateCognitiveMapRelation(mapId, relationId, params) {

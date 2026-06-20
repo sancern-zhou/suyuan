@@ -115,6 +115,9 @@
               <button class="panel-btn" type="button" @click="toggleInspector">
                 {{ isInspectorExpanded ? '收起管理' : '管理' }}
               </button>
+              <button class="panel-btn" type="button" @click="toggleModeBinding">
+                {{ isModeBindingExpanded ? '收起接入' : '接入模式' }}
+              </button>
               <button
                 class="panel-btn danger-action"
                 type="button"
@@ -156,6 +159,33 @@
                 重试
               </button>
             </div>
+          </div>
+          <div v-if="isModeBindingExpanded" class="mode-binding-panel">
+            <div class="mode-binding-options">
+              <label
+                v-for="mode in agentModeOptions"
+                :key="mode.id"
+                class="mode-binding-option"
+              >
+                <input
+                  v-model="bindingForm.agentModes"
+                  type="checkbox"
+                  :value="mode.id"
+                  :disabled="savingBindings"
+                />
+                <span>{{ mode.name }}</span>
+              </label>
+              <button
+                class="primary-btn"
+                type="button"
+                :disabled="savingBindings"
+                @click="saveModeBindings"
+              >
+                {{ savingBindings ? '保存中' : '保存接入' }}
+              </button>
+            </div>
+            <div v-if="bindingError" class="form-error">{{ bindingError }}</div>
+            <div v-else-if="bindingMessage" class="form-success">{{ bindingMessage }}</div>
           </div>
           <div v-if="buildError" class="form-error build-message">{{ buildError }}</div>
           <div v-else-if="buildMessage" class="form-success build-message">{{ buildMessage }}</div>
@@ -405,6 +435,7 @@ import {
   deleteCognitiveMapEntity,
   deleteCognitiveMapRelation,
   getCognitiveMapEvaluation,
+  getCognitiveMapBindings,
   listCognitiveMapBuildRuns,
   listCognitiveMapEntities,
   listCognitiveMapEvidence,
@@ -412,6 +443,7 @@ import {
   listCognitiveMapRelations,
   listCognitiveMaps,
   updateCognitiveMapEntity,
+  updateCognitiveMapBindings,
   updateCognitiveMapRelation,
   uploadCognitiveMapFile
 } from '@/api/cognitiveMap'
@@ -424,6 +456,7 @@ const building = ref(false)
 const uploading = ref(false)
 const managing = ref(false)
 const deletingMap = ref(false)
+const savingBindings = ref(false)
 const apiUnavailable = ref(false)
 const isDragging = ref(false)
 const isMapListExpanded = ref(false)
@@ -432,6 +465,7 @@ const isUploadDropExpanded = ref(false)
 const isBuildOptionsExpanded = ref(false)
 const isGraphActionsExpanded = ref(false)
 const isCreateMapExpanded = ref(false)
+const isModeBindingExpanded = ref(false)
 const fileInput = ref(null)
 const graphContainer = ref(null)
 const uploadProgress = ref({ current: 0, total: 0 })
@@ -456,10 +490,22 @@ const buildMessage = ref('')
 const managementError = ref('')
 const managementMessage = ref('')
 const mapActionError = ref('')
+const bindingError = ref('')
+const bindingMessage = ref('')
+const bindingForm = ref({ agentModes: [] })
 const buildOptions = ref({
   extractorProvider: 'local',
   timeoutSeconds: 300
 })
+
+const agentModeOptions = [
+  { id: 'assistant', name: '助手' },
+  { id: 'expert', name: '专家' },
+  { id: 'query', name: '问数' },
+  { id: 'report', name: '报告' },
+  { id: 'chart', name: '图表' },
+  { id: 'ops', name: '运维' }
+]
 
 const inspectorTabs = computed(() => [
   { id: 'selection', name: '选择' },
@@ -755,13 +801,14 @@ const refreshMaps = async () => {
 const refreshCurrentMapData = async () => {
   if (!currentMap.value?.id) return
   try {
-    const [filePayload, entityPayload, relationPayload, evidencePayload, runsPayload, evaluationPayload] = await Promise.all([
+    const [filePayload, entityPayload, relationPayload, evidencePayload, runsPayload, evaluationPayload, bindingPayload] = await Promise.all([
       listCognitiveMapFiles(currentMap.value.id),
       listCognitiveMapEntities(currentMap.value.id),
       listCognitiveMapRelations(currentMap.value.id),
       listCognitiveMapEvidence(currentMap.value.id),
       listCognitiveMapBuildRuns(currentMap.value.id),
-      getCognitiveMapEvaluation(currentMap.value.id)
+      getCognitiveMapEvaluation(currentMap.value.id),
+      getCognitiveMapBindings(currentMap.value.id)
     ])
     files.value = normalizeList(filePayload, ['files', 'items', 'data'])
     entities.value = normalizeList(entityPayload, ['entities', 'items', 'data'])
@@ -769,6 +816,10 @@ const refreshCurrentMapData = async () => {
     evidence.value = normalizeList(evidencePayload, ['evidence', 'items', 'data'])
     buildRuns.value = normalizeList(runsPayload, ['runs', 'items', 'data'])
     evaluation.value = evaluationPayload?.evaluation || null
+    bindingForm.value.agentModes = normalizeList(bindingPayload, ['bindings', 'items', 'data'])
+      .filter(item => item.enabled !== false)
+      .map(item => item.agent_mode)
+      .filter(Boolean)
   } catch (error) {
     files.value = []
     entities.value = []
@@ -776,6 +827,7 @@ const refreshCurrentMapData = async () => {
     evidence.value = []
     buildRuns.value = []
     evaluation.value = null
+    bindingForm.value.agentModes = []
   }
   await renderGraph()
 }
@@ -789,6 +841,9 @@ const clearCurrentMapData = () => {
   buildRuns.value = []
   evaluation.value = null
   selectedGraphItem.value = null
+  bindingForm.value.agentModes = []
+  bindingError.value = ''
+  bindingMessage.value = ''
 }
 
 const refreshAll = async () => {
@@ -808,11 +863,14 @@ const selectMap = async (map) => {
   managementError.value = ''
   managementMessage.value = ''
   mapActionError.value = ''
+  bindingError.value = ''
+  bindingMessage.value = ''
   selectedGraphItem.value = null
   inspectorTab.value = 'selection'
   isGraphActionsExpanded.value = false
   isBuildOptionsExpanded.value = false
   isUploadDropExpanded.value = false
+  isModeBindingExpanded.value = false
   clearGraphFilters()
   await refreshCurrentMapData()
 }
@@ -867,6 +925,29 @@ const handleDeleteMap = async (map = currentMap.value) => {
     mapActionError.value = error?.message || '删除认知地图失败'
   } finally {
     deletingMap.value = false
+  }
+}
+
+const saveModeBindings = async () => {
+  if (!currentMap.value?.id) return
+  savingBindings.value = true
+  bindingError.value = ''
+  bindingMessage.value = ''
+  try {
+    await updateCognitiveMapBindings(currentMap.value.id, {
+      agent_modes: bindingForm.value.agentModes,
+      enabled: true,
+      description: '前端认知地图管理绑定'
+    })
+    await refreshMaps()
+    updateCurrentMapFromList()
+    bindingMessage.value = bindingForm.value.agentModes.length
+      ? '已接入所选模式'
+      : '已取消所有模式接入'
+  } catch (error) {
+    bindingError.value = error?.message || '保存接入模式失败'
+  } finally {
+    savingBindings.value = false
   }
 }
 
@@ -1098,6 +1179,13 @@ const toggleUploadDrop = async () => {
 
 const toggleBuildOptions = async () => {
   isBuildOptionsExpanded.value = !isBuildOptionsExpanded.value
+  if (isBuildOptionsExpanded.value) isModeBindingExpanded.value = false
+  await resizeGraphSoon()
+}
+
+const toggleModeBinding = async () => {
+  isModeBindingExpanded.value = !isModeBindingExpanded.value
+  if (isModeBindingExpanded.value) isBuildOptionsExpanded.value = false
   await resizeGraphSoon()
 }
 
@@ -1549,6 +1637,36 @@ onBeforeUnmount(() => {
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
+}
+
+.mode-binding-panel {
+  position: absolute;
+  top: 66px;
+  right: 10px;
+  z-index: 13;
+  max-width: min(520px, calc(100vw - 96px));
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.mode-binding-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.mode-binding-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .inline-actions {

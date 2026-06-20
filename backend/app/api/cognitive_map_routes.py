@@ -9,11 +9,21 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.cognition.llm_factory import create_llamaindex_llm
-from app.agent.cognition.models import CognitiveSchema, ExtractionResult, ReviewStatus, SourceFile
+from app.agent.cognition.models import (
+    CandidateEntity,
+    CandidateRelation,
+    CognitiveMapQuery,
+    CognitiveSchema,
+    ExtractionDiagnostic,
+    ExtractionResult,
+    ReviewStatus,
+    SourceFile,
+)
 from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
+from app.agent.cognition.view_builder import CognitiveMapViewBuilder
 from app.utils.path_config import get_data_registry
 
 
@@ -35,7 +45,39 @@ class CognitiveMapBuildRequest(BaseModel):
     timeout_seconds: float = 300.0
 
 
+class CognitiveMapBindingUpdateRequest(BaseModel):
+    agent_modes: list[str]
+    enabled: bool = True
+    description: str = ""
+
+
+class CognitiveMapQueryRequest(BaseModel):
+    task: str
+    agent_mode: str
+    agent_role: str | None = None
+    map_ids: list[str] | None = None
+    data_ids: list[str] = Field(default_factory=list)
+    entity_hints: list[str] = Field(default_factory=list)
+    max_entities: int = 20
+    max_relations: int = 20
+    max_evidence: int = 10
+
+
+class CognitiveMapEntityCreateRequest(BaseModel):
+    name: str
+    entity_type: str = "Entity"
+    canonical_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    description: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    source_evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float = 1.0
+    review_status: ReviewStatus = "confirmed"
+
+
 class CognitiveMapEntityUpdateRequest(BaseModel):
+    name: str | None = None
+    entity_type: str | None = None
     canonical_name: str | None = None
     aliases: list[str] | None = None
     description: str | None = None
@@ -43,10 +85,28 @@ class CognitiveMapEntityUpdateRequest(BaseModel):
     review_status: ReviewStatus | None = None
 
 
+class CognitiveMapRelationCreateRequest(BaseModel):
+    source_entity_id: str
+    target_entity_id: str
+    relation_type: str = "related_to"
+    description: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    source_evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float = 1.0
+    review_status: ReviewStatus = "confirmed"
+
+
 class CognitiveMapRelationUpdateRequest(BaseModel):
+    source_entity_id: str | None = None
+    target_entity_id: str | None = None
+    relation_type: str | None = None
     description: str | None = None
     attributes: dict[str, Any] | None = None
     review_status: ReviewStatus | None = None
+
+
+class CognitiveMapEntityMergeRequest(BaseModel):
+    target_entity_id: str
 
 
 def _ensure_root() -> Path:
@@ -76,6 +136,10 @@ def _runs_path(map_id: str) -> Path:
 
 def _evaluation_path(map_id: str) -> Path:
     return _map_dir(map_id) / "evaluation.json"
+
+
+def _bindings_path() -> Path:
+    return _ensure_root() / "agent_bindings.json"
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -135,6 +199,27 @@ def _latest_run(map_id: str) -> dict[str, Any] | None:
 
 def _load_evaluation(map_id: str) -> dict[str, Any] | None:
     return _load_json(_evaluation_path(map_id), None)
+
+
+def _load_bindings() -> list[dict[str, Any]]:
+    return _load_json(_bindings_path(), [])
+
+
+def _write_bindings(bindings: list[dict[str, Any]]) -> None:
+    _write_json(_bindings_path(), bindings)
+
+
+def _bindings_for_map(map_id: str) -> list[dict[str, Any]]:
+    return [binding for binding in _load_bindings() if binding.get("map_id") == map_id]
+
+
+def _enabled_binding_map_ids(agent_mode: str) -> list[str]:
+    bindings = [
+        binding for binding in _load_bindings()
+        if binding.get("agent_mode") == agent_mode and binding.get("enabled", True)
+    ]
+    bindings.sort(key=lambda item: (item.get("priority", 100), item.get("updated_at", "")))
+    return [binding["map_id"] for binding in bindings if binding.get("map_id")]
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -250,7 +335,88 @@ def _enrich_map(meta: dict[str, Any]) -> dict[str, Any]:
         "build_error": meta.get("build_error"),
         "latest_run": _latest_run(meta["id"]),
         "evaluation": _load_evaluation(meta["id"]),
+        "agent_bindings": _bindings_for_map(meta["id"]),
     }
+
+
+def _entity_names(extraction: ExtractionResult) -> dict[str, str]:
+    return {entity.entity_id: entity.name for entity in extraction.candidate_entities}
+
+
+def _relation_to_response(relation: CandidateRelation, entity_names: dict[str, str]) -> dict[str, Any]:
+    item = relation.model_dump(mode="json")
+    item["source_name"] = entity_names.get(relation.source_entity_id, relation.source_entity_id)
+    item["target_name"] = entity_names.get(relation.target_entity_id, relation.target_entity_id)
+    return item
+
+
+def build_cognitive_map_prompt_context(
+    task: str,
+    agent_mode: str,
+    agent_role: str | None = None,
+    map_ids: list[str] | None = None,
+    entity_hints: list[str] | None = None,
+) -> str:
+    """Build compact cognitive map context for Agent prompt injection."""
+    selected_map_ids = map_ids or _enabled_binding_map_ids(agent_mode)
+    if not selected_map_ids:
+        return ""
+
+    query = CognitiveMapQuery(
+        task=task,
+        agent_mode=agent_mode,
+        agent_role=agent_role,
+        map_ids=selected_map_ids,
+        entity_hints=entity_hints or [],
+    )
+    builder = CognitiveMapViewBuilder()
+    summaries = []
+    for map_id in selected_map_ids[:3]:
+        extraction = _load_extraction(map_id)
+        if extraction is None:
+            continue
+        view = builder.build_from_extraction(query, extraction)
+        meta = _load_json(_meta_path(map_id), {})
+        title = meta.get("name") or map_id
+        summaries.append(f"### {title}\n{view.prompt_summary}")
+
+    if not summaries:
+        return ""
+    return "\n\n".join([
+        "## 已接入认知地图",
+        "以下内容来自当前 Agent 模式绑定的认知地图。回答中涉及地图事实时，应优先依据这些实体、关系和证据；无证据内容需要明确标为假设或待确认。",
+        *summaries,
+    ])
+
+
+def _build_query_views(payload: CognitiveMapQueryRequest) -> list[dict[str, Any]]:
+    map_ids = payload.map_ids or _enabled_binding_map_ids(payload.agent_mode)
+    query = CognitiveMapQuery(
+        task=payload.task,
+        agent_mode=payload.agent_mode,
+        agent_role=payload.agent_role,
+        map_ids=map_ids,
+        data_ids=payload.data_ids,
+        entity_hints=payload.entity_hints,
+    )
+    builder = CognitiveMapViewBuilder()
+    views = []
+    for map_id in map_ids:
+        extraction = _load_extraction(map_id)
+        if extraction is None:
+            continue
+        view = builder.build_from_extraction(
+            query,
+            extraction,
+            max_entities=payload.max_entities,
+            max_relations=payload.max_relations,
+            max_evidence=payload.max_evidence,
+        )
+        item = view.model_dump(mode="json")
+        meta = _load_json(_meta_path(map_id), {})
+        item["map_name"] = meta.get("name") or map_id
+        views.append(item)
+    return views
 
 
 def _safe_filename(filename: str) -> str:
@@ -314,11 +480,80 @@ async def create_cognitive_map(payload: CognitiveMapCreateRequest) -> dict[str, 
     return _enrich_map(meta)
 
 
+@router.get("/bindings")
+async def list_cognitive_map_agent_bindings(agent_mode: str | None = None) -> dict[str, Any]:
+    bindings = _load_bindings()
+    if agent_mode:
+        bindings = [binding for binding in bindings if binding.get("agent_mode") == agent_mode]
+    map_names = {}
+    for binding in bindings:
+        map_id = binding.get("map_id")
+        if map_id and map_id not in map_names:
+            meta = _load_json(_meta_path(map_id), None)
+            map_names[map_id] = meta.get("name") if meta else map_id
+    return {
+        "bindings": [
+            {
+                **binding,
+                "map_name": map_names.get(binding.get("map_id"), binding.get("map_id")),
+            }
+            for binding in bindings
+        ]
+    }
+
+
+@router.post("/query")
+async def query_cognitive_maps(payload: CognitiveMapQueryRequest) -> dict[str, Any]:
+    views = _build_query_views(payload)
+    return {
+        "views": views,
+        "prompt_context": "\n\n".join(view["prompt_summary"] for view in views),
+    }
+
+
 @router.delete("/{map_id}")
 async def delete_cognitive_map(map_id: str) -> dict[str, Any]:
     _require_map(map_id)
     _delete_map_directory(map_id)
+    _write_bindings([binding for binding in _load_bindings() if binding.get("map_id") != map_id])
     return {"deleted": True, "map_id": map_id}
+
+
+@router.get("/{map_id}/bindings")
+async def get_cognitive_map_agent_bindings(map_id: str) -> dict[str, Any]:
+    _require_map(map_id)
+    return {"bindings": _bindings_for_map(map_id)}
+
+
+@router.put("/{map_id}/bindings")
+async def update_cognitive_map_agent_bindings(
+    map_id: str,
+    payload: CognitiveMapBindingUpdateRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    now = datetime.utcnow().isoformat()
+    requested_modes = []
+    for mode in payload.agent_modes:
+        normalized = str(mode or "").strip()
+        if normalized and normalized not in requested_modes:
+            requested_modes.append(normalized)
+
+    remaining = [binding for binding in _load_bindings() if binding.get("map_id") != map_id]
+    new_bindings = [
+        {
+            "binding_id": f"cmb_{uuid.uuid4().hex[:12]}",
+            "map_id": map_id,
+            "agent_mode": mode,
+            "enabled": payload.enabled,
+            "priority": index + 1,
+            "description": payload.description,
+            "created_at": now,
+            "updated_at": now,
+        }
+        for index, mode in enumerate(requested_modes)
+    ]
+    _write_bindings([*remaining, *new_bindings])
+    return {"bindings": new_bindings}
 
 
 @router.post("/{map_id}/files")
@@ -498,6 +733,45 @@ async def list_cognitive_map_entities(map_id: str) -> dict[str, Any]:
     return {"entities": [entity.model_dump(mode="json") for entity in entities]}
 
 
+@router.post("/{map_id}/entities")
+async def create_cognitive_map_entity(
+    map_id: str,
+    payload: CognitiveMapEntityCreateRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _load_extraction(map_id)
+    if extraction is None:
+        extraction = ExtractionResult(
+            map_id=map_id,
+            diagnostics=ExtractionDiagnostic(
+                provider_name="manual",
+                provider_version="0.1",
+                status="success",
+                messages=["Created manually from cognitive map management"],
+            ),
+        )
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="entity name is required")
+    entity = CandidateEntity(
+        entity_id=f"entity_{uuid.uuid4().hex[:12]}",
+        map_id=map_id,
+        entity_type=payload.entity_type,
+        name=name,
+        canonical_name=payload.canonical_name,
+        aliases=payload.aliases,
+        description=payload.description,
+        attributes=payload.attributes,
+        source_evidence_ids=payload.source_evidence_ids,
+        confidence=payload.confidence,
+        review_status=payload.review_status,
+        created_by="user",
+    )
+    extraction.candidate_entities.append(entity)
+    _save_extraction(map_id, extraction)
+    return entity.model_dump(mode="json")
+
+
 @router.patch("/{map_id}/entities/{entity_id}")
 async def update_cognitive_map_entity(
     map_id: str,
@@ -515,6 +789,47 @@ async def update_cognitive_map_entity(
         setattr(entity, field, value)
     _save_extraction(map_id, extraction)
     return entity.model_dump(mode="json")
+
+
+@router.post("/{map_id}/entities/{entity_id}/merge")
+async def merge_cognitive_map_entity(
+    map_id: str,
+    entity_id: str,
+    payload: CognitiveMapEntityMergeRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    if entity_id == payload.target_entity_id:
+        raise HTTPException(status_code=400, detail="source and target entity must be different")
+    extraction = _require_extraction(map_id)
+    source = next((item for item in extraction.candidate_entities if item.entity_id == entity_id), None)
+    target = next((item for item in extraction.candidate_entities if item.entity_id == payload.target_entity_id), None)
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"Cognitive map entity not found: {entity_id}")
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Cognitive map entity not found: {payload.target_entity_id}")
+
+    target.aliases = sorted(set([*target.aliases, source.name, *(source.aliases or [])]))
+    target.source_evidence_ids = sorted(set([*target.source_evidence_ids, *source.source_evidence_ids]))
+    target.attributes = {**source.attributes, **target.attributes}
+    if not target.description and source.description:
+        target.description = source.description
+    target.review_status = "merged"
+
+    for relation in extraction.candidate_relations:
+        if relation.source_entity_id == entity_id:
+            relation.source_entity_id = payload.target_entity_id
+        if relation.target_entity_id == entity_id:
+            relation.target_entity_id = payload.target_entity_id
+
+    extraction.candidate_entities = [
+        item for item in extraction.candidate_entities if item.entity_id != entity_id
+    ]
+    _save_extraction(map_id, extraction)
+    return {
+        "merged": True,
+        "source_entity_id": entity_id,
+        "target_entity": target.model_dump(mode="json"),
+    }
 
 
 @router.delete("/{map_id}/entities/{entity_id}")
@@ -560,6 +875,36 @@ async def list_cognitive_map_relations(map_id: str) -> dict[str, Any]:
     return {"relations": relations}
 
 
+@router.post("/{map_id}/relations")
+async def create_cognitive_map_relation(
+    map_id: str,
+    payload: CognitiveMapRelationCreateRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    entity_ids = {entity.entity_id for entity in extraction.candidate_entities}
+    if payload.source_entity_id not in entity_ids:
+        raise HTTPException(status_code=404, detail=f"source entity not found: {payload.source_entity_id}")
+    if payload.target_entity_id not in entity_ids:
+        raise HTTPException(status_code=404, detail=f"target entity not found: {payload.target_entity_id}")
+    relation = CandidateRelation(
+        relation_id=f"relation_{uuid.uuid4().hex[:12]}",
+        map_id=map_id,
+        source_entity_id=payload.source_entity_id,
+        target_entity_id=payload.target_entity_id,
+        relation_type=payload.relation_type,
+        description=payload.description,
+        attributes=payload.attributes,
+        source_evidence_ids=payload.source_evidence_ids,
+        confidence=payload.confidence,
+        review_status=payload.review_status,
+        created_by="user",
+    )
+    extraction.candidate_relations.append(relation)
+    _save_extraction(map_id, extraction)
+    return _relation_to_response(relation, _entity_names(extraction))
+
+
 @router.patch("/{map_id}/relations/{relation_id}")
 async def update_cognitive_map_relation(
     map_id: str,
@@ -580,11 +925,7 @@ async def update_cognitive_map_relation(
         setattr(relation, field, value)
     _save_extraction(map_id, extraction)
 
-    entity_names = {entity.entity_id: entity.name for entity in extraction.candidate_entities}
-    item = relation.model_dump(mode="json")
-    item["source_name"] = entity_names.get(relation.source_entity_id, relation.source_entity_id)
-    item["target_name"] = entity_names.get(relation.target_entity_id, relation.target_entity_id)
-    return item
+    return _relation_to_response(relation, _entity_names(extraction))
 
 
 @router.delete("/{map_id}/relations/{relation_id}")
