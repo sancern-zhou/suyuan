@@ -78,7 +78,10 @@
               <h4>{{ currentMap.name }}</h4>
               <p v-if="currentMap.description">{{ currentMap.description }}</p>
             </div>
-            <div class="build-actions">
+            <button class="panel-btn action-toggle" type="button" @click="toggleGraphActions">
+              {{ isGraphActionsExpanded ? '收起操作' : '操作' }}
+            </button>
+            <div v-if="isGraphActionsExpanded" class="build-actions graph-actions-popover">
               <button class="panel-btn" type="button" @click="toggleBuildOptions">
                 {{ isBuildOptionsExpanded ? '收起设置' : '构建设置' }}
               </button>
@@ -372,6 +375,7 @@ const isMapListExpanded = ref(false)
 const isInspectorExpanded = ref(false)
 const isUploadDropExpanded = ref(false)
 const isBuildOptionsExpanded = ref(false)
+const isGraphActionsExpanded = ref(false)
 const fileInput = ref(null)
 const graphContainer = ref(null)
 const uploadProgress = ref({ current: 0, total: 0 })
@@ -731,6 +735,9 @@ const selectMap = async (map) => {
   uploadError.value = ''
   selectedGraphItem.value = null
   inspectorTab.value = 'selection'
+  isGraphActionsExpanded.value = false
+  isBuildOptionsExpanded.value = false
+  isUploadDropExpanded.value = false
   clearGraphFilters()
   await refreshCurrentMapData()
 }
@@ -890,6 +897,11 @@ const toggleUploadDrop = async () => {
 
 const toggleBuildOptions = async () => {
   isBuildOptionsExpanded.value = !isBuildOptionsExpanded.value
+  await resizeGraphSoon()
+}
+
+const toggleGraphActions = async () => {
+  isGraphActionsExpanded.value = !isGraphActionsExpanded.value
   await resizeGraphSoon()
 }
 
@@ -1272,6 +1284,18 @@ onBeforeUnmount(() => {
 
 .compact-header {
   flex: none;
+}
+
+.action-toggle {
+  flex: 0 0 auto;
+}
+
+.graph-actions-popover {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  z-index: 14;
+  max-width: min(640px, calc(100vw - 96px));
 }
 
 .build-options-panel {
