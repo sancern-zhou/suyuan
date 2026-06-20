@@ -30,7 +30,14 @@
         <template v-else>
           <div class="section-header">
             <span>地图列表</span>
-            <button class="text-btn" type="button" @click="toggleMapList">收起</button>
+            <button
+              class="text-btn collapse-icon-btn"
+              type="button"
+              aria-label="收起地图列表"
+              @click="toggleMapList"
+            >
+              ‹
+            </button>
           </div>
 
           <form class="create-form" @submit.prevent="handleCreate">
@@ -1053,6 +1060,15 @@ onBeforeUnmount(() => {
   border: 0;
   color: #2563eb;
   font-size: 12px;
+}
+
+.collapse-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .service-notice {
