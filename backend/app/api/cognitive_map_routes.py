@@ -258,6 +258,14 @@ def _safe_filename(filename: str) -> str:
     return name.replace("/", "_").replace("\\", "_")
 
 
+def _delete_map_directory(map_id: str) -> None:
+    root = _ensure_root().resolve()
+    map_dir = _map_dir(map_id).resolve()
+    if map_dir == root or root not in map_dir.parents:
+        raise HTTPException(status_code=400, detail="Invalid cognitive map id")
+    shutil.rmtree(map_dir)
+
+
 def _parser_provider_for_source(source_file: SourceFile, requested_provider: str) -> str:
     provider = (requested_provider or "auto").strip().lower()
     if provider != "auto":
@@ -304,6 +312,13 @@ async def create_cognitive_map(payload: CognitiveMapCreateRequest) -> dict[str, 
     _write_json(_meta_path(map_id), meta)
     _write_json(_files_path(map_id), [])
     return _enrich_map(meta)
+
+
+@router.delete("/{map_id}")
+async def delete_cognitive_map(map_id: str) -> dict[str, Any]:
+    _require_map(map_id)
+    _delete_map_directory(map_id)
+    return {"deleted": True, "map_id": map_id}
 
 
 @router.post("/{map_id}/files")

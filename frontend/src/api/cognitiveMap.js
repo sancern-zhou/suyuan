@@ -48,6 +48,12 @@ export async function createCognitiveMap(params) {
   })
 }
 
+export async function deleteCognitiveMap(mapId) {
+  return await request(`${BASE_URL}/${mapId}`, {
+    method: 'DELETE'
+  })
+}
+
 export async function uploadCognitiveMapFile(mapId, file) {
   const formData = new FormData()
   formData.append('file', file)
