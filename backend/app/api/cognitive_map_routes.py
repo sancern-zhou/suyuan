@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.agent.cognition.llm_factory import create_llamaindex_llm
-from app.agent.cognition.models import CognitiveSchema, ExtractionResult, SourceFile
+from app.agent.cognition.models import CognitiveSchema, ExtractionResult, ReviewStatus, SourceFile
 from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
 from app.utils.path_config import get_data_registry
 
@@ -33,6 +33,20 @@ class CognitiveMapBuildRequest(BaseModel):
     extractor_provider: str = "local"
     llm_provider: str | None = None
     timeout_seconds: float = 300.0
+
+
+class CognitiveMapEntityUpdateRequest(BaseModel):
+    canonical_name: str | None = None
+    aliases: list[str] | None = None
+    description: str | None = None
+    attributes: dict[str, Any] | None = None
+    review_status: ReviewStatus | None = None
+
+
+class CognitiveMapRelationUpdateRequest(BaseModel):
+    description: str | None = None
+    attributes: dict[str, Any] | None = None
+    review_status: ReviewStatus | None = None
 
 
 def _ensure_root() -> Path:
@@ -101,6 +115,13 @@ def _load_extraction(map_id: str) -> ExtractionResult | None:
     if raw is None:
         return None
     return ExtractionResult.model_validate_json(raw)
+
+
+def _require_extraction(map_id: str) -> ExtractionResult:
+    extraction = _load_extraction(map_id)
+    if extraction is None:
+        raise HTTPException(status_code=404, detail=f"Cognitive map extraction not found: {map_id}")
+    return extraction
 
 
 def _load_runs(map_id: str) -> list[dict[str, Any]]:
@@ -200,6 +221,18 @@ def _generate_evaluation(extraction: ExtractionResult) -> dict[str, Any]:
         "generated_at": datetime.utcnow().isoformat(),
         "diagnostic": extraction.diagnostics.model_dump(mode="json"),
     }
+
+
+def _save_extraction(map_id: str, extraction: ExtractionResult) -> None:
+    _extraction_path(map_id).write_text(
+        extraction.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    _write_json(_evaluation_path(map_id), _generate_evaluation(extraction))
+
+    meta = _require_map(map_id)
+    meta["updated_at"] = datetime.utcnow().isoformat()
+    _write_json(_meta_path(map_id), meta)
 
 
 def _enrich_map(meta: dict[str, Any]) -> dict[str, Any]:
@@ -450,6 +483,51 @@ async def list_cognitive_map_entities(map_id: str) -> dict[str, Any]:
     return {"entities": [entity.model_dump(mode="json") for entity in entities]}
 
 
+@router.patch("/{map_id}/entities/{entity_id}")
+async def update_cognitive_map_entity(
+    map_id: str,
+    entity_id: str,
+    payload: CognitiveMapEntityUpdateRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    entity = next((item for item in extraction.candidate_entities if item.entity_id == entity_id), None)
+    if entity is None:
+        raise HTTPException(status_code=404, detail=f"Cognitive map entity not found: {entity_id}")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(entity, field, value)
+    _save_extraction(map_id, extraction)
+    return entity.model_dump(mode="json")
+
+
+@router.delete("/{map_id}/entities/{entity_id}")
+async def delete_cognitive_map_entity(map_id: str, entity_id: str) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    original_entity_count = len(extraction.candidate_entities)
+    original_relation_count = len(extraction.candidate_relations)
+    extraction.candidate_entities = [
+        entity for entity in extraction.candidate_entities if entity.entity_id != entity_id
+    ]
+    if len(extraction.candidate_entities) == original_entity_count:
+        raise HTTPException(status_code=404, detail=f"Cognitive map entity not found: {entity_id}")
+
+    extraction.candidate_relations = [
+        relation
+        for relation in extraction.candidate_relations
+        if relation.source_entity_id != entity_id and relation.target_entity_id != entity_id
+    ]
+    removed_relation_count = original_relation_count - len(extraction.candidate_relations)
+    _save_extraction(map_id, extraction)
+    return {
+        "deleted": True,
+        "entity_id": entity_id,
+        "removed_relation_count": removed_relation_count,
+    }
+
+
 @router.get("/{map_id}/relations")
 async def list_cognitive_map_relations(map_id: str) -> dict[str, Any]:
     _require_map(map_id)
@@ -465,6 +543,48 @@ async def list_cognitive_map_relations(map_id: str) -> dict[str, Any]:
         item["target_name"] = entity_names.get(relation.target_entity_id, relation.target_entity_id)
         relations.append(item)
     return {"relations": relations}
+
+
+@router.patch("/{map_id}/relations/{relation_id}")
+async def update_cognitive_map_relation(
+    map_id: str,
+    relation_id: str,
+    payload: CognitiveMapRelationUpdateRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    relation = next(
+        (item for item in extraction.candidate_relations if item.relation_id == relation_id),
+        None,
+    )
+    if relation is None:
+        raise HTTPException(status_code=404, detail=f"Cognitive map relation not found: {relation_id}")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(relation, field, value)
+    _save_extraction(map_id, extraction)
+
+    entity_names = {entity.entity_id: entity.name for entity in extraction.candidate_entities}
+    item = relation.model_dump(mode="json")
+    item["source_name"] = entity_names.get(relation.source_entity_id, relation.source_entity_id)
+    item["target_name"] = entity_names.get(relation.target_entity_id, relation.target_entity_id)
+    return item
+
+
+@router.delete("/{map_id}/relations/{relation_id}")
+async def delete_cognitive_map_relation(map_id: str, relation_id: str) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    original_relation_count = len(extraction.candidate_relations)
+    extraction.candidate_relations = [
+        relation for relation in extraction.candidate_relations if relation.relation_id != relation_id
+    ]
+    if len(extraction.candidate_relations) == original_relation_count:
+        raise HTTPException(status_code=404, detail=f"Cognitive map relation not found: {relation_id}")
+
+    _save_extraction(map_id, extraction)
+    return {"deleted": True, "relation_id": relation_id}
 
 
 @router.get("/{map_id}/evidence")

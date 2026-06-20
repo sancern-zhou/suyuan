@@ -73,8 +73,34 @@ export async function listCognitiveMapEntities(mapId) {
   return await request(`${BASE_URL}/${mapId}/entities`)
 }
 
+export async function updateCognitiveMapEntity(mapId, entityId, params) {
+  return await request(`${BASE_URL}/${mapId}/entities/${entityId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function deleteCognitiveMapEntity(mapId, entityId) {
+  return await request(`${BASE_URL}/${mapId}/entities/${entityId}`, {
+    method: 'DELETE'
+  })
+}
+
 export async function listCognitiveMapRelations(mapId) {
   return await request(`${BASE_URL}/${mapId}/relations`)
+}
+
+export async function updateCognitiveMapRelation(mapId, relationId, params) {
+  return await request(`${BASE_URL}/${mapId}/relations/${relationId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function deleteCognitiveMapRelation(mapId, relationId) {
+  return await request(`${BASE_URL}/${mapId}/relations/${relationId}`, {
+    method: 'DELETE'
+  })
 }
 
 export async function listCognitiveMapEvidence(mapId) {
