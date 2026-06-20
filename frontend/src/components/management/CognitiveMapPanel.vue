@@ -66,7 +66,12 @@
             <span class="map-meta">
               {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
             </span>
-            <span class="map-status">{{ getStatusText(map.status) }}</span>
+            <span
+              class="map-status-dot"
+              :class="`status-${map.status || 'unknown'}`"
+              :title="getStatusText(map.status)"
+              :aria-label="getStatusText(map.status)"
+            ></span>
           </button>
         </div>
       </aside>
@@ -1219,7 +1224,9 @@ onBeforeUnmount(() => {
 .map-item {
   width: 100%;
   display: grid;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 2px;
   padding: 7px 10px;
   text-align: left;
@@ -1236,6 +1243,10 @@ onBeforeUnmount(() => {
 }
 
 .map-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   color: #111827;
 }
@@ -1245,6 +1256,34 @@ onBeforeUnmount(() => {
 .row-meta {
   color: #64748b;
   font-size: 12px;
+}
+
+.map-meta {
+  white-space: nowrap;
+}
+
+.map-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.map-status-dot.status-draft {
+  background: #94a3b8;
+}
+
+.map-status-dot.status-building {
+  background: #f59e0b;
+}
+
+.map-status-dot.status-completed,
+.map-status-dot.status-published {
+  background: #16a34a;
+}
+
+.map-status-dot.status-failed {
+  background: #dc2626;
 }
 
 .empty-detail,
