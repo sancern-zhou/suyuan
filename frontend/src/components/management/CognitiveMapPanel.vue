@@ -17,7 +17,7 @@
 
     <div v-if="apiUnavailable" class="service-notice">
       <strong>后端接口未就绪</strong>
-      <span>当前页面已接入 `/api/cognitive-maps` 契约，等待后端服务化后即可显示真实数据。</span>
+      <span>当前页面已接入认知地图接口，等待后端服务可用后即可显示真实数据。</span>
     </div>
 
     <div class="content-grid">
@@ -75,7 +75,7 @@
                 <span>抽取引擎</span>
                 <select v-model="buildOptions.extractorProvider" :disabled="building">
                   <option value="local">本地规则</option>
-                  <option value="llamaindex">LlamaIndex</option>
+                  <option value="llamaindex">开源图谱引擎</option>
                 </select>
               </label>
               <label class="engine-select">
@@ -109,7 +109,7 @@
           <div class="run-summary">
             <div class="run-summary-item">
               <span class="summary-label">最近引擎</span>
-              <span class="run-value">{{ latestRun?.extractor_provider || currentMap.extractor_provider || '未构建' }}</span>
+              <span class="run-value">{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</span>
             </div>
             <div class="run-summary-item">
               <span class="summary-label">状态</span>
@@ -120,7 +120,7 @@
               <span class="run-value">{{ formatDuration(latestRun?.duration_ms) }}</span>
             </div>
             <div class="run-summary-item">
-              <span class="summary-label">Chunk</span>
+              <span class="summary-label">分块</span>
               <span class="run-value">{{ latestRun?.chunk_count ?? '-' }}</span>
             </div>
             <div class="run-summary-item">
@@ -133,7 +133,7 @@
             </div>
           </div>
           <div v-if="latestRun?.error || currentMap.build_error" class="form-error">
-            {{ latestRun?.error || currentMap.build_error }}
+            {{ formatError(latestRun?.error || currentMap.build_error) }}
           </div>
 
           <div class="summary-grid">
@@ -199,7 +199,7 @@
             <div v-if="entities.length === 0" class="state-text">暂无实体</div>
             <div v-for="entity in entities" v-else :key="entity.entity_id || entity.id || entity.name" class="data-row">
               <span class="row-title">{{ entity.name }}</span>
-              <span class="row-meta">{{ entity.type || entity.entity_type || '未分类' }}</span>
+              <span class="row-meta">{{ formatEntityType(entity.type || entity.entity_type) }}</span>
             </div>
           </section>
 
@@ -207,9 +207,9 @@
             <div v-if="relations.length === 0" class="state-text">暂无关系</div>
             <div v-for="relation in relations" v-else :key="relation.relation_id || relation.id || relation.key" class="data-row">
               <span class="row-title">
-                {{ relation.source || relation.source_name }} -> {{ relation.target || relation.target_name }}
+                {{ relation.source || relation.source_name }} 到 {{ relation.target || relation.target_name }}
               </span>
-              <span class="row-meta">{{ relation.type || relation.relation_type }}</span>
+              <span class="row-meta">{{ formatRelationType(relation.type || relation.relation_type) }}</span>
             </div>
           </section>
 
@@ -220,11 +220,11 @@
                 <div class="graph-legend">
                   <button
                     v-for="category in graphCategories"
-                    :key="category.name"
+                    :key="category.rawName"
                     class="legend-item"
-                    :class="{ muted: isEntityTypeHidden(category.name) }"
+                    :class="{ muted: isEntityTypeHidden(category.rawName) }"
                     type="button"
-                    @click="toggleEntityType(category.name)"
+                    @click="toggleEntityType(category.rawName)"
                   >
                     <i :style="{ backgroundColor: category.itemStyle.color }"></i>
                     {{ category.name }}
@@ -243,7 +243,7 @@
                   :class="{ muted: isRelationTypeHidden(type) }"
                   @click="toggleRelationType(type)"
                 >
-                  {{ type }}
+                  {{ formatRelationType(type) }}
                 </button>
               </div>
               <div v-if="graphNodes.length === 0" class="state-text">当前筛选条件下暂无节点</div>
@@ -340,6 +340,54 @@ const tabs = computed(() => [
 const latestRun = computed(() => buildRuns.value[0] || currentMap.value?.latest_run || null)
 const canRetryBuild = computed(() => currentMap.value?.status === 'failed' || latestRun.value?.status === 'failed')
 
+const providerLabels = {
+  local: '本地规则',
+  llamaindex: '开源图谱引擎',
+  llamaindex_property_graph: '开源图谱引擎',
+  project: '项目模型'
+}
+
+const entityTypeLabels = {
+  Station: '监测站',
+  Pollutant: '污染物',
+  Metric: '指标',
+  TimeWindow: '时间窗口',
+  Region: '区域',
+  DataSource: '数据源',
+  AnalysisMethod: '分析方法',
+  EmissionSource: '排放源',
+  ProcessMechanism: '过程机理',
+  ControlMeasure: '管控措施',
+  StandardRule: '标准规则',
+  Finding: '发现',
+  Hypothesis: '假设',
+  Dataset: '数据集',
+  Tool: '工具',
+  AgentRole: '智能体角色',
+  Entity: '实体'
+}
+
+const relationTypeLabels = {
+  located_in: '位于',
+  measures: '监测',
+  has_alias: '别名',
+  belongs_to_category: '属于类别',
+  affects: '影响',
+  indicates: '指示',
+  supports: '支持',
+  contradicts: '矛盾',
+  requires_data: '需要数据',
+  derived_from: '来源于',
+  regulated_by: '受规则约束',
+  applies_to: '适用于',
+  produces: '产生',
+  consumes: '消耗',
+  uses_method: '使用方法',
+  has_limitation: '存在限制',
+  handled_by_agent: '由智能体处理',
+  related_to: '相关'
+}
+
 const graphPalette = [
   '#2563eb',
   '#16a34a',
@@ -354,7 +402,8 @@ const graphPalette = [
 const graphCategories = computed(() => {
   const types = Array.from(new Set(entities.value.map(entity => entity.entity_type || entity.type || '未分类')))
   return types.map((type, index) => ({
-    name: type,
+    name: formatEntityType(type),
+    rawName: type,
     itemStyle: {
       color: graphPalette[index % graphPalette.length]
     }
@@ -375,7 +424,7 @@ const evidenceById = computed(() => {
 })
 
 const graphNodes = computed(() => {
-  const categoryIndex = new Map(graphCategories.value.map((category, index) => [category.name, index]))
+  const categoryIndex = new Map(graphCategories.value.map((category, index) => [category.rawName, index]))
   return entities.value
     .filter(entity => !isEntityTypeHidden(entity.entity_type || entity.type || '未分类'))
     .map(entity => {
@@ -412,7 +461,7 @@ const graphLinks = computed(() => {
         raw: relation,
         label: {
           show: true,
-          formatter: type
+          formatter: formatRelationType(type)
         },
         lineStyle: {
           width: 1.5,
@@ -429,10 +478,10 @@ const graphOption = computed(() => ({
     formatter: (params) => {
       if (params.dataType === 'edge') {
         const raw = params.data.raw || {}
-        return `${raw.source_name || params.data.source} -> ${raw.target_name || params.data.target}<br/>${params.data.value || ''}<br/>证据：${raw.source_evidence_ids?.length || 0}`
+        return `${raw.source_name || params.data.source} 到 ${raw.target_name || params.data.target}<br/>关系：${formatRelationType(params.data.value)}<br/>证据：${raw.source_evidence_ids?.length || 0}`
       }
       const raw = params.data.raw || {}
-      return `${raw.name || params.name}<br/>类型：${raw.entity_type || raw.type || '未分类'}<br/>证据：${raw.source_evidence_ids?.length || 0}`
+      return `${raw.name || params.name}<br/>类型：${formatEntityType(raw.entity_type || raw.type)}<br/>证据：${raw.source_evidence_ids?.length || 0}`
     }
   },
   legend: {
@@ -479,7 +528,7 @@ const selectedGraphTitle = computed(() => {
   if (!selectedGraphItem.value) return ''
   const raw = selectedGraphItem.value.raw || {}
   if (selectedGraphItem.value.kind === 'relation') {
-    return `${raw.source_name || raw.source || raw.source_entity_id} -> ${raw.target_name || raw.target || raw.target_entity_id}`
+    return `${raw.source_name || raw.source || raw.source_entity_id} 到 ${raw.target_name || raw.target || raw.target_entity_id}`
   }
   return raw.name || ''
 })
@@ -488,8 +537,8 @@ const selectedGraphMeta = computed(() => {
   if (!selectedGraphItem.value) return ''
   const raw = selectedGraphItem.value.raw || {}
   return selectedGraphItem.value.kind === 'relation'
-    ? raw.relation_type || raw.type || 'related_to'
-    : raw.entity_type || raw.type || '未分类'
+    ? formatRelationType(raw.relation_type || raw.type)
+    : formatEntityType(raw.entity_type || raw.type)
 })
 
 const selectedGraphDescription = computed(() => {
@@ -519,6 +568,22 @@ const getStatusText = (status) => {
     failed: '失败'
   }
   return map[status] || status || '未处理'
+}
+
+const formatProvider = (provider) => providerLabels[provider] || provider || '未构建'
+
+const formatEntityType = (type) => entityTypeLabels[type] || type || '未分类'
+
+const formatRelationType = (type) => relationTypeLabels[type] || type || '相关'
+
+const formatError = (message) => {
+  if (!message) return ''
+  return String(message)
+    .replace(/^Failed to build cognitive map:\s*/i, '构建认知地图失败：')
+    .replace(/Cognitive map extraction timed out after ([\d.]+) seconds/gi, '认知地图抽取超过 $1 秒')
+    .replace(/Cognitive map stale building state exceeded ([\d.]+) seconds/gi, '认知地图构建状态超过 $1 秒未更新')
+    .replace(/llamaindex unavailable/gi, '开源图谱引擎不可用')
+    .replace(/No files uploaded for cognitive map/gi, '请先上传文件')
 }
 
 const refreshMaps = async () => {
@@ -665,10 +730,10 @@ const handleBuild = async () => {
     })
     await refreshCurrentMapData()
     await refreshMaps()
-    const engineName = buildOptions.value.extractorProvider === 'llamaindex' ? 'LlamaIndex' : '本地规则'
+    const engineName = formatProvider(buildOptions.value.extractorProvider)
     buildMessage.value = `${engineName} 构建完成，已更新实体、关系和证据`
   } catch (error) {
-    buildError.value = error?.message || '构建认知地图失败'
+    buildError.value = formatError(error?.message || '构建认知地图失败')
     await refreshCurrentMapData()
     await refreshMaps()
   } finally {
@@ -684,8 +749,8 @@ const normalizeTimeoutSeconds = (value) => {
 
 const formatDuration = (durationMs) => {
   if (durationMs === null || durationMs === undefined) return '-'
-  if (durationMs < 1000) return `${durationMs}ms`
-  return `${(durationMs / 1000).toFixed(1)}s`
+  if (durationMs < 1000) return `${durationMs}毫秒`
+  return `${(durationMs / 1000).toFixed(1)}秒`
 }
 
 const formatRatio = (value) => {
@@ -695,7 +760,7 @@ const formatRatio = (value) => {
 
 const formatSeconds = (value) => {
   if (value === null || value === undefined) return '-'
-  return `${Number(value)}s`
+  return `${Number(value)}秒`
 }
 
 const isEntityTypeHidden = (type) => hiddenEntityTypes.value.includes(type)
