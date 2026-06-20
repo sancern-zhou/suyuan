@@ -79,16 +79,7 @@
                   :aria-label="getStatusText(map.status)"
                 ></span>
               </button>
-              <button
-                class="map-delete-btn"
-                type="button"
-                :disabled="deletingMap"
-                @click="handleDeleteMap(map)"
-              >
-                删除
-              </button>
             </div>
-            <div v-if="mapListError" class="form-error">{{ mapListError }}</div>
           </template>
         </div>
       </aside>
@@ -123,6 +114,14 @@
               </button>
               <button class="panel-btn" type="button" @click="toggleInspector">
                 {{ isInspectorExpanded ? '收起管理' : '管理' }}
+              </button>
+              <button
+                class="panel-btn danger-action"
+                type="button"
+                :disabled="deletingMap"
+                @click="handleDeleteMap"
+              >
+                {{ deletingMap ? '删除中' : '删除地图' }}
               </button>
             </div>
           </div>
@@ -160,6 +159,7 @@
           </div>
           <div v-if="buildError" class="form-error build-message">{{ buildError }}</div>
           <div v-else-if="buildMessage" class="form-success build-message">{{ buildMessage }}</div>
+          <div v-if="mapActionError" class="form-error build-message">{{ mapActionError }}</div>
           <div v-if="latestRun?.error || currentMap.build_error" class="form-error">
             {{ formatError(latestRun?.error || currentMap.build_error) }}
           </div>
@@ -455,7 +455,7 @@ const buildError = ref('')
 const buildMessage = ref('')
 const managementError = ref('')
 const managementMessage = ref('')
-const mapListError = ref('')
+const mapActionError = ref('')
 const buildOptions = ref({
   extractorProvider: 'local',
   timeoutSeconds: 300
@@ -807,7 +807,7 @@ const selectMap = async (map) => {
   uploadError.value = ''
   managementError.value = ''
   managementMessage.value = ''
-  mapListError.value = ''
+  mapActionError.value = ''
   selectedGraphItem.value = null
   inspectorTab.value = 'selection'
   isGraphActionsExpanded.value = false
@@ -843,12 +843,12 @@ const handleCreate = async () => {
   }
 }
 
-const handleDeleteMap = async (map) => {
+const handleDeleteMap = async (map = currentMap.value) => {
   if (!map?.id) return
   if (!window.confirm(`确认删除认知地图“${map.name || map.id}”？`)) return
 
   deletingMap.value = true
-  mapListError.value = ''
+  mapActionError.value = ''
   try {
     const deletedCurrentMap = currentMap.value?.id === map.id
     await deleteCognitiveMap(map.id)
@@ -864,7 +864,7 @@ const handleDeleteMap = async (map) => {
       await renderGraph()
     }
   } catch (error) {
-    mapListError.value = error?.message || '删除认知地图失败'
+    mapActionError.value = error?.message || '删除认知地图失败'
   } finally {
     deletingMap.value = false
   }
@@ -1073,7 +1073,7 @@ const toggleMapList = async () => {
   if (isMapListExpanded.value) {
     isCreateMapExpanded.value = false
     createError.value = ''
-    mapListError.value = ''
+    mapActionError.value = ''
   }
   await resizeGraphSoon()
 }
@@ -1082,7 +1082,7 @@ const toggleCreateMap = async () => {
   isMapListExpanded.value = true
   isCreateMapExpanded.value = !isCreateMapExpanded.value
   createError.value = ''
-  mapListError.value = ''
+  mapActionError.value = ''
   await resizeGraphSoon()
 }
 
@@ -1424,10 +1424,7 @@ onBeforeUnmount(() => {
 
 .map-item-row {
   width: 100%;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 4px;
+  display: block;
   margin-bottom: 2px;
   border-left: 2px solid transparent;
   background: transparent;
@@ -1449,21 +1446,6 @@ onBeforeUnmount(() => {
 .map-item-row.active {
   border-left-color: #2563eb;
   background: transparent;
-}
-
-.map-delete-btn {
-  padding: 7px 4px;
-  border: 0;
-  background: transparent;
-  color: #dc2626;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.map-delete-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .map-name {
