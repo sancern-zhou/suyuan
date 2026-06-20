@@ -957,8 +957,8 @@ onBeforeUnmount(() => {
 .management-panel {
   height: 100%;
   overflow: hidden;
-  padding: 20px;
-  background: #fff;
+  padding: 0;
+  background: transparent;
   color: #1f2937;
 }
 
@@ -975,7 +975,7 @@ onBeforeUnmount(() => {
   gap: 16px;
   position: absolute;
   top: 12px;
-  right: 20px;
+  right: 12px;
   z-index: 30;
   margin-bottom: 0;
   padding-bottom: 0;
@@ -1096,8 +1096,6 @@ onBeforeUnmount(() => {
 .map-detail-panel {
   min-height: 0;
   overflow: auto;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
   background: transparent;
 }
 
@@ -1110,6 +1108,8 @@ onBeforeUnmount(() => {
   max-height: calc(100% - 20px);
   overflow: auto;
   padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
   box-shadow: none;
 }
 
@@ -1157,6 +1157,8 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
 }
 
