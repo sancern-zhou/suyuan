@@ -16,18 +16,18 @@
       <span>当前页面已接入认知地图接口，等待后端服务可用后即可显示真实数据。</span>
     </div>
 
-    <div class="content-grid" :class="{ 'map-list-collapsed': !isMapListExpanded }">
-      <aside class="map-list-panel" :class="{ collapsed: !isMapListExpanded }">
+    <div class="content-grid">
+      <aside class="map-list-panel">
         <button
-          v-if="!isMapListExpanded"
           class="rail-btn"
           type="button"
+          :aria-expanded="isMapListExpanded"
           @click="toggleMapList"
         >
           地图列表
         </button>
 
-        <template v-else>
+        <div v-if="isMapListExpanded" class="map-list-dropdown">
           <div class="section-header">
             <span>地图列表</span>
             <button
@@ -70,7 +70,7 @@
             </span>
             <span class="map-status">{{ getStatusText(map.status) }}</span>
           </button>
-        </template>
+        </div>
       </aside>
 
       <main class="map-detail-panel">
@@ -1090,10 +1090,6 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-.content-grid.map-list-collapsed {
-  display: block;
-}
-
 .map-list-panel,
 .map-detail-panel {
   min-height: 0;
@@ -1106,24 +1102,10 @@ onBeforeUnmount(() => {
   top: 10px;
   left: 10px;
   z-index: 20;
-  width: 280px;
-  max-height: calc(100% - 20px);
-  overflow: auto;
-  padding: 8px 0;
+  overflow: visible;
+  padding: 8px;
   border: 0;
   border-radius: 0;
-  box-shadow: none;
-}
-
-.map-list-panel.collapsed {
-  display: grid;
-  place-items: start;
-  overflow: hidden;
-  width: 88px;
-  height: auto;
-  padding: 8px;
-  border-color: transparent;
-  background: transparent;
   box-shadow: none;
 }
 
@@ -1143,6 +1125,15 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
+}
+
+.map-list-dropdown {
+  width: 280px;
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  margin-top: 6px;
+  padding: 8px 0;
+  background: transparent;
 }
 
 .map-detail-panel {
