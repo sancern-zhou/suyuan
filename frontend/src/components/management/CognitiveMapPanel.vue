@@ -74,12 +74,8 @@
 
         <template v-else>
           <div class="detail-header compact-header">
-            <div>
-              <h4>{{ currentMap.name }}</h4>
-              <p v-if="currentMap.description">{{ currentMap.description }}</p>
-            </div>
             <button class="panel-btn action-toggle" type="button" @click="toggleGraphActions">
-              {{ isGraphActionsExpanded ? '收起操作' : '操作' }}
+              管理
             </button>
             <div v-if="isGraphActionsExpanded" class="build-actions graph-actions-popover">
               <button class="panel-btn" type="button" @click="toggleBuildOptions">
@@ -984,17 +980,6 @@ onBeforeUnmount(() => {
   border-bottom: 0;
 }
 
-.detail-header h4 {
-  margin: 0;
-  font-weight: 600;
-}
-
-.detail-header p {
-  margin: 4px 0 0;
-  color: #64748b;
-  font-size: 13px;
-}
-
 .panel-actions {
   gap: 8px;
 }
@@ -1258,15 +1243,14 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 10px;
   left: 62px;
-  right: 10px;
   z-index: 12;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 42px;
+  justify-content: flex-start;
+  width: max-content;
+  min-height: 0;
   margin-bottom: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  border-radius: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
@@ -1282,8 +1266,8 @@ onBeforeUnmount(() => {
 
 .graph-actions-popover {
   position: absolute;
-  top: 48px;
-  right: 0;
+  top: 34px;
+  left: 0;
   z-index: 14;
   max-width: min(640px, calc(100vw - 96px));
 }
@@ -1632,9 +1616,7 @@ onBeforeUnmount(() => {
 
   .detail-header {
     left: 56px;
-    right: 8px;
-    align-items: flex-start;
-    flex-direction: column;
+    width: max-content;
   }
 
   .build-actions {
