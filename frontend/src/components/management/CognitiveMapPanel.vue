@@ -1,16 +1,5 @@
 <template>
   <div class="management-panel cognitive-map-panel">
-    <div class="panel-header">
-      <div class="panel-actions">
-        <button class="panel-btn" type="button" @click="refreshAll" :disabled="loading">
-          刷新
-        </button>
-        <button class="panel-btn close-btn" type="button" @click="$emit('close')">
-          关闭
-        </button>
-      </div>
-    </div>
-
     <div v-if="apiUnavailable" class="service-notice">
       <strong>后端接口未就绪</strong>
       <span>当前页面已接入认知地图接口，等待后端服务可用后即可显示真实数据。</span>
@@ -123,7 +112,7 @@
           </div>
           <div v-if="uploadError" class="form-error">{{ uploadError }}</div>
 
-          <div class="workbench-layout" :class="{ 'inspector-collapsed': !isInspectorExpanded }">
+          <div class="workbench-layout" :class="{ 'drawer-open': isInspectorExpanded }">
             <section class="graph-workspace">
               <div class="graph-toolbar">
                 <div class="graph-legend">
@@ -1511,24 +1500,11 @@ onBeforeUnmount(() => {
   color: #1f2937;
 }
 
-.panel-header,
 .section-header,
 .detail-header,
 .panel-actions {
   display: flex;
   align-items: center;
-}
-
-.panel-header {
-  justify-content: flex-end;
-  gap: 16px;
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 30;
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: 0;
 }
 
 .panel-actions {
@@ -1919,11 +1895,16 @@ onBeforeUnmount(() => {
 
 .workbench-layout {
   position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1 1 auto;
   width: 100%;
   height: 100%;
   min-height: 0;
+}
+
+.workbench-layout.drawer-open {
+  grid-template-columns: minmax(420px, 1fr) minmax(560px, 42vw);
 }
 
 .graph-workspace {
@@ -2046,19 +2027,16 @@ onBeforeUnmount(() => {
 }
 
 .management-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 24;
-  width: min(760px, calc(100vw - 88px));
+  position: relative;
+  z-index: 10;
+  width: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid #e5e7eb;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: -12px 0 28px rgba(15, 23, 42, 0.08);
+  background: #fff;
+  box-shadow: none;
 }
 
 .drawer-header {
@@ -2365,13 +2343,14 @@ onBeforeUnmount(() => {
     right: 8px;
   }
 
+  .workbench-layout.drawer-open {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(320px, 58%);
+  }
+
   .management-drawer {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: auto;
-    max-height: 68%;
+    width: 100%;
+    min-height: 0;
     border-top: 1px solid #e5e7eb;
     border-left: 0;
   }
