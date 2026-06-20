@@ -1381,7 +1381,9 @@ const deleteSelectedGraphItem = async () => {
 
 const resizeGraphSoon = async () => {
   await nextTick()
-  graphChart.value?.resize()
+  window.requestAnimationFrame(() => {
+    graphChart.value?.resize()
+  })
 }
 
 const toggleMapList = async () => {
@@ -1905,6 +1907,10 @@ onBeforeUnmount(() => {
 
 .workbench-layout.drawer-open {
   grid-template-columns: minmax(420px, 1fr) minmax(560px, 42vw);
+}
+
+.workbench-layout:not(.drawer-open) .graph-workspace {
+  grid-column: 1 / -1;
 }
 
 .graph-workspace {
