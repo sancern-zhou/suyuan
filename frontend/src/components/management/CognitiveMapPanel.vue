@@ -242,6 +242,40 @@
                       <strong>{{ selectedReviewStatus }}</strong>
                     </div>
                   </div>
+                  <div class="review-actions">
+                    <button
+                      class="panel-btn"
+                      type="button"
+                      :disabled="managing"
+                      @click="updateSelectedReviewStatus('confirmed')"
+                    >
+                      确认
+                    </button>
+                    <button
+                      class="panel-btn"
+                      type="button"
+                      :disabled="managing"
+                      @click="updateSelectedReviewStatus('needs_review')"
+                    >
+                      需复核
+                    </button>
+                    <button
+                      class="panel-btn"
+                      type="button"
+                      :disabled="managing"
+                      @click="updateSelectedReviewStatus('rejected')"
+                    >
+                      驳回
+                    </button>
+                    <button
+                      class="panel-btn danger-action"
+                      type="button"
+                      :disabled="managing"
+                      @click="deleteSelectedGraphItem"
+                    >
+                      删除
+                    </button>
+                  </div>
                   <div class="inspector-subtitle">关联证据</div>
                   <div v-if="selectedGraphEvidence.length" class="compact-list">
                     <div
@@ -275,6 +309,8 @@
                     </div>
                   </div>
                 </template>
+                <div v-if="managementError" class="form-error">{{ managementError }}</div>
+                <div v-else-if="managementMessage" class="form-success">{{ managementMessage }}</div>
               </section>
 
               <section v-else-if="inspectorTab === 'entities'" class="inspector-section">
@@ -352,6 +388,8 @@ import * as echarts from 'echarts'
 import {
   buildCognitiveMap,
   createCognitiveMap,
+  deleteCognitiveMapEntity,
+  deleteCognitiveMapRelation,
   getCognitiveMapEvaluation,
   listCognitiveMapBuildRuns,
   listCognitiveMapEntities,
@@ -359,6 +397,8 @@ import {
   listCognitiveMapFiles,
   listCognitiveMapRelations,
   listCognitiveMaps,
+  updateCognitiveMapEntity,
+  updateCognitiveMapRelation,
   uploadCognitiveMapFile
 } from '@/api/cognitiveMap'
 
@@ -368,6 +408,7 @@ const loading = ref(false)
 const creating = ref(false)
 const building = ref(false)
 const uploading = ref(false)
+const managing = ref(false)
 const apiUnavailable = ref(false)
 const isDragging = ref(false)
 const isMapListExpanded = ref(false)
@@ -397,6 +438,8 @@ const createError = ref('')
 const uploadError = ref('')
 const buildError = ref('')
 const buildMessage = ref('')
+const managementError = ref('')
+const managementMessage = ref('')
 const buildOptions = ref({
   extractorProvider: 'local',
   timeoutSeconds: 300
@@ -655,10 +698,12 @@ const formatRelationType = (type) => relationTypeLabels[type] || type || '相关
 
 const getReviewStatusText = (status) => {
   const map = {
-    pending: '待审核',
-    approved: '已确认',
+    candidate: '候选',
+    confirmed: '已确认',
     rejected: '已驳回',
-    modified: '已修正'
+    needs_review: '需复核',
+    merged: '已合并',
+    published: '已发布'
   }
   return map[status] || status || '未审核'
 }
@@ -733,6 +778,8 @@ const selectMap = async (map) => {
   buildError.value = ''
   buildMessage.value = ''
   uploadError.value = ''
+  managementError.value = ''
+  managementMessage.value = ''
   selectedGraphItem.value = null
   inspectorTab.value = 'selection'
   isGraphActionsExpanded.value = false
@@ -876,6 +923,91 @@ const clearGraphFilters = () => {
   hiddenRelationTypes.value = []
 }
 
+const getSelectedGraphItemId = () => {
+  const raw = selectedGraphItem.value?.raw || {}
+  return selectedGraphItem.value?.kind === 'relation'
+    ? raw.relation_id || raw.id
+    : raw.entity_id || raw.id
+}
+
+const findGraphItemById = (kind, id) => {
+  if (!id) return null
+  const source = kind === 'relation' ? relations.value : entities.value
+  const key = kind === 'relation' ? 'relation_id' : 'entity_id'
+  return source.find(item => (item[key] || item.id) === id) || null
+}
+
+const updateCurrentMapFromList = () => {
+  if (!currentMap.value?.id) return
+  const updated = maps.value.find(item => item.id === currentMap.value.id)
+  if (updated) currentMap.value = updated
+}
+
+const updateSelectedReviewStatus = async (reviewStatus) => {
+  if (!currentMap.value?.id || !selectedGraphItem.value) return
+  const kind = selectedGraphItem.value.kind
+  const itemId = getSelectedGraphItemId()
+  if (!itemId) {
+    managementError.value = '缺少选中项标识，无法更新'
+    managementMessage.value = ''
+    return
+  }
+
+  managing.value = true
+  managementError.value = ''
+  managementMessage.value = ''
+  try {
+    if (kind === 'relation') {
+      await updateCognitiveMapRelation(currentMap.value.id, itemId, { review_status: reviewStatus })
+    } else {
+      await updateCognitiveMapEntity(currentMap.value.id, itemId, { review_status: reviewStatus })
+    }
+    await refreshCurrentMapData()
+    await refreshMaps()
+    updateCurrentMapFromList()
+    const refreshedItem = findGraphItemById(kind, itemId)
+    selectedGraphItem.value = refreshedItem ? { kind, raw: refreshedItem } : null
+    managementMessage.value = `已更新为${getReviewStatusText(reviewStatus)}`
+  } catch (error) {
+    managementError.value = error?.message || '更新审核状态失败'
+  } finally {
+    managing.value = false
+  }
+}
+
+const deleteSelectedGraphItem = async () => {
+  if (!currentMap.value?.id || !selectedGraphItem.value) return
+  const kind = selectedGraphItem.value.kind
+  const itemId = getSelectedGraphItemId()
+  if (!itemId) {
+    managementError.value = '缺少选中项标识，无法删除'
+    managementMessage.value = ''
+    return
+  }
+  const itemName = selectedGraphTitle.value || (kind === 'relation' ? '该关系' : '该实体')
+  if (!window.confirm(`确认删除${itemName}？`)) return
+
+  managing.value = true
+  managementError.value = ''
+  managementMessage.value = ''
+  try {
+    if (kind === 'relation') {
+      await deleteCognitiveMapRelation(currentMap.value.id, itemId)
+    } else {
+      await deleteCognitiveMapEntity(currentMap.value.id, itemId)
+    }
+    selectedGraphItem.value = null
+    await refreshCurrentMapData()
+    await refreshMaps()
+    updateCurrentMapFromList()
+    managementMessage.value = kind === 'relation' ? '关系已删除' : '实体已删除'
+  } catch (error) {
+    managementError.value = error?.message || '删除失败'
+  } finally {
+    managing.value = false
+  }
+}
+
 const resizeGraphSoon = async () => {
   await nextTick()
   graphChart.value?.resize()
@@ -918,6 +1050,8 @@ const toggleGraphActions = async () => {
 }
 
 const selectEntity = (entity) => {
+  managementError.value = ''
+  managementMessage.value = ''
   selectedGraphItem.value = { kind: 'entity', raw: entity }
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
@@ -925,6 +1059,8 @@ const selectEntity = (entity) => {
 }
 
 const selectRelation = (relation) => {
+  managementError.value = ''
+  managementMessage.value = ''
   selectedGraphItem.value = { kind: 'relation', raw: relation }
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
@@ -1628,6 +1764,16 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   word-break: break-word;
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.danger-action {
+  color: #dc2626;
 }
 
 .inspector-subtitle {
