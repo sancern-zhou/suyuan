@@ -1,10 +1,6 @@
 <template>
   <div class="management-panel cognitive-map-panel">
     <div class="panel-header">
-      <div>
-        <h3>认知地图</h3>
-        <p class="panel-subtitle">实体、关系、规则与证据管理</p>
-      </div>
       <div class="panel-actions">
         <button class="panel-btn" type="button" @click="refreshAll" :disabled="loading">
           刷新
@@ -975,24 +971,22 @@ onBeforeUnmount(() => {
 }
 
 .panel-header {
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
-  margin-bottom: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #e5e7eb;
+  position: absolute;
+  top: 12px;
+  right: 20px;
+  z-index: 30;
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
-.panel-header h3,
 .detail-header h4 {
   margin: 0;
   font-weight: 600;
 }
 
-.panel-header h3 {
-  font-size: 18px;
-}
-
-.panel-subtitle,
 .detail-header p {
   margin: 4px 0 0;
   color: #64748b;
@@ -1090,7 +1084,7 @@ onBeforeUnmount(() => {
 
 .content-grid {
   position: relative;
-  height: calc(100% - 76px);
+  height: 100%;
   min-height: 0;
 }
 
@@ -1653,7 +1647,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 920px) {
   .content-grid {
-    height: calc(100% - 72px);
+    height: 100%;
   }
 
   .detail-header {
