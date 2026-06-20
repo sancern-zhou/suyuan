@@ -65,7 +65,7 @@
         </div>
 
         <template v-else>
-          <div class="detail-header">
+          <div class="detail-header compact-header">
             <div>
               <h4>{{ currentMap.name }}</h4>
               <p v-if="currentMap.description">{{ currentMap.description }}</p>
@@ -105,117 +105,53 @@
           </div>
           <div v-if="buildError" class="form-error build-message">{{ buildError }}</div>
           <div v-else-if="buildMessage" class="form-success build-message">{{ buildMessage }}</div>
-
-          <div class="run-summary">
-            <div class="run-summary-item">
-              <span class="summary-label">最近引擎</span>
-              <span class="run-value">{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</span>
-            </div>
-            <div class="run-summary-item">
-              <span class="summary-label">状态</span>
-              <span class="run-value">{{ getStatusText(latestRun?.status || currentMap.status) }}</span>
-            </div>
-            <div class="run-summary-item">
-              <span class="summary-label">耗时</span>
-              <span class="run-value">{{ formatDuration(latestRun?.duration_ms) }}</span>
-            </div>
-            <div class="run-summary-item">
-              <span class="summary-label">分块</span>
-              <span class="run-value">{{ latestRun?.chunk_count ?? '-' }}</span>
-            </div>
-            <div class="run-summary-item">
-              <span class="summary-label">超时</span>
-              <span class="run-value">{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</span>
-            </div>
-            <div class="run-summary-item">
-              <span class="summary-label">证据覆盖</span>
-              <span class="run-value">{{ formatRatio(evaluation?.entity_evidence_ratio) }}</span>
-            </div>
-          </div>
           <div v-if="latestRun?.error || currentMap.build_error" class="form-error">
             {{ formatError(latestRun?.error || currentMap.build_error) }}
           </div>
 
-          <div class="summary-grid">
-            <div class="summary-item">
-              <span class="summary-value">{{ files.length }}</span>
-              <span class="summary-label">文件</span>
+          <div class="workspace-toolbar">
+            <div class="metric-strip">
+              <span class="metric-pill">文件 {{ files.length }}</span>
+              <span class="metric-pill">实体 {{ entities.length }}</span>
+              <span class="metric-pill">关系 {{ relations.length }}</span>
+              <span class="metric-pill">证据 {{ evidence.length }}</span>
+              <span class="metric-pill">状态 {{ getStatusText(latestRun?.status || currentMap.status) }}</span>
+              <span class="metric-pill">覆盖 {{ formatRatio(evaluation?.entity_evidence_ratio) }}</span>
             </div>
-            <div class="summary-item">
-              <span class="summary-value">{{ entities.length }}</span>
-              <span class="summary-label">实体</span>
-            </div>
-            <div class="summary-item">
-              <span class="summary-value">{{ relations.length }}</span>
-              <span class="summary-label">关系</span>
-            </div>
-            <div class="summary-item">
-              <span class="summary-value">{{ evidence.length }}</span>
-              <span class="summary-label">证据</span>
-            </div>
-          </div>
-
-          <div
-            class="upload-area"
-            :class="{ dragging: isDragging, uploading }"
-            @dragover.prevent="isDragging = true"
-            @dragleave="isDragging = false"
-            @drop.prevent="handleDrop"
-            @click="triggerFileInput"
-          >
+            <button
+              class="panel-btn compact-upload"
+              :class="{ dragging: isDragging }"
+              type="button"
+              @click="triggerFileInput"
+              :disabled="uploading"
+              @dragover.prevent="isDragging = true"
+              @dragleave="isDragging = false"
+              @drop.prevent="handleDrop"
+            >
+              {{ uploading ? `上传中 ${uploadProgress.current}/${uploadProgress.total}` : '上传文件' }}
+            </button>
             <input
               ref="fileInput"
+              class="hidden-file-input"
               type="file"
               multiple
               accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.html,.htm,.txt,.md,.csv,.json"
               @change="handleFileSelect"
             />
-            <span v-if="uploading">上传中 {{ uploadProgress.current }}/{{ uploadProgress.total }}</span>
-            <span v-else>点击或拖拽文件到此处</span>
+          </div>
+          <div
+            class="drop-strip"
+            :class="{ dragging: isDragging }"
+            @dragover.prevent="isDragging = true"
+            @dragleave="isDragging = false"
+            @drop.prevent="handleDrop"
+          >
+            可将文件拖到此处补充地图语料
           </div>
           <div v-if="uploadError" class="form-error">{{ uploadError }}</div>
 
-          <div class="tabs">
-            <button
-              v-for="tab in tabs"
-              :key="tab.id"
-              type="button"
-              :class="{ active: activeTab === tab.id }"
-              @click="activeTab = tab.id"
-            >
-              {{ tab.name }}
-            </button>
-          </div>
-
-          <section v-if="activeTab === 'files'" class="data-section">
-            <div v-if="files.length === 0" class="state-text">暂无文件</div>
-            <div v-for="file in files" v-else :key="file.file_id || file.id || file.filename" class="data-row">
-              <span class="row-title">{{ file.filename || file.name }}</span>
-              <span class="row-meta">{{ getStatusText(file.status) }}</span>
-            </div>
-          </section>
-
-          <section v-else-if="activeTab === 'entities'" class="data-section">
-            <div v-if="entities.length === 0" class="state-text">暂无实体</div>
-            <div v-for="entity in entities" v-else :key="entity.entity_id || entity.id || entity.name" class="data-row">
-              <span class="row-title">{{ entity.name }}</span>
-              <span class="row-meta">{{ formatEntityType(entity.type || entity.entity_type) }}</span>
-            </div>
-          </section>
-
-          <section v-else-if="activeTab === 'relations'" class="data-section">
-            <div v-if="relations.length === 0" class="state-text">暂无关系</div>
-            <div v-for="relation in relations" v-else :key="relation.relation_id || relation.id || relation.key" class="data-row">
-              <span class="row-title">
-                {{ relation.source || relation.source_name }} 到 {{ relation.target || relation.target_name }}
-              </span>
-              <span class="row-meta">{{ formatRelationType(relation.type || relation.relation_type) }}</span>
-            </div>
-          </section>
-
-          <section v-else-if="activeTab === 'graph'" class="graph-section">
-            <div v-if="entities.length === 0" class="state-text">暂无可视化数据</div>
-            <template v-else>
+          <div class="workbench-layout">
+            <section class="graph-workspace">
               <div class="graph-toolbar">
                 <div class="graph-legend">
                   <button
@@ -246,33 +182,143 @@
                   {{ formatRelationType(type) }}
                 </button>
               </div>
-              <div v-if="graphNodes.length === 0" class="state-text">当前筛选条件下暂无节点</div>
+              <div v-if="entities.length === 0" class="graph-empty-state">
+                暂无可视化数据，请先上传文件并构建地图
+              </div>
+              <div v-else-if="graphNodes.length === 0" class="graph-empty-state">
+                当前筛选条件下暂无节点
+              </div>
               <div ref="graphContainer" class="graph-canvas"></div>
-              <div v-if="selectedGraphItem" class="graph-inspector">
-                <div class="row-title">{{ selectedGraphTitle }}</div>
-                <div class="row-meta">{{ selectedGraphMeta }}</div>
-                <p v-if="selectedGraphDescription">{{ selectedGraphDescription }}</p>
-                <div v-if="selectedGraphEvidence.length" class="graph-evidence-list">
-                  <div
-                    v-for="item in selectedGraphEvidence"
-                    :key="item.evidence_id || item.id || item.chunk_id"
-                    class="graph-evidence-item"
+            </section>
+
+            <aside class="inspector-panel">
+              <div class="inspector-tabs">
+                <button
+                  v-for="tab in inspectorTabs"
+                  :key="tab.id"
+                  type="button"
+                  :class="{ active: inspectorTab === tab.id }"
+                  @click="inspectorTab = tab.id"
+                >
+                  {{ tab.name }}
+                </button>
+              </div>
+
+              <section v-if="inspectorTab === 'selection'" class="inspector-section">
+                <template v-if="selectedGraphItem">
+                  <div class="selection-title">{{ selectedGraphTitle }}</div>
+                  <div class="selection-meta">{{ selectedGraphMeta }}</div>
+                  <p v-if="selectedGraphDescription" class="selection-description">
+                    {{ selectedGraphDescription }}
+                  </p>
+                  <div class="detail-grid">
+                    <div class="detail-field">
+                      <span>证据数</span>
+                      <strong>{{ selectedGraphEvidence.length }}</strong>
+                    </div>
+                    <div class="detail-field">
+                      <span>审核状态</span>
+                      <strong>{{ selectedReviewStatus }}</strong>
+                    </div>
+                  </div>
+                  <div class="inspector-subtitle">关联证据</div>
+                  <div v-if="selectedGraphEvidence.length" class="compact-list">
+                    <div
+                      v-for="item in selectedGraphEvidence"
+                      :key="item.evidence_id || item.id || item.chunk_id"
+                      class="compact-row evidence-compact-row"
+                    >
+                      {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                    </div>
+                  </div>
+                  <div v-else class="state-text">暂无关联证据</div>
+                </template>
+                <template v-else>
+                  <div class="selection-empty">点击图谱中的实体或关系查看详情</div>
+                  <div class="detail-grid">
+                    <div class="detail-field">
+                      <span>抽取引擎</span>
+                      <strong>{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</strong>
+                    </div>
+                    <div class="detail-field">
+                      <span>耗时</span>
+                      <strong>{{ formatDuration(latestRun?.duration_ms) }}</strong>
+                    </div>
+                    <div class="detail-field">
+                      <span>分块</span>
+                      <strong>{{ latestRun?.chunk_count ?? '-' }}</strong>
+                    </div>
+                    <div class="detail-field">
+                      <span>超时</span>
+                      <strong>{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</strong>
+                    </div>
+                  </div>
+                </template>
+              </section>
+
+              <section v-else-if="inspectorTab === 'entities'" class="inspector-section">
+                <div v-if="entities.length === 0" class="state-text">暂无实体</div>
+                <div v-else class="compact-list">
+                  <button
+                    v-for="entity in entities"
+                    :key="entity.entity_id || entity.id || entity.name"
+                    class="compact-row selectable-row"
+                    type="button"
+                    @click="selectEntity(entity)"
                   >
+                    <span class="row-title">{{ entity.name }}</span>
+                    <span class="row-meta">{{ formatEntityType(entity.type || entity.entity_type) }}</span>
+                  </button>
+                </div>
+              </section>
+
+              <section v-else-if="inspectorTab === 'relations'" class="inspector-section">
+                <div v-if="relations.length === 0" class="state-text">暂无关系</div>
+                <div v-else class="compact-list">
+                  <button
+                    v-for="relation in relations"
+                    :key="relation.relation_id || relation.id || relation.key"
+                    class="compact-row selectable-row"
+                    type="button"
+                    @click="selectRelation(relation)"
+                  >
+                    <span class="row-title">
+                      {{ relation.source_name || relation.source }} 到 {{ relation.target_name || relation.target }}
+                    </span>
+                    <span class="row-meta">{{ formatRelationType(relation.type || relation.relation_type) }}</span>
+                  </button>
+                </div>
+              </section>
+
+              <section v-else-if="inspectorTab === 'evidence'" class="inspector-section">
+                <div v-if="evidence.length === 0" class="state-text">暂无证据</div>
+                <div v-else class="compact-list">
+                  <div
+                    v-for="item in evidence"
+                    :key="item.evidence_id || item.id || item.chunk_id"
+                    class="compact-row evidence-compact-row"
+                  >
+                    <strong>{{ item.title || item.source || '证据片段' }}</strong>
                     {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
                   </div>
                 </div>
-                <p v-else>暂无关联证据</p>
-              </div>
-            </template>
-          </section>
+              </section>
 
-          <section v-else class="data-section">
-            <div v-if="evidence.length === 0" class="state-text">暂无证据</div>
-            <div v-for="item in evidence" v-else :key="item.evidence_id || item.id || item.chunk_id" class="evidence-row">
-              <div class="row-title">{{ item.title || item.source || '证据片段' }}</div>
-              <p>{{ item.text || item.content || item.quote || item.text_span || item.normalized_summary }}</p>
-            </div>
-          </section>
+              <section v-else class="inspector-section">
+                <div v-if="files.length === 0" class="state-text">暂无文件</div>
+                <div v-else class="compact-list">
+                  <div
+                    v-for="file in files"
+                    :key="file.file_id || file.id || file.filename"
+                    class="compact-row"
+                  >
+                    <span class="row-title">{{ file.filename || file.name }}</span>
+                    <span class="row-meta">{{ getStatusText(file.status) }}</span>
+                  </div>
+                </div>
+              </section>
+            </aside>
+          </div>
         </template>
       </main>
     </div>
@@ -318,7 +364,7 @@ const graphChart = ref(null)
 const selectedGraphItem = ref(null)
 const hiddenEntityTypes = ref([])
 const hiddenRelationTypes = ref([])
-const activeTab = ref('files')
+const inspectorTab = ref('selection')
 const createForm = ref({ name: '' })
 const createError = ref('')
 const uploadError = ref('')
@@ -329,12 +375,12 @@ const buildOptions = ref({
   timeoutSeconds: 300
 })
 
-const tabs = computed(() => [
-  { id: 'files', name: `文件 ${files.value.length}` },
+const inspectorTabs = computed(() => [
+  { id: 'selection', name: '选择' },
   { id: 'entities', name: `实体 ${entities.value.length}` },
   { id: 'relations', name: `关系 ${relations.value.length}` },
-  { id: 'graph', name: `图谱 ${entities.value.length}` },
-  { id: 'evidence', name: `证据 ${evidence.value.length}` }
+  { id: 'evidence', name: `证据 ${evidence.value.length}` },
+  { id: 'files', name: `文件 ${files.value.length}` }
 ])
 
 const latestRun = computed(() => buildRuns.value[0] || currentMap.value?.latest_run || null)
@@ -551,6 +597,10 @@ const selectedGraphEvidence = computed(() => {
   return evidenceIds.map(id => evidenceById.value.get(id)).filter(Boolean)
 })
 
+const selectedReviewStatus = computed(() => (
+  getReviewStatusText(selectedGraphItem.value?.raw?.review_status)
+))
+
 const normalizeList = (payload, keys) => {
   if (Array.isArray(payload)) return payload
   for (const key of keys) {
@@ -575,6 +625,16 @@ const formatProvider = (provider) => providerLabels[provider] || provider || '�
 const formatEntityType = (type) => entityTypeLabels[type] || type || '未分类'
 
 const formatRelationType = (type) => relationTypeLabels[type] || type || '相关'
+
+const getReviewStatusText = (status) => {
+  const map = {
+    pending: '待审核',
+    approved: '已确认',
+    rejected: '已驳回',
+    modified: '已修正'
+  }
+  return map[status] || status || '未审核'
+}
 
 const formatError = (message) => {
   if (!message) return ''
@@ -647,6 +707,7 @@ const selectMap = async (map) => {
   buildMessage.value = ''
   uploadError.value = ''
   selectedGraphItem.value = null
+  inspectorTab.value = 'selection'
   clearGraphFilters()
   await refreshCurrentMapData()
 }
@@ -784,17 +845,26 @@ const clearGraphFilters = () => {
   hiddenRelationTypes.value = []
 }
 
+const selectEntity = (entity) => {
+  selectedGraphItem.value = { kind: 'entity', raw: entity }
+  inspectorTab.value = 'selection'
+}
+
+const selectRelation = (relation) => {
+  selectedGraphItem.value = { kind: 'relation', raw: relation }
+  inspectorTab.value = 'selection'
+}
+
 const renderGraph = async () => {
-  if (activeTab.value !== 'graph') return
   await nextTick()
   if (!graphContainer.value) return
   if (!graphChart.value) {
     graphChart.value = echarts.init(graphContainer.value)
     graphChart.value.on('click', (params) => {
       if (params.dataType === 'node') {
-        selectedGraphItem.value = { kind: 'entity', raw: params.data.raw || {} }
+        selectEntity(params.data.raw || {})
       } else if (params.dataType === 'edge') {
-        selectedGraphItem.value = { kind: 'relation', raw: params.data.raw || {} }
+        selectRelation(params.data.raw || {})
       }
     })
   }
@@ -809,10 +879,6 @@ const fitGraph = async () => {
 const handleResize = () => {
   graphChart.value?.resize()
 }
-
-watch(activeTab, async () => {
-  await renderGraph()
-})
 
 watch([entities, relations], async () => {
   await renderGraph()
@@ -847,9 +913,7 @@ onBeforeUnmount(() => {
 .panel-header,
 .section-header,
 .detail-header,
-.panel-actions,
-.tabs,
-.summary-grid {
+.panel-actions {
   display: flex;
   align-items: center;
 }
@@ -983,7 +1047,10 @@ onBeforeUnmount(() => {
 }
 
 .map-detail-panel {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px;
   background: #fff;
 }
 
@@ -1079,106 +1146,83 @@ onBeforeUnmount(() => {
 .detail-header {
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+.compact-header {
+  flex: 0 0 auto;
 }
 
-.run-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  margin-bottom: 8px;
 }
 
-.run-summary-item {
-  display: grid;
-  gap: 4px;
-  padding: 8px 10px;
-  border: 1px solid #dbeafe;
-  border-radius: 6px;
-  background: #eff6ff;
+.metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 
-.run-value {
-  color: #1e3a8a;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.summary-item {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
+.metric-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
   border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  border-radius: 4px;
   background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
-.summary-value {
-  font-size: 20px;
-  font-weight: 600;
-  color: #111827;
+.compact-upload {
+  flex: 0 0 auto;
 }
 
-.summary-label {
+.compact-upload.dragging {
+  border-color: #16a34a;
+  color: #15803d;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.drop-strip {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 4px;
+  background: #f8fafc;
   color: #64748b;
   font-size: 12px;
 }
 
-.upload-area {
+.drop-strip.dragging {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.workbench-layout {
   display: grid;
-  place-items: center;
-  min-height: 86px;
-  margin-bottom: 14px;
-  border: 1px dashed #94a3b8;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #334155;
-  cursor: pointer;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.upload-area.dragging {
-  border-color: #2563eb;
-  background: #eff6ff;
-}
-
-.upload-area input {
-  display: none;
-}
-
-.tabs {
-  gap: 8px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.tabs button {
-  padding: 8px 10px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: #475569;
-}
-
-.tabs button.active {
-  border-bottom-color: #2563eb;
-  color: #1d4ed8;
-}
-
-.data-section {
+.graph-workspace {
   display: grid;
-  gap: 8px;
-}
-
-.graph-section {
-  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
 }
@@ -1246,55 +1290,158 @@ onBeforeUnmount(() => {
 
 .graph-canvas {
   width: 100%;
-  height: 420px;
+  height: 100%;
+  min-height: 520px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #f8fafc;
 }
 
-.graph-inspector {
+.graph-empty-state {
   display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid #dbeafe;
+  place-items: center;
+  min-height: 72px;
+  border: 1px dashed #cbd5e1;
   border-radius: 6px;
-  background: #eff6ff;
-}
-
-.graph-inspector p {
-  margin: 0;
-  color: #475569;
+  background: #f8fafc;
+  color: #64748b;
   font-size: 13px;
-  line-height: 1.5;
 }
 
-.graph-evidence-list {
-  display: grid;
-  gap: 6px;
-}
-
-.graph-evidence-item {
-  padding: 8px 10px;
-  border: 1px solid #bfdbfe;
-  border-radius: 4px;
-  background: #fff;
-  color: #334155;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.data-row,
-.evidence-row {
-  padding: 10px 12px;
+.inspector-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #fff;
 }
 
-.data-row {
+.inspector-tabs {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -10px -10px 10px;
+  padding: 10px 10px 8px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+  overflow-x: auto;
+}
+
+.inspector-tabs button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.inspector-tabs button.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.inspector-section,
+.compact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.selection-title {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.selection-meta,
+.selection-description {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.selection-empty {
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detail-field {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #f8fafc;
+}
+
+.detail-field span,
+.inspector-subtitle {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.detail-field strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.inspector-subtitle {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.compact-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #fff;
+  text-align: left;
+}
+
+.selectable-row {
+  cursor: pointer;
+}
+
+.selectable-row:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.evidence-compact-row {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.evidence-compact-row strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #111827;
 }
 
 .row-title {
@@ -1302,13 +1449,7 @@ onBeforeUnmount(() => {
   color: #111827;
   font-size: 13px;
   font-weight: 500;
-}
-
-.evidence-row p {
-  margin: 6px 0 0;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.55;
+  word-break: break-word;
 }
 
 @media (max-width: 920px) {
@@ -1316,12 +1457,13 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .workbench-layout {
+    grid-template-columns: 1fr;
   }
 
   .graph-canvas {
-    height: 340px;
+    height: 420px;
+    min-height: 420px;
   }
 }
 </style>
