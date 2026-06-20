@@ -20,43 +20,55 @@
       <span>当前页面已接入认知地图接口，等待后端服务可用后即可显示真实数据。</span>
     </div>
 
-    <div class="content-grid">
-      <aside class="map-list-panel">
-        <div class="section-header">
-          <span>地图列表</span>
-          <span class="count">{{ maps.length }}</span>
-        </div>
-
-        <form class="create-form" @submit.prevent="handleCreate">
-          <input
-            v-model="createForm.name"
-            type="text"
-            placeholder="新建地图名称"
-            @input="createError = ''"
-          />
-          <button type="submit" :disabled="creating">
-            {{ creating ? '创建中' : '新建' }}
-          </button>
-        </form>
-        <div v-if="createError" class="form-error">{{ createError }}</div>
-
-        <div v-if="loading" class="state-text">加载中...</div>
-        <div v-else-if="maps.length === 0" class="state-text">暂无认知地图</div>
+    <div class="content-grid" :class="{ 'map-list-collapsed': !isMapListExpanded }">
+      <aside class="map-list-panel" :class="{ collapsed: !isMapListExpanded }">
         <button
-          v-for="map in maps"
-          v-else
-          :key="map.id"
-          class="map-item"
-          :class="{ active: currentMap?.id === map.id }"
+          v-if="!isMapListExpanded"
+          class="rail-btn"
           type="button"
-          @click="selectMap(map)"
+          @click="toggleMapList"
         >
-          <span class="map-name">{{ map.name }}</span>
-          <span class="map-meta">
-            {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
-          </span>
-          <span class="map-status">{{ getStatusText(map.status) }}</span>
+          地图
+          <span>{{ maps.length }}</span>
         </button>
+
+        <template v-else>
+          <div class="section-header">
+            <span>地图列表</span>
+            <button class="text-btn" type="button" @click="toggleMapList">收起</button>
+          </div>
+
+          <form class="create-form" @submit.prevent="handleCreate">
+            <input
+              v-model="createForm.name"
+              type="text"
+              placeholder="新建地图名称"
+              @input="createError = ''"
+            />
+            <button type="submit" :disabled="creating">
+              {{ creating ? '创建中' : '新建' }}
+            </button>
+          </form>
+          <div v-if="createError" class="form-error">{{ createError }}</div>
+
+          <div v-if="loading" class="state-text">加载中...</div>
+          <div v-else-if="maps.length === 0" class="state-text">暂无认知地图</div>
+          <button
+            v-for="map in maps"
+            v-else
+            :key="map.id"
+            class="map-item"
+            :class="{ active: currentMap?.id === map.id }"
+            type="button"
+            @click="selectMap(map)"
+          >
+            <span class="map-name">{{ map.name }}</span>
+            <span class="map-meta">
+              {{ map.entity_count || 0 }} 实体 / {{ map.relation_count || 0 }} 关系
+            </span>
+            <span class="map-status">{{ getStatusText(map.status) }}</span>
+          </button>
+        </template>
       </aside>
 
       <main class="map-detail-panel">
@@ -71,6 +83,31 @@
               <p v-if="currentMap.description">{{ currentMap.description }}</p>
             </div>
             <div class="build-actions">
+              <button class="panel-btn" type="button" @click="toggleBuildOptions">
+                {{ isBuildOptionsExpanded ? '收起设置' : '构建设置' }}
+              </button>
+              <button class="primary-btn" type="button" @click="handleBuild" :disabled="building">
+                {{ building ? '构建中...' : '构建地图' }}
+              </button>
+              <button
+                class="panel-btn compact-upload"
+                type="button"
+                @click="triggerFileInput"
+                :disabled="uploading"
+              >
+                {{ uploading ? `上传中 ${uploadProgress.current}/${uploadProgress.total}` : '上传文件' }}
+              </button>
+              <button class="panel-btn" type="button" @click="toggleUploadDrop">
+                {{ isUploadDropExpanded ? '收起拖拽' : '拖拽上传' }}
+              </button>
+              <button class="panel-btn" type="button" @click="toggleInspector">
+                {{ isInspectorExpanded ? '收起管理' : '管理' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="isBuildOptionsExpanded" class="build-options-panel">
+            <div class="build-actions inline-actions">
               <label class="engine-select">
                 <span>抽取引擎</span>
                 <select v-model="buildOptions.extractorProvider" :disabled="building">
@@ -89,9 +126,6 @@
                   :disabled="building"
                 />
               </label>
-              <button class="primary-btn" type="button" @click="handleBuild" :disabled="building">
-                {{ building ? '构建中...' : '构建地图' }}
-              </button>
               <button
                 v-if="canRetryBuild"
                 class="panel-btn"
@@ -118,18 +152,6 @@
               <span class="metric-pill">状态 {{ getStatusText(latestRun?.status || currentMap.status) }}</span>
               <span class="metric-pill">覆盖 {{ formatRatio(evaluation?.entity_evidence_ratio) }}</span>
             </div>
-            <button
-              class="panel-btn compact-upload"
-              :class="{ dragging: isDragging }"
-              type="button"
-              @click="triggerFileInput"
-              :disabled="uploading"
-              @dragover.prevent="isDragging = true"
-              @dragleave="isDragging = false"
-              @drop.prevent="handleDrop"
-            >
-              {{ uploading ? `上传中 ${uploadProgress.current}/${uploadProgress.total}` : '上传文件' }}
-            </button>
             <input
               ref="fileInput"
               class="hidden-file-input"
@@ -140,6 +162,7 @@
             />
           </div>
           <div
+            v-if="isUploadDropExpanded || isDragging"
             class="drop-strip"
             :class="{ dragging: isDragging }"
             @dragover.prevent="isDragging = true"
@@ -150,7 +173,7 @@
           </div>
           <div v-if="uploadError" class="form-error">{{ uploadError }}</div>
 
-          <div class="workbench-layout">
+          <div class="workbench-layout" :class="{ 'inspector-collapsed': !isInspectorExpanded }">
             <section class="graph-workspace">
               <div class="graph-toolbar">
                 <div class="graph-legend">
@@ -191,7 +214,7 @@
               <div ref="graphContainer" class="graph-canvas"></div>
             </section>
 
-            <aside class="inspector-panel">
+            <aside v-if="isInspectorExpanded" class="inspector-panel">
               <div class="inspector-tabs">
                 <button
                   v-for="tab in inspectorTabs"
@@ -349,6 +372,10 @@ const building = ref(false)
 const uploading = ref(false)
 const apiUnavailable = ref(false)
 const isDragging = ref(false)
+const isMapListExpanded = ref(false)
+const isInspectorExpanded = ref(false)
+const isUploadDropExpanded = ref(false)
+const isBuildOptionsExpanded = ref(false)
 const fileInput = ref(null)
 const graphContainer = ref(null)
 const uploadProgress = ref({ current: 0, total: 0 })
@@ -845,14 +872,43 @@ const clearGraphFilters = () => {
   hiddenRelationTypes.value = []
 }
 
+const resizeGraphSoon = async () => {
+  await nextTick()
+  graphChart.value?.resize()
+}
+
+const toggleMapList = async () => {
+  isMapListExpanded.value = !isMapListExpanded.value
+  await resizeGraphSoon()
+}
+
+const toggleInspector = async () => {
+  isInspectorExpanded.value = !isInspectorExpanded.value
+  await resizeGraphSoon()
+}
+
+const toggleUploadDrop = async () => {
+  isUploadDropExpanded.value = !isUploadDropExpanded.value
+  await resizeGraphSoon()
+}
+
+const toggleBuildOptions = async () => {
+  isBuildOptionsExpanded.value = !isBuildOptionsExpanded.value
+  await resizeGraphSoon()
+}
+
 const selectEntity = (entity) => {
   selectedGraphItem.value = { kind: 'entity', raw: entity }
   inspectorTab.value = 'selection'
+  isInspectorExpanded.value = true
+  resizeGraphSoon()
 }
 
 const selectRelation = (relation) => {
   selectedGraphItem.value = { kind: 'relation', raw: relation }
   inspectorTab.value = 'selection'
+  isInspectorExpanded.value = true
+  resizeGraphSoon()
 }
 
 const renderGraph = async () => {
@@ -985,7 +1041,7 @@ onBeforeUnmount(() => {
 .panel-btn,
 .primary-btn,
 .create-form button,
-.tabs button {
+.text-btn {
   border: 1px solid #2563eb;
   background: #fff;
   color: #2563eb;
@@ -1012,6 +1068,13 @@ onBeforeUnmount(() => {
   opacity: 0.55;
 }
 
+.text-btn {
+  padding: 0;
+  border: 0;
+  color: #2563eb;
+  font-size: 12px;
+}
+
 .service-notice {
   display: flex;
   gap: 12px;
@@ -1033,6 +1096,11 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.content-grid.map-list-collapsed {
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+}
+
 .map-list-panel,
 .map-detail-panel {
   min-height: 0;
@@ -1044,6 +1112,37 @@ onBeforeUnmount(() => {
 
 .map-list-panel {
   padding: 12px;
+}
+
+.map-list-panel.collapsed {
+  display: grid;
+  place-items: start center;
+  overflow: hidden;
+  padding: 8px 6px;
+}
+
+.rail-btn {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 28px;
+  min-height: 88px;
+  padding: 8px 0;
+  border: 1px solid #dbeafe;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.15;
+  writing-mode: vertical-rl;
+}
+
+.rail-btn span {
+  padding: 2px 0;
+  color: #64748b;
+  font-size: 11px;
+  writing-mode: horizontal-tb;
 }
 
 .map-detail-panel {
@@ -1153,6 +1252,19 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+.build-options-panel {
+  flex: 0 0 auto;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.inline-actions {
+  justify-content: flex-start;
+}
+
 .workspace-toolbar {
   display: flex;
   align-items: center;
@@ -1218,6 +1330,10 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.workbench-layout.inspector-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .graph-workspace {
