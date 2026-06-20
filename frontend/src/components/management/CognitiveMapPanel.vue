@@ -1089,16 +1089,13 @@ onBeforeUnmount(() => {
 }
 
 .content-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 16px;
+  position: relative;
   height: calc(100% - 76px);
   min-height: 0;
 }
 
 .content-grid.map-list-collapsed {
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 10px;
+  display: block;
 }
 
 .map-list-panel,
@@ -1111,14 +1108,27 @@ onBeforeUnmount(() => {
 }
 
 .map-list-panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 20;
+  width: 280px;
+  max-height: calc(100% - 20px);
+  overflow: auto;
   padding: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
 .map-list-panel.collapsed {
   display: grid;
   place-items: start center;
   overflow: hidden;
+  width: 42px;
+  height: auto;
   padding: 8px 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .rail-btn {
@@ -1146,10 +1156,13 @@ onBeforeUnmount(() => {
 }
 
 .map-detail-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 14px;
+  width: 100%;
+  height: 100%;
+  padding: 0;
   background: #fff;
 }
 
@@ -1243,22 +1256,39 @@ onBeforeUnmount(() => {
 }
 
 .detail-header {
+  position: absolute;
+  top: 10px;
+  left: 62px;
+  right: 10px;
+  z-index: 12;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  min-height: 42px;
+  margin-bottom: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(8px);
 }
 
 .compact-header {
-  flex: 0 0 auto;
+  flex: none;
 }
 
 .build-options-panel {
-  flex: 0 0 auto;
-  margin-bottom: 8px;
+  position: absolute;
+  top: 66px;
+  right: 10px;
+  z-index: 13;
+  margin-bottom: 0;
   padding: 8px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #f8fafc;
+  background: rgba(248, 250, 252, 0.96);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(8px);
 }
 
 .inline-actions {
@@ -1266,12 +1296,17 @@ onBeforeUnmount(() => {
 }
 
 .workspace-toolbar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex: 0 0 auto;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+  pointer-events: none;
 }
 
 .metric-strip {
@@ -1288,10 +1323,11 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border: 1px solid #e5e7eb;
   border-radius: 4px;
-  background: #f8fafc;
+  background: rgba(248, 250, 252, 0.95);
   color: #475569;
   font-size: 12px;
   white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
 }
 
 .compact-upload {
@@ -1308,14 +1344,20 @@ onBeforeUnmount(() => {
 }
 
 .drop-strip {
-  flex: 0 0 auto;
-  margin-bottom: 10px;
+  position: absolute;
+  top: 66px;
+  left: 62px;
+  right: 390px;
+  z-index: 13;
+  margin-bottom: 0;
   padding: 6px 10px;
   border: 1px dashed #cbd5e1;
   border-radius: 4px;
-  background: #f8fafc;
+  background: rgba(248, 250, 252, 0.96);
   color: #64748b;
   font-size: 12px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(8px);
 }
 
 .drop-strip.dragging {
@@ -1325,35 +1367,43 @@ onBeforeUnmount(() => {
 }
 
 .workbench-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 12px;
+  position: relative;
+  display: block;
   flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
   min-height: 0;
 }
 
 .workbench-layout.inspector-collapsed {
-  grid-template-columns: minmax(0, 1fr);
+  display: block;
 }
 
 .graph-workspace {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 10px;
+  position: relative;
+  width: 100%;
+  height: 100%;
   min-height: 0;
 }
 
 .graph-toolbar {
+  position: absolute;
+  top: 66px;
+  left: 62px;
+  right: 12px;
+  z-index: 9;
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  pointer-events: none;
 }
 
 .graph-toolbar-actions {
   display: flex;
   gap: 8px;
   flex: 0 0 auto;
+  pointer-events: auto;
 }
 
 .graph-legend {
@@ -1361,6 +1411,14 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px 12px;
   min-width: 0;
+  max-width: calc(100% - 180px);
+  padding: 6px 8px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
 }
 
 .legend-item {
@@ -1389,48 +1447,73 @@ onBeforeUnmount(() => {
 }
 
 .relation-filter {
+  position: absolute;
+  top: 110px;
+  left: 62px;
+  right: 12px;
+  z-index: 8;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  pointer-events: none;
 }
 
 .relation-filter button {
   padding: 4px 8px;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.92);
   color: #475569;
   cursor: pointer;
   font-size: 12px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  pointer-events: auto;
 }
 
 .graph-canvas {
   width: 100%;
   height: 100%;
-  min-height: 520px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
   background: #f8fafc;
 }
 
 .graph-empty-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 7;
+  transform: translate(-50%, -50%);
   display: grid;
   place-items: center;
   min-height: 72px;
+  min-width: 280px;
+  padding: 0 16px;
   border: 1px dashed #cbd5e1;
   border-radius: 6px;
-  background: #f8fafc;
+  background: rgba(248, 250, 252, 0.96);
   color: #64748b;
   font-size: 13px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(8px);
 }
 
 .inspector-panel {
+  position: absolute;
+  top: 66px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 14;
+  width: 340px;
   min-height: 0;
   overflow: auto;
   padding: 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(8px);
 }
 
 .inspector-tabs {
@@ -1570,16 +1653,63 @@ onBeforeUnmount(() => {
 
 @media (max-width: 920px) {
   .content-grid {
-    grid-template-columns: 1fr;
+    height: calc(100% - 72px);
   }
 
-  .workbench-layout {
-    grid-template-columns: 1fr;
+  .detail-header {
+    left: 56px;
+    right: 8px;
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .graph-canvas {
-    height: 420px;
-    min-height: 420px;
+  .build-actions {
+    justify-content: flex-start;
+  }
+
+  .graph-toolbar {
+    top: 120px;
+    left: 8px;
+    right: 8px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .graph-legend {
+    max-width: 100%;
+  }
+
+  .relation-filter {
+    top: 188px;
+    left: 8px;
+    right: 8px;
+  }
+
+  .drop-strip {
+    top: 122px;
+    left: 8px;
+    right: 8px;
+  }
+
+  .build-options-panel {
+    top: 122px;
+    left: 8px;
+    right: 8px;
+  }
+
+  .inspector-panel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 48%;
+  }
+
+  .workspace-toolbar {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
   }
 }
 </style>
