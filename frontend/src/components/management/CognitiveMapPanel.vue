@@ -18,17 +18,27 @@
 
     <div class="content-grid">
       <aside class="map-list-panel">
-        <button
-          class="rail-btn"
-          type="button"
-          :aria-expanded="isMapListExpanded"
-          @click="toggleMapList"
-        >
-          地图列表
-        </button>
+        <div class="map-list-actions">
+          <button
+            class="rail-btn"
+            type="button"
+            :aria-expanded="isMapListExpanded"
+            @click="toggleMapList"
+          >
+            地图列表
+          </button>
+          <button
+            class="add-map-btn"
+            type="button"
+            aria-label="新建地图"
+            @click="toggleCreateMap"
+          >
+            +
+          </button>
+        </div>
 
         <div v-if="isMapListExpanded" class="map-list-dropdown">
-          <form class="create-form" @submit.prevent="handleCreate">
+          <form v-if="isCreateMapExpanded" class="create-form" @submit.prevent="handleCreate">
             <input
               v-model="createForm.name"
               type="text"
@@ -356,6 +366,7 @@ const isInspectorExpanded = ref(false)
 const isUploadDropExpanded = ref(false)
 const isBuildOptionsExpanded = ref(false)
 const isGraphActionsExpanded = ref(false)
+const isCreateMapExpanded = ref(false)
 const fileInput = ref(null)
 const graphContainer = ref(null)
 const uploadProgress = ref({ current: 0, total: 0 })
@@ -736,6 +747,7 @@ const handleCreate = async () => {
       description: ''
     })
     createForm.value.name = ''
+    isCreateMapExpanded.value = false
     await refreshMaps()
     const mapId = created?.id || created?.map?.id
     const selected = maps.value.find(item => item.id === mapId)
@@ -862,6 +874,13 @@ const resizeGraphSoon = async () => {
 
 const toggleMapList = async () => {
   isMapListExpanded.value = !isMapListExpanded.value
+  await resizeGraphSoon()
+}
+
+const toggleCreateMap = async () => {
+  isMapListExpanded.value = true
+  isCreateMapExpanded.value = !isCreateMapExpanded.value
+  createError.value = ''
   await resizeGraphSoon()
 }
 
@@ -1088,6 +1107,12 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
+.map-list-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .rail-btn {
   display: inline-flex;
   align-items: center;
@@ -1104,6 +1129,21 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1;
   white-space: nowrap;
+}
+
+.add-map-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .map-list-dropdown {
