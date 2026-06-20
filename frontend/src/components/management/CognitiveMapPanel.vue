@@ -24,7 +24,7 @@
           type="button"
           @click="toggleMapList"
         >
-          地图
+          地图列表
           <span>{{ maps.length }}</span>
         </button>
 
@@ -1102,38 +1102,37 @@ onBeforeUnmount(() => {
 
 .map-list-panel.collapsed {
   display: grid;
-  place-items: start center;
+  place-items: start;
   overflow: hidden;
-  width: 42px;
+  width: 88px;
   height: auto;
-  padding: 8px 6px;
+  padding: 8px;
   border-color: transparent;
   background: transparent;
   box-shadow: none;
 }
 
 .rail-btn {
-  display: grid;
-  justify-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 6px;
-  width: 28px;
-  min-height: 88px;
-  padding: 8px 0;
+  min-width: 72px;
+  min-height: 28px;
+  padding: 6px 8px;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: #1d4ed8;
   cursor: pointer;
   font-size: 12px;
-  line-height: 1.15;
-  writing-mode: vertical-rl;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .rail-btn span {
-  padding: 2px 0;
   color: #64748b;
   font-size: 11px;
-  writing-mode: horizontal-tb;
 }
 
 .map-detail-panel {
