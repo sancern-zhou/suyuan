@@ -91,102 +91,11 @@
 
         <template v-else>
           <div class="detail-header compact-header">
-            <button class="panel-btn action-toggle" type="button" @click="toggleGraphActions">
+            <button class="panel-btn action-toggle" type="button" @click="openManagementDrawer('selection')">
               管理
             </button>
-            <div v-if="isGraphActionsExpanded" class="build-actions graph-actions-popover">
-              <button class="panel-btn" type="button" @click="toggleBuildOptions">
-                {{ isBuildOptionsExpanded ? '收起设置' : '构建设置' }}
-              </button>
-              <button class="primary-btn" type="button" @click="handleBuild" :disabled="building">
-                {{ building ? '构建中...' : '构建地图' }}
-              </button>
-              <button
-                class="panel-btn compact-upload"
-                type="button"
-                @click="triggerFileInput"
-                :disabled="uploading"
-              >
-                {{ uploading ? `上传中 ${uploadProgress.current}/${uploadProgress.total}` : '上传文件' }}
-              </button>
-              <button class="panel-btn" type="button" @click="toggleUploadDrop">
-                {{ isUploadDropExpanded ? '收起拖拽' : '拖拽上传' }}
-              </button>
-              <button class="panel-btn" type="button" @click="toggleInspector">
-                {{ isInspectorExpanded ? '收起管理' : '管理' }}
-              </button>
-              <button class="panel-btn" type="button" @click="toggleModeBinding">
-                {{ isModeBindingExpanded ? '收起接入' : '接入模式' }}
-              </button>
-              <button
-                class="panel-btn danger-action"
-                type="button"
-                :disabled="deletingMap"
-                @click="handleDeleteMap()"
-              >
-                {{ deletingMap ? '删除中' : '删除地图' }}
-              </button>
-            </div>
           </div>
 
-          <div v-if="isBuildOptionsExpanded" class="build-options-panel">
-            <div class="build-actions inline-actions">
-              <label class="engine-select">
-                <span>抽取引擎</span>
-                <select v-model="buildOptions.extractorProvider" :disabled="building">
-                  <option value="local">本地规则</option>
-                  <option value="llamaindex">开源图谱引擎</option>
-                </select>
-              </label>
-              <label class="engine-select">
-                <span>超时</span>
-                <input
-                  v-model.number="buildOptions.timeoutSeconds"
-                  type="number"
-                  min="30"
-                  max="900"
-                  step="30"
-                  :disabled="building"
-                />
-              </label>
-              <button
-                v-if="canRetryBuild"
-                class="panel-btn"
-                type="button"
-                @click="handleBuild"
-                :disabled="building"
-              >
-                重试
-              </button>
-            </div>
-          </div>
-          <div v-if="isModeBindingExpanded" class="mode-binding-panel">
-            <div class="mode-binding-options">
-              <label
-                v-for="mode in agentModeOptions"
-                :key="mode.id"
-                class="mode-binding-option"
-              >
-                <input
-                  v-model="bindingForm.agentModes"
-                  type="checkbox"
-                  :value="mode.id"
-                  :disabled="savingBindings"
-                />
-                <span>{{ mode.name }}</span>
-              </label>
-              <button
-                class="primary-btn"
-                type="button"
-                :disabled="savingBindings"
-                @click="saveModeBindings"
-              >
-                {{ savingBindings ? '保存中' : '保存接入' }}
-              </button>
-            </div>
-            <div v-if="bindingError" class="form-error">{{ bindingError }}</div>
-            <div v-else-if="bindingMessage" class="form-success">{{ bindingMessage }}</div>
-          </div>
           <div v-if="buildError" class="form-error build-message">{{ buildError }}</div>
           <div v-else-if="buildMessage" class="form-success build-message">{{ buildMessage }}</div>
           <div v-if="mapActionError" class="form-error build-message">{{ mapActionError }}</div>
@@ -255,168 +164,402 @@
               <div ref="graphContainer" class="graph-canvas"></div>
             </section>
 
-            <aside v-if="isInspectorExpanded" class="inspector-panel">
-              <div class="inspector-tabs">
-                <button
-                  v-for="tab in inspectorTabs"
-                  :key="tab.id"
-                  type="button"
-                  :class="{ active: inspectorTab === tab.id }"
-                  @click="inspectorTab = tab.id"
-                >
-                  {{ tab.name }}
-                </button>
+            <aside v-if="isInspectorExpanded" class="management-drawer">
+              <div class="drawer-header">
+                <div>
+                  <strong>{{ currentMap.name || '认知地图' }}</strong>
+                  <span>{{ entities.length }} 个实体 / {{ relations.length }} 条关系</span>
+                </div>
+                <button class="panel-btn" type="button" @click="closeManagementDrawer">关闭</button>
               </div>
 
-              <section v-if="inspectorTab === 'selection'" class="inspector-section">
-                <template v-if="selectedGraphItem">
-                  <div class="selection-title">{{ selectedGraphTitle }}</div>
-                  <div class="selection-meta">{{ selectedGraphMeta }}</div>
-                  <p v-if="selectedGraphDescription" class="selection-description">
-                    {{ selectedGraphDescription }}
-                  </p>
-                  <div class="detail-grid">
-                    <div class="detail-field">
-                      <span>证据数</span>
-                      <strong>{{ selectedGraphEvidence.length }}</strong>
-                    </div>
-                    <div class="detail-field">
-                      <span>审核状态</span>
-                      <strong>{{ selectedReviewStatus }}</strong>
-                    </div>
-                  </div>
-                  <div class="review-actions">
+              <div class="drawer-body">
+                <nav class="drawer-tree" aria-label="认知地图管理树">
+                  <button
+                    class="tree-node root-node"
+                    type="button"
+                    :class="{ active: inspectorTab === 'selection' && !selectedGraphItem }"
+                    @click="showMapOverview"
+                  >
+                    {{ currentMap.name || '当前地图' }}
+                  </button>
+                  <button
+                    class="tree-node"
+                    type="button"
+                    :class="{ active: inspectorTab === 'build' }"
+                    @click="openManagementDrawer('build')"
+                  >
+                    构建与文件
+                  </button>
+                  <button
+                    class="tree-node"
+                    type="button"
+                    :class="{ active: inspectorTab === 'binding' }"
+                    @click="openManagementDrawer('binding')"
+                  >
+                    Agent接入
+                  </button>
+
+                  <div class="tree-group">
                     <button
-                      class="panel-btn"
+                      class="tree-node group-node"
                       type="button"
-                      :disabled="managing"
-                      @click="updateSelectedReviewStatus('confirmed')"
+                      :class="{ active: inspectorTab === 'entities' && !selectedGraphItem }"
+                      @click="openManagementDrawer('entities')"
                     >
-                      确认
+                      实体
+                      <span>{{ entities.length }}</span>
                     </button>
-                    <button
-                      class="panel-btn"
-                      type="button"
-                      :disabled="managing"
-                      @click="updateSelectedReviewStatus('needs_review')"
-                    >
-                      需复核
-                    </button>
-                    <button
-                      class="panel-btn"
-                      type="button"
-                      :disabled="managing"
-                      @click="updateSelectedReviewStatus('rejected')"
-                    >
-                      驳回
-                    </button>
-                    <button
-                      class="panel-btn danger-action"
-                      type="button"
-                      :disabled="managing"
-                      @click="deleteSelectedGraphItem"
-                    >
-                      删除
-                    </button>
-                  </div>
-                  <div class="inspector-subtitle">关联证据</div>
-                  <div v-if="selectedGraphEvidence.length" class="compact-list">
                     <div
-                      v-for="item in selectedGraphEvidence"
-                      :key="item.evidence_id || item.id || item.chunk_id"
-                      class="compact-row evidence-compact-row"
+                      v-for="group in entityTreeGroups"
+                      :key="group.type"
+                      class="tree-children"
                     >
-                      {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                      <div class="tree-label">{{ formatEntityType(group.type) }}</div>
+                      <button
+                        v-for="entity in group.items"
+                        :key="entity.entity_id || entity.id || entity.name"
+                        class="tree-node leaf-node"
+                        type="button"
+                        :class="{ active: isSelectedTreeItem('entity', entity) }"
+                        @click="selectEntity(entity)"
+                      >
+                        {{ entity.name || '未命名实体' }}
+                      </button>
                     </div>
                   </div>
-                  <div v-else class="state-text">暂无关联证据</div>
-                </template>
-                <template v-else>
-                  <div class="selection-empty">点击图谱中的实体或关系查看详情</div>
-                  <div class="detail-grid">
-                    <div class="detail-field">
-                      <span>抽取引擎</span>
-                      <strong>{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</strong>
-                    </div>
-                    <div class="detail-field">
-                      <span>耗时</span>
-                      <strong>{{ formatDuration(latestRun?.duration_ms) }}</strong>
-                    </div>
-                    <div class="detail-field">
-                      <span>分块</span>
-                      <strong>{{ latestRun?.chunk_count ?? '-' }}</strong>
-                    </div>
-                    <div class="detail-field">
-                      <span>超时</span>
-                      <strong>{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</strong>
-                    </div>
-                  </div>
-                </template>
-                <div v-if="managementError" class="form-error">{{ managementError }}</div>
-                <div v-else-if="managementMessage" class="form-success">{{ managementMessage }}</div>
-              </section>
 
-              <section v-else-if="inspectorTab === 'entities'" class="inspector-section">
-                <div v-if="entities.length === 0" class="state-text">暂无实体</div>
-                <div v-else class="compact-list">
+                  <div class="tree-group">
+                    <button
+                      class="tree-node group-node"
+                      type="button"
+                      :class="{ active: inspectorTab === 'relations' && !selectedGraphItem }"
+                      @click="openManagementDrawer('relations')"
+                    >
+                      关系
+                      <span>{{ relations.length }}</span>
+                    </button>
+                    <div
+                      v-for="group in relationTreeGroups"
+                      :key="group.type"
+                      class="tree-children"
+                    >
+                      <div class="tree-label">{{ formatRelationType(group.type) }}</div>
+                      <button
+                        v-for="relation in group.items"
+                        :key="relation.relation_id || relation.id || relation.key"
+                        class="tree-node leaf-node"
+                        type="button"
+                        :class="{ active: isSelectedTreeItem('relation', relation) }"
+                        @click="selectRelation(relation)"
+                      >
+                        {{ relation.source_name || relation.source }} 到 {{ relation.target_name || relation.target }}
+                      </button>
+                    </div>
+                  </div>
+
                   <button
-                    v-for="entity in entities"
-                    :key="entity.entity_id || entity.id || entity.name"
-                    class="compact-row selectable-row"
+                    class="tree-node"
                     type="button"
-                    @click="selectEntity(entity)"
+                    :class="{ active: inspectorTab === 'evidence' }"
+                    @click="openManagementDrawer('evidence')"
                   >
-                    <span class="row-title">{{ entity.name }}</span>
-                    <span class="row-meta">{{ formatEntityType(entity.type || entity.entity_type) }}</span>
+                    证据
+                    <span>{{ evidence.length }}</span>
                   </button>
-                </div>
-              </section>
-
-              <section v-else-if="inspectorTab === 'relations'" class="inspector-section">
-                <div v-if="relations.length === 0" class="state-text">暂无关系</div>
-                <div v-else class="compact-list">
                   <button
-                    v-for="relation in relations"
-                    :key="relation.relation_id || relation.id || relation.key"
-                    class="compact-row selectable-row"
+                    class="tree-node"
                     type="button"
-                    @click="selectRelation(relation)"
+                    :class="{ active: inspectorTab === 'files' }"
+                    @click="openManagementDrawer('files')"
                   >
-                    <span class="row-title">
-                      {{ relation.source_name || relation.source }} 到 {{ relation.target_name || relation.target }}
-                    </span>
-                    <span class="row-meta">{{ formatRelationType(relation.type || relation.relation_type) }}</span>
+                    文件
+                    <span>{{ files.length }}</span>
                   </button>
-                </div>
-              </section>
+                </nav>
 
-              <section v-else-if="inspectorTab === 'evidence'" class="inspector-section">
-                <div v-if="evidence.length === 0" class="state-text">暂无证据</div>
-                <div v-else class="compact-list">
-                  <div
-                    v-for="item in evidence"
-                    :key="item.evidence_id || item.id || item.chunk_id"
-                    class="compact-row evidence-compact-row"
-                  >
-                    <strong>{{ item.title || item.source || '证据片段' }}</strong>
-                    {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
-                  </div>
-                </div>
-              </section>
+                <div class="drawer-detail">
+                  <section v-if="inspectorTab === 'selection'" class="inspector-section">
+                    <template v-if="selectedGraphItem">
+                      <div class="selection-title">{{ selectedGraphTitle }}</div>
+                      <div class="selection-meta">{{ selectedGraphMeta }}</div>
 
-              <section v-else class="inspector-section">
-                <div v-if="files.length === 0" class="state-text">暂无文件</div>
-                <div v-else class="compact-list">
-                  <div
-                    v-for="file in files"
-                    :key="file.file_id || file.id || file.filename"
-                    class="compact-row"
-                  >
-                    <span class="row-title">{{ file.filename || file.name }}</span>
-                    <span class="row-meta">{{ getStatusText(file.status) }}</span>
-                  </div>
+                      <form v-if="selectedGraphItem.kind === 'entity'" class="edit-form" @submit.prevent="saveSelectedGraphItem">
+                        <label>
+                          <span>实体名称</span>
+                          <input v-model="entityEditForm.name" type="text" />
+                        </label>
+                        <label>
+                          <span>实体类型</span>
+                          <select v-model="entityEditForm.entityType">
+                            <option
+                              v-for="type in entityTypeOptions"
+                              :key="type"
+                              :value="type"
+                            >
+                              {{ formatEntityType(type) }}
+                            </option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>描述</span>
+                          <textarea v-model="entityEditForm.description" rows="4"></textarea>
+                        </label>
+                        <button class="primary-btn" type="submit" :disabled="managing">
+                          {{ managing ? '保存中' : '保存实体' }}
+                        </button>
+                      </form>
+
+                      <form v-else class="edit-form" @submit.prevent="saveSelectedGraphItem">
+                        <label>
+                          <span>起点实体</span>
+                          <select v-model="relationEditForm.sourceEntityId">
+                            <option
+                              v-for="entity in entities"
+                              :key="entity.entity_id || entity.id || entity.name"
+                              :value="entity.entity_id || entity.id"
+                            >
+                              {{ entity.name }}
+                            </option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>终点实体</span>
+                          <select v-model="relationEditForm.targetEntityId">
+                            <option
+                              v-for="entity in entities"
+                              :key="entity.entity_id || entity.id || entity.name"
+                              :value="entity.entity_id || entity.id"
+                            >
+                              {{ entity.name }}
+                            </option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>关系类型</span>
+                          <select v-model="relationEditForm.relationType">
+                            <option
+                              v-for="type in relationTypeOptions"
+                              :key="type"
+                              :value="type"
+                            >
+                              {{ formatRelationType(type) }}
+                            </option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>描述</span>
+                          <textarea v-model="relationEditForm.description" rows="4"></textarea>
+                        </label>
+                        <button class="primary-btn" type="submit" :disabled="managing">
+                          {{ managing ? '保存中' : '保存关系' }}
+                        </button>
+                      </form>
+
+                      <div class="detail-grid">
+                        <div class="detail-field">
+                          <span>证据数</span>
+                          <strong>{{ selectedGraphEvidence.length }}</strong>
+                        </div>
+                        <div class="detail-field">
+                          <span>审核状态</span>
+                          <strong>{{ selectedReviewStatus }}</strong>
+                        </div>
+                      </div>
+                      <div class="review-actions">
+                        <button class="panel-btn" type="button" :disabled="managing" @click="updateSelectedReviewStatus('confirmed')">
+                          确认
+                        </button>
+                        <button class="panel-btn" type="button" :disabled="managing" @click="updateSelectedReviewStatus('needs_review')">
+                          需复核
+                        </button>
+                        <button class="panel-btn" type="button" :disabled="managing" @click="updateSelectedReviewStatus('rejected')">
+                          驳回
+                        </button>
+                        <button class="panel-btn danger-action" type="button" :disabled="managing" @click="deleteSelectedGraphItem">
+                          删除
+                        </button>
+                      </div>
+                      <div class="inspector-subtitle">关联证据</div>
+                      <div v-if="selectedGraphEvidence.length" class="compact-list">
+                        <div
+                          v-for="item in selectedGraphEvidence"
+                          :key="item.evidence_id || item.id || item.chunk_id"
+                          class="compact-row evidence-compact-row"
+                        >
+                          {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                        </div>
+                      </div>
+                      <div v-else class="state-text">暂无关联证据</div>
+                    </template>
+                    <template v-else>
+                      <div class="selection-title">{{ currentMap.name || '认知地图' }}</div>
+                      <div class="detail-grid">
+                        <div class="detail-field">
+                          <span>抽取引擎</span>
+                          <strong>{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</strong>
+                        </div>
+                        <div class="detail-field">
+                          <span>耗时</span>
+                          <strong>{{ formatDuration(latestRun?.duration_ms) }}</strong>
+                        </div>
+                        <div class="detail-field">
+                          <span>分块</span>
+                          <strong>{{ latestRun?.chunk_count ?? '-' }}</strong>
+                        </div>
+                        <div class="detail-field">
+                          <span>超时</span>
+                          <strong>{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</strong>
+                        </div>
+                      </div>
+                    </template>
+                    <div v-if="managementError" class="form-error">{{ managementError }}</div>
+                    <div v-else-if="managementMessage" class="form-success">{{ managementMessage }}</div>
+                  </section>
+
+                  <section v-else-if="inspectorTab === 'build'" class="inspector-section">
+                    <div class="selection-title">构建与文件</div>
+                    <div class="build-actions inline-actions">
+                      <label class="engine-select">
+                        <span>抽取引擎</span>
+                        <select v-model="buildOptions.extractorProvider" :disabled="building">
+                          <option value="local">本地规则</option>
+                          <option value="llamaindex">开源图谱引擎</option>
+                        </select>
+                      </label>
+                      <label class="engine-select">
+                        <span>超时</span>
+                        <input
+                          v-model.number="buildOptions.timeoutSeconds"
+                          type="number"
+                          min="30"
+                          max="900"
+                          step="30"
+                          :disabled="building"
+                        />
+                      </label>
+                      <button class="primary-btn" type="button" @click="handleBuild" :disabled="building">
+                        {{ building ? '构建中...' : '构建地图' }}
+                      </button>
+                      <button v-if="canRetryBuild" class="panel-btn" type="button" @click="handleBuild" :disabled="building">
+                        重试
+                      </button>
+                    </div>
+                    <div class="review-actions">
+                      <button class="panel-btn compact-upload" type="button" @click="triggerFileInput" :disabled="uploading">
+                        {{ uploading ? `上传中 ${uploadProgress.current}/${uploadProgress.total}` : '上传文件' }}
+                      </button>
+                      <button class="panel-btn" type="button" @click="toggleUploadDrop">
+                        {{ isUploadDropExpanded ? '收起拖拽' : '拖拽上传' }}
+                      </button>
+                      <button class="panel-btn danger-action" type="button" :disabled="deletingMap" @click="handleDeleteMap()">
+                        {{ deletingMap ? '删除中' : '删除地图' }}
+                      </button>
+                    </div>
+                    <div v-if="files.length === 0" class="state-text">暂无文件</div>
+                    <div v-else class="compact-list">
+                      <div
+                        v-for="file in files"
+                        :key="file.file_id || file.id || file.filename"
+                        class="compact-row"
+                      >
+                        <span class="row-title">{{ file.filename || file.name }}</span>
+                        <span class="row-meta">{{ getStatusText(file.status) }}</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section v-else-if="inspectorTab === 'binding'" class="inspector-section">
+                    <div class="selection-title">Agent接入</div>
+                    <div class="mode-binding-options">
+                      <label
+                        v-for="mode in agentModeOptions"
+                        :key="mode.id"
+                        class="mode-binding-option"
+                      >
+                        <input
+                          v-model="bindingForm.agentModes"
+                          type="checkbox"
+                          :value="mode.id"
+                          :disabled="savingBindings"
+                        />
+                        <span>{{ mode.name }}</span>
+                      </label>
+                    </div>
+                    <button class="primary-btn" type="button" :disabled="savingBindings" @click="saveModeBindings">
+                      {{ savingBindings ? '保存中' : '保存接入' }}
+                    </button>
+                    <div v-if="bindingError" class="form-error">{{ bindingError }}</div>
+                    <div v-else-if="bindingMessage" class="form-success">{{ bindingMessage }}</div>
+                  </section>
+
+                  <section v-else-if="inspectorTab === 'entities'" class="inspector-section">
+                    <div class="selection-title">实体</div>
+                    <div v-if="entities.length === 0" class="state-text">暂无实体</div>
+                    <div v-else class="compact-list">
+                      <button
+                        v-for="entity in entities"
+                        :key="entity.entity_id || entity.id || entity.name"
+                        class="compact-row selectable-row"
+                        type="button"
+                        @click="selectEntity(entity)"
+                      >
+                        <span class="row-title">{{ entity.name }}</span>
+                        <span class="row-meta">{{ formatEntityType(entity.type || entity.entity_type) }}</span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section v-else-if="inspectorTab === 'relations'" class="inspector-section">
+                    <div class="selection-title">关系</div>
+                    <div v-if="relations.length === 0" class="state-text">暂无关系</div>
+                    <div v-else class="compact-list">
+                      <button
+                        v-for="relation in relations"
+                        :key="relation.relation_id || relation.id || relation.key"
+                        class="compact-row selectable-row"
+                        type="button"
+                        @click="selectRelation(relation)"
+                      >
+                        <span class="row-title">
+                          {{ relation.source_name || relation.source }} 到 {{ relation.target_name || relation.target }}
+                        </span>
+                        <span class="row-meta">{{ formatRelationType(relation.type || relation.relation_type) }}</span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section v-else-if="inspectorTab === 'evidence'" class="inspector-section">
+                    <div class="selection-title">证据</div>
+                    <div v-if="evidence.length === 0" class="state-text">暂无证据</div>
+                    <div v-else class="compact-list">
+                      <div
+                        v-for="item in evidence"
+                        :key="item.evidence_id || item.id || item.chunk_id"
+                        class="compact-row evidence-compact-row"
+                      >
+                        <strong>{{ item.title || item.source || '证据片段' }}</strong>
+                        {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                      </div>
+                    </div>
+                  </section>
+
+                  <section v-else class="inspector-section">
+                    <div class="selection-title">文件</div>
+                    <div v-if="files.length === 0" class="state-text">暂无文件</div>
+                    <div v-else class="compact-list">
+                      <div
+                        v-for="file in files"
+                        :key="file.file_id || file.id || file.filename"
+                        class="compact-row"
+                      >
+                        <span class="row-title">{{ file.filename || file.name }}</span>
+                        <span class="row-meta">{{ getStatusText(file.status) }}</span>
+                      </div>
+                    </div>
+                  </section>
                 </div>
-              </section>
+              </div>
             </aside>
           </div>
         </template>
@@ -462,10 +605,7 @@ const isDragging = ref(false)
 const isMapListExpanded = ref(false)
 const isInspectorExpanded = ref(false)
 const isUploadDropExpanded = ref(false)
-const isBuildOptionsExpanded = ref(false)
-const isGraphActionsExpanded = ref(false)
 const isCreateMapExpanded = ref(false)
-const isModeBindingExpanded = ref(false)
 const fileInput = ref(null)
 const graphContainer = ref(null)
 const uploadProgress = ref({ current: 0, total: 0 })
@@ -493,6 +633,17 @@ const mapActionError = ref('')
 const bindingError = ref('')
 const bindingMessage = ref('')
 const bindingForm = ref({ agentModes: [] })
+const entityEditForm = ref({
+  name: '',
+  entityType: 'Entity',
+  description: ''
+})
+const relationEditForm = ref({
+  sourceEntityId: '',
+  targetEntityId: '',
+  relationType: 'related_to',
+  description: ''
+})
 const buildOptions = ref({
   extractorProvider: 'local',
   timeoutSeconds: 300
@@ -506,14 +657,6 @@ const agentModeOptions = [
   { id: 'chart', name: '图表' },
   { id: 'ops', name: '运维' }
 ]
-
-const inspectorTabs = computed(() => [
-  { id: 'selection', name: '选择' },
-  { id: 'entities', name: `实体 ${entities.value.length}` },
-  { id: 'relations', name: `关系 ${relations.value.length}` },
-  { id: 'evidence', name: `证据 ${evidence.value.length}` },
-  { id: 'files', name: `文件 ${files.value.length}` }
-])
 
 const latestRun = computed(() => buildRuns.value[0] || currentMap.value?.latest_run || null)
 const canRetryBuild = computed(() => currentMap.value?.status === 'failed' || latestRun.value?.status === 'failed')
@@ -590,6 +733,46 @@ const graphCategories = computed(() => {
 
 const relationTypes = computed(() => (
   Array.from(new Set(relations.value.map(relation => relation.relation_type || relation.type || 'related_to')))
+))
+
+const entityTreeGroups = computed(() => {
+  const groups = new Map()
+  entities.value.forEach(entity => {
+    const type = entity.entity_type || entity.type || 'Entity'
+    if (!groups.has(type)) groups.set(type, [])
+    groups.get(type).push(entity)
+  })
+  return Array.from(groups.entries()).map(([type, items]) => ({
+    type,
+    items: [...items].sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'zh-Hans-CN'))
+  }))
+})
+
+const relationTreeGroups = computed(() => {
+  const groups = new Map()
+  relations.value.forEach(relation => {
+    const type = relation.relation_type || relation.type || 'related_to'
+    if (!groups.has(type)) groups.set(type, [])
+    groups.get(type).push(relation)
+  })
+  return Array.from(groups.entries()).map(([type, items]) => ({
+    type,
+    items
+  }))
+})
+
+const entityTypeOptions = computed(() => (
+  Array.from(new Set([
+    ...Object.keys(entityTypeLabels),
+    ...entities.value.map(entity => entity.entity_type || entity.type).filter(Boolean)
+  ]))
+))
+
+const relationTypeOptions = computed(() => (
+  Array.from(new Set([
+    ...Object.keys(relationTypeLabels),
+    ...relations.value.map(relation => relation.relation_type || relation.type).filter(Boolean)
+  ]))
 ))
 
 const evidenceById = computed(() => {
@@ -717,11 +900,6 @@ const selectedGraphMeta = computed(() => {
   return selectedGraphItem.value.kind === 'relation'
     ? formatRelationType(raw.relation_type || raw.type)
     : formatEntityType(raw.entity_type || raw.type)
-})
-
-const selectedGraphDescription = computed(() => {
-  const raw = selectedGraphItem.value?.raw || {}
-  return raw.description || ''
 })
 
 const selectedGraphEvidence = computed(() => {
@@ -867,10 +1045,7 @@ const selectMap = async (map) => {
   bindingMessage.value = ''
   selectedGraphItem.value = null
   inspectorTab.value = 'selection'
-  isGraphActionsExpanded.value = false
-  isBuildOptionsExpanded.value = false
   isUploadDropExpanded.value = false
-  isModeBindingExpanded.value = false
   clearGraphFilters()
   await refreshCurrentMapData()
 }
@@ -1066,6 +1241,34 @@ const getSelectedGraphItemId = () => {
     : raw.entity_id || raw.id
 }
 
+const getGraphItemId = (kind, item) => (
+  kind === 'relation'
+    ? item?.relation_id || item?.id
+    : item?.entity_id || item?.id
+)
+
+const isSelectedTreeItem = (kind, item) => (
+  selectedGraphItem.value?.kind === kind &&
+  getSelectedGraphItemId() === getGraphItemId(kind, item)
+)
+
+const syncEntityEditForm = (entity = {}) => {
+  entityEditForm.value = {
+    name: entity.name || '',
+    entityType: entity.entity_type || entity.type || 'Entity',
+    description: entity.description || ''
+  }
+}
+
+const syncRelationEditForm = (relation = {}) => {
+  relationEditForm.value = {
+    sourceEntityId: relation.source_entity_id || relation.source || relation.source_id || '',
+    targetEntityId: relation.target_entity_id || relation.target || relation.target_id || '',
+    relationType: relation.relation_type || relation.type || 'related_to',
+    description: relation.description || ''
+  }
+}
+
 const findGraphItemById = (kind, id) => {
   if (!id) return null
   const source = kind === 'relation' ? relations.value : entities.value
@@ -1106,6 +1309,49 @@ const updateSelectedReviewStatus = async (reviewStatus) => {
     managementMessage.value = `已更新为${getReviewStatusText(reviewStatus)}`
   } catch (error) {
     managementError.value = error?.message || '更新审核状态失败'
+  } finally {
+    managing.value = false
+  }
+}
+
+const saveSelectedGraphItem = async () => {
+  if (!currentMap.value?.id || !selectedGraphItem.value) return
+  const kind = selectedGraphItem.value.kind
+  const itemId = getSelectedGraphItemId()
+  if (!itemId) {
+    managementError.value = '缺少选中项标识，无法保存'
+    managementMessage.value = ''
+    return
+  }
+
+  managing.value = true
+  managementError.value = ''
+  managementMessage.value = ''
+  try {
+    if (kind === 'relation') {
+      await updateCognitiveMapRelation(currentMap.value.id, itemId, {
+        source_entity_id: relationEditForm.value.sourceEntityId,
+        target_entity_id: relationEditForm.value.targetEntityId,
+        relation_type: relationEditForm.value.relationType,
+        description: relationEditForm.value.description
+      })
+    } else {
+      await updateCognitiveMapEntity(currentMap.value.id, itemId, {
+        name: entityEditForm.value.name,
+        entity_type: entityEditForm.value.entityType,
+        description: entityEditForm.value.description
+      })
+    }
+    await refreshCurrentMapData()
+    await refreshMaps()
+    updateCurrentMapFromList()
+    const refreshedItem = findGraphItemById(kind, itemId)
+    selectedGraphItem.value = refreshedItem ? { kind, raw: refreshedItem } : null
+    if (kind === 'relation') syncRelationEditForm(refreshedItem || {})
+    else syncEntityEditForm(refreshedItem || {})
+    managementMessage.value = kind === 'relation' ? '关系已保存' : '实体已保存'
+  } catch (error) {
+    managementError.value = error?.message || '保存失败'
   } finally {
     managing.value = false
   }
@@ -1167,8 +1413,15 @@ const toggleCreateMap = async () => {
   await resizeGraphSoon()
 }
 
-const toggleInspector = async () => {
-  isInspectorExpanded.value = !isInspectorExpanded.value
+const openManagementDrawer = async (tab = 'selection') => {
+  isInspectorExpanded.value = true
+  inspectorTab.value = tab
+  if (tab !== 'selection') selectedGraphItem.value = null
+  await resizeGraphSoon()
+}
+
+const closeManagementDrawer = async () => {
+  isInspectorExpanded.value = false
   await resizeGraphSoon()
 }
 
@@ -1177,27 +1430,11 @@ const toggleUploadDrop = async () => {
   await resizeGraphSoon()
 }
 
-const toggleBuildOptions = async () => {
-  isBuildOptionsExpanded.value = !isBuildOptionsExpanded.value
-  if (isBuildOptionsExpanded.value) isModeBindingExpanded.value = false
-  await resizeGraphSoon()
-}
-
-const toggleModeBinding = async () => {
-  isModeBindingExpanded.value = !isModeBindingExpanded.value
-  if (isModeBindingExpanded.value) isBuildOptionsExpanded.value = false
-  await resizeGraphSoon()
-}
-
-const toggleGraphActions = async () => {
-  isGraphActionsExpanded.value = !isGraphActionsExpanded.value
-  await resizeGraphSoon()
-}
-
 const selectEntity = (entity) => {
   managementError.value = ''
   managementMessage.value = ''
   selectedGraphItem.value = { kind: 'entity', raw: entity }
+  syncEntityEditForm(entity)
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
   resizeGraphSoon()
@@ -1207,9 +1444,16 @@ const selectRelation = (relation) => {
   managementError.value = ''
   managementMessage.value = ''
   selectedGraphItem.value = { kind: 'relation', raw: relation }
+  syncRelationEditForm(relation)
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
   resizeGraphSoon()
+}
+
+const showMapOverview = async () => {
+  selectedGraphItem.value = null
+  inspectorTab.value = 'selection'
+  await openManagementDrawer('selection')
 }
 
 const renderGraph = async () => {
@@ -1617,42 +1861,6 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-.graph-actions-popover {
-  position: absolute;
-  top: 34px;
-  right: 0;
-  z-index: 14;
-  max-width: min(640px, calc(100vw - 96px));
-}
-
-.build-options-panel {
-  position: absolute;
-  top: 66px;
-  right: 10px;
-  z-index: 13;
-  margin-bottom: 0;
-  padding: 8px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-.mode-binding-panel {
-  position: absolute;
-  top: 66px;
-  right: 10px;
-  z-index: 13;
-  max-width: min(520px, calc(100vw - 96px));
-  padding: 8px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
 .mode-binding-options {
   display: flex;
   flex-wrap: wrap;
@@ -1716,10 +1924,6 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 0;
-}
-
-.workbench-layout.inspector-collapsed {
-  display: block;
 }
 
 .graph-workspace {
@@ -1841,50 +2045,133 @@ onBeforeUnmount(() => {
   backdrop-filter: none;
 }
 
-.inspector-panel {
+.management-drawer {
   position: absolute;
-  top: 66px;
-  right: 12px;
-  bottom: 12px;
-  z-index: 14;
-  width: 340px;
-  min-height: 0;
-  overflow: auto;
-  padding: 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-.inspector-tabs {
-  display: flex;
-  gap: 4px;
-  position: sticky;
   top: 0;
-  z-index: 1;
-  margin: -10px -10px 10px;
-  padding: 10px 10px 8px;
-  border-bottom: 1px solid #e5e7eb;
-  background: transparent;
-  overflow-x: auto;
+  right: 0;
+  bottom: 0;
+  z-index: 24;
+  width: min(760px, calc(100vw - 88px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: -12px 0 28px rgba(15, 23, 42, 0.08);
 }
 
-.inspector-tabs button {
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex: 0 0 auto;
-  padding: 5px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.drawer-header div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.drawer-header strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-header span {
+  color: #64748b;
   font-size: 12px;
 }
 
-.inspector-tabs button.active {
+.drawer-body {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.drawer-tree {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 8px;
+  border-right: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.tree-group {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.tree-children {
+  display: grid;
+  gap: 2px;
+  margin-left: 10px;
+  padding-left: 8px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.tree-label {
+  padding: 7px 6px 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
-  color: #1d4ed8;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.tree-node span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.root-node,
+.group-node {
+  font-weight: 600;
+}
+
+.leaf-node {
+  justify-content: flex-start;
+  overflow: hidden;
+  color: #475569;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-node:hover,
+.tree-node.active {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.drawer-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
 }
 
 .inspector-section,
@@ -1915,6 +2202,42 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 13px;
   text-align: center;
+}
+
+.edit-form {
+  display: grid;
+  gap: 10px;
+}
+
+.edit-form label {
+  display: grid;
+  gap: 5px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.edit-form input,
+.edit-form select,
+.edit-form textarea {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #111827;
+  font-size: 13px;
+}
+
+.edit-form input,
+.edit-form select {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.edit-form textarea {
+  resize: vertical;
+  padding: 8px;
+  line-height: 1.5;
 }
 
 .detail-grid {
@@ -2042,19 +2365,19 @@ onBeforeUnmount(() => {
     right: 8px;
   }
 
-  .build-options-panel {
-    top: 122px;
-    left: 8px;
-    right: 8px;
+  .management-drawer {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 68%;
+    border-top: 1px solid #e5e7eb;
+    border-left: 0;
   }
 
-  .inspector-panel {
-    top: auto;
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-    width: auto;
-    max-height: 48%;
+  .drawer-body {
+    grid-template-columns: 160px minmax(0, 1fr);
   }
 
 }
