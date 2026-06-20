@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from llama_index.core.llms import ChatMessage, CompletionResponse
@@ -45,6 +46,27 @@ async def test_text_parser_chunks_plain_text_with_source_locations(tmp_path: Pat
     assert chunks[0].source_file_id == "file_1"
     assert chunks[0].location == "paragraph 1"
     assert "深圳市臭氧污染过程分析" in chunks[0].text
+
+
+@pytest.mark.asyncio
+async def test_text_parser_packs_short_paragraphs_to_reduce_llm_calls():
+    source_file = SourceFile(
+        file_id="file_1",
+        map_id="map_1",
+        filename="notes.txt",
+        content_type="text/plain",
+        storage_path="/tmp/notes.txt",
+    )
+    text = "\n\n".join(f"短段落{i}" for i in range(20))
+
+    chunks = await TextParserProvider(max_chars=120).parse_text(
+        source_file=source_file,
+        text=text,
+    )
+
+    assert len(chunks) < 20
+    assert all(len(chunk.text) <= 120 for chunk in chunks)
+    assert chunks[0].location.startswith("paragraphs 1-")
 
 
 @pytest.mark.asyncio
@@ -257,7 +279,46 @@ def test_llamaindex_provider_builds_schema_components_from_cognitive_schema():
 
     assert components.possible_entities is not None
     assert components.possible_relations is not None
-    assert ("ProcessMechanism", "affects", "Pollutant") in components.validation_schema
+    assert "PROCESSMECHANISM" in get_args(components.possible_entities)
+    assert "AFFECTS" in get_args(components.possible_relations)
+    assert ("PROCESSMECHANISM", "AFFECTS", "POLLUTANT") in components.validation_schema
+
+
+def test_llamaindex_provider_maps_uppercase_llamaindex_labels_to_project_schema():
+    provider = LlamaIndexPropertyGraphExtractorProvider()
+    schema = CognitiveSchema.default_air_quality_schema()
+    provider.build_schema_components(schema)
+
+    extraction = provider.map_payload_to_extraction(
+        map_id="map_1",
+        payload={
+            "entities": [
+                {"name": "臭氧", "type": "POLLUTANT", "evidence_id": "ev_1"},
+                {"name": "光化学反应", "type": "PROCESSMECHANISM", "evidence_id": "ev_1"},
+            ],
+            "relations": [
+                {
+                    "source": "光化学反应",
+                    "target": "臭氧",
+                    "type": "AFFECTS",
+                    "evidence_id": "ev_1",
+                }
+            ],
+        },
+        evidence_by_id={
+            "ev_1": {
+                "source_file_id": "file_1",
+                "chunk_id": "chunk_1",
+                "location": "paragraph 1",
+                "text_span": "臭氧受光化学反应影响。",
+            }
+        },
+    )
+
+    entity_types = {entity.entity_type for entity in extraction.candidate_entities}
+    assert "Pollutant" in entity_types
+    assert "ProcessMechanism" in entity_types
+    assert extraction.candidate_relations[0].relation_type == "affects"
 
 
 @pytest.mark.asyncio
