@@ -35,6 +35,15 @@ test('extractDashboardFocusFromMessages prefers latest final message metadata', 
   assert.deepEqual(focus.cities, ['广州'])
 })
 
+test('extractDashboardFocusFromMessages reads final message metadata focus', () => {
+  const focus = extractDashboardFocusFromMessages([
+    { type: 'final', data: { metadata: { dashboard_focus: { scope: 'city', cities: ['深圳'] } } } }
+  ])
+
+  assert.equal(focus.scope, 'city')
+  assert.deepEqual(focus.cities, ['深圳'])
+})
+
 test('normalizeLayerState only enables known layers', () => {
   assert.deepEqual(
     normalizeLayerState({ city_metrics: true, unknown: true }),
