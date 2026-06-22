@@ -24,6 +24,7 @@ from config.settings import settings
 logger = structlog.get_logger()
 
 DASHBOARD_METADATA_FIELDS = ("dashboard_focus", "answer_evidence")
+DASHBOARD_METADATA_MARKER = "query_dashboard_metadata"
 
 
 class ReActPlanner:
@@ -143,6 +144,8 @@ class ReActPlanner:
             except json.JSONDecodeError:
                 continue
             if not isinstance(payload, dict):
+                continue
+            if payload.get(DASHBOARD_METADATA_MARKER) is not True:
                 continue
 
             nested_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
