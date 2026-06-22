@@ -1,12 +1,19 @@
 <template>
   <section class="guangdong-map" aria-label="广东省空气质量总览地图">
     <div class="map-surface">
-      <div class="province-outline">
-        <span class="province-label">广东</span>
+      <div ref="mapContainer" class="amap-surface"></div>
+
+      <div v-if="loading" class="map-state" role="status">
+        <span class="state-title">地图加载中</span>
+        <span class="state-detail">正在初始化高德地图</span>
       </div>
-      <div class="map-layer layer-city" :class="{ active: layers.city_metrics }">城市指标</div>
-      <div class="map-layer layer-stations" :class="{ active: layers.stations }">站点</div>
-      <div class="map-layer layer-heatmap" :class="{ active: layers.heatmap }">热力</div>
+
+      <div v-else-if="error" class="map-state error" role="alert">
+        <span class="state-title">地图不可用</span>
+        <span class="state-detail">{{ error }}</span>
+      </div>
+
+      <div v-if="layers.heatmap" class="heatmap-note">热力层待可用插件加载后显示</div>
     </div>
     <div class="map-footer">
       <span>{{ focusLabel }}</span>
@@ -16,7 +23,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { MAP_CONFIG } from '@/config/mapConfig'
+import { loadAMap } from '@/utils/mapLoader'
+import {
+  extractCityMetricMarkers,
+  extractStationMarkers,
+  GUANGDONG_CENTER,
+  GUANGDONG_ZOOM
+} from './guangdongMapData.js'
 
 const props = defineProps({
   overview: {
@@ -33,6 +48,15 @@ const props = defineProps({
   }
 })
 
+const mapContainer = ref(null)
+const loading = ref(false)
+const error = ref('')
+
+let AMapApi = null
+let map = null
+let overlays = []
+let destroyed = false
+
 const focusLabel = computed(() => {
   const cities = props.focus?.cities || []
   const stations = props.focus?.stations || []
@@ -42,8 +66,138 @@ const focusLabel = computed(() => {
 })
 
 const overviewLabel = computed(() => {
-  const updatedAt = props.overview?.updated_at || props.overview?.data_time || props.overview?.timestamp
+  const updatedAt = props.overview?.updated_at || props.overview?.data_time || props.overview?.timestamp || props.overview?.generated_at
   return updatedAt ? `更新时间：${updatedAt}` : '等待地图数据'
+})
+
+const createOffset = (x, y) => {
+  if (AMapApi?.Pixel) return new AMapApi.Pixel(x, y)
+  return [x, y]
+}
+
+const markerValue = (value) => {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : ''
+}
+
+const markerContent = (marker) => {
+  const classes = [
+    'gd-overview-marker',
+    marker.type === 'station' ? 'station' : 'city',
+    marker.focused ? 'focused' : ''
+  ].filter(Boolean).join(' ')
+  const value = markerValue(marker.value)
+  return `<div class="${classes}"><span>${value}</span></div>`
+}
+
+const clearOverlays = () => {
+  if (map && overlays.length > 0) {
+    try {
+      map.remove(overlays)
+    } catch {
+      overlays.forEach((overlay) => {
+        try {
+          overlay.setMap(null)
+        } catch {
+          // Overlay cleanup is best-effort because AMap plugin classes vary by version.
+        }
+      })
+    }
+  }
+  overlays = []
+}
+
+const createMarker = (marker) => {
+  const size = marker.type === 'station' ? 22 : 30
+  return new AMapApi.Marker({
+    position: marker.position,
+    title: marker.name,
+    content: markerContent(marker),
+    offset: createOffset(-Math.round(size / 2), -Math.round(size / 2)),
+    zIndex: marker.focused ? 120 : marker.type === 'station' ? 90 : 80
+  })
+}
+
+const renderOverlays = () => {
+  if (!map || !AMapApi) return
+  clearOverlays()
+
+  const nextOverlays = []
+  if (props.layers?.city_metrics) {
+    nextOverlays.push(...extractCityMetricMarkers(props.overview, props.focus).map(createMarker))
+  }
+  if (props.layers?.stations) {
+    nextOverlays.push(...extractStationMarkers(props.overview, props.focus).map(createMarker))
+  }
+
+  overlays = nextOverlays
+  if (overlays.length > 0) {
+    map.add(overlays)
+  }
+}
+
+const addControls = () => {
+  try {
+    if (AMapApi.Scale) map.addControl(new AMapApi.Scale())
+  } catch {
+    // Controls are optional and should not block map rendering.
+  }
+  try {
+    if (AMapApi.ToolBar) map.addControl(new AMapApi.ToolBar({ position: 'RB' }))
+  } catch {
+    // Controls are optional and should not block map rendering.
+  }
+}
+
+const initMap = async () => {
+  if (!import.meta.env?.VITE_AMAP_KEY) {
+    error.value = '缺少 VITE_AMAP_KEY，无法加载高德地图。'
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  try {
+    AMapApi = await loadAMap()
+    if (destroyed || !mapContainer.value) return
+
+    map = new AMapApi.Map(mapContainer.value, {
+      ...MAP_CONFIG,
+      center: GUANGDONG_CENTER,
+      zoom: GUANGDONG_ZOOM,
+      pitch: 0,
+      viewMode: '2D'
+    })
+    addControls()
+    renderOverlays()
+  } catch (err) {
+    error.value = err?.message || '高德地图加载失败。'
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(
+  () => [props.overview, props.focus, props.layers],
+  renderOverlays,
+  { deep: true }
+)
+
+onMounted(() => {
+  initMap()
+})
+
+onBeforeUnmount(() => {
+  destroyed = true
+  clearOverlays()
+  if (map) {
+    try {
+      map.destroy()
+    } catch {
+      // Ignore teardown errors from third-party map internals.
+    }
+  }
+  map = null
+  AMapApi = null
 })
 </script>
 
@@ -55,7 +209,7 @@ const overviewLabel = computed(() => {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: linear-gradient(135deg, #e7f1f0 0%, #dce8ee 48%, #f0f3ef 100%);
+  background: #dfe8e7;
   color: #20313a;
 }
 
@@ -65,60 +219,54 @@ const overviewLabel = computed(() => {
   min-height: 320px;
 }
 
-.province-outline {
+.amap-surface {
   position: absolute;
-  inset: 13% 18% 16% 17%;
+  inset: 0;
+}
+
+.map-state {
+  position: absolute;
+  inset: 0;
   display: flex;
+  flex-direction: column;
+  gap: 6px;
   align-items: center;
   justify-content: center;
-  border: 2px solid rgba(43, 113, 122, 0.45);
-  border-radius: 44% 56% 50% 50% / 48% 38% 62% 52%;
-  background:
-    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.72), transparent 28%),
-    rgba(255, 255, 255, 0.28);
-  box-shadow: inset 0 0 48px rgba(43, 113, 122, 0.14);
+  padding: 24px;
+  background: #eef3f2;
+  color: #52646c;
+  text-align: center;
 }
 
-.province-label {
-  font-size: clamp(28px, 5vw, 58px);
+.map-state.error {
+  background: #f8eeee;
+  color: #8a2f2f;
+}
+
+.state-title {
+  font-size: 14px;
   font-weight: 700;
-  color: rgba(32, 49, 58, 0.62);
 }
 
-.map-layer {
+.state-detail {
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.heatmap-note {
   position: absolute;
-  max-width: 132px;
+  right: 14px;
+  bottom: 14px;
+  max-width: 190px;
   padding: 7px 10px;
   border: 1px solid rgba(32, 49, 58, 0.16);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #4f6068;
+  background: rgba(255, 255, 255, 0.86);
+  color: #52646c;
   font-size: 12px;
-  line-height: 1.2;
-  opacity: 0.45;
-  overflow-wrap: anywhere;
-}
-
-.map-layer.active {
-  opacity: 1;
-  border-color: rgba(17, 128, 118, 0.42);
-  color: #0f6c65;
-  box-shadow: 0 8px 18px rgba(29, 72, 76, 0.12);
-}
-
-.layer-city {
-  top: 24%;
-  left: 18%;
-}
-
-.layer-stations {
-  right: 20%;
-  top: 35%;
-}
-
-.layer-heatmap {
-  left: 43%;
-  bottom: 24%;
+  line-height: 1.35;
+  box-shadow: 0 8px 18px rgba(29, 72, 76, 0.1);
 }
 
 .map-footer {
@@ -137,5 +285,36 @@ const overviewLabel = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:deep(.gd-overview-marker) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 4px 12px rgba(32, 49, 58, 0.28);
+}
+
+:deep(.gd-overview-marker.city) {
+  width: 30px;
+  height: 30px;
+  background: #1f7a75;
+}
+
+:deep(.gd-overview-marker.station) {
+  width: 22px;
+  height: 22px;
+  background: #245f9d;
+  font-size: 0;
+}
+
+:deep(.gd-overview-marker.focused) {
+  background: #d4523f;
+  box-shadow: 0 0 0 4px rgba(212, 82, 63, 0.22), 0 4px 12px rgba(32, 49, 58, 0.28);
 }
 </style>
