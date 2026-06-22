@@ -188,3 +188,24 @@ export function extractStationMarkers(overview, focus = {}) {
     .map(record => normalizeStation(record, focusedStations))
     .filter(Boolean)
 }
+
+export function extractHeatPoints(overview) {
+  const layer = overview?.modules?.layers || {}
+  const points = [
+    ...asArray(layer.heat_points),
+    ...asArray(layer.stations)
+  ]
+
+  return points
+    .map(record => {
+      const position = coordinatePair(record)
+      if (!position) return null
+      const value = metricValue(record)
+      return {
+        lng: position[0],
+        lat: position[1],
+        value: value !== null ? value : 0
+      }
+    })
+    .filter(Boolean)
+}
