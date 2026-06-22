@@ -23,6 +23,7 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
+      :dashboard-focus="store.currentState.dashboardFocus"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"

@@ -29,12 +29,20 @@
         :has-more-messages="hasMoreMessages"
         :total-message-count="totalMessageCount"
         :loading-more="loadingMore"
+        :dashboard-focus="dashboardFocus"
+        :drag-over="chatAreaDragOver"
+        :right-panel-expanded="rightPanelExpanded"
+        :has-viz-content="hasVizContent"
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
         @update:agentMode="handleAgentModeChange"
         @select-message="handleSelectMessage"
         @load-more="handleLoadMore"
+        @drag-over="handleChatAreaDragOver"
+        @drag-leave="handleChatAreaDragLeave"
+        @drop="handleChatAreaDrop"
+        @toggle-viz-panel="handleToggleVizPanel"
       />
       <ChatArea
         v-else
@@ -262,6 +270,10 @@ const props = defineProps({
     default: null
   },
   board: {
+    type: Object,
+    default: null
+  },
+  dashboardFocus: {
     type: Object,
     default: null
   },

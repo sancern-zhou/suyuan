@@ -11,7 +11,7 @@
         <dl>
           <div v-for="detail in sourceDetails(source)" :key="detail.label" class="source-detail">
             <dt>{{ detail.label }}</dt>
-            <dd>{{ detail.value }}</dd>
+            <dd :class="{ code: detail.code }">{{ detail.value }}</dd>
           </div>
         </dl>
       </article>
@@ -34,22 +34,50 @@ defineProps({
 
 defineEmits(['close'])
 
-const sourceKey = (source, index) => source?.id || source?.data_id || source?.name || index
+const MAX_DETAIL_LENGTH = 360
 
-const sourceTitle = (source, index) => source?.title || source?.name || source?.data_id || `数据源 ${index + 1}`
+const sourceKey = (source, index) => source?.source_id || source?.id || source?.data_id || source?.name || index
 
-const sourceDescription = (source) => source?.description || source?.summary || source?.content || ''
+const sourceTitle = (source, index) => source?.source_id || source?.title || source?.name || source?.data_id || `数据源 ${index + 1}`
+
+const sourceDescription = (source) => source?.description || source?.summary || source?.content || source?.tool_name || ''
+
+const compactValue = (value) => {
+  if (value === undefined || value === null || value === '') return ''
+  if (Array.isArray(value)) return value.join('、')
+  if (typeof value === 'object') return JSON.stringify(value, null, 2)
+  return String(value)
+}
+
+const boundedValue = (value) => {
+  const text = compactValue(value)
+  if (text.length <= MAX_DETAIL_LENGTH) return text
+  return `${text.slice(0, MAX_DETAIL_LENGTH)}...`
+}
+
+const sampleCount = (source) => {
+  if (Array.isArray(source?.sample_records)) return source.sample_records.length
+  if (Array.isArray(source?.samples)) return source.samples.length
+  return null
+}
 
 const sourceDetails = (source) => {
   const fields = [
+    ['工具', source?.tool_name],
+    ['数据ID', source?.data_id],
+    ['数据集', source?.data_ids],
+    ['记录数', source?.record_count],
+    ['样本数', sampleCount(source)],
+    ['更新', source?.updated_at],
+    ['生成', source?.generated_at],
+    ['参数', source?.query_params, true],
     ['类型', source?.type || source?.category],
-    ['时间', source?.updated_at || source?.time || source?.timestamp],
     ['来源', source?.source || source?.provider],
     ['状态', source?.status]
   ]
   return fields
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([label, value]) => ({ label, value: String(value) }))
+    .map(([label, value, code]) => ({ label, value: boundedValue(value), code: Boolean(code) }))
 }
 </script>
 
@@ -147,6 +175,18 @@ dt {
 
 dd {
   margin: 0;
+}
+
+dd.code {
+  max-height: 110px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f6f8f8;
+  color: #34464f;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
 .empty-state {
