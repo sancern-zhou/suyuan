@@ -13,7 +13,31 @@
 
     <!-- 主分析面板 -->
     <div class="analysis-panel" ref="layoutRef">
+      <QueryDashboardWorkspace
+        v-if="agentMode === 'query'"
+        :messages="messages"
+        :pending-steering-inputs="pendingSteeringInputs"
+        :is-analyzing="isAnalyzing"
+        :input-disabled="inputDisabled"
+        :current-message="currentMessage"
+        :session-id="sessionId"
+        :selected-message-id="selectedMessageId"
+        :show-reflexion="showReflexion"
+        :reflexion-count="reflexionCount"
+        :assistant-mode="activeModule"
+        :use-reranker="useReranker"
+        :has-more-messages="hasMoreMessages"
+        :total-message-count="totalMessageCount"
+        :loading-more="loadingMore"
+        @send="handleSend"
+        @pause="handlePause"
+        @update:useReranker="handleRerankerChange"
+        @update:agentMode="handleAgentModeChange"
+        @select-message="handleSelectMessage"
+        @load-more="handleLoadMore"
+      />
       <ChatArea
+        v-else
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
@@ -123,7 +147,6 @@
           />
         </template>
       </ChatArea>
-
       <!-- 宽度调整器 -->
       <WidthResizer
         v-if="rightPanelVisible"
@@ -167,6 +190,7 @@
 import { ref, computed, watch } from 'vue'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import ChatArea from './ChatArea.vue'
+import QueryDashboardWorkspace from '@/components/queryDashboard/QueryDashboardWorkspace.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
 import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
