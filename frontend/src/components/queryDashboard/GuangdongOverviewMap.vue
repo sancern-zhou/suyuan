@@ -13,7 +13,7 @@
         <span class="state-detail">{{ error }}</span>
       </div>
 
-      <div v-if="layers.heatmap" class="heatmap-note">热力层待可用插件加载后显示</div>
+      <div v-if="layers.heatmap && heatmapUnavailable" class="heatmap-note">暂无可渲染热力数据</div>
     </div>
     <div class="map-footer">
       <span>{{ focusLabel }}</span>
@@ -28,6 +28,7 @@ import { MAP_CONFIG } from '@/config/mapConfig'
 import { loadAMap } from '@/utils/mapLoader'
 import {
   extractCityMetricMarkers,
+  extractHeatPoints,
   extractStationMarkers,
   GUANGDONG_CENTER,
   GUANGDONG_ZOOM
@@ -55,7 +56,9 @@ const error = ref('')
 let AMapApi = null
 let map = null
 let overlays = []
+let heatmapLayer = null
 let destroyed = false
+const heatmapUnavailable = ref(false)
 
 const focusLabel = computed(() => {
   const cities = props.focus?.cities || []
@@ -106,6 +109,18 @@ const clearOverlays = () => {
   overlays = []
 }
 
+const clearHeatmap = () => {
+  if (heatmapLayer) {
+    try {
+      heatmapLayer.setMap(null)
+    } catch {
+      // HeatMap cleanup is best-effort because plugin availability varies.
+    }
+  }
+  heatmapLayer = null
+  heatmapUnavailable.value = false
+}
+
 const createMarker = (marker) => {
   const size = marker.type === 'station' ? 22 : 30
   return new AMapApi.Marker({
@@ -120,6 +135,7 @@ const createMarker = (marker) => {
 const renderOverlays = () => {
   if (!map || !AMapApi) return
   clearOverlays()
+  clearHeatmap()
 
   const nextOverlays = []
   if (props.layers?.city_metrics) {
@@ -132,6 +148,38 @@ const renderOverlays = () => {
   overlays = nextOverlays
   if (overlays.length > 0) {
     map.add(overlays)
+  }
+
+  if (props.layers?.heatmap) {
+    renderHeatmap()
+  }
+}
+
+const renderHeatmap = () => {
+  const points = extractHeatPoints(props.overview)
+  if (!points.length || !AMapApi?.HeatMap) {
+    heatmapUnavailable.value = true
+    return
+  }
+
+  const max = Math.max(...points.map(point => point.value || 0), 1)
+  try {
+    heatmapLayer = new AMapApi.HeatMap(map, {
+      radius: 28,
+      opacity: [0, 0.78],
+      gradient: {
+        0.2: '#2d7dd2',
+        0.45: '#35b779',
+        0.7: '#fde725',
+        1.0: '#d7191c'
+      }
+    })
+    heatmapLayer.setDataSet({
+      data: points.map(point => ({ ...point, count: point.value || 0 })),
+      max
+    })
+  } catch {
+    heatmapUnavailable.value = true
   }
 }
 
@@ -184,6 +232,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   destroyed = true
   clearOverlays()
+  clearHeatmap()
   if (map) {
     try {
       map.destroy()

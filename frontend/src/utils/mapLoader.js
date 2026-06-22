@@ -39,7 +39,8 @@ export async function loadAMap() {
       'AMap.MouseTool',       // 鼠标工具
       'AMap.PolygonEditor',   // 多边形编辑
       'AMap.Geocoder',        // 地理编码
-      'AMap.InfoWindow'       // 信息窗口
+      'AMap.InfoWindow',      // 信息窗口
+      'AMap.HeatMap'          // 热力图
     ],
     // 添加安全密钥配置（如果有的话）
     securityJsCode: amapConfig.securityJsCode || ''

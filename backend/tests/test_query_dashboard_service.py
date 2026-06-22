@@ -191,6 +191,33 @@ def test_build_overview_returns_successful_modules_from_existing_tool_provider()
     assert ("city_hour", provider.calls[0][1]) in provider.calls
 
 
+def test_layers_enrich_station_coordinates_and_heat_points():
+    class StationWithoutCoordinatesProvider(StubProvider):
+        def station_hour(self, **kwargs):
+            return {
+                "success": True,
+                "data_id": "air_quality_5min:v1:stations",
+                "total_count": 1,
+                "data": [{"station_name": "麓湖", "AQI": 42}],
+                "metadata": {"query_params": kwargs},
+            }
+
+    service = QueryDashboardService(
+        provider=StationWithoutCoordinatesProvider(),
+        today=date(2026, 6, 22),
+        station_index={"麓湖": {"longitude": 113.292, "latitude": 23.151}},
+    )
+
+    response = service.build_guangdong_overview(include=["layers"])
+
+    station = response.modules["layers"].stations[0]
+    assert station["lng"] == 113.292
+    assert station["lat"] == 23.151
+    assert response.modules["layers"].heat_points == [
+        {"lng": 113.292, "lat": 23.151, "value": 42, "name": "麓湖"}
+    ]
+
+
 def test_build_overview_keeps_partial_success_when_module_fails():
     class FailingProvider(StubProvider):
         def city_day(self, **kwargs):

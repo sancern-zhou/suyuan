@@ -240,10 +240,12 @@ class QueryDashboardService:
         provider: QueryDashboardProvider | None = None,
         today: date | None = None,
         cities: list[str] | None = None,
+        station_index: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.provider = provider or GDSuncereDashboardProvider()
         self.today = today
         self.cities = cities or DEFAULT_GUANGDONG_CITIES
+        self.station_index = station_index if station_index is not None else self._load_station_index()
 
     def build_guangdong_overview(self, include: list[str] | None = None) -> DashboardOverviewResponse:
         requested_modules = include or DEFAULT_MODULES
@@ -302,11 +304,12 @@ class QueryDashboardService:
                 end_time=ranges["realtime"]["end"],
             )
             records = _records_from_result(result)
+            stations = self._enrich_station_records(records)
             return self._module_from_result(
                 module_name,
                 result,
-                stations=records,
-                heat_points=[record for record in records if record.get("lng") is not None and record.get("lat") is not None],
+                stations=stations,
+                heat_points=self._heat_points_from_stations(stations),
             )
 
         raise ValueError(f"Unsupported dashboard module: {module_name}")
@@ -321,3 +324,83 @@ class QueryDashboardService:
             sources=[source],
             **payload,
         )
+
+    @staticmethod
+    def _load_station_index() -> dict[str, dict[str, Any]]:
+        try:
+            from app.utils.geo_matcher import GeoMatcher
+
+            return GeoMatcher().station_index
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _number(value: Any) -> float | None:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    def _station_lookup(self, record: dict[str, Any]) -> dict[str, Any]:
+        for key in ("station_name", "name", "站点名称", "站点"):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                station = self.station_index.get(value.strip())
+                if station:
+                    return station
+        return {}
+
+    def _enrich_station_records(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched = []
+        for record in records:
+            station = self._station_lookup(record)
+            lng = self._number(
+                record.get("lng")
+                or record.get("lon")
+                or record.get("longitude")
+                or record.get("经度")
+                or station.get("longitude")
+                or station.get("lng")
+            )
+            lat = self._number(
+                record.get("lat")
+                or record.get("latitude")
+                or record.get("纬度")
+                or station.get("latitude")
+                or station.get("lat")
+            )
+            next_record = dict(record)
+            if lng is not None:
+                next_record["lng"] = lng
+                next_record["longitude"] = lng
+            if lat is not None:
+                next_record["lat"] = lat
+                next_record["latitude"] = lat
+            if station.get("city") and not next_record.get("city"):
+                next_record["city"] = station["city"]
+            enriched.append(next_record)
+        return enriched
+
+    def _heat_points_from_stations(self, stations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        points = []
+        for station in stations:
+            lng = self._number(station.get("lng") or station.get("longitude"))
+            lat = self._number(station.get("lat") or station.get("latitude"))
+            if lng is None or lat is None:
+                continue
+
+            measurements = station.get("measurements") if isinstance(station.get("measurements"), dict) else {}
+            value = self._number(station.get("AQI") or station.get("aqi") or measurements.get("AQI"))
+            points.append(
+                {
+                    "lng": lng,
+                    "lat": lat,
+                    "value": value if value is not None else 0,
+                    "name": station.get("station_name") or station.get("name") or station.get("站点名称") or "",
+                }
+            )
+        return points

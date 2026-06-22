@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   extractCityMetricMarkers,
+  extractHeatPoints,
   extractStationMarkers
 } from './guangdongMapData.js'
 
@@ -108,4 +109,26 @@ test('extractStationMarkers reads layer stations and ignores records without coo
   assert.deepEqual(markers[0].position, [113.292, 23.151])
   assert.equal(markers[0].value, 52)
   assert.equal(markers[0].focused, true)
+})
+
+test('extractHeatPoints reads layer heat points and station coordinates', () => {
+  const overview = {
+    modules: {
+      layers: {
+        heat_points: [
+          { lng: 113.292, lat: 23.151, value: 52 }
+        ],
+        stations: [
+          { station_name: '市监测站', lng: 113.31, lat: 23.13, measurements: { AQI: 44 } }
+        ]
+      }
+    }
+  }
+
+  const points = extractHeatPoints(overview)
+
+  assert.deepEqual(points, [
+    { lng: 113.292, lat: 23.151, value: 52 },
+    { lng: 113.31, lat: 23.13, value: 44 }
+  ])
 })
