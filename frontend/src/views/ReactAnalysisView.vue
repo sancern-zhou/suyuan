@@ -345,6 +345,11 @@ const handleAssistantSelect = async (moduleId) => {
 const handleSidebarAction = async (actionId) => {
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
   switch (actionId) {
+    case 'query-dashboard':
+      store.switchMode('query')
+      hideManagementPanel()
+      resetPanelState()
+      break
     case 'tools-management':
       console.log('[ReactAnalysisView] Showing tools-management panel')
       showManagementPanel('tools-management')

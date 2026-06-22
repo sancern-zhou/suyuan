@@ -195,6 +195,14 @@ const modules = [
     isAction: true
   },
   {
+    id: 'query-dashboard',
+    name: '问数大屏',
+    abbr: '问数',
+    desc: '进入广东省数据总览与问数联动大屏',
+    badge: '问数',
+    isAction: true
+  },
+  {
     id: 'knowledge-base',
     name: '知识管理',
     abbr: '知识',
@@ -273,6 +281,16 @@ const moduleIcons = {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </svg>
+  `,
+  'query-dashboard': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="M8 16v-5" />
+      <path d="M12 16V8" />
+      <path d="M16 16v-7" />
+      <path d="M20 8.5 16 6l-4 2-4-3" />
     </svg>
   `,
   'session-history': `
