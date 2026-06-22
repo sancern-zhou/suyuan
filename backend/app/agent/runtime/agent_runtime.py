@@ -28,6 +28,21 @@ from ..context.context_diagnostics import ContextDiagnostics
 
 logger = structlog.get_logger()
 
+DASHBOARD_FINAL_METADATA_FIELDS = ("dashboard_focus", "answer_evidence")
+
+
+def _capture_final_response_metadata(state: RunState, action: Dict[str, Any]) -> None:
+    if not isinstance(action, dict):
+        return
+
+    metadata = action.get("metadata") if isinstance(action.get("metadata"), dict) else {}
+    for field in DASHBOARD_FINAL_METADATA_FIELDS:
+        value = action.get(field)
+        if value is None:
+            value = metadata.get(field)
+        if isinstance(value, dict):
+            setattr(state, field, value)
+
 
 @dataclass
 class AgentRuntimeConfig:
@@ -841,9 +856,13 @@ class AgentRuntime:
 
         self.observation_processor.capture_last_knowledge_sources(state)
         self._ensure_user_message_written(state)
+        completion_action = dict(planner_result.action or {"type": "PLAIN_TEXT_REPLY"})
+        completion_action["type"] = "PLAIN_TEXT_REPLY"
+        completion_action["answer"] = answer
+        _capture_final_response_metadata(state, completion_action)
         self.writer.add_iteration(
             planner_result.thought,
-            {"type": "PLAIN_TEXT_REPLY", "answer": answer},
+            completion_action,
             {"success": True, "summary": "任务完成"},
         )
         async for event in self.finalizer.complete(

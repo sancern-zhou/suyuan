@@ -67,6 +67,7 @@ def build_query_prompt(
         "## 查询看板元数据",
         "",
         "- 当本轮查询结果可关联问数看板时，最终答案必须同时提供结构化 metadata，便于前端联动定位；不要只在自然语言中描述范围、来源或证据。",
+        "- 在自然语言答案后追加一个独立的 ```json 代码块，代码块只包含 `dashboard_focus` 和 `answer_evidence`；不要把这些字段写成普通段落。",
         "- `dashboard_focus` 必须尽量包含：`scope`、`cities`、`stations`、`pollutants`、`time_range`、`modules`、`layer_state`、`source_data_ids`。",
         "- `dashboard_focus.scope` 表示本次回答聚焦范围，如 `province`、`region`、`city`、`station`；`cities`、`stations`、`pollutants` 使用数组；`time_range` 使用 `{start, end, label}`；`layer_state` 使用看板图层布尔状态；`source_data_ids` 记录支撑看板联动的数据 ID。",
         "- `answer_evidence.claims` 必须按结论列出证据项，每项包含 claim text、metrics、source data IDs；字段使用 `text`、`metrics`、`source_data_ids`。",
