@@ -29,6 +29,7 @@ const focusFromMessage = (message) => {
   if (!message) return null
   const data = message.data || {}
   return data.dashboard_focus ||
+    data.metadata?.dashboard_focus ||
     data.result?.dashboard_focus ||
     data.result?.metadata?.dashboard_focus ||
     null
