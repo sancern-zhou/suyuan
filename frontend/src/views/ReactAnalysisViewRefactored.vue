@@ -331,6 +331,11 @@ const handleAssistantSelect = async (moduleId) => {
 
 const handleSidebarAction = async (actionId) => {
   switch (actionId) {
+    case 'query-dashboard':
+      store.switchMode('query')
+      hideManagementPanel()
+      resetPanelState()
+      break
     case 'tools-management':
       showManagementPanel('tools-management')
       break

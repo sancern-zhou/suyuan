@@ -383,8 +383,8 @@ const createEmptyModeState = () => ({
 export const useReactStore = defineStore('react', {
   state: () => {
     // 从localStorage恢复currentMode
-    const savedMode = localStorage.getItem('current-mode') || 'assistant'
-    const initialMode = VALID_MODES.includes(savedMode) ? savedMode : 'assistant'
+    const savedMode = localStorage.getItem('current-mode') || 'query'
+    const initialMode = VALID_MODES.includes(savedMode) ? savedMode : 'query'
     if (initialMode !== savedMode) {
       localStorage.setItem('current-mode', initialMode)
     }
