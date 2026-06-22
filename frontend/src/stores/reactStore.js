@@ -2,24 +2,48 @@
 // 多模式并行任务系统 - 按模式隔离状态
 
 import { defineStore } from 'pinia'
-import { agentAPI } from '@/services/reactApi'
-import { uploadChatFile } from '@/services/uploadApi'
-import { autoSaveSession } from '@/api/session'
+import { agentAPI } from '../services/reactApi.js'
+import { uploadChatFile } from '../services/uploadApi.js'
+import { autoSaveSession } from '../api/session.js'
 import {
   convertStreamingAnswerToThoughtIfToolPlanning,
   freezeActiveAssistantOutput
-} from './reactStoreStreaming'
+} from './reactStoreStreaming.js'
 import {
   addPendingSteeringInput,
   applyPendingSteeringInputs,
   promoteUnappliedSteeringInputsToQueue,
   removePendingSteeringInput
-} from './reactStoreSteering'
-import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership'
-import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue'
+} from './reactStoreSteering.js'
+import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
+import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue.js'
 
 const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+
+export const extractDashboardFocus = (data = {}) => data?.dashboard_focus ||
+  data?.metadata?.dashboard_focus ||
+  data?.result?.dashboard_focus ||
+  data?.result?.metadata?.dashboard_focus ||
+  null
+
+export const extractAnswerEvidence = (data = {}) => data?.answer_evidence ||
+  data?.metadata?.answer_evidence ||
+  data?.result?.answer_evidence ||
+  data?.result?.metadata?.answer_evidence ||
+  null
+
+export const applyQueryDashboardMetadata = (targetState, data = {}) => {
+  const focus = extractDashboardFocus(data)
+  const evidence = extractAnswerEvidence(data)
+  if (focus) {
+    targetState.dashboardFocus = focus
+  }
+  if (evidence) {
+    targetState.answerEvidence = evidence
+  }
+  return targetState
+}
 
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -978,22 +1002,7 @@ export const useReactStore = defineStore('react', {
     },
 
     applyDashboardMetadata(data = {}, targetState = this.currentState) {
-      const focus = data?.dashboard_focus ||
-        data?.metadata?.dashboard_focus ||
-        data?.result?.dashboard_focus ||
-        data?.result?.metadata?.dashboard_focus ||
-        null
-      const evidence = data?.answer_evidence ||
-        data?.metadata?.answer_evidence ||
-        data?.result?.answer_evidence ||
-        data?.result?.metadata?.answer_evidence ||
-        null
-      if (focus) {
-        targetState.dashboardFocus = focus
-      }
-      if (evidence) {
-        targetState.answerEvidence = evidence
-      }
+      applyQueryDashboardMetadata(targetState, data)
     },
 
     /**
@@ -1798,6 +1807,8 @@ export const useReactStore = defineStore('react', {
           targetState.isInterruption = false
           targetState.isComplete = true
           this.applyDashboardMetadata(data, targetState)
+          const dashboardFocus = extractDashboardFocus(data)
+          const answerEvidence = extractAnswerEvidence(data)
           targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
           const finalContent = data?.response || data?.answer || ''
@@ -1826,8 +1837,8 @@ export const useReactStore = defineStore('react', {
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
               sources: data?.sources || null,  // ✅ 知识问答参考来源
-              dashboard_focus: data?.dashboard_focus || null,
-              answer_evidence: data?.answer_evidence || null
+              dashboard_focus: dashboardFocus,
+              answer_evidence: answerEvidence
             })
             if (finalContent) {
               targetState.finalAnswer = finalContent
@@ -1842,8 +1853,8 @@ export const useReactStore = defineStore('react', {
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
               sources: data?.sources || null,  // ✅ 知识问答参考来源
-              dashboard_focus: data?.dashboard_focus || null,
-              answer_evidence: data?.answer_evidence || null
+              dashboard_focus: dashboardFocus,
+              answer_evidence: answerEvidence
             }, null, { streaming: false })  // 【修复】明确设置 streaming: false
             console.log('[event:complete] messages数量:', targetState.messages.length)
           } else {
