@@ -18,13 +18,6 @@
     </button>
 
     <div class="dashboard-main">
-      <DashboardMetricLayer
-        :overview="overview"
-        :loading="loading"
-        :error="error"
-        @open-sources="sourceDrawerOpen = true"
-      />
-
       <div class="dashboard-content">
         <GuangdongOverviewMap
           :overview="overview"
@@ -35,6 +28,9 @@
         <aside class="dashboard-side">
           <DashboardLayerControl v-model="activeLayers" />
           <DashboardFocusPanel :focus="effectiveFocus" />
+          <button type="button" class="source-button" @click="sourceDrawerOpen = true">
+            数据源
+          </button>
         </aside>
       </div>
     </div>
@@ -87,7 +83,6 @@ import { fetchGuangdongOverview } from '@/api/queryDashboard.js'
 import { extractDashboardFocusFromMessages, normalizeDashboardFocus, normalizeLayerState } from './dashboardFocus.js'
 import DashboardFocusPanel from './DashboardFocusPanel.vue'
 import DashboardLayerControl from './DashboardLayerControl.vue'
-import DashboardMetricLayer from './DashboardMetricLayer.vue'
 import DashboardSourceDrawer from './DashboardSourceDrawer.vue'
 import GuangdongOverviewMap from './GuangdongOverviewMap.vue'
 
@@ -265,6 +260,19 @@ onMounted(() => {
   border-left: 1px solid rgba(32, 49, 58, 0.1);
   background: rgba(247, 250, 249, 0.86);
   overflow: auto;
+}
+
+.source-button {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid rgba(17, 128, 118, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #0f6c65;
+  cursor: pointer;
+  font-size: 13px;
 }
 
 .chat-overlay {
