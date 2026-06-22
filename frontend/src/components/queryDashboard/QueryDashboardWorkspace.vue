@@ -1,5 +1,22 @@
 <template>
-  <div class="query-dashboard-workspace">
+  <div
+    class="query-dashboard-workspace"
+    :class="{ 'drag-over': dragOver }"
+    @dragover.prevent="handleDragOver"
+    @dragleave.prevent="handleDragLeave"
+    @drop.prevent="handleDrop"
+  >
+    <button
+      v-if="hasVizContent"
+      class="viz-toggle-btn"
+      :class="{ expanded: rightPanelExpanded }"
+      type="button"
+      @click="$emit('toggle-viz-panel')"
+      :title="rightPanelExpanded ? '隐藏右侧面板' : '显示右侧面板'"
+    >
+      <span>{{ rightPanelExpanded ? '»' : '«' }}</span>
+    </button>
+
     <div class="dashboard-main">
       <DashboardMetricLayer
         :overview="overview"
@@ -89,7 +106,10 @@ const props = defineProps({
   totalMessageCount: { type: Number, default: 0 },
   loadingMore: { type: Boolean, default: false },
   selectedMessageId: { type: String, default: null },
-  dashboardFocus: { type: Object, default: null }
+  dashboardFocus: { type: Object, default: null },
+  dragOver: { type: Boolean, default: false },
+  rightPanelExpanded: { type: Boolean, default: false },
+  hasVizContent: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -98,7 +118,11 @@ const emit = defineEmits([
   'update:useReranker',
   'update:agentMode',
   'select-message',
-  'load-more'
+  'load-more',
+  'drag-over',
+  'drag-leave',
+  'drop',
+  'toggle-viz-panel'
 ])
 
 const overview = ref(null)
@@ -146,6 +170,18 @@ const handleMessageClick = (messageId) => {
   emit('select-message', messageId)
 }
 
+const handleDragOver = (event) => {
+  emit('drag-over', event)
+}
+
+const handleDragLeave = (event) => {
+  emit('drag-leave', event)
+}
+
+const handleDrop = (event) => {
+  emit('drop', event)
+}
+
 watch(
   () => effectiveFocus.value.layer_state,
   (layerState) => {
@@ -171,6 +207,38 @@ onMounted(() => {
   height: 100%;
   overflow: hidden;
   background: #eef3f2;
+}
+
+.query-dashboard-workspace.drag-over {
+  background: #e6f7ff;
+  outline: 2px dashed #1890ff;
+  outline-offset: -2px;
+}
+
+.viz-toggle-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 80px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px 0 0 4px;
+  background: #f5f5f5;
+  color: #666;
+  cursor: pointer;
+  font-weight: 700;
+  transform: translateY(-50%);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+}
+
+.viz-toggle-btn.expanded {
+  background: #e8f4ff;
+  color: #1890ff;
+  border-color: #91d5ff;
 }
 
 .dashboard-main {

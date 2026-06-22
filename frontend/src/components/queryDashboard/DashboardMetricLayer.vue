@@ -18,7 +18,7 @@
       </article>
     </div>
 
-    <p v-if="error" class="metric-error">{{ error }}</p>
+    <p v-if="displayError" class="metric-error">{{ displayError }}</p>
   </section>
 </template>
 
@@ -56,35 +56,107 @@ const formatValue = (value, suffix = '') => {
   return suffix && !text.endsWith(suffix) ? `${text}${suffix}` : text
 }
 
+const moduleFor = (key, legacyKey) => props.overview?.modules?.[key] ||
+  props.overview?.[key] ||
+  props.overview?.[legacyKey] ||
+  {}
+
+const moduleErrorText = (module) => {
+  if (!module?.error) return ''
+  if (typeof module.error === 'string') return module.error
+  return module.error.message || JSON.stringify(module.error)
+}
+
+const moduleStatusText = (module) => {
+  const statusMap = {
+    idle: '待加载',
+    loading: '加载中',
+    success: '已更新',
+    partial: '部分更新',
+    error: '异常',
+    stale: '旧数据'
+  }
+  return statusMap[module?.status] || module?.status || '未知状态'
+}
+
+const summaryValue = (summary, keys, suffix = '') => {
+  for (const key of keys) {
+    if (summary?.[key] !== undefined && summary?.[key] !== null && summary?.[key] !== '') {
+      return formatValue(summary[key], suffix)
+    }
+  }
+  return '--'
+}
+
+const moduleValue = (module, keys, suffix = '') => {
+  const summarized = summaryValue(module?.summary, keys, suffix)
+  if (summarized !== '--') return summarized
+  return summaryValue(module, keys, suffix)
+}
+
+const recordCountValue = (module) => {
+  const count = module?.summary?.record_count ?? module?.record_count
+  if (count !== undefined && count !== null && count !== '') return `${count}条`
+  const fallbackCount = Array.isArray(module?.cities)
+    ? module.cities.length
+    : Array.isArray(module?.stations)
+      ? module.stations.length
+      : null
+  return fallbackCount !== null ? `${fallbackCount}条` : '--'
+}
+
 const statusText = computed(() => {
   if (props.loading) return '模块状态：加载中'
-  if (props.error) return '模块状态：数据异常'
-  return '模块状态：已连接'
+  const statuses = metrics.value.map((metric) => metric.status).filter(Boolean)
+  if (props.error || statuses.includes('error')) return '模块状态：数据异常'
+  if (statuses.includes('partial') || statuses.includes('stale')) return '模块状态：部分可用'
+  if (statuses.includes('success')) return '模块状态：已连接'
+  return '模块状态：等待数据'
+})
+
+const displayError = computed(() => {
+  if (props.error) return props.error
+  const errors = metrics.value
+    .map((metric) => metric.error)
+    .filter(Boolean)
+  return errors.join('；')
 })
 
 const metrics = computed(() => {
-  const realtime = props.overview?.realtime || props.overview?.current || {}
-  const month = props.overview?.month_to_date || props.overview?.month || {}
-  const year = props.overview?.year_to_date || props.overview?.year || {}
+  const realtime = moduleFor('realtime', 'current')
+  const month = moduleFor('month_to_date', 'month')
+  const year = moduleFor('year_to_date', 'year')
 
   return [
     {
       key: 'realtime',
-      label: '实时 AQI',
-      value: formatValue(realtime.aqi ?? realtime.value),
-      note: pick(realtime.primary_pollutant, realtime.level, realtime.status, '实时数据')
+      label: '实时数据',
+      value: moduleValue(realtime, ['aqi', 'avg_aqi', 'value']) !== '--'
+        ? moduleValue(realtime, ['aqi', 'avg_aqi', 'value'])
+        : recordCountValue(realtime),
+      note: `状态：${moduleStatusText(realtime)}`,
+      status: realtime.status,
+      error: moduleErrorText(realtime)
     },
     {
       key: 'month',
-      label: '本月优良率',
-      value: formatValue(month.good_rate ?? month.excellent_rate ?? month.rate, '%'),
-      note: pick(month.comparison, month.trend, '月度累计')
+      label: '本月累计',
+      value: moduleValue(month, ['good_rate', 'excellent_rate', 'rate'], '%') !== '--'
+        ? moduleValue(month, ['good_rate', 'excellent_rate', 'rate'], '%')
+        : recordCountValue(month),
+      note: `状态：${moduleStatusText(month)}`,
+      status: month.status,
+      error: moduleErrorText(month)
     },
     {
       key: 'year',
-      label: '年度达标率',
-      value: formatValue(year.good_rate ?? year.compliance_rate ?? year.rate, '%'),
-      note: pick(year.comparison, year.trend, '年度累计')
+      label: '年度累计',
+      value: moduleValue(year, ['good_rate', 'compliance_rate', 'rate'], '%') !== '--'
+        ? moduleValue(year, ['good_rate', 'compliance_rate', 'rate'], '%')
+        : recordCountValue(year),
+      note: `状态：${moduleStatusText(year)}`,
+      status: year.status,
+      error: moduleErrorText(year)
     }
   ]
 })
