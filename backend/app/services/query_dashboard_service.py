@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -57,11 +57,10 @@ def _now() -> datetime:
 
 def build_default_date_ranges(today: date | None = None) -> dict[str, dict[str, str]]:
     current = today or _now().date()
-    realtime_start = datetime.combine(current, time.min, tzinfo=TZ).isoformat()
-    realtime_end = datetime.combine(current, time.max, tzinfo=TZ).replace(microsecond=0).isoformat()
+    current_day = current.isoformat()
 
     return {
-        "realtime": {"start": realtime_start, "end": realtime_end},
+        "realtime": {"start": f"{current_day} 00:00:00", "end": f"{current_day} 23:59:59"},
         "month_to_date": {
             "start": current.replace(day=1).isoformat(),
             "end": current.isoformat(),

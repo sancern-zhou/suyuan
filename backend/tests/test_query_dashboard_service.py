@@ -61,7 +61,7 @@ def test_dashboard_focus_defaults_to_empty_lists():
 def test_build_default_date_ranges_uses_current_month_and_year():
     ranges = build_default_date_ranges(today=date(2026, 6, 22))
 
-    assert ranges["realtime"]["start"].startswith("2026-06-22")
+    assert ranges["realtime"] == {"start": "2026-06-22 00:00:00", "end": "2026-06-22 23:59:59"}
     assert ranges["month_to_date"] == {"start": "2026-06-01", "end": "2026-06-22"}
     assert ranges["year_to_date"] == {"start": "2026-01-01", "end": "2026-06-22"}
 
