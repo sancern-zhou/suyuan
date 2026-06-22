@@ -558,6 +558,10 @@ const deleteScheduledTask = async (task) => {
 // ========== 生命周期 ==========
 
 onMounted(() => {
+  if (store.currentMode !== 'query') {
+    store.switchMode('query')
+  }
+
   setupPanelWatchers()
   setupGlobalListeners()
 
