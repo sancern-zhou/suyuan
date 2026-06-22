@@ -8,6 +8,8 @@ from app.agent.cognition.models import CognitiveMapQuery, CognitiveMapView, Extr
 class CognitiveMapViewBuilder:
     """Builds the compact view that will be injected into Agent context."""
 
+    max_prompt_evidence_chars = 180
+
     def build_from_extraction(
         self,
         query: CognitiveMapQuery,
@@ -15,23 +17,30 @@ class CognitiveMapViewBuilder:
         max_entities: int = 20,
         max_relations: int = 20,
         max_evidence: int = 10,
+        allowed_review_statuses: set[str] | None = None,
     ) -> CognitiveMapView:
-        entities = self._filter_entities(query, extraction)[:max_entities]
+        filtered_extraction = self._filter_by_review_status(
+            extraction,
+            allowed_review_statuses,
+        )
+        entities = self._filter_entities(query, filtered_extraction)[:max_entities]
         entity_ids = {entity.entity_id for entity in entities}
         relations = [
             relation
-            for relation in extraction.candidate_relations
+            for relation in filtered_extraction.candidate_relations
             if relation.source_entity_id in entity_ids or relation.target_entity_id in entity_ids
         ][:max_relations]
-        evidence_ids = {
+        entity_evidence_ids = {
             evidence_id
             for entity in entities
             for evidence_id in entity.source_evidence_ids
         }
+        relation_evidence_ids = set()
         for relation in relations:
-            evidence_ids.update(relation.source_evidence_ids)
+            relation_evidence_ids.update(relation.source_evidence_ids)
+        evidence_ids = relation_evidence_ids or entity_evidence_ids
         evidence = [
-            item for item in extraction.evidence if item.evidence_id in evidence_ids
+            item for item in filtered_extraction.evidence if item.evidence_id in evidence_ids
         ][:max_evidence]
 
         prompt_summary = self._render_prompt_summary(query, entities, relations, evidence)
@@ -72,6 +81,47 @@ class CognitiveMapViewBuilder:
             if entity.entity_id in related_ids
         ]
 
+    def _filter_by_review_status(
+        self,
+        extraction: ExtractionResult,
+        allowed_review_statuses: set[str] | None,
+    ) -> ExtractionResult:
+        if not allowed_review_statuses:
+            return extraction
+
+        entities = [
+            entity
+            for entity in extraction.candidate_entities
+            if entity.review_status in allowed_review_statuses
+        ]
+        entity_ids = {entity.entity_id for entity in entities}
+        relations = [
+            relation
+            for relation in extraction.candidate_relations
+            if (
+                relation.review_status in allowed_review_statuses
+                and relation.source_entity_id in entity_ids
+                and relation.target_entity_id in entity_ids
+            )
+        ]
+        evidence_ids = {
+            evidence_id
+            for entity in entities
+            for evidence_id in entity.source_evidence_ids
+        }
+        for relation in relations:
+            evidence_ids.update(relation.source_evidence_ids)
+        evidence = [
+            item for item in extraction.evidence if item.evidence_id in evidence_ids
+        ]
+        return ExtractionResult(
+            map_id=extraction.map_id,
+            candidate_entities=entities,
+            candidate_relations=relations,
+            evidence=evidence,
+            diagnostics=extraction.diagnostics,
+        )
+
     def _render_prompt_summary(self, query, entities, relations, evidence) -> str:
         lines = [
             "## 当前认知地图",
@@ -97,7 +147,7 @@ class CognitiveMapViewBuilder:
         )
         lines.extend(["", "可引用证据："])
         lines.extend(
-            f"- [{item.ref}] {item.source_file_id}:{item.location} {item.normalized_summary}"
+            f"- [{item.ref}] {item.source_file_id}:{item.location} {self._evidence_short_text(item)}"
             for item in evidence
         )
         lines.extend(
@@ -109,6 +159,23 @@ class CognitiveMapViewBuilder:
             ]
         )
         return "\n".join(lines)
+
+    def _evidence_short_text(self, evidence) -> str:
+        text = (
+            getattr(evidence, "quote", None)
+            or getattr(evidence, "normalized_summary", None)
+            or ""
+        )
+        text = " ".join(str(text).split())
+        if len(text) <= self.max_prompt_evidence_chars:
+            short_text = text
+        else:
+            short_text = f"{text[: self.max_prompt_evidence_chars].rstrip()}..."
+        quality = getattr(evidence, "evidence_quality", None) or "unknown"
+        support_type = getattr(evidence, "support_type", None) or "unknown"
+        if support_type == "fallback" or quality == "missing_relation_evidence":
+            return f"{short_text}（证据质量: {quality}; 兜底摘要，需核验原文）"
+        return f"{short_text}（证据质量: {quality}）"
 
     def _stable_id(self, prefix: str, *parts: str) -> str:
         digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]

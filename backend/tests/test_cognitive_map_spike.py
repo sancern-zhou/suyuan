@@ -174,6 +174,7 @@ def test_provider_factory_selects_local_defaults():
 
 
 def test_provider_factory_selects_optional_adapters_without_importing_dependencies():
+    assert create_parser_provider("pdf").__class__.__name__ == "PdfParserProvider"
     assert create_parser_provider("markitdown").__class__.__name__ == "MarkItDownParserProvider"
     assert (
         create_extractor_provider("llamaindex").__class__.__name__
@@ -186,6 +187,29 @@ def test_provider_factory_passes_llm_to_llamaindex_provider():
     provider = create_extractor_provider("llamaindex", llm=llm)
 
     assert provider.llm is llm
+
+
+def test_llamaindex_provider_defaults_to_parallel_extraction():
+    provider = create_extractor_provider("llamaindex", llm=object())
+
+    assert provider.num_workers == 4
+
+
+def test_project_llm_prompt_includes_build_requirement():
+    class DummyLLMService:
+        async def chat(self, *args, **kwargs):
+            return "{}"
+
+    adapter = ProjectLLMAdapter(llm_service=DummyLLMService())
+    schema = CognitiveSchema.default_air_quality_schema()
+    schema.build_requirement = "用于运维故障诊断，优先抽取站点、设备、告警和工单之间的因果关系。"
+    adapter.set_cognitive_schema(schema)
+
+    prompt = adapter._build_structured_kg_prompt("测试文本", max_triplets=3)
+
+    assert "本次认知地图构建需求" in prompt
+    assert schema.build_requirement in prompt
+    assert "优先保留与该需求相关" in prompt
 
 
 def test_llamaindex_provider_maps_extraction_result_payload_to_project_models():
@@ -319,6 +343,49 @@ def test_llamaindex_provider_maps_uppercase_llamaindex_labels_to_project_schema(
     assert "Pollutant" in entity_types
     assert "ProcessMechanism" in entity_types
     assert extraction.candidate_relations[0].relation_type == "affects"
+
+
+@pytest.mark.asyncio
+async def test_llamaindex_provider_builds_property_graph_store_from_chunks():
+    class FakeLLMService:
+        provider = "fake"
+        model = "fake-model"
+
+        async def call_llm_with_json_response(self, prompt, max_retries=2):
+            return {
+                "triplets": [
+                    {
+                        "subject": {"type": "ProcessMechanism", "name": "光化学反应"},
+                        "relation": {"type": "affects"},
+                        "object": {"type": "Pollutant", "name": "臭氧"},
+                    }
+                ]
+            }
+
+    source_file = SourceFile(
+        file_id="file_1",
+        map_id="map_1",
+        filename="notes.txt",
+        content_type="text/plain",
+        storage_path="/tmp/notes.txt",
+    )
+    chunks = await TextParserProvider(max_chars=500).parse_text(
+        source_file=source_file,
+        text="臭氧受光化学反应影响。",
+    )
+    llm = ProjectLLMAdapter(llm_service=FakeLLMService(), model_name="fake-model")
+    provider = LlamaIndexPropertyGraphExtractorProvider(llm=llm)
+
+    extraction = await provider.extract(
+        chunks=chunks,
+        schema=CognitiveSchema.default_air_quality_schema(),
+    )
+
+    assert provider.last_property_graph_store is not None
+    assert provider.last_property_graph_store.graph.get_triplets()
+    assert any(entity.name == "臭氧" for entity in extraction.candidate_entities)
+    assert extraction.candidate_relations[0].relation_type == "affects"
+    assert extraction.evidence[0].source_file_id == "file_1"
 
 
 @pytest.mark.asyncio

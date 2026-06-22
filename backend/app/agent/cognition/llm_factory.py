@@ -111,11 +111,22 @@ class ProjectLLMAdapter(CustomLLM):
             "  \"triplets\": [\n"
             "    {\n"
             "      \"subject\": {\"type\": \"实体类型\", \"name\": \"实体名称\"},\n"
-            "      \"relation\": {\"type\": \"关系类型\"},\n"
+            "      \"relation\": {\n"
+            "        \"type\": \"关系类型\",\n"
+            "        \"properties\": {\n"
+            "          \"evidence_quote\": \"必须是原文中直接支持该关系的最短引用，1-3句；不要改写，不要使用关系本身复述\",\n"
+            "          \"evidence_summary\": \"中文短摘要，说明该引用如何支持 subject-relation-object 这条关系\",\n"
+            "          \"support_type\": \"direct | indirect | background\"\n"
+            "        }\n"
+            "      },\n"
             "      \"object\": {\"type\": \"实体类型\", \"name\": \"实体名称\"}\n"
             "    }\n"
             "  ]\n"
             "}\n"
+            "必须把关系级证据放在 relation.properties.evidence_quote、"
+            "relation.properties.evidence_summary、relation.properties.support_type 中；"
+            "不要放在 relation 顶层。\n"
+            "如果找不到能直接支撑关系的原文引用，不要抽取该关系。\n"
             f"最多抽取 {max_triplets} 个三元组。\n"
             "实体类型必须优先使用：Station, Pollutant, Metric, TimeWindow, Region, "
             "DataSource, AnalysisMethod, EmissionSource, ProcessMechanism, ControlMeasure, "
@@ -133,11 +144,18 @@ class ProjectLLMAdapter(CustomLLM):
         schema = self.cognitive_schema
         if schema is None:
             return ""
+        lines = []
+        build_requirement = str(getattr(schema, "build_requirement", "") or "").strip()
+        if build_requirement:
+            lines.extend([
+                "本次认知地图构建需求：",
+                build_requirement,
+                "抽取实体和关系时优先保留与该需求相关、可服务后续 Agent 推理和数据分析的内容；与需求无关的背景信息降低优先级。",
+            ])
         triplets = getattr(schema, "allowed_relation_triplets", []) or []
-        if not triplets:
-            return ""
-        lines = ["允许的三元组方向只能使用以下组合："]
-        lines.extend(f"- {source} --{relation}--> {target}" for source, relation, target in triplets)
+        if triplets:
+            lines.append("允许的三元组方向只能使用以下组合：")
+            lines.extend(f"- {source} --{relation}--> {target}" for source, relation, target in triplets)
         return "\n".join(lines)
 
     def _normalize_structured_payload(self, payload: dict[str, Any]) -> dict[str, Any]:

@@ -16,7 +16,9 @@ from app.agent.cognition.models import (
     CandidateEntity,
     CandidateRelation,
     CognitiveMapQuery,
+    CognitiveMapView,
     CognitiveSchema,
+    Evidence,
     ExtractionDiagnostic,
     ExtractionResult,
     ReviewStatus,
@@ -42,7 +44,8 @@ class CognitiveMapBuildRequest(BaseModel):
     parser_provider: str = "auto"
     extractor_provider: str = "local"
     llm_provider: str | None = None
-    timeout_seconds: float = 300.0
+    timeout_seconds: float = 900.0
+    build_requirement: str = ""
 
 
 class CognitiveMapBindingUpdateRequest(BaseModel):
@@ -61,6 +64,19 @@ class CognitiveMapQueryRequest(BaseModel):
     max_entities: int = 20
     max_relations: int = 20
     max_evidence: int = 10
+
+
+class CognitiveMapGraphQueryRequest(BaseModel):
+    task: str
+    agent_mode: str
+    agent_role: str | None = None
+    entity_hints: list[str] = Field(default_factory=list)
+    depth: int = 2
+    limit: int = 30
+    max_entities: int = 20
+    max_relations: int = 20
+    max_evidence: int = 10
+    allowed_review_statuses: list[ReviewStatus] = Field(default_factory=lambda: ["confirmed", "published", "merged"])
 
 
 class CognitiveMapEntityCreateRequest(BaseModel):
@@ -126,6 +142,10 @@ def _files_path(map_id: str) -> Path:
     return _map_dir(map_id) / "files.json"
 
 
+def _schema_path(map_id: str) -> Path:
+    return _map_dir(map_id) / "schema.json"
+
+
 def _extraction_path(map_id: str) -> Path:
     return _map_dir(map_id) / "extraction.json"
 
@@ -136,6 +156,10 @@ def _runs_path(map_id: str) -> Path:
 
 def _evaluation_path(map_id: str) -> Path:
     return _map_dir(map_id) / "evaluation.json"
+
+
+def _property_graph_store_path(map_id: str) -> Path:
+    return _map_dir(map_id) / "property_graph_store.json"
 
 
 def _bindings_path() -> Path:
@@ -172,6 +196,17 @@ def _require_map(map_id: str) -> dict[str, Any]:
 
 def _load_files(map_id: str) -> list[dict[str, Any]]:
     return _load_json(_files_path(map_id), [])
+
+
+def _load_schema(map_id: str) -> CognitiveSchema:
+    raw = _load_json(_schema_path(map_id), None)
+    if raw is None:
+        return CognitiveSchema.default_air_quality_schema()
+    return CognitiveSchema.model_validate(raw)
+
+
+def _write_schema(map_id: str, schema: CognitiveSchema) -> None:
+    _write_json(_schema_path(map_id), schema.model_dump(mode="json"))
 
 
 def _load_extraction(map_id: str) -> ExtractionResult | None:
@@ -280,12 +315,59 @@ def _mark_stale_build_failed(meta: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
-def _generate_evaluation(extraction: ExtractionResult) -> dict[str, Any]:
+def _generate_evaluation(
+    extraction: ExtractionResult,
+    property_graph_persisted: bool = False,
+) -> dict[str, Any]:
     entity_count = len(extraction.candidate_entities)
     relation_count = len(extraction.candidate_relations)
     evidence_count = len(extraction.evidence)
+    evidence_by_id = {item.evidence_id: item for item in extraction.evidence}
     entities_with_evidence = sum(1 for entity in extraction.candidate_entities if entity.source_evidence_ids)
     relations_with_evidence = sum(1 for relation in extraction.candidate_relations if relation.source_evidence_ids)
+    relation_evidence_ids = {
+        evidence_id
+        for relation in extraction.candidate_relations
+        for evidence_id in relation.source_evidence_ids
+    }
+    relation_evidence = [
+        evidence_by_id[evidence_id]
+        for evidence_id in relation_evidence_ids
+        if evidence_id in evidence_by_id
+    ]
+    fallback_evidence_count = sum(
+        1
+        for evidence in relation_evidence
+        if evidence.support_type == "fallback"
+        or evidence.evidence_quality == "missing_relation_evidence"
+    )
+    relation_evidence_quote_count = sum(1 for evidence in relation_evidence if evidence.quote)
+    relation_evidence_summary_count = sum(
+        1
+        for evidence in relation_evidence
+        if evidence.evidence_quality == "llm_relation_evidence" and evidence.normalized_summary
+    )
+    candidate_entity_count = sum(1 for entity in extraction.candidate_entities if entity.review_status == "candidate")
+    candidate_relation_count = sum(1 for relation in extraction.candidate_relations if relation.review_status == "candidate")
+    confirmed_entity_count = sum(
+        1 for entity in extraction.candidate_entities
+        if entity.review_status in {"confirmed", "published", "merged"}
+    )
+    confirmed_relation_count = sum(
+        1 for relation in extraction.candidate_relations
+        if relation.review_status in {"confirmed", "published", "merged"}
+    )
+    connected_entity_ids = {
+        relation.source_entity_id
+        for relation in extraction.candidate_relations
+    } | {
+        relation.target_entity_id
+        for relation in extraction.candidate_relations
+    }
+    isolated_entity_count = sum(
+        1 for entity in extraction.candidate_entities
+        if entity.entity_id not in connected_entity_ids
+    )
     entity_types: dict[str, int] = {}
     relation_types: dict[str, int] = {}
     for entity in extraction.candidate_entities:
@@ -301,6 +383,30 @@ def _generate_evaluation(extraction: ExtractionResult) -> dict[str, Any]:
         "relations_with_evidence": relations_with_evidence,
         "entity_evidence_ratio": round(entities_with_evidence / entity_count, 4) if entity_count else 0,
         "relation_evidence_ratio": round(relations_with_evidence / relation_count, 4) if relation_count else 0,
+        "fallback_evidence_count": fallback_evidence_count,
+        "relation_evidence_quote_ratio": (
+            round(relation_evidence_quote_count / len(relation_evidence), 4)
+            if relation_evidence
+            else 0
+        ),
+        "relation_evidence_summary_ratio": (
+            round(relation_evidence_summary_count / len(relation_evidence), 4)
+            if relation_evidence
+            else 0
+        ),
+        "candidate_entity_count": candidate_entity_count,
+        "candidate_relation_count": candidate_relation_count,
+        "confirmed_entity_count": confirmed_entity_count,
+        "confirmed_relation_count": confirmed_relation_count,
+        "isolated_entity_count": isolated_entity_count,
+        "property_graph_persisted": property_graph_persisted,
+        "usable_for_agent": bool(
+            property_graph_persisted
+            and confirmed_entity_count > 0
+            and confirmed_relation_count > 0
+            and candidate_relation_count == 0
+            and fallback_evidence_count == 0
+        ),
         "entity_types": entity_types,
         "relation_types": relation_types,
         "generated_at": datetime.utcnow().isoformat(),
@@ -308,12 +414,58 @@ def _generate_evaluation(extraction: ExtractionResult) -> dict[str, Any]:
     }
 
 
+def _count_agent_available_items(extraction: ExtractionResult) -> tuple[int, int]:
+    available_statuses = {"confirmed", "published", "merged"}
+    available_entity_ids = {
+        entity.entity_id
+        for entity in extraction.candidate_entities
+        if entity.review_status in available_statuses
+    }
+    available_relation_count = sum(
+        1
+        for relation in extraction.candidate_relations
+        if relation.review_status in available_statuses
+        and relation.source_entity_id in available_entity_ids
+        and relation.target_entity_id in available_entity_ids
+    )
+    return len(available_entity_ids), available_relation_count
+
+
+def _clean_extraction_graph(extraction: ExtractionResult) -> ExtractionResult:
+    entity_ids = {entity.entity_id for entity in extraction.candidate_entities}
+    seen_relation_keys: set[tuple[str, str, str]] = set()
+    cleaned_relations: list[CandidateRelation] = []
+    for relation in extraction.candidate_relations:
+        if relation.source_entity_id not in entity_ids or relation.target_entity_id not in entity_ids:
+            continue
+        if relation.source_entity_id == relation.target_entity_id:
+            continue
+        key = (
+            relation.source_entity_id,
+            relation.relation_type,
+            relation.target_entity_id,
+        )
+        if key in seen_relation_keys:
+            continue
+        seen_relation_keys.add(key)
+        cleaned_relations.append(relation)
+    extraction.candidate_relations = cleaned_relations
+    return extraction
+
+
 def _save_extraction(map_id: str, extraction: ExtractionResult) -> None:
+    extraction = _clean_extraction_graph(extraction)
     _extraction_path(map_id).write_text(
         extraction.model_dump_json(indent=2),
         encoding="utf-8",
     )
-    _write_json(_evaluation_path(map_id), _generate_evaluation(extraction))
+    _write_json(
+        _evaluation_path(map_id),
+        _generate_evaluation(
+            extraction,
+            property_graph_persisted=_property_graph_store_path(map_id).exists(),
+        ),
+    )
 
     meta = _require_map(map_id)
     meta["updated_at"] = datetime.utcnow().isoformat()
@@ -333,8 +485,11 @@ def _enrich_map(meta: dict[str, Any]) -> dict[str, Any]:
         "extractor_provider": meta.get("extractor_provider"),
         "llm_provider": meta.get("llm_provider"),
         "build_error": meta.get("build_error"),
+        "build_requirement": meta.get("build_requirement", ""),
         "latest_run": _latest_run(meta["id"]),
         "evaluation": _load_evaluation(meta["id"]),
+        "has_property_graph_store": _property_graph_store_path(meta["id"]).exists(),
+        "schema": _load_schema(meta["id"]).model_dump(mode="json"),
         "agent_bindings": _bindings_for_map(meta["id"]),
     }
 
@@ -348,6 +503,24 @@ def _relation_to_response(relation: CandidateRelation, entity_names: dict[str, s
     item["source_name"] = entity_names.get(relation.source_entity_id, relation.source_entity_id)
     item["target_name"] = entity_names.get(relation.target_entity_id, relation.target_entity_id)
     return item
+
+
+def _evidence_to_summary_response(evidence: Evidence) -> dict[str, Any]:
+    return {
+        "evidence_id": evidence.evidence_id,
+        "map_id": evidence.map_id,
+        "source_file_id": evidence.source_file_id,
+        "chunk_id": evidence.chunk_id,
+        "location": evidence.location,
+        "summary": evidence.normalized_summary,
+        "normalized_summary": evidence.normalized_summary,
+        "quote": evidence.quote or "",
+        "support_type": evidence.support_type,
+        "evidence_quality": evidence.evidence_quality,
+        "supported_entity_ids": evidence.supported_entity_ids,
+        "supported_relation_ids": evidence.supported_relation_ids,
+        "confidence": evidence.confidence,
+    }
 
 
 def build_cognitive_map_prompt_context(
@@ -375,7 +548,22 @@ def build_cognitive_map_prompt_context(
         extraction = _load_extraction(map_id)
         if extraction is None:
             continue
-        view = builder.build_from_extraction(query, extraction)
+        if _property_graph_store_path(map_id).exists():
+            graph_payload = CognitiveMapGraphQueryRequest(
+                task=task,
+                agent_mode=agent_mode,
+                agent_role=agent_role,
+                entity_hints=entity_hints or [],
+                depth=2,
+                limit=30,
+            )
+            view, _source = _build_graph_query_view(map_id, graph_payload)
+        else:
+            view = builder.build_from_extraction(
+                query,
+                extraction,
+                allowed_review_statuses={"confirmed", "published", "merged"},
+            )
         meta = _load_json(_meta_path(map_id), {})
         title = meta.get("name") or map_id
         summaries.append(f"### {title}\n{view.prompt_summary}")
@@ -440,7 +628,150 @@ def _parser_provider_for_source(source_file: SourceFile, requested_provider: str
     suffix = Path(source_file.filename).suffix.lower()
     if suffix == ".docx":
         return "docx"
+    if suffix == ".pdf":
+        return "pdf"
     return "text"
+
+
+def _persist_property_graph_store_if_available(map_id: str, extractor: Any) -> bool:
+    graph_store = getattr(extractor, "last_property_graph_store", None)
+    if graph_store is None or not hasattr(graph_store, "persist"):
+        return False
+    graph_store.persist(str(_property_graph_store_path(map_id)))
+    return True
+
+
+def _load_property_graph_store(map_id: str):
+    path = _property_graph_store_path(map_id)
+    if not path.exists():
+        return None
+    from llama_index.core.graph_stores.simple_labelled import SimplePropertyGraphStore
+
+    return SimplePropertyGraphStore.from_persist_path(str(path))
+
+
+def _project_relation_label(label: str) -> str:
+    return str(label or "").strip().lower()
+
+
+def _build_graph_query_view(
+    map_id: str,
+    payload: CognitiveMapGraphQueryRequest,
+) -> tuple[CognitiveMapView, str]:
+    extraction = _require_extraction(map_id)
+    store = _load_property_graph_store(map_id)
+    allowed_statuses = set(payload.allowed_review_statuses)
+    entity_by_name = {entity.name: entity for entity in extraction.candidate_entities}
+    entity_names = _entity_names(extraction)
+    relation_by_key = {
+        (
+            entity_names.get(relation.source_entity_id, relation.source_entity_id),
+            relation.relation_type,
+            entity_names.get(relation.target_entity_id, relation.target_entity_id),
+        ): relation
+        for relation in extraction.candidate_relations
+    }
+
+    entities: list[CandidateEntity] = []
+    relations: list[CandidateRelation] = []
+    source = "extraction"
+
+    def add_entity_by_name(name: str) -> CandidateEntity | None:
+        entity = entity_by_name.get(name)
+        if entity is None or entity.review_status not in allowed_statuses:
+            return None
+        if all(existing.entity_id != entity.entity_id for existing in entities):
+            entities.append(entity)
+        return entity
+
+    if store is not None:
+        source = "property_graph_store"
+        start_nodes = []
+        for hint in payload.entity_hints:
+            start_nodes.extend(store.get(ids=[hint]))
+        if not start_nodes and payload.entity_hints:
+            for hint in payload.entity_hints:
+                start_nodes.extend([
+                    node for node in store.get() if hint in getattr(node, "id", "")
+                ])
+        if not start_nodes:
+            start_nodes = store.get()[: payload.limit]
+
+        triplets = store.get_rel_map(
+            start_nodes,
+            depth=max(1, payload.depth),
+            limit=payload.limit,
+        )
+        for source_node, graph_relation, target_node in triplets:
+            source_entity = add_entity_by_name(str(source_node.id))
+            target_entity = add_entity_by_name(str(target_node.id))
+            if source_entity is None or target_entity is None:
+                continue
+            relation = relation_by_key.get((
+                str(source_node.id),
+                _project_relation_label(graph_relation.label),
+                str(target_node.id),
+            ))
+            if relation is None or relation.review_status not in allowed_statuses:
+                continue
+            if all(existing.relation_id != relation.relation_id for existing in relations):
+                relations.append(relation)
+
+    if store is None or (not entities and not relations):
+        query = CognitiveMapQuery(
+            task=payload.task,
+            agent_mode=payload.agent_mode,
+            agent_role=payload.agent_role,
+            map_ids=[map_id],
+            entity_hints=payload.entity_hints,
+        )
+        view = CognitiveMapViewBuilder().build_from_extraction(
+            query,
+            extraction,
+            max_entities=payload.max_entities,
+            max_relations=payload.max_relations,
+            max_evidence=payload.max_evidence,
+            allowed_review_statuses=allowed_statuses,
+        )
+        return view, "extraction"
+
+    entity_evidence_ids = {
+        evidence_id
+        for entity in entities
+        for evidence_id in entity.source_evidence_ids
+    }
+    relation_evidence_ids = set()
+    for relation in relations:
+        relation_evidence_ids.update(relation.source_evidence_ids)
+    evidence_ids = relation_evidence_ids or entity_evidence_ids
+    evidence = [
+        item for item in extraction.evidence if item.evidence_id in evidence_ids
+    ][: payload.max_evidence]
+    entities = entities[: payload.max_entities]
+    relations = relations[: payload.max_relations]
+    query = CognitiveMapQuery(
+        task=payload.task,
+        agent_mode=payload.agent_mode,
+        agent_role=payload.agent_role,
+        map_ids=[map_id],
+        entity_hints=payload.entity_hints,
+    )
+    prompt_summary = CognitiveMapViewBuilder()._render_prompt_summary(query, entities, relations, evidence)
+    return (
+        CognitiveMapView(
+            view_id=f"graph_view_{map_id}",
+            map_id=map_id,
+            task=payload.task,
+            agent_mode=payload.agent_mode,
+            agent_role=payload.agent_role,
+            entities=entities,
+            relations=relations,
+            evidence_summaries=evidence,
+            limitations=[],
+            prompt_summary=prompt_summary,
+        ),
+        source,
+    )
 
 
 @router.get("")
@@ -477,6 +808,7 @@ async def create_cognitive_map(payload: CognitiveMapCreateRequest) -> dict[str, 
     _map_dir(map_id).mkdir(parents=True, exist_ok=True)
     _write_json(_meta_path(map_id), meta)
     _write_json(_files_path(map_id), [])
+    _write_schema(map_id, CognitiveSchema.default_air_quality_schema())
     return _enrich_map(meta)
 
 
@@ -517,6 +849,38 @@ async def delete_cognitive_map(map_id: str) -> dict[str, Any]:
     _delete_map_directory(map_id)
     _write_bindings([binding for binding in _load_bindings() if binding.get("map_id") != map_id])
     return {"deleted": True, "map_id": map_id}
+
+
+@router.get("/{map_id}/schema")
+async def get_cognitive_map_schema(map_id: str) -> dict[str, Any]:
+    _require_map(map_id)
+    return {"schema": _load_schema(map_id).model_dump(mode="json")}
+
+
+@router.put("/{map_id}/schema")
+async def update_cognitive_map_schema(
+    map_id: str,
+    payload: CognitiveSchema,
+) -> dict[str, Any]:
+    meta = _require_map(map_id)
+    _write_schema(map_id, payload)
+    meta["updated_at"] = datetime.utcnow().isoformat()
+    _write_json(_meta_path(map_id), meta)
+    return {"schema": payload.model_dump(mode="json")}
+
+
+@router.post("/{map_id}/query-graph")
+async def query_cognitive_map_graph(
+    map_id: str,
+    payload: CognitiveMapGraphQueryRequest,
+) -> dict[str, Any]:
+    _require_map(map_id)
+    view, source = _build_graph_query_view(map_id, payload)
+    return {
+        "source": source,
+        "view": view.model_dump(mode="json"),
+        "prompt_context": view.prompt_summary,
+    }
 
 
 @router.get("/{map_id}/bindings")
@@ -610,7 +974,9 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
     chunks = []
 
     try:
-        schema = CognitiveSchema.default_air_quality_schema()
+        schema = _load_schema(map_id)
+        build_requirement = str(payload.build_requirement or "").strip()
+        schema.build_requirement = build_requirement
         parser_providers_used = set()
         for source_file in source_files:
             parser_provider = _parser_provider_for_source(source_file, payload.parser_provider)
@@ -635,11 +1001,16 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
         if extraction is None:
             raise RuntimeError("Cognitive map extractor returned no extraction result")
 
+        extraction = _clean_extraction_graph(extraction)
         _extraction_path(map_id).write_text(
             extraction.model_dump_json(indent=2),
             encoding="utf-8",
         )
-        evaluation = _generate_evaluation(extraction)
+        property_graph_persisted = _persist_property_graph_store_if_available(map_id, extractor)
+        evaluation = _generate_evaluation(
+            extraction,
+            property_graph_persisted=property_graph_persisted,
+        )
         _write_json(_evaluation_path(map_id), evaluation)
 
         meta["status"] = "completed"
@@ -647,6 +1018,7 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
         meta["requested_extractor_provider"] = requested_extractor
         meta["extractor_provider"] = requested_extractor
         meta["llm_provider"] = payload.llm_provider
+        meta["build_requirement"] = build_requirement
         meta["build_error"] = None
         meta["updated_at"] = datetime.utcnow().isoformat()
         _write_json(_meta_path(map_id), meta)
@@ -659,12 +1031,14 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
                 "requested_extractor_provider": requested_extractor,
                 "extractor_provider": requested_extractor,
                 "llm_provider": payload.llm_provider,
+                "build_requirement": build_requirement,
                 "file_count": len(source_files),
                 "chunk_count": len(chunks),
                 "timeout_seconds": payload.timeout_seconds,
                 "entity_count": evaluation["entity_count"],
                 "relation_count": evaluation["relation_count"],
                 "evidence_count": evaluation["evidence_count"],
+                "property_graph_persisted": property_graph_persisted,
                 "started_at": started_at,
                 "finished_at": meta["updated_at"],
                 "duration_ms": int((time.perf_counter() - start_time) * 1000),
@@ -679,6 +1053,7 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
         meta["requested_extractor_provider"] = requested_extractor
         meta["extractor_provider"] = requested_extractor
         meta["llm_provider"] = payload.llm_provider
+        meta["build_requirement"] = str(payload.build_requirement or "").strip()
         meta["build_error"] = str(exc)
         meta["updated_at"] = finished_at
         _write_json(_meta_path(map_id), meta)
@@ -691,6 +1066,7 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
                 "requested_extractor_provider": requested_extractor,
                 "extractor_provider": requested_extractor,
                 "llm_provider": payload.llm_provider,
+                "build_requirement": str(payload.build_requirement or "").strip(),
                 "file_count": len(source_files),
                 "chunk_count": len(chunks),
                 "timeout_seconds": payload.timeout_seconds,
@@ -723,6 +1099,64 @@ async def get_cognitive_map_evaluation(map_id: str) -> dict[str, Any]:
         evaluation = _generate_evaluation(extraction)
         _write_json(_evaluation_path(map_id), evaluation)
     return {"evaluation": evaluation}
+
+
+@router.post("/{map_id}/publish")
+async def publish_cognitive_map(map_id: str) -> dict[str, Any]:
+    meta = _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    publishable_statuses = {"candidate", "confirmed", "needs_review"}
+    published_entity_count = 0
+    published_relation_count = 0
+
+    for entity in extraction.candidate_entities:
+        if entity.review_status in publishable_statuses:
+            entity.review_status = "published"
+            published_entity_count += 1
+
+    published_entity_ids = {
+        entity.entity_id
+        for entity in extraction.candidate_entities
+        if entity.review_status in {"published", "confirmed", "merged"}
+    }
+    for relation in extraction.candidate_relations:
+        if relation.review_status not in publishable_statuses:
+            continue
+        if (
+            relation.source_entity_id not in published_entity_ids
+            or relation.target_entity_id not in published_entity_ids
+        ):
+            continue
+        relation.review_status = "published"
+        published_relation_count += 1
+
+    _save_extraction(map_id, extraction)
+    evaluation = _generate_evaluation(
+        extraction,
+        property_graph_persisted=_property_graph_store_path(map_id).exists(),
+    )
+    _write_json(_evaluation_path(map_id), evaluation)
+    available_entity_count, available_relation_count = _count_agent_available_items(extraction)
+
+    meta["status"] = "published"
+    meta["updated_at"] = datetime.utcnow().isoformat()
+    _write_json(_meta_path(map_id), meta)
+
+    return {
+        "published": True,
+        "map_id": map_id,
+        "published_entity_count": published_entity_count,
+        "published_relation_count": published_relation_count,
+        "available_entity_count": available_entity_count,
+        "available_relation_count": available_relation_count,
+        "already_published": bool(
+            published_entity_count == 0
+            and published_relation_count == 0
+            and available_entity_count > 0
+        ),
+        "evaluation": evaluation,
+        "map": _enrich_map(meta),
+    }
 
 
 @router.get("/{map_id}/entities")
@@ -948,4 +1382,14 @@ async def list_cognitive_map_evidence(map_id: str) -> dict[str, Any]:
     _require_map(map_id)
     extraction = _load_extraction(map_id)
     evidence = extraction.evidence if extraction else []
-    return {"evidence": [item.model_dump(mode="json") for item in evidence]}
+    return {"evidence": [_evidence_to_summary_response(item) for item in evidence]}
+
+
+@router.get("/{map_id}/evidence/{evidence_id}")
+async def get_cognitive_map_evidence_detail(map_id: str, evidence_id: str) -> dict[str, Any]:
+    _require_map(map_id)
+    extraction = _require_extraction(map_id)
+    for item in extraction.evidence:
+        if item.evidence_id == evidence_id:
+            return {"evidence": item.model_dump(mode="json")}
+    raise HTTPException(status_code=404, detail="Evidence not found")

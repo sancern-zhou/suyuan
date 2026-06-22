@@ -7,7 +7,6 @@
         </span>
       </div>
       <div class="header-actions">
-        <button class="btn-secondary" @click="refreshList">刷新</button>
         <div class="search-box">
           <input
             v-model="searchQuery"
@@ -314,10 +313,6 @@ const fetchTools = async () => {
   } finally {
     loading.value = false
   }
-}
-
-const refreshList = async () => {
-  await fetchTools()
 }
 
 const selectCategory = (categoryId) => {

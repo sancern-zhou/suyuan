@@ -173,6 +173,7 @@ OPS_TOOL_NAMES = {
     "ops_audit_fetch_dataset",
     "ops_audit_run_rules",
     "ops_audit_inspect",
+    "cognitive_map_guidance",
 
     # 展示型流程图
     "create_diagram_artifact",
@@ -404,6 +405,7 @@ OPS_TOOL_ORDER = [
     "ops_audit_fetch_dataset",
     "ops_audit_run_rules",
     "ops_audit_inspect",
+    "cognitive_map_guidance",
     "execute_ops_sql_query",
 
     # 展示型流程图

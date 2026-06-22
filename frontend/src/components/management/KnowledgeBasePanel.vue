@@ -4,7 +4,6 @@
       <h3>知识库管理</h3>
       <div class="panel-actions">
         <button class="panel-btn" @click="$emit('show-create-dialog')">+ 新建知识库</button>
-        <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
       </div>
     </div>
 

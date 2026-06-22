@@ -273,79 +273,15 @@
                       <div class="selection-title">{{ selectedGraphTitle }}</div>
                       <div class="selection-meta">{{ selectedGraphMeta }}</div>
 
-                      <form v-if="selectedGraphItem.kind === 'entity'" class="edit-form" @submit.prevent="saveSelectedGraphItem">
-                        <label>
-                          <span>实体名称</span>
-                          <input v-model="entityEditForm.name" type="text" />
-                        </label>
-                        <label>
-                          <span>实体类型</span>
-                          <select v-model="entityEditForm.entityType">
-                            <option
-                              v-for="type in entityTypeOptions"
-                              :key="type"
-                              :value="type"
-                            >
-                              {{ formatEntityType(type) }}
-                            </option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>描述</span>
-                          <textarea v-model="entityEditForm.description" rows="4"></textarea>
-                        </label>
-                        <button class="primary-btn" type="submit" :disabled="managing">
-                          {{ managing ? '保存中' : '保存实体' }}
-                        </button>
-                      </form>
-
-                      <form v-else class="edit-form" @submit.prevent="saveSelectedGraphItem">
-                        <label>
-                          <span>起点实体</span>
-                          <select v-model="relationEditForm.sourceEntityId">
-                            <option
-                              v-for="entity in entities"
-                              :key="entity.entity_id || entity.id || entity.name"
-                              :value="entity.entity_id || entity.id"
-                            >
-                              {{ entity.name }}
-                            </option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>终点实体</span>
-                          <select v-model="relationEditForm.targetEntityId">
-                            <option
-                              v-for="entity in entities"
-                              :key="entity.entity_id || entity.id || entity.name"
-                              :value="entity.entity_id || entity.id"
-                            >
-                              {{ entity.name }}
-                            </option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>关系类型</span>
-                          <select v-model="relationEditForm.relationType">
-                            <option
-                              v-for="type in relationTypeOptions"
-                              :key="type"
-                              :value="type"
-                            >
-                              {{ formatRelationType(type) }}
-                            </option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>描述</span>
-                          <textarea v-model="relationEditForm.description" rows="4"></textarea>
-                        </label>
-                        <button class="primary-btn" type="submit" :disabled="managing">
-                          {{ managing ? '保存中' : '保存关系' }}
-                        </button>
-                      </form>
-
                       <div class="detail-grid">
+                        <div class="detail-field">
+                          <span>{{ selectedGraphItem.kind === 'relation' ? '图关系' : '图节点' }}</span>
+                          <strong>
+                            {{ selectedGraphItem.kind === 'relation'
+                              ? formatRelationType(selectedGraphItem.raw?.relation_type || selectedGraphItem.raw?.type)
+                              : formatEntityType(selectedGraphItem.raw?.entity_type || selectedGraphItem.raw?.type) }}
+                          </strong>
+                        </div>
                         <div class="detail-field">
                           <span>证据数</span>
                           <strong>{{ selectedGraphEvidence.length }}</strong>
@@ -356,18 +292,7 @@
                         </div>
                       </div>
                       <div class="review-actions">
-                        <button class="panel-btn" type="button" :disabled="managing" @click="updateSelectedReviewStatus('confirmed')">
-                          确认
-                        </button>
-                        <button class="panel-btn" type="button" :disabled="managing" @click="updateSelectedReviewStatus('needs_review')">
-                          需复核
-                        </button>
-                        <button class="panel-btn" type="button" :disabled="managing" @click="updateSelectedReviewStatus('rejected')">
-                          驳回
-                        </button>
-                        <button class="panel-btn danger-action" type="button" :disabled="managing" @click="deleteSelectedGraphItem">
-                          删除
-                        </button>
+                        <span class="state-text">当前详情来自 Property Graph，节点与关系保持只读。</span>
                       </div>
                       <div class="inspector-subtitle">关联证据</div>
                       <div v-if="selectedGraphEvidence.length" class="compact-list">
@@ -375,8 +300,12 @@
                           v-for="item in selectedGraphEvidence"
                           :key="item.evidence_id || item.id || item.chunk_id"
                           class="compact-row evidence-compact-row"
+                          role="button"
+                          tabindex="0"
+                          @click="loadEvidenceDetail(item)"
+                          @keydown.enter.prevent="loadEvidenceDetail(item)"
                         >
-                          {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                          {{ item.summary || item.normalized_summary || item.quote || item.text || item.content || item.text_span }}
                         </div>
                       </div>
                       <div v-else class="state-text">暂无关联证据</div>
@@ -400,6 +329,14 @@
                           <span>超时</span>
                           <strong>{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</strong>
                         </div>
+                        <div class="detail-field">
+                          <span>图结构</span>
+                          <strong>{{ graphSourceText }}</strong>
+                        </div>
+                        <div v-if="latestRun?.build_requirement || currentMap.build_requirement" class="detail-field build-requirement-field">
+                          <span>构建需求</span>
+                          <strong>{{ latestRun?.build_requirement || currentMap.build_requirement }}</strong>
+                        </div>
                       </div>
                     </template>
                     <div v-if="managementError" class="form-error">{{ managementError }}</div>
@@ -412,7 +349,6 @@
                       <label class="engine-select">
                         <span>抽取引擎</span>
                         <select v-model="buildOptions.extractorProvider" :disabled="building">
-                          <option value="local">本地规则</option>
                           <option value="llamaindex">开源图谱引擎</option>
                         </select>
                       </label>
@@ -427,11 +363,28 @@
                           :disabled="building"
                         />
                       </label>
+                      <label class="build-requirement-input">
+                        <span>构建需求</span>
+                        <textarea
+                          v-model="buildOptions.buildRequirement"
+                          :disabled="building"
+                          rows="3"
+                          placeholder="例如：用于运维模式，根据站点故障工单、告警和监测数据关系，辅助分析故障原因。"
+                        ></textarea>
+                      </label>
                       <button class="primary-btn" type="button" @click="handleBuild" :disabled="building">
                         {{ building ? '构建中...' : '构建地图' }}
                       </button>
                       <button v-if="canRetryBuild" class="panel-btn" type="button" @click="handleBuild" :disabled="building">
                         重试
+                      </button>
+                      <button
+                        class="panel-btn"
+                        type="button"
+                        :disabled="publishingMap || building || (entities.length === 0 && relations.length === 0)"
+                        @click="handlePublishMap"
+                      >
+                        {{ publishingMap ? '发布中' : '确认并发布' }}
                       </button>
                     </div>
                     <div class="review-actions">
@@ -445,6 +398,8 @@
                         {{ deletingMap ? '删除中' : '删除地图' }}
                       </button>
                     </div>
+                    <div v-if="managementError" class="form-error">{{ managementError }}</div>
+                    <div v-else-if="managementMessage" class="form-success">{{ managementMessage }}</div>
                     <div v-if="files.length === 0" class="state-text">暂无文件</div>
                     <div v-else class="compact-list">
                       <div
@@ -526,10 +481,19 @@
                         v-for="item in evidence"
                         :key="item.evidence_id || item.id || item.chunk_id"
                         class="compact-row evidence-compact-row"
+                        role="button"
+                        tabindex="0"
+                        @click="loadEvidenceDetail(item)"
+                        @keydown.enter.prevent="loadEvidenceDetail(item)"
                       >
                         <strong>{{ item.title || item.source || '证据片段' }}</strong>
-                        {{ item.text_span || item.normalized_summary || item.text || item.content || item.quote }}
+                        {{ item.summary || item.normalized_summary || item.quote || item.text || item.content || item.text_span }}
                       </div>
+                    </div>
+                    <div v-if="evidenceDetailError" class="form-error">{{ evidenceDetailError }}</div>
+                    <div v-if="selectedEvidenceDetail" class="evidence-detail">
+                      <strong>{{ selectedEvidenceDetail.location || selectedEvidenceDetail.evidence_id }}</strong>
+                      <p>{{ selectedEvidenceDetail.text_span || selectedEvidenceDetail.normalized_summary }}</p>
                     </div>
                   </section>
 
@@ -560,23 +524,20 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import { collectSettledRefreshPayloads } from '@/utils/cognitiveMapRefresh'
 import {
   buildCognitiveMap,
   createCognitiveMap,
   deleteCognitiveMap,
-  deleteCognitiveMapEntity,
-  deleteCognitiveMapRelation,
   getCognitiveMapEvaluation,
+  getCognitiveMapEvidenceDetail,
   getCognitiveMapBindings,
   listCognitiveMapBuildRuns,
-  listCognitiveMapEntities,
-  listCognitiveMapEvidence,
   listCognitiveMapFiles,
-  listCognitiveMapRelations,
   listCognitiveMaps,
-  updateCognitiveMapEntity,
+  publishCognitiveMap,
+  queryCognitiveMapGraph,
   updateCognitiveMapBindings,
-  updateCognitiveMapRelation,
   uploadCognitiveMapFile
 } from '@/api/cognitiveMap'
 
@@ -586,9 +547,9 @@ const loading = ref(false)
 const creating = ref(false)
 const building = ref(false)
 const uploading = ref(false)
-const managing = ref(false)
 const deletingMap = ref(false)
 const savingBindings = ref(false)
+const publishingMap = ref(false)
 const apiUnavailable = ref(false)
 const isDragging = ref(false)
 const isMapListExpanded = ref(false)
@@ -604,8 +565,11 @@ const files = ref([])
 const entities = ref([])
 const relations = ref([])
 const evidence = ref([])
+const selectedEvidenceDetail = ref(null)
+const evidenceDetailError = ref('')
 const buildRuns = ref([])
 const evaluation = ref(null)
+const graphSource = ref('')
 const graphChart = ref(null)
 const selectedGraphItem = ref(null)
 const hiddenEntityTypes = ref([])
@@ -622,21 +586,13 @@ const mapActionError = ref('')
 const bindingError = ref('')
 const bindingMessage = ref('')
 const bindingForm = ref({ agentModes: [] })
-const entityEditForm = ref({
-  name: '',
-  entityType: 'Entity',
-  description: ''
-})
-const relationEditForm = ref({
-  sourceEntityId: '',
-  targetEntityId: '',
-  relationType: 'related_to',
-  description: ''
-})
 const buildOptions = ref({
-  extractorProvider: 'local',
-  timeoutSeconds: 300
+  extractorProvider: 'llamaindex',
+  timeoutSeconds: 900,
+  buildRequirement: ''
 })
+
+const GRAPH_REVIEW_STATUSES = ['candidate', 'confirmed', 'needs_review', 'merged', 'published', 'rejected']
 
 const agentModeOptions = [
   { id: 'assistant', name: '助手' },
@@ -649,6 +605,11 @@ const agentModeOptions = [
 
 const latestRun = computed(() => buildRuns.value[0] || currentMap.value?.latest_run || null)
 const canRetryBuild = computed(() => currentMap.value?.status === 'failed' || latestRun.value?.status === 'failed')
+const graphSourceText = computed(() => {
+  if (graphSource.value === 'property_graph_store') return 'Property Graph'
+  if (currentMap.value?.has_property_graph_store) return 'Property Graph'
+  return '未生成图结构'
+})
 
 const providerLabels = {
   local: '本地规则',
@@ -749,20 +710,6 @@ const relationTreeGroups = computed(() => {
     items
   }))
 })
-
-const entityTypeOptions = computed(() => (
-  Array.from(new Set([
-    ...Object.keys(entityTypeLabels),
-    ...entities.value.map(entity => entity.entity_type || entity.type).filter(Boolean)
-  ]))
-))
-
-const relationTypeOptions = computed(() => (
-  Array.from(new Set([
-    ...Object.keys(relationTypeLabels),
-    ...relations.value.map(relation => relation.relation_type || relation.type).filter(Boolean)
-  ]))
-))
 
 const evidenceById = computed(() => {
   const index = new Map()
@@ -896,6 +843,19 @@ const selectedGraphEvidence = computed(() => {
   return evidenceIds.map(id => evidenceById.value.get(id)).filter(Boolean)
 })
 
+const loadEvidenceDetail = async (item) => {
+  const evidenceId = item?.evidence_id || item?.id
+  if (!currentMap.value?.id || !evidenceId) return
+  evidenceDetailError.value = ''
+  try {
+    const payload = await getCognitiveMapEvidenceDetail(currentMap.value.id, evidenceId)
+    selectedEvidenceDetail.value = payload?.evidence || null
+  } catch (error) {
+    selectedEvidenceDetail.value = null
+    evidenceDetailError.value = error?.message || '加载证据详情失败'
+  }
+}
+
 const selectedReviewStatus = computed(() => (
   getReviewStatusText(selectedGraphItem.value?.raw?.review_status)
 ))
@@ -906,6 +866,48 @@ const normalizeList = (payload, keys) => {
     if (Array.isArray(payload?.[key])) return payload[key]
   }
   return []
+}
+
+const buildGraphQueryPayload = () => ({
+  task: currentMap.value?.name || '认知地图',
+  agent_mode: 'expert',
+  entity_hints: [],
+  depth: 3,
+  limit: 200,
+  max_entities: 200,
+  max_relations: 200,
+  max_evidence: 200,
+  allowed_review_statuses: GRAPH_REVIEW_STATUSES
+})
+
+const applyGraphPayload = (payload) => {
+  graphSource.value = payload?.source || ''
+  if (payload?.source !== 'property_graph_store') {
+    entities.value = []
+    relations.value = []
+    evidence.value = []
+    return
+  }
+
+  const view = payload?.view || {}
+  const graphEntities = normalizeList(view, ['entities'])
+  const nameById = new Map(
+    graphEntities
+      .map(entity => [entity.entity_id || entity.id, entity.name])
+      .filter(([id]) => id)
+  )
+
+  entities.value = graphEntities
+  relations.value = normalizeList(view, ['relations']).map(relation => {
+    const sourceId = relation.source_entity_id || relation.source || relation.source_id
+    const targetId = relation.target_entity_id || relation.target || relation.target_id
+    return {
+      ...relation,
+      source_name: relation.source_name || nameById.get(sourceId) || sourceId,
+      target_name: relation.target_name || nameById.get(targetId) || targetId
+    }
+  })
+  evidence.value = normalizeList(view, ['evidence_summaries', 'evidence'])
 }
 
 const getStatusText = (status) => {
@@ -967,34 +969,46 @@ const refreshMaps = async () => {
 
 const refreshCurrentMapData = async () => {
   if (!currentMap.value?.id) return
-  try {
-    const [filePayload, entityPayload, relationPayload, evidencePayload, runsPayload, evaluationPayload, bindingPayload] = await Promise.all([
-      listCognitiveMapFiles(currentMap.value.id),
-      listCognitiveMapEntities(currentMap.value.id),
-      listCognitiveMapRelations(currentMap.value.id),
-      listCognitiveMapEvidence(currentMap.value.id),
-      listCognitiveMapBuildRuns(currentMap.value.id),
-      getCognitiveMapEvaluation(currentMap.value.id),
-      getCognitiveMapBindings(currentMap.value.id)
-    ])
-    files.value = normalizeList(filePayload, ['files', 'items', 'data'])
-    entities.value = normalizeList(entityPayload, ['entities', 'items', 'data'])
-    relations.value = normalizeList(relationPayload, ['relations', 'items', 'data'])
-    evidence.value = normalizeList(evidencePayload, ['evidence', 'items', 'data'])
-    buildRuns.value = normalizeList(runsPayload, ['runs', 'items', 'data'])
-    evaluation.value = evaluationPayload?.evaluation || null
-    bindingForm.value.agentModes = normalizeList(bindingPayload, ['bindings', 'items', 'data'])
-      .filter(item => item.enabled !== false)
-      .map(item => item.agent_mode)
-      .filter(Boolean)
-  } catch (error) {
+  const {
+    filePayload,
+    graphPayload,
+    runsPayload,
+    evaluationPayload,
+    bindingPayload,
+    hasBlockingError
+  } = collectSettledRefreshPayloads(await Promise.allSettled([
+    listCognitiveMapFiles(currentMap.value.id),
+    queryCognitiveMapGraph(currentMap.value.id, buildGraphQueryPayload()),
+    listCognitiveMapBuildRuns(currentMap.value.id),
+    getCognitiveMapEvaluation(currentMap.value.id),
+    getCognitiveMapBindings(currentMap.value.id)
+  ]))
+
+  if (hasBlockingError) {
     files.value = []
     entities.value = []
     relations.value = []
     evidence.value = []
     buildRuns.value = []
     evaluation.value = null
+    graphSource.value = ''
     bindingForm.value.agentModes = []
+  } else {
+    files.value = normalizeList(filePayload, ['files', 'items', 'data'])
+    if (graphPayload) {
+      applyGraphPayload(graphPayload)
+    } else {
+      graphSource.value = ''
+      entities.value = []
+      relations.value = []
+      evidence.value = []
+    }
+    buildRuns.value = normalizeList(runsPayload, ['runs', 'items', 'data'])
+    evaluation.value = evaluationPayload?.evaluation || null
+    bindingForm.value.agentModes = normalizeList(bindingPayload, ['bindings', 'items', 'data'])
+      .filter(item => item.enabled !== false)
+      .map(item => item.agent_mode)
+      .filter(Boolean)
   }
   await renderGraph()
 }
@@ -1007,6 +1021,9 @@ const clearCurrentMapData = () => {
   evidence.value = []
   buildRuns.value = []
   evaluation.value = null
+  graphSource.value = ''
+  selectedEvidenceDetail.value = null
+  evidenceDetailError.value = ''
   selectedGraphItem.value = null
   bindingForm.value.agentModes = []
   bindingError.value = ''
@@ -1022,8 +1039,9 @@ const selectMap = async (map) => {
   currentMap.value = map
   evaluation.value = map.evaluation || null
   buildRuns.value = map.latest_run ? [map.latest_run] : []
-  buildOptions.value.extractorProvider = map.requested_extractor_provider || map.extractor_provider || buildOptions.value.extractorProvider
-  buildOptions.value.timeoutSeconds = map.latest_run?.timeout_seconds || buildOptions.value.timeoutSeconds
+  buildOptions.value.extractorProvider = 'llamaindex'
+  buildOptions.value.timeoutSeconds = Math.max(Number(map.latest_run?.timeout_seconds || 0), 900)
+  buildOptions.value.buildRequirement = map.latest_run?.build_requirement || map.build_requirement || ''
   buildError.value = ''
   buildMessage.value = ''
   uploadError.value = ''
@@ -1115,6 +1133,34 @@ const saveModeBindings = async () => {
   }
 }
 
+const handlePublishMap = async () => {
+  if (!currentMap.value?.id) return
+  publishingMap.value = true
+  managementError.value = ''
+  managementMessage.value = ''
+  try {
+    const result = await publishCognitiveMap(currentMap.value.id)
+    await refreshCurrentMapData()
+    await refreshMaps()
+    updateCurrentMapFromList()
+    const publishedEntityCount = result.published_entity_count || 0
+    const publishedRelationCount = result.published_relation_count || 0
+    const availableEntityCount = result.available_entity_count || 0
+    const availableRelationCount = result.available_relation_count || 0
+    if (publishedEntityCount > 0 || publishedRelationCount > 0) {
+      managementMessage.value = `已发布 ${publishedEntityCount} 个实体、${publishedRelationCount} 条关系，Agent 可默认使用。`
+    } else if (availableEntityCount > 0 || availableRelationCount > 0) {
+      managementMessage.value = `当前认知地图已发布，Agent 可默认使用 ${availableEntityCount} 个实体、${availableRelationCount} 条关系。`
+    } else {
+      managementMessage.value = '没有可发布的实体或关系，请先构建认知地图。'
+    }
+  } catch (error) {
+    managementError.value = error?.message || '发布认知地图失败'
+  } finally {
+    publishingMap.value = false
+  }
+}
+
 const triggerFileInput = () => {
   fileInput.value?.click()
 }
@@ -1165,12 +1211,13 @@ const handleBuild = async () => {
       parser_provider: 'auto',
       extractor_provider: buildOptions.value.extractorProvider,
       llm_provider: buildOptions.value.extractorProvider === 'llamaindex' ? 'project' : null,
-      timeout_seconds: normalizeTimeoutSeconds(buildOptions.value.timeoutSeconds)
+      timeout_seconds: normalizeTimeoutSeconds(buildOptions.value.timeoutSeconds),
+      build_requirement: buildOptions.value.buildRequirement?.trim() || ''
     })
     await refreshCurrentMapData()
     await refreshMaps()
     const engineName = formatProvider(buildOptions.value.extractorProvider)
-    buildMessage.value = `${engineName} 构建完成，已更新实体、关系和证据`
+    buildMessage.value = `${engineName} 构建完成，已更新 Property Graph 图结构`
   } catch (error) {
     buildError.value = formatError(error?.message || '构建认知地图失败')
     await refreshCurrentMapData()
@@ -1223,13 +1270,6 @@ const clearGraphFilters = () => {
   hiddenRelationTypes.value = []
 }
 
-const getSelectedGraphItemId = () => {
-  const raw = selectedGraphItem.value?.raw || {}
-  return selectedGraphItem.value?.kind === 'relation'
-    ? raw.relation_id || raw.id
-    : raw.entity_id || raw.id
-}
-
 const getGraphItemId = (kind, item) => (
   kind === 'relation'
     ? item?.relation_id || item?.id
@@ -1238,145 +1278,13 @@ const getGraphItemId = (kind, item) => (
 
 const isSelectedTreeItem = (kind, item) => (
   selectedGraphItem.value?.kind === kind &&
-  getSelectedGraphItemId() === getGraphItemId(kind, item)
+  getGraphItemId(kind, selectedGraphItem.value?.raw) === getGraphItemId(kind, item)
 )
-
-const syncEntityEditForm = (entity = {}) => {
-  entityEditForm.value = {
-    name: entity.name || '',
-    entityType: entity.entity_type || entity.type || 'Entity',
-    description: entity.description || ''
-  }
-}
-
-const syncRelationEditForm = (relation = {}) => {
-  relationEditForm.value = {
-    sourceEntityId: relation.source_entity_id || relation.source || relation.source_id || '',
-    targetEntityId: relation.target_entity_id || relation.target || relation.target_id || '',
-    relationType: relation.relation_type || relation.type || 'related_to',
-    description: relation.description || ''
-  }
-}
-
-const findGraphItemById = (kind, id) => {
-  if (!id) return null
-  const source = kind === 'relation' ? relations.value : entities.value
-  const key = kind === 'relation' ? 'relation_id' : 'entity_id'
-  return source.find(item => (item[key] || item.id) === id) || null
-}
 
 const updateCurrentMapFromList = () => {
   if (!currentMap.value?.id) return
   const updated = maps.value.find(item => item.id === currentMap.value.id)
   if (updated) currentMap.value = updated
-}
-
-const updateSelectedReviewStatus = async (reviewStatus) => {
-  if (!currentMap.value?.id || !selectedGraphItem.value) return
-  const kind = selectedGraphItem.value.kind
-  const itemId = getSelectedGraphItemId()
-  if (!itemId) {
-    managementError.value = '缺少选中项标识，无法更新'
-    managementMessage.value = ''
-    return
-  }
-
-  managing.value = true
-  managementError.value = ''
-  managementMessage.value = ''
-  try {
-    if (kind === 'relation') {
-      await updateCognitiveMapRelation(currentMap.value.id, itemId, { review_status: reviewStatus })
-    } else {
-      await updateCognitiveMapEntity(currentMap.value.id, itemId, { review_status: reviewStatus })
-    }
-    await refreshCurrentMapData()
-    await refreshMaps()
-    updateCurrentMapFromList()
-    const refreshedItem = findGraphItemById(kind, itemId)
-    selectedGraphItem.value = refreshedItem ? { kind, raw: refreshedItem } : null
-    managementMessage.value = `已更新为${getReviewStatusText(reviewStatus)}`
-  } catch (error) {
-    managementError.value = error?.message || '更新审核状态失败'
-  } finally {
-    managing.value = false
-  }
-}
-
-const saveSelectedGraphItem = async () => {
-  if (!currentMap.value?.id || !selectedGraphItem.value) return
-  const kind = selectedGraphItem.value.kind
-  const itemId = getSelectedGraphItemId()
-  if (!itemId) {
-    managementError.value = '缺少选中项标识，无法保存'
-    managementMessage.value = ''
-    return
-  }
-
-  managing.value = true
-  managementError.value = ''
-  managementMessage.value = ''
-  try {
-    if (kind === 'relation') {
-      await updateCognitiveMapRelation(currentMap.value.id, itemId, {
-        source_entity_id: relationEditForm.value.sourceEntityId,
-        target_entity_id: relationEditForm.value.targetEntityId,
-        relation_type: relationEditForm.value.relationType,
-        description: relationEditForm.value.description
-      })
-    } else {
-      await updateCognitiveMapEntity(currentMap.value.id, itemId, {
-        name: entityEditForm.value.name,
-        entity_type: entityEditForm.value.entityType,
-        description: entityEditForm.value.description
-      })
-    }
-    await refreshCurrentMapData()
-    await refreshMaps()
-    updateCurrentMapFromList()
-    const refreshedItem = findGraphItemById(kind, itemId)
-    selectedGraphItem.value = refreshedItem ? { kind, raw: refreshedItem } : null
-    if (kind === 'relation') syncRelationEditForm(refreshedItem || {})
-    else syncEntityEditForm(refreshedItem || {})
-    managementMessage.value = kind === 'relation' ? '关系已保存' : '实体已保存'
-  } catch (error) {
-    managementError.value = error?.message || '保存失败'
-  } finally {
-    managing.value = false
-  }
-}
-
-const deleteSelectedGraphItem = async () => {
-  if (!currentMap.value?.id || !selectedGraphItem.value) return
-  const kind = selectedGraphItem.value.kind
-  const itemId = getSelectedGraphItemId()
-  if (!itemId) {
-    managementError.value = '缺少选中项标识，无法删除'
-    managementMessage.value = ''
-    return
-  }
-  const itemName = selectedGraphTitle.value || (kind === 'relation' ? '该关系' : '该实体')
-  if (!window.confirm(`确认删除${itemName}？`)) return
-
-  managing.value = true
-  managementError.value = ''
-  managementMessage.value = ''
-  try {
-    if (kind === 'relation') {
-      await deleteCognitiveMapRelation(currentMap.value.id, itemId)
-    } else {
-      await deleteCognitiveMapEntity(currentMap.value.id, itemId)
-    }
-    selectedGraphItem.value = null
-    await refreshCurrentMapData()
-    await refreshMaps()
-    updateCurrentMapFromList()
-    managementMessage.value = kind === 'relation' ? '关系已删除' : '实体已删除'
-  } catch (error) {
-    managementError.value = error?.message || '删除失败'
-  } finally {
-    managing.value = false
-  }
 }
 
 const resizeGraphSoon = async () => {
@@ -1408,6 +1316,10 @@ const openManagementDrawer = async (tab = 'selection') => {
   isInspectorExpanded.value = true
   inspectorTab.value = tab
   if (tab !== 'selection') selectedGraphItem.value = null
+  if (tab !== 'evidence') {
+    selectedEvidenceDetail.value = null
+    evidenceDetailError.value = ''
+  }
   await resizeGraphSoon()
 }
 
@@ -1424,8 +1336,9 @@ const toggleUploadDrop = async () => {
 const selectEntity = (entity) => {
   managementError.value = ''
   managementMessage.value = ''
+  selectedEvidenceDetail.value = null
+  evidenceDetailError.value = ''
   selectedGraphItem.value = { kind: 'entity', raw: entity }
-  syncEntityEditForm(entity)
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
   resizeGraphSoon()
@@ -1434,8 +1347,9 @@ const selectEntity = (entity) => {
 const selectRelation = (relation) => {
   managementError.value = ''
   managementMessage.value = ''
+  selectedEvidenceDetail.value = null
+  evidenceDetailError.value = ''
   selectedGraphItem.value = { kind: 'relation', raw: relation }
-  syncRelationEditForm(relation)
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
   resizeGraphSoon()
@@ -1546,6 +1460,31 @@ onBeforeUnmount(() => {
 .engine-select input {
   width: 76px;
   padding: 0 8px;
+}
+
+.build-requirement-input {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.build-requirement-input textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 8px;
+  background: #fff;
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.build-requirement-field {
+  grid-column: 1 / -1;
 }
 
 .panel-btn,
@@ -2289,6 +2228,7 @@ onBeforeUnmount(() => {
 }
 
 .evidence-compact-row {
+  cursor: pointer;
   color: #475569;
   font-size: 12px;
   line-height: 1.55;
@@ -2299,6 +2239,24 @@ onBeforeUnmount(() => {
   display: block;
   margin-bottom: 3px;
   color: #111827;
+}
+
+.evidence-detail {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #1f2937;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.evidence-detail p {
+  margin: 0;
 }
 
 .row-title {

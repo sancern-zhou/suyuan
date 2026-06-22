@@ -6,6 +6,7 @@ from app.agent.cognition.providers.llamaindex_extractor import (
 from app.agent.cognition.providers.docx_parser import DocxParserProvider
 from app.agent.cognition.providers.local_extractor import LocalRuleBasedExtractorProvider
 from app.agent.cognition.providers.markitdown_parser import MarkItDownParserProvider
+from app.agent.cognition.providers.pdf_parser import PdfParserProvider
 from app.agent.cognition.providers.text_parser import TextParserProvider
 
 
@@ -15,6 +16,8 @@ def create_parser_provider(name: str | None = None):
         return TextParserProvider()
     if provider_name == "docx":
         return DocxParserProvider()
+    if provider_name == "pdf":
+        return PdfParserProvider()
     if provider_name == "markitdown":
         return MarkItDownParserProvider()
     raise ValueError(f"Unknown cognitive map parser provider: {name}")

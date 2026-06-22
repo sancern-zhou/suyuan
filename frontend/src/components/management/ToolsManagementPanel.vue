@@ -2,7 +2,6 @@
   <div class="management-panel tools-management-panel">
     <div class="panel-header">
       <h3>工具/技能管理</h3>
-      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
     </div>
     <div class="panel-embedded-content">
       <ToolsManagementView />
