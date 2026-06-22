@@ -206,6 +206,31 @@ def test_planner_preserves_bare_marked_json_as_plain_answer_even_when_query_enab
     assert "answer_evidence" not in action
 
 
+def test_planner_preserves_plain_fenced_marked_json_when_query_enabled():
+    planner = ReActPlanner(llm_client=object())
+    text = (
+        "广州今日空气质量良好。\n\n"
+        "```\n"
+        "{\n"
+        '  "query_dashboard_metadata": true,\n'
+        '  "dashboard_focus": {"scope": "city", "cities": ["广州"]},\n'
+        '  "answer_evidence": {"claims": []}\n'
+        "}\n"
+        "```"
+    )
+
+    result = planner._parse_accumulated_blocks(
+        [{"type": "text", "text": text}],
+        enable_dashboard_metadata=True,
+    )
+
+    action = result["action"]
+    assert action["type"] == "PLAIN_TEXT_REPLY"
+    assert action["answer"] == text
+    assert "dashboard_focus" not in action
+    assert "answer_evidence" not in action
+
+
 def test_planner_preserves_ordinary_json_that_mentions_dashboard_focus():
     planner = ReActPlanner(llm_client=object())
     text = (

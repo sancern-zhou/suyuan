@@ -131,7 +131,7 @@ class ReActPlanner:
             return text, {}
 
         candidates: List[tuple[int, int, str]] = []
-        for match in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL):
+        for match in re.finditer(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL):
             candidates.append((match.start(), match.end(), match.group(1)))
 
         for start, end, raw_json in candidates:
