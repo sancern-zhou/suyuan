@@ -134,10 +134,6 @@ class ReActPlanner:
         for match in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL):
             candidates.append((match.start(), match.end(), match.group(1)))
 
-        stripped = text.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            candidates.append((0, len(text), stripped))
-
         for start, end, raw_json in candidates:
             try:
                 payload = json.loads(raw_json)
@@ -255,7 +251,10 @@ class ReActPlanner:
                 auto_profile=auto_profile,
             )
 
-        return self._parse_anthropic_response(llm_response)
+        return self._parse_anthropic_response(
+            llm_response,
+            enable_dashboard_metadata=mode == "query",
+        )
 
     async def think_and_action_streaming(
         self,
@@ -508,7 +507,10 @@ class ReActPlanner:
                         blocks_types=[b.get("type") for b in current_blocks],
                         blocks_preview=[{"type": b.get("type"), "preview": str(b)[:100]} for b in current_blocks[:3]]
                     )
-                    result = self._parse_accumulated_blocks(current_blocks)
+                    result = self._parse_accumulated_blocks(
+                        current_blocks,
+                        enable_dashboard_metadata=mode == "query",
+                    )
 
                     # 提取 thought
                     text_content = ""
@@ -630,7 +632,11 @@ class ReActPlanner:
                 "data": result
             }
 
-    def _parse_anthropic_response(self, llm_response: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_anthropic_response(
+        self,
+        llm_response: Dict[str, Any],
+        enable_dashboard_metadata: bool = False,
+    ) -> Dict[str, Any]:
         """解析 Anthropic 非流式响应
 
         通过遍历 content blocks 检测工具调用（不依赖 stop_reason）
@@ -673,7 +679,11 @@ class ReActPlanner:
         ])
 
         if not tool_use_blocks:
-            answer_text, dashboard_metadata = self._split_dashboard_metadata_from_text(full_text)
+            answer_text, dashboard_metadata = (
+                self._split_dashboard_metadata_from_text(full_text)
+                if enable_dashboard_metadata
+                else (full_text, {})
+            )
             action = {
                 "type": "PLAIN_TEXT_REPLY",
                 "answer": answer_text,
@@ -697,7 +707,11 @@ class ReActPlanner:
             }
         }
 
-    def _parse_accumulated_blocks(self, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _parse_accumulated_blocks(
+        self,
+        blocks: List[Dict[str, Any]],
+        enable_dashboard_metadata: bool = False,
+    ) -> Dict[str, Any]:
         """解析流式累积的 content blocks
 
         Args:
@@ -759,7 +773,11 @@ class ReActPlanner:
             full_text = thinking_blocks[-1].get("thinking", "")
 
         if not tool_use_blocks:
-            answer_text, dashboard_metadata = self._split_dashboard_metadata_from_text(full_text)
+            answer_text, dashboard_metadata = (
+                self._split_dashboard_metadata_from_text(full_text)
+                if enable_dashboard_metadata
+                else (full_text, {})
+            )
             action = {
                 "type": "PLAIN_TEXT_REPLY",
                 "answer": answer_text,
