@@ -50,6 +50,45 @@ test('extractCityMetricMarkers falls back to realtime cities when monthly metric
   assert.equal(markers[0].value, 72)
 })
 
+test('extractCityMetricMarkers reads AQI from nested measurements', () => {
+  const overview = {
+    modules: {
+      month_to_date: {
+        city_metrics: [
+          { city: '广州', measurements: { AQI: 77 } }
+        ]
+      }
+    }
+  }
+
+  const markers = extractCityMetricMarkers(overview, { cities: [] })
+
+  assert.equal(markers.length, 1)
+  assert.equal(markers[0].name, '广州')
+  assert.equal(markers[0].value, 77)
+})
+
+test('extractCityMetricMarkers averages duplicate city records into one marker', () => {
+  const overview = {
+    modules: {
+      month_to_date: {
+        city_metrics: [
+          { city: '广州', measurements: { AQI: 60 } },
+          { city: '广州', measurements: { AQI: 80 } },
+          { city: '深圳', measurements: { AQI: 45 } }
+        ]
+      }
+    }
+  }
+
+  const markers = extractCityMetricMarkers(overview, { cities: ['广州'] })
+
+  assert.equal(markers.length, 2)
+  assert.equal(markers[0].name, '广州')
+  assert.equal(markers[0].value, 70)
+  assert.equal(markers[0].focused, true)
+})
+
 test('extractStationMarkers reads layer stations and ignores records without coordinates', () => {
   const overview = {
     modules: {

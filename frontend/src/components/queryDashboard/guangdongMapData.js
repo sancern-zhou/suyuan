@@ -28,6 +28,7 @@ const CITY_COORDINATES = {
 const CITY_NAME_KEYS = ['city', 'city_name', 'name', '城市', '地市', 'area', 'region']
 const STATION_NAME_KEYS = ['station_name', 'station', 'name', '站点名称', '站点', 'monitor_name', 'point_name', 'site_name']
 const VALUE_KEYS = ['aqi', 'avg_aqi', 'average', 'value', 'index', 'aqi_index', '综合指数', 'AQI']
+const MEASUREMENT_KEYS = ['measurements', 'measurement', 'metrics', 'values', 'pollutants']
 
 function asArray(value) {
   return Array.isArray(value) ? value : []
@@ -81,7 +82,18 @@ function focusSet(focus, key) {
 }
 
 function metricValue(record) {
-  return firstNumber(record, VALUE_KEYS)
+  const topLevel = firstNumber(record, VALUE_KEYS)
+  if (topLevel !== null) return topLevel
+
+  for (const key of MEASUREMENT_KEYS) {
+    const measurements = record?.[key]
+    if (measurements && typeof measurements === 'object' && !Array.isArray(measurements)) {
+      const nested = firstNumber(measurements, VALUE_KEYS)
+      if (nested !== null) return nested
+    }
+  }
+
+  return null
 }
 
 function normalizeCityMetric(record, focusedCities) {
@@ -98,6 +110,42 @@ function normalizeCityMetric(record, focusedCities) {
     value: metricValue(record),
     focused: focusedCities.has(name)
   }
+}
+
+// Month/year city modules can contain one raw day record per city per date.
+// Average valid AQI-like values so each city renders as one stable overview marker.
+function aggregateCityMetricMarkers(records, focusedCities) {
+  const byCity = new Map()
+
+  for (const record of records) {
+    const marker = normalizeCityMetric(record, focusedCities)
+    if (!marker) continue
+
+    const existing = byCity.get(marker.name)
+    const value = marker.value
+    if (!existing) {
+      byCity.set(marker.name, {
+        ...marker,
+        valueTotal: value !== null ? value : 0,
+        valueCount: value !== null ? 1 : 0
+      })
+      continue
+    }
+
+    if (value !== null) {
+      existing.valueTotal += value
+      existing.valueCount += 1
+    }
+    if (!existing.position && marker.position) {
+      existing.position = marker.position
+    }
+    existing.focused = existing.focused || marker.focused
+  }
+
+  return Array.from(byCity.values()).map(({ valueTotal, valueCount, ...marker }) => ({
+    ...marker,
+    value: valueCount > 0 ? valueTotal / valueCount : null
+  }))
 }
 
 function normalizeStation(record, focusedStations) {
@@ -129,9 +177,7 @@ export function extractCityMetricMarkers(overview, focus = {}) {
   )
   const focusedCities = focusSet(focus, 'cities')
 
-  return records
-    .map(record => normalizeCityMetric(record, focusedCities))
-    .filter(Boolean)
+  return aggregateCityMetricMarkers(records, focusedCities)
 }
 
 export function extractStationMarkers(overview, focus = {}) {
