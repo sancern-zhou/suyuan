@@ -208,3 +208,28 @@ def test_build_overview_keeps_partial_success_when_module_fails():
     assert response.modules["year_to_date"].status == "error"
     assert response.modules["year_to_date"].error["message"] == "统计接口超时"
     assert response.errors[0]["module"] == "year_to_date"
+
+
+def test_build_overview_treats_returned_failure_payload_as_module_error():
+    class FailurePayloadProvider(StubProvider):
+        def city_day(self, **kwargs):
+            if kwargs["label"] == "month_to_date":
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "error": {"message": "接口返回失败"},
+                    "data": [],
+                    "metadata": {"query_params": kwargs},
+                }
+            return super().city_day(**kwargs)
+
+    service = QueryDashboardService(provider=FailurePayloadProvider(), today=date(2026, 6, 22))
+
+    response = service.build_guangdong_overview(include=["realtime", "month_to_date", "year_to_date"])
+
+    assert response.success is True
+    assert response.modules["realtime"].status == "success"
+    assert response.modules["month_to_date"].status == "error"
+    assert response.modules["month_to_date"].error["message"] == "接口返回失败"
+    assert response.modules["year_to_date"].status == "success"
+    assert response.errors[0]["module"] == "month_to_date"

@@ -109,6 +109,25 @@ def _first_count(*values: Any) -> int | None:
     return None
 
 
+def _error_message(error: Any) -> str:
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("detail") or error.get("error")
+        if message:
+            return str(message)
+    if error:
+        return str(error)
+    return "查询工具返回失败"
+
+
+def _ensure_successful_tool_result(result: dict[str, Any]) -> None:
+    records = _records_from_result(result)
+    status = str(result.get("status", "")).lower()
+    has_error_without_data = bool(result.get("error")) and not records
+
+    if result.get("success") is False or status in {"error", "failed"} or has_error_without_data:
+        raise RuntimeError(_error_message(result.get("error") or result.get("message")))
+
+
 def extract_dashboard_source(source_id: str, tool_name: str, result: dict[str, Any]) -> DashboardSource:
     records = _records_from_result(result)
     metadata = _metadata(result)
@@ -293,6 +312,7 @@ class QueryDashboardService:
         raise ValueError(f"Unsupported dashboard module: {module_name}")
 
     def _module_from_result(self, module_name: str, result: dict[str, Any], **payload: Any) -> DashboardModule:
+        _ensure_successful_tool_result(result)
         records = _records_from_result(result)
         source = extract_dashboard_source(f"src_{module_name}", TOOL_NAME, result)
         return DashboardModule(
