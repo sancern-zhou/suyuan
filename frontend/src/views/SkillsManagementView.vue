@@ -10,9 +10,6 @@
           </span>
         </div>
         <div class="header-actions">
-          <button v-if="activeSkillType === 'official'" class="btn-secondary" @click="refreshIndex">刷新索引</button>
-          <button class="btn-secondary" @click="refreshList">刷新列表</button>
-          <button class="btn-close" @click="$emit('close')">关闭</button>
           <div class="search-box">
             <input
               v-model="searchKeyword"
@@ -118,7 +115,6 @@ import {
   getSkillDetail,
   getSkillDraftsList,
   getSkillDraftDetail,
-  refreshSkillsIndex,
   saveSkillDetail,
   saveSkillDraftDetail
 } from '@/api/skillsManagement'
@@ -290,25 +286,6 @@ const renderMarkdown = (content) => {
     console.error('Markdown渲染失败:', error)
     return '<pre>' + content + '</pre>'
   }
-}
-
-const refreshIndex = async () => {
-  if (!confirm('确定要刷新技能索引吗？')) return
-
-  try {
-    const data = await refreshSkillsIndex()
-    if (data.success) {
-      alert('索引刷新成功')
-      await loadSkills()
-    }
-  } catch (error) {
-    console.error('刷新索引失败:', error)
-    alert('刷新索引失败: ' + error.message)
-  }
-}
-
-const refreshList = () => {
-  loadSkills()
 }
 
 onMounted(() => {

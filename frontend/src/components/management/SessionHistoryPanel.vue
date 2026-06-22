@@ -2,11 +2,7 @@
   <div class="management-panel session-history-panel">
     <div class="panel-header">
       <h3>会话历史</h3>
-      <button class="panel-btn small" @click="$emit('refresh-sessions')" :disabled="sessionHistoryLoading">
-        {{ sessionHistoryLoading ? '刷新中...' : '刷新' }}
-      </button>
       <button class="panel-btn small" @click="$emit('cleanup-sessions')">清理过期</button>
-      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
     </div>
 
     <div class="session-history-content">

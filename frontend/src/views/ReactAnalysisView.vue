@@ -62,7 +62,7 @@
       @update:era5-historical-date="era5HistoricalDate = $event"
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
-      @load-session="handleLoadSession"
+      @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
       @reset-width="resetWidth"
@@ -93,7 +93,7 @@
       @delete-scheduled-task="deleteScheduledTask"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
-      @restore-session="handleSessionRestore"
+      @restore-session="handleSessionRestoreAndClosePanel"
       @toggle-session-case="handleToggleSessionCase"
       @toggle-viz-panel="toggleVizPanel"
     />
@@ -317,6 +317,22 @@ const handleRerankerChange = (value) => {
 const handleAgentModeChange = (value) => {
   store.switchMode(value)
   console.log('[ReactAnalysisView] Agent模式切换:', value)
+}
+
+const handleLoadSessionAndClosePanel = async (sessionId) => {
+  const restored = await handleLoadSession(sessionId)
+  if (restored) {
+    hideManagementPanel()
+  }
+  return restored
+}
+
+const handleSessionRestoreAndClosePanel = async (sessionId) => {
+  const restored = await handleSessionRestore(sessionId)
+  if (restored) {
+    hideManagementPanel()
+  }
+  return restored
 }
 
 const handleAssistantSelect = async (moduleId) => {

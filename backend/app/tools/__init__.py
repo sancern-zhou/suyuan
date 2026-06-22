@@ -327,6 +327,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
+    try:
+        from app.tools.analysis.cognitive_map_guidance.tool import CognitiveMapGuidanceTool
+        registry.register(CognitiveMapGuidanceTool(), priority=51)
+        logger.info("tool_loaded", tool="cognitive_map_guidance")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="cognitive_map_guidance", error=str(e))
+
     # 5分钟数据查询工具
     try:
         from app.tools.query.get_5min_data.tool import Get5MinDataTool

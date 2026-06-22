@@ -2,7 +2,6 @@
   <div class="management-panel fetchers-panel">
     <div class="panel-header">
       <h3>数据抓取管理</h3>
-      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
     </div>
 
     <div class="fetchers-content">
@@ -80,9 +79,6 @@
       <div class="fetchers-list-section">
         <div class="section-header">
           <h4>数据获取器列表</h4>
-          <button @click="$emit('refresh-status')" :disabled="fetcherLoading" class="panel-btn small">
-            {{ fetcherLoading ? '刷新中...' : '刷新' }}
-          </button>
         </div>
 
         <div v-if="fetcherLoading" class="fetcher-loading">

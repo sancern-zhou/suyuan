@@ -5,10 +5,6 @@
       <button class="panel-btn small primary" @click="showCreateDialog = true">
         新建广播任务
       </button>
-      <button class="panel-btn small" @click="$emit('refresh-tasks')" :disabled="scheduledTasksRefreshing">
-        {{ scheduledTasksRefreshing ? '刷新中...' : '刷新' }}
-      </button>
-      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
     </div>
 
     <div class="scheduled-tasks-content">
