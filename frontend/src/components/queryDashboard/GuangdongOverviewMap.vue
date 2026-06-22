@@ -149,11 +149,6 @@ const addControls = () => {
 }
 
 const initMap = async () => {
-  if (!import.meta.env?.VITE_AMAP_KEY) {
-    error.value = '缺少 VITE_AMAP_KEY，无法加载高德地图。'
-    return
-  }
-
   loading.value = true
   error.value = ''
   try {
