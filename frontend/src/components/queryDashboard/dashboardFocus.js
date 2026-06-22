@@ -14,16 +14,19 @@ export const normalizeLayerState = (layerState = {}) => {
   return normalized
 }
 
-export const normalizeDashboardFocus = (raw = {}) => ({
-  scope: raw.scope || 'province',
-  cities: toList(raw.cities),
-  stations: toList(raw.stations),
-  pollutants: toList(raw.pollutants),
-  time_range: raw.time_range || null,
-  modules: toList(raw.modules),
-  layer_state: normalizeLayerState(raw.layer_state),
-  source_data_ids: toList(raw.source_data_ids)
-})
+export const normalizeDashboardFocus = (raw = {}) => {
+  const focus = raw && typeof raw === 'object' ? raw : {}
+  return {
+    scope: focus.scope || 'province',
+    cities: toList(focus.cities),
+    stations: toList(focus.stations),
+    pollutants: toList(focus.pollutants),
+    time_range: focus.time_range || null,
+    modules: toList(focus.modules),
+    layer_state: normalizeLayerState(focus.layer_state),
+    source_data_ids: toList(focus.source_data_ids)
+  }
+}
 
 const focusFromMessage = (message) => {
   if (!message) return null
