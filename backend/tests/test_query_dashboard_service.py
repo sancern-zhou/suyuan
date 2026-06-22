@@ -7,6 +7,7 @@ from app.schemas.query_dashboard import (
 from datetime import date
 
 from app.services.query_dashboard_service import (
+    GDSuncereDashboardProvider,
     QueryDashboardService,
     build_default_date_ranges,
     extract_dashboard_source,
@@ -81,6 +82,63 @@ def test_extract_dashboard_source_reads_tool_result_metadata():
     assert source.record_count == 21
     assert source.query_params == {"cities": ["广州"]}
     assert source.sample_records == [{"city": "广州", "AQI": 42}]
+
+
+def test_extract_dashboard_source_prefers_metadata_total_records_over_sample_length():
+    result = {
+        "data_id": "air_quality_unified:v1:externalized",
+        "metadata": {
+            "query_params": {"cities": ["广州"]},
+            "total_records": 128,
+        },
+        "data": [{"city": "广州", "AQI": 42}],
+    }
+
+    source = extract_dashboard_source("src_realtime", "query_gd_suncere", result)
+
+    assert source.record_count == 128
+
+
+def test_real_provider_preserves_query_params_for_realtime_and_layers(monkeypatch):
+    captured = {}
+
+    def fake_city_hour(**kwargs):
+        captured["city_hour"] = kwargs
+        return {
+            "success": True,
+            "data_id": "air_quality_5min:v1:realtime",
+            "metadata": {},
+            "data": [],
+        }
+
+    def fake_station_hour_real(**kwargs):
+        captured["station_hour"] = kwargs
+        return {
+            "success": True,
+            "data_id": "air_quality_5min:v1:layers",
+            "metadata": {},
+            "data": [],
+        }
+
+    monkeypatch.setattr(
+        "app.tools.query.query_gd_suncere.tool.execute_query_gd_suncere_station_hour",
+        fake_city_hour,
+    )
+    monkeypatch.setattr(
+        "app.tools.query.query_gd_suncere.tool.execute_query_gd_suncere_station_hour_real",
+        fake_station_hour_real,
+    )
+    provider = GDSuncereDashboardProvider(context=object())
+
+    realtime = provider.city_hour(label="realtime", cities=["广州"], start_time="2026-06-22T00:00:00+08:00", end_time="2026-06-22T23:59:59+08:00")
+    layers = provider.station_hour(label="layers", cities=["广州"], start_time="2026-06-22T00:00:00+08:00", end_time="2026-06-22T23:59:59+08:00")
+
+    assert realtime["metadata"]["query_params"]["label"] == "realtime"
+    assert realtime["metadata"]["query_params"]["cities"] == ["广州"]
+    assert layers["metadata"]["query_params"]["label"] == "layers"
+    assert layers["metadata"]["query_params"]["cities"] == ["广州"]
+    assert captured["city_hour"]["context"] is provider.context
+    assert captured["station_hour"]["context"] is provider.context
 
 
 class StubProvider:

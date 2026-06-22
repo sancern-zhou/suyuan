@@ -103,6 +103,13 @@ def _metadata(result: dict[str, Any]) -> dict[str, Any]:
     return metadata if isinstance(metadata, dict) else {}
 
 
+def _first_count(*values: Any) -> int | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def extract_dashboard_source(source_id: str, tool_name: str, result: dict[str, Any]) -> DashboardSource:
     records = _records_from_result(result)
     metadata = _metadata(result)
@@ -110,6 +117,14 @@ def extract_dashboard_source(source_id: str, tool_name: str, result: dict[str, A
     data_ids = result.get("data_ids") or metadata.get("data_ids") or []
     if isinstance(data_ids, str):
         data_ids = [data_ids]
+    record_count = _first_count(
+        result.get("total_count"),
+        result.get("record_count"),
+        result.get("total_records"),
+        metadata.get("total_count"),
+        metadata.get("record_count"),
+        metadata.get("total_records"),
+    )
 
     return DashboardSource(
         source_id=source_id,
@@ -117,7 +132,7 @@ def extract_dashboard_source(source_id: str, tool_name: str, result: dict[str, A
         data_id=result.get("data_id") or metadata.get("data_id"),
         data_ids=[data_id for data_id in data_ids if isinstance(data_id, str)],
         query_params=query_params,
-        record_count=result.get("total_count") or result.get("record_count") or len(records),
+        record_count=record_count if record_count is not None else len(records),
         updated_at=result.get("updated_at") or metadata.get("updated_at"),
         generated_at=result.get("generated_at") or metadata.get("generated_at"),
         sample_records=records[:10],
@@ -131,7 +146,7 @@ class GDSuncereDashboardProvider:
     def city_hour(self, **kwargs: Any) -> dict[str, Any]:
         from app.tools.query.query_gd_suncere.tool import execute_query_gd_suncere_station_hour
 
-        return execute_query_gd_suncere_station_hour(
+        result = execute_query_gd_suncere_station_hour(
             cities=kwargs["cities"],
             start_time=kwargs["start_time"],
             end_time=kwargs["end_time"],
@@ -141,6 +156,8 @@ class GDSuncereDashboardProvider:
             skip_count=kwargs.get("skip_count", 0),
             max_result_count=kwargs.get("max_result_count", 1000),
         )
+        self._merge_query_params(result, kwargs)
+        return result
 
     def city_day(self, **kwargs: Any) -> dict[str, Any]:
         from app.tools.query.query_gd_suncere.tool import execute_query_gd_suncere_city_day
@@ -163,7 +180,7 @@ class GDSuncereDashboardProvider:
     def station_hour(self, **kwargs: Any) -> dict[str, Any]:
         from app.tools.query.query_gd_suncere.tool import execute_query_gd_suncere_station_hour_real
 
-        return execute_query_gd_suncere_station_hour_real(
+        result = execute_query_gd_suncere_station_hour_real(
             start_time=kwargs["start_time"],
             end_time=kwargs["end_time"],
             context=self.context,
@@ -176,6 +193,8 @@ class GDSuncereDashboardProvider:
             skip_count=kwargs.get("skip_count", 0),
             max_result_count=kwargs.get("max_result_count", 1000),
         )
+        self._merge_query_params(result, kwargs)
+        return result
 
     def _create_context(self) -> Any:
         from app.agent.context.data_context_manager import DataContextManager
