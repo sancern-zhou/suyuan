@@ -77,6 +77,24 @@ def _event_run_id(event: Dict[str, Any]) -> Optional[str]:
     return data.get("run_id") or event.get("run_id")
 
 
+def _build_final_message(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    final_message = {
+        "type": "final",
+        "content": event_data["answer"],
+        "data": event_data,
+        "timestamp": event_data.get("timestamp", datetime.now().isoformat()),
+    }
+
+    if "visuals" in event_data and isinstance(event_data["visuals"], list):
+        final_message["visuals"] = event_data["visuals"]
+    if "dashboard_focus" in event_data and isinstance(event_data["dashboard_focus"], dict):
+        final_message["dashboard_focus"] = event_data["dashboard_focus"]
+    if "answer_evidence" in event_data and isinstance(event_data["answer_evidence"], dict):
+        final_message["answer_evidence"] = event_data["answer_evidence"]
+
+    return final_message
+
+
 def _drawio_xml_from_result(result: Dict[str, Any]) -> str:
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     for field in ("current_xml", "currentXml", "xml", "drawio_xml", "mxfile"):
@@ -715,17 +733,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             # ✅ 添加最终答案消息
                             event_data = event.get("data") or {}
                             if event_data.get("answer"):
-                                final_message = {
-                                    "type": "final",
-                                    "content": event_data["answer"],
-                                    "data": event_data,
-                                    "timestamp": event_data.get("timestamp", datetime.now().isoformat())
-                                }
-
-                                # ✅ 将visuals提取到消息顶层，确保能被正确存储和恢复
-                                if "visuals" in event_data and isinstance(event_data["visuals"], list):
-                                    final_message["visuals"] = event_data["visuals"]
-
+                                final_message = _build_final_message(event_data)
                                 conversation_history.append(final_message)
                                 logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])
 
