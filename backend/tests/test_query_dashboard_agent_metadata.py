@@ -153,13 +153,57 @@ def test_planner_extracts_dashboard_metadata_from_final_json_block():
                 "```"
             ),
         }
-    ])
+    ], enable_dashboard_metadata=True)
 
     action = result["action"]
     assert action["type"] == "PLAIN_TEXT_REPLY"
     assert action["answer"] == "广州今日空气质量良好。"
     assert action["dashboard_focus"]["cities"] == ["广州"]
     assert action["answer_evidence"]["claims"][0]["source_data_ids"] == ["realtime-20260622"]
+
+
+def test_planner_preserves_marked_metadata_block_by_default_for_non_query_modes():
+    planner = ReActPlanner(llm_client=object())
+    text = (
+        "下面是看板协议示例：\n\n"
+        "```json\n"
+        "{\n"
+        '  "query_dashboard_metadata": true,\n'
+        '  "dashboard_focus": {"scope": "city", "cities": ["广州"]},\n'
+        '  "answer_evidence": {"claims": []}\n'
+        "}\n"
+        "```"
+    )
+
+    result = planner._parse_accumulated_blocks([{"type": "text", "text": text}])
+
+    action = result["action"]
+    assert action["type"] == "PLAIN_TEXT_REPLY"
+    assert action["answer"] == text
+    assert "dashboard_focus" not in action
+    assert "answer_evidence" not in action
+
+
+def test_planner_preserves_bare_marked_json_as_plain_answer_even_when_query_enabled():
+    planner = ReActPlanner(llm_client=object())
+    text = (
+        "{\n"
+        '  "query_dashboard_metadata": true,\n'
+        '  "dashboard_focus": {"scope": "city", "cities": ["广州"]},\n'
+        '  "answer_evidence": {"claims": []}\n'
+        "}"
+    )
+
+    result = planner._parse_accumulated_blocks(
+        [{"type": "text", "text": text}],
+        enable_dashboard_metadata=True,
+    )
+
+    action = result["action"]
+    assert action["type"] == "PLAIN_TEXT_REPLY"
+    assert action["answer"] == text
+    assert "dashboard_focus" not in action
+    assert "answer_evidence" not in action
 
 
 def test_planner_preserves_ordinary_json_that_mentions_dashboard_focus():
