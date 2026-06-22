@@ -6,6 +6,7 @@ import {
   normalizeDashboardFocus,
   normalizeLayerState
 } from './dashboardFocus.js'
+import { fetchGuangdongOverview } from '../../api/queryDashboard.js'
 
 test('normalizeDashboardFocus fills stable defaults', () => {
   const focus = normalizeDashboardFocus({
@@ -20,6 +21,19 @@ test('normalizeDashboardFocus fills stable defaults', () => {
   assert.deepEqual(focus.stations, [])
   assert.deepEqual(focus.pollutants, ['O3_8h'])
   assert.deepEqual(focus.layer_state, { city_metrics: false, stations: false, heatmap: true })
+})
+
+test('normalizeDashboardFocus tolerates null input', () => {
+  const focus = normalizeDashboardFocus(null)
+
+  assert.equal(focus.scope, 'province')
+  assert.deepEqual(focus.cities, [])
+  assert.deepEqual(focus.stations, [])
+  assert.deepEqual(focus.pollutants, [])
+  assert.equal(focus.time_range, null)
+  assert.deepEqual(focus.modules, [])
+  assert.deepEqual(focus.layer_state, { city_metrics: false, stations: false, heatmap: false })
+  assert.deepEqual(focus.source_data_ids, [])
 })
 
 test('extractDashboardFocusFromMessages prefers latest final message metadata', () => {
@@ -49,4 +63,26 @@ test('normalizeLayerState only enables known layers', () => {
     normalizeLayerState({ city_metrics: true, unknown: true }),
     { city_metrics: true, stations: false, heatmap: false }
   )
+})
+
+test('fetchGuangdongOverview only sends include query option', async () => {
+  const originalFetch = globalThis.fetch
+  let requestedUrl
+  globalThis.fetch = async (url) => {
+    requestedUrl = url
+    return {
+      ok: true,
+      async json () {
+        return { ok: true }
+      }
+    }
+  }
+
+  try {
+    await fetchGuangdongOverview({ include: ['cities'], forceRefresh: true })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  assert.equal(requestedUrl, '/api/query-dashboard/guangdong-overview?include=cities')
 })
