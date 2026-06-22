@@ -237,29 +237,37 @@ onMounted(() => {
 }
 
 .dashboard-main {
-  display: flex;
+  position: absolute;
+  inset: 0;
+  display: block;
   flex: 1 1 0%;
   min-width: 0;
-  flex-direction: column;
-  padding-bottom: 238px;
 }
 
 .dashboard-content {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  flex: 1;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
 }
 
 .dashboard-side {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 7;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: min(260px, calc(100% - 32px));
+  max-height: calc(100% - 280px);
   min-width: 0;
-  padding: 14px;
-  border-left: 1px solid rgba(32, 49, 58, 0.1);
-  background: rgba(247, 250, 249, 0.86);
+  padding: 0;
+  border: 0;
+  background: transparent;
   overflow: auto;
+  pointer-events: auto;
 }
 
 .source-button {
@@ -277,18 +285,19 @@ onMounted(() => {
 
 .chat-overlay {
   position: absolute;
-  right: 16px;
+  right: 18px;
   bottom: 16px;
-  left: 16px;
+  left: 18px;
   z-index: 8;
   display: flex;
   flex-direction: column;
   max-height: 220px;
-  min-height: 150px;
+  min-height: 144px;
   border: 1px solid rgba(32, 49, 58, 0.14);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 14px 34px rgba(22, 39, 46, 0.14);
+  backdrop-filter: blur(8px);
   overflow: hidden;
 }
 
@@ -304,18 +313,20 @@ onMounted(() => {
 }
 
 @media (max-width: 900px) {
-  .dashboard-main {
-    padding-bottom: 260px;
-  }
-
-  .dashboard-content {
-    grid-template-columns: 1fr;
-  }
-
   .dashboard-side {
-    max-height: 190px;
-    border-top: 1px solid rgba(32, 49, 58, 0.1);
-    border-left: 0;
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 168px;
+  }
+
+  .chat-overlay {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    max-height: 230px;
+    min-height: 150px;
   }
 }
 </style>
