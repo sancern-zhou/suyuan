@@ -299,6 +299,9 @@ const createEmptyModeState = () => ({
   finalAnswer: '',
   finalAnswers: [],
   hasResults: false,
+  dashboardFocus: null,
+  answerEvidence: null,
+  dashboardOverview: null,
 
   // 可视化
   currentVisualization: null,
@@ -696,6 +699,9 @@ export const useReactStore = defineStore('react', {
         finalAnswer: modeState.finalAnswer,
         finalAnswers: modeState.finalAnswers,
         hasResults: modeState.hasResults,
+        dashboardFocus: modeState.dashboardFocus,
+        answerEvidence: modeState.answerEvidence,
+        dashboardOverview: modeState.dashboardOverview,
         currentVisualization: modeState.currentVisualization,
         visualizationHistory: modeState.visualizationHistory,
         board: modeState.board
@@ -971,6 +977,25 @@ export const useReactStore = defineStore('react', {
       console.log(`[setComplete] Set complete=${isComplete} for mode ${this.currentMode}`)
     },
 
+    applyDashboardMetadata(data = {}, targetState = this.currentState) {
+      const focus = data?.dashboard_focus ||
+        data?.metadata?.dashboard_focus ||
+        data?.result?.dashboard_focus ||
+        data?.result?.metadata?.dashboard_focus ||
+        null
+      const evidence = data?.answer_evidence ||
+        data?.metadata?.answer_evidence ||
+        data?.result?.answer_evidence ||
+        data?.result?.metadata?.answer_evidence ||
+        null
+      if (focus) {
+        targetState.dashboardFocus = focus
+      }
+      if (evidence) {
+        targetState.answerEvidence = evidence
+      }
+    },
+
     /**
      * 批量设置会话状态（用于会话恢复）
      */
@@ -993,6 +1018,16 @@ export const useReactStore = defineStore('react', {
 
       if (sessionData.last_result) {
         this.currentState.lastExpertResults = sessionData.last_result
+      }
+
+      if (sessionData.dashboardFocus) {
+        this.currentState.dashboardFocus = sessionData.dashboardFocus
+      }
+      if (sessionData.answerEvidence) {
+        this.currentState.answerEvidence = sessionData.answerEvidence
+      }
+      if (sessionData.dashboardOverview) {
+        this.currentState.dashboardOverview = sessionData.dashboardOverview
       }
 
       if (sessionData.state === 'completed') {
@@ -1500,6 +1535,7 @@ export const useReactStore = defineStore('react', {
           // task_guard 等虚拟工具不会先发送 tool_use；如果它拦截了已流出的
           // PLAIN_TEXT_REPLY，需要先把该文本降级为过程消息，避免下一轮重复追加。
           this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
+          this.applyDashboardMetadata(data, targetState)
 
           const toolResultData = data || {}
           const resultToolUseId = toolResultData.tool_use_id
@@ -1761,6 +1797,7 @@ export const useReactStore = defineStore('react', {
           targetState.isAnalyzing = false
           targetState.isInterruption = false
           targetState.isComplete = true
+          this.applyDashboardMetadata(data, targetState)
           targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
           const finalContent = data?.response || data?.answer || ''
@@ -1788,7 +1825,9 @@ export const useReactStore = defineStore('react', {
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-              sources: data?.sources || null  // ✅ 知识问答参考来源
+              sources: data?.sources || null,  // ✅ 知识问答参考来源
+              dashboard_focus: data?.dashboard_focus || null,
+              answer_evidence: data?.answer_evidence || null
             })
             if (finalContent) {
               targetState.finalAnswer = finalContent
@@ -1802,7 +1841,9 @@ export const useReactStore = defineStore('react', {
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-              sources: data?.sources || null  // ✅ 知识问答参考来源
+              sources: data?.sources || null,  // ✅ 知识问答参考来源
+              dashboard_focus: data?.dashboard_focus || null,
+              answer_evidence: data?.answer_evidence || null
             }, null, { streaming: false })  // 【修复】明确设置 streaming: false
             console.log('[event:complete] messages数量:', targetState.messages.length)
           } else {
