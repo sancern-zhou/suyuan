@@ -40,6 +40,7 @@ const GUANGDONG_MASK_OUTER_PATH = [
   [136, 55],
   [72, 55]
 ]
+const GUANGDONG_MASK_PADDING = 0.35
 
 const props = defineProps({
   overview: {
@@ -152,10 +153,35 @@ const normalizeBoundaryPath = (boundary) => {
     .filter(Boolean)
 }
 
-const createGuangdongMaskPath = (boundaries) => [
-  GUANGDONG_MASK_OUTER_PATH,
-  ...boundaries
+const calculateBoundaryBounds = (boundaries) => {
+  const points = boundaries.flat()
+  const lngs = points.map(point => point[0])
+  const lats = points.map(point => point[1])
+  return {
+    west: Math.min(...lngs) - GUANGDONG_MASK_PADDING,
+    east: Math.max(...lngs) + GUANGDONG_MASK_PADDING,
+    south: Math.min(...lats) - GUANGDONG_MASK_PADDING,
+    north: Math.max(...lats) + GUANGDONG_MASK_PADDING
+  }
+}
+
+const createRectPath = (west, south, east, north) => [
+  [west, south],
+  [east, south],
+  [east, north],
+  [west, north]
 ]
+
+const createGuangdongShadowMasks = (bounds) => {
+  const [outerWest, outerSouth] = GUANGDONG_MASK_OUTER_PATH[0]
+  const [outerEast, outerNorth] = GUANGDONG_MASK_OUTER_PATH[2]
+  return [
+    createRectPath(outerWest, bounds.north, outerEast, outerNorth),
+    createRectPath(outerWest, outerSouth, outerEast, bounds.south),
+    createRectPath(outerWest, bounds.south, bounds.west, bounds.north),
+    createRectPath(bounds.east, bounds.south, outerEast, bounds.north)
+  ]
+}
 
 const renderProvinceFocus = () => {
   if (!map || !AMapApi?.DistrictSearch || !AMapApi?.Polygon) return
@@ -176,15 +202,16 @@ const renderProvinceFocus = () => {
 
     clearProvinceOverlays()
 
-    const mask = new AMapApi.Polygon({
-      path: createGuangdongMaskPath(boundaries),
+    const bounds = calculateBoundaryBounds(boundaries)
+    const maskPolygons = createGuangdongShadowMasks(bounds).map(path => new AMapApi.Polygon({
+      path,
       className: 'gd-province-mask',
       strokeOpacity: 0,
       fillColor: '#101820',
-      fillOpacity: 0.42,
-      zIndex: 18,
+      fillOpacity: 0.46,
+      zIndex: 60,
       bubble: true
-    })
+    }))
 
     const boundaryPolygons = boundaries.map(path => new AMapApi.Polygon({
       path,
@@ -194,11 +221,11 @@ const renderProvinceFocus = () => {
       strokeOpacity: 0.92,
       fillColor: '#4fb58f',
       fillOpacity: 0.08,
-      zIndex: 22,
+      zIndex: 70,
       bubble: true
     }))
 
-    provinceOverlays = [mask, ...boundaryPolygons]
+    provinceOverlays = [...maskPolygons, ...boundaryPolygons]
     map.add(provinceOverlays)
   })
 }
