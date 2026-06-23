@@ -175,6 +175,18 @@ class StubProvider:
             "metadata": {"query_params": kwargs},
         }
 
+    def station_list(self, **kwargs):
+        self.calls.append(("station_list", kwargs))
+        return {
+            "success": True,
+            "total_count": 2,
+            "data": [
+                {"站点名称": "麓湖", "唯一编码": "1010A", "city": "广州", "经度": 113.2765, "纬度": 23.1544, "站点类型ID": 1.0},
+                {"站点名称": "市监测站", "唯一编码": "1008A", "city": "广州", "经度": 113.2597, "纬度": 23.1331, "站点类型ID": 1.0},
+            ],
+            "metadata": {"query_params": kwargs},
+        }
+
 
 def test_build_overview_returns_successful_modules_from_existing_tool_provider():
     provider = StubProvider()
@@ -187,35 +199,47 @@ def test_build_overview_returns_successful_modules_from_existing_tool_provider()
     assert response.modules["year_to_date"].status == "success"
     assert response.modules["layers"].status == "success"
     assert response.modules["layers"].stations[0]["station_name"] == "麓湖"
+    assert response.modules["layers"].summary["station_count"] == 2
     assert response.sources[0].tool_name == "query_gd_suncere"
     assert ("city_hour", provider.calls[0][1]) in provider.calls
 
 
-def test_layers_enrich_station_coordinates_and_heat_points():
-    class StationWithoutCoordinatesProvider(StubProvider):
+def test_layers_use_station_list_for_distribution_and_measurements_for_heat_points():
+    class StationListProvider(StubProvider):
+        def station_list(self, **kwargs):
+            return {
+                "success": True,
+                "total_count": 2,
+                "data": [
+                    {"站点名称": "麓湖", "唯一编码": "1010A", "city": "广州", "经度": 113.292, "纬度": 23.151},
+                    {"站点名称": "市监测站", "唯一编码": "1008A", "city": "广州", "经度": 113.2597, "纬度": 23.1331},
+                ],
+                "metadata": {"query_params": kwargs},
+            }
+
         def station_hour(self, **kwargs):
             return {
                 "success": True,
                 "data_id": "air_quality_5min:v1:stations",
                 "total_count": 1,
-                "data": [{"station_name": "麓湖", "AQI": 42}],
+                "data": [{"station_name": "麓湖", "AQI": 42, "time": "2026-06-22 12:00:00"}],
                 "metadata": {"query_params": kwargs},
             }
 
     service = QueryDashboardService(
-        provider=StationWithoutCoordinatesProvider(),
+        provider=StationListProvider(),
         today=date(2026, 6, 22),
-        station_index={"麓湖": {"longitude": 113.292, "latitude": 23.151}},
     )
 
     response = service.build_guangdong_overview(include=["layers"])
 
-    station = response.modules["layers"].stations[0]
-    assert station["lng"] == 113.292
-    assert station["lat"] == 23.151
-    assert response.modules["layers"].heat_points == [
-        {"lng": 113.292, "lat": 23.151, "value": 42, "name": "麓湖"}
-    ]
+    stations = response.modules["layers"].stations
+    assert [station["station_name"] for station in stations] == ["麓湖", "市监测站"]
+    assert stations[0]["lng"] == 113.292
+    assert stations[0]["lat"] == 23.151
+    assert stations[0]["AQI"] == 42
+    assert response.modules["layers"].summary["measurement_record_count"] == 1
+    assert {"lng": 113.292, "lat": 23.151, "value": 42, "name": "麓湖"} in response.modules["layers"].heat_points
 
 
 def test_build_overview_keeps_partial_success_when_module_fails():
