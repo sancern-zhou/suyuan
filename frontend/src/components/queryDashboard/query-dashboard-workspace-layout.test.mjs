@@ -11,8 +11,12 @@ const mapSource = readFileSync(resolve(__dirname, './GuangdongOverviewMap.vue'),
 test('query dashboard layout keeps chat on the right and controls at bottom left', () => {
   assert.doesNotMatch(source, /<DashboardFocusPanel\b/, 'query focus panel should not be rendered')
   assert.doesNotMatch(source, /class="source-button"/, 'data source button should not be rendered')
+  assert.match(source, /<AgentModeSelector\b[\s\S]*?class="dashboard-mode-selector"/, 'mode selector should be outside the chat overlay')
+  assert.match(source, /:hide-welcome="true"/, 'query dashboard should hide the generic welcome copy')
+  assert.match(source, /:show-agent-mode-selector="false"/, 'query dashboard should hide the mode selector inside InputBox')
   assert.match(source, /\.dashboard-side\s*\{[\s\S]*?left:\s*16px;[\s\S]*?bottom:\s*16px;/)
   assert.match(source, /\.chat-overlay\s*\{[\s\S]*?top:\s*16px;[\s\S]*?right:\s*18px;[\s\S]*?width:\s*min\(380px, calc\(100% - 36px\)\);/)
+  assert.match(source, /\.dashboard-mode-selector\s*\{[\s\S]*?right:\s*18px;[\s\S]*?bottom:\s*16px;[\s\S]*?width:\s*min\(380px, calc\(100% - 36px\)\);/)
   assert.doesNotMatch(source, /\.chat-overlay\s*\{[\s\S]*?left:\s*18px;[\s\S]*?bottom:\s*16px;/)
   assert.doesNotMatch(mapSource, /关注范围|关注城市|关注站点|focusLabel/)
 })

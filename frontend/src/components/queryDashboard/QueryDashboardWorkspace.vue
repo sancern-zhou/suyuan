@@ -45,6 +45,7 @@
         :has-more-messages="hasMoreMessages"
         :total-message-count="totalMessageCount"
         :loading-more="loadingMore"
+        :hide-welcome="true"
         @load-more="$emit('load-more')"
       />
       <InputBox
@@ -56,6 +57,7 @@
         placeholder="输入查询或追问..."
         :assistant-mode="assistantMode"
         :use-reranker="useReranker"
+        :show-agent-mode-selector="false"
         @send="$emit('send', $event)"
         @pause="$emit('pause')"
         @update:useReranker="$emit('update:useReranker', $event)"
@@ -63,11 +65,18 @@
       />
     </section>
 
+    <AgentModeSelector
+      class="dashboard-mode-selector"
+      :model-value="activeAgentMode"
+      @update:modelValue="$emit('update:agentMode', $event)"
+    />
+
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import InputBox from '@/components/InputBox.vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import { fetchGuangdongOverview } from '@/api/queryDashboard.js'
@@ -126,6 +135,11 @@ const inputValue = computed({
 const effectiveFocus = computed(() => {
   if (props.dashboardFocus) return normalizeDashboardFocus(props.dashboardFocus)
   return extractDashboardFocusFromMessages(props.messages)
+})
+
+const activeAgentMode = computed(() => {
+  const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
+  return validAgentModes.includes(props.assistantMode) ? props.assistantMode : 'query'
 })
 
 const loadOverview = async () => {
@@ -255,7 +269,7 @@ onMounted(() => {
   position: absolute;
   top: 16px;
   right: 18px;
-  bottom: 16px;
+  bottom: 72px;
   z-index: 8;
   display: flex;
   flex-direction: column;
@@ -267,6 +281,25 @@ onMounted(() => {
   box-shadow: 0 14px 34px rgba(22, 39, 46, 0.14);
   backdrop-filter: blur(8px);
   overflow: hidden;
+}
+
+.dashboard-mode-selector {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: min(380px, calc(100% - 36px));
+  min-height: 42px;
+  padding: 6px;
+  border: 1px solid rgba(32, 49, 58, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 24px rgba(22, 39, 46, 0.12);
+  backdrop-filter: blur(8px);
+  overflow-x: auto;
 }
 
 .overlay-message-list {
@@ -291,11 +324,19 @@ onMounted(() => {
   .chat-overlay {
     top: auto;
     right: 12px;
-    bottom: 12px;
+    bottom: 64px;
     left: 12px;
     width: auto;
     max-height: 230px;
     min-height: 150px;
+  }
+
+  .dashboard-mode-selector {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    min-height: 40px;
   }
 }
 </style>
