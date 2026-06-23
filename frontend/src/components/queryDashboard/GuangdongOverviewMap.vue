@@ -25,6 +25,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { MAP_CONFIG } from '@/config/mapConfig'
 import { loadAMap } from '@/utils/mapLoader'
+import guangdongBoundary from './guangdong-boundary.json'
 import {
   extractCityMetricMarkers,
   extractHeatPoints,
@@ -40,7 +41,6 @@ const GUANGDONG_MASK_OUTER_PATH = [
   [136, 55],
   [72, 55]
 ]
-const GUANGDONG_MASK_PADDING = 0.35
 
 const props = defineProps({
   overview: {
@@ -153,38 +153,64 @@ const normalizeBoundaryPath = (boundary) => {
     .filter(Boolean)
 }
 
-const calculateBoundaryBounds = (boundaries) => {
-  const points = boundaries.flat()
-  const lngs = points.map(point => point[0])
-  const lats = points.map(point => point[1])
-  return {
-    west: Math.min(...lngs) - GUANGDONG_MASK_PADDING,
-    east: Math.max(...lngs) + GUANGDONG_MASK_PADDING,
-    south: Math.min(...lats) - GUANGDONG_MASK_PADDING,
-    north: Math.max(...lats) + GUANGDONG_MASK_PADDING
-  }
+const extractLocalGuangdongBoundaries = () => {
+  const features = Array.isArray(guangdongBoundary?.features) ? guangdongBoundary.features : []
+  return features.flatMap(feature => {
+    const geometry = feature?.geometry
+    if (geometry?.type === 'Polygon') {
+      return geometry.coordinates.map(normalizeBoundaryPath).filter(path => path.length > 0)
+    }
+    if (geometry?.type === 'MultiPolygon') {
+      return geometry.coordinates
+        .flatMap(polygon => polygon.map(normalizeBoundaryPath))
+        .filter(path => path.length > 0)
+    }
+    return []
+  })
 }
 
-const createRectPath = (west, south, east, north) => [
-  [west, south],
-  [east, south],
-  [east, north],
-  [west, north]
+const createGuangdongMaskPath = (boundaries) => [
+  GUANGDONG_MASK_OUTER_PATH,
+  ...boundaries
 ]
 
-const createGuangdongShadowMasks = (bounds) => {
-  const [outerWest, outerSouth] = GUANGDONG_MASK_OUTER_PATH[0]
-  const [outerEast, outerNorth] = GUANGDONG_MASK_OUTER_PATH[2]
-  return [
-    createRectPath(outerWest, bounds.north, outerEast, outerNorth),
-    createRectPath(outerWest, outerSouth, outerEast, bounds.south),
-    createRectPath(outerWest, bounds.south, bounds.west, bounds.north),
-    createRectPath(bounds.east, bounds.south, outerEast, bounds.north)
-  ]
+const renderProvinceFocusWithBoundaries = (boundaries) => {
+  if (!map || !AMapApi?.Polygon || !boundaries.length) return
+
+  clearProvinceOverlays()
+
+  const mask = new AMapApi.Polygon({
+    path: createGuangdongMaskPath(boundaries),
+    className: 'gd-province-mask',
+    strokeOpacity: 0,
+    fillColor: '#101820',
+    fillOpacity: 0.46,
+    zIndex: 60,
+    bubble: true
+  })
+
+  const boundaryPolygons = boundaries.map(path => new AMapApi.Polygon({
+    path,
+    className: 'gd-province-boundary',
+    strokeColor: '#ffffff',
+    strokeWeight: 2,
+    strokeOpacity: 0.92,
+    fillColor: '#4fb58f',
+    fillOpacity: 0.08,
+    zIndex: 70,
+    bubble: true
+  }))
+
+  provinceOverlays = [mask, ...boundaryPolygons]
+  map.add(provinceOverlays)
 }
 
 const renderProvinceFocus = () => {
-  if (!map || !AMapApi?.DistrictSearch || !AMapApi?.Polygon) return
+  if (!map || !AMapApi?.Polygon) return
+
+  const localBoundaries = extractLocalGuangdongBoundaries()
+  renderProvinceFocusWithBoundaries(localBoundaries)
+  if (!AMapApi?.DistrictSearch) return
 
   const districtSearch = new AMapApi.DistrictSearch({
     subdistrict: 0,
@@ -196,37 +222,11 @@ const renderProvinceFocus = () => {
     if (destroyed || !map || status !== 'complete') return
 
     const boundaries = (result?.districtList?.[0]?.boundaries || [])
-      .map(normalizeBoundaryPath)
-      .filter(path => path.length > 0)
+        .map(normalizeBoundaryPath)
+        .filter(path => path.length > 0)
     if (!boundaries.length) return
 
-    clearProvinceOverlays()
-
-    const bounds = calculateBoundaryBounds(boundaries)
-    const maskPolygons = createGuangdongShadowMasks(bounds).map(path => new AMapApi.Polygon({
-      path,
-      className: 'gd-province-mask',
-      strokeOpacity: 0,
-      fillColor: '#101820',
-      fillOpacity: 0.46,
-      zIndex: 60,
-      bubble: true
-    }))
-
-    const boundaryPolygons = boundaries.map(path => new AMapApi.Polygon({
-      path,
-      className: 'gd-province-boundary',
-      strokeColor: '#ffffff',
-      strokeWeight: 2,
-      strokeOpacity: 0.92,
-      fillColor: '#4fb58f',
-      fillOpacity: 0.08,
-      zIndex: 70,
-      bubble: true
-    }))
-
-    provinceOverlays = [...maskPolygons, ...boundaryPolygons]
-    map.add(provinceOverlays)
+    renderProvinceFocusWithBoundaries(boundaries)
   })
 }
 
