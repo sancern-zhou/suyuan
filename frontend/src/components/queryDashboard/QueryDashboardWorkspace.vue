@@ -290,7 +290,7 @@ onMounted(() => {
   z-index: 8;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   width: min(480px, calc(100% - 36px));
   min-height: 42px;
   padding: 6px;
@@ -301,6 +301,11 @@ onMounted(() => {
   backdrop-filter: blur(8px);
   flex-wrap: nowrap;
   overflow-x: auto;
+}
+
+.dashboard-mode-selector.agent-mode-selector {
+  justify-content: space-between;
+  flex-wrap: nowrap;
 }
 
 .overlay-message-list {
