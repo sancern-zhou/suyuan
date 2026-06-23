@@ -273,7 +273,7 @@ onMounted(() => {
   z-index: 8;
   display: flex;
   flex-direction: column;
-  width: min(380px, calc(100% - 36px));
+  width: min(520px, calc(100% - 36px));
   min-height: 0;
   border: 1px solid rgba(32, 49, 58, 0.14);
   border-radius: 8px;
@@ -291,7 +291,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  width: min(380px, calc(100% - 36px));
+  width: min(520px, calc(100% - 36px));
   min-height: 42px;
   padding: 6px;
   border: 1px solid rgba(32, 49, 58, 0.14);
@@ -299,6 +299,7 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 10px 24px rgba(22, 39, 46, 0.12);
   backdrop-filter: blur(8px);
+  flex-wrap: nowrap;
   overflow-x: auto;
 }
 
