@@ -5,6 +5,8 @@ from typing import Any, Protocol
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import requests
+
 from app.schemas.query_dashboard import (
     DashboardModule,
     DashboardOverviewResponse,
@@ -48,6 +50,9 @@ class QueryDashboardProvider(Protocol):
         ...
 
     def station_hour(self, **kwargs: Any) -> dict[str, Any]:
+        ...
+
+    def station_list(self, **kwargs: Any) -> dict[str, Any]:
         ...
 
 
@@ -214,6 +219,61 @@ class GDSuncereDashboardProvider:
         self._merge_query_params(result, kwargs)
         return result
 
+    def station_list(self, **kwargs: Any) -> dict[str, Any]:
+        from config.settings import settings
+
+        cities = kwargs["cities"]
+        station_type_id = kwargs.get("station_type_id", 1.0)
+        fields = kwargs.get("fields") or "name,code,lat,lon,district,type_id"
+        timeout = kwargs.get("timeout", 20)
+        records: list[dict[str, Any]] = []
+        raw_sources: list[dict[str, Any]] = []
+
+        with requests.Session() as session:
+            for city in cities:
+                response = session.get(
+                    f"{settings.station_api_base_url}/api/station-district/by-city",
+                    params={
+                        "city_name": city,
+                        "fields": fields,
+                        "station_type_id": station_type_id,
+                    },
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("status") != "success":
+                    raise RuntimeError(f"{city}站点清单接口返回失败")
+
+                city_records = payload.get("data") if isinstance(payload.get("data"), list) else []
+                for record in city_records:
+                    if isinstance(record, dict):
+                        records.append({**record, "city": city})
+
+                raw_sources.append(
+                    {
+                        "city": city,
+                        "total": payload.get("total"),
+                        "station_type_stats": payload.get("station_type_stats"),
+                    }
+                )
+
+        result = {
+            "success": True,
+            "status": "success",
+            "data": records,
+            "total_count": len(records),
+            "metadata": {
+                "query_params": {
+                    **kwargs,
+                    "fields": fields,
+                    "station_type_id": station_type_id,
+                },
+                "raw_sources": raw_sources,
+            },
+        }
+        return result
+
     def _create_context(self) -> Any:
         from app.agent.context.data_context_manager import DataContextManager
         from app.agent.context.execution_context import ExecutionContext
@@ -297,17 +357,55 @@ class QueryDashboardService:
             return self._module_from_result(module_name, result, cities=records, city_metrics=records)
 
         if module_name == "layers":
-            result = self.provider.station_hour(
+            station_result = self.provider.station_list(
                 label=module_name,
                 cities=self.cities,
-                start_time=ranges["realtime"]["start"],
-                end_time=ranges["realtime"]["end"],
+                station_type_id=1.0,
             )
-            records = _records_from_result(result)
-            stations = self._enrich_station_records(records)
-            return self._module_from_result(
-                module_name,
-                result,
+            _ensure_successful_tool_result(station_result)
+            station_records = _records_from_result(station_result)
+            stations = self._normalize_station_list(station_records)
+
+            measurement_result: dict[str, Any] | None = None
+            measurement_error: str | None = None
+            try:
+                measurement_result = self.provider.station_hour(
+                    label=f"{module_name}_measurements",
+                    cities=self.cities,
+                    start_time=ranges["realtime"]["start"],
+                    end_time=ranges["realtime"]["end"],
+                )
+                _ensure_successful_tool_result(measurement_result)
+                measurements = self._latest_station_measurements(_records_from_result(measurement_result))
+                stations = self._merge_station_measurements(stations, measurements)
+            except Exception as exc:
+                measurement_error = str(exc)
+
+            source = extract_dashboard_source("src_layers_stations", "station_district_api", station_result)
+            sources = [source]
+            measurement_count = 0
+            if measurement_result is not None:
+                measurement_source = extract_dashboard_source(
+                    "src_layers_measurements",
+                    TOOL_NAME,
+                    measurement_result,
+                )
+                sources.append(measurement_source)
+                measurement_count = measurement_source.record_count or len(_records_from_result(measurement_result))
+
+            summary = {
+                "station_count": len(stations),
+                "measurement_record_count": measurement_count,
+                "heat_point_count": len(self._heat_points_from_stations(stations)),
+            }
+            if measurement_error:
+                summary["measurement_status"] = "degraded"
+                summary["measurement_error"] = measurement_error
+
+            return DashboardModule(
+                status="success" if not measurement_error else "partial",
+                summary=summary,
+                sources=sources,
                 stations=stations,
                 heat_points=self._heat_points_from_stations(stations),
             )
@@ -384,6 +482,102 @@ class QueryDashboardService:
                 next_record["city"] = station["city"]
             enriched.append(next_record)
         return enriched
+
+    def _normalize_station_list(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        stations = []
+        seen = set()
+        for record in records:
+            name = self._first_text(record, "station_name", "name", "站点名称", "站点")
+            code = self._first_text(record, "code", "station_code", "唯一编码", "站点编码")
+            city = self._first_text(record, "city", "city_name", "城市", "城市名称")
+            if not code and not name:
+                continue
+            dedupe_key = f"{city}:{code or name}"
+            if not dedupe_key or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            normalized = {
+                **record,
+                "station_name": name,
+                "name": name,
+                "code": code,
+                "city": city,
+                "district": self._first_text(record, "district", "所属区县", "区县", "行政区"),
+                "station_type_id": self._number(record.get("station_type_id") or record.get("type_id") or record.get("站点类型ID")),
+            }
+            lng = self._number(record.get("lng") or record.get("lon") or record.get("longitude") or record.get("经度"))
+            lat = self._number(record.get("lat") or record.get("latitude") or record.get("纬度"))
+            if lng is not None:
+                normalized["lng"] = lng
+                normalized["longitude"] = lng
+            if lat is not None:
+                normalized["lat"] = lat
+                normalized["latitude"] = lat
+            stations.append(normalized)
+        return self._enrich_station_records(stations)
+
+    def _latest_station_measurements(self, records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for record in self._enrich_station_records(records):
+            key = self._station_key(record)
+            if not key:
+                continue
+            existing = latest.get(key)
+            if existing is None or str(record.get("time") or record.get("timestamp") or record.get("TimePoint") or "") >= str(
+                existing.get("time") or existing.get("timestamp") or existing.get("TimePoint") or ""
+            ):
+                latest[key] = record
+        return latest
+
+    def _merge_station_measurements(
+        self,
+        stations: list[dict[str, Any]],
+        measurements: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged = []
+        for station in stations:
+            measurement = None
+            for key in self._station_keys(station):
+                measurement = measurements.get(key)
+                if measurement is not None:
+                    break
+            if measurement is None:
+                merged.append(station)
+                continue
+            next_station = {**station, **measurement}
+            next_station["station_name"] = station.get("station_name") or measurement.get("station_name")
+            next_station["name"] = station.get("name") or measurement.get("name")
+            next_station["code"] = station.get("code") or measurement.get("code")
+            next_station["city"] = station.get("city") or measurement.get("city")
+            next_station["district"] = station.get("district") or measurement.get("district")
+            next_station["lng"] = station.get("lng") or measurement.get("lng")
+            next_station["lat"] = station.get("lat") or measurement.get("lat")
+            merged.append(next_station)
+        return merged
+
+    @staticmethod
+    def _first_text(record: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def _station_key(self, record: dict[str, Any]) -> str:
+        keys = self._station_keys(record)
+        return keys[0] if keys else ""
+
+    def _station_keys(self, record: dict[str, Any]) -> list[str]:
+        code = self._first_text(record, "code", "station_code", "唯一编码", "站点编码")
+        name = self._first_text(
+            record,
+            "station_name",
+            "name",
+            "站点名称",
+            "站点",
+        )
+        return [key for key in (code, name) if key]
 
     def _heat_points_from_stations(self, stations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         points = []
