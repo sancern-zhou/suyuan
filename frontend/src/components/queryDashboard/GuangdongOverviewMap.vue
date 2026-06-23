@@ -16,7 +16,6 @@
       <div v-if="layers.heatmap && heatmapUnavailable" class="heatmap-note">暂无可渲染热力数据</div>
     </div>
     <div class="map-footer">
-      <span>{{ focusLabel }}</span>
       <span>{{ overviewLabel }}</span>
     </div>
   </section>
@@ -59,14 +58,6 @@ let overlays = []
 let heatmapLayer = null
 let destroyed = false
 const heatmapUnavailable = ref(false)
-
-const focusLabel = computed(() => {
-  const cities = props.focus?.cities || []
-  const stations = props.focus?.stations || []
-  if (stations.length > 0) return `关注站点：${stations.join('、')}`
-  if (cities.length > 0) return `关注城市：${cities.join('、')}`
-  return '关注范围：全省'
-})
 
 const overviewLabel = computed(() => {
   const updatedAt = props.overview?.updated_at || props.overview?.data_time || props.overview?.timestamp || props.overview?.generated_at

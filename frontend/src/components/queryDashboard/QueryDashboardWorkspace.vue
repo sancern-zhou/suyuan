@@ -27,10 +27,6 @@
 
         <aside class="dashboard-side">
           <DashboardLayerControl v-model="activeLayers" />
-          <DashboardFocusPanel :focus="effectiveFocus" />
-          <button type="button" class="source-button" @click="sourceDrawerOpen = true">
-            数据源
-          </button>
         </aside>
       </div>
     </div>
@@ -67,11 +63,6 @@
       />
     </section>
 
-    <DashboardSourceDrawer
-      :open="sourceDrawerOpen"
-      :sources="sources"
-      @close="sourceDrawerOpen = false"
-    />
   </div>
 </template>
 
@@ -81,9 +72,7 @@ import InputBox from '@/components/InputBox.vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import { fetchGuangdongOverview } from '@/api/queryDashboard.js'
 import { extractDashboardFocusFromMessages, normalizeDashboardFocus, normalizeLayerState } from './dashboardFocus.js'
-import DashboardFocusPanel from './DashboardFocusPanel.vue'
 import DashboardLayerControl from './DashboardLayerControl.vue'
-import DashboardSourceDrawer from './DashboardSourceDrawer.vue'
 import GuangdongOverviewMap from './GuangdongOverviewMap.vue'
 
 const props = defineProps({
@@ -123,7 +112,6 @@ const emit = defineEmits([
 const overview = ref(null)
 const loading = ref(false)
 const error = ref('')
-const sourceDrawerOpen = ref(false)
 const activeLayers = ref({
   city_metrics: true,
   stations: false,
@@ -138,13 +126,6 @@ const inputValue = computed({
 const effectiveFocus = computed(() => {
   if (props.dashboardFocus) return normalizeDashboardFocus(props.dashboardFocus)
   return extractDashboardFocusFromMessages(props.messages)
-})
-
-const sources = computed(() => {
-  const overviewSources = overview.value?.sources || overview.value?.source_details || overview.value?.data_sources
-  if (Array.isArray(overviewSources)) return overviewSources
-  const ids = effectiveFocus.value?.source_data_ids || []
-  return ids.map((id) => ({ data_id: id }))
 })
 
 const loadOverview = async () => {
@@ -254,14 +235,14 @@ onMounted(() => {
 
 .dashboard-side {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  left: 16px;
+  bottom: 16px;
   z-index: 7;
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: min(260px, calc(100% - 32px));
-  max-height: calc(100% - 280px);
+  max-height: min(260px, calc(100% - 32px));
   min-width: 0;
   padding: 0;
   border: 0;
@@ -270,29 +251,16 @@ onMounted(() => {
   pointer-events: auto;
 }
 
-.source-button {
-  flex: 0 0 auto;
-  width: 100%;
-  min-height: 34px;
-  padding: 7px 10px;
-  border: 1px solid rgba(17, 128, 118, 0.22);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #0f6c65;
-  cursor: pointer;
-  font-size: 13px;
-}
-
 .chat-overlay {
   position: absolute;
+  top: 16px;
   right: 18px;
   bottom: 16px;
-  left: 18px;
   z-index: 8;
   display: flex;
   flex-direction: column;
-  max-height: 220px;
-  min-height: 144px;
+  width: min(380px, calc(100% - 36px));
+  min-height: 0;
   border: 1px solid rgba(32, 49, 58, 0.14);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
@@ -314,17 +282,18 @@ onMounted(() => {
 
 @media (max-width: 900px) {
   .dashboard-side {
-    top: 12px;
-    right: 12px;
     left: 12px;
-    width: auto;
+    bottom: 12px;
+    width: min(260px, calc(100% - 24px));
     max-height: 168px;
   }
 
   .chat-overlay {
+    top: auto;
     right: 12px;
     bottom: 12px;
     left: 12px;
+    width: auto;
     max-height: 230px;
     min-height: 150px;
   }
