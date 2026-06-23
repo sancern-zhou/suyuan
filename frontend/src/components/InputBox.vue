@@ -101,7 +101,7 @@
 
         <div class="input-footer">
           <AgentModeSelector
-            v-if="assistantMode === 'general-agent'"
+            v-if="assistantMode === 'general-agent' && showAgentModeSelector"
             v-model="agentMode"
             @update:modelValue="handleAgentModeChange"
           />
@@ -239,6 +239,10 @@ const props = defineProps({
   sessionId: {
     type: String,
     default: ''
+  },
+  showAgentModeSelector: {
+    type: Boolean,
+    default: true
   }
 })
 

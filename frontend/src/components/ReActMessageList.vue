@@ -1,7 +1,7 @@
 <template>
   <div class="react-message-list" ref="messagesContainer">
     <!-- 欢迎消息 -->
-    <div v-if="messages.length === 0" class="welcome-message">
+    <div v-if="messages.length === 0 && !hideWelcome" class="welcome-message">
       <h2>{{ welcomeContent.title }}</h2>
       <p>{{ welcomeContent.description }}</p>
       <div class="welcome-capabilities">
@@ -354,6 +354,10 @@ const props = defineProps({
   assistantMode: {
     type: String,
     default: 'general-agent'
+  },
+  hideWelcome: {
+    type: Boolean,
+    default: false
   },
   // 【新增】当前选中的消息ID（用于高亮显示）
   selectedMessageId: {
