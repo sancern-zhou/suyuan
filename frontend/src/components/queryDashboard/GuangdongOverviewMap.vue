@@ -33,6 +33,14 @@ import {
   GUANGDONG_ZOOM
 } from './guangdongMapData.js'
 
+const GUANGDONG_FOCUS_ZOOM = 7.2
+const GUANGDONG_MASK_OUTER_PATH = [
+  [72, 3],
+  [136, 3],
+  [136, 55],
+  [72, 55]
+]
+
 const props = defineProps({
   overview: {
     type: Object,
@@ -55,6 +63,7 @@ const error = ref('')
 let AMapApi = null
 let map = null
 let overlays = []
+let provinceOverlays = []
 let heatmapLayer = null
 let destroyed = false
 const heatmapUnavailable = ref(false)
@@ -100,6 +109,23 @@ const clearOverlays = () => {
   overlays = []
 }
 
+const clearProvinceOverlays = () => {
+  if (map && provinceOverlays.length > 0) {
+    try {
+      map.remove(provinceOverlays)
+    } catch {
+      provinceOverlays.forEach((overlay) => {
+        try {
+          overlay.setMap(null)
+        } catch {
+          // Province overlay cleanup is best-effort because AMap plugin classes vary by version.
+        }
+      })
+    }
+  }
+  provinceOverlays = []
+}
+
 const clearHeatmap = () => {
   if (heatmapLayer) {
     try {
@@ -110,6 +136,71 @@ const clearHeatmap = () => {
   }
   heatmapLayer = null
   heatmapUnavailable.value = false
+}
+
+const normalizeBoundaryPath = (boundary) => {
+  if (!Array.isArray(boundary)) return []
+  return boundary
+    .map(point => {
+      if (Array.isArray(point) && point.length >= 2) return [point[0], point[1]]
+      if (typeof point?.getLng === 'function' && typeof point?.getLat === 'function') {
+        return [point.getLng(), point.getLat()]
+      }
+      if (typeof point?.lng === 'number' && typeof point?.lat === 'number') return [point.lng, point.lat]
+      return null
+    })
+    .filter(Boolean)
+}
+
+const createGuangdongMaskPath = (boundaries) => [
+  GUANGDONG_MASK_OUTER_PATH,
+  ...boundaries
+]
+
+const renderProvinceFocus = () => {
+  if (!map || !AMapApi?.DistrictSearch || !AMapApi?.Polygon) return
+
+  const districtSearch = new AMapApi.DistrictSearch({
+    subdistrict: 0,
+    extensions: 'all',
+    level: 'province'
+  })
+
+  districtSearch.search('广东省', (status, result) => {
+    if (destroyed || !map || status !== 'complete') return
+
+    const boundaries = (result?.districtList?.[0]?.boundaries || [])
+      .map(normalizeBoundaryPath)
+      .filter(path => path.length > 0)
+    if (!boundaries.length) return
+
+    clearProvinceOverlays()
+
+    const mask = new AMapApi.Polygon({
+      path: createGuangdongMaskPath(boundaries),
+      className: 'gd-province-mask',
+      strokeOpacity: 0,
+      fillColor: '#101820',
+      fillOpacity: 0.42,
+      zIndex: 18,
+      bubble: true
+    })
+
+    const boundaryPolygons = boundaries.map(path => new AMapApi.Polygon({
+      path,
+      className: 'gd-province-boundary',
+      strokeColor: '#ffffff',
+      strokeWeight: 2,
+      strokeOpacity: 0.92,
+      fillColor: '#4fb58f',
+      fillOpacity: 0.08,
+      zIndex: 22,
+      bubble: true
+    }))
+
+    provinceOverlays = [mask, ...boundaryPolygons]
+    map.add(provinceOverlays)
+  })
 }
 
 const createMarker = (marker) => {
@@ -201,7 +292,9 @@ const initMap = async () => {
       pitch: 0,
       viewMode: '2D'
     })
+    map.setZoomAndCenter(GUANGDONG_FOCUS_ZOOM, GUANGDONG_CENTER)
     addControls()
+    renderProvinceFocus()
     renderOverlays()
   } catch (err) {
     error.value = err?.message || '高德地图加载失败。'
@@ -223,6 +316,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   destroyed = true
   clearOverlays()
+  clearProvinceOverlays()
   clearHeatmap()
   if (map) {
     try {

@@ -40,6 +40,7 @@ export async function loadAMap() {
       'AMap.PolygonEditor',   // 多边形编辑
       'AMap.Geocoder',        // 地理编码
       'AMap.InfoWindow',      // 信息窗口
+      'AMap.DistrictSearch',   // 行政区边界查询
       'AMap.HeatMap'          // 热力图
     ],
     // 添加安全密钥配置（如果有的话）
