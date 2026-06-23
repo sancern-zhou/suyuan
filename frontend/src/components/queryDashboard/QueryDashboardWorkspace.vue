@@ -273,7 +273,7 @@ onMounted(() => {
   z-index: 8;
   display: flex;
   flex-direction: column;
-  width: min(520px, calc(100% - 36px));
+  width: min(480px, calc(100% - 36px));
   min-height: 0;
   border: 1px solid rgba(32, 49, 58, 0.14);
   border-radius: 8px;
@@ -291,7 +291,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  width: min(520px, calc(100% - 36px));
+  width: min(480px, calc(100% - 36px));
   min-height: 42px;
   padding: 6px;
   border: 1px solid rgba(32, 49, 58, 0.14);
