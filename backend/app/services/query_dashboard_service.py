@@ -366,44 +366,35 @@ class QueryDashboardService:
             station_records = _records_from_result(station_result)
             stations = self._normalize_station_list(station_records)
 
-            measurement_result: dict[str, Any] | None = None
-            measurement_error: str | None = None
-            try:
-                measurement_result = self.provider.station_hour(
-                    label=f"{module_name}_measurements",
-                    cities=self.cities,
-                    start_time=ranges["realtime"]["start"],
-                    end_time=ranges["realtime"]["end"],
-                )
-                _ensure_successful_tool_result(measurement_result)
-                measurements = self._latest_station_measurements(_records_from_result(measurement_result))
-                stations = self._merge_station_measurements(stations, measurements)
-            except Exception as exc:
-                measurement_error = str(exc)
+            measurement_result = self.provider.station_hour(
+                label=f"{module_name}_measurements",
+                cities=self.cities,
+                start_time=ranges["realtime"]["start"],
+                end_time=ranges["realtime"]["end"],
+            )
+            _ensure_successful_tool_result(measurement_result)
+            measurement_records = self._measurement_records_from_result(measurement_result)
+            measurements = self._latest_station_measurements(measurement_records)
+            stations = self._merge_station_measurements(stations, measurements)
 
             source = extract_dashboard_source("src_layers_stations", "station_district_api", station_result)
             sources = [source]
-            measurement_count = 0
-            if measurement_result is not None:
-                measurement_source = extract_dashboard_source(
-                    "src_layers_measurements",
-                    TOOL_NAME,
-                    measurement_result,
-                )
-                sources.append(measurement_source)
-                measurement_count = measurement_source.record_count or len(_records_from_result(measurement_result))
+            measurement_source = extract_dashboard_source(
+                "src_layers_measurements",
+                TOOL_NAME,
+                measurement_result,
+            )
+            sources.append(measurement_source)
+            measurement_count = measurement_source.record_count or len(measurement_records)
 
             summary = {
                 "station_count": len(stations),
                 "measurement_record_count": measurement_count,
                 "heat_point_count": len(self._heat_points_from_stations(stations)),
             }
-            if measurement_error:
-                summary["measurement_status"] = "degraded"
-                summary["measurement_error"] = measurement_error
 
             return DashboardModule(
-                status="success" if not measurement_error else "partial",
+                status="success",
                 summary=summary,
                 sources=sources,
                 stations=stations,
@@ -529,6 +520,20 @@ class QueryDashboardService:
             ):
                 latest[key] = record
         return latest
+
+    def _measurement_records_from_result(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        metadata = _metadata(result)
+        data_id = result.get("data_id") or metadata.get("data_id")
+        if metadata.get("externalized") and isinstance(data_id, str) and data_id:
+            context = getattr(self.provider, "context", None)
+            get_raw_data = getattr(context, "get_raw_data", None)
+            if not callable(get_raw_data):
+                raise RuntimeError(f"小时数据已外部化，但当前上下文无法读取完整数据: {data_id}")
+            records = get_raw_data(data_id)
+            if not isinstance(records, list):
+                raise RuntimeError(f"小时数据完整数据格式异常: {data_id}")
+            return [record for record in records if isinstance(record, dict)]
+        return _records_from_result(result)
 
     def _merge_station_measurements(
         self,

@@ -242,6 +242,74 @@ def test_layers_use_station_list_for_distribution_and_measurements_for_heat_poin
     assert {"lng": 113.292, "lat": 23.151, "value": 42, "name": "麓湖"} in response.modules["layers"].heat_points
 
 
+def test_layers_read_externalized_measurements_for_heatmap_values():
+    class ContextWithRawData:
+        def get_raw_data(self, data_id):
+            assert data_id == "air_quality_unified:v1:full"
+            return [
+                {"station_name": "麓湖", "code": "1010A", "measurements": {"AQI": 42}, "timestamp": "2026-06-22 12:00:00"},
+                {"station_name": "市监测站", "code": "1008A", "measurements": {"AQI": 36}, "timestamp": "2026-06-22 12:00:00"},
+            ]
+
+    class ExternalizedMeasurementProvider(StubProvider):
+        context = ContextWithRawData()
+
+        def station_list(self, **kwargs):
+            return {
+                "success": True,
+                "total_count": 2,
+                "data": [
+                    {"站点名称": "麓湖", "唯一编码": "1010A", "city": "广州", "经度": 113.292, "纬度": 23.151},
+                    {"站点名称": "市监测站", "唯一编码": "1008A", "city": "广州", "经度": 113.2597, "纬度": 23.1331},
+                ],
+                "metadata": {"query_params": kwargs},
+            }
+
+        def station_hour(self, **kwargs):
+            return {
+                "success": True,
+                "data_id": "air_quality_unified:v1:full",
+                "data": [{"station_name": "麓湖", "code": "1010A", "measurements": {"AQI": 42}}],
+                "metadata": {
+                    "query_params": kwargs,
+                    "externalized": True,
+                    "total_records": 2,
+                    "returned_records": 1,
+                },
+            }
+
+    service = QueryDashboardService(provider=ExternalizedMeasurementProvider(), today=date(2026, 6, 22))
+
+    response = service.build_guangdong_overview(include=["layers"])
+
+    values_by_name = {point["name"]: point["value"] for point in response.modules["layers"].heat_points}
+    assert values_by_name["麓湖"] == 42
+    assert values_by_name["市监测站"] == 36
+
+
+def test_layers_do_not_fallback_to_sample_when_externalized_data_is_unreadable():
+    class ExternalizedWithoutContextProvider(StubProvider):
+        def station_hour(self, **kwargs):
+            return {
+                "success": True,
+                "data_id": "air_quality_unified:v1:full",
+                "data": [{"station_name": "麓湖", "code": "1010A", "measurements": {"AQI": 42}}],
+                "metadata": {
+                    "query_params": kwargs,
+                    "externalized": True,
+                    "total_records": 2,
+                    "returned_records": 1,
+                },
+            }
+
+    service = QueryDashboardService(provider=ExternalizedWithoutContextProvider(), today=date(2026, 6, 22))
+
+    response = service.build_guangdong_overview(include=["layers"])
+
+    assert response.modules["layers"].status == "error"
+    assert "无法读取完整数据" in response.modules["layers"].error["message"]
+
+
 def test_build_overview_keeps_partial_success_when_module_fails():
     class FailingProvider(StubProvider):
         def city_day(self, **kwargs):
