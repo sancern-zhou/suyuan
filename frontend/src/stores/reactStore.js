@@ -4,6 +4,7 @@
 import { defineStore } from 'pinia'
 import { agentAPI } from '../services/reactApi.js'
 import { uploadChatFile } from '../services/uploadApi.js'
+import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
 import { autoSaveSession } from '../api/session.js'
 import {
   convertStreamingAnswerToThoughtIfToolPlanning,
@@ -17,9 +18,16 @@ import {
 } from './reactStoreSteering.js'
 import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
 import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue.js'
+import { restoreMapScene } from './reactStoreMapScene.js'
+import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
 const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+
+export const isQueryVoiceOutputEnabled = () => {
+  if (typeof localStorage === 'undefined') return false
+  return localStorage.getItem('query-voice-output-enabled') === 'true'
+}
 
 export const extractDashboardFocus = (data = {}) => data?.dashboard_focus ||
   data?.metadata?.dashboard_focus ||
@@ -33,14 +41,47 @@ export const extractAnswerEvidence = (data = {}) => data?.answer_evidence ||
   data?.result?.metadata?.answer_evidence ||
   null
 
+export const extractMapProgram = (data = {}) => data?.map_program ||
+  data?.metadata?.map_program ||
+  data?.result?.map_program ||
+  data?.result?.data?.map_program ||
+  data?.result?.metadata?.map_program ||
+  null
+
+export const buildMapContext = (targetState = {}, options = {}) => {
+  const { consume = true, limit = 10 } = options
+  const events = Array.isArray(targetState.mapEvents) ? targetState.mapEvents : []
+  if (events.length === 0) return null
+
+  const selectedEvents = events.slice(-limit)
+  if (consume) {
+    targetState.mapEvents = []
+  }
+
+  return {
+    type: 'map_context',
+    session_id: targetState.sessionId || selectedEvents[selectedEvents.length - 1]?.session_id || null,
+    current_program: targetState.currentMapProgram || null,
+    events: selectedEvents
+  }
+}
+
 export const applyQueryDashboardMetadata = (targetState, data = {}) => {
   const focus = extractDashboardFocus(data)
   const evidence = extractAnswerEvidence(data)
+  const mapProgram = extractMapProgram(data)
   if (focus) {
     targetState.dashboardFocus = focus
   }
   if (evidence) {
     targetState.answerEvidence = evidence
+  }
+  if (mapProgram) {
+    if (!Array.isArray(targetState.mapPrograms)) {
+      targetState.mapPrograms = []
+    }
+    targetState.currentMapProgram = mergeMapPrograms(targetState.currentMapProgram, mapProgram)
+    targetState.mapPrograms.push(mapProgram)
   }
   return targetState
 }
@@ -326,6 +367,9 @@ const createEmptyModeState = () => ({
   dashboardFocus: null,
   answerEvidence: null,
   dashboardOverview: null,
+  mapPrograms: [],
+  currentMapProgram: null,
+  mapEvents: [],
 
   // 可视化
   currentVisualization: null,
@@ -726,6 +770,8 @@ export const useReactStore = defineStore('react', {
         dashboardFocus: modeState.dashboardFocus,
         answerEvidence: modeState.answerEvidence,
         dashboardOverview: modeState.dashboardOverview,
+        mapPrograms: modeState.mapPrograms,
+        currentMapProgram: modeState.currentMapProgram,
         currentVisualization: modeState.currentVisualization,
         visualizationHistory: modeState.visualizationHistory,
         board: modeState.board
@@ -1005,6 +1051,17 @@ export const useReactStore = defineStore('react', {
       applyQueryDashboardMetadata(targetState, data)
     },
 
+    recordMapEvent(event, targetState = this.currentState) {
+      if (!event || event.type !== 'map_event') return
+      if (!Array.isArray(targetState.mapEvents)) {
+        targetState.mapEvents = []
+      }
+      targetState.mapEvents.push(event)
+      if (targetState.mapEvents.length > 50) {
+        targetState.mapEvents = targetState.mapEvents.slice(-50)
+      }
+    },
+
     /**
      * 批量设置会话状态（用于会话恢复）
      */
@@ -1018,6 +1075,8 @@ export const useReactStore = defineStore('react', {
       if (sessionData.conversation_history && Array.isArray(sessionData.conversation_history)) {
         this.setMessages(sessionData.conversation_history)
       }
+
+      restoreMapScene(this.currentState, sessionData)
 
       if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
         this.setVisualizationHistory(sessionData.visualizations)
@@ -1353,6 +1412,61 @@ export const useReactStore = defineStore('react', {
 
     _convertStreamingAnswerToThoughtIfToolPlanning(modeState) {
       convertStreamingAnswerToThoughtIfToolPlanning(modeState, contentToString)
+    },
+
+    prepareQueryVoiceOutput(mode, targetState = this.currentState) {
+      if (targetState.queryVoicePlayback?.queue) {
+        targetState.queryVoicePlayback.queue.stop()
+      }
+      targetState.queryVoicePlayback = null
+      if (mode !== 'query' || !isQueryVoiceOutputEnabled()) return
+      if (typeof Audio === 'undefined' || typeof URL === 'undefined') return
+
+      targetState.queryVoicePlayback = {
+        streamed: false,
+        queue: createQueryVoicePlaybackQueue({
+          voice: typeof localStorage !== 'undefined'
+            ? localStorage.getItem('query-voice-output-voice') || '冰糖'
+            : '冰糖',
+          stylePrompt: '用专业、清晰、平稳的语气播报空气质量分析结果。'
+        })
+      }
+    },
+
+    stopQueryVoiceOutput(targetState = this.currentState) {
+      if (targetState?.queryVoicePlayback?.queue) {
+        targetState.queryVoicePlayback.queue.stop()
+      }
+      if (targetState) {
+        targetState.queryVoicePlayback = null
+      }
+    },
+
+    queueQueryVoiceOutputChunk(chunk, mode, targetState = this.currentState) {
+      const text = contentToString(chunk || '')
+      if (mode !== 'query' || !text || !isQueryVoiceOutputEnabled()) return
+      if (!targetState.queryVoicePlayback?.queue) {
+        this.prepareQueryVoiceOutput(mode, targetState)
+      }
+      if (!targetState.queryVoicePlayback?.queue) return
+
+      targetState.queryVoicePlayback.streamed = true
+      targetState.queryVoicePlayback.queue.pushChunk(text)
+    },
+
+    finishQueryVoiceOutput(finalText, mode, targetState = this.currentState) {
+      if (mode !== 'query' || !isQueryVoiceOutputEnabled()) return
+      if (!targetState.queryVoicePlayback?.queue) {
+        this.prepareQueryVoiceOutput(mode, targetState)
+      }
+      const playback = targetState.queryVoicePlayback
+      if (!playback?.queue) return
+
+      const fallbackText = contentToString(finalText || '').trim()
+      if (!playback.streamed && fallbackText) {
+        playback.queue.pushChunk(fallbackText)
+      }
+      playback.queue.finish()
     },
 
     /**
@@ -1700,6 +1814,7 @@ export const useReactStore = defineStore('react', {
               // 同步更新 finalAnswer
               targetState.finalAnswer += chunk
             }
+            this.queueQueryVoiceOutputChunk(chunk, targetMode, targetState)
           }
 
           // 如果是最后一块，清除标志并移除 streaming 标记
@@ -1910,6 +2025,8 @@ export const useReactStore = defineStore('react', {
           } else if (data?.last_office_document) {
             this.recordOfficeDocument(data.last_office_document, targetState)
           }
+
+          this.finishQueryVoiceOutput(finalContent || targetState.finalAnswer, targetMode, targetState)
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
@@ -2763,6 +2880,7 @@ export const useReactStore = defineStore('react', {
       sessionState.isComplete = false
       sessionState.error = null
       sessionState.iterations = 0
+      this.prepareQueryVoiceOutput(actualMode, sessionState)
 
       // 如果是中断状态，传递给后端，然后重置标志
       const isInterruption = sessionState.isInterruption
@@ -2785,6 +2903,7 @@ export const useReactStore = defineStore('react', {
 
       try {
         const boardContext = actualMode === 'chart' ? this.buildBoardContext(actualMode, sessionState) : null
+        const mapContext = actualMode === 'query' ? buildMapContext(sessionState) : null
         if (boardContext) {
           console.log('[drawio-board] board_context will be sent', {
             sessionId: sessionState.sessionId,
@@ -2812,6 +2931,7 @@ export const useReactStore = defineStore('react', {
           modelTier,
           attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,  // ✅ 传递附件列表
           ...(boardContext !== null ? { boardContext } : {}),
+          ...(mapContext !== null ? { mapContext } : {}),
           skipAutoFollowup,
           onEvent: (event) => {
             if (!event.data) event.data = {}

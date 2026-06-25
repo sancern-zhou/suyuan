@@ -139,6 +139,36 @@
               </svg>
             </button>
 
+            <button
+              v-if="showVoiceControls"
+              class="voice-button"
+              :class="{ recording: isRecording, processing: isTranscribing }"
+              @click="toggleRecording"
+              :disabled="props.disabled || isTranscribing"
+              :title="voiceButtonTitle"
+            >
+              <svg viewBox="0 0 24 24" class="voice-icon">
+                <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"/>
+                <path d="M19 11a7 7 0 0 1-14 0"/>
+                <path d="M12 18v3"/>
+                <path d="M8 21h8"/>
+              </svg>
+            </button>
+
+            <button
+              v-if="showVoiceControls"
+              class="voice-button"
+              :class="{ active: voiceOutputEnabled }"
+              @click="toggleVoiceOutput"
+              title="切换AI回复语音播报"
+            >
+              <svg viewBox="0 0 24 24" class="voice-icon">
+                <path d="M4 9v6h4l5 4V5L8 9H4Z"/>
+                <path d="M16 9.5a4 4 0 0 1 0 5"/>
+                <path d="M18.5 7a7 7 0 0 1 0 10"/>
+              </svg>
+            </button>
+
             <label class="upload-label" title="上传文件或图片">
               <input
                 ref="fileInputRef"
@@ -198,7 +228,14 @@ import { useReactStore } from '@/stores/reactStore'
 import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
 import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
+import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
+import {
+  createVoiceFilename,
+  getPreferredRecordingMimeType,
+  getVoiceRecordingAvailability,
+  shouldShowVoiceControls
+} from '@/components/voiceMode.js'
 import {
   getEffectiveModelTier,
   shouldShowModelTierSelector
@@ -292,6 +329,14 @@ const modelTier = ref(readStoredModelTier(props.sessionId))
 const attachments = ref([])  // 附件列表
 const previewedImage = ref(null)  // 当前预览的图片
 const isDragOver = ref(false)  // 拖拽状态
+const isRecording = ref(false)
+const isTranscribing = ref(false)
+const mediaRecorder = ref(null)
+const recordedChunks = ref([])
+const voiceOutputEnabled = ref(
+  typeof localStorage !== 'undefined' &&
+  localStorage.getItem('query-voice-output-enabled') === 'true'
+)
 const pendingBoardSnapshotAttachment = computed(() => {
   if (reactStore.currentMode !== 'chart') return null
   const attachment = reactStore.currentState?.board?.pendingSnapshotAttachment
@@ -348,10 +393,15 @@ const activeModelTierMode = computed(() => (
   validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : agentMode.value
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
+const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
 const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
 const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
 const pendingSteeringDisplay = computed(() => getPendingSteeringDisplay(props.pendingSteeringInputs))
+const voiceButtonTitle = computed(() => {
+  if (isTranscribing.value) return '语音转文字中'
+  return isRecording.value ? '停止录音并转文字' : '语音输入'
+})
 
 const actionButtonDisabled = computed(() => {
   if (props.isAnalyzing) {
@@ -625,6 +675,85 @@ const handlePause = () => {
   if (!props.isAnalyzing) return
 
   emit('pause')
+}
+
+const toggleVoiceOutput = () => {
+  voiceOutputEnabled.value = !voiceOutputEnabled.value
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('query-voice-output-enabled', voiceOutputEnabled.value ? 'true' : 'false')
+  }
+}
+
+const toggleRecording = async () => {
+  if (isRecording.value) {
+    stopRecording()
+    return
+  }
+  await startRecording()
+}
+
+const startRecording = async () => {
+  const availability = getVoiceRecordingAvailability()
+  if (!availability.available) {
+    alert(availability.message)
+    return
+  }
+
+  try {
+    reactStore.stopQueryVoiceOutput()
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const mimeType = getPreferredRecordingMimeType()
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+    recordedChunks.value = []
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunks.value.push(event.data)
+      }
+    }
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(track => track.stop())
+      await submitRecordedAudio(mimeType || recorder.mimeType || 'audio/webm')
+    }
+    mediaRecorder.value = recorder
+    recorder.start()
+    isRecording.value = true
+  } catch (error) {
+    console.error('[InputBox] Failed to start recording:', error)
+    alert(`无法开始录音: ${error.message}`)
+  }
+}
+
+const stopRecording = () => {
+  if (!mediaRecorder.value || mediaRecorder.value.state === 'inactive') return
+  mediaRecorder.value.stop()
+  isRecording.value = false
+}
+
+const submitRecordedAudio = async (mimeType) => {
+  if (recordedChunks.value.length === 0) return
+  isTranscribing.value = true
+  try {
+    const audioBlob = new Blob(recordedChunks.value, { type: mimeType || 'audio/webm' })
+    const result = await transcribeVoice(audioBlob, {
+      filename: createVoiceFilename(mimeType),
+      language: 'zh'
+    })
+    const transcript = (result?.text || '').trim()
+    if (transcript) {
+      localValue.value = localValue.value.trim()
+        ? `${localValue.value.trim()}\n${transcript}`
+        : transcript
+      await nextTick()
+      textareaRef.value?.focus()
+    }
+  } catch (error) {
+    console.error('[InputBox] Voice transcription failed:', error)
+    alert(`语音转文字失败: ${error.message}`)
+  } finally {
+    isTranscribing.value = false
+    recordedChunks.value = []
+    mediaRecorder.value = null
+  }
 }
 
 const handleFileSelect = async (event) => {
@@ -1158,6 +1287,58 @@ defineExpose({
   &:disabled {
     cursor: not-allowed;
   }
+}
+
+.voice-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  background: #fff;
+  color: #526173;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    border-color: #1976D2;
+    color: #1976D2;
+    background: #f4f9ff;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  &.recording {
+    border-color: #d32f2f;
+    color: #d32f2f;
+    background: #fff5f5;
+  }
+
+  &.processing {
+    color: #1976D2;
+    background: #eef6ff;
+  }
+
+  &.active {
+    border-color: #1976D2;
+    color: #1976D2;
+    background: #e3f2fd;
+  }
+}
+
+.voice-icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .send-icon {

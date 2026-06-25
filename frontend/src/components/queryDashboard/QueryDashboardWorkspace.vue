@@ -17,12 +17,20 @@
       <span>{{ rightPanelExpanded ? '»' : '«' }}</span>
     </button>
 
-    <div class="dashboard-main">
+    <!-- 管理面板插槽 -->
+    <div v-show="showManagementPanel" class="management-panel-container">
+      <slot name="management-panels"></slot>
+    </div>
+
+    <div class="dashboard-main" v-show="!showManagementPanel">
       <div class="dashboard-content">
         <GuangdongOverviewMap
           :overview="overview"
           :focus="effectiveFocus"
           :layers="activeLayers"
+          :map-program="mapProgram"
+          :session-id="sessionId"
+          @map-event="$emit('map-event', $event)"
         />
 
         <aside class="dashboard-side">
@@ -31,7 +39,7 @@
       </div>
     </div>
 
-    <section class="chat-overlay" aria-label="查询对话">
+    <section class="chat-overlay" aria-label="查询对话" v-show="!showManagementPanel">
       <ReActMessageList
         class="overlay-message-list"
         :messages="messages"
@@ -83,6 +91,7 @@ import { fetchGuangdongOverview } from '@/api/queryDashboard.js'
 import { extractDashboardFocusFromMessages, normalizeDashboardFocus, normalizeLayerState } from './dashboardFocus.js'
 import DashboardLayerControl from './DashboardLayerControl.vue'
 import GuangdongOverviewMap from './GuangdongOverviewMap.vue'
+import { layerStateFromMapProgram } from './mapProgramDashboardLayers.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -100,9 +109,11 @@ const props = defineProps({
   loadingMore: { type: Boolean, default: false },
   selectedMessageId: { type: String, default: null },
   dashboardFocus: { type: Object, default: null },
+  mapProgram: { type: Object, default: null },
   dragOver: { type: Boolean, default: false },
   rightPanelExpanded: { type: Boolean, default: false },
-  hasVizContent: { type: Boolean, default: false }
+  hasVizContent: { type: Boolean, default: false },
+  showManagementPanel: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -115,7 +126,8 @@ const emit = defineEmits([
   'drag-over',
   'drag-leave',
   'drop',
-  'toggle-viz-panel'
+  'toggle-viz-panel',
+  'map-event'
 ])
 
 const overview = ref(null)
@@ -183,6 +195,17 @@ watch(
   { immediate: true }
 )
 
+watch(
+  () => props.mapProgram,
+  (mapProgram) => {
+    const layerState = layerStateFromMapProgram(mapProgram)
+    if (layerState) {
+      activeLayers.value = layerState
+    }
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
   loadOverview()
 })
@@ -231,6 +254,13 @@ onMounted(() => {
   border-color: #91d5ff;
 }
 
+.management-panel-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: white;
+}
+
 .dashboard-main {
   position: absolute;
   inset: 0;
@@ -250,7 +280,7 @@ onMounted(() => {
 .dashboard-side {
   position: absolute;
   left: 16px;
-  bottom: 16px;
+  top: 16px;
   z-index: 7;
   display: flex;
   flex-direction: column;
@@ -322,7 +352,7 @@ onMounted(() => {
 @media (max-width: 900px) {
   .dashboard-side {
     left: 12px;
-    bottom: 12px;
+    top: 12px;
     width: min(260px, calc(100% - 24px));
     max-height: 168px;
   }

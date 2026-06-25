@@ -196,12 +196,36 @@ class Settings(BaseSettings):
 
     mimo_api_key: Optional[str] = Field(default=None, description="Xiaomi Mimo API key")
     mimo_base_url: str = Field(
-        default="https://api.xiaomimimo.com/v1",
-        description="Xiaomi Mimo API base URL"
+        default="https://api.xiaomimimo.com/anthropic",
+        description="Xiaomi Mimo Anthropic-compatible API base URL"
     )
     mimo_model: str = Field(
         default="mimo-v2-pro",
         description="Xiaomi Mimo model name"
+    )
+    voice_mimo_base_url: str = Field(
+        default="https://api.xiaomimimo.com/v1",
+        description="Xiaomi Mimo OpenAI-compatible base URL for ASR/TTS"
+    )
+    voice_asr_model: str = Field(
+        default="mimo-v2.5-asr",
+        description="Voice ASR model name"
+    )
+    voice_tts_model: str = Field(
+        default="mimo-v2.5-tts",
+        description="Voice TTS model name"
+    )
+    voice_tts_voice: str = Field(
+        default="冰糖",
+        description="Default TTS voice"
+    )
+    voice_asr_timeout_seconds: float = Field(
+        default=30.0,
+        description="Timeout in seconds for voice ASR requests"
+    )
+    voice_tts_timeout_seconds: float = Field(
+        default=45.0,
+        description="Timeout in seconds for voice TTS requests"
     )
 
     glm_api_key: Optional[str] = Field(default=None, description="GLM API key")

@@ -17,6 +17,7 @@ boto3>=1.34.0  # S3-compatible object storage for temporary multimodal media URL
 pandas==2.2.3
 numpy==1.26.3  # Keep aligned with environment.yml; NumPy 2.x removes np.mat used by nimfa.
 scipy>=1.10.0  # Sparse matrix optimization for OBM calculations
+PyKrige>=1.7.2  # Kriging interpolation backend for GIS concentration surfaces
 nimfa>=1.0.0   # Non-negative matrix factorization for PMF dual-mode
 defusedxml>=0.7.1  # Safe XML parsing (protects against XML attacks)
 

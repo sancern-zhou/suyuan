@@ -968,10 +968,10 @@ class LLMService:
             "model_env": "OPENAI_MODEL",
             "model_default": "gpt-4-turbo-preview",
         },
-        # Xiaomi Mimo，与 Agent 保持一致（OpenAI 兼容协议）
+        # Xiaomi Mimo，与 Agent 保持一致（Anthropic 兼容协议）
         "mimo": {
             "url_env": "MIMO_BASE_URL",
-            "url_default": "https://api.xiaomimimo.com/v1",
+            "url_default": "https://api.xiaomimimo.com/anthropic",
             "key_env": "MIMO_API_KEY",
             "model_env": "MIMO_MODEL",
             "model_default": "mimo-v2.5",

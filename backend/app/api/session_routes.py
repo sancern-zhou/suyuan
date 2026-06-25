@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview", "svg_preview"}
-SESSION_LIST_DEFAULT_LIMIT = 50
+SESSION_LIST_DEFAULT_LIMIT = 200
 SESSION_LIST_MAX_LIMIT = 200
 
 
