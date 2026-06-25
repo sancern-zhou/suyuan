@@ -83,6 +83,9 @@ class SimplifiedContextBuilder:
         # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
         self.board_context = None
 
+        # 问数模式地图交互上下文，仅 query 模式允许注入。
+        self.map_context = None
+
         # 认知地图上下文，由 Agent 入口按模式绑定注入。
         self.cognitive_map_context = None
 
@@ -257,6 +260,14 @@ class SimplifiedContextBuilder:
             board_context=self.board_context if self.current_mode == "chart" else None,
         )
         sections = [mode_prompt.rstrip()]
+        if self.current_mode == "query" and self.map_context:
+            sections.append(
+                "## Agentic GIS 控制说明\n"
+                "- 当前请求可能包含前端地图交互上下文，见用户消息中的“当前地图交互上下文”。\n"
+                "- 如需改变地图显示，优先调用 `gisctl` 生成 `map_program`，不要只用自然语言描述地图变化。\n"
+                "- 地图事件代表用户已在 GIS 中完成的操作，例如框选、视图变化、图层开关；分析时应把它当作当前对话状态。\n"
+                "- `map_program_executed` / `map_program_failed` 是前端执行回执；只有回执中 `layer_rendered` 且 feature_count > 0 的图层，才能视为已经真实显示。"
+            )
         if self.cognitive_map_context:
             sections.append(str(self.cognitive_map_context).strip())
         sections.append(self._build_agent_control_prompt())
@@ -283,6 +294,7 @@ class SimplifiedContextBuilder:
         """
         if mode == "social":
             self.board_context = None
+            self.map_context = None
             return
 
         if any([
@@ -317,6 +329,13 @@ class SimplifiedContextBuilder:
                 mode=mode,
             )
             self.board_context = None
+
+        if mode != "query" and self.map_context is not None:
+            logger.warning(
+                "non_query_map_context_stripped",
+                mode=mode,
+            )
+            self.map_context = None
 
     def _estimate_messages_tokens(self, conversation_history: Optional[List[Dict[str, Any]]]) -> int:
         """Best-effort token estimate for structured message history."""
@@ -376,6 +395,81 @@ class SimplifiedContextBuilder:
 
         if len(selected_cells) > 5:
             lines.append(f"...另有 {len(selected_cells) - 5} 个选中元素，详见系统提示词 selected_cells JSON。")
+
+        return "\n".join(lines)
+
+    def _build_map_context_user_summary(self) -> str:
+        """Build a compact current-turn summary for query-mode GIS interactions."""
+        if self.current_mode != "query" or not isinstance(self.map_context, dict):
+            return ""
+
+        events = self.map_context.get("events") or []
+        if not isinstance(events, list) or not events:
+            return ""
+
+        current_program = self.map_context.get("current_program")
+        program_id = ""
+        if isinstance(current_program, dict):
+            program_id = current_program.get("program_id") or current_program.get("id") or ""
+
+        lines = ["## 当前地图交互上下文"]
+        if program_id:
+            lines.append(f"当前地图程序: {program_id}")
+        session_id = self.map_context.get("session_id")
+        if session_id:
+            lines.append(f"地图会话: {session_id}")
+
+        for index, event in enumerate(events[-5:], start=1):
+            if not isinstance(event, dict):
+                lines.append(f"{index}. {event}")
+                continue
+
+            event_name = event.get("event") or event.get("type") or "unknown"
+            active_layers = event.get("active_layers") or event.get("activeLayers") or []
+            geometry = event.get("geometry") if isinstance(event.get("geometry"), dict) else None
+            view = event.get("map_view") or event.get("view")
+            view = view if isinstance(view, dict) else None
+            receipt = event.get("receipt") if isinstance(event.get("receipt"), dict) else None
+
+            details = [f"event={event_name}"]
+            if active_layers:
+                details.append(f"active_layers={json.dumps(active_layers, ensure_ascii=False)}")
+            if geometry:
+                details.append(f"geometry_type={geometry.get('type')}")
+            if view:
+                center = view.get("center")
+                zoom = view.get("zoom")
+                details.append(f"view=center:{center}, zoom:{zoom}")
+            if receipt:
+                receipt_program = receipt.get("program_id") or ""
+                receipt_status = receipt.get("status") or ""
+                if receipt_program:
+                    details.append(f"receipt_program={receipt_program}")
+                if receipt_status:
+                    details.append(f"receipt_status={receipt_status}")
+                layers = receipt.get("layers") or []
+                if isinstance(layers, list) and layers:
+                    layer_summaries = []
+                    for layer in layers[:20]:
+                        if not isinstance(layer, dict):
+                            continue
+                        layer_summary = f"{layer.get('layer_id')}:{layer.get('status')}:{layer.get('feature_count', 0)}"
+                        data_id = layer.get("data_id")
+                        if data_id:
+                            layer_summary = f"{layer_summary}:data_id={data_id}"
+                        layer_summaries.append(layer_summary)
+                    if layer_summaries:
+                        details.append(f"receipt_layers={json.dumps(layer_summaries, ensure_ascii=False)}")
+                    if len(layers) > 20:
+                        details.append(f"receipt_layers_omitted={len(layers) - 20}")
+                errors = receipt.get("errors") or []
+                if isinstance(errors, list) and errors:
+                    details.append(f"receipt_errors={json.dumps(errors[:3], ensure_ascii=False)}")
+
+            lines.append(f"{index}. " + " ".join(details))
+
+        if len(events) > 5:
+            lines.append(f"...另有 {len(events) - 5} 条地图事件未展开。")
 
         return "\n".join(lines)
 
@@ -496,6 +590,9 @@ class SimplifiedContextBuilder:
             board_selection_summary = self._build_board_selection_user_summary()
             if board_selection_summary:
                 sections.append(board_selection_summary)
+            map_context_summary = self._build_map_context_user_summary()
+            if map_context_summary:
+                sections.append(map_context_summary)
 
             # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
@@ -518,6 +615,9 @@ class SimplifiedContextBuilder:
             board_selection_summary = self._build_board_selection_user_summary()
             if board_selection_summary:
                 sections.append(board_selection_summary)
+            map_context_summary = self._build_map_context_user_summary()
+            if map_context_summary:
+                sections.append(map_context_summary)
             sections.append(f"{current_input_section}\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）

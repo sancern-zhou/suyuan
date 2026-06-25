@@ -3,6 +3,52 @@
 
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
+export function buildAnalyzeRequestBody(query, options = {}) {
+  const {
+    sessionId = null,
+    enhanceWithHistory = true,
+    maxIterations = 120,
+    debugMode = false,
+    assistantMode = null,
+    agentMode = 'expert',
+    knowledgeBaseIds = null,
+    modelTier = 'auto',
+    attachments = null,
+    boardContext = null,
+    mapContext = null,
+    userIdentifier = null,
+    isInterruption = false,
+    skipAutoFollowup = false
+  } = options
+
+  const body = {
+    query,
+    session_id: sessionId,
+    user_id: userIdentifier,
+    enhance_with_history: enhanceWithHistory,
+    max_iterations: maxIterations,
+    debug_mode: debugMode,
+    assistant_mode: assistantMode,
+    mode: agentMode,
+    knowledge_base_ids: knowledgeBaseIds,
+    model_tier: modelTier,
+    modelTier,
+    attachments,
+    is_interruption: isInterruption,
+    skip_auto_followup: skipAutoFollowup,
+    skipAutoFollowup
+  }
+
+  if (boardContext !== null) {
+    body.board_context = boardContext
+  }
+  if (mapContext !== null) {
+    body.map_context = mapContext
+  }
+
+  return body
+}
+
 class ReactAgentAPI {
   constructor() {
     this.controller = null
@@ -31,6 +77,7 @@ class ReactAgentAPI {
       modelTier = 'auto',
       attachments = null,  // ✅ 附件列表
       boardContext = null,
+      mapContext = null,
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
       skipAutoFollowup = false,
@@ -39,27 +86,22 @@ class ReactAgentAPI {
     } = options
 
     const url = `${API_BASE_URL}/agent/analyze`
-    const body = {
-      query,
-      session_id: sessionId,
-      user_id: userIdentifier,  // ✅ 传递用户标识
-      enhance_with_history: enhanceWithHistory,
-      max_iterations: maxIterations,
-      debug_mode: debugMode,
-      assistant_mode: assistantMode,  // 传递助手模式
-      mode: agentMode,  // ✅ 双模式架构
-      knowledge_base_ids: knowledgeBaseIds,  // ✅ 传递知识库ID列表
-      model_tier: modelTier,
+    const body = buildAnalyzeRequestBody(query, {
+      sessionId,
+      enhanceWithHistory,
+      maxIterations,
+      debugMode,
+      assistantMode,
+      agentMode,
+      knowledgeBaseIds,
       modelTier,
-      attachments: attachments,  // ✅ 传递附件列表
-      is_interruption: isInterruption,
-      skip_auto_followup: skipAutoFollowup,
+      attachments,
+      boardContext,
+      mapContext,
+      userIdentifier,
+      isInterruption,
       skipAutoFollowup
-    }
-
-    if (boardContext !== null) {
-      body.board_context = boardContext
-    }
+    })
 
     return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)
   }

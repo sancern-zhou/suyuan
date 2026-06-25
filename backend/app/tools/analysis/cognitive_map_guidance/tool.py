@@ -274,6 +274,58 @@ def build_guidance_from_views(
                 ["describe_table 或 SELECT 白名单表"],
             )
 
+    if agent_mode == "query":
+        query_terms = ("站点", "PM2.5", "PM25", "细颗粒物", "地图", "上图", "定位", "最高", "异常")
+        if any(term in text_blob for term in query_terms):
+            _suggest_tool(
+                suggested_tools,
+                "query_station_standard_report",
+                "站点污染物排名或最高值判断需要先查询真实站点统计数据。",
+                ["cities/stations", "start_time", "end_time", "pollutant_codes"],
+            )
+            _suggest_tool(
+                suggested_tools,
+                "read_data_registry",
+                "站点查询返回 report_data_id/data_id 后，需要读取结果再排序筛选目标站点。",
+                ["data_id", "view"],
+            )
+            _suggest_tool(
+                suggested_tools,
+                "cognitive_map_entity_query",
+                "按实体类型和属性发现真实站点目录、城市/区县归属和经纬度。",
+                ["entity_type", "attribute_filters"],
+            )
+            _suggest_tool(
+                suggested_tools,
+                "cognitive_map_graph_traverse",
+                "从城市或区县实体沿 located_in 反向遍历，发现其下辖站点实体。",
+                ["start_entity", "relation_type", "direction", "depth", "target_entity_type"],
+            )
+            _suggest_tool(
+                suggested_tools,
+                "resolve_station_geo",
+                "站点上图或定位前需要解析确定性站点经纬度、城市、区县和类型。",
+                ["stations 或 station_codes"],
+            )
+            _suggest_tool(
+                suggested_tools,
+                "create_map_point_asset",
+                "Agent 判定目标站点后，将带经纬度的点记录注册成真实 DataRegistry data_id。",
+                ["name", "records", "longitude_field", "latitude_field", "layer_id"],
+            )
+            _suggest_tool(
+                suggested_tools,
+                "gisctl",
+                "获得 create_map_point_asset 返回的 data_id 后，通过 map_program 生成点图层并定位地图。",
+                ["point-layer 或 set-view command"],
+            )
+            data_requirements.append({
+                "requirement": "站点 PM2.5 查询结果、最高站点名称/编码、站点经纬度",
+                "reason": "问数地图闭环需要先以真实数据筛选站点，再解析地理属性并生成地图程序。",
+                "source": "query-mode station workflow",
+                "target": "map_program",
+            })
+
     if not analysis_directions and graph_relations:
         for relation in graph_relations[:5]:
             source, target = _relation_names(relation)

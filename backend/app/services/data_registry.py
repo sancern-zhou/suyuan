@@ -223,7 +223,10 @@ class DataRegistryService:
         return entry
 
     def get_metadata(self, data_id: str) -> Optional[DataRegistryEntry]:
-        return self._index.get(data_id)
+        entry = self._index.get(data_id)
+        if entry:
+            return entry
+        return self._reload_and_get_entry(data_id)
 
     def load_sample(self, data_id: str) -> List[Dict[str, Any]]:
         entry = self._require_entry(data_id)
@@ -263,8 +266,17 @@ class DataRegistryService:
     def _require_entry(self, data_id: str) -> DataRegistryEntry:
         entry = self._index.get(data_id)
         if not entry:
+            entry = self._reload_and_get_entry(data_id)
+        if not entry:
             raise KeyError(f"data_id {data_id} not found in registry")
         return entry
+
+    def _reload_and_get_entry(self, data_id: str) -> Optional[DataRegistryEntry]:
+        if not self.metadata_path.exists():
+            return None
+        with self._lock:
+            self._load_metadata()
+            return self._index.get(data_id)
 
     @staticmethod
     def _sanitize_identifier(identifier: str) -> str:

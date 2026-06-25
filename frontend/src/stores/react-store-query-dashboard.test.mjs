@@ -58,6 +58,33 @@ test('query dashboard metadata keeps existing values when payload omits them', (
   assert.deepEqual(state.answerEvidence, { claims: [{ text: '保留既有证据' }] })
 })
 
+test('query voice output can be stopped explicitly', () => {
+  const storage = new Map()
+  globalThis.localStorage = {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: key => storage.delete(key),
+    clear: () => storage.clear()
+  }
+
+  setActivePinia(createPinia())
+  const store = useReactStore()
+  let stopped = false
+  store.modeStates.query.queryVoicePlayback = {
+    streamed: true,
+    queue: {
+      stop() {
+        stopped = true
+      }
+    }
+  }
+
+  store.stopQueryVoiceOutput()
+
+  assert.equal(stopped, true)
+  assert.equal(store.modeStates.query.queryVoicePlayback, null)
+})
+
 test('complete event writes nested dashboard metadata to final message data', () => {
   const storage = new Map()
   globalThis.localStorage = {

@@ -10,6 +10,7 @@ import {
   getSessionVisualizations,
   getSessionOfficeDocuments,
   getSessionDrawioBoard,
+  deleteSession as deleteSessionRequest,
   markSessionCase,
   unmarkSessionCase
 } from '@/api/session'
@@ -674,7 +675,7 @@ export function useSessionManagement(store) {
     if (!silent) sessionHistoryLoading.value = true
     try {
       refreshInFlight = (async () => {
-        const data = await listSessions({ limit: 50 })
+        const data = await listSessions({ limit: 200 })
         persistedSessionHistoryData.value = data.sessions || []
         sessionHistoryStats.value = data.stats || null
       })()
@@ -732,23 +733,32 @@ export function useSessionManagement(store) {
    * 删除会话
    * @param {string} sessionId - 会话ID
    */
-  const deleteSession = async (sessionId) => {
-    if (!confirm('确定要删除此会话吗？此操作不可恢复。')) return
+  const deleteSessions = async (sessionIds) => {
+    const ids = Array.from(new Set((sessionIds || []).filter(Boolean)))
+    if (ids.length === 0) return false
+
+    const message = ids.length === 1
+      ? '确定要删除此会话吗？此操作不可恢复。'
+      : `确定要删除选中的 ${ids.length} 个会话吗？此操作不可恢复。`
+    if (!confirm(message)) return false
 
     try {
-      const response = await fetch(`/api/sessions/${sessionId}`, {
-        method: 'DELETE'
-      })
-
-      if (!response.ok) throw new Error('Failed to delete session')
-
+      await Promise.all(ids.map(sessionId => deleteSessionRequest(sessionId)))
       await refreshSessionHistory()
       return true
     } catch (error) {
-      console.error('Failed to delete session:', error)
+      console.error('Failed to delete sessions:', error)
       alert('删除失败: ' + error.message)
       return false
     }
+  }
+
+  /**
+   * 删除单个会话
+   * @param {string} sessionId - 会话ID
+   */
+  const deleteSession = async (sessionId) => {
+    return deleteSessions([sessionId])
   }
 
   const handleToggleSessionCase = async (session) => {
@@ -822,6 +832,7 @@ export function useSessionManagement(store) {
     refreshSessionHistory,
     handleSessionCleanup,
     deleteSession,
+    deleteSessions,
     handleToggleSessionCase,
 
     // 会话管理器

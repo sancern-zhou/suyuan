@@ -47,9 +47,9 @@ const toggleLayer = (key, enabled) => {
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  border: 1px solid rgba(32, 49, 58, 0.12);
+  border: 0;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
+  background: transparent;
 }
 
 h3 {

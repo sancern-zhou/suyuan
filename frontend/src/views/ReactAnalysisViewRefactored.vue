@@ -23,6 +23,7 @@
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
       :dashboard-focus="store.currentState.dashboardFocus"
+      :map-program="store.currentState.currentMapProgram"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
@@ -94,6 +95,8 @@
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestore"
       @toggle-session-case="handleToggleSessionCase"
+      @delete-sessions="deleteSessions"
+      @map-event="handleMapEvent"
     />
 
     <!-- 知识库创建对话框 -->
@@ -131,6 +134,7 @@ import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import { PANEL_SIZES } from '@/utils/constants'
+import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -195,6 +199,7 @@ const {
   handleLoadSession,
   refreshSessionHistory,
   handleSessionCleanup,
+  deleteSessions,
   handleToggleSessionCase
 } = useSessionManagement(store)
 
@@ -451,6 +456,20 @@ const handleBoardSnapshotConfirm = async (snapshot) => {
 const handleBoardVersionRestore = (versionId) => {
   if (typeof store.restoreDrawioBoardVersion === 'function') {
     store.restoreDrawioBoardVersion(versionId)
+  }
+}
+
+const handleMapEvent = (event) => {
+  if (typeof store.recordMapEvent === 'function') {
+    store.recordMapEvent(event)
+  }
+  if (event?.receipt) {
+    postMapProgramReceipt({
+      sessionId: event.session_id || currentModeSessionId.value,
+      receipt: event.receipt
+    }).catch(error => {
+      console.warn('Failed to post map program receipt:', error)
+    })
   }
 }
 

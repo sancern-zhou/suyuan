@@ -28,6 +28,46 @@ def content_disposition(disposition: str, filename: str) -> str:
     return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
 
 
+def _office_document_file_path(document: dict) -> Optional[str]:
+    file_path = document.get("file_path") or document.get("path")
+    if file_path:
+        return file_path
+    pdf_preview = document.get("pdf_preview") or {}
+    if isinstance(pdf_preview, dict):
+        return pdf_preview.get("source_file") or pdf_preview.get("office_file_path")
+    return None
+
+
+async def _ensure_pdf_available(pdf_id: str) -> bool:
+    if pdf_converter.pdf_exists(pdf_id):
+        return True
+
+    try:
+        from app.db.session_repository import get_session_repository
+
+        match = await get_session_repository().find_office_document_by_pdf_id(pdf_id)
+        document = (match or {}).get("document") or {}
+        file_path = _office_document_file_path(document)
+        if not file_path:
+            logger.warning("PDF rebuild skipped: no source path for pdf_id=%s", pdf_id)
+            return False
+
+        source_path = Path(file_path).resolve()
+        if not source_path.exists():
+            logger.warning(
+                "PDF rebuild skipped: source file missing for pdf_id=%s source_path=%s",
+                pdf_id,
+                source_path,
+            )
+            return False
+
+        await pdf_converter.rebuild_pdf(pdf_id, str(source_path))
+        return pdf_converter.pdf_exists(pdf_id)
+    except Exception as e:
+        logger.warning("PDF rebuild failed for pdf_id=%s: %s", pdf_id, e, exc_info=True)
+        return False
+
+
 @router.get("/pdf/{pdf_id}")
 async def get_pdf(pdf_id: str):
     """
@@ -41,7 +81,7 @@ async def get_pdf(pdf_id: str):
     """
     pdf_path = pdf_converter.get_pdf_path(pdf_id)
 
-    if not pdf_converter.pdf_exists(pdf_id):
+    if not await _ensure_pdf_available(pdf_id):
         raise HTTPException(status_code=404, detail="PDF not found")
 
     return FileResponse(
@@ -66,7 +106,7 @@ async def download_pdf(pdf_id: str, filename: Optional[str] = None):
     """
     pdf_path = pdf_converter.get_pdf_path(pdf_id)
 
-    if not pdf_converter.pdf_exists(pdf_id):
+    if not await _ensure_pdf_available(pdf_id):
         raise HTTPException(status_code=404, detail="PDF not found")
 
     safe_name = Path(filename).name if filename else f"{pdf_id}.pdf"
@@ -94,7 +134,7 @@ async def get_pdf_info(pdf_id: str):
     """
     pdf_path = pdf_converter.get_pdf_path(pdf_id)
 
-    if not pdf_converter.pdf_exists(pdf_id):
+    if not await _ensure_pdf_available(pdf_id):
         raise HTTPException(status_code=404, detail="PDF not found")
 
     return {

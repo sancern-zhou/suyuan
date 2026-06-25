@@ -30,9 +30,11 @@
         :total-message-count="totalMessageCount"
         :loading-more="loadingMore"
         :dashboard-focus="dashboardFocus"
+        :map-program="mapProgram"
         :drag-over="chatAreaDragOver"
         :right-panel-expanded="rightPanelExpanded"
         :has-viz-content="hasVizContent"
+        :show-management-panel="!!managementPanel"
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
@@ -43,7 +45,89 @@
         @drag-leave="handleChatAreaDragLeave"
         @drop="handleChatAreaDrop"
         @toggle-viz-panel="handleToggleVizPanel"
-      />
+        @map-event="$emit('map-event', $event)"
+      >
+        <template #management-panels>
+          <!-- 管理面板插槽 -->
+          <KnowledgeBasePanel
+            v-if="managementPanel === 'knowledge-base'"
+            @show-create-dialog="$emit('show-kb-create-dialog')"
+            @show-edit-dialog="$emit('show-kb-edit-dialog')"
+            @close="$emit('close-management-panel')"
+            @view-chunks="$emit('view-kb-chunks', $event)"
+            @retry-doc="$emit('retry-kb-doc', $event)"
+            @delete-doc="$emit('delete-kb-doc', $event)"
+          />
+
+          <CognitiveMapPanel
+            v-else-if="managementPanel === 'cognitive-map'"
+            @close="$emit('close-management-panel')"
+          />
+
+          <FetchersPanel
+            v-else-if="managementPanel === 'fetchers'"
+            :fetcher-system-status="fetcherSystemStatus"
+            :fetcher-loading="fetcherLoading"
+            :fetcher-error="fetcherError"
+            :fetcher-operating="fetcherOperating"
+            :era5-historical-date="era5HistoricalDate"
+            :era5-fetch-result="era5FetchResult"
+            @close="$emit('close-management-panel')"
+            @fetch-era5="$emit('fetch-era5', $event)"
+            @refresh-status="$emit('refresh-fetcher-status')"
+            @trigger-fetcher="$emit('trigger-fetcher', $event)"
+            @pause-fetcher="$emit('pause-fetcher', $event)"
+            @resume-fetcher="$emit('resume-fetcher', $event)"
+            @update:era5-historical-date="handleEra5DateChange"
+          />
+
+          <ScheduledTasksPanel
+            v-else-if="managementPanel === 'scheduled-tasks'"
+            :tasks="scheduledTasks"
+            :stats="scheduledTasksStats"
+            :scheduled-tasks-refreshing="scheduledTasksRefreshing"
+            @close="$emit('close-management-panel')"
+            @refresh-tasks="$emit('refresh-scheduled-tasks')"
+            @toggle-task="$emit('toggle-scheduled-task', $event)"
+            @execute-task="$emit('execute-scheduled-task', $event)"
+            @edit-task="$emit('edit-scheduled-task', $event)"
+            @delete-task="$emit('delete-scheduled-task', $event)"
+          />
+
+          <SessionHistoryPanel
+            v-else-if="managementPanel === 'session-history'"
+            :sessions="sessionHistoryData"
+            :session-history-stats="sessionHistoryStats"
+            :session-history-loading="sessionHistoryLoading"
+            @close="$emit('close-management-panel')"
+            @refresh-sessions="$emit('refresh-session-history')"
+            @cleanup-sessions="$emit('cleanup-sessions')"
+            @restore-session="$emit('restore-session', $event)"
+            @toggle-session-case="$emit('toggle-session-case', $event)"
+            @delete-sessions="$emit('delete-sessions', $event)"
+          />
+
+          <SocialPlatformPanel
+            v-else-if="managementPanel === 'social-platform'"
+            @close="$emit('close-management-panel')"
+          />
+
+          <ToolsManagementPanel
+            v-else-if="managementPanel === 'tools-management'"
+            @close="$emit('close-management-panel')"
+          />
+
+          <SkillsManagementPanel
+            v-else-if="managementPanel === 'skills-management'"
+            @close="$emit('close-management-panel')"
+          />
+
+          <FileManagerPanel
+            v-else-if="managementPanel === 'file-manager'"
+            @close="$emit('close-management-panel')"
+          />
+        </template>
+      </QueryDashboardWorkspace>
       <ChatArea
         v-else
         :messages="messages"
@@ -132,6 +216,7 @@
             @cleanup-sessions="$emit('cleanup-sessions')"
             @restore-session="$emit('restore-session', $event)"
             @toggle-session-case="$emit('toggle-session-case', $event)"
+            @delete-sessions="$emit('delete-sessions', $event)"
           />
 
           <SocialPlatformPanel
@@ -277,6 +362,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  mapProgram: {
+    type: Object,
+    default: null
+  },
 
   // 面板状态
   activeModule: {
@@ -417,6 +506,7 @@ const emit = defineEmits([
   'chat-area-drag-leave',
   'chat-area-drop',
   'toggle-viz-panel',
+  'map-event',
   'update:era5HistoricalDate',
   'close-management-panel',
   'show-kb-create-dialog',
@@ -437,7 +527,8 @@ const emit = defineEmits([
   'refresh-session-history',
   'cleanup-sessions',
   'restore-session',
-  'toggle-session-case'
+  'toggle-session-case',
+  'delete-sessions'
 ])
 
 const layoutRef = ref(null)

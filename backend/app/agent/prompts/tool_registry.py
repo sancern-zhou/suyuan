@@ -88,12 +88,20 @@ QUERY_TOOL_NAMES = {
     "query_station_standard_report", "query_station_standard_yoy_report",
     "query_gd_suncere_district_report",
     "analyze_city_pollutant_rankings",
+    "cognitive_map_guidance",
+    "cognitive_map_entity_query",
+    "cognitive_map_graph_traverse",
+    "resolve_station_geo",
 
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
 
     # === 数据注册表工具 ===
     "read_data_registry",
+
+    # === Agentic GIS 控制工具 ===
+    "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "gisctl",
+    "get_map_program_receipt", "wait_map_program_receipt",
 
     # === 数值计算工具 ===
     "execute_python",
@@ -353,6 +361,10 @@ QUERY_TOOL_ORDER = [
 
     # 数据注册表工具
     "read_data_registry",
+
+    # Agentic GIS 控制工具
+    "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "gisctl",
+    "get_map_program_receipt", "wait_map_program_receipt",
 
     # 数值计算
     "execute_python",

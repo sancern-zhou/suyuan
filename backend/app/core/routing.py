@@ -39,6 +39,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.scheduled_task_routes", description="Scheduled tasks"),
     RouterSpec("app.api.scheduled_task_ws", description="Scheduled task WebSocket"),
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
+    RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.office_routes", description="Office preview"),
     RouterSpec("app.api.report_routes", description="Quarto report preview/share"),
     RouterSpec("app.api.html_artifact_routes", description="HTML artifact preview/share"),

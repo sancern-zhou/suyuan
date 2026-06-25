@@ -233,6 +233,7 @@ class ReActAgent:
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
         board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
+        map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -483,6 +484,17 @@ class ReActAgent:
                     selected_count=len(board_context.get("selected_cells") or board_context.get("selectedCells") or []),
                     version=board_context.get("version"),
                     dirty=board_context.get("dirty"),
+                )
+
+            if manual_mode == "query" and map_context:
+                react_loop.context_builder.map_context = map_context
+                map_events = map_context.get("events") or []
+                current_program = map_context.get("current_program") or {}
+                logger.info(
+                    "map_context_set_to_context_builder",
+                    session_id=map_context.get("session_id"),
+                    program_id=current_program.get("program_id") if isinstance(current_program, dict) else None,
+                    event_count=len(map_events) if isinstance(map_events, list) else 0,
                 )
 
             # ✅ 设置记忆文件路径到上下文构建器（所有模式）

@@ -26,6 +26,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { MAP_CONFIG } from '@/config/mapConfig'
 import { loadAMap } from '@/utils/mapLoader'
 import guangdongBoundary from './guangdong-boundary.json'
+import { createMapEvent, summarizeMapView } from './mapEventBridge.js'
+import { loadProgramLayerFeatureEntries } from './mapProgramData.js'
+import {
+  createMapProgramExecutionReceipt,
+  summarizeProgramLayerRenderResults
+} from './mapProgramReceipt.js'
+import { pointIconClassName, resolvePointIconPreset } from './mapProgramPointIcons.js'
 import {
   extractCityMetricMarkers,
   extractHeatPoints,
@@ -54,8 +61,18 @@ const props = defineProps({
   layers: {
     type: Object,
     default: () => ({})
+  },
+  sessionId: {
+    type: String,
+    default: ''
+  },
+  mapProgram: {
+    type: Object,
+    default: null
   }
 })
+
+const emit = defineEmits(['map-event'])
 
 const mapContainer = ref(null)
 const loading = ref(false)
@@ -67,6 +84,7 @@ let overlays = []
 let provinceOverlays = []
 let heatmapLayer = null
 let destroyed = false
+let overlayRenderToken = 0
 const heatmapUnavailable = ref(false)
 
 const overviewLabel = computed(() => {
@@ -84,13 +102,65 @@ const markerValue = (value) => {
 }
 
 const markerContent = (marker) => {
+  const iconClass = marker.icon ? `icon-${pointIconClassName(marker.icon)}` : ''
   const classes = [
     'gd-overview-marker',
     marker.type === 'station' ? 'station' : 'city',
+    iconClass,
     marker.focused ? 'focused' : ''
   ].filter(Boolean).join(' ')
   const value = markerValue(marker.value)
   return `<div class="${classes}"><span>${value}</span></div>`
+}
+
+const collectActiveLayerIds = () => {
+  const dashboardLayers = Object.entries(props.layers || {})
+    .filter(([, visible]) => visible)
+    .map(([layerId]) => layerId)
+
+  const programLayers = Array.isArray(props.mapProgram?.state?.layers)
+    ? props.mapProgram.state.layers
+      .filter(layer => layer?.lifecycle?.visible !== false)
+      .map(layer => layer.id)
+      .filter(Boolean)
+    : []
+
+  return [...new Set([...dashboardLayers, ...programLayers])]
+}
+
+const emitMapEvent = (eventName) => {
+  if (!map) return
+  emit('map-event', createMapEvent(eventName, {
+    sessionId: props.sessionId,
+    activeLayers: collectActiveLayerIds(),
+    mapView: summarizeMapView(map)
+  }))
+}
+
+const emitMapProgramReceipt = (eventName, receipt) => {
+  if (!map || !props.mapProgram?.program_id) return
+  emit('map-event', createMapEvent(eventName, {
+    sessionId: props.sessionId,
+    activeLayers: collectActiveLayerIds(),
+    mapView: summarizeMapView(map),
+    receipt
+  }))
+}
+
+const handleMapViewChanged = () => {
+  emitMapEvent('view_changed')
+}
+
+const attachMapEventListeners = () => {
+  if (!map || typeof map.on !== 'function') return
+  map.on('moveend', handleMapViewChanged)
+  map.on('zoomend', handleMapViewChanged)
+}
+
+const detachMapEventListeners = () => {
+  if (!map || typeof map.off !== 'function') return
+  map.off('moveend', handleMapViewChanged)
+  map.off('zoomend', handleMapViewChanged)
 }
 
 const clearOverlays = () => {
@@ -241,8 +311,121 @@ const createMarker = (marker) => {
   })
 }
 
-const renderOverlays = () => {
+const createProgramPointMarker = (layer, feature) => {
+  const coordinates = feature?.geometry?.coordinates
+  if (!Array.isArray(coordinates) || coordinates.length < 2) return null
+  const properties = feature.properties || {}
+  const icon = resolvePointIconPreset(layer.style || {}, properties)
+  return createMarker({
+    type: 'station',
+    name: properties.name || properties.station_name || layer.name || layer.id,
+    position: coordinates,
+    value: properties.value ?? properties.pm25 ?? null,
+    icon,
+    focused: true
+  })
+}
+
+const normalizePolygonRings = (geometry) => {
+  if (geometry?.type === 'Polygon') {
+    return Array.isArray(geometry.coordinates)
+      ? geometry.coordinates.map(normalizeBoundaryPath).filter(path => path.length > 0)
+      : []
+  }
+  if (geometry?.type === 'MultiPolygon') {
+    return Array.isArray(geometry.coordinates)
+      ? geometry.coordinates
+        .flatMap(polygon => polygon.map(normalizeBoundaryPath))
+        .filter(path => path.length > 0)
+      : []
+  }
+  return []
+}
+
+const createProgramPolygon = (layer, feature) => {
+  if (!AMapApi?.Polygon) return null
+  const path = normalizePolygonRings(feature?.geometry)
+  if (!path.length) return null
+  const style = layer.style || {}
+  const properties = feature?.properties || {}
+  const fillColorField = style.feature_fill_color_field || 'fill_color'
+  const fillOpacityField = style.feature_fill_opacity_field || 'fill_opacity'
+  const strokeColorField = style.feature_stroke_color_field || 'stroke_color'
+  const strokeOpacityField = style.feature_stroke_opacity_field || 'stroke_opacity'
+  return new AMapApi.Polygon({
+    path,
+    title: feature?.properties?.name || layer.name || layer.id,
+    strokeColor: properties[strokeColorField] || style.stroke_color || style.strokeColor || '#1f5fbf',
+    strokeWeight: style.stroke_weight ?? style.strokeWeight ?? 2,
+    strokeOpacity: properties[strokeOpacityField] ?? style.stroke_opacity ?? style.strokeOpacity ?? 0.9,
+    fillColor: properties[fillColorField] || style.fill_color || style.fillColor || '#2f80ed',
+    fillOpacity: properties[fillOpacityField] ?? style.fill_opacity ?? style.fillOpacity ?? 0.18,
+    zIndex: style.z_index ?? style.zIndex ?? 105,
+    bubble: true
+  })
+}
+
+const normalizeLinePaths = (geometry) => {
+  if (geometry?.type === 'LineString') {
+    const path = normalizeBoundaryPath(geometry.coordinates)
+    return path.length > 0 ? [path] : []
+  }
+  if (geometry?.type === 'MultiLineString') {
+    return Array.isArray(geometry.coordinates)
+      ? geometry.coordinates.map(normalizeBoundaryPath).filter(path => path.length > 0)
+      : []
+  }
+  return []
+}
+
+const createProgramLine = (layer, feature) => {
+  if (!AMapApi?.Polyline) return null
+  const paths = normalizeLinePaths(feature?.geometry)
+  if (!paths.length) return null
+  const style = layer.style || {}
+  return paths.map(path => new AMapApi.Polyline({
+    path,
+    title: feature?.properties?.name || layer.name || layer.id,
+    strokeColor: style.stroke_color || style.strokeColor || '#d7191c',
+    strokeWeight: style.stroke_weight ?? style.strokeWeight ?? 2,
+    strokeOpacity: style.stroke_opacity ?? style.strokeOpacity ?? 0.92,
+    zIndex: style.z_index ?? style.zIndex ?? 112,
+    bubble: true
+  }))
+}
+
+const createProgramOverlay = (layer, feature) => {
+  if (layer?.layer_type === 'point') return createProgramPointMarker(layer, feature)
+  if (layer?.layer_type === 'polygon') return createProgramPolygon(layer, feature)
+  if (layer?.layer_type === 'line') return createProgramLine(layer, feature)
+  return null
+}
+
+const collectProgramOverlayResult = async () => {
+  const entries = await loadProgramLayerFeatureEntries(props.mapProgram)
+  const programOverlays = entries
+    .map(({ layer, feature }) => createProgramOverlay(layer, feature))
+    .flat()
+    .filter(Boolean)
+  return {
+    entries,
+    programOverlays
+  }
+}
+
+const applyProgramFitBounds = (programOverlays) => {
+  const view = props.mapProgram?.state?.view || {}
+  if (view.fit_bounds !== true || !programOverlays?.length || typeof map?.setFitView !== 'function') return
+  try {
+    map.setFitView(programOverlays)
+  } catch {
+    // Fit bounds is a navigation convenience; rendering should still succeed if the map API rejects an overlay class.
+  }
+}
+
+const renderOverlays = async () => {
   if (!map || !AMapApi) return
+  const token = ++overlayRenderToken
   clearOverlays()
   clearHeatmap()
 
@@ -254,9 +437,41 @@ const renderOverlays = () => {
     nextOverlays.push(...extractStationMarkers(props.overview, props.focus).map(createMarker))
   }
 
+  let programReceipt = null
+  let programOverlays = []
+  try {
+    const programResult = await collectProgramOverlayResult()
+    programOverlays = programResult.programOverlays
+    nextOverlays.push(...programOverlays)
+    if (props.mapProgram?.program_id) {
+      programReceipt = createMapProgramExecutionReceipt(props.mapProgram, {
+        status: 'executed',
+        layers: summarizeProgramLayerRenderResults(props.mapProgram, programResult.entries)
+      })
+    }
+  } catch (err) {
+    if (props.mapProgram?.program_id) {
+      programReceipt = createMapProgramExecutionReceipt(props.mapProgram, {
+        status: 'failed',
+        errors: [{ message: err?.message || 'map program layer rendering failed' }]
+      })
+    }
+    // Program layer data is optional; dashboard base layers should still render.
+  }
+
+  if (token !== overlayRenderToken || destroyed || !map) return
+
   overlays = nextOverlays
   if (overlays.length > 0) {
     map.add(overlays)
+  }
+  applyProgramFitBounds(programOverlays)
+
+  if (programReceipt) {
+    emitMapProgramReceipt(
+      programReceipt.status === 'failed' ? 'map_program_failed' : 'map_program_executed',
+      programReceipt
+    )
   }
 
   if (props.layers?.heatmap) {
@@ -292,6 +507,33 @@ const renderHeatmap = () => {
   }
 }
 
+const normalizeCenter = (center) => {
+  if (!Array.isArray(center) || center.length < 2) return null
+  const lng = Number(center[0])
+  const lat = Number(center[1])
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null
+  return [lng, lat]
+}
+
+const applyProgramView = () => {
+  if (!map) return
+  const view = props.mapProgram?.state?.view || {}
+  const center = normalizeCenter(view.center)
+  const zoom = Number(view.zoom)
+  const hasZoom = Number.isFinite(zoom)
+
+  if (center && hasZoom && typeof map.setZoomAndCenter === 'function') {
+    map.setZoomAndCenter(zoom, center)
+    return
+  }
+  if (center && typeof map.setCenter === 'function') {
+    map.setCenter(center)
+  }
+  if (hasZoom && typeof map.setZoom === 'function') {
+    map.setZoom(zoom)
+  }
+}
+
 const addControls = () => {
   try {
     if (AMapApi.Scale) map.addControl(new AMapApi.Scale())
@@ -320,9 +562,11 @@ const initMap = async () => {
       viewMode: '2D'
     })
     map.setZoomAndCenter(GUANGDONG_FOCUS_ZOOM, GUANGDONG_CENTER)
+    attachMapEventListeners()
     addControls()
     renderProvinceFocus()
-    renderOverlays()
+    applyProgramView()
+    await renderOverlays()
   } catch (err) {
     error.value = err?.message || '高德地图加载失败。'
   } finally {
@@ -331,8 +575,11 @@ const initMap = async () => {
 }
 
 watch(
-  () => [props.overview, props.focus, props.layers],
-  renderOverlays,
+  () => [props.overview, props.focus, props.layers, props.mapProgram],
+  async () => {
+    applyProgramView()
+    await renderOverlays()
+  },
   { deep: true }
 )
 
@@ -345,6 +592,7 @@ onBeforeUnmount(() => {
   clearOverlays()
   clearProvinceOverlays()
   clearHeatmap()
+  detachMapEventListeners()
   if (map) {
     try {
       map.destroy()
@@ -472,5 +720,52 @@ onBeforeUnmount(() => {
 :deep(.gd-overview-marker.focused) {
   background: #d4523f;
   box-shadow: 0 0 0 4px rgba(212, 82, 63, 0.22), 0 4px 12px rgba(32, 49, 58, 0.28);
+}
+
+:deep(.gd-overview-marker.station.icon-pollution_source) {
+  background: #7a4d9f;
+}
+
+:deep(.gd-overview-marker.station.icon-factory) {
+  background: #49545a;
+  border-radius: 5px;
+}
+
+:deep(.gd-overview-marker.station.icon-dust) {
+  background: #b7791f;
+  border-style: dashed;
+}
+
+:deep(.gd-overview-marker.station.icon-traffic) {
+  width: 24px;
+  height: 18px;
+  background: #2f6f8f;
+  border-radius: 6px;
+}
+
+:deep(.gd-overview-marker.station.icon-fire) {
+  background: #c2412d;
+  border-radius: 50% 50% 50% 8px;
+  transform: rotate(-45deg);
+}
+
+:deep(.gd-overview-marker.station.icon-monitor) {
+  background: #1f7a75;
+  border-radius: 4px;
+}
+
+:deep(.gd-overview-marker.station.icon-selected) {
+  background: #d4523f;
+  box-shadow: 0 0 0 5px rgba(212, 82, 63, 0.24), 0 4px 12px rgba(32, 49, 58, 0.28);
+}
+
+:deep(.gd-overview-marker.station.icon-pollution_source span),
+:deep(.gd-overview-marker.station.icon-factory span),
+:deep(.gd-overview-marker.station.icon-dust span),
+:deep(.gd-overview-marker.station.icon-traffic span),
+:deep(.gd-overview-marker.station.icon-fire span),
+:deep(.gd-overview-marker.station.icon-monitor span),
+:deep(.gd-overview-marker.station.icon-selected span) {
+  display: none;
 }
 </style>

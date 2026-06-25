@@ -77,6 +77,51 @@ class PDFConverter:
             logger.error(f"PDF conversion error: {e}", exc_info=True)
             raise
 
+    async def rebuild_pdf(self, pdf_id: str, office_file_path: str) -> dict:
+        """
+        Rebuild a missing cached PDF while preserving its historical PDF id.
+
+        Historical sessions store pdf_url values that include pdf_id. Regenerating
+        with a new id would leave the restored iframe pointing at the old URL, so
+        recovery writes the converted PDF back to the old cache path.
+        """
+        try:
+            pdf_path = self.get_pdf_path(pdf_id)
+
+            result = run_soffice([
+                "--headless",
+                "--convert-to", "pdf",
+                "--outdir", str(self.output_dir),
+                office_file_path
+            ])
+
+            if result.returncode != 0:
+                logger.error(f"LibreOffice PDF rebuild failed: {result.stderr}")
+                raise Exception(f"PDF rebuild failed: {result.stderr}")
+
+            converted_files = [
+                path
+                for path in self.output_dir.glob("*.pdf")
+                if path.name != f"{pdf_id}.pdf"
+            ]
+            if not converted_files:
+                raise Exception("No PDF file generated during rebuild")
+
+            converted_pdf = max(converted_files, key=lambda p: p.stat().st_mtime)
+            shutil.move(str(converted_pdf), str(pdf_path))
+
+            return {
+                "pdf_id": pdf_id,
+                "pdf_path": str(pdf_path),
+                "pdf_url": f"/api/office/pdf/{pdf_id}",
+                "pages": self._get_pdf_page_count(pdf_path),
+                "size": pdf_path.stat().st_size
+            }
+
+        except Exception as e:
+            logger.error(f"PDF rebuild error: {e}", exc_info=True)
+            raise
+
     def _get_pdf_page_count(self, pdf_path: Path) -> int:
         """Get the number of pages in the PDF"""
         if pypdf is None:
