@@ -486,12 +486,13 @@ class ReActAgent:
                     dirty=board_context.get("dirty"),
                 )
 
-            if manual_mode == "query" and map_context:
+            if manual_mode in {"query", "graph"} and map_context:
                 react_loop.context_builder.map_context = map_context
                 map_events = map_context.get("events") or []
                 current_program = map_context.get("current_program") or {}
                 logger.info(
                     "map_context_set_to_context_builder",
+                    mode=manual_mode,
                     session_id=map_context.get("session_id"),
                     program_id=current_program.get("program_id") if isinstance(current_program, dict) else None,
                     event_count=len(map_events) if isinstance(map_events, list) else 0,
