@@ -12,6 +12,7 @@ from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .chart_prompt import build_chart_prompt
 from .ops_prompt import build_ops_prompt
+from .graph_prompt import build_graph_prompt
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -31,6 +32,7 @@ AgentMode = Literal[
     "social",
     "chart",
     "ops",
+    "graph",
     "memory_consolidator",
     "deliberation_meteorology",
     "deliberation_monitoring",
@@ -110,6 +112,8 @@ def build_react_system_prompt(
         return build_chart_prompt(filtered_tools, memory_context, memory_file_path, board_context)
     elif mode == "ops":
         return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "graph":
+        return build_graph_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_meteorology":
         return build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "deliberation_monitoring":
