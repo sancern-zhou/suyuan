@@ -268,6 +268,13 @@ class SimplifiedContextBuilder:
                 "- 地图事件代表用户已在 GIS 中完成的操作，例如框选、视图变化、图层开关；分析时应把它当作当前对话状态。\n"
                 "- `map_program_executed` / `map_program_failed` 是前端执行回执；只有回执中 `layer_rendered` 且 feature_count > 0 的图层，才能视为已经真实显示。"
             )
+        if self.current_mode == "graph" and self.map_context:
+            sections.append(
+                "## 认知地图图谱编辑上下文\n"
+                "- 当前请求来自认知地图面板右侧的对话编辑入口。\n"
+                "- 用户可能用“这个节点”“这条关系”“刚才那个实体”等表达指代，优先结合用户消息中的“当前认知地图上下文”。\n"
+                "- 修改图谱时默认通过认知地图 REST API 完成，不要直接改内部 JSON 文件。"
+            )
         if self.cognitive_map_context:
             sections.append(str(self.cognitive_map_context).strip())
         sections.append(self._build_agent_control_prompt())
@@ -330,9 +337,9 @@ class SimplifiedContextBuilder:
             )
             self.board_context = None
 
-        if mode != "query" and self.map_context is not None:
+        if mode not in {"query", "graph"} and self.map_context is not None:
             logger.warning(
-                "non_query_map_context_stripped",
+                "mode_without_map_context_stripped",
                 mode=mode,
             )
             self.map_context = None
@@ -473,6 +480,43 @@ class SimplifiedContextBuilder:
 
         return "\n".join(lines)
 
+    def _build_graph_map_context_user_summary(self) -> str:
+        """Build a compact current-turn summary for cognitive-map graph editing."""
+        if self.current_mode != "graph" or not isinstance(self.map_context, dict):
+            return ""
+
+        active_map_id = self.map_context.get("active_map_id") or self.map_context.get("map_id")
+        if not active_map_id:
+            return "## 当前认知地图上下文\n未收到 active_map_id；请先在认知地图面板选择地图。"
+
+        lines = ["## 当前认知地图上下文", f"active_map_id={active_map_id}"]
+        active_map_name = self.map_context.get("active_map_name") or self.map_context.get("map_name")
+        if active_map_name:
+            lines.append(f"active_map_name={active_map_name}")
+
+        selected_item = self.map_context.get("selected_item")
+        if isinstance(selected_item, dict):
+            item_kind = selected_item.get("kind") or "unknown"
+            item_id = selected_item.get("id") or selected_item.get("entity_id") or selected_item.get("relation_id") or ""
+            item_name = selected_item.get("name") or selected_item.get("label") or ""
+            lines.append(f"selected_item kind={item_kind} id={item_id} name={item_name}")
+
+        visible_entity_ids = self.map_context.get("visible_entity_ids") or []
+        visible_relation_ids = self.map_context.get("visible_relation_ids") or []
+        if isinstance(visible_entity_ids, list):
+            lines.append(f"visible_entity_ids={len(visible_entity_ids)}")
+        if isinstance(visible_relation_ids, list):
+            lines.append(f"visible_relation_ids={len(visible_relation_ids)}")
+
+        entity_count = self.map_context.get("entity_count")
+        relation_count = self.map_context.get("relation_count")
+        if entity_count is not None:
+            lines.append(f"entity_count={entity_count}")
+        if relation_count is not None:
+            lines.append(f"relation_count={relation_count}")
+
+        return "\n".join(lines)
+
     def _build_user_conversation(
         self,
         query: str,
@@ -593,6 +637,9 @@ class SimplifiedContextBuilder:
             map_context_summary = self._build_map_context_user_summary()
             if map_context_summary:
                 sections.append(map_context_summary)
+            graph_map_context_summary = self._build_graph_map_context_user_summary()
+            if graph_map_context_summary:
+                sections.append(graph_map_context_summary)
 
             # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
@@ -618,6 +665,9 @@ class SimplifiedContextBuilder:
             map_context_summary = self._build_map_context_user_summary()
             if map_context_summary:
                 sections.append(map_context_summary)
+            graph_map_context_summary = self._build_graph_map_context_user_summary()
+            if graph_map_context_summary:
+                sections.append(graph_map_context_summary)
             sections.append(f"{current_input_section}\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）

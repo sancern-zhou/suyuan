@@ -597,12 +597,13 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 dirty=request.board_context.get("dirty"),
                 updated_at=request.board_context.get("updated_at") or request.board_context.get("updatedAt"),
             )
-        if request.mode == "query" and request.map_context:
+        if request.mode in {"query", "graph"} and request.map_context:
             analyze_kwargs["map_context"] = request.map_context
             map_events = request.map_context.get("events") or []
             current_program = request.map_context.get("current_program") or {}
             logger.info(
-                "query_map_context_received",
+                "agent_map_context_received",
+                mode=request.mode,
                 session_id=request.session_id,
                 program_id=current_program.get("program_id") if isinstance(current_program, dict) else None,
                 event_count=len(map_events) if isinstance(map_events, list) else 0,
