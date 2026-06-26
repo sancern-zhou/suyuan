@@ -188,6 +188,14 @@
                   >
                     Agent接入
                   </button>
+                  <button
+                    class="tree-node"
+                    type="button"
+                    :class="{ active: inspectorTab === 'graph-chat' }"
+                    @click="openManagementDrawer('graph-chat')"
+                  >
+                    对话编辑
+                  </button>
 
                   <div class="tree-group">
                     <button
@@ -437,6 +445,16 @@
                     <div v-else-if="bindingMessage" class="form-success">{{ bindingMessage }}</div>
                   </section>
 
+                  <section v-else-if="inspectorTab === 'graph-chat'" class="inspector-section">
+                    <CognitiveMapGraphChat
+                      :current-map="currentMap"
+                      :selected-graph-item="selectedGraphItem"
+                      :entities="entities"
+                      :relations="relations"
+                      @graph-updated="handleGraphChatUpdated"
+                    />
+                  </section>
+
                   <section v-else-if="inspectorTab === 'entities'" class="inspector-section">
                     <div class="selection-title">实体</div>
                     <div v-if="entities.length === 0" class="state-text">暂无实体</div>
@@ -524,6 +542,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import CognitiveMapGraphChat from './CognitiveMapGraphChat.vue'
 import { collectSettledRefreshPayloads } from '@/utils/cognitiveMapRefresh'
 import {
   buildCognitiveMap,
@@ -1033,6 +1052,13 @@ const clearCurrentMapData = () => {
 const refreshAll = async () => {
   await refreshMaps()
   await refreshCurrentMapData()
+}
+
+const handleGraphChatUpdated = async () => {
+  if (!currentMap.value?.id) return
+  await refreshCurrentMapData()
+  await refreshMaps()
+  updateCurrentMapFromList()
 }
 
 const selectMap = async (map) => {
