@@ -21,7 +21,7 @@ import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue.js'
 import { restoreMapScene } from './reactStoreMapScene.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
+const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops', 'graph']
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 export const isQueryVoiceOutputEnabled = () => {
@@ -448,7 +448,8 @@ export const useReactStore = defineStore('react', {
         query: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
-        ops: createEmptyModeState()
+        ops: createEmptyModeState(),
+        graph: createEmptyModeState()
       },
 
       // 同一模式下的多会话状态，key 为完整 sessionId
@@ -2903,7 +2904,11 @@ export const useReactStore = defineStore('react', {
 
       try {
         const boardContext = actualMode === 'chart' ? this.buildBoardContext(actualMode, sessionState) : null
-        const mapContext = actualMode === 'query' ? buildMapContext(sessionState) : null
+        const mapContext = actualMode === 'graph'
+          ? options.mapContext || null
+          : actualMode === 'query'
+            ? buildMapContext(sessionState)
+            : null
         if (boardContext) {
           console.log('[drawio-board] board_context will be sent', {
             sessionId: sessionState.sessionId,
