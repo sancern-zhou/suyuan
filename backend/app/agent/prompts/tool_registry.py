@@ -209,6 +209,16 @@ OPS_TOOL_NAMES = {
     "read_file", "write_file", "present_artifact", "edit_file", "grep", "list_directory", "search_files", "list_skills", "view_skill",
 }
 
+# ===== 认知地图图谱编辑模式工具 =====
+GRAPH_TOOL_NAMES = [
+    "cognitive_map_guidance",
+    "read_file",
+    "grep",
+    "list_directory",
+    "search_files",
+    "execute_python",
+]
+
 # ===== 社交模式工具（移动端助理） =====
 SOCIAL_TOOL_NAMES = {
     # === 系统操作 ===
@@ -443,6 +453,15 @@ OPS_TOOL_ORDER = [
     "grep", "write_file", "present_artifact", "edit_file", "list_directory", "search_files",
 ]
 
+GRAPH_TOOL_ORDER = [
+    "cognitive_map_guidance",
+    "read_file",
+    "grep",
+    "list_directory",
+    "search_files",
+    "execute_python",
+]
+
 CHART_TOOL_ORDER = [
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash", "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
@@ -502,6 +521,7 @@ QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
+GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
@@ -528,6 +548,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "social": SOCIAL_TOOLS,
         "chart": CHART_TOOLS,
         "ops": OPS_TOOLS,
+        "graph": GRAPH_TOOLS,
         "memory_consolidator": MEMORY_CONSOLIDATOR_TOOLS,
         "deliberation_meteorology": DELIBERATION_METEOROLOGY_TOOLS,
         "deliberation_monitoring": DELIBERATION_MONITORING_TOOLS,
@@ -559,8 +580,14 @@ def get_tool_order(mode: str) -> List[str]:
         "social": SOCIAL_TOOL_ORDER,
         "chart": CHART_TOOL_ORDER,
         "ops": OPS_TOOL_ORDER,
+        "graph": GRAPH_TOOL_ORDER,
         "memory_consolidator": MEMORY_CONSOLIDATOR_TOOL_ORDER,
         "deliberation_reviewer": DELIBERATION_REVIEWER_TOOL_ORDER,
     }
 
     return order_mapping.get(mode, [])
+
+
+def get_tool_order_by_mode(mode: str) -> List[str]:
+    """Compatibility alias for callers that name the mode explicitly."""
+    return get_tool_order(mode)
