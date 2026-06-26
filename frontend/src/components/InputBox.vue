@@ -293,7 +293,7 @@ const showWorkflowTools = ref(false)
 const atSymbolIndex = ref(-1)  // 记录@符号的位置
 const highlightedTool = ref(null)  // 高亮的工具
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
-const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
+const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops', 'graph']
 // ✅ 使用统一的模式键名，与 store.currentMode 保持一致
 const cachedMode = localStorage.getItem('current-mode') || 'assistant'
 const initialAgentMode = validAgentModes.includes(reactStore.currentMode)
