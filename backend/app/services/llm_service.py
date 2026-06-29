@@ -27,6 +27,7 @@ from app.services.llm_failover import (
     summarize_attempts,
 )
 from app.services.chat_completions_adapter import (
+    ChatCompletionsStreamAdapter,
     convert_anthropic_messages_to_chat,
     convert_anthropic_tools_to_chat,
     convert_chat_response_to_anthropic,
@@ -2724,6 +2725,49 @@ class LLMService:
             response.raise_for_status()
         return convert_chat_response_to_anthropic(response.json())
 
+    async def _chat_completions_stream(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        max_tokens: Optional[int],
+        temperature: float,
+        system: Optional[str],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        url, headers = self._get_request_config()
+        payload = self._build_chat_completions_payload(
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            stream=True,
+        )
+        logger.info(
+            "llm_chat_completions_streaming_request",
+            provider=self.provider,
+            model=self.model,
+            api_mode=self.api_mode,
+            messages_count=len(payload["messages"]),
+            has_tools=bool(payload.get("tools")),
+        )
+        adapter = ChatCompletionsStreamAdapter(model=self.model)
+        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data = line[len("data: "):].strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    for event in adapter.feed_chunk(chunk):
+                        yield event
+        for event in adapter.finish():
+            yield event
+
     async def chat_anthropic(
         self,
         messages: List[Dict[str, str]],
@@ -2968,6 +3012,19 @@ class LLMService:
         if auto_profile:
             with self.use_auto_profile(auto_profile):
                 async for event in self.chat_anthropic_streaming(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                ):
+                    yield event
+            return
+
+        if self.api_mode == "chat_completions":
+            semaphore = get_llm_pool_semaphore(self.provider, self.model)
+            async with semaphore:
+                async for event in self._chat_completions_stream(
                     messages=messages,
                     tools=tools,
                     max_tokens=max_tokens,
