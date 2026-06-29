@@ -184,10 +184,6 @@ class RuntimeEventBus:
             data["status"] = status
         if reason:
             data["reason"] = reason
-        if isinstance(state.dashboard_focus, dict):
-            data["dashboard_focus"] = state.dashboard_focus
-        if isinstance(state.answer_evidence, dict):
-            data["answer_evidence"] = state.answer_evidence
         return {"type": "complete", "stream": "final", "data": data}
 
     def error(self, state: RunState, error: Exception) -> Dict[str, Any]:

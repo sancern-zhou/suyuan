@@ -115,6 +115,19 @@
           <div class="workbench-layout" :class="{ 'drawer-open': isInspectorExpanded }">
             <section class="graph-workspace">
               <div class="graph-toolbar">
+                <div v-if="relationCategories.length" class="relation-filter">
+                  <button
+                    v-for="category in relationCategories"
+                    :key="category.rawName"
+                    class="legend-item relation-legend-item"
+                    type="button"
+                    :class="{ muted: isRelationTypeHidden(category.rawName) }"
+                    @click="toggleRelationType(category.rawName)"
+                  >
+                    <i :style="{ backgroundColor: category.itemStyle.color }"></i>
+                    {{ category.name }}
+                  </button>
+                </div>
                 <div class="graph-legend">
                   <button
                     v-for="category in graphCategories"
@@ -129,20 +142,12 @@
                   </button>
                 </div>
                 <div class="graph-toolbar-actions">
+                  <label class="graph-toggle">
+                    <input v-model="showRelationLabels" type="checkbox" />
+                    <span>关系标签</span>
+                  </label>
                   <button class="panel-btn" type="button" @click="clearGraphFilters">显示全部</button>
-                  <button class="panel-btn" type="button" @click="fitGraph">适配视图</button>
                 </div>
-              </div>
-              <div v-if="relationTypes.length" class="relation-filter">
-                <button
-                  v-for="type in relationTypes"
-                  :key="type"
-                  type="button"
-                  :class="{ muted: isRelationTypeHidden(type) }"
-                  @click="toggleRelationType(type)"
-                >
-                  {{ formatRelationType(type) }}
-                </button>
               </div>
               <div v-if="entities.length === 0" class="graph-empty-state">
                 暂无可视化数据，请先上传文件并构建地图
@@ -154,204 +159,181 @@
             </section>
 
             <aside v-if="isInspectorExpanded" class="management-drawer">
-              <div class="drawer-header">
-                <div>
-                  <strong>{{ currentMap.name || '认知地图' }}</strong>
-                  <span>{{ entities.length }} 个实体 / {{ relations.length }} 条关系</span>
-                </div>
-                <button class="panel-btn" type="button" @click="closeManagementDrawer">关闭</button>
+              <div class="management-tabs" role="tablist" aria-label="认知地图管理视图">
+                <button
+                  v-for="tab in managementTabOptions"
+                  :key="tab.id"
+                  class="management-tab"
+                  type="button"
+                  role="tab"
+                  :aria-selected="inspectorTab === tab.id"
+                  :class="{ active: inspectorTab === tab.id }"
+                  @click="openManagementDrawer(tab.id)"
+                >
+                  {{ tab.name }}
+                  <span v-if="tab.count !== undefined">{{ tab.count }}</span>
+                </button>
+                <button class="management-close-btn" type="button" @click="closeManagementDrawer">关闭</button>
               </div>
 
               <div class="drawer-body">
-                <nav class="drawer-tree" aria-label="认知地图管理树">
-                  <button
-                    class="tree-node root-node"
-                    type="button"
-                    :class="{ active: inspectorTab === 'selection' && !selectedGraphItem }"
-                    @click="showMapOverview"
-                  >
-                    {{ currentMap.name || '当前地图' }}
-                  </button>
-                  <button
-                    class="tree-node"
-                    type="button"
-                    :class="{ active: inspectorTab === 'build' }"
-                    @click="openManagementDrawer('build')"
-                  >
-                    构建与文件
-                  </button>
-                  <button
-                    class="tree-node"
-                    type="button"
-                    :class="{ active: inspectorTab === 'binding' }"
-                    @click="openManagementDrawer('binding')"
-                  >
-                    Agent接入
-                  </button>
-                  <button
-                    class="tree-node"
-                    type="button"
-                    :class="{ active: inspectorTab === 'graph-chat' }"
-                    @click="openManagementDrawer('graph-chat')"
-                  >
-                    对话编辑
-                  </button>
-
-                  <div class="tree-group">
+                <section v-if="inspectorTab === 'selection'" class="hierarchy-workbench">
+                  <div class="hierarchy-list-pane">
+                    <div class="pane-header">
+                      <strong>实体层级</strong>
+                      <span>{{ entities.length }} 个实体</span>
+                    </div>
                     <button
-                      class="tree-node group-node"
+                      class="tree-node root-node overview-node"
                       type="button"
-                      :class="{ active: inspectorTab === 'entities' && !selectedGraphItem }"
-                      @click="openManagementDrawer('entities')"
+                      :class="{ active: !selectedGraphItem }"
+                      @click="showMapOverview"
                     >
-                      实体
-                      <span>{{ entities.length }}</span>
+                      {{ currentMap.name || '当前地图' }}
                     </button>
-                    <div
-                      v-for="group in entityTreeGroups"
-                      :key="group.type"
-                      class="tree-children"
-                    >
-                      <div class="tree-label">{{ formatEntityType(group.type) }}</div>
+                    <div v-if="entityHierarchyRows.length" class="hierarchy-tree">
                       <button
-                        v-for="entity in group.items"
-                        :key="entity.entity_id || entity.id || entity.name"
-                        class="tree-node leaf-node"
+                        v-for="row in entityHierarchyRows"
+                        :key="row.key"
+                        class="tree-node leaf-node hierarchy-node"
                         type="button"
-                        :class="{ active: isSelectedTreeItem('entity', entity) }"
-                        @click="selectEntity(entity)"
+                        :class="{ active: isSelectedTreeItem('entity', row.entity), cycle: row.cycle }"
+                        :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+                        @click="selectEntity(row.entity)"
                       >
-                        {{ entity.name || '未命名实体' }}
+                        <span class="tree-node-name">{{ row.entity.name || '未命名实体' }}</span>
+                        <span v-if="row.relation" class="relation-badge">
+                          {{ formatRelationType(row.relation.relation_type || row.relation.type) }}
+                        </span>
+                        <span v-if="row.cycle" class="relation-badge cycle-badge">已出现</span>
+                      </button>
+                    </div>
+                    <div v-else class="tree-label">暂无实体关系层级</div>
+                    <div v-if="orphanHierarchyRows.length" class="hierarchy-tree orphan-tree">
+                      <div class="tree-label">未连接实体</div>
+                      <button
+                        v-for="row in orphanHierarchyRows"
+                        :key="row.key"
+                        class="tree-node leaf-node hierarchy-node"
+                        type="button"
+                        :class="{ active: isSelectedTreeItem('entity', row.entity) }"
+                        @click="selectEntity(row.entity)"
+                      >
+                        <span class="tree-node-name">{{ row.entity.name || '未命名实体' }}</span>
                       </button>
                     </div>
                   </div>
 
-                  <div class="tree-group">
-                    <button
-                      class="tree-node group-node"
-                      type="button"
-                      :class="{ active: inspectorTab === 'relations' && !selectedGraphItem }"
-                      @click="openManagementDrawer('relations')"
-                    >
-                      关系
-                      <span>{{ relations.length }}</span>
-                    </button>
-                    <div
-                      v-for="group in relationTreeGroups"
-                      :key="group.type"
-                      class="tree-children"
-                    >
-                      <div class="tree-label">{{ formatRelationType(group.type) }}</div>
-                      <button
-                        v-for="relation in group.items"
-                        :key="relation.relation_id || relation.id || relation.key"
-                        class="tree-node leaf-node"
-                        type="button"
-                        :class="{ active: isSelectedTreeItem('relation', relation) }"
-                        @click="selectRelation(relation)"
-                      >
-                        {{ relation.source_name || relation.source }} 到 {{ relation.target_name || relation.target }}
-                      </button>
-                    </div>
-                  </div>
+                  <div class="hierarchy-detail-pane">
+                    <section class="inspector-section">
+                      <template v-if="selectedGraphItem">
+                        <div class="selection-title">{{ selectedGraphTitle }}</div>
+                        <div class="selection-meta">{{ selectedGraphMeta }}</div>
 
-                  <button
-                    class="tree-node"
-                    type="button"
-                    :class="{ active: inspectorTab === 'evidence' }"
-                    @click="openManagementDrawer('evidence')"
-                  >
-                    证据
-                    <span>{{ evidence.length }}</span>
-                  </button>
-                  <button
-                    class="tree-node"
-                    type="button"
-                    :class="{ active: inspectorTab === 'files' }"
-                    @click="openManagementDrawer('files')"
-                  >
-                    文件
-                    <span>{{ files.length }}</span>
-                  </button>
-                </nav>
+                        <div class="detail-grid">
+                          <div class="detail-field">
+                            <span>{{ selectedGraphItem.kind === 'relation' ? '图关系' : '图节点' }}</span>
+                            <strong>
+                              {{ selectedGraphItem.kind === 'relation'
+                                ? formatRelationType(selectedGraphItem.raw?.relation_type || selectedGraphItem.raw?.type)
+                                : formatEntityType(selectedGraphItem.raw?.entity_type || selectedGraphItem.raw?.type) }}
+                            </strong>
+                          </div>
+                          <div class="detail-field">
+                            <span>审核状态</span>
+                            <strong>{{ selectedReviewStatus }}</strong>
+                          </div>
+                        </div>
 
-                <div class="drawer-detail">
-                  <section v-if="inspectorTab === 'selection'" class="inspector-section">
-                    <template v-if="selectedGraphItem">
-                      <div class="selection-title">{{ selectedGraphTitle }}</div>
-                      <div class="selection-meta">{{ selectedGraphMeta }}</div>
+                        <template v-if="selectedGraphItem.kind === 'entity'">
+                          <div class="inspector-subtitle">下级实体</div>
+                          <div v-if="selectedChildRelations.length" class="compact-list">
+                            <button
+                              v-for="item in selectedChildRelations"
+                              :key="item.relation.relation_id || item.relation.id || item.entity.entity_id || item.entity.id"
+                              class="compact-row selectable-row relation-row"
+                              type="button"
+                              @click="selectEntity(item.entity)"
+                            >
+                              <span class="row-title">{{ item.entity.name || '未命名实体' }}</span>
+                              <span class="row-meta">{{ formatRelationType(item.relation.relation_type || item.relation.type) }}</span>
+                            </button>
+                          </div>
+                          <div v-else class="state-text">暂无下级实体</div>
 
-                      <div class="detail-grid">
-                        <div class="detail-field">
-                          <span>{{ selectedGraphItem.kind === 'relation' ? '图关系' : '图节点' }}</span>
-                          <strong>
-                            {{ selectedGraphItem.kind === 'relation'
-                              ? formatRelationType(selectedGraphItem.raw?.relation_type || selectedGraphItem.raw?.type)
-                              : formatEntityType(selectedGraphItem.raw?.entity_type || selectedGraphItem.raw?.type) }}
-                          </strong>
+                          <div class="inspector-subtitle">上级实体</div>
+                          <div v-if="selectedParentRelations.length" class="compact-list">
+                            <button
+                              v-for="item in selectedParentRelations"
+                              :key="item.relation.relation_id || item.relation.id || item.entity.entity_id || item.entity.id"
+                              class="compact-row selectable-row relation-row"
+                              type="button"
+                              @click="selectEntity(item.entity)"
+                            >
+                              <span class="row-title">{{ item.entity.name || '未命名实体' }}</span>
+                              <span class="row-meta">{{ formatRelationType(item.relation.relation_type || item.relation.type) }}</span>
+                            </button>
+                          </div>
+                          <div v-else class="state-text">暂无上级实体</div>
+                        </template>
+
+                        <template v-if="selectedGraphItem.kind === 'relation' && selectedGraphItem.raw?.isSelfLoopGroup">
+                          <div class="inspector-subtitle">自关联明细</div>
+                          <div class="compact-list">
+                            <button
+                              v-for="relation in selectedGraphItem.raw.selfLoopRelations"
+                              :key="relation.relation_id || relation.id || relation.relation_type || relation.type"
+                              class="compact-row selectable-row relation-row"
+                              type="button"
+                              @click="selectRelation(relation)"
+                            >
+                              <span class="row-title">{{ formatRelationType(relation.relation_type || relation.type) }}</span>
+                              <span class="row-meta">{{ relation.source_name || relation.source_entity_id || relation.source }} → {{ relation.target_name || relation.target_entity_id || relation.target }}</span>
+                            </button>
+                          </div>
+                        </template>
+
+                        <div class="review-actions">
+                          <span class="state-text">当前详情来自 Property Graph，节点与关系保持只读。</span>
                         </div>
-                        <div class="detail-field">
-                          <span>证据数</span>
-                          <strong>{{ selectedGraphEvidence.length }}</strong>
+                      </template>
+                      <template v-else>
+                        <div class="selection-title">{{ currentMap.name || '认知地图' }}</div>
+                        <div class="detail-grid">
+                          <div class="detail-field">
+                            <span>抽取引擎</span>
+                            <strong>{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</strong>
+                          </div>
+                          <div class="detail-field">
+                            <span>耗时</span>
+                            <strong>{{ formatDuration(latestRun?.duration_ms) }}</strong>
+                          </div>
+                          <div class="detail-field">
+                            <span>分块</span>
+                            <strong>{{ latestRun?.chunk_count ?? '-' }}</strong>
+                          </div>
+                          <div class="detail-field">
+                            <span>超时</span>
+                            <strong>{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</strong>
+                          </div>
+                          <div class="detail-field">
+                            <span>图结构</span>
+                            <strong>{{ graphSourceText }}</strong>
+                          </div>
+                          <div v-if="latestRun?.build_requirement || currentMap.build_requirement" class="detail-field build-requirement-field">
+                            <span>构建需求</span>
+                            <strong>{{ latestRun?.build_requirement || currentMap.build_requirement }}</strong>
+                          </div>
                         </div>
-                        <div class="detail-field">
-                          <span>审核状态</span>
-                          <strong>{{ selectedReviewStatus }}</strong>
-                        </div>
-                      </div>
-                      <div class="review-actions">
-                        <span class="state-text">当前详情来自 Property Graph，节点与关系保持只读。</span>
-                      </div>
-                      <div class="inspector-subtitle">关联证据</div>
-                      <div v-if="selectedGraphEvidence.length" class="compact-list">
-                        <div
-                          v-for="item in selectedGraphEvidence"
-                          :key="item.evidence_id || item.id || item.chunk_id"
-                          class="compact-row evidence-compact-row"
-                          role="button"
-                          tabindex="0"
-                          @click="loadEvidenceDetail(item)"
-                          @keydown.enter.prevent="loadEvidenceDetail(item)"
-                        >
-                          {{ item.summary || item.normalized_summary || item.quote || item.text || item.content || item.text_span }}
-                        </div>
-                      </div>
-                      <div v-else class="state-text">暂无关联证据</div>
-                    </template>
-                    <template v-else>
-                      <div class="selection-title">{{ currentMap.name || '认知地图' }}</div>
-                      <div class="detail-grid">
-                        <div class="detail-field">
-                          <span>抽取引擎</span>
-                          <strong>{{ formatProvider(latestRun?.extractor_provider || currentMap.extractor_provider) }}</strong>
-                        </div>
-                        <div class="detail-field">
-                          <span>耗时</span>
-                          <strong>{{ formatDuration(latestRun?.duration_ms) }}</strong>
-                        </div>
-                        <div class="detail-field">
-                          <span>分块</span>
-                          <strong>{{ latestRun?.chunk_count ?? '-' }}</strong>
-                        </div>
-                        <div class="detail-field">
-                          <span>超时</span>
-                          <strong>{{ formatSeconds(latestRun?.timeout_seconds || buildOptions.timeoutSeconds) }}</strong>
-                        </div>
-                        <div class="detail-field">
-                          <span>图结构</span>
-                          <strong>{{ graphSourceText }}</strong>
-                        </div>
-                        <div v-if="latestRun?.build_requirement || currentMap.build_requirement" class="detail-field build-requirement-field">
-                          <span>构建需求</span>
-                          <strong>{{ latestRun?.build_requirement || currentMap.build_requirement }}</strong>
-                        </div>
-                      </div>
-                    </template>
+                      </template>
+                    </section>
                     <div v-if="managementError" class="form-error">{{ managementError }}</div>
                     <div v-else-if="managementMessage" class="form-success">{{ managementMessage }}</div>
-                  </section>
+                  </div>
+                </section>
 
-                  <section v-else-if="inspectorTab === 'build'" class="inspector-section">
+                <div v-else class="drawer-detail" :class="{ 'graph-chat-detail': inspectorTab === 'graph-chat' }">
+                  <section v-if="inspectorTab === 'build'" class="inspector-section">
                     <div class="selection-title">构建与文件</div>
                     <div class="build-actions inline-actions">
                       <label class="engine-select">
@@ -445,7 +427,7 @@
                     <div v-else-if="bindingMessage" class="form-success">{{ bindingMessage }}</div>
                   </section>
 
-                  <section v-else-if="inspectorTab === 'graph-chat'" class="inspector-section">
+                  <section v-else-if="inspectorTab === 'graph-chat'" class="inspector-section graph-chat-section">
                     <CognitiveMapGraphChat
                       :current-map="currentMap"
                       :selected-graph-item="selectedGraphItem"
@@ -453,66 +435,6 @@
                       :relations="relations"
                       @graph-updated="handleGraphChatUpdated"
                     />
-                  </section>
-
-                  <section v-else-if="inspectorTab === 'entities'" class="inspector-section">
-                    <div class="selection-title">实体</div>
-                    <div v-if="entities.length === 0" class="state-text">暂无实体</div>
-                    <div v-else class="compact-list">
-                      <button
-                        v-for="entity in entities"
-                        :key="entity.entity_id || entity.id || entity.name"
-                        class="compact-row selectable-row"
-                        type="button"
-                        @click="selectEntity(entity)"
-                      >
-                        <span class="row-title">{{ entity.name }}</span>
-                        <span class="row-meta">{{ formatEntityType(entity.type || entity.entity_type) }}</span>
-                      </button>
-                    </div>
-                  </section>
-
-                  <section v-else-if="inspectorTab === 'relations'" class="inspector-section">
-                    <div class="selection-title">关系</div>
-                    <div v-if="relations.length === 0" class="state-text">暂无关系</div>
-                    <div v-else class="compact-list">
-                      <button
-                        v-for="relation in relations"
-                        :key="relation.relation_id || relation.id || relation.key"
-                        class="compact-row selectable-row"
-                        type="button"
-                        @click="selectRelation(relation)"
-                      >
-                        <span class="row-title">
-                          {{ relation.source_name || relation.source }} 到 {{ relation.target_name || relation.target }}
-                        </span>
-                        <span class="row-meta">{{ formatRelationType(relation.type || relation.relation_type) }}</span>
-                      </button>
-                    </div>
-                  </section>
-
-                  <section v-else-if="inspectorTab === 'evidence'" class="inspector-section">
-                    <div class="selection-title">证据</div>
-                    <div v-if="evidence.length === 0" class="state-text">暂无证据</div>
-                    <div v-else class="compact-list">
-                      <div
-                        v-for="item in evidence"
-                        :key="item.evidence_id || item.id || item.chunk_id"
-                        class="compact-row evidence-compact-row"
-                        role="button"
-                        tabindex="0"
-                        @click="loadEvidenceDetail(item)"
-                        @keydown.enter.prevent="loadEvidenceDetail(item)"
-                      >
-                        <strong>{{ item.title || item.source || '证据片段' }}</strong>
-                        {{ item.summary || item.normalized_summary || item.quote || item.text || item.content || item.text_span }}
-                      </div>
-                    </div>
-                    <div v-if="evidenceDetailError" class="form-error">{{ evidenceDetailError }}</div>
-                    <div v-if="selectedEvidenceDetail" class="evidence-detail">
-                      <strong>{{ selectedEvidenceDetail.location || selectedEvidenceDetail.evidence_id }}</strong>
-                      <p>{{ selectedEvidenceDetail.text_span || selectedEvidenceDetail.normalized_summary }}</p>
-                    </div>
                   </section>
 
                   <section v-else class="inspector-section">
@@ -543,13 +465,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import CognitiveMapGraphChat from './CognitiveMapGraphChat.vue'
+import { buildEntityRelationTree, flattenEntityRelationTree } from './cognitiveMapHierarchy'
+import { buildGraphLinks } from './cognitiveMapGraphLinks'
 import { collectSettledRefreshPayloads } from '@/utils/cognitiveMapRefresh'
 import {
   buildCognitiveMap,
   createCognitiveMap,
   deleteCognitiveMap,
   getCognitiveMapEvaluation,
-  getCognitiveMapEvidenceDetail,
   getCognitiveMapBindings,
   listCognitiveMapBuildRuns,
   listCognitiveMapFiles,
@@ -583,9 +506,6 @@ const currentMap = ref(null)
 const files = ref([])
 const entities = ref([])
 const relations = ref([])
-const evidence = ref([])
-const selectedEvidenceDetail = ref(null)
-const evidenceDetailError = ref('')
 const buildRuns = ref([])
 const evaluation = ref(null)
 const graphSource = ref('')
@@ -593,6 +513,7 @@ const graphChart = ref(null)
 const selectedGraphItem = ref(null)
 const hiddenEntityTypes = ref([])
 const hiddenRelationTypes = ref([])
+const showRelationLabels = ref(false)
 const inspectorTab = ref('selection')
 const createForm = ref({ name: '' })
 const createError = ref('')
@@ -621,6 +542,14 @@ const agentModeOptions = [
   { id: 'chart', name: '图表' },
   { id: 'ops', name: '运维' }
 ]
+
+const managementTabOptions = computed(() => [
+  { id: 'selection', name: '层级', count: entities.value.length },
+  { id: 'build', name: '构建', count: files.value.length },
+  { id: 'binding', name: '接入', count: bindingForm.value.agentModes.length },
+  { id: 'graph-chat', name: '对话编辑' },
+  { id: 'files', name: '文件', count: files.value.length }
+])
 
 const latestRun = computed(() => buildRuns.value[0] || currentMap.value?.latest_run || null)
 const canRetryBuild = computed(() => currentMap.value?.status === 'failed' || latestRun.value?.status === 'failed')
@@ -654,10 +583,40 @@ const entityTypeLabels = {
   Dataset: '数据集',
   Tool: '工具',
   AgentRole: '智能体角色',
+  Equipment: '设备',
+  Device: '设备',
+  Monitor: '监测设备',
+  Analyzer: '分析仪',
+  Component: '组件',
+  System: '系统',
+  Facility: '设施',
+  FaultSymptom: '故障现象',
+  DataMetric: '数据指标',
+  CheckItem: '检查项',
   Entity: '实体'
 }
 
 const relationTypeLabels = {
+  contains: '包含',
+  has_part: '包含',
+  part_of: '属于',
+  includes: '包括',
+  installed_in: '安装于',
+  installed_on: '安装于',
+  connects_to: '连接',
+  depends_on: '依赖',
+  controls: '控制',
+  monitors: '监控',
+  manages: '管理',
+  configured_with: '配置',
+  composed_of: '组成',
+  parent_of: '上级',
+  child_of: '下级',
+  device_measures: '设备监测',
+  station_has_device: '站点配置设备',
+  fault_affects_metric: '故障影响指标',
+  check_requires: '检查要求',
+  data_source_validates: '数据源校验',
   located_in: '位于',
   measures: '监测',
   has_alias: '别名',
@@ -689,6 +648,17 @@ const graphPalette = [
   '#64748b'
 ]
 
+const relationPalette = [
+  '#0f766e',
+  '#7c3aed',
+  '#be123c',
+  '#0369a1',
+  '#b45309',
+  '#15803d',
+  '#4338ca',
+  '#475569'
+]
+
 const graphCategories = computed(() => {
   const types = Array.from(new Set(entities.value.map(entity => entity.entity_type || entity.type || '未分类')))
   return types.map((type, index) => ({
@@ -704,39 +674,81 @@ const relationTypes = computed(() => (
   Array.from(new Set(relations.value.map(relation => relation.relation_type || relation.type || 'related_to')))
 ))
 
-const entityTreeGroups = computed(() => {
-  const groups = new Map()
-  entities.value.forEach(entity => {
-    const type = entity.entity_type || entity.type || 'Entity'
-    if (!groups.has(type)) groups.set(type, [])
-    groups.get(type).push(entity)
-  })
-  return Array.from(groups.entries()).map(([type, items]) => ({
-    type,
-    items: [...items].sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'zh-Hans-CN'))
+const relationCategories = computed(() => (
+  relationTypes.value.map((type, index) => ({
+    name: formatRelationType(type),
+    rawName: type,
+    itemStyle: {
+      color: relationPalette[index % relationPalette.length]
+    }
   }))
-})
+))
 
-const relationTreeGroups = computed(() => {
-  const groups = new Map()
-  relations.value.forEach(relation => {
-    const type = relation.relation_type || relation.type || 'related_to'
-    if (!groups.has(type)) groups.set(type, [])
-    groups.get(type).push(relation)
-  })
-  return Array.from(groups.entries()).map(([type, items]) => ({
-    type,
-    items
-  }))
-})
+const entityRelationTree = computed(() => buildEntityRelationTree(entities.value, relations.value))
 
-const evidenceById = computed(() => {
+const withTreeRowKeys = (rows) => rows.map((row, index) => ({
+  ...row,
+  key: [
+    row.id || row.entity?.name || 'entity',
+    row.depth,
+    row.relation?.relation_id || row.relation?.id || 'root',
+    index
+  ].join(':')
+}))
+
+const entityHierarchyRows = computed(() => (
+  withTreeRowKeys(flattenEntityRelationTree(entityRelationTree.value.roots))
+))
+
+const orphanHierarchyRows = computed(() => (
+  withTreeRowKeys(flattenEntityRelationTree(entityRelationTree.value.orphans))
+))
+
+const getEntityIdentifier = (entity) => entity?.entity_id || entity?.id || entity?.name || ''
+
+const getRelationSourceIdentifier = (relation) => (
+  relation?.source_entity_id || relation?.source || relation?.source_id || ''
+)
+
+const getRelationTargetIdentifier = (relation) => (
+  relation?.target_entity_id || relation?.target || relation?.target_id || ''
+)
+
+const entityById = computed(() => {
   const index = new Map()
-  evidence.value.forEach(item => {
-    const id = item.evidence_id || item.id
-    if (id) index.set(id, item)
+  entities.value.forEach(entity => {
+    const id = getEntityIdentifier(entity)
+    if (id) index.set(id, entity)
   })
   return index
+})
+
+const selectedEntityId = computed(() => (
+  selectedGraphItem.value?.kind === 'entity'
+    ? getEntityIdentifier(selectedGraphItem.value.raw)
+    : ''
+))
+
+const selectedChildRelations = computed(() => {
+  if (!selectedEntityId.value) return []
+  return relations.value
+    .filter(relation => getRelationSourceIdentifier(relation) === selectedEntityId.value)
+    .map(relation => ({
+      relation,
+      entity: entityById.value.get(getRelationTargetIdentifier(relation))
+    }))
+    .filter(item => item.entity)
+})
+
+const selectedParentRelations = computed(() => {
+  if (!selectedEntityId.value) return []
+  return relations.value
+    .filter(relation => getRelationTargetIdentifier(relation) === selectedEntityId.value)
+    .map(relation => ({
+      relation,
+      entity: entityById.value.get(getRelationSourceIdentifier(relation))
+    }))
+    .filter(item => item.entity)
 })
 
 const graphNodes = computed(() => {
@@ -745,13 +757,12 @@ const graphNodes = computed(() => {
     .filter(entity => !isEntityTypeHidden(entity.entity_type || entity.type || '未分类'))
     .map(entity => {
       const type = entity.entity_type || entity.type || '未分类'
-      const evidenceCount = entity.source_evidence_ids?.length || 0
       return {
         id: entity.entity_id || entity.id || `${type}:${entity.name}`,
         name: entity.name,
-        value: evidenceCount,
+        value: 1,
         category: categoryIndex.get(type) || 0,
-        symbolSize: Math.max(34, Math.min(62, 34 + evidenceCount * 6)),
+        symbolSize: 42,
         raw: entity,
         label: {
           show: true,
@@ -763,29 +774,15 @@ const graphNodes = computed(() => {
 
 const graphLinks = computed(() => {
   const nodeIds = new Set(graphNodes.value.map(node => node.id))
-  return relations.value
-    .map(relation => {
-      const type = relation.relation_type || relation.type || 'related_to'
-      if (isRelationTypeHidden(type)) return null
-      const source = relation.source_entity_id || relation.source || relation.source_id
-      const target = relation.target_entity_id || relation.target || relation.target_id
-      if (!nodeIds.has(source) || !nodeIds.has(target)) return null
-      return {
-        source,
-        target,
-        value: type,
-        raw: relation,
-        label: {
-          show: true,
-          formatter: formatRelationType(type)
-        },
-        lineStyle: {
-          width: 1.5,
-          opacity: 0.62
-        }
-      }
-    })
-    .filter(Boolean)
+  const relationColorByType = new Map(relationCategories.value.map(category => [category.rawName, category.itemStyle.color]))
+  return buildGraphLinks({
+    relations: relations.value,
+    nodeIds,
+    relationColorByType,
+    isRelationTypeHidden,
+    formatRelationType,
+    showRelationLabels: showRelationLabels.value
+  })
 })
 
 const graphOption = computed(() => ({
@@ -794,10 +791,13 @@ const graphOption = computed(() => ({
     formatter: (params) => {
       if (params.dataType === 'edge') {
         const raw = params.data.raw || {}
-        return `${raw.source_name || params.data.source} 到 ${raw.target_name || params.data.target}<br/>关系：${formatRelationType(params.data.value)}<br/>证据：${raw.source_evidence_ids?.length || 0}`
+        if (raw.isSelfLoopGroup) {
+          return `${raw.source_name || params.data.source}<br/>关系：自关联 ${raw.selfLoopRelations?.length || 0} 条`
+        }
+        return `${raw.source_name || params.data.source} 到 ${raw.target_name || params.data.target}<br/>关系：${formatRelationType(params.data.value)}`
       }
       const raw = params.data.raw || {}
-      return `${raw.name || params.name}<br/>类型：${formatEntityType(raw.entity_type || raw.type)}<br/>证据：${raw.source_evidence_ids?.length || 0}`
+      return `${raw.name || params.name}<br/>类型：${formatEntityType(raw.entity_type || raw.type)}`
     }
   },
   legend: {
@@ -827,6 +827,7 @@ const graphOption = computed(() => ({
         width: 86
       },
       edgeLabel: {
+        show: showRelationLabels.value,
         color: '#475569',
         fontSize: 10
       },
@@ -844,6 +845,7 @@ const selectedGraphTitle = computed(() => {
   if (!selectedGraphItem.value) return ''
   const raw = selectedGraphItem.value.raw || {}
   if (selectedGraphItem.value.kind === 'relation') {
+    if (raw.isSelfLoopGroup) return `${raw.source_name || raw.source_entity_id} 的自关联`
     return `${raw.source_name || raw.source || raw.source_entity_id} 到 ${raw.target_name || raw.target || raw.target_entity_id}`
   }
   return raw.name || ''
@@ -852,28 +854,13 @@ const selectedGraphTitle = computed(() => {
 const selectedGraphMeta = computed(() => {
   if (!selectedGraphItem.value) return ''
   const raw = selectedGraphItem.value.raw || {}
+  if (selectedGraphItem.value.kind === 'relation' && raw.isSelfLoopGroup) {
+    return `自关联 ${raw.selfLoopRelations?.length || 0} 条`
+  }
   return selectedGraphItem.value.kind === 'relation'
     ? formatRelationType(raw.relation_type || raw.type)
     : formatEntityType(raw.entity_type || raw.type)
 })
-
-const selectedGraphEvidence = computed(() => {
-  const evidenceIds = selectedGraphItem.value?.raw?.source_evidence_ids || []
-  return evidenceIds.map(id => evidenceById.value.get(id)).filter(Boolean)
-})
-
-const loadEvidenceDetail = async (item) => {
-  const evidenceId = item?.evidence_id || item?.id
-  if (!currentMap.value?.id || !evidenceId) return
-  evidenceDetailError.value = ''
-  try {
-    const payload = await getCognitiveMapEvidenceDetail(currentMap.value.id, evidenceId)
-    selectedEvidenceDetail.value = payload?.evidence || null
-  } catch (error) {
-    selectedEvidenceDetail.value = null
-    evidenceDetailError.value = error?.message || '加载证据详情失败'
-  }
-}
 
 const selectedReviewStatus = computed(() => (
   getReviewStatusText(selectedGraphItem.value?.raw?.review_status)
@@ -895,7 +882,6 @@ const buildGraphQueryPayload = () => ({
   limit: 200,
   max_entities: 200,
   max_relations: 200,
-  max_evidence: 200,
   allowed_review_statuses: GRAPH_REVIEW_STATUSES
 })
 
@@ -904,7 +890,6 @@ const applyGraphPayload = (payload) => {
   if (payload?.source !== 'property_graph_store') {
     entities.value = []
     relations.value = []
-    evidence.value = []
     return
   }
 
@@ -926,7 +911,6 @@ const applyGraphPayload = (payload) => {
       target_name: relation.target_name || nameById.get(targetId) || targetId
     }
   })
-  evidence.value = normalizeList(view, ['evidence_summaries', 'evidence'])
 }
 
 const getStatusText = (status) => {
@@ -1007,7 +991,6 @@ const refreshCurrentMapData = async () => {
     files.value = []
     entities.value = []
     relations.value = []
-    evidence.value = []
     buildRuns.value = []
     evaluation.value = null
     graphSource.value = ''
@@ -1020,7 +1003,6 @@ const refreshCurrentMapData = async () => {
       graphSource.value = ''
       entities.value = []
       relations.value = []
-      evidence.value = []
     }
     buildRuns.value = normalizeList(runsPayload, ['runs', 'items', 'data'])
     evaluation.value = evaluationPayload?.evaluation || null
@@ -1037,12 +1019,9 @@ const clearCurrentMapData = () => {
   files.value = []
   entities.value = []
   relations.value = []
-  evidence.value = []
   buildRuns.value = []
   evaluation.value = null
   graphSource.value = ''
-  selectedEvidenceDetail.value = null
-  evidenceDetailError.value = ''
   selectedGraphItem.value = null
   bindingForm.value.agentModes = []
   bindingError.value = ''
@@ -1342,10 +1321,6 @@ const openManagementDrawer = async (tab = 'selection') => {
   isInspectorExpanded.value = true
   inspectorTab.value = tab
   if (tab !== 'selection') selectedGraphItem.value = null
-  if (tab !== 'evidence') {
-    selectedEvidenceDetail.value = null
-    evidenceDetailError.value = ''
-  }
   await resizeGraphSoon()
 }
 
@@ -1362,8 +1337,6 @@ const toggleUploadDrop = async () => {
 const selectEntity = (entity) => {
   managementError.value = ''
   managementMessage.value = ''
-  selectedEvidenceDetail.value = null
-  evidenceDetailError.value = ''
   selectedGraphItem.value = { kind: 'entity', raw: entity }
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
@@ -1373,8 +1346,6 @@ const selectEntity = (entity) => {
 const selectRelation = (relation) => {
   managementError.value = ''
   managementMessage.value = ''
-  selectedEvidenceDetail.value = null
-  evidenceDetailError.value = ''
   selectedGraphItem.value = { kind: 'relation', raw: relation }
   inspectorTab.value = 'selection'
   isInspectorExpanded.value = true
@@ -1402,10 +1373,6 @@ const renderGraph = async () => {
   }
   graphChart.value.setOption(graphOption.value, true)
   graphChart.value.resize()
-}
-
-const fitGraph = async () => {
-  await renderGraph()
 }
 
 const handleResize = () => {
@@ -1899,12 +1866,36 @@ onBeforeUnmount(() => {
 
 .graph-toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex: 0 0 auto;
   pointer-events: auto;
 }
 
-.graph-legend {
+.graph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(203, 213, 225, 0.92);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+}
+
+.graph-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #2563eb;
+}
+
+.graph-legend,
+.relation-filter {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;
@@ -1939,33 +1930,17 @@ onBeforeUnmount(() => {
 }
 
 .legend-item.muted,
-.relation-filter button.muted {
+.relation-legend-item.muted {
   opacity: 0.38;
   text-decoration: line-through;
 }
 
 .relation-filter {
-  position: absolute;
-  left: 12px;
-  bottom: 78px;
-  z-index: 8;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-width: min(560px, calc(100vw - 64px));
-  pointer-events: none;
+  max-width: min(620px, calc(100vw - 64px));
 }
 
-.relation-filter button {
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 12px;
-  box-shadow: none;
-  pointer-events: auto;
+.relation-legend-item i {
+  border-radius: 2px;
 }
 
 .graph-canvas {
@@ -1974,7 +1949,9 @@ onBeforeUnmount(() => {
   min-height: 0;
   border: 0;
   border-radius: 0;
-  background: #f8fafc;
+  background-color: #f8fafc;
+  background-image: radial-gradient(rgba(148, 163, 184, 0.32) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 .graph-empty-state {
@@ -2010,48 +1987,98 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
-.drawer-header {
+.management-tabs {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 4px;
   flex: 0 0 auto;
-  padding: 12px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
 }
 
-.drawer-header div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.drawer-header strong {
-  overflow: hidden;
-  color: #111827;
-  font-size: 14px;
-  text-overflow: ellipsis;
+.management-tab,
+.management-close-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
   white-space: nowrap;
 }
 
-.drawer-header span {
+.management-close-btn {
+  margin-left: auto;
   color: #64748b;
-  font-size: 12px;
+}
+
+.management-tab span {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.management-tab:hover,
+.management-tab.active,
+.management-close-btn:hover {
+  background: #fff;
+  color: #111827;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 .drawer-body {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  display: block;
   min-height: 0;
+  height: 100%;
   flex: 1 1 auto;
+  overflow: hidden;
 }
 
-.drawer-tree {
+.hierarchy-workbench {
+  display: grid;
+  grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.hierarchy-list-pane {
   min-height: 0;
   overflow: auto;
   padding: 10px 8px;
   border-right: 1px solid #e5e7eb;
   background: #f8fafc;
+}
+
+.hierarchy-detail-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  background: #fff;
+}
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 8px;
+}
+
+.pane-header strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.pane-header span {
+  color: #64748b;
+  font-size: 12px;
 }
 
 .tree-group {
@@ -2101,6 +2128,10 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+.overview-node {
+  margin-bottom: 4px;
+}
+
 .leaf-node {
   justify-content: flex-start;
   overflow: hidden;
@@ -2108,6 +2139,53 @@ onBeforeUnmount(() => {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hierarchy-tree {
+  display: grid;
+  gap: 1px;
+}
+
+.orphan-tree {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.hierarchy-node {
+  justify-content: space-between;
+}
+
+.hierarchy-node.cycle {
+  opacity: 0.72;
+}
+
+.tree-node-name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relation-badge {
+  flex: 0 0 auto;
+  max-width: 82px;
+  overflow: hidden;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cycle-badge {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .tree-node:hover,
@@ -2123,10 +2201,28 @@ onBeforeUnmount(() => {
   padding: 14px;
 }
 
+.graph-chat-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+}
+
 .inspector-section,
 .compact-list {
   display: grid;
   gap: 8px;
+}
+
+.graph-chat-section {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
 }
 
 .selection-title {
@@ -2253,36 +2349,9 @@ onBeforeUnmount(() => {
   background: #eff6ff;
 }
 
-.evidence-compact-row {
-  cursor: pointer;
-  color: #475569;
-  font-size: 12px;
-  line-height: 1.55;
-  word-break: break-word;
-}
-
-.evidence-compact-row strong {
-  display: block;
-  margin-bottom: 3px;
-  color: #111827;
-}
-
-.evidence-detail {
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  background: #f8fafc;
-  color: #1f2937;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-
-.evidence-detail p {
-  margin: 0;
+.relation-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 
 .row-title {
@@ -2316,15 +2385,9 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
-  .graph-legend {
-    max-width: 100%;
-  }
-
+  .graph-legend,
   .relation-filter {
-    top: auto;
-    left: 8px;
-    right: 8px;
-    bottom: 86px;
+    max-width: 100%;
   }
 
   .drop-strip {

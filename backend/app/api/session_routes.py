@@ -16,7 +16,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
-ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview", "svg_preview"}
+ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview", "svg_preview", "spreadsheet_preview"}
 SESSION_LIST_DEFAULT_LIMIT = 200
 SESSION_LIST_MAX_LIMIT = 200
 
@@ -104,10 +104,12 @@ def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> L
         markdown_preview = result_data.get("markdown_preview")
         html_preview = result_data.get("html_preview")
         svg_preview = result_data.get("svg_preview")
-        if not (pdf_preview or markdown_preview or html_preview or svg_preview):
+        spreadsheet_preview = result_data.get("spreadsheet_preview")
+        if not (pdf_preview or markdown_preview or html_preview or svg_preview or spreadsheet_preview):
             continue
 
         document = {
+            "file_name": result_data.get("file_name"),
             "file_path": result_data.get("file_path")
                 or result_data.get("path")
                 or (pdf_preview or {}).get("pdf_path")
@@ -115,7 +117,8 @@ def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> L
                 or (html_preview or {}).get("html_id"),
             "file_type": result_data.get("file_type")
                 or (html_preview or {}).get("file_type")
-                or (svg_preview or {}).get("file_type"),
+                or (svg_preview or {}).get("file_type")
+                or (spreadsheet_preview or {}).get("file_type"),
             "generator": result_data.get("generator")
                 or (result.get("metadata") or {}).get("generator")
                 or "document",
@@ -130,6 +133,8 @@ def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> L
             document["html_preview"] = html_preview
         if svg_preview:
             document["svg_preview"] = svg_preview
+        if spreadsheet_preview:
+            document["spreadsheet_preview"] = spreadsheet_preview
         for key in ("related_files", "artifacts", "refs", "assets"):
             value = result_data.get(key)
             if value:

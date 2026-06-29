@@ -14,7 +14,7 @@
           <!-- Preview mode: PDF preview (with transition animation) -->
           <div v-if="!isEditMode" class="doc-preview">
             <!-- Action buttons in top-right corner -->
-            <div class="action-buttons">
+            <div v-if="!isExcelDoc(doc)" class="action-buttons">
               <button
                 v-if="isEditableDoc(doc)"
                 @click="toggleEditMode"
@@ -110,8 +110,17 @@
               </div>
             </div>
 
+            <!-- Excel preview/edit surface -->
+            <div v-if="isExcelDoc(doc)" class="excel-wrapper">
+              <ExcelOnlineEditor
+                :doc="doc"
+                :session-id="props.sessionId"
+                @saved="handleOfficeDocumentSaved"
+              />
+            </div>
+
             <!-- Loading state -->
-            <div v-if="doc.loading" class="preview-loading">
+            <div v-else-if="doc.loading" class="preview-loading">
               <div class="spinner"></div>
               <p>更新预览中...</p>
             </div>
@@ -148,27 +157,14 @@
             </div>
           </div>
 
-          <!-- Edit mode: Simple edit box -->
+          <!-- Edit mode: DOCX online editor -->
           <div v-else class="doc-edit">
-            <div class="edit-header">
-              <span class="edit-hint">编辑内容（支持Markdown格式）</span>
-              <button
-                @click="submitEdit(doc)"
-                :disabled="doc.submitting"
-                class="submit-btn"
-              >
-                {{ doc.submitting ? '应用中...' : '✓ 应用更改' }}
-              </button>
-            </div>
-            <textarea
-              v-model="doc.editContent"
-              class="edit-textarea"
-              placeholder="在此编辑文档内容..."
-              @input="onEditChange(doc)"
-            ></textarea>
-            <div v-if="doc.editMessage" class="edit-message" :class="doc.editMessage.type">
-              {{ doc.editMessage.text }}
-            </div>
+            <DocxOnlineEditor
+              :doc="doc"
+              :session-id="props.sessionId"
+              @cancel="cancelEditMode"
+              @saved="handleDocxSaved"
+            />
           </div>
         </div>
       </div>
@@ -231,11 +227,12 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
+import DocxOnlineEditor from '@/components/DocxOnlineEditor.vue'
+import ExcelOnlineEditor from '@/components/ExcelOnlineEditor.vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { normalizeArtifactUrl, normalizeRelatedArtifactFiles } from '@/utils/artifactRelatedFiles'
 
 const reactStore = useReactStore()
-const emit = defineEmits(['submit-edit'])
 
 const props = defineProps({
   history: {
@@ -292,7 +289,7 @@ const hasOfficeDocuments = computed(() => {
 
 const officeDocuments = computed(() => {
   return (reactStore.officeDocumentHistory || [])
-    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.pdf_url || doc?.html_url || doc?.svg_url || doc?.markdown_content)
+    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.spreadsheet_preview || doc?.pdf_url || doc?.html_url || doc?.svg_url || doc?.markdown_content || isExcelPath(doc?.file_path || doc?.path || doc?.file_name))
     .map(normalizeDocument)
 })
 
@@ -300,7 +297,9 @@ const activeDocument = computed(() => {
   if (officeDocuments.value.length === 0) {
     return null
   }
-  return officeDocuments.value.find(doc => getDocumentKey(doc) === activeDocumentId.value) || officeDocuments.value[officeDocuments.value.length - 1]
+  return officeDocuments.value.find(doc => getDocumentKey(doc) === activeDocumentId.value)
+    || officeDocuments.value.find(doc => doc.is_current)
+    || officeDocuments.value[officeDocuments.value.length - 1]
 })
 
 const activeDocumentList = computed(() => {
@@ -312,7 +311,7 @@ const fileHistory = computed(() => {
 })
 
 function getDocumentKey(doc) {
-  return doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.svg_url || doc?.file_name || ''
+  return doc?.version_id || doc?.pdf_id || doc?.html_id || doc?.file_path || doc?.svg_url || doc?.file_name || ''
 }
 
 function getDocumentSignature(doc) {
@@ -342,11 +341,16 @@ function normalizeDocument(doc) {
   const htmlPreviewUrl = doc.html_url || withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version) || svgPreviewUrl
   return {
     doc_type: doc.doc_type || getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type || doc.svg_preview?.file_type),
+    document_id: doc.document_id,
+    version_id: doc.version_id,
+    revision: doc.revision,
+    is_current: doc.is_current,
     file_name: fileName,
     file_path: filePath,
     generator: doc.generator,
     pdf_url: normalizeArtifactUrl(doc.pdf_url || doc.pdf_preview?.pdf_url),
     pdf_id: doc.pdf_id || doc.pdf_preview?.pdf_id,
+    spreadsheet_preview: doc.spreadsheet_preview,
     html_url: normalizeArtifactUrl(htmlPreviewUrl),
     html_id: doc.html_id || doc.html_preview?.html_id,
     svg_url: normalizeArtifactUrl(svgPreviewUrl),
@@ -456,13 +460,44 @@ function toggleEditMode() {
   isEditMode.value = !isEditMode.value
 }
 
+function cancelEditMode() {
+  isEditMode.value = false
+}
+
+function cancelEdit() {
+  cancelEditMode()
+}
+
+function handleDocxSaved(document) {
+  handleOfficeDocumentSaved(document)
+}
+
+function handleOfficeDocumentSaved(document) {
+  reactStore.recordOfficeDocument(document)
+  activeDocumentId.value = getDocumentKey(document)
+  isEditMode.value = false
+  showDownloadMenu.value = false
+}
+
 // Toggle download menu
 function toggleDownloadMenu() {
   showDownloadMenu.value = !showDownloadMenu.value
 }
 
 function isEditableDoc(doc) {
-  return doc.generator !== 'present_artifact' && !['report', 'html_artifact'].includes(doc.doc_type)
+  if (doc.generator === 'present_artifact' || ['report', 'html_artifact'].includes(doc.doc_type)) {
+    return false
+  }
+  const filePath = String(doc.file_path || doc.file_name || '').toLowerCase()
+  return doc.doc_type === 'word' && filePath.endsWith('.docx')
+}
+
+function isExcelDoc(doc) {
+  return doc?.doc_type === 'excel' || isExcelPath(doc?.file_path || doc?.file_name)
+}
+
+function isExcelPath(path) {
+  return /\.(xlsx|xls)$/i.test(String(path || ''))
 }
 
 function getResponseFilename(response, fallback) {
@@ -543,7 +578,8 @@ async function downloadWord(doc) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        file_path: doc.file_path
+        file_path: doc.file_path,
+        file_name: doc.file_name || 'document.docx'
       })
     })
 
@@ -586,7 +622,8 @@ async function downloadPPT(doc) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        file_path: doc.file_path
+        file_path: doc.file_path,
+        file_name: doc.file_name || 'document.pptx'
       })
     })
 
@@ -842,7 +879,7 @@ function downloadMarkdown(doc) {
 }
 
 // Download Excel file
-function downloadExcel(doc) {
+async function downloadExcel(doc) {
   if (!doc.file_path || doc.file_path === '') {
     console.error('[OfficeDocumentPanel] Excel file path not available')
     showDownloadMenu.value = false
@@ -850,66 +887,36 @@ function downloadExcel(doc) {
   }
 
   try {
-    // 使用通用文件下载API
-    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+    const response = await fetch('/api/office/download-excel', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        file_path: doc.file_path,
+        file_name: doc.file_name || 'document.xlsx'
+      })
+    })
 
-    // 创建下载链接
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const fileName = getResponseFilename(response, doc.file_name || 'document.xlsx')
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = fileUrl
-    link.download = doc.file_name || 'document.xlsx'
-    link.target = '_blank'
+    link.href = url
+    link.download = fileName
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+    URL.revokeObjectURL(url)
 
-    console.log('[OfficeDocumentPanel] Excel download started:', doc.file_name)
+    console.log('[OfficeDocumentPanel] Excel download started:', fileName)
     showDownloadMenu.value = false
   } catch (error) {
     console.error('[OfficeDocumentPanel] Excel download failed:', error)
-  }
-}
-
-// Cancel edit
-function cancelEdit() {
-  isEditMode.value = false
-  // Clear edit content
-  activeDocument.value && (activeDocument.value.editContent = '')
-  activeDocument.value && (activeDocument.value.editMessage = null)
-}
-
-// Edit content change
-function onEditChange(doc) {
-  // Clear previous message
-  if (doc.editMessage) {
-    doc.editMessage = null
-  }
-}
-
-// Submit edit
-async function submitEdit(doc) {
-  if (!doc.editContent || doc.editContent.trim() === '') {
-    doc.editMessage = { type: 'error', text: '请输入编辑内容' }
-    return
-  }
-
-  doc.submitting = true
-
-  try {
-    // Trigger parent component to handle edit submission
-    emit('submit-edit', {
-      file_path: doc.file_path,
-      content: doc.editContent,
-      doc_type: doc.doc_type
-    })
-
-    // Switch back to preview mode after edit
-    isEditMode.value = false
-    doc.editContent = ''
-    doc.editMessage = null
-  } catch (error) {
-    doc.editMessage = { type: 'error', text: '提交失败：' + error.message }
-  } finally {
-    doc.submitting = false
   }
 }
 
@@ -964,7 +971,7 @@ function getDocType(generator, markdownPreview, htmlPreview, filePath, fileType)
 }
 
 function getDocIcon(docType) {
-  const icons = { word: '📝', ppt: '📊', unknown: '📄' }
+  const icons = { word: '📝', ppt: '📊', excel: '📈', unknown: '📄' }
   return icons[docType] || icons.unknown
 }
 
@@ -1346,6 +1353,13 @@ defineExpose({
   height: calc(100vh - 100px);
 }
 
+.excel-wrapper {
+  width: 100%;
+  flex: 1;
+  min-height: 720px;
+  box-sizing: border-box;
+}
+
 .pdf-iframe {
   width: 100%;
   height: 750px;
@@ -1388,75 +1402,9 @@ defineExpose({
   border: 1px solid #f0f0f0;
   border-radius: 6px;
   background: #fafafa;
-}
-
-.edit-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid #f0f0f0;
-  background: #fff;
-  border-radius: 6px 6px 0 0;
-}
-
-.edit-hint {
-  font-size: 12px;
-  color: #666;
-}
-
-.submit-btn {
-  padding: 4px 12px;
-  border: none;
-  background: #1976d2;
-  color: white;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover:not(:disabled) {
-    background: #1565c0;
-  }
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-}
-
-.edit-textarea {
-  width: 100%;
-  min-height: 200px;
-  padding: 12px;
-  border: none;
-  border-radius: 0 0 6px 6px;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  resize: vertical;
-
-  &:focus {
-    outline: none;
-    background: #fff;
-  }
-}
-
-.edit-message {
-  padding: 8px 12px;
-  margin-top: 8px;
-  border-radius: 4px;
-  font-size: 12px;
-
-  &.error {
-    background: #ffebee;
-    color: #c62828;
-  }
-
-  &.success {
-    background: #e8f5e9;
-    color: #2e7d32;
-  }
+  height: calc(100vh - 100px);
+  min-height: 560px;
+  overflow: hidden;
 }
 
 .file-history-section {

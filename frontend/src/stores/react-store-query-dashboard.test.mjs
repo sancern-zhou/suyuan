@@ -3,59 +3,68 @@ import test from 'node:test'
 
 import { createPinia, setActivePinia } from 'pinia'
 import {
-  applyQueryDashboardMetadata,
-  extractAnswerEvidence,
-  extractDashboardFocus,
+  applyMapProgramMetadata,
   useReactStore
 } from './reactStore.js'
 
-test('query dashboard metadata can be applied without losing final answer', () => {
+test('map program metadata can be applied without losing final answer', () => {
   const state = {
     finalAnswer: '广州臭氧偏高',
-    dashboardFocus: null,
-    answerEvidence: null
+    mapPrograms: [],
+    currentMapProgram: null
+  }
+  const program = {
+    type: 'map_program',
+    program_id: 'mapprog_city',
+    intent: '定位广州',
+    state: { view: { center: [113.2644, 23.1291], zoom: 10 }, layers: [] }
   }
 
-  applyQueryDashboardMetadata(state, {
-    dashboard_focus: { scope: 'city', cities: ['广州'] },
-    answer_evidence: { claims: [{ text: 'O3 偏高' }] }
-  })
+  applyMapProgramMetadata(state, { map_program: program })
 
   assert.equal(state.finalAnswer, '广州臭氧偏高')
-  assert.deepEqual(state.dashboardFocus, { scope: 'city', cities: ['广州'] })
-  assert.deepEqual(state.answerEvidence, { claims: [{ text: 'O3 偏高' }] })
+  assert.equal(state.currentMapProgram.program_id, 'mapprog_city')
+  assert.equal(state.mapPrograms.length, 1)
 })
 
-test('query dashboard metadata can be read from nested metadata paths', () => {
-  const state = { dashboardFocus: null, answerEvidence: null }
+test('map program metadata can be read from nested metadata paths', () => {
+  const state = { mapPrograms: [], currentMapProgram: null }
+  const program = {
+    type: 'map_program',
+    program_id: 'mapprog_station',
+    intent: '显示站点',
+    state: { layers: [] }
+  }
 
   const data = {
     result: {
       metadata: {
-        dashboard_focus: { scope: 'station', stations: ['麓湖'] },
-        answer_evidence: { claims: [{ text: '站点 AQI 可追溯' }] }
+        map_program: program
       }
     }
   }
 
-  applyQueryDashboardMetadata(state, data)
+  applyMapProgramMetadata(state, data)
 
-  assert.deepEqual(state.dashboardFocus, { scope: 'station', stations: ['麓湖'] })
-  assert.deepEqual(state.answerEvidence, { claims: [{ text: '站点 AQI 可追溯' }] })
-  assert.deepEqual(extractDashboardFocus(data), { scope: 'station', stations: ['麓湖'] })
-  assert.deepEqual(extractAnswerEvidence(data), { claims: [{ text: '站点 AQI 可追溯' }] })
+  assert.equal(state.currentMapProgram.program_id, 'mapprog_station')
+  assert.equal(state.mapPrograms.length, 1)
 })
 
-test('query dashboard metadata keeps existing values when payload omits them', () => {
+test('map program metadata keeps existing values when payload omits map program', () => {
   const state = {
-    dashboardFocus: { scope: 'province' },
-    answerEvidence: { claims: [{ text: '保留既有证据' }] }
+    mapPrograms: [],
+    currentMapProgram: {
+      type: 'map_program',
+      program_id: 'mapprog_existing',
+      intent: '已有地图',
+      state: { layers: [] }
+    }
   }
 
-  applyQueryDashboardMetadata(state, { result: { metadata: {} } })
+  applyMapProgramMetadata(state, { result: { metadata: {} } })
 
-  assert.deepEqual(state.dashboardFocus, { scope: 'province' })
-  assert.deepEqual(state.answerEvidence, { claims: [{ text: '保留既有证据' }] })
+  assert.equal(state.currentMapProgram.program_id, 'mapprog_existing')
+  assert.equal(state.mapPrograms.length, 0)
 })
 
 test('query voice output can be stopped explicitly', () => {
@@ -85,7 +94,7 @@ test('query voice output can be stopped explicitly', () => {
   assert.equal(store.modeStates.query.queryVoicePlayback, null)
 })
 
-test('complete event writes nested dashboard metadata to final message data', () => {
+test('complete event ignores dashboard metadata fields on final message data', () => {
   const storage = new Map()
   globalThis.localStorage = {
     getItem: key => storage.get(key) ?? null,
@@ -121,8 +130,8 @@ test('complete event writes nested dashboard metadata to final message data', ()
   }
 
   const finalMessage = store.modeStates.query.messages.find(message => message.type === 'final')
-  assert.deepEqual(store.modeStates.query.dashboardFocus, { scope: 'city', cities: ['广州'] })
-  assert.deepEqual(store.modeStates.query.answerEvidence, { claims: [{ text: 'O3 偏高' }] })
-  assert.deepEqual(finalMessage?.data?.dashboard_focus, { scope: 'city', cities: ['广州'] })
-  assert.deepEqual(finalMessage?.data?.answer_evidence, { claims: [{ text: 'O3 偏高' }] })
+  assert.equal('dashboardFocus' in store.modeStates.query, false)
+  assert.equal('answerEvidence' in store.modeStates.query, false)
+  assert.equal(finalMessage?.data?.dashboard_focus, undefined)
+  assert.equal(finalMessage?.data?.answer_evidence, undefined)
 })

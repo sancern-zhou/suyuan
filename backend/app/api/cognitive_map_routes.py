@@ -23,6 +23,8 @@ from app.agent.cognition.models import (
     ExtractionResult,
     ReviewStatus,
     SourceFile,
+    lightweight_extraction,
+    lightweight_extraction_payload,
 )
 from app.agent.cognition.provider_factory import create_extractor_provider, create_parser_provider
 from app.agent.cognition.view_builder import CognitiveMapViewBuilder
@@ -63,7 +65,6 @@ class CognitiveMapQueryRequest(BaseModel):
     entity_hints: list[str] = Field(default_factory=list)
     max_entities: int = 20
     max_relations: int = 20
-    max_evidence: int = 10
 
 
 class CognitiveMapGraphQueryRequest(BaseModel):
@@ -75,7 +76,6 @@ class CognitiveMapGraphQueryRequest(BaseModel):
     limit: int = 30
     max_entities: int = 20
     max_relations: int = 20
-    max_evidence: int = 10
     allowed_review_statuses: list[ReviewStatus] = Field(default_factory=lambda: ["confirmed", "published", "merged"])
 
 
@@ -86,8 +86,6 @@ class CognitiveMapEntityCreateRequest(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     description: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
-    source_evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float = 1.0
     review_status: ReviewStatus = "confirmed"
 
 
@@ -107,8 +105,6 @@ class CognitiveMapRelationCreateRequest(BaseModel):
     relation_type: str = "related_to"
     description: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
-    source_evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float = 1.0
     review_status: ReviewStatus = "confirmed"
 
 
@@ -213,7 +209,7 @@ def _load_extraction(map_id: str) -> ExtractionResult | None:
     raw = _read_json(_extraction_path(map_id), None)
     if raw is None:
         return None
-    return ExtractionResult.model_validate_json(raw)
+    return lightweight_extraction(ExtractionResult.model_validate_json(raw))
 
 
 def _require_extraction(map_id: str) -> ExtractionResult:
@@ -305,7 +301,6 @@ def _mark_stale_build_failed(meta: dict[str, Any]) -> dict[str, Any]:
                 "timeout_seconds": STALE_BUILDING_SECONDS,
                 "entity_count": 0,
                 "relation_count": 0,
-                "evidence_count": 0,
                 "started_at": updated_at.isoformat(),
                 "finished_at": finished_at,
                 "duration_ms": int(age_seconds * 1000),
@@ -321,32 +316,6 @@ def _generate_evaluation(
 ) -> dict[str, Any]:
     entity_count = len(extraction.candidate_entities)
     relation_count = len(extraction.candidate_relations)
-    evidence_count = len(extraction.evidence)
-    evidence_by_id = {item.evidence_id: item for item in extraction.evidence}
-    entities_with_evidence = sum(1 for entity in extraction.candidate_entities if entity.source_evidence_ids)
-    relations_with_evidence = sum(1 for relation in extraction.candidate_relations if relation.source_evidence_ids)
-    relation_evidence_ids = {
-        evidence_id
-        for relation in extraction.candidate_relations
-        for evidence_id in relation.source_evidence_ids
-    }
-    relation_evidence = [
-        evidence_by_id[evidence_id]
-        for evidence_id in relation_evidence_ids
-        if evidence_id in evidence_by_id
-    ]
-    fallback_evidence_count = sum(
-        1
-        for evidence in relation_evidence
-        if evidence.support_type == "fallback"
-        or evidence.evidence_quality == "missing_relation_evidence"
-    )
-    relation_evidence_quote_count = sum(1 for evidence in relation_evidence if evidence.quote)
-    relation_evidence_summary_count = sum(
-        1
-        for evidence in relation_evidence
-        if evidence.evidence_quality == "llm_relation_evidence" and evidence.normalized_summary
-    )
     candidate_entity_count = sum(1 for entity in extraction.candidate_entities if entity.review_status == "candidate")
     candidate_relation_count = sum(1 for relation in extraction.candidate_relations if relation.review_status == "candidate")
     confirmed_entity_count = sum(
@@ -378,22 +347,6 @@ def _generate_evaluation(
         "map_id": extraction.map_id,
         "entity_count": entity_count,
         "relation_count": relation_count,
-        "evidence_count": evidence_count,
-        "entities_with_evidence": entities_with_evidence,
-        "relations_with_evidence": relations_with_evidence,
-        "entity_evidence_ratio": round(entities_with_evidence / entity_count, 4) if entity_count else 0,
-        "relation_evidence_ratio": round(relations_with_evidence / relation_count, 4) if relation_count else 0,
-        "fallback_evidence_count": fallback_evidence_count,
-        "relation_evidence_quote_ratio": (
-            round(relation_evidence_quote_count / len(relation_evidence), 4)
-            if relation_evidence
-            else 0
-        ),
-        "relation_evidence_summary_ratio": (
-            round(relation_evidence_summary_count / len(relation_evidence), 4)
-            if relation_evidence
-            else 0
-        ),
         "candidate_entity_count": candidate_entity_count,
         "candidate_relation_count": candidate_relation_count,
         "confirmed_entity_count": confirmed_entity_count,
@@ -405,7 +358,6 @@ def _generate_evaluation(
             and confirmed_entity_count > 0
             and confirmed_relation_count > 0
             and candidate_relation_count == 0
-            and fallback_evidence_count == 0
         ),
         "entity_types": entity_types,
         "relation_types": relation_types,
@@ -453,17 +405,65 @@ def _clean_extraction_graph(extraction: ExtractionResult) -> ExtractionResult:
     return extraction
 
 
+def _sync_property_graph_store_from_extraction(map_id: str, extraction: ExtractionResult) -> bool:
+    from llama_index.core.graph_stores.simple_labelled import SimplePropertyGraphStore
+    from llama_index.core.graph_stores.types import EntityNode, Relation
+
+    entity_by_id = {
+        entity.entity_id: entity
+        for entity in extraction.candidate_entities
+    }
+    graph_store = SimplePropertyGraphStore()
+    graph_store.upsert_nodes([
+        EntityNode(
+            name=entity.name,
+            label=entity.entity_type,
+            properties={
+                "map_id": map_id,
+                "entity_id": entity.entity_id,
+                "canonical_name": entity.canonical_name or entity.name,
+                "aliases": entity.aliases,
+                "review_status": entity.review_status,
+                "created_by": entity.created_by,
+                **entity.attributes,
+            },
+        )
+        for entity in extraction.candidate_entities
+    ])
+    graph_store.upsert_relations([
+        Relation(
+            label=relation.relation_type,
+            source_id=entity_by_id[relation.source_entity_id].name,
+            target_id=entity_by_id[relation.target_entity_id].name,
+            properties={
+                "map_id": map_id,
+                "relation_id": relation.relation_id,
+                "review_status": relation.review_status,
+                "created_by": relation.created_by,
+                **relation.attributes,
+            },
+        )
+        for relation in extraction.candidate_relations
+        if relation.source_entity_id in entity_by_id
+        and relation.target_entity_id in entity_by_id
+    ])
+    graph_store.persist(str(_property_graph_store_path(map_id)))
+    return _property_graph_store_path(map_id).exists()
+
+
 def _save_extraction(map_id: str, extraction: ExtractionResult) -> None:
     extraction = _clean_extraction_graph(extraction)
-    _extraction_path(map_id).write_text(
-        extraction.model_dump_json(indent=2),
-        encoding="utf-8",
+    persisted_extraction = lightweight_extraction(extraction)
+    _write_json(_extraction_path(map_id), lightweight_extraction_payload(extraction))
+    property_graph_persisted = _sync_property_graph_store_from_extraction(
+        map_id,
+        persisted_extraction,
     )
     _write_json(
         _evaluation_path(map_id),
         _generate_evaluation(
-            extraction,
-            property_graph_persisted=_property_graph_store_path(map_id).exists(),
+            persisted_extraction,
+            property_graph_persisted=property_graph_persisted,
         ),
     )
 
@@ -479,7 +479,6 @@ def _enrich_map(meta: dict[str, Any]) -> dict[str, Any]:
         "file_count": len(_load_files(meta["id"])),
         "entity_count": len(extraction.candidate_entities) if extraction else 0,
         "relation_count": len(extraction.candidate_relations) if extraction else 0,
-        "evidence_count": len(extraction.evidence) if extraction else 0,
         "parser_provider": meta.get("parser_provider"),
         "requested_extractor_provider": meta.get("requested_extractor_provider"),
         "extractor_provider": meta.get("extractor_provider"),
@@ -503,24 +502,6 @@ def _relation_to_response(relation: CandidateRelation, entity_names: dict[str, s
     item["source_name"] = entity_names.get(relation.source_entity_id, relation.source_entity_id)
     item["target_name"] = entity_names.get(relation.target_entity_id, relation.target_entity_id)
     return item
-
-
-def _evidence_to_summary_response(evidence: Evidence) -> dict[str, Any]:
-    return {
-        "evidence_id": evidence.evidence_id,
-        "map_id": evidence.map_id,
-        "source_file_id": evidence.source_file_id,
-        "chunk_id": evidence.chunk_id,
-        "location": evidence.location,
-        "summary": evidence.normalized_summary,
-        "normalized_summary": evidence.normalized_summary,
-        "quote": evidence.quote or "",
-        "support_type": evidence.support_type,
-        "evidence_quality": evidence.evidence_quality,
-        "supported_entity_ids": evidence.supported_entity_ids,
-        "supported_relation_ids": evidence.supported_relation_ids,
-        "confidence": evidence.confidence,
-    }
 
 
 def build_cognitive_map_prompt_context(
@@ -572,7 +553,7 @@ def build_cognitive_map_prompt_context(
         return ""
     return "\n\n".join([
         "## 已接入认知地图",
-        "以下内容来自当前 Agent 模式绑定的认知地图。回答中涉及地图事实时，应优先依据这些实体、关系和证据；无证据内容需要明确标为假设或待确认。",
+        "以下内容来自当前 Agent 模式绑定的认知地图。回答中涉及地图事实时，应优先依据这些实体和关系；不在图谱中的内容需要明确标为假设或待确认。",
         *summaries,
     ])
 
@@ -598,7 +579,6 @@ def _build_query_views(payload: CognitiveMapQueryRequest) -> list[dict[str, Any]
             extraction,
             max_entities=payload.max_entities,
             max_relations=payload.max_relations,
-            max_evidence=payload.max_evidence,
         )
         item = view.model_dump(mode="json")
         meta = _load_json(_meta_path(map_id), {})
@@ -730,23 +710,10 @@ def _build_graph_query_view(
             extraction,
             max_entities=payload.max_entities,
             max_relations=payload.max_relations,
-            max_evidence=payload.max_evidence,
             allowed_review_statuses=allowed_statuses,
         )
         return view, "extraction"
 
-    entity_evidence_ids = {
-        evidence_id
-        for entity in entities
-        for evidence_id in entity.source_evidence_ids
-    }
-    relation_evidence_ids = set()
-    for relation in relations:
-        relation_evidence_ids.update(relation.source_evidence_ids)
-    evidence_ids = relation_evidence_ids or entity_evidence_ids
-    evidence = [
-        item for item in extraction.evidence if item.evidence_id in evidence_ids
-    ][: payload.max_evidence]
     entities = entities[: payload.max_entities]
     relations = relations[: payload.max_relations]
     query = CognitiveMapQuery(
@@ -756,7 +723,7 @@ def _build_graph_query_view(
         map_ids=[map_id],
         entity_hints=payload.entity_hints,
     )
-    prompt_summary = CognitiveMapViewBuilder()._render_prompt_summary(query, entities, relations, evidence)
+    prompt_summary = CognitiveMapViewBuilder()._render_prompt_summary(query, entities, relations)
     return (
         CognitiveMapView(
             view_id=f"graph_view_{map_id}",
@@ -766,7 +733,6 @@ def _build_graph_query_view(
             agent_role=payload.agent_role,
             entities=entities,
             relations=relations,
-            evidence_summaries=evidence,
             limitations=[],
             prompt_summary=prompt_summary,
         ),
@@ -1002,13 +968,11 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
             raise RuntimeError("Cognitive map extractor returned no extraction result")
 
         extraction = _clean_extraction_graph(extraction)
-        _extraction_path(map_id).write_text(
-            extraction.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
+        persisted_extraction = lightweight_extraction(extraction)
+        _write_json(_extraction_path(map_id), lightweight_extraction_payload(extraction))
         property_graph_persisted = _persist_property_graph_store_if_available(map_id, extractor)
         evaluation = _generate_evaluation(
-            extraction,
+            persisted_extraction,
             property_graph_persisted=property_graph_persisted,
         )
         _write_json(_evaluation_path(map_id), evaluation)
@@ -1037,7 +1001,6 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
                 "timeout_seconds": payload.timeout_seconds,
                 "entity_count": evaluation["entity_count"],
                 "relation_count": evaluation["relation_count"],
-                "evidence_count": evaluation["evidence_count"],
                 "property_graph_persisted": property_graph_persisted,
                 "started_at": started_at,
                 "finished_at": meta["updated_at"],
@@ -1072,7 +1035,6 @@ async def build_cognitive_map(map_id: str, payload: CognitiveMapBuildRequest) ->
                 "timeout_seconds": payload.timeout_seconds,
                 "entity_count": 0,
                 "relation_count": 0,
-                "evidence_count": 0,
                 "started_at": started_at,
                 "finished_at": finished_at,
                 "duration_ms": int((time.perf_counter() - start_time) * 1000),
@@ -1196,8 +1158,6 @@ async def create_cognitive_map_entity(
         aliases=payload.aliases,
         description=payload.description,
         attributes=payload.attributes,
-        source_evidence_ids=payload.source_evidence_ids,
-        confidence=payload.confidence,
         review_status=payload.review_status,
         created_by="user",
     )
@@ -1243,7 +1203,6 @@ async def merge_cognitive_map_entity(
         raise HTTPException(status_code=404, detail=f"Cognitive map entity not found: {payload.target_entity_id}")
 
     target.aliases = sorted(set([*target.aliases, source.name, *(source.aliases or [])]))
-    target.source_evidence_ids = sorted(set([*target.source_evidence_ids, *source.source_evidence_ids]))
     target.attributes = {**source.attributes, **target.attributes}
     if not target.description and source.description:
         target.description = source.description
@@ -1329,8 +1288,6 @@ async def create_cognitive_map_relation(
         relation_type=payload.relation_type,
         description=payload.description,
         attributes=payload.attributes,
-        source_evidence_ids=payload.source_evidence_ids,
-        confidence=payload.confidence,
         review_status=payload.review_status,
         created_by="user",
     )
@@ -1375,21 +1332,3 @@ async def delete_cognitive_map_relation(map_id: str, relation_id: str) -> dict[s
 
     _save_extraction(map_id, extraction)
     return {"deleted": True, "relation_id": relation_id}
-
-
-@router.get("/{map_id}/evidence")
-async def list_cognitive_map_evidence(map_id: str) -> dict[str, Any]:
-    _require_map(map_id)
-    extraction = _load_extraction(map_id)
-    evidence = extraction.evidence if extraction else []
-    return {"evidence": [_evidence_to_summary_response(item) for item in evidence]}
-
-
-@router.get("/{map_id}/evidence/{evidence_id}")
-async def get_cognitive_map_evidence_detail(map_id: str, evidence_id: str) -> dict[str, Any]:
-    _require_map(map_id)
-    extraction = _require_extraction(map_id)
-    for item in extraction.evidence:
-        if item.evidence_id == evidence_id:
-            return {"evidence": item.model_dump(mode="json")}
-    raise HTTPException(status_code=404, detail="Evidence not found")

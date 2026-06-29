@@ -19,7 +19,7 @@ from .deliberation_prompt import (
     build_deliberation_monitoring_prompt,
     build_deliberation_reviewer_prompt,
 )
-from .tool_registry import get_tools_by_mode, get_tool_order
+from .tool_registry import get_tools_by_mode
 import structlog
 
 logger = structlog.get_logger()

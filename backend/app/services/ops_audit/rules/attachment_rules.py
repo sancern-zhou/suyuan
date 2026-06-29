@@ -132,6 +132,8 @@ def _requirement_is_not_applicable(requirement: dict[str, Any], forms: list[tupl
     text = " ".join(_form_exemption_text(form) for _table, form in relevant_forms)
     if _has_not_applicable_device_marker(text):
         return True
+    if requirement.get("id") == "VISIBILITY_CALIBRATION_EVIDENCE" and _has_no_visibility_device_marker(text):
+        return True
     if requirement.get("id") == "MONTH_STATION_MAINTAIN_PHOTOS" and _has_special_station_maintenance_marker(text):
         return True
     return False
@@ -170,6 +172,19 @@ def _has_not_applicable_device_marker(text: str) -> bool:
         "无此项",
     )
     return any(marker in text for marker in markers)
+
+
+def _has_no_visibility_device_marker(text: str) -> bool:
+    normalized = re.sub(r"\s+", "", str(text or ""))
+    if not normalized:
+        return False
+    no_device_patterns = (
+        r"无.*能见度.*(分析仪|仪器|设备|仪|传感器|检测仪)",
+        r"未配置.*能见度.*(分析仪|仪器|设备|仪|传感器|检测仪)",
+        r"无.*散射仪",
+        r"未配置.*散射仪",
+    )
+    return any(re.search(pattern, normalized) for pattern in no_device_patterns)
 
 
 def _has_special_station_maintenance_marker(text: str) -> bool:

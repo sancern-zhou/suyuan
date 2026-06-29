@@ -28,23 +28,6 @@ from ..context.context_diagnostics import ContextDiagnostics
 
 logger = structlog.get_logger()
 
-DASHBOARD_FINAL_METADATA_FIELDS = ("dashboard_focus", "answer_evidence")
-
-
-def _capture_final_response_metadata(state: RunState, action: Dict[str, Any]) -> None:
-    if state.mode != "query":
-        return
-    if not isinstance(action, dict):
-        return
-
-    metadata = action.get("metadata") if isinstance(action.get("metadata"), dict) else {}
-    for field in DASHBOARD_FINAL_METADATA_FIELDS:
-        value = action.get(field)
-        if value is None:
-            value = metadata.get(field)
-        if isinstance(value, dict):
-            setattr(state, field, value)
-
 
 @dataclass
 class AgentRuntimeConfig:
@@ -568,7 +551,7 @@ class AgentRuntime:
             loop_guard=self.tool_coordinator.loop_guard,
         )
         await cancellation_registry.attach_streaming_executor(state.session_id, streaming_tool_executor)
-        buffer = AssistantStreamBuffer(suppress_marked_dashboard_metadata=state.mode == "query")
+        buffer = AssistantStreamBuffer()
         planner_result = PlannerResult()
         user_content = None
         attachments = self._effective_attachments(state)
@@ -865,7 +848,6 @@ class AgentRuntime:
         completion_action = dict(planner_result.action or {"type": "PLAIN_TEXT_REPLY"})
         completion_action["type"] = "PLAIN_TEXT_REPLY"
         completion_action["answer"] = answer
-        _capture_final_response_metadata(state, completion_action)
         self.writer.add_iteration(
             planner_result.thought,
             completion_action,

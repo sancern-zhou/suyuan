@@ -16,7 +16,7 @@ class SpatialInterpolationTool(LLMTool):
             description=(
                 "Execute concentration spatial interpolation under the GIS spatial capability layer. "
                 "Use this for pollutant concentration surfaces, IDW/griddata fallback, and kriging when PyKrige is available. "
-                "Outputs DataRegistry grid/surface/contour assets for map analysis; use the surface data_id with gisctl interpolation-layer for map rendering. "
+                "Outputs DataRegistry grid/surface/contour assets for map analysis; use the surface data_id with visual_interaction interpolation-layer for user-visible map rendering. "
                 f"Before complex use, read {SPATIAL_INTERPOLATION_GUIDE_PATH}."
             ),
             category=ToolCategory.ANALYSIS,
@@ -29,8 +29,8 @@ class SpatialInterpolationTool(LLMTool):
                     "kriging 需要 PyKrige；缺失时除非 allow_fallback=true，否则返回依赖错误。"
                     "复杂插值、需要地图展示或不确定字段/方法时，先用 read_file 阅读 "
                     f"{SPATIAL_INTERPOLATION_GUIDE_PATH}。"
-                    "需要显示到地图时，优先使用返回的 surface data_id 调用 gisctl map-spec create interpolation-layer；"
-                    "contours data_id 可用 gisctl map-spec create line-layer 作为可选等值线叠加。"
+                    "需要显示到地图时，优先使用返回的 surface data_id 调用 visual_interaction map-spec create interpolation-layer；"
+                    "contours data_id 可用 visual_interaction map-spec create line-layer 作为可选等值线叠加。"
                     "再调用 wait_map_program_receipt；没有有效回执前不得声称插值图层已显示。"
                 ),
                 "parameters": {

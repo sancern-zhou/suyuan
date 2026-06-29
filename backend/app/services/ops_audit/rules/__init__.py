@@ -17,6 +17,7 @@ from app.services.ops_audit.rules.device_consistency_rules import (
     merge_device_history,
 )
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure
+from app.services.ops_audit.rules.o3_transfer_quality_rules import check_o3_transfer_quality_values
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates
 from app.services.ops_audit.rules.rf_enum_rules import check_rf_enum_values
@@ -49,6 +50,7 @@ __all__ = [
     "check_rf_calibration_dates",
     "check_rf_enum_values",
     "check_rf_visibility_values",
+    "check_o3_transfer_quality_values",
     # Lifecycle rules
     "check_lifecycle_closure",
     # Device consistency rules
@@ -83,6 +85,7 @@ def get_all_rule_checkers() -> dict[str, callable]:
         "rf_calibration_date": check_rf_calibration_dates,
         "rf_enum": check_rf_enum_values,
         "rf_visibility": check_rf_visibility_values,
+        "o3_transfer_quality": check_o3_transfer_quality_values,
         "lifecycle": check_lifecycle_closure,
         "device_consistency": check_device_identity_consistency,
         "attachment": check_attachment_requirements,

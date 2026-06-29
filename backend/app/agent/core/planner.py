@@ -11,7 +11,6 @@ ReAct Agent 规划器 (Planner) - V4 按模式过滤
 """
 
 import json
-import re
 import structlog
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from datetime import datetime
@@ -22,10 +21,6 @@ from app.utils.llm_context_logger import get_llm_context_logger
 from config.settings import settings
 
 logger = structlog.get_logger()
-
-DASHBOARD_METADATA_FIELDS = ("dashboard_focus", "answer_evidence")
-DASHBOARD_METADATA_MARKER = "query_dashboard_metadata"
-
 
 class ReActPlanner:
     """
@@ -124,46 +119,6 @@ class ReActPlanner:
         retry_content = build_base64_user_content(text, attachments)
         return retry_content if retry_content != text else user_content
 
-    @staticmethod
-    def _split_dashboard_metadata_from_text(text: str) -> tuple[str, Dict[str, Any]]:
-        """Extract explicit dashboard metadata JSON while preserving normal answers."""
-        if not text:
-            return text, {}
-
-        candidates: List[tuple[int, int, str]] = []
-        for match in re.finditer(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL):
-            candidates.append((match.start(), match.end(), match.group(1)))
-
-        for start, end, raw_json in candidates:
-            try:
-                payload = json.loads(raw_json)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            if payload.get(DASHBOARD_METADATA_MARKER) is not True:
-                continue
-
-            nested_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-            metadata: Dict[str, Any] = {}
-            for field in DASHBOARD_METADATA_FIELDS:
-                value = payload.get(field)
-                if value is None:
-                    value = nested_metadata.get(field)
-                if isinstance(value, dict):
-                    metadata[field] = value
-            if not metadata:
-                continue
-
-            answer = payload.get("answer")
-            if isinstance(answer, str) and answer.strip():
-                return answer.strip(), metadata
-
-            answer_without_block = (text[:start] + text[end:]).strip()
-            return answer_without_block, metadata
-
-        return text, {}
-
     async def think_and_action(
         self,
         query: str,
@@ -253,7 +208,6 @@ class ReActPlanner:
 
         return self._parse_anthropic_response(
             llm_response,
-            enable_dashboard_metadata=mode == "query",
         )
 
     async def think_and_action_streaming(
@@ -509,7 +463,6 @@ class ReActPlanner:
                     )
                     result = self._parse_accumulated_blocks(
                         current_blocks,
-                        enable_dashboard_metadata=mode == "query",
                     )
 
                     # 提取 thought
@@ -635,7 +588,6 @@ class ReActPlanner:
     def _parse_anthropic_response(
         self,
         llm_response: Dict[str, Any],
-        enable_dashboard_metadata: bool = False,
     ) -> Dict[str, Any]:
         """解析 Anthropic 非流式响应
 
@@ -679,16 +631,10 @@ class ReActPlanner:
         ])
 
         if not tool_use_blocks:
-            answer_text, dashboard_metadata = (
-                self._split_dashboard_metadata_from_text(full_text)
-                if enable_dashboard_metadata
-                else (full_text, {})
-            )
             action = {
                 "type": "PLAIN_TEXT_REPLY",
-                "answer": answer_text,
+                "answer": full_text,
             }
-            action.update(dashboard_metadata)
             # 无工具调用 - 纯文本回复
             return {
                 "thought": thinking_text or "思考回复策略",
@@ -710,7 +656,6 @@ class ReActPlanner:
     def _parse_accumulated_blocks(
         self,
         blocks: List[Dict[str, Any]],
-        enable_dashboard_metadata: bool = False,
     ) -> Dict[str, Any]:
         """解析流式累积的 content blocks
 
@@ -773,21 +718,15 @@ class ReActPlanner:
             full_text = thinking_blocks[-1].get("thinking", "")
 
         if not tool_use_blocks:
-            answer_text, dashboard_metadata = (
-                self._split_dashboard_metadata_from_text(full_text)
-                if enable_dashboard_metadata
-                else (full_text, {})
-            )
             action = {
                 "type": "PLAIN_TEXT_REPLY",
-                "answer": answer_text,
+                "answer": full_text,
             }
-            action.update(dashboard_metadata)
             # 纯文本回复
             logger.info(
                 "parse_accumulated_blocks_plain_text",
-                full_text_length=len(answer_text),
-                full_text_preview=answer_text[:200],
+                full_text_length=len(full_text),
+                full_text_preview=full_text[:200],
                 thinking_text_length=len(thinking_text),
                 thinking_text_preview=thinking_text[:200] if thinking_text else ""
             )

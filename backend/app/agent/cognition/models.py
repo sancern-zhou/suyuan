@@ -38,7 +38,7 @@ class CognitiveSchema(BaseModel):
     allowed_entity_types: list[str]
     allowed_relation_types: list[str]
     allowed_relation_triplets: list[tuple[str, str, str]] = Field(default_factory=list)
-    required_evidence: bool = True
+    required_evidence: bool = False
     build_requirement: str = ""
     domain_aliases: dict[str, list[str]] = Field(default_factory=dict)
     normalization_rules: dict[str, Any] = Field(default_factory=dict)
@@ -120,6 +120,12 @@ class CognitiveSchema(BaseModel):
                 ("RootCause", "root_cause_causes", "FaultSymptom"),
                 ("DataSource", "data_source_validates", "RootCause"),
                 ("CheckItem", "check_requires", "DataSource"),
+                ("Pollutant", "has_alias", "Pollutant"),
+                ("Station", "has_alias", "Station"),
+                ("Device", "has_alias", "Device"),
+                ("Analyzer", "has_alias", "Analyzer"),
+                ("Metric", "has_alias", "Metric"),
+                ("DataMetric", "has_alias", "DataMetric"),
             ],
             domain_aliases={
                 "臭氧": ["O3", "O₃"],
@@ -145,7 +151,6 @@ class Evidence(BaseModel):
     evidence_quality: str = "unknown"
     supported_entity_ids: list[str] = Field(default_factory=list)
     supported_relation_ids: list[str] = Field(default_factory=list)
-    confidence: float = 0.7
 
     @property
     def ref(self) -> str:
@@ -161,8 +166,6 @@ class CandidateEntity(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     description: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
-    source_evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float = 0.7
     review_status: ReviewStatus = "candidate"
     created_by: Literal["system", "user", "agent"] = "system"
 
@@ -175,8 +178,6 @@ class CandidateRelation(BaseModel):
     relation_type: str
     description: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
-    source_evidence_ids: list[str] = Field(default_factory=list)
-    confidence: float = 0.7
     review_status: ReviewStatus = "candidate"
     created_by: Literal["system", "user", "agent"] = "system"
 
@@ -196,6 +197,19 @@ class ExtractionResult(BaseModel):
     diagnostics: ExtractionDiagnostic
 
 
+LIGHTWEIGHT_EXTRACTION_EXCLUDE: dict[str, Any] = {
+    "evidence": True,
+}
+
+
+def lightweight_extraction_payload(extraction: ExtractionResult) -> dict[str, Any]:
+    return extraction.model_dump(mode="json", exclude=LIGHTWEIGHT_EXTRACTION_EXCLUDE)
+
+
+def lightweight_extraction(extraction: ExtractionResult) -> ExtractionResult:
+    return ExtractionResult.model_validate(lightweight_extraction_payload(extraction))
+
+
 class CognitiveMapQuery(BaseModel):
     task: str
     agent_mode: str
@@ -213,6 +227,5 @@ class CognitiveMapView(BaseModel):
     agent_role: str | None = None
     entities: list[CandidateEntity] = Field(default_factory=list)
     relations: list[CandidateRelation] = Field(default_factory=list)
-    evidence_summaries: list[Evidence] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     prompt_summary: str

@@ -15,6 +15,7 @@ PRESSURE_TRUE_VALUE_RULE_ID = "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATC
 MONTHLY_GAS_FLOW_ERROR_RANGE_RULE_ID = "RF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE"
 PM_MEMBRANE_ERROR_MISMATCH_RULE_ID = "RF_PM_MEMBRANE_ERROR_MISMATCH"
 PM_MEMBRANE_ERROR_RANGE_RULE_ID = "RF_PM_MEMBRANE_ERROR_OUT_OF_RANGE"
+QUARTER_GAS_FLOW_TARGET_POINT_RULE_ID = "RF_Q_GASEOUS_FLOW_TARGET_POINT_MISMATCH"
 SKIP_TOKENS = {"", "/", "-", "nan", "none", "null", "无", "无该项指标", "不适用", "未填写"}
 
 
@@ -43,6 +44,9 @@ def check_rf_formula_values(
                 _add_monthly_gas_flow_error_range_issue(order, table, monthly_error_range_violations, issues)
             violations.extend(_check_monthly_gas_flow(table, form))
         elif table == "RF_Q_GaseousFlowCheck":
+            target_point_violations = _check_quarter_gas_flow_target_points(table, form)
+            if target_point_violations:
+                _add_quarter_gas_flow_target_point_issue(order, table, target_point_violations, issues)
             pressure_violations = _check_quarter_pressure_true_value(table, form)
             if pressure_violations:
                 _add_pressure_true_value_issue(order, table, pressure_violations, issues)
@@ -173,6 +177,33 @@ def _add_pm_membrane_error_range_issue(
         "高",
         f"rf.{table}.{first.get('error_field')}",
         f"颗粒物校准膜误差{first.get('expected_error')}%超出±2%",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _add_quarter_gas_flow_target_point_issue(
+    order: dict[str, Any],
+    table: str,
+    violations: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "violation_count": len(violations),
+        "violations": violations[:20],
+    }
+    first = violations[0]
+    add_issue(
+        issues,
+        QUARTER_GAS_FLOW_TARGET_POINT_RULE_ID,
+        "表单数值逻辑",
+        "高",
+        f"rf.{table}.{first.get('field')}",
+        (
+            f"季度气体流量检查未按指定流量点检查: {first.get('field')}="
+            f"{first.get('actual')}，应接近{first.get('expected_target')}({first.get('point')}点)"
+        ),
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
@@ -383,6 +414,40 @@ def _check_quarter_gas_flow(table: str, form: dict[str, Any]) -> list[dict[str, 
         )
         violations.extend(_standard_flow_formula(table, form, point, abs_tol=0.2))
         violations.extend(_relative_flow_error_formula(table, form, point, abs_tol=0.2))
+    return violations
+
+
+def _check_quarter_gas_flow_target_points(table: str, form: dict[str, Any]) -> list[dict[str, Any]]:
+    violations = []
+    point_targets = {
+        "85": 8500,
+        "60": 6000,
+        "35": 3500,
+        "80": 80,
+        "50": 50,
+        "20": 20,
+    }
+    for point, expected in point_targets.items():
+        field = f"DF_Valuve_{point}"
+        if field not in form:
+            continue
+        actual = _num(form.get(field))
+        if actual is None:
+            continue
+        tolerance = max(abs(expected) * 0.05, 0.5)
+        if abs(actual - expected) <= tolerance:
+            continue
+        violations.append(
+            {
+                "rf_table": table,
+                "field": field,
+                "point": point,
+                "actual": actual,
+                "expected_target": expected,
+                "allowed_tolerance": round(tolerance, 6),
+                "violation_type": "target_point_mismatch",
+            }
+        )
     return violations
 
 

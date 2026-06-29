@@ -35,8 +35,8 @@ class GisctlResult(BaseModel):
         }
         metadata = {
             "schema_version": "gisctl.v1",
-            "tool_name": "gisctl",
-            "generator": "gisctl",
+            "tool_name": "visual_interaction",
+            "generator": "visual_interaction",
             "command": command,
             "data_ids": data_ids,
             "artifacts": artifacts,

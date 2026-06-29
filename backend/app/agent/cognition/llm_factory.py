@@ -105,28 +105,41 @@ class ProjectLLMAdapter(CustomLLM):
 
     def _build_structured_kg_prompt(self, text: str, max_triplets: int) -> str:
         return (
-            "请从以下文本中抽取知识图谱三元组，只返回 JSON，不要返回 Markdown。\n"
+            "请从以下文本中抽取轻量知识图谱三元组，只返回 JSON，不要返回 Markdown。\n"
             "JSON schema:\n"
             "{\n"
             "  \"triplets\": [\n"
             "    {\n"
-            "      \"subject\": {\"type\": \"实体类型\", \"name\": \"实体名称\"},\n"
+            "      \"subject\": {\n"
+            "        \"type\": \"实体类型\",\n"
+            "        \"name\": \"规范实体名\",\n"
+            "        \"description\": \"一句话解释实体含义，可为空，最多80个中文字符\",\n"
+            "        \"properties\": {}\n"
+            "      },\n"
             "      \"relation\": {\n"
             "        \"type\": \"关系类型\",\n"
-            "        \"properties\": {\n"
-            "          \"evidence_quote\": \"必须是原文中直接支持该关系的最短引用，1-3句；不要改写，不要使用关系本身复述\",\n"
-            "          \"evidence_summary\": \"中文短摘要，说明该引用如何支持 subject-relation-object 这条关系\",\n"
-            "          \"support_type\": \"direct | indirect | background\"\n"
-            "        }\n"
+            "        \"description\": \"一句话解释这条关系，可为空，最多80个中文字符\",\n"
+            "        \"properties\": {}\n"
             "      },\n"
-            "      \"object\": {\"type\": \"实体类型\", \"name\": \"实体名称\"}\n"
+            "      \"object\": {\n"
+            "        \"type\": \"实体类型\",\n"
+            "        \"name\": \"规范实体名\",\n"
+            "        \"description\": \"一句话解释实体含义，可为空，最多80个中文字符\",\n"
+            "        \"properties\": {}\n"
+            "      }\n"
             "    }\n"
             "  ]\n"
             "}\n"
-            "必须把关系级证据放在 relation.properties.evidence_quote、"
-            "relation.properties.evidence_summary、relation.properties.support_type 中；"
-            "不要放在 relation 顶层。\n"
-            "如果找不到能直接支撑关系的原文引用，不要抽取该关系。\n"
+            "不要输出 evidence、quote、source、chunk、page、location、原文片段或来源文件信息。\n"
+            "实体 description 只解释实体含义，不复述原文；常识型实体可留空。\n"
+            "关系 description 只说明 subject 与 object 为什么存在该关系，不要放原文引用。\n"
+            "实体名称必须是短规范名，不要把整句、长短语或文档标题当实体。\n"
+            "实体规范化要求：同义词、缩写、英文名、中文名、大小写差异、别名和上下位泛称如果实际指向同一概念，只选择一个最常用规范名；例如 PM2.5、细颗粒物、细颗粒物浓度不要生成两个实体。\n"
+            "如果原文同时出现规范名和别名，可用 has_alias 连接规范实体与别名实体；不要为了表达同一含义重复生成多个业务实体。\n"
+            "连通性要求：优先把实体连接到已有核心实体，例如站点、污染物、指标、区域、时段、机制、措施、规则、数据源或分析方法。\n"
+            "不要形成多个互不相连的小图；只有文本确实描述完全无关主题时，才允许产生独立子图。\n"
+            "关系选择要服务查询和多跳遍历，优先抽取能把现象、原因、指标、对象、方法、规则串起来的关系，避免只生成孤立二元关系。\n"
+            "只抽取对后续 Agent 推理、图谱编辑、污染分析或设备诊断有用的实体和关系；忽略泛泛背景信息。\n"
             f"最多抽取 {max_triplets} 个三元组。\n"
             "实体类型必须优先使用：Station, Pollutant, Metric, TimeWindow, Region, "
             "DataSource, AnalysisMethod, EmissionSource, ProcessMechanism, ControlMeasure, "
@@ -150,7 +163,7 @@ class ProjectLLMAdapter(CustomLLM):
             lines.extend([
                 "本次认知地图构建需求：",
                 build_requirement,
-                "抽取实体和关系时优先保留与该需求相关、可服务后续 Agent 推理和数据分析的内容；与需求无关的背景信息降低优先级。",
+                "抽取实体和关系时优先保留与该需求相关、可服务后续 Agent 推理和数据分析的内容；与需求无关的背景信息不要抽取。",
             ])
         triplets = getattr(schema, "allowed_relation_triplets", []) or []
         if triplets:

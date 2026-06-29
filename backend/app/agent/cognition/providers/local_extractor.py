@@ -69,10 +69,7 @@ class LocalRuleBasedExtractorProvider:
                         name=name,
                         canonical_name=name,
                         aliases=aliases,
-                        source_evidence_ids=[evidence.evidence_id],
                     )
-                elif evidence.evidence_id not in entities_by_key[key].source_evidence_ids:
-                    entities_by_key[key].source_evidence_ids.append(evidence.evidence_id)
 
         relations = self._build_relations(
             map_id=map_id,
@@ -125,7 +122,6 @@ class LocalRuleBasedExtractorProvider:
             target = by_type.get(target_key)
             if not source or not target:
                 return
-            evidence_ids = sorted(set(source.source_evidence_ids + target.source_evidence_ids))
             relations.append(
                 CandidateRelation(
                     relation_id=self._stable_id(
@@ -140,7 +136,6 @@ class LocalRuleBasedExtractorProvider:
                     target_entity_id=target.entity_id,
                     relation_type=relation_type,
                     description=f"{source.name} {relation_type} {target.name}",
-                    source_evidence_ids=evidence_ids or [item.evidence_id for item in evidence[:1]],
                 )
             )
 
@@ -152,4 +147,3 @@ class LocalRuleBasedExtractorProvider:
     def _stable_id(self, prefix: str, *parts: str) -> str:
         digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]
         return f"{prefix}_{digest}"
-

@@ -19,6 +19,8 @@ from app.agent.cognition.models import (
 class LlamaIndexSchemaComponents:
     possible_entities: type[Any]
     possible_relations: type[Any]
+    possible_entity_props: list[str]
+    possible_relation_props: list[str]
     validation_schema: list[tuple[str, str, str]]
 
 
@@ -72,25 +74,9 @@ class LlamaIndexPropertyGraphExtractorProvider:
         extractor = SchemaLLMPathExtractor(
             llm=self.llm,
             possible_entities=components.possible_entities,
-            possible_entity_props=[
-                ("confidence", "Confidence score between 0 and 1."),
-            ],
+            possible_entity_props=components.possible_entity_props,
             possible_relations=components.possible_relations,
-            possible_relation_props=[
-                (
-                    "evidence_quote",
-                    "The shortest exact source quote, 1-3 sentences, that directly supports this relation.",
-                ),
-                (
-                    "evidence_summary",
-                    "A concise Chinese summary explaining how the quote supports this relation.",
-                ),
-                (
-                    "support_type",
-                    "One of direct, indirect, or background. Use direct only when the quote supports the relation.",
-                ),
-                ("confidence", "Confidence score between 0 and 1."),
-            ],
+            possible_relation_props=components.possible_relation_props,
             kg_validation_schema=components.validation_schema,
             strict=True,
             max_triplets_per_chunk=self.max_triplets_per_chunk,
@@ -156,17 +142,27 @@ class LlamaIndexPropertyGraphExtractorProvider:
         relation_values = tuple(self._relation_type_lookup)
         possible_entities = Literal.__getitem__(entity_values)
         possible_relations = Literal.__getitem__(relation_values)
+        validation_schema = [
+            (
+                self._llamaindex_label(source),
+                self._llamaindex_label(relation),
+                self._llamaindex_label(target),
+            )
+            for source, relation, target in schema.allowed_relation_triplets
+        ]
+        if "has_alias" in (schema.allowed_relation_types or []):
+            for entity_type in schema.allowed_entity_types or []:
+                validation_schema.append((
+                    self._llamaindex_label(entity_type),
+                    self._llamaindex_label("has_alias"),
+                    self._llamaindex_label(entity_type),
+                ))
         return LlamaIndexSchemaComponents(
             possible_entities=possible_entities,
             possible_relations=possible_relations,
-            validation_schema=[
-                (
-                    self._llamaindex_label(source),
-                    self._llamaindex_label(relation),
-                    self._llamaindex_label(target),
-                )
-                for source, relation, target in schema.allowed_relation_triplets
-            ],
+            possible_entity_props=["description"],
+            possible_relation_props=["description"],
+            validation_schema=list(dict.fromkeys(validation_schema)),
         )
 
     def map_payload_to_extraction(
@@ -186,8 +182,6 @@ class LlamaIndexPropertyGraphExtractorProvider:
             name = str(item.get("name") or item.get("label") or "").strip()
             if not name:
                 continue
-            evidence_id = item.get("evidence_id")
-            source_evidence_ids = [evidence_id] if evidence_id else []
             key = (entity_type, name)
             entities[key] = CandidateEntity(
                 entity_id=self._stable_id("ent", map_id, entity_type, name),
@@ -198,8 +192,6 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 aliases=list(item.get("aliases") or []),
                 description=item.get("description"),
                 attributes=dict(item.get("attributes") or {}),
-                source_evidence_ids=source_evidence_ids,
-                confidence=float(item.get("confidence", 0.7)),
             )
 
         relations: list[CandidateRelation] = []
@@ -241,8 +233,6 @@ class LlamaIndexPropertyGraphExtractorProvider:
                     if item.get("evidence_quote") or item.get("evidence_summary")
                     else data.get("evidence_quality") or "unknown"
                 )
-                data["confidence"] = item.get("confidence") or data.get("confidence") or 0.7
-            source_evidence_ids = [evidence_id] if evidence_id else []
             relations.append(
                 CandidateRelation(
                     relation_id=self._stable_id(
@@ -258,20 +248,8 @@ class LlamaIndexPropertyGraphExtractorProvider:
                     relation_type=relation_type,
                     description=item.get("description"),
                     attributes=dict(item.get("attributes") or {}),
-                    source_evidence_ids=source_evidence_ids,
-                    confidence=float(item.get("confidence", 0.7)),
                 )
             )
-
-        relation_ids_by_evidence: dict[str, list[str]] = {}
-        for relation in relations:
-            for evidence_id in relation.source_evidence_ids:
-                relation_ids_by_evidence.setdefault(evidence_id, []).append(relation.relation_id)
-
-        entity_ids_by_evidence: dict[str, list[str]] = {}
-        for entity in entities.values():
-            for evidence_id in entity.source_evidence_ids:
-                entity_ids_by_evidence.setdefault(evidence_id, []).append(entity.entity_id)
 
         evidence = [
             Evidence(
@@ -285,9 +263,6 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 quote=data.get("quote") or None,
                 support_type=data.get("support_type") or "unknown",
                 evidence_quality=data.get("evidence_quality") or "unknown",
-                supported_entity_ids=entity_ids_by_evidence.get(evidence_id, []),
-                supported_relation_ids=relation_ids_by_evidence.get(evidence_id, []),
-                confidence=float(data.get("confidence", 0.7)),
             )
             for evidence_id, data in enriched_evidence_by_id.items()
         ]
@@ -361,41 +336,18 @@ class LlamaIndexPropertyGraphExtractorProvider:
             name = str(getattr(node, "name", None) or getattr(node, "id", None) or node).strip()
             key = (entity_type, name)
             properties = dict(getattr(node, "properties", {}) or {})
-            evidence_id = evidence_for_properties(properties)
             if key not in entities:
-                attributes = {
-                    k: v
-                    for k, v in properties.items()
-                    if k not in {
-                        "map_id",
-                        "source_file_id",
-                        "chunk_id",
-                        "location",
-                        "text_span",
-                        "triplet_source_id",
-                    }
-                }
+                description = str(properties.get("description") or "").strip() or None
                 entities[key] = CandidateEntity(
                     entity_id=self._stable_id("ent", map_id, entity_type, name),
                     map_id=map_id,
                     entity_type=entity_type,
                     name=name,
                     canonical_name=name,
-                    attributes=attributes,
-                    source_evidence_ids=[evidence_id] if evidence_id else [],
-                    confidence=float(properties.get("confidence", 0.7)),
+                    description=description,
+                    attributes={},
                 )
-            elif evidence_id and evidence_id not in entities[key].source_evidence_ids:
-                entities[key].source_evidence_ids.append(evidence_id)
             return entities[key]
-
-        def evidence_by_id(evidence_id: str | None) -> Evidence | None:
-            if not evidence_id:
-                return None
-            for item in evidence_by_source.values():
-                if item.evidence_id == evidence_id:
-                    return item
-            return None
 
         for source_node, relation, target_node in self._store_triplets(graph_store):
             source = entity_from_node(source_node)
@@ -411,44 +363,24 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 target.name,
             ])
             fallback_summary = f"{source.name} --{relation_type}--> {target.name}"
-            evidence_id = evidence_for_properties(
+            evidence_for_properties(
                 properties,
                 evidence_key=relation_evidence_key,
                 fallback_summary=fallback_summary,
             )
             key = (source.entity_id, relation_type, target.entity_id)
             if key in relations:
-                if evidence_id and evidence_id not in relations[key].source_evidence_ids:
-                    relations[key].source_evidence_ids.append(evidence_id)
-                    evidence_item = evidence_by_id(evidence_id)
-                    if evidence_item and relations[key].relation_id not in evidence_item.supported_relation_ids:
-                        evidence_item.supported_relation_ids.append(relations[key].relation_id)
                 continue
-            attributes = {
-                k: v
-                for k, v in properties.items()
-                if k not in {
-                    "map_id",
-                    "source_file_id",
-                    "chunk_id",
-                    "location",
-                    "text_span",
-                    "triplet_source_id",
-                }
-            }
+            description = str(properties.get("description") or "").strip() or None
             relations[key] = CandidateRelation(
                 relation_id=self._stable_id("rel", map_id, source.entity_id, relation_type, target.entity_id),
                 map_id=map_id,
                 source_entity_id=source.entity_id,
                 target_entity_id=target.entity_id,
                 relation_type=relation_type,
-                attributes=attributes,
-                source_evidence_ids=[evidence_id] if evidence_id else [],
-                confidence=float(properties.get("confidence", 0.7)),
+                description=description,
+                attributes={},
             )
-            evidence_item = evidence_by_id(evidence_id)
-            if evidence_item and relations[key].relation_id not in evidence_item.supported_relation_ids:
-                evidence_item.supported_relation_ids.append(relations[key].relation_id)
 
         return ExtractionResult(
             map_id=map_id,
@@ -502,10 +434,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
         if not isinstance(payload, dict) or not payload.get("triplets"):
             return
 
-        from llama_index.core.graph_stores.types import EntityNode, Relation, TRIPLET_SOURCE_KEY
-
-        chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks}
-        fallback_chunk = chunks[0] if chunks else None
+        from llama_index.core.graph_stores.types import EntityNode, Relation
         nodes_by_name: dict[str, EntityNode] = {}
         relations: list[Relation] = []
         for item in payload.get("triplets", []):
@@ -520,45 +449,28 @@ class LlamaIndexPropertyGraphExtractorProvider:
             if source_name == target_name:
                 continue
 
-            chunk_id = str(item.get("chunk_id") or "")
-            chunk = chunk_by_id.get(chunk_id) or fallback_chunk
-            metadata = {}
-            if chunk is not None:
-                metadata = {
-                    "map_id": chunk.map_id,
-                    "source_file_id": chunk.source_file_id,
-                    "chunk_id": chunk.chunk_id,
-                    "location": chunk.location,
-                    "text_span": chunk.text,
-                    TRIPLET_SOURCE_KEY: chunk.chunk_id,
-                }
-            metadata.update(
-                {
-                    "evidence_quote": (relation.get("properties") or {}).get("evidence_quote") or "",
-                    "evidence_summary": (relation.get("properties") or {}).get("evidence_summary") or "",
-                    "support_type": (relation.get("properties") or {}).get("support_type") or "unknown",
-                    "confidence": (relation.get("properties") or {}).get("confidence") or 0.7,
-                }
-            )
+            relation_properties = {"description": str(relation.get("description") or "").strip()}
 
             source_type = self._project_entity_type(str(subject.get("type") or "Entity"))
             target_type = self._project_entity_type(str(obj.get("type") or "Entity"))
+            source_properties = {"description": str(subject.get("description") or "").strip()}
+            target_properties = {"description": str(obj.get("description") or "").strip()}
             nodes_by_name[source_name] = EntityNode(
                 name=source_name,
                 label=source_type,
-                properties=metadata,
+                properties=source_properties,
             )
             nodes_by_name[target_name] = EntityNode(
                 name=target_name,
                 label=target_type,
-                properties=metadata,
+                properties=target_properties,
             )
             relations.append(
                 Relation(
                     label=relation_type,
                     source_id=source_name,
                     target_id=target_name,
-                    properties=metadata,
+                    properties=relation_properties,
                 )
             )
 

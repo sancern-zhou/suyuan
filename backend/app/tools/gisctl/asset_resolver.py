@@ -18,7 +18,7 @@ SEMANTIC_ASSET_PROFILES: dict[str, dict[str, Any]] = {
         "layer_kind": "point",
         "geometry": "point",
         "required_capabilities": ("lon_field", "lat_field"),
-        "tool_bindings": ("gisctl.point-layer",),
+        "tool_bindings": ("visual_interaction.point-layer",),
     },
     "map_layer_source.pollution_sources": {
         "asset_type": "map_layer_source",
@@ -26,7 +26,7 @@ SEMANTIC_ASSET_PROFILES: dict[str, dict[str, Any]] = {
         "layer_kind": "point",
         "geometry": "point",
         "required_capabilities": ("lon_field", "lat_field"),
-        "tool_bindings": ("spatial_analysis", "gisctl.point-layer"),
+        "tool_bindings": ("spatial_analysis", "visual_interaction.point-layer"),
     },
 }
 

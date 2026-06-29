@@ -16,7 +16,7 @@ class SpatialAnalysisTool(LLMTool):
             description=(
                 "Execute an Agent-authored GIS spatial analysis spec. "
                 "Use this for generic spatial operations such as buffer, intersect, filter, nearest, distance, aggregate, top_n, and upwind_sector, "
-                "then pass returned data_id values to gisctl for map display. "
+                "then pass returned data_id values to visual_interaction for user-visible map display. "
                 f"Before complex use, read {SPATIAL_ANALYSIS_GUIDE_PATH}."
             ),
             category=ToolCategory.ANALYSIS,
@@ -25,7 +25,7 @@ class SpatialAnalysisTool(LLMTool):
                 "description": (
                     "通用空间分析执行工具。Agent 生成 spatial-spec JSON，后端校验并执行基础 GIS 操作，"
                     "将结果注册为 DataRegistry 资产。适合站点周边污染源、空间相交、缓冲区、按区域聚合等场景。"
-                    "本工具只做空间分析和资产注册，不直接控制地图；需要展示时继续调用 gisctl。"
+                    "本工具只做空间分析和资产注册，不直接改变用户所见；需要展示时继续调用 visual_interaction。"
                     "复杂空间分析前先用 read_file 阅读 "
                     f"{SPATIAL_ANALYSIS_GUIDE_PATH}。"
                 ),

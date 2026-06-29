@@ -22,7 +22,6 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
-      :dashboard-focus="store.currentState.dashboardFocus"
       :map-program="store.currentState.currentMapProgram"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"

@@ -8,15 +8,12 @@ from app.agent.cognition.models import CognitiveMapQuery, CognitiveMapView, Extr
 class CognitiveMapViewBuilder:
     """Builds the compact view that will be injected into Agent context."""
 
-    max_prompt_evidence_chars = 180
-
     def build_from_extraction(
         self,
         query: CognitiveMapQuery,
         extraction: ExtractionResult,
         max_entities: int = 20,
         max_relations: int = 20,
-        max_evidence: int = 10,
         allowed_review_statuses: set[str] | None = None,
     ) -> CognitiveMapView:
         filtered_extraction = self._filter_by_review_status(
@@ -30,20 +27,8 @@ class CognitiveMapViewBuilder:
             for relation in filtered_extraction.candidate_relations
             if relation.source_entity_id in entity_ids or relation.target_entity_id in entity_ids
         ][:max_relations]
-        entity_evidence_ids = {
-            evidence_id
-            for entity in entities
-            for evidence_id in entity.source_evidence_ids
-        }
-        relation_evidence_ids = set()
-        for relation in relations:
-            relation_evidence_ids.update(relation.source_evidence_ids)
-        evidence_ids = relation_evidence_ids or entity_evidence_ids
-        evidence = [
-            item for item in filtered_extraction.evidence if item.evidence_id in evidence_ids
-        ][:max_evidence]
 
-        prompt_summary = self._render_prompt_summary(query, entities, relations, evidence)
+        prompt_summary = self._render_prompt_summary(query, entities, relations)
         return CognitiveMapView(
             view_id=self._stable_id("view", query.task, extraction.map_id),
             map_id=extraction.map_id,
@@ -52,7 +37,6 @@ class CognitiveMapViewBuilder:
             agent_role=query.agent_role,
             entities=entities,
             relations=relations,
-            evidence_summaries=evidence,
             limitations=["当前为 Spike 视图，仅包含候选认知地图内容，未经发布审核。"],
             prompt_summary=prompt_summary,
         )
@@ -104,25 +88,14 @@ class CognitiveMapViewBuilder:
                 and relation.target_entity_id in entity_ids
             )
         ]
-        evidence_ids = {
-            evidence_id
-            for entity in entities
-            for evidence_id in entity.source_evidence_ids
-        }
-        for relation in relations:
-            evidence_ids.update(relation.source_evidence_ids)
-        evidence = [
-            item for item in extraction.evidence if item.evidence_id in evidence_ids
-        ]
         return ExtractionResult(
             map_id=extraction.map_id,
             candidate_entities=entities,
             candidate_relations=relations,
-            evidence=evidence,
             diagnostics=extraction.diagnostics,
         )
 
-    def _render_prompt_summary(self, query, entities, relations, evidence) -> str:
+    def _render_prompt_summary(self, query, entities, relations) -> str:
         lines = [
             "## 当前认知地图",
             "",
@@ -134,7 +107,8 @@ class CognitiveMapViewBuilder:
 
         lines.extend(["", "相关实体："])
         lines.extend(
-            f"- {entity.entity_type}: {entity.name} ({', '.join(entity.source_evidence_ids)})"
+            f"- {entity.entity_type}: {entity.name}"
+            f"{f'：{entity.description}' if entity.description else ''}"
             for entity in entities
         )
         lines.extend(["", "关键关系："])
@@ -143,39 +117,18 @@ class CognitiveMapViewBuilder:
             f"- {entity_name_by_id.get(relation.source_entity_id, relation.source_entity_id)} "
             f"--{relation.relation_type}--> "
             f"{entity_name_by_id.get(relation.target_entity_id, relation.target_entity_id)}"
+            f"{f'：{relation.description}' if relation.description else ''}"
             for relation in relations
-        )
-        lines.extend(["", "可引用证据："])
-        lines.extend(
-            f"- [{item.ref}] {item.source_file_id}:{item.location} {self._evidence_short_text(item)}"
-            for item in evidence
         )
         lines.extend(
             [
                 "",
                 "输出约束：",
-                "- 事实性结论必须引用 evidence_refs。",
-                "- 无证据内容只能作为 hypothesis 或 open_question。",
+                "- 事实性结论优先依据上述实体和关系。",
+                "- 图谱中不存在的内容只能作为 hypothesis 或 open_question。",
             ]
         )
         return "\n".join(lines)
-
-    def _evidence_short_text(self, evidence) -> str:
-        text = (
-            getattr(evidence, "quote", None)
-            or getattr(evidence, "normalized_summary", None)
-            or ""
-        )
-        text = " ".join(str(text).split())
-        if len(text) <= self.max_prompt_evidence_chars:
-            short_text = text
-        else:
-            short_text = f"{text[: self.max_prompt_evidence_chars].rstrip()}..."
-        quality = getattr(evidence, "evidence_quality", None) or "unknown"
-        support_type = getattr(evidence, "support_type", None) or "unknown"
-        if support_type == "fallback" or quality == "missing_relation_evidence":
-            return f"{short_text}（证据质量: {quality}; 兜底摘要，需核验原文）"
-        return f"{short_text}（证据质量: {quality}）"
 
     def _stable_id(self, prefix: str, *parts: str) -> str:
         digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:12]

@@ -13,13 +13,6 @@ def generate_evaluation_markdown(
 ) -> str:
     entity_count = len(extraction.candidate_entities)
     relation_count = len(extraction.candidate_relations)
-    evidence_count = len(extraction.evidence)
-    entities_with_evidence = sum(
-        1 for entity in extraction.candidate_entities if entity.source_evidence_ids
-    )
-    relations_with_evidence = sum(
-        1 for relation in extraction.candidate_relations if relation.source_evidence_ids
-    )
     entity_type_counts = Counter(entity.entity_type for entity in extraction.candidate_entities)
     relation_type_counts = Counter(
         relation.relation_type for relation in extraction.candidate_relations
@@ -32,9 +25,6 @@ def generate_evaluation_markdown(
         "",
         f"- 候选实体数量：{entity_count}",
         f"- 候选关系数量：{relation_count}",
-        f"- 证据片段数量：{evidence_count}",
-        f"- 有证据实体比例：{_ratio(entities_with_evidence, entity_count)}",
-        f"- 有证据关系比例：{_ratio(relations_with_evidence, relation_count)}",
         f"- Provider：{extraction.diagnostics.provider_name}",
         f"- Provider 状态：{extraction.diagnostics.status}",
         "",
@@ -54,8 +44,7 @@ def generate_evaluation_markdown(
 
     lines.extend(["", f"## 抽样候选实体（最多 {sample_size} 条）", ""])
     for entity in extraction.candidate_entities[:sample_size]:
-        evidence = ", ".join(entity.source_evidence_ids) or "无"
-        lines.append(f"- [{entity.entity_type}] {entity.name} | evidence: {evidence}")
+        lines.append(f"- [{entity.entity_type}] {entity.name}")
     if not extraction.candidate_entities:
         lines.append("- 无")
 
@@ -64,8 +53,7 @@ def generate_evaluation_markdown(
     for relation in extraction.candidate_relations[:sample_size]:
         source = entity_name_by_id.get(relation.source_entity_id, relation.source_entity_id)
         target = entity_name_by_id.get(relation.target_entity_id, relation.target_entity_id)
-        evidence = ", ".join(relation.source_evidence_ids) or "无"
-        lines.append(f"- {source} --{relation.relation_type}--> {target} | evidence: {evidence}")
+        lines.append(f"- {source} --{relation.relation_type}--> {target}")
     if not extraction.candidate_relations:
         lines.append("- 无")
 
@@ -88,12 +76,6 @@ def write_evaluation(
         encoding="utf-8",
     )
     return output_path
-
-
-def _ratio(numerator: int, denominator: int) -> str:
-    if denominator <= 0:
-        return "0/0 (0.0%)"
-    return f"{numerator}/{denominator} ({numerator / denominator:.1%})"
 
 
 def main() -> None:

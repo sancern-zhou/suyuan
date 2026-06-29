@@ -262,9 +262,9 @@ class SimplifiedContextBuilder:
         sections = [mode_prompt.rstrip()]
         if self.current_mode == "query" and self.map_context:
             sections.append(
-                "## Agentic GIS 控制说明\n"
+                "## Agentic GIS 视觉交互说明\n"
                 "- 当前请求可能包含前端地图交互上下文，见用户消息中的“当前地图交互上下文”。\n"
-                "- 如需改变地图显示，优先调用 `gisctl` 生成 `map_program`，不要只用自然语言描述地图变化。\n"
+                "- 如需改变用户所见，优先调用 `visual_interaction` 生成 `map_program`，不要只用自然语言描述地图变化。\n"
                 "- 地图事件代表用户已在 GIS 中完成的操作，例如框选、视图变化、图层开关；分析时应把它当作当前对话状态。\n"
                 "- `map_program_executed` / `map_program_failed` 是前端执行回执；只有回执中 `layer_rendered` 且 feature_count > 0 的图层，才能视为已经真实显示。"
             )
@@ -493,6 +493,20 @@ class SimplifiedContextBuilder:
         active_map_name = self.map_context.get("active_map_name") or self.map_context.get("map_name")
         if active_map_name:
             lines.append(f"active_map_name={active_map_name}")
+
+        map_dir = f"backend_data_registry/cognitive_maps/{active_map_id}/"
+        lines.extend([
+            "",
+            "文件优先路径:",
+            f"- map_dir={map_dir}",
+            f"- extraction={map_dir}extraction.json",
+            f"- evaluation={map_dir}evaluation.json",
+            f"- map={map_dir}map.json",
+            f"- files={map_dir}files.json",
+            f"- build_runs={map_dir}build_runs.json",
+            f"- property_graph_store={map_dir}property_graph_store.json",
+            "解释/查看/总结时优先 read_file 读取这些文件；编辑时先 read_file 再 edit_file。",
+        ])
 
         selected_item = self.map_context.get("selected_item")
         if isinstance(selected_item, dict):

@@ -32,34 +32,6 @@ class DashboardModule(BaseModel):
     error: dict[str, Any] | None = None
 
 
-class DashboardFocusTimeRange(BaseModel):
-    start: str | None = None
-    end: str | None = None
-    label: str | None = None
-
-
-class DashboardFocus(BaseModel):
-    scope: str = "province"
-    cities: list[str] = Field(default_factory=list)
-    stations: list[str] = Field(default_factory=list)
-    pollutants: list[str] = Field(default_factory=list)
-    time_range: DashboardFocusTimeRange | None = None
-    modules: list[str] = Field(default_factory=list)
-    layer_state: dict[str, bool] = Field(default_factory=dict)
-    source_data_ids: list[str] = Field(default_factory=list)
-
-
-class AnswerEvidenceClaim(BaseModel):
-    text: str
-    metrics: list[str] = Field(default_factory=list)
-    source_data_ids: list[str] = Field(default_factory=list)
-
-
-class AnswerEvidence(BaseModel):
-    claims: list[AnswerEvidenceClaim] = Field(default_factory=list)
-    query_params: dict[str, Any] = Field(default_factory=dict)
-
-
 class DashboardOverviewResponse(BaseModel):
     success: bool = True
     generated_at: str

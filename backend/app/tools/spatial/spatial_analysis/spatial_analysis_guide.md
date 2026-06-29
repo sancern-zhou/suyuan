@@ -1,6 +1,6 @@
 # spatial_analysis 使用说明
 
-`spatial_analysis` 用于执行 Agent 生成的通用 GIS 分析 spec。它只负责空间分析和 DataRegistry 资产注册；需要把结果显示到问数看板地图时，继续调用 `gisctl`。
+`spatial_analysis` 用于执行 Agent 生成的通用 GIS 分析 spec。它只负责空间分析和 DataRegistry 资产注册；需要把结果显示到问数看板地图时，继续调用 `visual_interaction`。
 
 ## 适用场景
 
@@ -17,7 +17,7 @@
 1. 先用查询工具、认知地图或 `create_map_point_asset` 获取真实数据资产 `data_id`。
 2. 调用 `spatial_analysis`，用 spatial-spec 描述输入、步骤和输出。
 3. 读取返回的 `data.outputs[*].data_id`。
-4. 调用 `gisctl` 创建 `polygon-layer`、`point-layer` 或其他地图程序。
+4. 调用 `visual_interaction` 创建 `polygon-layer`、`point-layer` 或其他地图程序。
 
 ## spatial-spec 结构
 
@@ -190,7 +190,7 @@
 
 ## 结果展示
 
-`spatial_analysis` 返回的每个输出都会带 `data_id` 和 `asset_schema`。展示时把 `data_id` 交给 `gisctl`：
+`spatial_analysis` 返回的每个输出都会带 `data_id` 和 `asset_schema`。展示时把 `data_id` 交给 `visual_interaction`：
 
 - `spatial_polygon_asset`：用 `map-spec create polygon-layer`。
 - `spatial_point_asset`：用 `map-spec create point-layer`。

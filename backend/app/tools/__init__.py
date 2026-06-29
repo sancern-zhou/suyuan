@@ -543,9 +543,9 @@ def create_global_tool_registry() -> ToolRegistry:
     try:
         from app.tools.gisctl.tool import GisctlTool
         registry.register(GisctlTool(), priority=214)
-        logger.info("tool_loaded", tool="gisctl")
+        logger.info("tool_loaded", tool="visual_interaction")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="gisctl", error=str(e))
+        logger.warning("tool_import_failed", tool="visual_interaction", error=str(e))
 
     try:
         from app.tools.gisctl.asset_resolver_tool import ResolveMapDataAssetTool

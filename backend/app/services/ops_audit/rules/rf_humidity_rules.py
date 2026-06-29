@@ -15,6 +15,7 @@ from app.services.ops_audit.rules.base import add_issue
 MISSING_RULE_ID = "RF_HY_ENV_HUMIDITY_SENSOR_VALUE_MISSING"
 UNCHANGED_RULE_ID = "RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT"
 DATE_RULE_ID = "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID"
+QUARTER_GAS_FLOW_HUMIDITY_RULE_ID = "RF_Q_GASEOUS_FLOW_ENV_HUMIDITY_OUT_OF_RANGE"
 TABLE = "RF_HY_EnvironmentHumidity"
 SKIP_VALUES = {"", "/", "-", "无", "不适用", "none", "null", "nan"}
 
@@ -27,7 +28,12 @@ def check_rf_environment_humidity_values(
     """Check half-year particulate environment humidity calibration records."""
 
     for table, form in forms:
-        if form.get("_query_error") or table != TABLE:
+        if form.get("_query_error"):
+            continue
+        if table == "RF_Q_GaseousFlowCheck":
+            _check_quarter_gaseous_flow_humidity(order, table, form, issues)
+            continue
+        if table != TABLE:
             continue
 
         prev_value = _num(form.get("CailbPrevReadNum"))
@@ -77,6 +83,36 @@ def check_rf_environment_humidity_values(
             )
 
         _check_last_calibration_date(order, table, form, issues)
+
+
+def _check_quarter_gaseous_flow_humidity(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    value = _num(form.get("Humidity"))
+    if value is None or 0 <= value <= 80:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "field": "Humidity",
+        "raw_value": form.get("Humidity"),
+        "value": value,
+        "expected_min": 0,
+        "expected_max": 80,
+    }
+    add_issue(
+        issues,
+        QUARTER_GAS_FLOW_HUMIDITY_RULE_ID,
+        "表单结果合理性",
+        "高",
+        f"rf.{table}.Humidity",
+        f"季度气体流量检查室内湿度{value}%超出0-80%",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _check_last_calibration_date(

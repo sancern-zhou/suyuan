@@ -54,11 +54,11 @@ rules:
     scope: RF_W_INSPECTIONSUMMARY
     rationale: 每周巡检汇总表应填写实际人员姓名，车辆应填写车牌号或交通工具，不能只保留用户ID或低信息内容。
   - rule_id: RF_PM_TAPE_USAGE_INVALID
-    name: 颗粒物周检纸带使用量填写不规范
+    name: 颗粒物周检耗材使用/处置情况填写不规范
     category: 规范性问题
     default_severity: 中
     scope: RF_W_PMCHECK
-    rationale: 颗粒物 PM10/PM2.5 周检应明确纸带使用量足够一周，或填写可判断的一周使用量数值。
+    rationale: 颗粒物 PM10/PM2.5 周检应按设备类型填写对应耗材状态；DEVICEMODEL 包含 1405 时应填写 TEOM 滤膜负载及处置情况，其他颗粒物仪器应填写纸带使用量及处置情况，不能为空或仅填写 /。
   - rule_id: RF_STATION_MISMATCH
     name: RF 表单站点与工单站点不一致
     category: 一致性
@@ -179,6 +179,12 @@ rules:
     default_severity: 高
     scope: RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK/RF_M_GASEOUSFLOWCHECK
     rationale: 检查值超出对应品牌正常范围，或月度气体流量显示值、测量值超出表单流量范围文本解析出的上下限，需核对单位、复测或补充异常处理记录。
+  - rule_id: RF_M_GASEOUS_FLOW_RANGE_MISSING
+    name: 月度气体流量检查流量范围未填写
+    category: 表单完整性
+    default_severity: 高
+    scope: RF_M_GASEOUSFLOWCHECK
+    rationale: 月度气体流量检查应填写 SO2、NO2、CO、O3 对应流量范围，缺少范围文本时无法判断显示值和测量值是否在允许范围内。
   - rule_id: RF_VALUE_FORMULA_MISMATCH
     name: RF 表单公式计算结果不一致
     category: 表单数值逻辑
@@ -196,7 +202,7 @@ rules:
     category: 表单数值逻辑
     default_severity: 中
     scope: RF_M_GASEOUSFLOWCHECK/RF_TW_PmFlowCheck/RF_Q_GaseousFlowCheck
-    rationale: 数值字段出现量程文本，或显示值/测量值交换后误差公式反而成立时，说明字段位置可能填反，需要结合附件或原始记录复核。
+    rationale: 数值字段出现量程、范围或目标值文本时，说明字段位置或字段内容可能错填，需要结合附件或原始记录复核；误差公式正负号或计算结果不一致不再直接推断为字段填反。
   - rule_id: RF_MULTIPOINT_RANGE_INVALID
     name: 多点校准量程较上一条同站点同类表单发生变化
     category: 表单数值逻辑
@@ -209,6 +215,12 @@ rules:
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck/RF_TW_PmFlowCheck/RF_TW_PmFlowCalibrate/RF_Q_GASEOUSMULTIPOINT_*
     rationale: 上次校准日期不得晚于下次校准日期，下次校准日期或有效期必须晚于检查/校准作业日期。
+  - rule_id: RF_CALIBRATION_DATE_SHOULD_BE_EMPTY
+    name: RF 表单校准有效期应为空
+    category: 填报规范性
+    default_severity: 高
+    scope: RF_Q_GASEOUSMULTIPOINT_O3
+    rationale: 臭氧多点校准无标气瓶时，标气有效期字段应不填，不再要求备注说明臭氧传递浓度有效期。
   - rule_id: RF_CALIBRATION_INTERVAL_TOO_LONG
     name: RF 表单校准周期超过两年
     category: 时间合理性
@@ -227,6 +239,24 @@ rules:
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
     rationale: 臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的候选单元格一致；斜率比对 F25/F24，截距比对 F26/F25，改变率比对 F28/F27，任一候选单元格匹配即视为一致。
+  - rule_id: RF_O3_VALUE_PASS_FLOW_VALUE_MISSING
+    name: O3量值传递传递流量未填写
+    category: 表单完整性
+    default_severity: 高
+    scope: RF_HY_O3VALUEPASS
+    rationale: O3量值传递表中已填写同组目标/工作浓度等信息时，传递流量字段应同步填写。
+  - rule_id: RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT
+    name: O3量值传递字段内容疑似错位
+    category: 表单数值逻辑
+    default_severity: 高
+    scope: RF_HY_O3VALUEPASS
+    rationale: O3量值传递流量字段出现日期、设备型号或编号等非流量内容时，说明表单字段疑似错位。
+  - rule_id: RF_O3_TRANSFER_RESULT_INVALID
+    name: O3量值传递结果不符合要求
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_HY_O3VALUEPASS
+    rationale: O3量值传递应至少形成3个有效传递点，各点相对偏差应控制在±2%以内。
   - rule_id: RF_ENUM_VALUE_INVALID
     name: RF 表单枚举字段取值异常
     category: 表单填报一致性
@@ -245,6 +275,18 @@ rules:
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck
     rationale: 参考气压计真实值应由显示值、斜率和截距复算，填报值不一致会影响后续标准流量计算。
+  - rule_id: RF_Q_GASEOUS_FLOW_TARGET_POINT_MISMATCH
+    name: 季度气体流量检查未按指定流量点检查
+    category: 表单数值逻辑
+    default_severity: 高
+    scope: RF_Q_GaseousFlowCheck
+    rationale: 季度气体流量检查的目标点字段应与字段名指定的流量点一致，35/60/85 点对应约 3500/6000/8500，20/50/80 点对应约 20/50/80；偏离过大说明未按指定零气或标气流量点检查。
+  - rule_id: RF_Q_GASEOUS_FLOW_ENV_HUMIDITY_OUT_OF_RANGE
+    name: 季度气体流量检查室内湿度超范围
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_Q_GaseousFlowCheck
+    rationale: 季度气体流量检查作业环境湿度应在0-80%范围内，超出范围会影响MFC流量检查条件。
   - rule_id: RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT
     name: 能见度无设备说明与设备字段冲突
     category: 表单填报一致性

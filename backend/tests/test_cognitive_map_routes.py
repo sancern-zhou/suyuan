@@ -1,5 +1,6 @@
 from pathlib import Path
 import asyncio
+import json
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI
@@ -77,18 +78,20 @@ def test_cognitive_map_api_runs_file_to_entities_flow(tmp_path: Path, monkeypatc
     assert built["status"] == "completed"
     assert built["entity_count"] >= 2
     assert built["relation_count"] >= 1
-    assert built["evidence_count"] >= 1
+    assert "evidence_count" not in built
+
+    extraction_json = json.loads((tmp_path / map_id / "extraction.json").read_text(encoding="utf-8"))
+    assert "evidence" not in extraction_json
+    assert all("source_evidence_ids" not in entity for entity in extraction_json["candidate_entities"])
+    assert all("source_evidence_ids" not in relation for relation in extraction_json["candidate_relations"])
 
     entities_response = client.get(f"/api/cognitive-maps/{map_id}/entities")
     relations_response = client.get(f"/api/cognitive-maps/{map_id}/relations")
-    evidence_response = client.get(f"/api/cognitive-maps/{map_id}/evidence")
 
     assert entities_response.status_code == 200
     assert relations_response.status_code == 200
-    assert evidence_response.status_code == 200
     assert any(entity["name"] == "臭氧" for entity in entities_response.json()["entities"])
     assert relations_response.json()["relations"]
-    assert evidence_response.json()["evidence"]
 
 
 def test_cognitive_map_api_returns_404_for_missing_map(tmp_path: Path, monkeypatch):
@@ -103,6 +106,51 @@ def test_cognitive_map_api_returns_404_for_missing_map(tmp_path: Path, monkeypat
     response = client.get("/api/cognitive-maps/missing/entities")
 
     assert response.status_code == 404
+
+
+def test_cognitive_map_load_extraction_drops_legacy_evidence(tmp_path: Path, monkeypatch):
+    from app.api import cognitive_map_routes
+
+    monkeypatch.setattr(cognitive_map_routes, "COGNITIVE_MAPS_ROOT", tmp_path)
+    map_id = "map_legacy"
+    map_dir = tmp_path / map_id
+    map_dir.mkdir()
+    (map_dir / "extraction.json").write_text(
+        json.dumps(
+            {
+                "map_id": map_id,
+                "candidate_entities": [
+                    {
+                        "entity_id": "ent_1",
+                        "map_id": map_id,
+                        "entity_type": "Pollutant",
+                        "name": "PM2.5",
+                        "source_evidence_ids": ["ev_1"],
+                    }
+                ],
+                "candidate_relations": [],
+                "evidence": [
+                    {
+                        "evidence_id": "ev_1",
+                        "map_id": map_id,
+                        "source_file_id": "file_1",
+                        "chunk_id": "chunk_1",
+                        "location": "page 1",
+                        "text_span": "old source text",
+                        "normalized_summary": "old summary",
+                    }
+                ],
+                "diagnostics": {"provider_name": "legacy"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    extraction = cognitive_map_routes._load_extraction(map_id)
+
+    assert extraction is not None
+    assert extraction.evidence == []
+    assert "source_evidence_ids" not in extraction.candidate_entities[0].model_dump()
 
 
 def test_cognitive_map_build_request_defaults_to_long_llamaindex_timeout():
@@ -300,10 +348,11 @@ def test_cognitive_map_api_records_build_runs_and_evaluation(tmp_path: Path, mon
     assert built["latest_run"]["extractor_provider"] == "local"
     assert built["latest_run"]["timeout_seconds"] == 180
     assert built["latest_run"]["duration_ms"] >= 0
+    assert "evidence_count" not in built["latest_run"]
     assert built["evaluation"]["entity_count"] >= 2
     assert built["evaluation"]["relation_count"] >= 1
-    assert built["evaluation"]["evidence_count"] >= 1
-    assert built["evaluation"]["entity_evidence_ratio"] == 1.0
+    assert "evidence_count" not in built["evaluation"]
+    assert "entity_evidence_ratio" not in built["evaluation"]
 
     runs_response = client.get(f"/api/cognitive-maps/{map_id}/build-runs")
     evaluation_response = client.get(f"/api/cognitive-maps/{map_id}/evaluation")
@@ -522,6 +571,84 @@ def test_cognitive_map_api_queries_property_graph_subgraph(tmp_path: Path, monke
     assert [entity["name"] for entity in payload["view"]["entities"]] == ["光化学反应", "臭氧", "臭氧升高"]
     assert [relation["relation_type"] for relation in payload["view"]["relations"]] == ["affects", "indicates"]
     assert "光化学反应 --affects--> 臭氧" in payload["prompt_context"]
+
+
+def test_cognitive_map_relation_edit_syncs_property_graph_query(tmp_path: Path, monkeypatch):
+    from llama_index.core.graph_stores.simple_labelled import SimplePropertyGraphStore
+    from llama_index.core.graph_stores.types import EntityNode, Relation
+
+    from app.api import cognitive_map_routes
+
+    monkeypatch.setattr(cognitive_map_routes, "COGNITIVE_MAPS_ROOT", tmp_path)
+
+    map_id = "cm_edit_sync"
+    map_dir = tmp_path / map_id
+    map_dir.mkdir(parents=True)
+    cognitive_map_routes._write_json(
+        map_dir / "map.json",
+        {
+            "id": map_id,
+            "name": "编辑同步测试",
+            "description": "",
+            "status": "completed",
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        },
+    )
+    cognitive_map_routes._write_json(map_dir / "files.json", [])
+    cognitive_map_routes._save_extraction(
+        map_id,
+        ExtractionResult(
+            map_id=map_id,
+            candidate_entities=[
+                CandidateEntity(entity_id="ent_parent", map_id=map_id, entity_type="Device", name="父设备", review_status="confirmed"),
+                CandidateEntity(entity_id="ent_old", map_id=map_id, entity_type="Device", name="旧子设备", review_status="confirmed"),
+                CandidateEntity(entity_id="ent_new", map_id=map_id, entity_type="Device", name="新子设备", review_status="confirmed"),
+            ],
+            candidate_relations=[
+                CandidateRelation(
+                    relation_id="rel_contains",
+                    map_id=map_id,
+                    source_entity_id="ent_parent",
+                    target_entity_id="ent_old",
+                    relation_type="station_has_device",
+                    review_status="confirmed",
+                ),
+            ],
+            diagnostics=ExtractionDiagnostic(provider_name="test"),
+        ),
+    )
+    store = SimplePropertyGraphStore()
+    store.upsert_nodes([
+        EntityNode(name="父设备", label="Device"),
+        EntityNode(name="旧子设备", label="Device"),
+        EntityNode(name="新子设备", label="Device"),
+    ])
+    store.upsert_relations([
+        Relation(label="STATION_HAS_DEVICE", source_id="父设备", target_id="旧子设备"),
+    ])
+    store.persist(str(map_dir / "property_graph_store.json"))
+
+    app = FastAPI()
+    app.include_router(cognitive_map_routes.router)
+    client = TestClient(app)
+
+    patch_response = client.patch(
+        f"/api/cognitive-maps/{map_id}/relations/rel_contains",
+        json={"target_entity_id": "ent_new"},
+    )
+    query_response = client.post(
+        f"/api/cognitive-maps/{map_id}/query-graph",
+        json={"task": "查看编辑结果", "agent_mode": "graph", "entity_hints": ["父设备"], "depth": 1, "limit": 10},
+    )
+
+    assert patch_response.status_code == 200
+    assert query_response.status_code == 200
+    payload = query_response.json()
+    assert payload["source"] == "property_graph_store"
+    assert [relation["target_entity_id"] for relation in payload["view"]["relations"]] == ["ent_new"]
+    assert "新子设备" in payload["prompt_context"]
+    assert "旧子设备" not in payload["prompt_context"]
 
 
 def test_cognitive_map_prompt_context_uses_property_graph_depth(tmp_path: Path, monkeypatch):
@@ -817,7 +944,7 @@ def test_cognitive_map_view_can_filter_unreviewed_candidates():
     assert "待审核假设" not in view.prompt_summary
 
 
-def test_cognitive_map_evidence_detail_returns_full_text(tmp_path: Path, monkeypatch):
+def test_cognitive_map_evidence_endpoints_ignore_legacy_evidence(tmp_path: Path, monkeypatch):
     from app.api import cognitive_map_routes
 
     monkeypatch.setattr(cognitive_map_routes, "COGNITIVE_MAPS_ROOT", tmp_path)
@@ -856,17 +983,11 @@ def test_cognitive_map_evidence_detail_returns_full_text(tmp_path: Path, monkeyp
     list_response = client.get(f"/api/cognitive-maps/{map_id}/evidence")
     detail_response = client.get(f"/api/cognitive-maps/{map_id}/evidence/ev_long")
 
-    assert list_response.status_code == 200
-    listed = list_response.json()["evidence"][0]
-    assert "text_span" not in listed
-    assert listed["summary"] == "短证据摘要"
-    assert listed["quote"] == "关键原文句"
-    assert detail_response.status_code == 200
-    detailed = detail_response.json()["evidence"]
-    assert detailed["text_span"] == "完整原文" * 300
+    assert list_response.status_code == 404
+    assert detail_response.status_code == 404
 
 
-def test_cognitive_map_guidance_omits_views_and_full_evidence_by_default():
+def test_cognitive_map_guidance_omits_views_and_evidence_fields_by_default():
     from app.tools.analysis.cognitive_map_guidance.tool import build_guidance_response
 
     result = build_guidance_response(
@@ -878,7 +999,6 @@ def test_cognitive_map_guidance_omits_views_and_full_evidence_by_default():
                 {
                     "entity_id": "ent_1",
                     "name": "仪器故障",
-                    "source_evidence_ids": ["ev_1"],
                 }
             ],
             "graph_relations": [],
@@ -886,39 +1006,16 @@ def test_cognitive_map_guidance_omits_views_and_full_evidence_by_default():
             "data_requirements": [],
             "suggested_tools": [],
             "missing_hints": [],
-            "evidence": [
-                {
-                    "evidence_id": "ev_1",
-                    "location": "page 1",
-                    "normalized_summary": "短证据摘要",
-                    "text_span": "很长原文" * 500,
-                }
-            ],
             "views": [{"prompt_summary": "很长摘要" * 500}],
             "map_ids": ["map_1"],
             "sources": {"map_1": "property_graph_store"},
         },
         include_views=False,
-        include_evidence_text=False,
-        max_evidence=5,
-        max_quote_chars=80,
     )
 
     data = result["data"]
     assert "views" not in data
-    assert data["evidence_refs"] == [
-        {
-            "evidence_id": "ev_1",
-            "location": "page 1",
-            "summary": "短证据摘要",
-            "quote": "",
-            "support_type": "unknown",
-            "evidence_quality": "unknown",
-            "needs_verification": False,
-            "source_file_id": "",
-        }
-    ]
-    assert "text_span" not in data["evidence_refs"][0]
+    assert "evidence_refs" not in data
     assert "evidence" not in data
 
 
@@ -961,10 +1058,10 @@ def test_llamaindex_extractor_uses_relation_level_evidence_summary():
     assert evidence.quote == "当实测流量与设定流量误差超过±5%时，须对流量进行校准。"
     assert evidence.normalized_summary == "流量误差超限可作为流量系统异常的核验依据。"
     assert evidence.support_type == "direct"
-    assert extraction.candidate_relations[0].source_evidence_ids == ["ev_1"]
+    assert "source_evidence_ids" not in extraction.candidate_relations[0].model_dump()
 
 
-def test_project_llm_structured_prompt_requests_relation_evidence_properties():
+def test_project_llm_structured_prompt_uses_lightweight_descriptions_not_evidence():
     from app.agent.cognition.llm_factory import ProjectLLMAdapter
 
     class FakeLLMService:
@@ -976,13 +1073,62 @@ def test_project_llm_structured_prompt_requests_relation_evidence_properties():
     prompt = adapter._build_structured_kg_prompt("流量误差超过阈值需校准。", 3)
 
     assert '"properties"' in prompt
-    assert '"evidence_quote"' in prompt
-    assert '"evidence_summary"' in prompt
-    assert '"support_type"' in prompt
-    assert "relation.properties.evidence_quote" in prompt
+    assert '"description"' in prompt
+    assert "一句话" in prompt
+    assert "evidence_quote" not in prompt
+    assert "evidence_summary" not in prompt
+    assert "support_type" not in prompt
+    assert "confidence" not in prompt
 
 
-def test_project_llm_does_not_normalize_flat_relation_evidence_into_properties():
+def test_project_llm_structured_prompt_requires_canonical_connected_graph():
+    from app.agent.cognition.llm_factory import ProjectLLMAdapter
+
+    class FakeLLMService:
+        async def chat(self, *args, **kwargs):
+            return "{}"
+
+    adapter = ProjectLLMAdapter(llm_service=FakeLLMService())
+
+    prompt = adapter._build_structured_kg_prompt("PM2.5、细颗粒物和颗粒物浓度升高。", 5)
+
+    assert "实体规范化" in prompt
+    assert "同义词" in prompt
+    assert "不要生成两个实体" in prompt
+    assert "has_alias" in prompt
+    assert "优先把实体连接到已有核心实体" in prompt
+    assert "不要形成多个互不相连的小图" in prompt
+    assert "多跳遍历" in prompt
+
+
+def test_default_cognitive_schema_is_lightweight_and_allows_alias_relations():
+    schema = CognitiveSchema.default_air_quality_schema()
+
+    assert schema.required_evidence is False
+    assert ("Pollutant", "has_alias", "Pollutant") in schema.allowed_relation_triplets
+    assert ("Station", "has_alias", "Station") in schema.allowed_relation_triplets
+    assert ("Device", "has_alias", "Device") in schema.allowed_relation_triplets
+
+
+def test_llamaindex_schema_components_allow_description_properties_and_alias_triplets():
+    from app.agent.cognition.providers.llamaindex_extractor import LlamaIndexPropertyGraphExtractorProvider
+
+    schema = CognitiveSchema(
+        allowed_entity_types=["Station", "Pollutant"],
+        allowed_relation_types=["measures", "has_alias"],
+        allowed_relation_triplets=[("Station", "measures", "Pollutant")],
+    )
+    extractor = LlamaIndexPropertyGraphExtractorProvider()
+
+    components = extractor.build_schema_components(schema)
+
+    assert components.possible_entity_props == ["description"]
+    assert components.possible_relation_props == ["description"]
+    assert ("STATION", "HAS_ALIAS", "STATION") in components.validation_schema
+    assert ("POLLUTANT", "HAS_ALIAS", "POLLUTANT") in components.validation_schema
+
+
+def test_project_llm_keeps_lightweight_description_payload_shape():
     from app.agent.cognition.llm_factory import ProjectLLMAdapter
 
     class FakeLLMService:
@@ -995,23 +1141,23 @@ def test_project_llm_does_not_normalize_flat_relation_evidence_into_properties()
         {
             "triplets": [
                 {
-                    "subject": {"type": "DataMetric", "name": "流量误差"},
+                    "subject": {"type": "DataMetric", "name": "流量误差", "description": "实测流量与设定流量的偏差。"},
                     "relation": {
                         "type": "metric_anomaly_supports",
-                        "evidence_quote": "流量误差超过±5%时需校准。",
-                        "evidence_summary": "流量误差超限支持流量系统异常排查。",
-                        "support_type": "direct",
+                        "description": "流量误差超限可支持流量系统故障排查。",
+                        "properties": {"threshold": "±5%"},
                     },
-                    "object": {"type": "RootCause", "name": "流量系统故障"},
+                    "object": {"type": "RootCause", "name": "流量系统故障", "description": "采样流量相关部件或控制异常。"},
                 }
             ]
         }
     )
 
+    subject = payload["triplets"][0]["subject"]
     relation = payload["triplets"][0]["relation"]
-    assert "properties" not in relation
-    assert relation["evidence_quote"] == "流量误差超过±5%时需校准。"
-    assert relation["evidence_summary"] == "流量误差超限支持流量系统异常排查。"
+    assert subject["description"] == "实测流量与设定流量的偏差。"
+    assert relation["description"] == "流量误差超限可支持流量系统故障排查。"
+    assert relation["properties"]["threshold"] == "±5%"
 
 
 def test_llamaindex_property_graph_falls_back_to_relation_level_evidence():
@@ -1050,17 +1196,17 @@ def test_llamaindex_property_graph_falls_back_to_relation_level_evidence():
 
     assert len(extraction.candidate_relations) == 1
     relation = extraction.candidate_relations[0]
-    assert relation.source_evidence_ids
-    evidence = next(item for item in extraction.evidence if item.evidence_id == relation.source_evidence_ids[0])
+    assert "source_evidence_ids" not in relation.model_dump()
+    evidence = extraction.evidence[0]
     assert evidence.normalized_summary == "流量误差 --metric_anomaly_supports--> 流量系统故障"
     assert evidence.support_type == "fallback"
     assert evidence.evidence_quality == "missing_relation_evidence"
-    assert evidence.supported_relation_ids == [relation.relation_id]
+    assert evidence.supported_relation_ids == []
     assert "超长尾部不应进入短证据" not in evidence.normalized_summary
     assert evidence.text_span == long_source_text
 
 
-def test_llamaindex_structured_payload_relation_properties_become_llm_evidence():
+def test_llamaindex_structured_payload_descriptions_become_entity_and_relation_descriptions():
     from llama_index.core.graph_stores.simple_labelled import SimplePropertyGraphStore
 
     from app.agent.cognition.models import DocumentChunk
@@ -1071,16 +1217,21 @@ def test_llamaindex_structured_payload_relation_properties_become_llm_evidence()
             "triplets": [
                 {
                     "chunk_id": "chunk_1",
-                    "subject": {"type": "DataMetric", "name": "流量误差"},
+                    "subject": {
+                        "type": "DataMetric",
+                        "name": "流量误差",
+                        "description": "实测流量与设定流量之间的偏差。",
+                    },
                     "relation": {
                         "type": "metric_anomaly_supports",
-                        "properties": {
-                            "evidence_quote": "当实测流量与设定流量误差超过±5%时，须对流量进行校准。",
-                            "evidence_summary": "流量误差超限可作为流量系统异常的核验依据。",
-                            "support_type": "direct",
-                        },
+                        "description": "流量误差超限可作为流量系统异常的核验依据。",
+                        "properties": {"threshold": "±5%"},
                     },
-                    "object": {"type": "RootCause", "name": "流量系统故障"},
+                    "object": {
+                        "type": "RootCause",
+                        "name": "流量系统故障",
+                        "description": "采样流量相关部件或控制异常。",
+                    },
                 }
             ]
         }
@@ -1101,14 +1252,16 @@ def test_llamaindex_structured_payload_relation_properties_become_llm_evidence()
     extractor._populate_store_from_last_structured_payload(store, [chunk])
     extraction = extractor.map_property_graph_store_to_extraction("map_1", store)
 
-    evidence = next(item for item in extraction.evidence if item.supported_relation_ids)
-    assert evidence.quote == "当实测流量与设定流量误差超过±5%时，须对流量进行校准。"
-    assert evidence.normalized_summary == "流量误差超限可作为流量系统异常的核验依据。"
-    assert evidence.support_type == "direct"
-    assert evidence.evidence_quality == "llm_relation_evidence"
+    entity_by_name = {entity.name: entity for entity in extraction.candidate_entities}
+    relation = extraction.candidate_relations[0]
+    assert entity_by_name["流量误差"].description == "实测流量与设定流量之间的偏差。"
+    assert entity_by_name["流量系统故障"].description == "采样流量相关部件或控制异常。"
+    assert relation.description == "流量误差超限可作为流量系统异常的核验依据。"
+    assert relation.attributes == {}
+    assert "confidence" not in relation.attributes
 
 
-def test_cognitive_map_evaluation_exposes_fallback_evidence_quality():
+def test_cognitive_map_evaluation_ignores_legacy_evidence_quality_metrics():
     from app.api import cognitive_map_routes
 
     extraction = ExtractionResult(
@@ -1147,10 +1300,13 @@ def test_cognitive_map_evaluation_exposes_fallback_evidence_quality():
 
     evaluation = cognitive_map_routes._generate_evaluation(extraction, property_graph_persisted=True)
 
-    assert evaluation["fallback_evidence_count"] == 1
-    assert evaluation["relation_evidence_summary_ratio"] == 0
-    assert evaluation["relation_evidence_quote_ratio"] == 0
-    assert evaluation["usable_for_agent"] is False
+    assert "evidence_count" not in evaluation
+    assert "entities_with_evidence" not in evaluation
+    assert "relations_with_evidence" not in evaluation
+    assert "fallback_evidence_count" not in evaluation
+    assert "relation_evidence_summary_ratio" not in evaluation
+    assert "relation_evidence_quote_ratio" not in evaluation
+    assert evaluation["usable_for_agent"] is True
 
 
 def test_cognitive_map_prompt_context_uses_short_evidence_not_full_source_text(tmp_path: Path, monkeypatch):
@@ -1242,8 +1398,8 @@ def test_cognitive_map_prompt_context_uses_short_evidence_not_full_source_text(t
         entity_hints=["流量误差"],
     )
 
-    assert "流量误差超限需检查流量系统。" in context
-    assert "证据质量: llm_relation_evidence" in context
+    assert "流量误差超限需检查流量系统。" not in context
+    assert "证据质量: llm_relation_evidence" not in context
     assert "ENTITY_CHUNK_HEADER" not in context
     assert "PROMPT中不应出现的长尾" not in context
     assert len(context) < 1200

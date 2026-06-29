@@ -15,6 +15,12 @@ test('react store sends explicit graph map context to agent api', () => {
   assert.match(storeSource, /\.\.\.\(mapContext !== null \? \{ mapContext \} : \{\}\)/)
 })
 
+test('react store can send embedded graph requests without switching the visible mode', () => {
+  assert.match(storeSource, /preserveCurrentMode\s*=\s*false/)
+  assert.match(storeSource, /if\s*\(\s*requestedMode !== this\.currentMode && !preserveCurrentMode\s*\)/)
+  assert.match(storeSource, /const sessionStateMode = preserveCurrentMode\s*\?\s*requestedMode\s*:\s*this\.currentMode/)
+})
+
 test('input box accepts graph as a valid internal mode without changing selector markup', () => {
   assert.match(inputBoxSource, /const validAgentModes = \[[^\]]*'graph'[^\]]*\]/)
 })

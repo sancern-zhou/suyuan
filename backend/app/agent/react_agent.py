@@ -131,6 +131,44 @@ class ReActAgent:
                 "timestamp": datetime.now().isoformat()
             }
 
+    @staticmethod
+    def _set_mode_memory_tool_context(
+        manual_mode: str,
+        memory_tool_mode: str,
+        user_identifier: str = "global",
+    ) -> None:
+        """Set memory tool context without clobbering a consolidator target mode."""
+        from app.tools.social.remember_fact.tool import RememberFactTool
+        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+        from app.tools.social.remove_memory.tool import RemoveMemoryTool
+
+        current_modes = {
+            RememberFactTool._current_mode,
+            ReplaceMemoryTool._current_mode,
+            RemoveMemoryTool._current_mode,
+        }
+        has_existing_target_mode = any(
+            mode and mode != "memory_consolidator"
+            for mode in current_modes
+        )
+        if manual_mode == "memory_consolidator" and has_existing_target_mode:
+            logger.debug(
+                "memory_consolidator_preserved_target_memory_context",
+                memory_tool_mode=memory_tool_mode,
+                existing_modes=list(current_modes),
+            )
+            return
+
+        RememberFactTool.set_memory_context(memory_tool_mode, user_identifier)
+        ReplaceMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
+        RemoveMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
+        logger.debug(
+            "mode_memory_tool_context_set",
+            mode=manual_mode,
+            memory_tool_mode=memory_tool_mode,
+            user_identifier=user_identifier,
+        )
+
     def __init__(
         self,
         max_iterations: int = 120,  # ✅ 默认120次（适应复杂分析任务）
@@ -549,18 +587,10 @@ class ReActAgent:
                 # 非社交模式也可能直接暴露 remember_fact/replace_memory/remove_memory。
                 # 设置模式上下文，避免工具降级写入默认 social 记忆目录。
                 try:
-                    from app.tools.social.remember_fact.tool import RememberFactTool
-                    from app.tools.social.replace_memory.tool import ReplaceMemoryTool
-                    from app.tools.social.remove_memory.tool import RemoveMemoryTool
-
-                    RememberFactTool.set_memory_context(memory_tool_mode, "global")
-                    ReplaceMemoryTool.set_memory_context(memory_tool_mode, "global")
-                    RemoveMemoryTool.set_memory_context(memory_tool_mode, "global")
-                    logger.debug(
-                        "mode_memory_tool_context_set",
-                        mode=manual_mode,
+                    self._set_mode_memory_tool_context(
+                        manual_mode=manual_mode,
                         memory_tool_mode=memory_tool_mode,
-                        user_identifier="global"
+                        user_identifier="global",
                     )
                 except Exception as e:
                     logger.warning("failed_to_set_mode_memory_tool_context", mode=manual_mode, memory_tool_mode=memory_tool_mode, error=str(e))
@@ -721,6 +751,8 @@ class ReActAgent:
             "markdown_preview": office_doc_data.get("markdown_preview"),
             "html_preview": office_doc_data.get("html_preview"),
             "svg_preview": office_doc_data.get("svg_preview"),
+            "spreadsheet_preview": office_doc_data.get("spreadsheet_preview"),
+            "file_name": office_doc_data.get("file_name"),
             "file_path": office_doc_data.get("file_path"),
             "file_type": office_doc_data.get("file_type"),
             "generator": office_doc_data.get("generator"),
