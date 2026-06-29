@@ -35,7 +35,6 @@ def check_rf_field_positions(
         profile = table_profiles.get(table, {})
         violations = []
         violations.extend(_check_range_text_in_value_fields(table, form, profile))
-        violations.extend(_check_swapped_error_formula(table, form, profile))
         if not violations:
             continue
 

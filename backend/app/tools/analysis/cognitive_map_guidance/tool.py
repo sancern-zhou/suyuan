@@ -64,13 +64,6 @@ def _standard_failure(tool_name: str, summary: str, error: str, data: dict[str, 
     }
 
 
-def _truncate_text(value: Any, max_chars: int) -> str:
-    text = str(value or "").strip()
-    if max_chars <= 0 or len(text) <= max_chars:
-        return text
-    return f"{text[:max_chars].rstrip()}..."
-
-
 def _clean_list(values: list[str] | str | None) -> list[str]:
     if values is None:
         return []
@@ -118,39 +111,15 @@ def _suggest_tool(
     )
 
 
-def _evidence_ref(item: dict[str, Any], max_quote_chars: int, include_evidence_text: bool) -> dict[str, Any]:
-    quote = item.get("quote") or item.get("evidence_quote") or ""
-    summary = item.get("summary") or item.get("normalized_summary") or item.get("evidence_summary") or quote
-    ref = {
-        "evidence_id": item.get("evidence_id") or item.get("id") or "",
-        "location": item.get("location") or "",
-        "summary": _truncate_text(summary, max_quote_chars),
-        "quote": _truncate_text(quote, max_quote_chars),
-        "support_type": item.get("support_type") or "unknown",
-        "evidence_quality": item.get("evidence_quality") or "unknown",
-        "needs_verification": (
-            item.get("support_type") == "fallback"
-            or item.get("evidence_quality") == "missing_relation_evidence"
-        ),
-        "source_file_id": item.get("source_file_id") or "",
-    }
-    if include_evidence_text:
-        ref["text_span"] = _truncate_text(item.get("text_span"), max_quote_chars * 2)
-    return ref
-
-
 def build_guidance_response(
     guidance: dict[str, Any],
     *,
     include_views: bool = False,
-    include_evidence_text: bool = False,
-    max_evidence: int = 5,
-    max_quote_chars: int = 240,
 ) -> dict[str, Any]:
     data = {
         "matched": guidance.get("matched", False),
         "task": guidance.get("task", ""),
-        "agent_mode": guidance.get("agent_mode", "ops"),
+        "agent_mode": guidance.get("agent_mode", "graph"),
         "analysis_directions": guidance.get("analysis_directions", []),
         "data_requirements": guidance.get("data_requirements", []),
         "suggested_tools": guidance.get("suggested_tools", []),
@@ -161,17 +130,10 @@ def build_guidance_response(
         "graph_entity_count": len(guidance.get("graph_entities") or []),
         "graph_relation_count": len(guidance.get("graph_relations") or []),
     }
-    evidence_items = guidance.get("evidence") or []
-    data["evidence_refs"] = [
-        _evidence_ref(item, max_quote_chars=max_quote_chars, include_evidence_text=include_evidence_text)
-        for item in evidence_items[: max(0, int(max_evidence or 0))]
-    ]
     if include_views:
         data["views"] = guidance.get("views", [])
         data["graph_entities"] = guidance.get("graph_entities", [])
         data["graph_relations"] = guidance.get("graph_relations", [])
-        if include_evidence_text:
-            data["evidence"] = evidence_items
     summary = (
         f"认知地图命中 {data['graph_entity_count']} 个实体、"
         f"{data['graph_relation_count']} 条关系，形成 "
@@ -188,7 +150,6 @@ def build_guidance_from_views(
     """Convert cognitive map query views into deterministic Agent guidance."""
     graph_entities: list[dict[str, Any]] = []
     graph_relations: list[dict[str, Any]] = []
-    evidence: list[dict[str, Any]] = []
     analysis_directions: list[dict[str, Any]] = []
     data_requirements: list[dict[str, Any]] = []
     suggested_tools: list[dict[str, Any]] = []
@@ -207,11 +168,6 @@ def build_guidance_from_views(
             item.setdefault("map_name", map_name)
             item["relation_type"] = _relation_label(item)
             _append_unique(graph_relations, item, "relation_id")
-        for evidence_item in view.get("evidence_summaries") or []:
-            item = dict(evidence_item)
-            item.setdefault("map_id", map_id)
-            item.setdefault("map_name", map_name)
-            _append_unique(evidence, item, "evidence_id")
 
     for relation in graph_relations:
         label = _relation_label(relation)
@@ -238,7 +194,7 @@ def build_guidance_from_views(
             _suggest_tool(
                 suggested_tools,
                 "ops_audit_fetch_dataset",
-                "图谱路径涉及工单/处置关系，需要抽取目标工单、流程、RF表单和附件证据。",
+                "图谱路径涉及工单/处置关系，需要抽取目标工单、流程、RF表单和附件记录。",
                 ["working_order_codes", "station_id", "create_time_start/create_time_end"],
             )
 
@@ -251,7 +207,7 @@ def build_guidance_from_views(
         _suggest_tool(
             suggested_tools,
             "ops_audit_fetch_dataset",
-            "故障工单/告警原因分析需要先拿到工单上下文、处置记录和附件证据。",
+            "故障工单/告警原因分析需要先拿到工单上下文、处置记录和附件记录。",
             ["working_order_codes", "station_id", "order_type", "time_range"],
         )
         _suggest_tool(
@@ -315,8 +271,8 @@ def build_guidance_from_views(
             )
             _suggest_tool(
                 suggested_tools,
-                "gisctl",
-                "获得 create_map_point_asset 返回的 data_id 后，通过 map_program 生成点图层并定位地图。",
+                "visual_interaction",
+                "获得 create_map_point_asset 返回的 data_id 后，通过 map_program 生成点图层并定位地图，让用户真实看见结果。",
                 ["point-layer 或 set-view command"],
             )
             data_requirements.append({
@@ -349,7 +305,6 @@ def build_guidance_from_views(
         "agent_mode": agent_mode,
         "graph_entities": graph_entities,
         "graph_relations": graph_relations,
-        "evidence": evidence,
         "analysis_directions": analysis_directions,
         "data_requirements": data_requirements,
         "suggested_tools": suggested_tools,
@@ -372,7 +327,10 @@ class CognitiveMapGuidanceTool(LLMTool):
                     "type": "object",
                     "properties": {
                         "task": {"type": "string", "description": "用户任务或当前诊断问题。"},
-                        "agent_mode": {"type": "string", "description": "当前Agent模式，默认ops。"},
+                        "agent_mode": {
+                            "type": "string",
+                            "description": "当前Agent模式；图谱编辑传 graph，运维传 ops，问数传 query。未传时按 graph 处理。",
+                        },
                         "agent_role": {"type": "string", "description": "可选Agent角色。"},
                         "map_ids": {"type": "array", "items": {"type": "string"}, "description": "可选认知地图ID；不传则使用当前模式绑定并启用的地图。"},
                         "entity_hints": {"type": "array", "items": {"type": "string"}, "description": "站点、设备、告警、污染物、故障现象、工单号等图谱检索线索。"},
@@ -385,9 +343,6 @@ class CognitiveMapGuidanceTool(LLMTool):
                         "depth": {"type": "integer", "description": "图谱关系展开深度，默认2。"},
                         "limit": {"type": "integer", "description": "最多读取的图谱关系数量，默认30。"},
                         "include_views": {"type": "boolean", "description": "是否返回原始子图 views，默认 false，仅调试使用。"},
-                        "include_evidence_text": {"type": "boolean", "description": "是否返回证据原文片段，默认 false。"},
-                        "max_evidence": {"type": "integer", "description": "最多返回短证据卡片数量，默认5。"},
-                        "max_quote_chars": {"type": "integer", "description": "每条证据 quote/summary 的最大字符数，默认240。"},
                     },
                     "required": ["task"],
                 },
@@ -400,7 +355,7 @@ class CognitiveMapGuidanceTool(LLMTool):
         self,
         context=None,
         task: str = "",
-        agent_mode: str = "ops",
+        agent_mode: str = "graph",
         agent_role: str | None = None,
         map_ids: list[str] | None = None,
         entity_hints: list[str] | None = None,
@@ -413,9 +368,6 @@ class CognitiveMapGuidanceTool(LLMTool):
         depth: int = 2,
         limit: int = 30,
         include_views: bool = False,
-        include_evidence_text: bool = False,
-        max_evidence: int = 5,
-        max_quote_chars: int = 240,
         **_: Any,
     ) -> dict[str, Any]:
         task = str(task or "").strip()
@@ -452,7 +404,6 @@ class CognitiveMapGuidanceTool(LLMTool):
                 limit=max(1, min(int(limit or 30), 100)),
                 max_entities=30,
                 max_relations=50,
-                max_evidence=12,
             )
             try:
                 view, source = _build_graph_query_view(map_id, payload)
@@ -483,9 +434,6 @@ class CognitiveMapGuidanceTool(LLMTool):
         return build_guidance_response(
             guidance,
             include_views=include_views,
-            include_evidence_text=include_evidence_text,
-            max_evidence=max_evidence,
-            max_quote_chars=max_quote_chars,
         )
 
 

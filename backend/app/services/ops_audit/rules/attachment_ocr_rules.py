@@ -23,6 +23,7 @@ FLOW_VISUAL_RULE_TABLES = {
     "RF_M_GASEOUSFLOWCHECK",
     "RF_Q_GaseousFlowCheck",
     *PM_MEMBRANE_VISUAL_RULE_TABLES,
+    *PM_TEMP_PRESSURE_VISUAL_RULE_TABLES,
 }
 OCR_RULE_IDS = {
     "ATTACHMENT_CERT_INCOMPLETE",
@@ -159,6 +160,8 @@ def _check_flow_visual_values(
             _check_gas_flow_display_visual(order, table, form, item, issues)
         elif table in PM_MEMBRANE_VISUAL_RULE_TABLES:
             _check_pm_membrane_visual(order, table, form, item, issues)
+        elif table in PM_TEMP_PRESSURE_VISUAL_RULE_TABLES:
+            _check_pm_temp_pressure_visual(order, table, form, item, issues)
 
 
 def _build_reference_flowmeter_certificate_tasks(
@@ -1326,6 +1329,8 @@ def _add_visual_value_issue(
         "vision_reason": (result.get("data") or {}).get("reason"),
         "vision_data": result.get("data"),
         "comparisons": comparisons,
+        "needs_visual_review": True,
+        "promotion_policy": "视觉识别结果需满足高置信度、明确字段、明确单位后才进入最终问题清单；否则仅作为视觉复核候选。",
     }
     first = next((item for item in comparisons if item.get("status") == "mismatch"), comparisons[0])
     add_issue(

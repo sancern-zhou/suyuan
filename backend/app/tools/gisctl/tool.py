@@ -18,8 +18,10 @@ from app.services.map_program_receipts import map_program_receipt_store
 
 
 GISCTL_FUNCTION_SCHEMA = {
-    "name": "gisctl",
-    "description": """Agentic GIS 控制工具。用于生成前端地图可执行的 map_program，驱动问数模式地图添加/更新图层。
+    "name": "visual_interaction",
+    "description": """Agentic GIS 用户视觉交互工具。用于生成前端地图可执行的 map_program，把问数查询、分析结论和地图所见同步起来，实现回答即所见。
+
+本工具不是简单的地图控制命令。每次问数查询都应同时判断是否需要更新用户视觉上下文：定位视角、叠加图层、高亮对象、打开/关闭看板图层或清除/替换当前回答图层。只要用户问题涉及城市、区域、站点、污染源、经纬度、空间范围或“在地图上看”的表达，就应优先考虑调用本工具让答案进入地图。
 
 当前支持：
 - map-spec create point-layer: 基于已有 data_id 生成点图层 map_program
@@ -42,19 +44,21 @@ point-layer 图标：
 - 已有查询或分析结果 data_id，需要转成地图图层
 - spatial_interpolation 已返回 surface data_id，需要在地图上新增插值渲染图层
 - 对话中有 map_context，用户框选/切换图层后需要继续控制地图
+- 查询结果有明确空间对象时，即使用户没有显式说“显示地图”，也应判断是否需要同步视觉呈现
 
 注意：
 - point-layer 必须使用真实存在的 DataRegistry data_id；如果不知道 data_id，先调用 resolve_map_data_asset。
 - 插值分析展示优先使用 spatial_interpolation 输出的 surface data_id 调用 interpolation-layer；contours line-layer 只作为可选等值线叠加。
 - 创建 point-layer、polygon-layer、line-layer、interpolation-layer 时默认 fit_bounds=true，前端会自动移动/放大到 Agent 本次操作生成的图层位置；只有用户明确要求保持当前视角时才传 fit_bounds=false。
 - 不要编造 gd_stations 之类语义 data_id。
+- map_program 是前端执行协议对象，不是给用户阅读的最终答案；生成 map_program 后应等待前端回执确认用户真实看见。
 """,
     "parameters": {
         "type": "object",
         "properties": {
             "command": {
                 "type": "object",
-                "description": "结构化 GIS 命令对象。",
+                "description": "结构化视觉交互命令对象，用于生成前端可执行的 map_program。",
                 "properties": {
                     "family": {"type": "string", "enum": ["map-spec"]},
                     "action": {"type": "string", "enum": ["create"]},
@@ -73,7 +77,7 @@ point-layer 图标：
                     },
                     "target": {
                         "type": "string",
-                        "description": "set-view 使用，地名或业务空间对象名称；未提供 center 时由 gisctl 解析。"
+                        "description": "set-view 使用，地名或业务空间对象名称；未提供 center 时由 visual_interaction 解析。"
                     },
                     "zoom": {"type": "number", "description": "set-view 使用，目标缩放级别。"},
                     "color_by": {"type": "string", "description": "可选，分类或连续着色字段名。"},
@@ -418,7 +422,7 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
     return GisctlResult.from_map_program(
         success=False,
         command=f"{family or ''} {action or ''} {kind or ''}".strip(),
-        summary="Unsupported gisctl command",
+        summary="Unsupported visual_interaction command",
         map_program=None,
     ).model_dump()
 
@@ -426,8 +430,8 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
 class GisctlTool(LLMTool):
     def __init__(self):
         super().__init__(
-            name="gisctl",
-            description="Generate executable map_program specs for query-mode GIS map control.",
+            name="visual_interaction",
+            description="Generate executable map_program specs for query-mode visual interaction so answers are reflected in the map.",
             category=ToolCategory.VISUALIZATION,
             function_schema=GISCTL_FUNCTION_SCHEMA,
             version="0.1.0",

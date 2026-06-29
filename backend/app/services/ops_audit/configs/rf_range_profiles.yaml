@@ -108,6 +108,21 @@ range_unit_fields:
   - UNIT
   - MEASUREUNIT
 
+co_weekly_check_profiles:
+  RF_W_GASEOUSCHECK_CO:
+    display_name: CO
+    brand_field: DEVICEBRAND
+    pollutant_field: POLLUTANTTYPE
+    pollutant_values: ["CO", "一氧化碳"]
+    brand_aliases:
+      LD: ["LD", "力合", "力合科技"]
+    fields:
+      - key: offset
+        label: 截距
+        field: JGCHECKVALUE
+        ranges:
+          LD: {min: -5, max: 5, unit: mV}
+
 o3_weekly_check_profiles:
   RF_W_GASEOUSCHECK_O3:
     display_name: O3
@@ -233,7 +248,7 @@ nox_weekly_check_profiles:
         ranges:
           API: {min: 65, max: 95, unit: ml/min}
           FPI: {min: 72, max: 88, unit: scc}
-          THERMO: {min: 50, operator: ">", unit: mL/min}
+          THERMO: {min: 50, operator: ">=", unit: mL/min}
           TH: {min: 30, max: 120, unit: ml/min}
           XH: {min: 65, max: 95, unit: ml/min}
           DASIBI: {min: 0.02, max: 0.071, unit: L/min}
@@ -252,7 +267,7 @@ nox_weekly_check_profiles:
           API: {min: 450, max: 900, unit: V}
           EC: {min: 640, max: 700, unit: V}
           FPI: {min: 450, max: 900, unit: V}
-          ESA: {min: 500, max: 950, unit: mV}
+          ESA: {min: 500, max: 950, unit: V}
           THERMO: {min: -1200, max: 0, unit: V}
           TH: {min: -1100, max: -500, unit: V}
           DASIBI: {min: 500, max: 900, unit: V}
@@ -394,7 +409,7 @@ so2_weekly_check_profiles:
           FPI: {min: 0.85, max: 1.15}
           THERMO: {min: 0.500, max: 2.000}
           TH: {min: 0.4, max: 2}
-          XH: {min: 0.1, max: 0.3}
+          XH: {min: 0.5, max: 1.5}
       - key: offset
         label: 截距
         field: JGCHECKVALUE

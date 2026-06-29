@@ -18,6 +18,7 @@ MONTHLY_GASEOUS_FLOW_FIELDS = [
     ("O3", "FLOWRANGO3", ["DISPLAYVALUEO3", "MEASUREDVALUEO3"]),
 ]
 RANGE_UNIT_MISMATCH_RULE_ID = "RF_RANGE_UNIT_MISMATCH"
+MONTHLY_GASEOUS_FLOW_RANGE_MISSING_RULE_ID = "RF_M_GASEOUS_FLOW_RANGE_MISSING"
 
 
 def check_rf_range_values(
@@ -40,6 +41,7 @@ def check_rf_range_values(
     gas_type_mapping = RANGE_PROFILES.get("gas_type_mapping", {})
     structured_weekly_profiles = {}
     structured_weekly_profiles.update(RANGE_PROFILES.get("o3_weekly_check_profiles", {}))
+    structured_weekly_profiles.update(RANGE_PROFILES.get("co_weekly_check_profiles", {}))
     structured_weekly_profiles.update(RANGE_PROFILES.get("nox_weekly_check_profiles", {}))
     structured_weekly_profiles.update(RANGE_PROFILES.get("so2_weekly_check_profiles", {}))
     structured_weekly_profiles.update(RANGE_PROFILES.get("pm_weekly_check_profiles", {}))
@@ -52,6 +54,7 @@ def check_rf_range_values(
             continue
 
         if table == "RF_M_GASEOUSFLOWCHECK":
+            _check_monthly_gaseous_flow_range_missing(order, table, form, issues)
             _check_monthly_gaseous_flow_range_text(order, table, form, issues)
 
         _check_weekly_structured_ranges(order, table, form, structured_weekly_profiles, issues)
@@ -107,7 +110,7 @@ def _check_weekly_structured_ranges(
             if field_config.get("semantic_required_when_blank"):
                 _add_blank_structured_value_semantic_candidate(order, table, form, field_config, issues)
             continue
-        spec = _inline_range_spec_for_field(form, field_name) or (field_config.get("ranges") or {}).get(brand)
+        spec = _structured_range_spec_for_field(form, field_name, field_config, brand)
         if not spec:
             continue
         comparison_result = _comparison_text_satisfies_spec(form.get(field_name), spec)
@@ -129,7 +132,7 @@ def _check_weekly_structured_ranges(
                 issues,
             )
             continue
-        converted_value = _convert_value_to_spec_unit(form.get(field_name), value, spec)
+        converted_value = _convert_structured_value_to_spec_unit(form, field_config, form.get(field_name), value, spec, brand)
         if converted_value is not None:
             value = converted_value
         if _is_value_in_spec(value, spec):
@@ -381,18 +384,22 @@ def _check_monthly_gaseous_flow_range_text(
             value = _parse_numeric(form.get(field))
             if value is None:
                 continue
-            if value < min_value or value > max_value:
+            comparison_value = _normalize_monthly_flow_value_to_range_unit(value, unit, min_value, max_value)
+            if comparison_value < min_value or comparison_value > max_value:
+                out_of_spec_value = {
+                    "gas_type": gas_type,
+                    "range_field": range_field,
+                    "raw_range": form.get(range_field),
+                    "field": field,
+                    "value": comparison_value,
+                    "min": min_value,
+                    "max": max_value,
+                    "unit": unit,
+                }
+                if comparison_value != value:
+                    out_of_spec_value["raw_value"] = value
                 out_of_spec_values.append(
-                    {
-                        "gas_type": gas_type,
-                        "range_field": range_field,
-                        "raw_range": form.get(range_field),
-                        "field": field,
-                        "value": value,
-                        "min": min_value,
-                        "max": max_value,
-                        "unit": unit,
-                    }
+                    out_of_spec_value
                 )
 
     if not out_of_spec_values:
@@ -419,6 +426,54 @@ def _check_monthly_gaseous_flow_range_text(
         ),
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
+
+
+def _check_monthly_gaseous_flow_range_missing(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    missing = []
+    for gas_type, range_field, _value_fields in MONTHLY_GASEOUS_FLOW_FIELDS:
+        if range_field not in form:
+            continue
+        value = str(form.get(range_field) or "").strip()
+        if value in {"", "/", "-", "无", "无此参数", "不适用"}:
+            missing.append({"gas_type": gas_type, "field": range_field, "value": value})
+    if not missing:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "missing_ranges": missing,
+    }
+    gases = "、".join(item["gas_type"] for item in missing)
+    fields = "、".join(item["field"] for item in missing)
+    add_issue(
+        issues,
+        MONTHLY_GASEOUS_FLOW_RANGE_MISSING_RULE_ID,
+        "表单完整性",
+        "高",
+        f"rf.{table}.flow_range",
+        f"月度气体流量检查{gases}流量范围未填写或无效: {fields}",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _normalize_monthly_flow_value_to_range_unit(
+    value: float,
+    range_unit: str,
+    min_value: float,
+    max_value: float,
+) -> float:
+    canonical_unit = _canonical_unit(range_unit)
+    if canonical_unit == "ml/min" and max_value >= 50 and 0 < value < 10:
+        return value * 1000
+    if canonical_unit == "l/min" and max_value <= 10 and value >= 50:
+        return value / 1000
+    return value
 
 
 def _check_gas_type_mismatch(
@@ -544,6 +599,59 @@ def _convert_value_to_spec_unit(raw_value: Any, numeric: float, spec: dict[str, 
     return _convert_unit(numeric, _extract_value_unit(raw_value), spec.get("unit"))
 
 
+def _structured_range_spec_for_field(
+    form: dict[str, Any],
+    field_name: str,
+    field_config: dict[str, Any],
+    brand: str,
+) -> dict[str, Any] | None:
+    spec = (
+        _inline_range_spec_for_field(form, field_name)
+        or _inline_range_spec_for_label(form, field_config.get("label") or field_name)
+        or (field_config.get("ranges") or {}).get(brand)
+    )
+    if not spec:
+        return None
+    spec = dict(spec)
+    if (
+        brand == "ESA"
+        and str(field_config.get("key") or "") in {"reaction_pressure", "sample_pressure"}
+        and _canonical_unit(_extract_value_unit(form.get(field_name))) == "hpa"
+        and _canonical_unit(spec.get("unit")) == "mv"
+    ):
+        return None
+    if (
+        field_name == "AIRTEMPVALUE"
+        and str(field_config.get("key") or "") == "air_temperature"
+        and "SHARP5030" in _profile_model_text(form).upper()
+    ):
+        spec["max"] = 60
+        spec["operator"] = "<="
+        spec["unit"] = spec.get("unit") or "℃"
+    return spec
+
+
+def _convert_structured_value_to_spec_unit(
+    form: dict[str, Any],
+    field_config: dict[str, Any],
+    raw_value: Any,
+    numeric: float,
+    spec: dict[str, Any],
+    brand: str,
+) -> float | None:
+    converted = _convert_value_to_spec_unit(raw_value, numeric, spec)
+    if converted is not None:
+        return converted
+    raw_unit = _extract_value_unit(raw_value)
+    key = str(field_config.get("key") or "")
+    target_unit = _canonical_unit(spec.get("unit"))
+    if not raw_unit and key == "ozone_flow" and target_unit == "ml/min" and 0 < numeric < 1:
+        return numeric * 1000.0
+    if not raw_unit and key == "sample_pressure" and brand == "XH" and target_unit == "kpa" and 20 <= numeric <= 35:
+        return _convert_unit(numeric, "inHg", "kPa")
+    return None
+
+
 def _comparison_text_satisfies_spec(value: Any, spec: dict[str, Any]) -> bool | None:
     if value is None or isinstance(value, (int, float)):
         return None
@@ -599,6 +707,7 @@ def _extract_value_unit(value: Any) -> str:
         r"(In-Hg-A|inHgA|inHg|in-Hg|hPa|HPA|KPa|kPa|mmHg|TORR|torr|PSIA|psia|"
         r"ml/min|mL/min|l/min|L/min|sccm|SCCM|scc|SLPM|mV|V|%)",
         text,
+        flags=re.IGNORECASE,
     )
     return match.group(1) if match else ""
 
@@ -674,6 +783,23 @@ def _inline_range_spec_for_field(form: dict[str, Any], field_name: str) -> dict[
     if not row_field:
         return None
     return _parse_inline_range_spec(form.get(row_field))
+
+
+def _inline_range_spec_for_label(form: dict[str, Any], label: Any) -> dict[str, Any] | None:
+    label_text = str(label or "").strip()
+    if not label_text:
+        return None
+    for field in ("REMARK", "REMARKS", "CHECKREMARK", "DESCRIPTION"):
+        text = str(form.get(field) or "").strip()
+        if not text or label_text not in text:
+            continue
+        for segment in re.split(r"[;；。,\n\r]+", text):
+            if label_text not in segment:
+                continue
+            spec = _parse_inline_range_spec(segment)
+            if spec:
+                return spec
+    return None
 
 
 def _row_field_for_value_field(field_name: str) -> str | None:

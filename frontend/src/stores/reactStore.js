@@ -29,18 +29,6 @@ export const isQueryVoiceOutputEnabled = () => {
   return localStorage.getItem('query-voice-output-enabled') === 'true'
 }
 
-export const extractDashboardFocus = (data = {}) => data?.dashboard_focus ||
-  data?.metadata?.dashboard_focus ||
-  data?.result?.dashboard_focus ||
-  data?.result?.metadata?.dashboard_focus ||
-  null
-
-export const extractAnswerEvidence = (data = {}) => data?.answer_evidence ||
-  data?.metadata?.answer_evidence ||
-  data?.result?.answer_evidence ||
-  data?.result?.metadata?.answer_evidence ||
-  null
-
 export const extractMapProgram = (data = {}) => data?.map_program ||
   data?.metadata?.map_program ||
   data?.result?.map_program ||
@@ -66,16 +54,8 @@ export const buildMapContext = (targetState = {}, options = {}) => {
   }
 }
 
-export const applyQueryDashboardMetadata = (targetState, data = {}) => {
-  const focus = extractDashboardFocus(data)
-  const evidence = extractAnswerEvidence(data)
+export const applyMapProgramMetadata = (targetState, data = {}) => {
   const mapProgram = extractMapProgram(data)
-  if (focus) {
-    targetState.dashboardFocus = focus
-  }
-  if (evidence) {
-    targetState.answerEvidence = evidence
-  }
   if (mapProgram) {
     if (!Array.isArray(targetState.mapPrograms)) {
       targetState.mapPrograms = []
@@ -316,7 +296,9 @@ const findLatestDrawioBoardResultFromMessages = (messages = []) => {
 }
 
 const getOfficeDocumentIdentity = (doc = {}) => {
-  return doc.file_path ||
+  return doc.version_id ||
+    (doc.document_id && doc.file_path ? `${doc.document_id}:${doc.file_path}` : '') ||
+    doc.file_path ||
     doc.path ||
     doc.pdf_preview?.pdf_id ||
     doc.html_preview?.html_id ||
@@ -364,8 +346,6 @@ const createEmptyModeState = () => ({
   finalAnswer: '',
   finalAnswers: [],
   hasResults: false,
-  dashboardFocus: null,
-  answerEvidence: null,
   dashboardOverview: null,
   mapPrograms: [],
   currentMapProgram: null,
@@ -768,8 +748,6 @@ export const useReactStore = defineStore('react', {
         finalAnswer: modeState.finalAnswer,
         finalAnswers: modeState.finalAnswers,
         hasResults: modeState.hasResults,
-        dashboardFocus: modeState.dashboardFocus,
-        answerEvidence: modeState.answerEvidence,
         dashboardOverview: modeState.dashboardOverview,
         mapPrograms: modeState.mapPrograms,
         currentMapProgram: modeState.currentMapProgram,
@@ -1048,8 +1026,8 @@ export const useReactStore = defineStore('react', {
       console.log(`[setComplete] Set complete=${isComplete} for mode ${this.currentMode}`)
     },
 
-    applyDashboardMetadata(data = {}, targetState = this.currentState) {
-      applyQueryDashboardMetadata(targetState, data)
+    applyMapProgramMetadata(data = {}, targetState = this.currentState) {
+      applyMapProgramMetadata(targetState, data)
     },
 
     recordMapEvent(event, targetState = this.currentState) {
@@ -1089,12 +1067,6 @@ export const useReactStore = defineStore('react', {
         this.currentState.lastExpertResults = sessionData.last_result
       }
 
-      if (sessionData.dashboardFocus) {
-        this.currentState.dashboardFocus = sessionData.dashboardFocus
-      }
-      if (sessionData.answerEvidence) {
-        this.currentState.answerEvidence = sessionData.answerEvidence
-      }
       if (sessionData.dashboardOverview) {
         this.currentState.dashboardOverview = sessionData.dashboardOverview
       }
@@ -1659,7 +1631,7 @@ export const useReactStore = defineStore('react', {
           // task_guard 等虚拟工具不会先发送 tool_use；如果它拦截了已流出的
           // PLAIN_TEXT_REPLY，需要先把该文本降级为过程消息，避免下一轮重复追加。
           this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
-          this.applyDashboardMetadata(data, targetState)
+          this.applyMapProgramMetadata(data, targetState)
 
           const toolResultData = data || {}
           const resultToolUseId = toolResultData.tool_use_id
@@ -1922,9 +1894,7 @@ export const useReactStore = defineStore('react', {
           targetState.isAnalyzing = false
           targetState.isInterruption = false
           targetState.isComplete = true
-          this.applyDashboardMetadata(data, targetState)
-          const dashboardFocus = extractDashboardFocus(data)
-          const answerEvidence = extractAnswerEvidence(data)
+          this.applyMapProgramMetadata(data, targetState)
           targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
           const finalContent = data?.response || data?.answer || ''
@@ -1952,9 +1922,7 @@ export const useReactStore = defineStore('react', {
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-              sources: data?.sources || null,  // ✅ 知识问答参考来源
-              dashboard_focus: dashboardFocus,
-              answer_evidence: answerEvidence
+              sources: data?.sources || null  // ✅ 知识问答参考来源
             })
             if (finalContent) {
               targetState.finalAnswer = finalContent
@@ -1968,9 +1936,7 @@ export const useReactStore = defineStore('react', {
               session_id: data?.session_id,
               timestamp: data?.timestamp,
               expert_results: data?.expert_results || null,  // ✅ 传递专家结果用于显示
-              sources: data?.sources || null,  // ✅ 知识问答参考来源
-              dashboard_focus: dashboardFocus,
-              answer_evidence: answerEvidence
+              sources: data?.sources || null  // ✅ 知识问答参考来源
             }, null, { streaming: false })  // 【修复】明确设置 streaming: false
             console.log('[event:complete] messages数量:', targetState.messages.length)
           } else {
@@ -2789,19 +2755,24 @@ export const useReactStore = defineStore('react', {
         modelTier = 'auto',
         attachments = null,  // ✅ 附件列表
         skipAutoFollowup = false,
+        preserveCurrentMode = false,
         synthetic = false,
         syntheticMeta = null,
         queuedAlreadyShown = false
       } = options
 
       const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
-      if (requestedMode !== this.currentMode) {
+      if (requestedMode !== this.currentMode && !preserveCurrentMode) {
         this.switchMode(requestedMode)
       }
+      const sessionStateMode = preserveCurrentMode ? requestedMode : this.currentMode
+      const activeSessionId = this.activeSessionByMode[sessionStateMode]
 
       // 【修复】确定使用的模式：优先尊重本次请求的显式模式，继续已有会话时再使用会话自身记录的模式
       let actualMode = requestedMode
-      let sessionState = this.currentState
+      let sessionState = activeSessionId && this.sessionStates[activeSessionId]
+        ? this.sessionStates[activeSessionId]
+        : (this.modeStates[sessionStateMode] || this.currentState)
       if (sessionState.sessionId) {
         const sessionMode = VALID_MODES.includes(sessionState.mode)
           ? sessionState.mode
@@ -2851,13 +2822,33 @@ export const useReactStore = defineStore('react', {
 
       // 首次分析或继续分析
       if (!sessionState.sessionId) {
-        this.createSessionId()
-        sessionState = this.currentState
+        if (preserveCurrentMode) {
+          const sessionId = `${sessionStateMode}_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          sessionState = this._ensureSessionState(sessionId, sessionStateMode)
+          this.activeSessionByMode[sessionStateMode] = sessionId
+          sessionState.sessionId = sessionId
+          console.log('[startAnalysis] Created embedded session for', sessionStateMode, ':', sessionState.sessionId)
+        } else {
+          this.createSessionId()
+          sessionState = this.currentState
+        }
         sessionState.sessionRound = 1
         sessionState.finalAnswers = []
       } else {
-        this.continueSession()
-        sessionState = this.currentState
+        if (preserveCurrentMode) {
+          sessionState.sessionRound = Math.max(sessionState.sessionRound + 1, 1)
+          sessionState.isAnalyzing = false
+          sessionState.error = null
+          sessionState.results = {
+            map: null,
+            charts: [],
+            tables: [],
+            text: ''
+          }
+        } else {
+          this.continueSession()
+          sessionState = this.currentState
+        }
       }
 
       // 重置状态

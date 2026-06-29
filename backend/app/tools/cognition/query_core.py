@@ -69,7 +69,6 @@ def entity_payload(entity: Any, map_id: str) -> dict[str, Any]:
         "description": entity.description,
         "attributes": dict(entity.attributes or {}),
         "review_status": entity.review_status,
-        "confidence": entity.confidence,
     }
 
 
@@ -89,7 +88,6 @@ def relation_payload(relation: Any, entity_by_id: dict[str, Any], map_id: str) -
         "description": relation.description,
         "attributes": dict(relation.attributes or {}),
         "review_status": relation.review_status,
-        "confidence": relation.confidence,
     }
 
 

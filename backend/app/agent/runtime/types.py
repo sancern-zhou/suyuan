@@ -68,8 +68,6 @@ class RunState:
     user_message_written: bool = False
     has_seen_tool_use: bool = False
     workflow_sources: List[Any] = field(default_factory=list)
-    dashboard_focus: Optional[Dict[str, Any]] = None
-    answer_evidence: Optional[Dict[str, Any]] = None
     # ❌ 移除：workflow_visuals（不再使用，visuals从tool_result获取）
     # workflow_visuals: List[Any] = field(default_factory=list)
     # ❌ 移除：direct_from_workflow（不再需要）

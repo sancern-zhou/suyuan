@@ -34,12 +34,12 @@ def _layer_render_summary(receipt: dict[str, Any]) -> dict[str, Any]:
     return {
         "rendered_layers": rendered_layers,
         "empty_layers": empty_layers,
-        "map_control_completed": receipt.get("status") == "executed" and bool(rendered_layers),
+        "visual_interaction_completed": receipt.get("status") == "executed" and bool(rendered_layers),
     }
 
 
 def _receipt_success_summary(program_id: str, render_summary: dict[str, Any]) -> str:
-    if render_summary["map_control_completed"]:
+    if render_summary["visual_interaction_completed"]:
         layer_text = ", ".join(
             " ".join(
                 part
@@ -54,7 +54,7 @@ def _receipt_success_summary(program_id: str, render_summary: dict[str, Any]) ->
         )
         return (
             f"前端地图程序 {program_id} 已执行完成，已渲染图层：{layer_text}。"
-            "本轮地图控制目标已完成，请不要再次调用相同 gisctl，直接向用户说明地图已更新。"
+            "本轮视觉交互目标已完成，用户已真实看见对应地图变化；请不要再次调用相同 visual_interaction，直接向用户说明地图已更新。"
         )
     if render_summary["empty_layers"]:
         layer_text = ", ".join(
@@ -79,8 +79,8 @@ def _receipt_success_summary(program_id: str, render_summary: dict[str, Any]) ->
 MAP_PROGRAM_RECEIPT_SCHEMA = {
     "name": "get_map_program_receipt",
     "description": (
-        "查询前端地图对 map_program 的执行回执。用于确认 gisctl 生成的地图程序是否真的被前端执行、"
-        "图层是否真实渲染、feature_count 是否大于 0。"
+        "查询前端地图对 map_program 的执行回执。用于确认 visual_interaction 生成的视觉交互程序是否真的被前端执行、"
+        "用户真实看见的图层是否已渲染、feature_count 是否大于 0。"
     ),
     "parameters": {
         "type": "object",
@@ -91,7 +91,7 @@ MAP_PROGRAM_RECEIPT_SCHEMA = {
             },
             "program_id": {
                 "type": "string",
-                "description": "gisctl 返回的 map_program.program_id。",
+                "description": "visual_interaction 返回的 map_program.program_id。",
             },
         },
         "required": ["session_id", "program_id"],
@@ -102,14 +102,14 @@ MAP_PROGRAM_RECEIPT_SCHEMA = {
 WAIT_MAP_PROGRAM_RECEIPT_SCHEMA = {
     "name": "wait_map_program_receipt",
     "description": (
-        "等待前端地图执行回执。gisctl 返回 map_program 后，前端会异步执行地图渲染并回传 receipt；"
-        "本工具用于等待该 receipt，避免在地图真实渲染前提前宣布成功。"
+        "等待前端视觉交互执行回执。visual_interaction 返回 map_program 后，前端会异步执行地图渲染并回传 receipt；"
+        "本工具用于等待该 receipt，确认用户真实看见图层、视图或要素变化，避免在地图真实渲染前提前宣布成功。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "session_id": {"type": "string", "description": "问数会话 ID。"},
-            "program_id": {"type": "string", "description": "gisctl 返回的 map_program.program_id。"},
+            "program_id": {"type": "string", "description": "visual_interaction 返回的 map_program.program_id。"},
             "wait_timeout": {
                 "type": "number",
                 "description": "最多等待秒数，默认8，范围0-60。",
@@ -130,7 +130,7 @@ class MapProgramReceiptTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="get_map_program_receipt",
-            description="Read frontend map execution receipts for a map_program.",
+            description="Read frontend visual interaction receipts for a map_program.",
             category=ToolCategory.QUERY,
             function_schema=MAP_PROGRAM_RECEIPT_SCHEMA,
             version="0.1.0",
@@ -167,7 +167,7 @@ class WaitMapProgramReceiptTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="wait_map_program_receipt",
-            description="Wait until the frontend posts a map_program execution receipt.",
+            description="Wait until the frontend confirms the user-visible map_program result.",
             category=ToolCategory.QUERY,
             function_schema=WAIT_MAP_PROGRAM_RECEIPT_SCHEMA,
             version="0.1.0",
@@ -202,7 +202,8 @@ class WaitMapProgramReceiptTool(LLMTool):
             receipt = map_program_receipt_store.get(session_id, program_id)
             if receipt is not None:
                 render_summary = _layer_render_summary(receipt)
-                next_action = "answer_user" if render_summary["map_control_completed"] else "inspect_or_fix_map_program"
+                completed = render_summary["visual_interaction_completed"]
+                next_action = "answer_user" if completed else "inspect_or_fix_map_program"
                 return {
                     "status": "success",
                     "success": True,
@@ -214,9 +215,10 @@ class WaitMapProgramReceiptTool(LLMTool):
                         "program_id": program_id,
                         "wait_timed_out": False,
                         "wait_polls": poll_index + 1,
-                        "map_control_completed": render_summary["map_control_completed"],
+                        "map_control_completed": completed,
+                        "visual_interaction_completed": completed,
                         "next_action": next_action,
-                        "do_not_repeat_gisctl": render_summary["map_control_completed"],
+                        "do_not_repeat_visual_interaction": completed,
                     },
                     "data": {
                         "session_id": session_id,
@@ -225,9 +227,10 @@ class WaitMapProgramReceiptTool(LLMTool):
                         "program": map_program_receipt_store.get_program_status(session_id, program_id),
                         "wait_timed_out": False,
                         "wait_polls": poll_index + 1,
-                        "map_control_completed": render_summary["map_control_completed"],
+                        "map_control_completed": completed,
+                        "visual_interaction_completed": completed,
                         "next_action": next_action,
-                        "do_not_repeat_gisctl": render_summary["map_control_completed"],
+                        "do_not_repeat_visual_interaction": completed,
                         "rendered_layers": render_summary["rendered_layers"],
                         "empty_layers": render_summary["empty_layers"],
                     },

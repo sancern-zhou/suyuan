@@ -26,14 +26,14 @@ class CreateMapPointAssetTool(LLMTool):
             name="create_map_point_asset",
             description=(
                 "Create a real DataRegistry point dataset from Agent-selected records with coordinates. "
-                "Use this after the Agent has selected stations/features and before calling gisctl point-layer."
+                "Use this after the Agent has selected stations/features and before calling visual_interaction point-layer."
             ),
             category=ToolCategory.VISUALIZATION,
             function_schema={
                 "name": "create_map_point_asset",
                 "description": (
                     "地图点数据资产创建工具。Agent 已经从查询/分析结果中确定要上图的点对象后，"
-                    "传入带经纬度的 records，工具注册真实 DataRegistry data_id，并返回可继续传给 gisctl 的命令草案。"
+                    "传入带经纬度的 records，工具注册真实 DataRegistry data_id，并返回可继续传给 visual_interaction 的命令草案。"
                     "本工具不负责判断最高值或业务结论。"
                 ),
                 "parameters": {
@@ -54,7 +54,7 @@ class CreateMapPointAssetTool(LLMTool):
                             "description": "纬度字段名，默认 latitude。",
                         },
                         "layer_id": {"type": "string", "description": "建议的地图图层 ID。"},
-                        "color_by": {"type": "string", "description": "可选，后续 gisctl 着色字段。"},
+                        "color_by": {"type": "string", "description": "可选，后续 visual_interaction 着色字段。"},
                         "zoom": {"type": "number", "description": "可选，单点定位缩放级别。"},
                         "turn_id": {"type": "string", "description": "可选，对话轮次 ID。"},
                         "data_id": {
@@ -175,6 +175,7 @@ class CreateMapPointAssetTool(LLMTool):
                 "latitude_field": latitude_field,
                 "layer_id": layer_id,
                 "sample": valid_records[:5],
+                "suggested_visual_interaction_commands": [point_layer_command, set_view_command],
                 "suggested_gisctl_commands": [point_layer_command, set_view_command],
             },
             "metadata": {
@@ -185,7 +186,7 @@ class CreateMapPointAssetTool(LLMTool):
                 "invalid_record_count": invalid_count,
                 "longitude_field": longitude_field,
                 "latitude_field": latitude_field,
-                "suggested_next_tool": "gisctl",
+                "suggested_next_tool": "visual_interaction",
             },
         }
 
@@ -200,7 +201,7 @@ class CreateMapPointAssetTool(LLMTool):
             "status": "failed",
             "success": False,
             "summary": summary,
-            "data": {"data_id": None, "suggested_gisctl_commands": []},
+            "data": {"data_id": None, "suggested_visual_interaction_commands": [], "suggested_gisctl_commands": []},
             "metadata": {
                 "tool_name": "create_map_point_asset",
                 "generator": "create_map_point_asset",

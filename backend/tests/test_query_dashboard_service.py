@@ -1,5 +1,4 @@
 from app.schemas.query_dashboard import (
-    DashboardFocus,
     DashboardModule,
     DashboardOverviewResponse,
     DashboardSource,
@@ -46,16 +45,6 @@ def test_dashboard_overview_response_accepts_partial_modules():
     assert payload["modules"]["realtime"]["status"] == "success"
     assert payload["modules"]["year_to_date"]["status"] == "error"
     assert payload["modules"]["realtime"]["sources"][0]["data_id"] == "air_quality_unified:v1:abc"
-
-
-def test_dashboard_focus_defaults_to_empty_lists():
-    focus = DashboardFocus(scope="province")
-
-    assert focus.scope == "province"
-    assert focus.cities == []
-    assert focus.stations == []
-    assert focus.pollutants == []
-    assert focus.source_data_ids == []
 
 
 def test_build_default_date_ranges_uses_current_month_and_year():

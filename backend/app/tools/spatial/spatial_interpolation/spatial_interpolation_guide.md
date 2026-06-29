@@ -1,6 +1,6 @@
 # spatial_interpolation 使用说明
 
-`spatial_interpolation` 用于执行污染物浓度空间插值分析。它只负责生成可用于地图分析渲染的 DataRegistry 资产，不生成静态图片；需要把插值结果显示到问数地图时，必须继续调用 `gisctl` 创建地图图层。
+`spatial_interpolation` 用于执行污染物浓度空间插值分析。它只负责生成可用于地图分析渲染的 DataRegistry 资产，不生成静态图片；需要把插值结果显示到问数地图时，必须继续调用 `visual_interaction` 创建地图图层。
 
 ## 适用场景
 
@@ -16,7 +16,7 @@
 2. 调用 `spatial_interpolation`，指定 `data_id`、`lon`、`lat`、`value`、`pollutant`、`unit`、`method`。
 3. 检查返回结果是否 `success=true`，并读取 `data.outputs`。
 4. 地图展示优先使用 `outputs` 中 `id="surface"` 的 `data_id`。
-5. 调用 `gisctl`：
+5. 调用 `visual_interaction`：
 
 ```json
 {
@@ -30,7 +30,7 @@
 }
 ```
 
-6. 如用户需要等值线辅助读数，可再使用 `outputs` 中 `id="contours"` 的 `data_id` 调用 `gisctl map-spec create line-layer` 叠加等值线。
+6. 如用户需要等值线辅助读数，可再使用 `outputs` 中 `id="contours"` 的 `data_id` 调用 `visual_interaction map-spec create line-layer` 叠加等值线。
 7. 调用 `wait_map_program_receipt` 等待前端回执。没有有效回执前，不得声称插值分析图层已经显示成功。
 
 ## 输入资产链路
@@ -39,7 +39,7 @@
 
 如果当前只有 SQL 查询结果、Python 计算结果或临时记录，必须先把经度、纬度和值字段整理成点位记录，并通过项目资产注册链路生成真实 `data_id`。在后端代码路径中应使用 `data_registry.register_dataset` 或已有资产生成工具完成注册；随后只把注册返回的 `data_id` 传给 `spatial_interpolation`。
 
-当 `spatial_interpolation` 返回 `data_id not found` 时，说明传入 ID 不在 DataRegistry 索引中。此时不要反复使用同一个 ID 重试；应回到上一步创建或查找真实点位资产，再重新调用插值工具。插值成功后，地图渲染必须使用返回结果中的 `surface.data_id` 创建 `gisctl interpolation-layer`，而不是使用原始点位资产或手工推测的插值 ID。
+当 `spatial_interpolation` 返回 `data_id not found` 时，说明传入 ID 不在 DataRegistry 索引中。此时不要反复使用同一个 ID 重试；应回到上一步创建或查找真实点位资产，再重新调用插值工具。插值成功后，地图渲染必须使用返回结果中的 `surface.data_id` 创建 `visual_interaction interpolation-layer`，而不是使用原始点位资产或手工推测的插值 ID。
 
 ## spec 示例
 
@@ -84,8 +84,8 @@
 `spatial_interpolation` 成功后通常返回：
 
 - `outputs[id="grid"]`：插值网格点资产，适合后续分析或表格检查。
-- `outputs[id="surface"]`：插值渲染面资产，适合用 `gisctl interpolation-layer` 作为地图主图层。
-- `outputs[id="contours"]`：等值线资产，适合用 `gisctl line-layer` 作为可选叠加层。
+- `outputs[id="surface"]`：插值渲染面资产，适合用 `visual_interaction interpolation-layer` 作为地图主图层。
+- `outputs[id="contours"]`：等值线资产，适合用 `visual_interaction line-layer` 作为可选叠加层。
 
 不要把 `grid` 点资产或单独的 `contours` 等值线当成最终地图插值图层。用户要求“在地图上新增插值分析图层”时，应使用 `surface.data_id` 创建 `interpolation-layer`，并等待前端回执。
 
@@ -105,5 +105,5 @@
 - 只生成了 `map_point_asset`。
 - 只生成了 `contours` 等值线，没有生成或渲染 `surface` 插值面。
 - `surface.record_count` 为 0。
-- `gisctl` 没有返回 map program。
+- `visual_interaction` 没有返回 map program。
 - 没有收到地图前端回执。

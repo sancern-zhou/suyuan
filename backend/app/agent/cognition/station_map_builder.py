@@ -12,6 +12,8 @@ from app.agent.cognition.models import (
     Evidence,
     ExtractionDiagnostic,
     ExtractionResult,
+    lightweight_extraction,
+    lightweight_extraction_payload,
 )
 from app.utils.path_config import get_data_registry
 
@@ -118,7 +120,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
             quote="站点名称、唯一编码、城市名称、区县、经度、纬度、详细地址、站点类型ID",
             support_type="source_registry",
             evidence_quality="deterministic_structured_source",
-            confidence=1.0,
         )
     )
 
@@ -131,8 +132,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
                 name=pollutant,
                 canonical_name=pollutant,
                 aliases=[pollutant.replace(".", "_")] if "." in pollutant else [],
-                source_evidence_ids=[source_evidence_id],
-                confidence=1.0,
                 review_status="published",
             )
         )
@@ -147,8 +146,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
             name="resolve_station_geo",
             canonical_name="resolve_station_geo",
             description="按站点名称或编码解析站点经纬度、城市、区县和类型。",
-            source_evidence_ids=[source_evidence_id],
-            confidence=1.0,
             review_status="published",
         )
     )
@@ -160,8 +157,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
             name="广东省站点地理属性表",
             canonical_name="广东省站点地理属性表",
             attributes={"source_file": str(station_file), "station_count": len(records)},
-            source_evidence_ids=[source_evidence_id],
-            confidence=1.0,
             review_status="published",
         )
     )
@@ -182,8 +177,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
                 target_entity_id=target_id,
                 relation_type=relation_type,
                 description=description,
-                source_evidence_ids=[source_evidence_id],
-                confidence=1.0,
                 review_status="published",
             )
         )
@@ -200,8 +193,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
             canonical_name="广东省",
             aliases=["广东"],
             attributes={"region_kind": "province"},
-            source_evidence_ids=[source_evidence_id],
-            confidence=1.0,
             review_status="published",
         )
     )
@@ -237,8 +228,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
                 "type_id": type_id,
                 "type_name": _type_name(type_id),
             },
-            source_evidence_ids=[source_evidence_id],
-            confidence=1.0,
             review_status="published",
         )
         add_entity(station_entity)
@@ -256,8 +245,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
                     name=city,
                     canonical_name=city,
                     attributes={"region_kind": "city"},
-                    source_evidence_ids=[source_evidence_id],
-                    confidence=1.0,
                     review_status="published",
                 )
             )
@@ -274,8 +261,6 @@ def _build_extraction(map_id: str, station_file: Path) -> ExtractionResult:
                     name=district,
                     canonical_name=f"{city}{district}" if city else district,
                     attributes={"region_kind": "district", "city": city},
-                    source_evidence_ids=[source_evidence_id],
-                    confidence=1.0,
                     review_status="published",
                 )
             )
@@ -340,17 +325,17 @@ def ensure_station_cognitive_map(
             "created_at": now,
         }
     ]
+    persisted_extraction = lightweight_extraction(extraction)
     evaluation = {
         "map_id": STATION_MAP_ID,
-        "entity_count": len(extraction.candidate_entities),
-        "relation_count": len(extraction.candidate_relations),
-        "evidence_count": len(extraction.evidence),
-        "confirmed_entity_count": len(extraction.candidate_entities),
-        "confirmed_relation_count": len(extraction.candidate_relations),
+        "entity_count": len(persisted_extraction.candidate_entities),
+        "relation_count": len(persisted_extraction.candidate_relations),
+        "confirmed_entity_count": len(persisted_extraction.candidate_entities),
+        "confirmed_relation_count": len(persisted_extraction.candidate_relations),
         "usable_for_agent": True,
         "property_graph_persisted": False,
         "generated_at": now,
-        "diagnostic": extraction.diagnostics.model_dump(mode="json"),
+        "diagnostic": persisted_extraction.diagnostics.model_dump(mode="json"),
     }
     binding = {
         "binding_id": "cmb_guangdong_monitoring_stations_query",
@@ -367,7 +352,7 @@ def ensure_station_cognitive_map(
     _write_json(map_dir / "map.json", meta)
     _write_json(map_dir / "files.json", files)
     _write_json(map_dir / "schema.json", _schema().model_dump(mode="json"))
-    (map_dir / "extraction.json").write_text(extraction.model_dump_json(indent=2), encoding="utf-8")
+    _write_json(map_dir / "extraction.json", lightweight_extraction_payload(extraction))
     _write_json(map_dir / "evaluation.json", evaluation)
     _write_json(map_dir / "build_runs.json", [{
         "run_id": "run_guangdong_monitoring_stations",
@@ -375,9 +360,8 @@ def ensure_station_cognitive_map(
         "parser_provider": "structured_station_registry",
         "extractor_provider": "station_registry_builder",
         "file_count": 1,
-        "entity_count": len(extraction.candidate_entities),
-        "relation_count": len(extraction.candidate_relations),
-        "evidence_count": len(extraction.evidence),
+        "entity_count": len(persisted_extraction.candidate_entities),
+        "relation_count": len(persisted_extraction.candidate_relations),
         "started_at": now,
         "finished_at": now,
         "duration_ms": 0,

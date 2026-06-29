@@ -68,6 +68,8 @@ def check_rf_abnormal_remarks(
         for field, value in form.items():
             if not _is_abnormal_result_field(field, value):
                 continue
+            if _abnormal_result_value_has_context(value):
+                continue
             _add_if_no_remark(
                 order,
                 table,
@@ -181,6 +183,23 @@ def _is_pm_sample_tube_temp_status_abnormal(status: str) -> bool:
     if any(token in text for token in ABNORMAL_TEXT_TOKENS):
         return True
     return True
+
+
+def _abnormal_result_value_has_context(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    context_markers = (
+        "交接遗留",
+        "遗留问题",
+        "已处理",
+        "已修复",
+        "已恢复",
+        "已更换",
+        "已通知",
+        "已报备",
+    )
+    return any(marker in text for marker in context_markers)
 
 
 def _add_if_no_remark(

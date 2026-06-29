@@ -29,7 +29,6 @@
         :has-more-messages="hasMoreMessages"
         :total-message-count="totalMessageCount"
         :loading-more="loadingMore"
-        :dashboard-focus="dashboardFocus"
         :map-program="mapProgram"
         :drag-over="chatAreaDragOver"
         :right-panel-expanded="rightPanelExpanded"
@@ -355,10 +354,6 @@ const props = defineProps({
     default: null
   },
   board: {
-    type: Object,
-    default: null
-  },
-  dashboardFocus: {
     type: Object,
     default: null
   },

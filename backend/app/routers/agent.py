@@ -240,11 +240,6 @@ def _build_final_message(event_data: Dict[str, Any]) -> Dict[str, Any]:
 
     if "visuals" in event_data and isinstance(event_data["visuals"], list):
         final_message["visuals"] = event_data["visuals"]
-    if "dashboard_focus" in event_data and isinstance(event_data["dashboard_focus"], dict):
-        final_message["dashboard_focus"] = event_data["dashboard_focus"]
-    if "answer_evidence" in event_data and isinstance(event_data["answer_evidence"], dict):
-        final_message["answer_evidence"] = event_data["answer_evidence"]
-
     return final_message
 
 

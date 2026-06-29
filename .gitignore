@@ -57,6 +57,7 @@ backend/tests/
 **/tests/
 **/__tests__/
 **/*_test.py
+!backend/app/services/ops_audit/semantic/test_reviewer.py
 **/*.test.mjs
 *.backup*
 *.bak
@@ -142,6 +143,11 @@ unpacked_pm25_doc*/
 
 # Test scripts (development only)
 test_*.py
+!backend/app/services/ops_audit/rules/test_rf_range_rules.py
+!backend/app/services/ops_audit/rules/test_rf_required_rules.py
+!backend/app/services/ops_audit/rules/test_rf_position_rules.py
+!backend/app/services/ops_audit/rules/test_rf_formula_rules.py
+!backend/app/services/ops_audit/semantic/test_reviewer.py
 debug_*.py
 analyze_*.py
 extract_*.py
@@ -156,6 +162,7 @@ deep_*.py
 interactive_*.py
 manual_*.py
 final_*.py
+!backend/app/services/ops_audit/final_issue_list.py
 find_*.py
 correct_*.py
 refactored_*.py

@@ -26,7 +26,6 @@
       <div class="dashboard-content">
         <GuangdongOverviewMap
           :overview="overview"
-          :focus="effectiveFocus"
           :layers="activeLayers"
           :map-program="mapProgram"
           :session-id="sessionId"
@@ -88,7 +87,6 @@ import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import InputBox from '@/components/InputBox.vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import { fetchGuangdongOverview } from '@/api/queryDashboard.js'
-import { extractDashboardFocusFromMessages, normalizeDashboardFocus, normalizeLayerState } from './dashboardFocus.js'
 import DashboardLayerControl from './DashboardLayerControl.vue'
 import GuangdongOverviewMap from './GuangdongOverviewMap.vue'
 import { layerStateFromMapProgram } from './mapProgramDashboardLayers.js'
@@ -108,7 +106,6 @@ const props = defineProps({
   totalMessageCount: { type: Number, default: 0 },
   loadingMore: { type: Boolean, default: false },
   selectedMessageId: { type: String, default: null },
-  dashboardFocus: { type: Object, default: null },
   mapProgram: { type: Object, default: null },
   dragOver: { type: Boolean, default: false },
   rightPanelExpanded: { type: Boolean, default: false },
@@ -142,11 +139,6 @@ const activeLayers = ref({
 const inputValue = computed({
   get: () => props.currentMessage,
   set: () => {}
-})
-
-const effectiveFocus = computed(() => {
-  if (props.dashboardFocus) return normalizeDashboardFocus(props.dashboardFocus)
-  return extractDashboardFocusFromMessages(props.messages)
 })
 
 const activeAgentMode = computed(() => {
@@ -183,17 +175,6 @@ const handleDragLeave = (event) => {
 const handleDrop = (event) => {
   emit('drop', event)
 }
-
-watch(
-  () => effectiveFocus.value.layer_state,
-  (layerState) => {
-    const normalized = normalizeLayerState(layerState)
-    if (Object.values(normalized).some(Boolean)) {
-      activeLayers.value = normalized
-    }
-  },
-  { immediate: true }
-)
 
 watch(
   () => props.mapProgram,
