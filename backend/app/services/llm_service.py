@@ -99,6 +99,24 @@ class LLMService:
             self._model = value
 
     @property
+    def api_mode(self) -> str:
+        state = _llm_request_state.get()
+        if state is not None and "api_mode" in state:
+            return state["api_mode"]
+        return getattr(self, "_api_mode", "anthropic_messages")
+
+    @api_mode.setter
+    def api_mode(self, value: str) -> None:
+        normalized = (value or "anthropic_messages").strip().lower()
+        if normalized not in {"anthropic_messages", "chat_completions"}:
+            raise ValueError(f"Unsupported LLM api_mode: {value}")
+        state = _llm_request_state.get()
+        if state is not None:
+            state["api_mode"] = normalized
+        else:
+            self._api_mode = normalized
+
+    @property
     def anthropic_client(self):
         state = _llm_request_state.get()
         if state is not None and "anthropic_client" in state:
@@ -1024,6 +1042,7 @@ class LLMService:
             "base_url": getattr(self, "base_url", None),
             "api_key": getattr(self, "api_key", None),
             "model": getattr(self, "model", None),
+            "api_mode": getattr(self, "api_mode", "anthropic_messages"),
             "anthropic_client": getattr(self, "anthropic_client", None),
         }
 
@@ -1036,6 +1055,7 @@ class LLMService:
         self.base_url = state["base_url"]
         self.api_key = state["api_key"]
         self.model = state["model"]
+        self.api_mode = state["api_mode"]
         self.anthropic_client = state["anthropic_client"]
 
     def _schedule_anthropic_client_close(self, client: Any) -> None:
@@ -1243,6 +1263,7 @@ class LLMService:
 
         # 优先从 settings 读取，如果没有则从环境变量读取
         if self.provider == "qwen":
+            self.api_mode = getattr(settings, "qwen_api_mode", "chat_completions")
             self.base_url = settings.qwen_base_url
             self.api_key = settings.qwen_api_key or ""
             self.model = settings.qwen_model
@@ -1262,6 +1283,7 @@ class LLMService:
                 logger.debug("llm_qwen_model_fallback_to_env", model=self.model)
 
         elif self.provider == "deepseek":
+            self.api_mode = getattr(settings, "deepseek_api_mode", "anthropic_messages")
             self.base_url = settings.deepseek_base_url
             self.api_key = settings.deepseek_api_key or ""
             self.model = settings.deepseek_model
@@ -1274,6 +1296,7 @@ class LLMService:
                 logger.debug("llm_deepseek_model_fallback_to_env", model=self.model)
 
         elif self.provider == "minimax":
+            self.api_mode = getattr(settings, "minimax_api_mode", "anthropic_messages")
             self.base_url = settings.minimax_base_url
             self.api_key = settings.minimax_api_key or ""
             self.model = settings.minimax_model
@@ -1286,6 +1309,7 @@ class LLMService:
                 logger.debug("llm_minimax_model_fallback_to_env", model=self.model)
 
         elif self.provider == "openai":
+            self.api_mode = getattr(settings, "openai_api_mode", "chat_completions")
             self.base_url = settings.openai_base_url
             self.api_key = settings.openai_api_key or ""
             self.model = settings.openai_model
@@ -1298,6 +1322,7 @@ class LLMService:
                 logger.debug("llm_openai_model_fallback_to_env", model=self.model)
 
         elif self.provider == "mimo":
+            self.api_mode = getattr(settings, "mimo_api_mode", "anthropic_messages")
             self.base_url = settings.mimo_base_url
             self.api_key = settings.mimo_api_key or ""
             self.model = settings.mimo_model
@@ -1310,6 +1335,7 @@ class LLMService:
                 logger.debug("llm_mimo_model_fallback_to_env", model=self.model)
 
         elif self.provider == "glm":
+            self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
             self.base_url = (
                 settings.glm_base_url
                 or os.getenv(config["url_env"])
@@ -1332,6 +1358,7 @@ class LLMService:
 
         else:
             # 回退到环境变量
+            self.api_mode = "chat_completions"
             self.base_url = os.getenv(config["url_env"], config["url_default"])
             self.api_key = os.getenv(config["key_env"], "")
             self.model = os.getenv(config["model_env"], config["model_default"])
@@ -1377,6 +1404,7 @@ class LLMService:
             provider=self.provider,
             base_url=self.base_url,
             model=self.model,
+            api_mode=self.api_mode,
             has_api_key=bool(self.api_key)
         )
 
@@ -1385,6 +1413,15 @@ class LLMService:
 
         # Anthropic Native Client (always initialized for V3 architecture)
         self.anthropic_client = None
+        if self.api_mode == "chat_completions":
+            logger.info(
+                "llm_anthropic_client_skipped_for_chat_completions",
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+            )
+            return
+
         if self.provider in ["deepseek", "mimo", "glm", "minimax"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
