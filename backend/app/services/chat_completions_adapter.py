@@ -7,6 +7,16 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 
+class AttrDict(dict):
+    """Dict-compatible content object with Anthropic SDK-style attributes."""
+
+    def __getattr__(self, key: str) -> Any:
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+
 def _compact_json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, separators=(",", ":"))
 
@@ -160,21 +170,21 @@ def convert_chat_response_to_anthropic(response: Dict[str, Any]) -> Dict[str, An
 
     reasoning = message.get("reasoning_content")
     if reasoning:
-        content_blocks.append({"type": "thinking", "thinking": reasoning})
+        content_blocks.append(AttrDict({"type": "thinking", "thinking": reasoning}))
 
     text = message.get("content")
     if text:
-        content_blocks.append({"type": "text", "text": text})
+        content_blocks.append(AttrDict({"type": "text", "text": text}))
 
     for tool_call in message.get("tool_calls") or []:
         function = tool_call.get("function") or {}
         content_blocks.append(
-            {
+            AttrDict({
                 "type": "tool_use",
                 "id": str(tool_call.get("id") or ""),
                 "name": str(function.get("name") or ""),
                 "input": _parse_arguments(function.get("arguments")),
-            }
+            })
         )
 
     usage = response.get("usage") or {}
@@ -239,7 +249,7 @@ class ChatCompletionsStreamAdapter:
             events.append(
                 {
                     "type": "content_block_start",
-                    "data": {"index": index, "block": block},
+                    "data": {"index": index, "block": AttrDict(block)},
                 }
             )
         return events
@@ -251,7 +261,7 @@ class ChatCompletionsStreamAdapter:
                 "type": "content_block_delta",
                 "data": {
                     "index": self.open_block_index,
-                    "delta": {"type": "text_delta", "text": text},
+                    "delta": AttrDict({"type": "text_delta", "text": text}),
                 },
             }
         )
@@ -264,7 +274,7 @@ class ChatCompletionsStreamAdapter:
                 "type": "content_block_delta",
                 "data": {
                     "index": self.open_block_index,
-                    "delta": {"type": "thinking_delta", "thinking": text},
+                    "delta": AttrDict({"type": "thinking_delta", "thinking": text}),
                 },
             }
         )

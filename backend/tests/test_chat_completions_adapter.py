@@ -130,6 +130,10 @@ def test_convert_chat_response_to_anthropic_content_blocks():
         "usage": {"input_tokens": 12, "output_tokens": 8},
         "stop_reason": "tool_use",
     }
+    assert result["content"][0].type == "thinking"
+    assert result["content"][0].thinking == "Need data"
+    assert result["content"][2].type == "tool_use"
+    assert result["content"][2].input == {"city": "广州"}
 
 
 @pytest.mark.parametrize(
@@ -201,10 +205,13 @@ def test_stream_adapter_converts_reasoning_text_and_tool_call_events():
         "type": "content_block_start",
         "data": {"index": 0, "block": {"type": "thinking", "thinking": ""}},
     }
+    assert events[1]["data"]["block"].type == "thinking"
     assert events[2] == {
         "type": "content_block_delta",
         "data": {"index": 0, "delta": {"type": "thinking_delta", "thinking": "Need"}},
     }
+    assert events[2]["data"]["delta"].type == "thinking_delta"
+    assert events[2]["data"]["delta"].thinking == "Need"
     assert any(
         event == {
             "type": "content_block_start",
