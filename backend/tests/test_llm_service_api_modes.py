@@ -94,3 +94,62 @@ async def test_chat_anthropic_uses_chat_completions_when_api_mode_enabled(monkey
         {"type": "text", "text": "你好"},
     ]
     assert result["stop_reason"] == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_chat_anthropic_streaming_uses_chat_completions_events(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(settings, "deepseek_api_mode", "chat_completions")
+    monkeypatch.setattr(
+        settings,
+        "deepseek_base_url",
+        "http://ds.local.ai:30080/compatible-mode/v1",
+    )
+    monkeypatch.setattr(settings, "deepseek_api_key", "api-key")
+    monkeypatch.setattr(settings, "deepseek_model", "DeepSeek-V4-Flash")
+
+    captured = {}
+    stream_body = (
+        'data: {"choices":[{"delta":{"reasoning_content":"Need"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"你好"},"finish_reason":"stop"}],'
+        '"usage":{"prompt_tokens":3,"completion_tokens":4}}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["json"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, content=stream_body.encode("utf-8"))
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def fake_async_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
+
+    service = LLMService()
+    events = [
+        event
+        async for event in service.chat_anthropic_streaming(
+            messages=[{"role": "user", "content": "你好"}],
+            tools=None,
+            temperature=0.2,
+            system="你是助手",
+        )
+    ]
+
+    assert captured["url"] == (
+        "http://ds.local.ai:30080/compatible-mode/v1/chat/completions"
+    )
+    assert captured["json"]["stream"] is True
+    assert captured["json"]["stream_options"] == {"include_usage": True}
+    assert events[0]["type"] == "message_start"
+    assert any(event["type"] == "content_block_delta" for event in events)
+    assert events[-2] == {
+        "type": "message_delta",
+        "data": {"stop_reason": "end_turn", "usage": {"output_tokens": 4}},
+    }
+    assert events[-1] == {"type": "message_stop", "data": {}}
