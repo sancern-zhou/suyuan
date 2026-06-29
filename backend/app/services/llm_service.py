@@ -26,6 +26,11 @@ from app.services.llm_failover import (
     should_fallback,
     summarize_attempts,
 )
+from app.services.chat_completions_adapter import (
+    convert_anthropic_messages_to_chat,
+    convert_anthropic_tools_to_chat,
+    convert_chat_response_to_anthropic,
+)
 
 logger = structlog.get_logger()
 
@@ -2660,6 +2665,65 @@ class LLMService:
 
         return params
 
+    def _build_chat_completions_payload(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        max_tokens: Optional[int],
+        temperature: float,
+        system: Optional[str],
+        stream: bool,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": convert_anthropic_messages_to_chat(messages, system=system),
+            "temperature": temperature,
+            "stream": stream,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        converted_tools = convert_anthropic_tools_to_chat(tools)
+        if converted_tools:
+            payload["tools"] = converted_tools
+        if self.provider == "deepseek":
+            payload["enable_thinking"] = False
+            if stream:
+                payload["stream_options"] = {"include_usage": True}
+        return payload
+
+    async def _chat_completions_create(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        max_tokens: Optional[int],
+        temperature: float,
+        system: Optional[str],
+    ) -> Dict[str, Any]:
+        url, headers = self._get_request_config()
+        payload = self._build_chat_completions_payload(
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            stream=False,
+        )
+        logger.info(
+            "llm_chat_completions_request",
+            provider=self.provider,
+            model=self.model,
+            api_mode=self.api_mode,
+            messages_count=len(payload["messages"]),
+            has_tools=bool(payload.get("tools")),
+        )
+        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+        return convert_chat_response_to_anthropic(response.json())
+
     async def chat_anthropic(
         self,
         messages: List[Dict[str, str]],
@@ -2713,6 +2777,18 @@ class LLMService:
                 )
 
         try:
+            if self.api_mode == "chat_completions":
+                return await self._run_llm_request_with_global_limit(
+                    "chat_completions_chat",
+                    lambda: self._chat_completions_create(
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        system=system,
+                    ),
+                )
+
             if not self.anthropic_client:
                 raise RuntimeError(
                     "Anthropic client not initialized. "
