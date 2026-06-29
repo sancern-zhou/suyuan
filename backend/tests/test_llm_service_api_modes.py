@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -153,3 +154,12 @@ async def test_chat_anthropic_streaming_uses_chat_completions_events(monkeypatch
         "data": {"stop_reason": "end_turn", "usage": {"output_tokens": 4}},
     }
     assert events[-1] == {"type": "message_stop", "data": {}}
+
+
+def test_env_example_documents_deepseek_v4_chat_completions():
+    env_example = Path("backend/.env.example").read_text(encoding="utf-8")
+
+    assert "DEEPSEEK_API_MODE=chat_completions" in env_example
+    assert "DEEPSEEK_BASE_URL=http://ds.local.ai:30080/compatible-mode/v1" in env_example
+    assert "DEEPSEEK_MODEL=DeepSeek-V4-Flash" in env_example
+    assert "MDDEEPSEEK25FF2F3E5E17" in env_example
