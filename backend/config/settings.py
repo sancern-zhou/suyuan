@@ -161,6 +161,10 @@ class Settings(BaseSettings):
         default="gpt-4-turbo-preview",
         description="OpenAI model name"
     )
+    openai_api_mode: str = Field(
+        default="chat_completions",
+        description="OpenAI API protocol mode: chat_completions"
+    )
 
     deepseek_api_key: Optional[str] = Field(default=None, description="DeepSeek API key")
     deepseek_base_url: str = Field(
@@ -170,6 +174,10 @@ class Settings(BaseSettings):
     deepseek_model: str = Field(
         default="deepseek-v4-flash",
         description="DeepSeek model name"
+    )
+    deepseek_api_mode: str = Field(
+        default="anthropic_messages",
+        description="DeepSeek API protocol mode: anthropic_messages or chat_completions"
     )
 
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
@@ -193,6 +201,10 @@ class Settings(BaseSettings):
         default="MiniMax-M3",
         description="MiniMax model name"
     )
+    minimax_api_mode: str = Field(
+        default="anthropic_messages",
+        description="MiniMax API protocol mode: anthropic_messages or chat_completions"
+    )
 
     mimo_api_key: Optional[str] = Field(default=None, description="Xiaomi Mimo API key")
     mimo_base_url: str = Field(
@@ -202,6 +214,10 @@ class Settings(BaseSettings):
     mimo_model: str = Field(
         default="mimo-v2-pro",
         description="Xiaomi Mimo model name"
+    )
+    mimo_api_mode: str = Field(
+        default="anthropic_messages",
+        description="Mimo API protocol mode: anthropic_messages or chat_completions"
     )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",
@@ -240,6 +256,10 @@ class Settings(BaseSettings):
     glm_model: str = Field(
         default="glm-4.7",
         description="GLM model name"
+    )
+    glm_api_mode: str = Field(
+        default="anthropic_messages",
+        description="GLM API protocol mode: anthropic_messages or chat_completions"
     )
 
     # 报告模式配置
@@ -298,6 +318,10 @@ class Settings(BaseSettings):
     qwen_model: str = Field(
         default="qwen3",
         description="Qwen3 model name"
+    )
+    qwen_api_mode: str = Field(
+        default="chat_completions",
+        description="Qwen API protocol mode: chat_completions"
     )
     qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
     qwen_vl_base_url: str = Field(
@@ -497,6 +521,7 @@ class Settings(BaseSettings):
                 "api_key": self.openai_api_key,
                 "base_url": self.openai_base_url,
                 "model": self.openai_model,
+                "api_mode": self.openai_api_mode,
             }
         elif self.llm_provider == "deepseek":
             return {
@@ -504,6 +529,7 @@ class Settings(BaseSettings):
                 "api_key": self.deepseek_api_key,
                 "base_url": self.deepseek_base_url,
                 "model": self.deepseek_model,
+                "api_mode": self.deepseek_api_mode,
             }
         elif self.llm_provider == "anthropic":
             return {
@@ -517,6 +543,7 @@ class Settings(BaseSettings):
                 "api_key": self.minimax_api_key,
                 "base_url": self.minimax_base_url,
                 "model": self.minimax_model,
+                "api_mode": self.minimax_api_mode,
             }
         elif self.llm_provider == "mimo":
             return {
@@ -524,6 +551,7 @@ class Settings(BaseSettings):
                 "api_key": self.mimo_api_key,
                 "base_url": self.mimo_base_url,
                 "model": self.mimo_model,
+                "api_mode": self.mimo_api_mode,
             }
         elif self.llm_provider == "qwen":
             return {
@@ -531,6 +559,7 @@ class Settings(BaseSettings):
                 "api_key": self.qwen_api_key,
                 "base_url": self.qwen_base_url,
                 "model": self.qwen_model,
+                "api_mode": self.qwen_api_mode,
             }
         elif self.llm_provider == "glm":
             return {
@@ -539,6 +568,7 @@ class Settings(BaseSettings):
                 "base_url": self.glm_base_url,
                 "anthropic_base_url": self.glm_anthropic_base_url,
                 "model": self.glm_model,
+                "api_mode": self.glm_api_mode,
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")
