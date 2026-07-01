@@ -69,7 +69,10 @@ class LocalRuleBasedExtractorProvider:
                         name=name,
                         canonical_name=name,
                         aliases=aliases,
+                        source_evidence_ids=[evidence.evidence_id],
                     )
+                elif evidence.evidence_id not in entities_by_key[key].source_evidence_ids:
+                    entities_by_key[key].source_evidence_ids.append(evidence.evidence_id)
 
         relations = self._build_relations(
             map_id=map_id,
@@ -136,6 +139,7 @@ class LocalRuleBasedExtractorProvider:
                     target_entity_id=target.entity_id,
                     relation_type=relation_type,
                     description=f"{source.name} {relation_type} {target.name}",
+                    source_evidence_ids=[item.evidence_id for item in evidence],
                 )
             )
 

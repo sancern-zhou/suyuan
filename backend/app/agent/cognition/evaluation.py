@@ -13,6 +13,14 @@ def generate_evaluation_markdown(
 ) -> str:
     entity_count = len(extraction.candidate_entities)
     relation_count = len(extraction.candidate_relations)
+    evidenced_entity_count = sum(
+        1 for entity in extraction.candidate_entities if entity.source_evidence_ids
+    )
+    evidenced_relation_count = sum(
+        1 for relation in extraction.candidate_relations if relation.source_evidence_ids
+    )
+    evidenced_entity_ratio = evidenced_entity_count / entity_count if entity_count else 0
+    evidenced_relation_ratio = evidenced_relation_count / relation_count if relation_count else 0
     entity_type_counts = Counter(entity.entity_type for entity in extraction.candidate_entities)
     relation_type_counts = Counter(
         relation.relation_type for relation in extraction.candidate_relations
@@ -25,6 +33,8 @@ def generate_evaluation_markdown(
         "",
         f"- 候选实体数量：{entity_count}",
         f"- 候选关系数量：{relation_count}",
+        f"- 有证据实体比例：{evidenced_entity_ratio:.0%}",
+        f"- 有证据关系比例：{evidenced_relation_ratio:.0%}",
         f"- Provider：{extraction.diagnostics.provider_name}",
         f"- Provider 状态：{extraction.diagnostics.status}",
         "",

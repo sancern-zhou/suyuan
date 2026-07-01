@@ -28,7 +28,8 @@ class CognitiveMapViewBuilder:
             if relation.source_entity_id in entity_ids or relation.target_entity_id in entity_ids
         ][:max_relations]
 
-        prompt_summary = self._render_prompt_summary(query, entities, relations)
+        evidence_summaries = self._evidence_summaries(filtered_extraction, entities, relations)
+        prompt_summary = self._render_prompt_summary(query, entities, relations, evidence_summaries)
         return CognitiveMapView(
             view_id=self._stable_id("view", query.task, extraction.map_id),
             map_id=extraction.map_id,
@@ -37,6 +38,7 @@ class CognitiveMapViewBuilder:
             agent_role=query.agent_role,
             entities=entities,
             relations=relations,
+            evidence_summaries=evidence_summaries,
             limitations=["当前为 Spike 视图，仅包含候选认知地图内容，未经发布审核。"],
             prompt_summary=prompt_summary,
         )
@@ -92,10 +94,33 @@ class CognitiveMapViewBuilder:
             map_id=extraction.map_id,
             candidate_entities=entities,
             candidate_relations=relations,
+            evidence=extraction.evidence,
             diagnostics=extraction.diagnostics,
         )
 
-    def _render_prompt_summary(self, query, entities, relations) -> str:
+    def _evidence_summaries(self, extraction, entities, relations) -> list[dict[str, str]]:
+        evidence_ids = set()
+        for entity in entities:
+            evidence_ids.update(entity.source_evidence_ids)
+        for relation in relations:
+            evidence_ids.update(relation.source_evidence_ids)
+
+        summaries = []
+        for evidence in extraction.evidence:
+            if evidence.evidence_id not in evidence_ids:
+                continue
+            summaries.append(
+                {
+                    "evidence_id": evidence.evidence_id,
+                    "ref": evidence.ref,
+                    "summary": evidence.normalized_summary,
+                    "location": evidence.location,
+                }
+            )
+        return summaries
+
+    def _render_prompt_summary(self, query, entities, relations, evidence_summaries=None) -> str:
+        evidence_summaries = evidence_summaries or []
         lines = [
             "## 当前认知地图",
             "",
@@ -120,6 +145,12 @@ class CognitiveMapViewBuilder:
             f"{f'：{relation.description}' if relation.description else ''}"
             for relation in relations
         )
+        if evidence_summaries:
+            lines.extend(["", "证据摘要："])
+            lines.extend(
+                f"- {item['ref']}：{item['summary']}"
+                for item in evidence_summaries
+            )
         lines.extend(
             [
                 "",
