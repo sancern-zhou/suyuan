@@ -191,6 +191,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 canonical_name=item.get("canonical_name") or name,
                 aliases=list(item.get("aliases") or []),
                 description=item.get("description"),
+                source_evidence_ids=[str(item.get("evidence_id"))] if item.get("evidence_id") else [],
                 attributes=dict(item.get("attributes") or {}),
             )
 
@@ -218,6 +219,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 continue
 
             evidence_id = item.get("evidence_id")
+            source_evidence_ids = [str(evidence_id)] if evidence_id else []
             if evidence_id and evidence_id in enriched_evidence_by_id:
                 data = enriched_evidence_by_id[evidence_id]
                 data["quote"] = item.get("evidence_quote") or data.get("quote")
@@ -247,6 +249,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                     target_entity_id=target.entity_id,
                     relation_type=relation_type,
                     description=item.get("description"),
+                    source_evidence_ids=source_evidence_ids,
                     attributes=dict(item.get("attributes") or {}),
                 )
             )
@@ -363,7 +366,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 target.name,
             ])
             fallback_summary = f"{source.name} --{relation_type}--> {target.name}"
-            evidence_for_properties(
+            relation_evidence_id = evidence_for_properties(
                 properties,
                 evidence_key=relation_evidence_key,
                 fallback_summary=fallback_summary,
@@ -379,6 +382,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 target_entity_id=target.entity_id,
                 relation_type=relation_type,
                 description=description,
+                source_evidence_ids=[relation_evidence_id] if relation_evidence_id else [],
                 attributes={},
             )
 
