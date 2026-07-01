@@ -408,6 +408,56 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = Field(default=30, description="HTTP request timeout")
     vocs_api_timeout_seconds: int = Field(default=120, description="VOCs API timeout (2 minutes for large data queries)")
 
+    # Tender Information Fetcher Configuration
+    tender_fetcher_enabled: bool = Field(
+        default=True,
+        description="Enable daily tender information fetcher"
+    )
+    tender_fetcher_schedule: str = Field(
+        default="30 6 * * *",
+        description="Cron schedule for tender information fetcher"
+    )
+    tender_keywords: str = Field(
+        default="生态环境局,环境监测中心,生态环境厅,环境监测站",
+        description="Comma-separated tender search keywords"
+    )
+    tender_notice_types: str = Field(
+        default="tender,winning_bid",
+        description="Comma-separated tender notice types"
+    )
+    tender_max_pages: int = Field(
+        default=0,
+        description="Qianlima pages to crawl; 0 means complete target-date crawl"
+    )
+    qianlima_base_url: str = Field(
+        default="https://www.qianlima.com",
+        description="Qianlima base URL"
+    )
+    qianlima_storage_state: str = Field(
+        default="backend_data_registry/tenders/qianlima_storage_state.json",
+        description="Qianlima Playwright storage state path"
+    )
+    qianlima_username: Optional[str] = Field(
+        default=None,
+        description="Qianlima username for optional login"
+    )
+    qianlima_password: Optional[str] = Field(
+        default=None,
+        description="Qianlima password for optional login"
+    )
+    tender_llm_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible API key for tender LLM screening and extraction"
+    )
+    tender_llm_base_url: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible base URL for tender LLM"
+    )
+    tender_llm_model: Optional[str] = Field(
+        default=None,
+        description="Model name for tender LLM"
+    )
+
     # SQL Server Configuration (History Database)
     sqlserver_host: str = Field(
         default="180.184.30.94",

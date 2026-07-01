@@ -185,7 +185,7 @@ Fetcher 注册到 `backend/app/services/lifecycle_manager.py` 的 `initialize_fe
 
 ## 测试策略
 
-不在自动测试中访问真实千里马或真实 LLM。
+单元测试不访问真实千里马或真实 LLM，避免常规测试受账号、网络和额度影响。真实千里马和真实 LLM 覆盖通过显式集成测试提供：设置 `RUN_TENDER_REAL_INTEGRATION=1`，并配置 `TENDER_LLM_API_KEY`、`OPENAI_API_KEY`、`DASHSCOPE_API_KEY` 或 `QWEN_API_KEY` 后运行集成测试。
 
 需要覆盖：
 
@@ -194,6 +194,7 @@ Fetcher 注册到 `backend/app/services/lifecycle_manager.py` 的 `initialize_fe
 - Fetcher：验证默认 schedule、默认关键词、默认公告类型和默认目标日期为昨天。
 - 配置解析：验证逗号分隔关键词和公告类型解析。
 - 迁移脚本：验证 SQL 文件包含三张表和唯一索引。
+- 真实集成测试：访问真实千里马搜索和真实 LLM，默认跳过，只有显式设置环境变量时运行。
 
 ## 实施顺序
 
