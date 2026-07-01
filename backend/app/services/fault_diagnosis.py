@@ -156,6 +156,12 @@ class FaultDiagnosisService:
             supporting.append("PM2.5 与 PM10 协同关系偏弱")
             missing.append("采样流量、切割头、采样管路和颗粒物仪器维护记录")
             action = "优先核查采样流量、采样管路、切割头和颗粒物监测仪运行状态。"
+        if "main_pollutant_constant_streak" in codes:
+            cause = "监测仪或数采链路恒值异常"
+            cause_type = "data_quality"
+            supporting.append("主污染物出现长时间恒值，可能存在仪器停滞、数采卡滞或数据刷新异常")
+            missing.append("分钟级原始数据、数采状态、仪器运行状态和近期质控记录")
+            action = "优先核查分钟级原始数据、数采链路刷新状态、仪器运行状态和同期质控记录。"
         if "single_station_dominant" in codes:
             supporting.append("污染事件由单站或少数站点主导")
         if "peer_trend_inconsistent" in codes:

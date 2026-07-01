@@ -127,3 +127,38 @@ def test_processes_suspicious_conclusion_and_writes_fault_outputs(tmp_path):
     saved_conclusion = json.loads(conclusion.read_text(encoding="utf-8"))
     assert saved_conclusion["downstream"]["processed_by_fault_diagnosis"] is True
     assert FaultDiagnosisService(output_root=tmp_path).discover_pending() == []
+
+
+def test_processes_main_pollutant_constant_streak_as_data_quality_fault(tmp_path):
+    event_dir = tmp_path / "深圳" / "run1" / "evt1"
+    evidence_pack = _write_json(
+        event_dir / "evidence_pack.json",
+        {
+            "schema_version": "pollution_event_evidence_pack/v1",
+            "city": "深圳",
+            "event": {"event_id": "evt1", "main_pollutant": "PM10"},
+            "event_summary": {"main_pollutant": "PM10"},
+        },
+    )
+    conclusion = _write_json(
+        event_dir / "event_conclusion.json",
+        {
+            "schema_version": "pollution_event_conclusion/v1",
+            "event_id": "evt1",
+            "city": "深圳",
+            "main_pollutant": "PM10",
+            "classification": "suspected_device_or_data_fault",
+            "reason_codes": ["main_pollutant_constant_streak", "multi_station_coherent"],
+            "source_evidence_pack": str(evidence_pack),
+            "downstream": {
+                "requires_fault_diagnosis": True,
+                "processed_by_fault_diagnosis": False,
+            },
+        },
+    )
+
+    result = FaultDiagnosisService(output_root=tmp_path).process_conclusion(conclusion)
+
+    cause = result["most_likely_causes"][0]
+    assert cause["cause"] == "监测仪或数采链路恒值异常"
+    assert cause["cause_type"] == "data_quality"
