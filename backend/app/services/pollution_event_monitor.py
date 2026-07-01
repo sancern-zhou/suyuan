@@ -29,6 +29,7 @@ import structlog
 from app.agent.context.data_context_manager import DataContextManager
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.memory.hybrid_manager import HybridMemoryManager
+from app.services.pollution_event_conclusion import PollutionEventConclusionService
 from app.services.pollution_event_state_store import PollutionEventStateStore
 from app.external_apis.openmeteo_client import OpenMeteoClient
 
@@ -405,12 +406,15 @@ class PollutionEventMonitorService:
         self._write_json(event_dir / "event.json", event)
         self._write_json(event_dir / "evidence_pack.json", evidence_pack)
         self._write_text(event_dir / "analysis_request.md", self._build_analysis_request(evidence_pack))
+        conclusion = PollutionEventConclusionService().write_conclusion(event_dir / "evidence_pack.json")
 
         return {
             "event_id": event_id,
             "event_dir": str(event_dir),
             "evidence_pack": str(event_dir / "evidence_pack.json"),
             "analysis_request": str(event_dir / "analysis_request.md"),
+            "event_conclusion": str(event_dir / "event_conclusion.json"),
+            "event_conclusion_classification": conclusion.classification.value,
             "fetch_errors": fetch_errors,
         }
 

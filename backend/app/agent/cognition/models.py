@@ -165,6 +165,7 @@ class CandidateEntity(BaseModel):
     canonical_name: str | None = None
     aliases: list[str] = Field(default_factory=list)
     description: str | None = None
+    source_evidence_ids: list[str] = Field(default_factory=list, exclude=True)
     attributes: dict[str, Any] = Field(default_factory=dict)
     review_status: ReviewStatus = "candidate"
     created_by: Literal["system", "user", "agent"] = "system"
@@ -177,6 +178,7 @@ class CandidateRelation(BaseModel):
     target_entity_id: str
     relation_type: str
     description: str | None = None
+    source_evidence_ids: list[str] = Field(default_factory=list, exclude=True)
     attributes: dict[str, Any] = Field(default_factory=dict)
     review_status: ReviewStatus = "candidate"
     created_by: Literal["system", "user", "agent"] = "system"
@@ -227,5 +229,6 @@ class CognitiveMapView(BaseModel):
     agent_role: str | None = None
     entities: list[CandidateEntity] = Field(default_factory=list)
     relations: list[CandidateRelation] = Field(default_factory=list)
+    evidence_summaries: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
     limitations: list[str] = Field(default_factory=list)
     prompt_summary: str
