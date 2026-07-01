@@ -19,20 +19,26 @@ class OpenAICompatibleTenderLLMClient:
         temperature: float = 0.0,
     ):
         self._load_environment()
+        provider = self._selected_provider()
         self.api_key = api_key or self._first_configured_value(
             [
                 "TENDER_LLM_API_KEY",
+                *self._provider_key_names(provider),
                 "OPENAI_API_KEY",
                 "DASHSCOPE_API_KEY",
                 "QWEN_API_KEY",
             ]
         )
         self.base_url = self._normalize_base_url(
-            base_url or os.getenv("TENDER_LLM_BASE_URL") or self._default_base_url()
+            base_url
+            or os.getenv("TENDER_LLM_BASE_URL")
+            or self._provider_base_url(provider)
+            or self._default_base_url()
         )
         self.model = (
             model
             or os.getenv("TENDER_LLM_MODEL")
+            or self._provider_model(provider)
             or os.getenv("QWEN_MODEL")
             or os.getenv("DASHSCOPE_MODEL")
             or self._default_model(self.base_url)
@@ -40,7 +46,7 @@ class OpenAICompatibleTenderLLMClient:
         self.temperature = temperature
         if not self.api_key:
             raise RuntimeError(
-                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、OPENAI_API_KEY、DASHSCOPE_API_KEY 或 QWEN_API_KEY"
+                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、GLM_API_KEY、OPENAI_API_KEY、DASHSCOPE_API_KEY 或 QWEN_API_KEY"
             )
 
     async def review_candidate(
@@ -213,6 +219,25 @@ class OpenAICompatibleTenderLLMClient:
                 and (key not in os.environ or self._looks_placeholder(os.environ[key]))
             ):
                 os.environ[key] = value
+
+    def _selected_provider(self) -> str:
+        provider = os.getenv("TENDER_LLM_PROVIDER") or os.getenv("LLM_PROVIDER") or ""
+        return provider.strip().split("#", 1)[0].strip().lower()
+
+    def _provider_key_names(self, provider: str) -> list[str]:
+        if provider == "glm":
+            return ["GLM_API_KEY"]
+        return []
+
+    def _provider_base_url(self, provider: str) -> str | None:
+        if provider == "glm":
+            return os.getenv("GLM_BASE_URL")
+        return None
+
+    def _provider_model(self, provider: str) -> str | None:
+        if provider == "glm":
+            return os.getenv("GLM_MODEL")
+        return None
 
     def _default_base_url(self) -> str | None:
         if os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY"):
