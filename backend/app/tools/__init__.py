@@ -304,11 +304,13 @@ def create_global_tool_registry() -> ToolRegistry:
 
     # 通用SQL执行工具
     try:
-        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool
+        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool, ExecuteTenderSQLQueryTool
         registry.register(ExecuteSQLQueryTool(), priority=47)
         logger.info("tool_loaded", tool="execute_sql_query")
         registry.register(ExecuteOpsSQLQueryTool(), priority=47)
         logger.info("tool_loaded", tool="execute_ops_sql_query")
+        registry.register(ExecuteTenderSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_tender_sql_query")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 

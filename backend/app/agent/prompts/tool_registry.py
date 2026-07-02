@@ -36,6 +36,9 @@ ASSISTANT_TOOL_NAMES = [
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
 
+    # 数据查询
+    "execute_tender_sql_query",
+
     # 任务和技能
     "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
 
