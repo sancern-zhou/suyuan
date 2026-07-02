@@ -69,6 +69,11 @@ def test_candidate_batch_prompt_uses_compact_keep_indexes():
             "x": long_list_text[:200],
         }
     ]
+    exclude_text = " ".join(payload["exclude_when"])
+    assert "采购意向" in exclude_text
+    assert "履约验收" in exclude_text
+    assert "网上超市" in exclude_text
+    assert "招标代理" in exclude_text
 
 
 def test_review_candidates_accepts_keep_index_array():

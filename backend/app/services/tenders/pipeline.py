@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 from datetime import date
 from typing import Iterable, Protocol, Sequence
 
@@ -116,8 +117,16 @@ class TenderPipeline:
         self, candidates: Iterable[TenderCandidate], result: PipelineRunResult
     ) -> None:
         new_candidates: list[TenderCandidate] = []
+        seen_titles: set[str] = set()
         for candidate in candidates:
             try:
+                title_key = self._normalized_title_key(candidate)
+                if title_key and title_key in seen_titles:
+                    result.duplicate_candidates += 1
+                    continue
+                if title_key:
+                    seen_titles.add(title_key)
+
                 is_new = await self.repository.save_candidate(candidate)
                 if not is_new:
                     result.duplicate_candidates += 1
@@ -129,7 +138,17 @@ class TenderPipeline:
                     f"candidate saving failed for {candidate.url}: {exc}"
                 )
 
-        initial_decisions = await self._initial_decisions(new_candidates, result)
+        prefilter_decisions: dict[str, TenderFilterDecision] = {}
+        llm_candidates: list[TenderCandidate] = []
+        for candidate in new_candidates:
+            decision = self.relevance_filter.prefilter_decision(candidate)
+            if decision is not None:
+                prefilter_decisions[candidate.normalized_url_key()] = decision
+            else:
+                llm_candidates.append(candidate)
+
+        initial_decisions = dict(prefilter_decisions)
+        initial_decisions.update(await self._initial_decisions(llm_candidates, result))
         detail_concurrency = max(1, int(os.getenv("TENDER_DETAIL_CONCURRENCY", "5")))
         semaphore = asyncio.Semaphore(detail_concurrency)
 
@@ -140,6 +159,12 @@ class TenderPipeline:
         await asyncio.gather(
             *[process_with_limit(candidate) for candidate in new_candidates]
         )
+
+    def _normalized_title_key(self, candidate: TenderCandidate) -> str:
+        value = candidate.title or ""
+        value = re.sub(r"\[[^\]]+\]|\【[^】]+\】|\([^)]*\)|（[^）]*）", "", value)
+        value = re.sub(r"\s+", "", value).lower()
+        return value
 
     async def _process_candidate(
         self,

@@ -19,7 +19,11 @@ class TenderLLMPoolEntry:
 
 
 class TenderLLMClientPool:
-    def __init__(self, clients: Sequence[tuple[Any, int]]):
+    def __init__(
+        self,
+        clients: Sequence[tuple[Any, int]],
+        screening_client_index: int = 0,
+    ):
         if not clients:
             raise ValueError("TenderLLMClientPool requires at least one client")
         self.entries = [
@@ -30,6 +34,9 @@ class TenderLLMClientPool:
             )
             for client, concurrency in clients
         ]
+        if screening_client_index < 0 or screening_client_index >= len(self.entries):
+            raise ValueError("screening_client_index is out of range")
+        self.screening_client_index = screening_client_index
         self._next_index = 0
         self._selection_lock = asyncio.Lock()
 
@@ -38,7 +45,7 @@ class TenderLLMClientPool:
         candidates: Sequence[TenderCandidate],
         rule_decision: TenderFilterDecision,
     ) -> dict[str, TenderFilterDecision]:
-        primary = self.entries[0]
+        primary = self.entries[self.screening_client_index]
         async with primary.semaphore:
             return await primary.client.review_candidates(candidates, rule_decision)
 
@@ -380,6 +387,7 @@ class OpenAICompatibleTenderLLMClient:
                 "exclude_when": [
                     "只是生态环境部门采购通用办公、后勤保障、车辆维修、广告宣传、网络电信、物业餐饮、装修家具等非环境业务内容。",
                     "只是行政审批、公示、受理、环评批复等政府信息公开事项，并非采购或招投标项目。",
+                    "采购意向、合同履约验收、网上超市、定点采购、招标代理、采购代理、印刷宣传、业务用车等不属于目标公告。",
                     "环境相关内容仅出现在网页导航、推荐信息、站点热词或无关上下文中。",
                 ],
                 "candidate": {
@@ -419,6 +427,7 @@ class OpenAICompatibleTenderLLMClient:
                 "exclude_when": [
                     "只是生态环境部门采购通用办公、后勤保障、车辆维修、广告宣传、网络电信、物业餐饮、装修家具等非环境业务内容。",
                     "只是行政审批、公示、受理、环评批复等政府信息公开事项，并非采购或招投标项目。",
+                    "采购意向、合同履约验收、网上超市、定点采购、招标代理、采购代理、印刷宣传、业务用车等不属于目标公告。",
                     "环境相关内容仅出现在网页导航、推荐信息、站点热词或无关上下文中。",
                 ],
                 "candidates": [
