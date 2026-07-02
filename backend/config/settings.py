@@ -457,6 +457,26 @@ class Settings(BaseSettings):
         default=None,
         description="Model name for tender LLM"
     )
+    tender_llm_concurrency: int = Field(
+        default=5,
+        description="Max concurrent tender LLM detail requests for the primary provider"
+    )
+    tender_secondary_llm_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible API key for secondary tender detail LLM"
+    )
+    tender_secondary_llm_base_url: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible base URL for secondary tender detail LLM"
+    )
+    tender_secondary_llm_model: str = Field(
+        default="agnes-2.0-flash",
+        description="Model name for secondary tender detail LLM"
+    )
+    tender_secondary_llm_concurrency: int = Field(
+        default=5,
+        description="Max concurrent tender LLM detail requests for the secondary provider"
+    )
 
     # SQL Server Configuration (History Database)
     sqlserver_host: str = Field(

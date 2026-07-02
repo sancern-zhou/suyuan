@@ -130,68 +130,84 @@ class TenderPipeline:
                 )
 
         initial_decisions = await self._initial_decisions(new_candidates, result)
+        detail_concurrency = max(1, int(os.getenv("TENDER_DETAIL_CONCURRENCY", "5")))
+        semaphore = asyncio.Semaphore(detail_concurrency)
+
+        async def process_with_limit(candidate: TenderCandidate) -> None:
+            async with semaphore:
+                await self._process_candidate(candidate, initial_decisions, result)
+
+        await asyncio.gather(
+            *[process_with_limit(candidate) for candidate in new_candidates]
+        )
+
+    async def _process_candidate(
+        self,
+        candidate: TenderCandidate,
+        initial_decisions: dict[str, TenderFilterDecision],
+        result: PipelineRunResult,
+    ) -> None:
         candidate_delay_ms = int(os.getenv("TENDER_CANDIDATE_DELAY_MS", "0"))
-        for candidate in new_candidates:
+        try:
+            decision = initial_decisions.get(candidate.normalized_url_key())
+            if decision is None:
+                decision = await self._initial_decision(candidate)
+
+            await self.repository.update_candidate_decision(candidate, decision)
+
+            if not decision.is_relevant:
+                result.filtered_out += 1
+                return
+
             try:
-                decision = initial_decisions.get(candidate.normalized_url_key())
-                if decision is None:
-                    decision = await self._initial_decision(candidate)
-
-                await self.repository.update_candidate_decision(candidate, decision)
-
-                if not decision.is_relevant:
-                    result.filtered_out += 1
-                    continue
-
-                try:
-                    detail_html = await self.client.fetch_detail(candidate)
-                except Exception as exc:
-                    result.detail_fetch_failures += 1
-                    result.errors.append(
-                        f"detail fetch failed for {candidate.url}: {exc}"
-                    )
-                    continue
-
-                if self.llm_client is not None:
-                    detail_decision = await self.llm_client.review_candidate(
-                        candidate,
-                        decision,
-                        detail_text=detail_html,
-                    )
-                else:
-                    detail_decision = self.relevance_filter.decide(
-                        candidate, detail_html
-                    )
-                if not detail_decision.is_relevant:
-                    await self.repository.update_candidate_decision(
-                        candidate, detail_decision
-                    )
-                    result.filtered_out += 1
-                    continue
-
-                if self.llm_client is not None:
-                    notice = await self.llm_client.extract_notice(
-                        candidate,
-                        detail_html,
-                        detail_decision,
-                    )
-                else:
-                    notice = self.extractor.extract(
-                        candidate, detail_html, detail_decision
-                    )
-                await self.repository.save_notice(notice)
-                result.saved_notices += 1
-
-                if self.enable_vector_index and self.vector_indexer is not None:
-                    await self.vector_indexer.index_notice(notice)
-                    result.vector_indexed += 1
-                if candidate_delay_ms > 0:
-                    await asyncio.sleep(candidate_delay_ms / 1000)
+                detail_html = await self.client.fetch_detail(candidate)
             except Exception as exc:
-                logger.exception("candidate processing failed")
+                result.detail_fetch_failures += 1
                 result.errors.append(
-                    f"candidate processing failed for {candidate.url}: {exc}"
+                    f"detail fetch failed for {candidate.url}: {exc}"
                 )
+                return
+
+            if self.llm_client is not None:
+                detail_decision = await self.llm_client.review_candidate(
+                    candidate,
+                    decision,
+                    detail_text=detail_html,
+                )
+            else:
+                detail_decision = self.relevance_filter.decide(
+                    candidate, detail_html
+                )
+            if not detail_decision.is_relevant:
+                await self.repository.update_candidate_decision(
+                    candidate, detail_decision
+                )
+                result.filtered_out += 1
+                return
+
+            if self.llm_client is not None:
+                notice = await self.llm_client.extract_notice(
+                    candidate,
+                    detail_html,
+                    detail_decision,
+                )
+            else:
+                notice = self.extractor.extract(
+                    candidate, detail_html, detail_decision
+                )
+            await self.repository.save_notice(notice)
+            result.saved_notices += 1
+
+            if self.enable_vector_index and self.vector_indexer is not None:
+                await self.vector_indexer.index_notice(notice)
+                result.vector_indexed += 1
+            if candidate_delay_ms > 0:
+                await asyncio.sleep(candidate_delay_ms / 1000)
+        except Exception as exc:
+            logger.exception("candidate processing failed")
+            result.errors.append(
+                f"candidate processing failed for {candidate.url}: {exc}"
+            )
 
     async def _initial_decisions(
         self,

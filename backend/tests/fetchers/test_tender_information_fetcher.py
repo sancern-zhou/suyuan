@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from app.fetchers.tenders.tender_information_fetcher import TenderInformationFetcher
+from app.services.tenders.llm import TenderLLMClientPool
 from app.services.tenders.models import NoticeType, PipelineRunResult
 
 
@@ -55,6 +56,48 @@ def test_fetcher_target_date_defaults_to_yesterday():
     assert TenderInformationFetcher.compute_target_date(date(2026, 7, 1)) == date(
         2026, 6, 30
     )
+
+
+def test_fetcher_builds_dual_llm_pool_from_settings(monkeypatch):
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_llm_api_key",
+        "primary-key",
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_llm_base_url",
+        "https://primary.example/v1",
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_llm_model",
+        "primary-model",
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_llm_concurrency",
+        5,
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_secondary_llm_api_key",
+        "secondary-key",
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_secondary_llm_base_url",
+        "https://apihub.agnes-ai.com/v1/chat/completions",
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_secondary_llm_model",
+        "agnes-2.0-flash",
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.tender_secondary_llm_concurrency",
+        5,
+    )
+
+    llm = TenderInformationFetcher()._default_llm()
+
+    assert isinstance(llm, TenderLLMClientPool)
+    assert [entry.concurrency for entry in llm.entries] == [5, 5]
+    assert llm.entries[1].client.base_url == "https://apihub.agnes-ai.com/v1"
+    assert llm.entries[1].client.model == "agnes-2.0-flash"
 
 
 @pytest.mark.asyncio

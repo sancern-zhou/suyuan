@@ -13,7 +13,7 @@ from app.services.tenders.config import (
     parse_keywords,
     parse_notice_types,
 )
-from app.services.tenders.llm import OpenAICompatibleTenderLLMClient
+from app.services.tenders.llm import OpenAICompatibleTenderLLMClient, TenderLLMClientPool
 from app.services.tenders.pipeline import TenderPipeline, maybe_close_client
 from app.services.tenders.qianlima_client import QianlimaClient
 from app.services.tenders.repository import SQLServerTenderRepository
@@ -113,10 +113,24 @@ class TenderInformationFetcher(DataFetcher):
         )
 
     def _default_llm(self):
-        return OpenAICompatibleTenderLLMClient(
+        primary = OpenAICompatibleTenderLLMClient(
             api_key=settings.tender_llm_api_key,
             base_url=settings.tender_llm_base_url,
             model=settings.tender_llm_model,
+        )
+        if not settings.tender_secondary_llm_api_key:
+            return primary
+
+        secondary = OpenAICompatibleTenderLLMClient(
+            api_key=settings.tender_secondary_llm_api_key,
+            base_url=settings.tender_secondary_llm_base_url,
+            model=settings.tender_secondary_llm_model,
+        )
+        return TenderLLMClientPool(
+            [
+                (primary, settings.tender_llm_concurrency),
+                (secondary, settings.tender_secondary_llm_concurrency),
+            ]
         )
 
     def _config_from_settings(self) -> TenderFetcherConfig:

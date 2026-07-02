@@ -3,11 +3,74 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, Sequence
 
 from .extractor import amount_to_wan_yuan, clean_detail_content, extract_attachment_urls
 from .models import NoticeType, TenderCandidate, TenderFilterDecision, TenderNotice
+
+
+@dataclass(slots=True)
+class TenderLLMPoolEntry:
+    client: Any
+    concurrency: int
+    semaphore: asyncio.Semaphore
+
+
+class TenderLLMClientPool:
+    def __init__(self, clients: Sequence[tuple[Any, int]]):
+        if not clients:
+            raise ValueError("TenderLLMClientPool requires at least one client")
+        self.entries = [
+            TenderLLMPoolEntry(
+                client=client,
+                concurrency=max(1, int(concurrency)),
+                semaphore=asyncio.Semaphore(max(1, int(concurrency))),
+            )
+            for client, concurrency in clients
+        ]
+        self._next_index = 0
+        self._selection_lock = asyncio.Lock()
+
+    async def review_candidates(
+        self,
+        candidates: Sequence[TenderCandidate],
+        rule_decision: TenderFilterDecision,
+    ) -> dict[str, TenderFilterDecision]:
+        primary = self.entries[0]
+        async with primary.semaphore:
+            return await primary.client.review_candidates(candidates, rule_decision)
+
+    async def review_candidate(
+        self,
+        candidate: TenderCandidate,
+        rule_decision: TenderFilterDecision,
+        detail_text: str = "",
+    ) -> TenderFilterDecision:
+        entry = await self._select_entry()
+        async with entry.semaphore:
+            return await entry.client.review_candidate(
+                candidate,
+                rule_decision,
+                detail_text=detail_text,
+            )
+
+    async def extract_notice(
+        self,
+        candidate: TenderCandidate,
+        detail_text: str,
+        decision: TenderFilterDecision,
+    ) -> TenderNotice:
+        entry = await self._select_entry()
+        async with entry.semaphore:
+            return await entry.client.extract_notice(candidate, detail_text, decision)
+
+    async def _select_entry(self) -> TenderLLMPoolEntry:
+        async with self._selection_lock:
+            entry = self.entries[self._next_index]
+            self._next_index = (self._next_index + 1) % len(self.entries)
+            return entry
 
 
 class OpenAICompatibleTenderLLMClient:
