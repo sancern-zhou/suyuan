@@ -327,6 +327,34 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
+    try:
+        from app.tools.analysis.cognitive_map_guidance.tool import CognitiveMapGuidanceTool
+        registry.register(CognitiveMapGuidanceTool(), priority=51)
+        logger.info("tool_loaded", tool="cognitive_map_guidance")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="cognitive_map_guidance", error=str(e))
+
+    try:
+        from app.tools.cognition.cognitive_map_entity_query.tool import CognitiveMapEntityQueryTool
+        registry.register(CognitiveMapEntityQueryTool(), priority=52)
+        logger.info("tool_loaded", tool="cognitive_map_entity_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="cognitive_map_entity_query", error=str(e))
+
+    try:
+        from app.tools.cognition.cognitive_map_graph_traverse.tool import CognitiveMapGraphTraverseTool
+        registry.register(CognitiveMapGraphTraverseTool(), priority=53)
+        logger.info("tool_loaded", tool="cognitive_map_graph_traverse")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="cognitive_map_graph_traverse", error=str(e))
+
+    try:
+        from app.tools.query.resolve_station_geo.tool import ResolveStationGeoTool
+        registry.register(ResolveStationGeoTool(), priority=54)
+        logger.info("tool_loaded", tool="resolve_station_geo")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="resolve_station_geo", error=str(e))
+
     # 5分钟数据查询工具
     try:
         from app.tools.query.get_5min_data.tool import Get5MinDataTool
@@ -504,6 +532,50 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="create_report_chart")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_report_chart", error=str(e))
+
+    try:
+        from app.tools.gisctl.create_map_point_asset_tool import CreateMapPointAssetTool
+        registry.register(CreateMapPointAssetTool(), priority=213)
+        logger.info("tool_loaded", tool="create_map_point_asset")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="create_map_point_asset", error=str(e))
+
+    try:
+        from app.tools.gisctl.tool import GisctlTool
+        registry.register(GisctlTool(), priority=214)
+        logger.info("tool_loaded", tool="visual_interaction")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="visual_interaction", error=str(e))
+
+    try:
+        from app.tools.gisctl.asset_resolver_tool import ResolveMapDataAssetTool
+        registry.register(ResolveMapDataAssetTool(), priority=215)
+        logger.info("tool_loaded", tool="resolve_map_data_asset")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="resolve_map_data_asset", error=str(e))
+
+    try:
+        from app.tools.gisctl.map_program_receipt_tool import MapProgramReceiptTool, WaitMapProgramReceiptTool
+        registry.register(MapProgramReceiptTool(), priority=216)
+        logger.info("tool_loaded", tool="get_map_program_receipt")
+        registry.register(WaitMapProgramReceiptTool(), priority=217)
+        logger.info("tool_loaded", tool="wait_map_program_receipt")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_map_program_receipt", error=str(e))
+
+    try:
+        from app.tools.spatial.spatial_analysis.tool import SpatialAnalysisTool
+        registry.register(SpatialAnalysisTool(), priority=218)
+        logger.info("tool_loaded", tool="spatial_analysis")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="spatial_analysis", error=str(e))
+
+    try:
+        from app.tools.spatial.spatial_interpolation.tool import SpatialInterpolationTool
+        registry.register(SpatialInterpolationTool(), priority=219)
+        logger.info("tool_loaded", tool="spatial_interpolation")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="spatial_interpolation", error=str(e))
 
     try:
         from app.tools.analysis.smart_chart_generator.tool import SmartChartGenerator

@@ -1,0 +1,2 @@
+"""Cognitive map spike module."""
+

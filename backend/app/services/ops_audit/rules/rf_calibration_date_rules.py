@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "RF_CALIBRATION_DATE_EXPIRED"
 INTERVAL_RULE_ID = "RF_CALIBRATION_INTERVAL_TOO_LONG"
+SHOULD_BE_EMPTY_RULE_ID = "RF_CALIBRATION_DATE_SHOULD_BE_EMPTY"
 PROFILES = load_yaml_config("rf_calibration_date_profiles.yaml", {})
 
 
@@ -44,6 +46,10 @@ def check_rf_calibration_dates(
             next_field = pair.get("next_field")
             prev_time = _parse_time(form.get(prev_field)) if prev_field else None
             next_time = _parse_time(form.get(next_field)) if next_field else None
+            if _is_o3_multipoint_no_cylinder_pair(table, form, pair, next_field):
+                if _has_value(form.get(next_field)):
+                    _add_o3_no_cylinder_date_should_be_empty_issue(order, table, form, pair, next_field, issues)
+                continue
             if prev_field and next_field and prev_time and next_time and prev_time > next_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "prev_after_next"))
                 continue
@@ -86,6 +92,51 @@ def check_rf_calibration_dates(
             f"RF表单校准有效期异常: {first.get('label')} {first.get('reason')}",
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
+
+
+def _is_o3_multipoint_no_cylinder_pair(
+    table: str,
+    form: dict[str, Any],
+    pair: dict[str, Any],
+    next_field: str | None,
+) -> bool:
+    if table != "RF_Q_GASEOUSMULTIPOINT_O3":
+        return False
+    if str(pair.get("label") or "") != "标气有效期" or next_field != "PPMCODEDATE":
+        return False
+    remark = _calibration_remark_text(form)
+    return _mentions_no_o3_gas_cylinder(remark) or _o3_gas_cylinder_fields_are_placeholders(form)
+
+
+def _add_o3_no_cylinder_date_should_be_empty_issue(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    pair: dict[str, Any],
+    next_field: str | None,
+    issues: list[Issue],
+) -> None:
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "field": next_field,
+        "label": pair.get("label"),
+        "value": form.get(next_field) if next_field else None,
+        "expected": "臭氧多点无标气瓶时，标气有效期字段应不填。",
+    }
+    add_issue(
+        issues,
+        SHOULD_BE_EMPTY_RULE_ID,
+        "表单填写规范",
+        "高",
+        f"rf.{table}.{next_field or 'PPMCODEDATE'}",
+        "臭氧多点校准无标气瓶，标气有效期应不填。",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _has_value(value: Any) -> bool:
+    return str(value or "").strip() not in {"", "/", "-", "无", "无标气瓶", "无臭氧标气"}
 
 
 def _add_interval_too_long_issue(
@@ -160,6 +211,31 @@ def _first_time(record: dict[str, Any], fields: list[str]) -> datetime | None:
         if parsed:
             return parsed
     return None
+
+
+def _calibration_remark_text(form: dict[str, Any]) -> str:
+    return "\n".join(
+        str(form.get(field) or "").strip()
+        for field in ("REMARK", "REMARKS", "CHECKREMARK", "DESCRIPTION")
+        if str(form.get(field) or "").strip()
+    )
+
+
+def _mentions_no_o3_gas_cylinder(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text)
+    return bool(compact) and (
+        "无标气瓶" in compact
+        or "没有标气瓶" in compact
+        or "无臭氧标气" in compact
+        or "臭氧无标气" in compact
+    )
+
+
+def _o3_gas_cylinder_fields_are_placeholders(form: dict[str, Any]) -> bool:
+    ppm = str(form.get("PPM") or "").strip()
+    ppm_code = str(form.get("PPMCODE") or "").strip()
+    placeholders = {"", "/", "-", "无", "无标气瓶", "无臭氧标气"}
+    return ppm in placeholders and ppm_code in placeholders
 
 
 def _parse_time(value: Any) -> datetime | None:

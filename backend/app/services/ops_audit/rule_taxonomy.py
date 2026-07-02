@@ -88,10 +88,17 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_FIELD_POSITION_SUSPECT",
         "RF_MULTIPOINT_RANGE_INVALID",
         "RF_RANGE_OUT_OF_SPEC",
+        "RF_Q_GASEOUS_FLOW_ENV_HUMIDITY_OUT_OF_RANGE",
+        "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT",
+        "RF_O3_TRANSFER_RESULT_INVALID",
     }:
         return "数值逻辑问题"
+    if rule in {"RF_O3_VALUE_PASS_FLOW_VALUE_MISSING"}:
+        return "完整性问题"
     if rule in {"RF_PM_TEMP_PRESSURE_ERROR_UNRECALCULABLE"}:
         return "表单完整性问题"
+    if rule in {"RF_CALIBRATION_DATE_SHOULD_BE_EMPTY"}:
+        return "规范性问题"
     if rule in {
         "RF_ABNORMAL_VALUE_NO_REMARK",
         "RF_Q_PENDING_NO_REMARK",

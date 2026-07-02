@@ -16,6 +16,8 @@ from app.fetchers.consultation.monthly_supplement_fetchers import (
 )
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher
+from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
+from app.fetchers.tenders import TenderInformationFetcher
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -36,6 +38,8 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(MonthlyMeteorologySupportFetcher())  # 月度气象支撑补充数据
     scheduler.register(AirQualityDataQualityFetcher())  # 空气质量数据质量巡检
     scheduler.register(CityPollutionEventFetcher())  # 城市污染过程告警
+    scheduler.register(FaultDiagnosisFetcher())  # 疑似设备或数据故障原因诊断
+    scheduler.register(TenderInformationFetcher())  # 招投标信息每日抓取
 
     return scheduler
 

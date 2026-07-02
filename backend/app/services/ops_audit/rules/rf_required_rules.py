@@ -153,6 +153,26 @@ def _check_pm_tape_usage(
     is_placeholder = value in {"", "/"}
     expected_label = "TEOM滤膜负载及处置情况" if is_teom else "纸带使用量及处置情况"
     instrument_type = "teom_filter" if is_teom else "paper_tape"
+    if is_teom:
+        problem_reason = (
+            f"DEVICEMODEL={device_model}按TEOM/振荡天平类设备审核，"
+            f"应填写{expected_label}；当前{field}为空或为/，"
+            "无法判断滤膜负载或处置状态。"
+        )
+        message = (
+            f"颗粒物周检{expected_label}为空或为/，"
+            f"DEVICEMODEL={device_model}应填写{expected_label}"
+        ) if is_placeholder else f"颗粒物周检{expected_label}需语义复核: {value}"
+    else:
+        problem_reason = (
+            f"DEVICEMODEL={device_model or '<空>'}按非1405颗粒物仪器审核，"
+            f"应填写{expected_label}；当前{field}为空或为/，"
+            "无法判断纸带剩余量或处置状态。"
+        )
+        message = (
+            f"颗粒物周检{expected_label}为空或为/，"
+            f"非1405颗粒物仪器应填写{expected_label}"
+        ) if is_placeholder else f"颗粒物周检{expected_label}需语义复核: {value}"
 
     evidence = {
         "working_order_code": order.get("WORKINGORDERCODE"),
@@ -164,10 +184,11 @@ def _check_pm_tape_usage(
         "field_label": expected_label,
         "value": value,
         "needs_semantic_review": not is_placeholder,
+        "problem_reason": problem_reason if is_placeholder else "",
         "expected": (
-            "DEVICEMODEL包含1405时应填写TEOM滤膜负载及处置情况；"
-            "其他颗粒物仪器应填写纸带使用量及处置情况。"
-            "空值或/为明确不规范；其他内容交由语义复核判断。"
+            "DEVICEMODEL包含1405时按TEOM/振荡天平类设备审核，"
+            "应填写TEOM滤膜负载及处置情况；其他颗粒物仪器应填写纸带使用量及处置情况。"
+            "目标字段为空或/为明确不规范；其他内容交由语义复核判断。"
         ),
     }
     add_issue(
@@ -176,7 +197,7 @@ def _check_pm_tape_usage(
         "规范性问题",
         "中",
         f"rf.{table}.{field}",
-        f"颗粒物周检{expected_label}需复核: {value or '<空>'}",
+        message,
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
@@ -191,6 +212,8 @@ def _check_env_temp_humidity(
     """Check for missing indoor temperature and humidity fields."""
 
     if has_order_env_temp_humidity:
+        return
+    if table == "RF_HY_VISIBILITYCALI" and _form_indicates_not_applicable_device(form):
         return
     temp_fields = RF_FIELD_PROFILES.get("temperature_fields", [])
     humidity_fields = RF_FIELD_PROFILES.get("humidity_fields", [])
@@ -309,6 +332,9 @@ def _form_indicates_not_applicable_device(form: dict[str, Any]) -> bool:
         "不适用",
         "无需",
         "无此项",
+        "无能见度分析仪",
+        "无能见度仪",
+        "未配置能见度",
     )
     special_maintenance_markers = (
         "流动监测车",

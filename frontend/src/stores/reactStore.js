@@ -2,24 +2,69 @@
 // 多模式并行任务系统 - 按模式隔离状态
 
 import { defineStore } from 'pinia'
-import { agentAPI } from '@/services/reactApi'
-import { uploadChatFile } from '@/services/uploadApi'
-import { autoSaveSession } from '@/api/session'
+import { agentAPI } from '../services/reactApi.js'
+import { uploadChatFile } from '../services/uploadApi.js'
+import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
+import { autoSaveSession } from '../api/session.js'
 import {
   convertStreamingAnswerToThoughtIfToolPlanning,
   freezeActiveAssistantOutput
-} from './reactStoreStreaming'
+} from './reactStoreStreaming.js'
 import {
   addPendingSteeringInput,
   applyPendingSteeringInputs,
   promoteUnappliedSteeringInputsToQueue,
   removePendingSteeringInput
-} from './reactStoreSteering'
-import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership'
-import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue'
+} from './reactStoreSteering.js'
+import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
+import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue.js'
+import { restoreMapScene } from './reactStoreMapScene.js'
+import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops']
+const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops', 'graph']
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+
+export const isQueryVoiceOutputEnabled = () => {
+  if (typeof localStorage === 'undefined') return false
+  return localStorage.getItem('query-voice-output-enabled') === 'true'
+}
+
+export const extractMapProgram = (data = {}) => data?.map_program ||
+  data?.metadata?.map_program ||
+  data?.result?.map_program ||
+  data?.result?.data?.map_program ||
+  data?.result?.metadata?.map_program ||
+  null
+
+export const buildMapContext = (targetState = {}, options = {}) => {
+  const { consume = true, limit = 10 } = options
+  const events = Array.isArray(targetState.mapEvents) ? targetState.mapEvents : []
+  if (events.length === 0) return null
+
+  const selectedEvents = events.slice(-limit)
+  if (consume) {
+    targetState.mapEvents = []
+  }
+
+  return {
+    type: 'map_context',
+    session_id: targetState.sessionId || selectedEvents[selectedEvents.length - 1]?.session_id || null,
+    current_program: targetState.currentMapProgram || null,
+    events: selectedEvents
+  }
+}
+
+export const applyMapProgramMetadata = (targetState, data = {}) => {
+  const mapProgram = extractMapProgram(data)
+  if (mapProgram) {
+    if (!Array.isArray(targetState.mapPrograms)) {
+      targetState.mapPrograms = []
+    }
+    targetState.currentMapProgram = mergeMapPrograms(targetState.currentMapProgram, mapProgram)
+    targetState.mapPrograms.push(mapProgram)
+  }
+  return targetState
+}
 
 // 辅助函数：将 content 转换为字符串（支持字符串和 content blocks 格式）
 const contentToString = (content) => {
@@ -251,7 +296,9 @@ const findLatestDrawioBoardResultFromMessages = (messages = []) => {
 }
 
 const getOfficeDocumentIdentity = (doc = {}) => {
-  return doc.file_path ||
+  return doc.version_id ||
+    (doc.document_id && doc.file_path ? `${doc.document_id}:${doc.file_path}` : '') ||
+    doc.file_path ||
     doc.path ||
     doc.pdf_preview?.pdf_id ||
     doc.html_preview?.html_id ||
@@ -299,6 +346,10 @@ const createEmptyModeState = () => ({
   finalAnswer: '',
   finalAnswers: [],
   hasResults: false,
+  dashboardOverview: null,
+  mapPrograms: [],
+  currentMapProgram: null,
+  mapEvents: [],
 
   // 可视化
   currentVisualization: null,
@@ -377,7 +428,8 @@ export const useReactStore = defineStore('react', {
         query: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
-        ops: createEmptyModeState()
+        ops: createEmptyModeState(),
+        graph: createEmptyModeState()
       },
 
       // 同一模式下的多会话状态，key 为完整 sessionId
@@ -696,6 +748,9 @@ export const useReactStore = defineStore('react', {
         finalAnswer: modeState.finalAnswer,
         finalAnswers: modeState.finalAnswers,
         hasResults: modeState.hasResults,
+        dashboardOverview: modeState.dashboardOverview,
+        mapPrograms: modeState.mapPrograms,
+        currentMapProgram: modeState.currentMapProgram,
         currentVisualization: modeState.currentVisualization,
         visualizationHistory: modeState.visualizationHistory,
         board: modeState.board
@@ -971,6 +1026,21 @@ export const useReactStore = defineStore('react', {
       console.log(`[setComplete] Set complete=${isComplete} for mode ${this.currentMode}`)
     },
 
+    applyMapProgramMetadata(data = {}, targetState = this.currentState) {
+      applyMapProgramMetadata(targetState, data)
+    },
+
+    recordMapEvent(event, targetState = this.currentState) {
+      if (!event || event.type !== 'map_event') return
+      if (!Array.isArray(targetState.mapEvents)) {
+        targetState.mapEvents = []
+      }
+      targetState.mapEvents.push(event)
+      if (targetState.mapEvents.length > 50) {
+        targetState.mapEvents = targetState.mapEvents.slice(-50)
+      }
+    },
+
     /**
      * 批量设置会话状态（用于会话恢复）
      */
@@ -985,6 +1055,8 @@ export const useReactStore = defineStore('react', {
         this.setMessages(sessionData.conversation_history)
       }
 
+      restoreMapScene(this.currentState, sessionData)
+
       if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
         this.setVisualizationHistory(sessionData.visualizations)
       }
@@ -993,6 +1065,10 @@ export const useReactStore = defineStore('react', {
 
       if (sessionData.last_result) {
         this.currentState.lastExpertResults = sessionData.last_result
+      }
+
+      if (sessionData.dashboardOverview) {
+        this.currentState.dashboardOverview = sessionData.dashboardOverview
       }
 
       if (sessionData.state === 'completed') {
@@ -1311,6 +1387,61 @@ export const useReactStore = defineStore('react', {
       convertStreamingAnswerToThoughtIfToolPlanning(modeState, contentToString)
     },
 
+    prepareQueryVoiceOutput(mode, targetState = this.currentState) {
+      if (targetState.queryVoicePlayback?.queue) {
+        targetState.queryVoicePlayback.queue.stop()
+      }
+      targetState.queryVoicePlayback = null
+      if (mode !== 'query' || !isQueryVoiceOutputEnabled()) return
+      if (typeof Audio === 'undefined' || typeof URL === 'undefined') return
+
+      targetState.queryVoicePlayback = {
+        streamed: false,
+        queue: createQueryVoicePlaybackQueue({
+          voice: typeof localStorage !== 'undefined'
+            ? localStorage.getItem('query-voice-output-voice') || '冰糖'
+            : '冰糖',
+          stylePrompt: '用专业、清晰、平稳的语气播报空气质量分析结果。'
+        })
+      }
+    },
+
+    stopQueryVoiceOutput(targetState = this.currentState) {
+      if (targetState?.queryVoicePlayback?.queue) {
+        targetState.queryVoicePlayback.queue.stop()
+      }
+      if (targetState) {
+        targetState.queryVoicePlayback = null
+      }
+    },
+
+    queueQueryVoiceOutputChunk(chunk, mode, targetState = this.currentState) {
+      const text = contentToString(chunk || '')
+      if (mode !== 'query' || !text || !isQueryVoiceOutputEnabled()) return
+      if (!targetState.queryVoicePlayback?.queue) {
+        this.prepareQueryVoiceOutput(mode, targetState)
+      }
+      if (!targetState.queryVoicePlayback?.queue) return
+
+      targetState.queryVoicePlayback.streamed = true
+      targetState.queryVoicePlayback.queue.pushChunk(text)
+    },
+
+    finishQueryVoiceOutput(finalText, mode, targetState = this.currentState) {
+      if (mode !== 'query' || !isQueryVoiceOutputEnabled()) return
+      if (!targetState.queryVoicePlayback?.queue) {
+        this.prepareQueryVoiceOutput(mode, targetState)
+      }
+      const playback = targetState.queryVoicePlayback
+      if (!playback?.queue) return
+
+      const fallbackText = contentToString(finalText || '').trim()
+      if (!playback.streamed && fallbackText) {
+        playback.queue.pushChunk(fallbackText)
+      }
+      playback.queue.finish()
+    },
+
     /**
      * 获取事件的目标模式状态
      */
@@ -1500,6 +1631,7 @@ export const useReactStore = defineStore('react', {
           // task_guard 等虚拟工具不会先发送 tool_use；如果它拦截了已流出的
           // PLAIN_TEXT_REPLY，需要先把该文本降级为过程消息，避免下一轮重复追加。
           this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
+          this.applyMapProgramMetadata(data, targetState)
 
           const toolResultData = data || {}
           const resultToolUseId = toolResultData.tool_use_id
@@ -1655,6 +1787,7 @@ export const useReactStore = defineStore('react', {
               // 同步更新 finalAnswer
               targetState.finalAnswer += chunk
             }
+            this.queueQueryVoiceOutputChunk(chunk, targetMode, targetState)
           }
 
           // 如果是最后一块，清除标志并移除 streaming 标记
@@ -1761,6 +1894,7 @@ export const useReactStore = defineStore('react', {
           targetState.isAnalyzing = false
           targetState.isInterruption = false
           targetState.isComplete = true
+          this.applyMapProgramMetadata(data, targetState)
           targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
           const finalContent = data?.response || data?.answer || ''
@@ -1858,6 +1992,8 @@ export const useReactStore = defineStore('react', {
           } else if (data?.last_office_document) {
             this.recordOfficeDocument(data.last_office_document, targetState)
           }
+
+          this.finishQueryVoiceOutput(finalContent || targetState.finalAnswer, targetMode, targetState)
 
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
@@ -2619,19 +2755,24 @@ export const useReactStore = defineStore('react', {
         modelTier = 'auto',
         attachments = null,  // ✅ 附件列表
         skipAutoFollowup = false,
+        preserveCurrentMode = false,
         synthetic = false,
         syntheticMeta = null,
         queuedAlreadyShown = false
       } = options
 
       const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
-      if (requestedMode !== this.currentMode) {
+      if (requestedMode !== this.currentMode && !preserveCurrentMode) {
         this.switchMode(requestedMode)
       }
+      const sessionStateMode = preserveCurrentMode ? requestedMode : this.currentMode
+      const activeSessionId = this.activeSessionByMode[sessionStateMode]
 
       // 【修复】确定使用的模式：优先尊重本次请求的显式模式，继续已有会话时再使用会话自身记录的模式
       let actualMode = requestedMode
-      let sessionState = this.currentState
+      let sessionState = activeSessionId && this.sessionStates[activeSessionId]
+        ? this.sessionStates[activeSessionId]
+        : (this.modeStates[sessionStateMode] || this.currentState)
       if (sessionState.sessionId) {
         const sessionMode = VALID_MODES.includes(sessionState.mode)
           ? sessionState.mode
@@ -2681,13 +2822,33 @@ export const useReactStore = defineStore('react', {
 
       // 首次分析或继续分析
       if (!sessionState.sessionId) {
-        this.createSessionId()
-        sessionState = this.currentState
+        if (preserveCurrentMode) {
+          const sessionId = `${sessionStateMode}_session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+          sessionState = this._ensureSessionState(sessionId, sessionStateMode)
+          this.activeSessionByMode[sessionStateMode] = sessionId
+          sessionState.sessionId = sessionId
+          console.log('[startAnalysis] Created embedded session for', sessionStateMode, ':', sessionState.sessionId)
+        } else {
+          this.createSessionId()
+          sessionState = this.currentState
+        }
         sessionState.sessionRound = 1
         sessionState.finalAnswers = []
       } else {
-        this.continueSession()
-        sessionState = this.currentState
+        if (preserveCurrentMode) {
+          sessionState.sessionRound = Math.max(sessionState.sessionRound + 1, 1)
+          sessionState.isAnalyzing = false
+          sessionState.error = null
+          sessionState.results = {
+            map: null,
+            charts: [],
+            tables: [],
+            text: ''
+          }
+        } else {
+          this.continueSession()
+          sessionState = this.currentState
+        }
       }
 
       // 重置状态
@@ -2711,6 +2872,7 @@ export const useReactStore = defineStore('react', {
       sessionState.isComplete = false
       sessionState.error = null
       sessionState.iterations = 0
+      this.prepareQueryVoiceOutput(actualMode, sessionState)
 
       // 如果是中断状态，传递给后端，然后重置标志
       const isInterruption = sessionState.isInterruption
@@ -2733,6 +2895,11 @@ export const useReactStore = defineStore('react', {
 
       try {
         const boardContext = actualMode === 'chart' ? this.buildBoardContext(actualMode, sessionState) : null
+        const mapContext = actualMode === 'graph'
+          ? options.mapContext || null
+          : actualMode === 'query'
+            ? buildMapContext(sessionState)
+            : null
         if (boardContext) {
           console.log('[drawio-board] board_context will be sent', {
             sessionId: sessionState.sessionId,
@@ -2760,6 +2927,7 @@ export const useReactStore = defineStore('react', {
           modelTier,
           attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,  // ✅ 传递附件列表
           ...(boardContext !== null ? { boardContext } : {}),
+          ...(mapContext !== null ? { mapContext } : {}),
           skipAutoFollowup,
           onEvent: (event) => {
             if (!event.data) event.data = {}

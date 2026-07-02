@@ -587,7 +587,11 @@ class AgentRuntime:
                 if visible:
                     planner_result.streamed_assistant_text = True
                     yield self.events.assistant_delta(state, visible, is_complete=False)
-                elif is_complete and not buffer.suppress_after_tool_use:
+                if is_complete and not buffer.suppress_after_tool_use:
+                    flushed = buffer.flush()
+                    if flushed:
+                        planner_result.streamed_assistant_text = True
+                        yield self.events.assistant_delta(state, flushed, is_complete=False)
                     yield self.events.assistant_delta(state, "", is_complete=True)
 
             elif event_type == "thought":
@@ -841,9 +845,12 @@ class AgentRuntime:
 
         self.observation_processor.capture_last_knowledge_sources(state)
         self._ensure_user_message_written(state)
+        completion_action = dict(planner_result.action or {"type": "PLAIN_TEXT_REPLY"})
+        completion_action["type"] = "PLAIN_TEXT_REPLY"
+        completion_action["answer"] = answer
         self.writer.add_iteration(
             planner_result.thought,
-            {"type": "PLAIN_TEXT_REPLY", "answer": answer},
+            completion_action,
             {"success": True, "summary": "任务完成"},
         )
         async for event in self.finalizer.complete(

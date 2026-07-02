@@ -2,7 +2,6 @@
   <div class="management-panel file-management-panel">
     <div class="panel-header">
       <h3>文件管理</h3>
-      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
     </div>
 
     <div class="file-manager-content">
@@ -22,14 +21,6 @@
           </span>
         </template>
       </div>
-      <button
-        class="refresh-btn"
-        @click="() => loadDirectory()"
-        :disabled="loading"
-        title="刷新"
-      >
-        {{ loading ? '加载中...' : '刷新' }}
-      </button>
     </div>
 
     <!-- 文件列表 -->
@@ -265,26 +256,6 @@ onMounted(() => {
 
 .segment.clickable:hover {
   color: #40a9ff;
-}
-
-.refresh-btn {
-  padding: 6px 12px;
-  border: 1px solid #d9d9d9;
-  background: white;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: all 0.3s;
-}
-
-.refresh-btn:hover:not(:disabled) {
-  border-color: #1890ff;
-  color: #1890ff;
-}
-
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 /* 文件列表容器 */

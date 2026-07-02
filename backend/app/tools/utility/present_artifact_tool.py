@@ -129,7 +129,14 @@ class PresentArtifactTool(LLMTool):
                     "pdf_path": str(resolved_path),
                     "size": file_size,
                 }
-            elif resolved_type in {"document", "presentation", "spreadsheet"}:
+            elif resolved_type == "spreadsheet":
+                data["spreadsheet_preview"] = {
+                    "file_type": suffix.lstrip(".") or "xlsx",
+                    "editable": True,
+                    "download_url": "/api/office/download-excel",
+                    "size": file_size,
+                }
+            elif resolved_type in {"document", "presentation"}:
                 data["pdf_preview"] = await pdf_converter.convert_to_pdf(str(resolved_path))
                 if resolved_type == "presentation" and suffix == ".pptx":
                     ppt_preview = await self._render_ppt_preview(resolved_path)
@@ -164,7 +171,13 @@ class PresentArtifactTool(LLMTool):
                 artifact.setdefault("file_path", str(resolved_path))
                 artifact.setdefault("file_name", resolved_path.name)
                 artifact.setdefault("title", html_artifact_id or resolved_path.stem)
-            preview = data.get("html_preview") or data.get("ppt_preview") or data.get("pdf_preview") or data.get("markdown_preview")
+            preview = (
+                data.get("html_preview")
+                or data.get("ppt_preview")
+                or data.get("spreadsheet_preview")
+                or data.get("pdf_preview")
+                or data.get("markdown_preview")
+            )
             if isinstance(preview, dict):
                 artifact["preview"] = preview
             data["refs"] = merge_refs(

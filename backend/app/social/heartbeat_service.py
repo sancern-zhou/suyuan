@@ -123,27 +123,12 @@ class HeartbeatService:
   next_run: "下次执行时间"
 ```
 
-## 示例任务
-
-```yaml
-- name: 每日空气质量报告
-  schedule: "0 9 * * *"  # 每天早上9点
-  description: 发送广州空气质量日报
-  enabled: true
-  channels: ["weixin"]
-
-- name: PM2.5超标监控
-  schedule: "*/30 * * * *"  # 每30分钟
-  description: 检查PM2.5是否超过75μg/m³
-  enabled: false
-  channels: ["weixin", "qq"]
-```
-
 ## 注意事项
 
 - schedule 字段使用标准 cron 表达式
 - enabled: false 的任务会被跳过
 - HeartbeatService 会定期检查并执行到期的任务
+- 本文件只保存真实任务，不保存示例任务
 """
             self._atomic_write_text(self.heartbeat_file, initial_content)
             logger.info("heartbeat_file_created", path=str(self.heartbeat_file))
@@ -429,6 +414,7 @@ class HeartbeatService:
         )
         enabled = pick(r"^\s*enabled:\s*(true|false)\s*$").lower()
         next_run_at = pick(r"^\s*next_run_at:\s*[\"']?(.+?)[\"']?\s*$")
+        manual_mode = pick(r"^\s*manual_mode:\s*[\"']?(.+?)[\"']?\s*$")
 
         if not name or not schedule:
             return None
@@ -438,6 +424,7 @@ class HeartbeatService:
             "description": description,
             "enabled": enabled != "false",
             "next_run_at": next_run_at,
+            "manual_mode": manual_mode,
         }
 
     def _parse_tasks(self, content: str) -> list[Dict[str, Any]]:
@@ -469,6 +456,7 @@ class HeartbeatService:
             description = str(parsed.get("description", "") or "").strip()
             next_run_at = str(parsed.get("next_run_at", "") or "").strip()
             channels = parsed.get("channels") or ["weixin"]
+            manual_mode = str(parsed.get("manual_mode") or "").strip()
 
             if not name or not schedule:
                 logger.warning("heartbeat_task_missing_required_fields", block_preview=block[:200])
@@ -481,6 +469,8 @@ class HeartbeatService:
                 "enabled": True,
                 "channels": channels,
             }
+            if manual_mode:
+                task["manual_mode"] = manual_mode
             if next_run_at:
                 task["next_run_at"] = next_run_at
 

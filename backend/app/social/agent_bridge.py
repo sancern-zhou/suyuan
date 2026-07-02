@@ -1550,8 +1550,28 @@ class AgentBridge:
         if not tasks:
             return {"should_notify": False, "summary": "No tasks to execute"}
 
-        # ✅ 使用复用函数加载社交上下文
-        social_context = await self._load_social_agent_context(user_id)
+        manual_modes = {
+            str(task.get("manual_mode") or "social").strip() or "social"
+            for task in tasks
+        }
+        if len(manual_modes) > 1:
+            logger.error("mixed_heartbeat_manual_modes", user_id=user_id, manual_modes=sorted(manual_modes))
+            return {
+                "should_notify": True,
+                "summary": f"Heartbeat tasks for {user_id} mix manual modes: {', '.join(sorted(manual_modes))}",
+            }
+        manual_mode = manual_modes.pop()
+        use_social_context = manual_mode == "social"
+
+        social_context = await self._load_social_agent_context(user_id) if use_social_context else {
+            "social_memory_store": None,
+            "social_user_preferences": None,
+            "social_heartbeat_file_path": None,
+            "social_soul_file_path": None,
+            "social_user_file_path": None,
+            "social_soul_context": None,
+            "social_user_context": None,
+        }
 
         # 从 user_id 恢复本次心跳执行的 social 上下文。
         # user_id 格式：{channel}:{bot_account}:{chat_id}，channel 本身可能包含 ':'。
@@ -1570,7 +1590,7 @@ class AgentBridge:
         logger.info("heartbeat_context_set", channel=channel, chat_id=chat_id, bot_account=bot_account)
 
         task_description = "\n".join([
-            f"- {task.get('name', 'task')}: {task.get('description', '')}"
+            f"- {task.get('name', 'task')} [{task.get('manual_mode') or manual_mode}]: {task.get('description', '')}"
             for task in tasks
         ])
 
@@ -1594,7 +1614,7 @@ Example: If task says "Send a test message", then send the message directly, don
             async for event in self.agent.analyze(
                 user_query=query,
                 session_id=heartbeat_session_id,
-                manual_mode="social",
+                manual_mode=manual_mode,
                 user_identifier=user_id,
                 social_memory_store=social_context["social_memory_store"],
                 social_user_preferences=social_context["social_user_preferences"],
@@ -1615,7 +1635,7 @@ Example: If task says "Send a test message", then send the message directly, don
 
             summary = "\n".join(part for part in result_parts if part).strip()
             return {
-                "should_notify": bool(summary),
+                "should_notify": bool(summary) and use_social_context,
                 "summary": summary or "Tasks completed",
                 "executed_at": datetime.now().isoformat()
             }

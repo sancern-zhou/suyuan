@@ -2,11 +2,16 @@
   <div class="management-panel session-history-panel">
     <div class="panel-header">
       <h3>会话历史</h3>
-      <button class="panel-btn small" @click="$emit('refresh-sessions')" :disabled="sessionHistoryLoading">
-        {{ sessionHistoryLoading ? '刷新中...' : '刷新' }}
-      </button>
-      <button class="panel-btn small" @click="$emit('cleanup-sessions')">清理过期</button>
-      <button class="panel-btn close-btn" @click="$emit('close')">关闭</button>
+      <div class="panel-actions">
+        <button class="panel-btn small" @click="$emit('cleanup-sessions')">清理过期</button>
+        <button
+          class="panel-btn small danger"
+          :disabled="selectedSessionIds.length === 0"
+          @click="emitDeleteSelected"
+        >
+          删除选中{{ selectedSessionIds.length ? ` ${selectedSessionIds.length}` : '' }}
+        </button>
+      </div>
     </div>
 
     <div class="session-history-content">
@@ -55,12 +60,40 @@
         </div>
 
         <div v-else>
+          <div class="session-selection-toolbar">
+            <label class="session-select-all">
+              <input
+                type="checkbox"
+                :checked="allSessionsSelected"
+                :indeterminate.prop="someSessionsSelected"
+                @change="toggleSelectAll"
+              >
+              <span>选择全部</span>
+            </label>
+            <button
+              v-if="selectedSessionIds.length > 0"
+              type="button"
+              class="selection-clear-btn"
+              @click="clearSelection"
+            >
+              清空选择
+            </button>
+          </div>
+
           <div
             v-for="session in sessions"
             :key="session.session_id"
             class="session-item"
             @click="$emit('restore-session', session.session_id)"
           >
+            <label class="session-select-box" @click.stop>
+              <input
+                v-model="selectedSessionIds"
+                type="checkbox"
+                :value="session.session_id"
+                :aria-label="`选择会话 ${getShortId(session.session_id)}`"
+              >
+            </label>
             <div class="session-info">
               <div class="session-query">{{ truncateQuery(session.query) }}</div>
               <div class="session-meta">
@@ -72,13 +105,22 @@
                 <span class="session-time">{{ formatTime(session.updated_at) }}</span>
               </div>
             </div>
-            <button
-              class="session-case-action"
-              type="button"
-              @click.stop="$emit('toggle-session-case', session)"
-            >
-              {{ isSessionCase(session) ? '取消案例' : '标记案例' }}
-            </button>
+            <div class="session-actions">
+              <button
+                class="session-case-action"
+                type="button"
+                @click.stop="$emit('toggle-session-case', session)"
+              >
+                {{ isSessionCase(session) ? '取消案例' : '标记案例' }}
+              </button>
+              <button
+                class="session-delete-action"
+                type="button"
+                @click.stop="emitDeleteSession(session.session_id)"
+              >
+                删除
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -87,6 +129,8 @@
 </template>
 
 <script setup>
+import { computed, ref, watch } from 'vue'
+
 // Props
 const props = defineProps({
   sessions: {
@@ -102,6 +146,46 @@ const props = defineProps({
     default: false
   }
 })
+
+const emit = defineEmits([
+  'close',
+  'refresh-sessions',
+  'cleanup-sessions',
+  'restore-session',
+  'toggle-session-case',
+  'delete-sessions'
+])
+
+const selectedSessionIds = ref([])
+
+const sessionIds = computed(() => props.sessions.map(session => session.session_id).filter(Boolean))
+const allSessionsSelected = computed(() => sessionIds.value.length > 0 && selectedSessionIds.value.length === sessionIds.value.length)
+const someSessionsSelected = computed(() => selectedSessionIds.value.length > 0 && !allSessionsSelected.value)
+
+watch(sessionIds, (ids) => {
+  const visibleIds = new Set(ids)
+  selectedSessionIds.value = selectedSessionIds.value.filter(id => visibleIds.has(id))
+})
+
+const toggleSelectAll = () => {
+  selectedSessionIds.value = allSessionsSelected.value ? [] : [...sessionIds.value]
+}
+
+const clearSelection = () => {
+  selectedSessionIds.value = []
+}
+
+const emitDeleteSelected = () => {
+  if (selectedSessionIds.value.length === 0) return
+  emit('delete-sessions', [...selectedSessionIds.value])
+  clearSelection()
+}
+
+const emitDeleteSession = (sessionId) => {
+  if (!sessionId) return
+  emit('delete-sessions', [sessionId])
+  selectedSessionIds.value = selectedSessionIds.value.filter(id => id !== sessionId)
+}
 
 // Methods
 const truncateQuery = (query, maxLength = 80) => {
@@ -167,14 +251,6 @@ const formatFullTime = (timestamp) => {
   }
 }
 
-// Emit events
-defineEmits([
-  'close',
-  'refresh-sessions',
-  'cleanup-sessions',
-  'restore-session',
-  'toggle-session-case'
-])
 </script>
 
 <style scoped>
@@ -203,6 +279,13 @@ defineEmits([
   font-size: 18px;
   font-weight: 600;
   color: #333;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .panel-btn {
@@ -255,6 +338,29 @@ defineEmits([
 .session-case-action:hover {
   background: #1976d2;
   color: white;
+}
+
+.session-delete-action {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1px solid #dc3545;
+  border-radius: 4px;
+  background: white;
+  color: #dc3545;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.session-delete-action:hover {
+  background: #dc3545;
+  color: white;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .session-case-badge {
@@ -321,6 +427,48 @@ defineEmits([
   gap: 10px;
   flex-shrink: 0;
   min-height: 0;
+}
+
+.session-selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 2px;
+  margin-bottom: 8px;
+}
+
+.session-select-all,
+.session-select-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #495057;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.session-select-box {
+  flex-shrink: 0;
+}
+
+.session-select-all input,
+.session-select-box input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.selection-clear-btn {
+  border: none;
+  background: transparent;
+  color: #1976d2;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.selection-clear-btn:hover {
+  text-decoration: underline;
 }
 
 .session-loading,

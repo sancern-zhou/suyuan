@@ -3,6 +3,7 @@
  * 负责按需加载高德地图 JS API，并提供单例管理
  */
 import AMapLoader from '@amap/amap-jsapi-loader'
+import { resolveAMapConfig } from './amapConfig.js'
 
 let AMapInstance = null
 let loadingPromise = null
@@ -22,9 +23,14 @@ export async function loadAMap() {
     return loadingPromise
   }
 
+  const amapConfig = await resolveAMapConfig({ env: import.meta.env })
+  if (!amapConfig.key) {
+    throw new Error('缺少高德地图 API Key，无法加载高德地图。')
+  }
+
   // 开始加载
   loadingPromise = AMapLoader.load({
-    key: import.meta.env.VITE_AMAP_KEY,
+    key: amapConfig.key,
     version: '2.0',
     plugins: [
       'AMap.Scale',           // 比例尺
@@ -33,10 +39,12 @@ export async function loadAMap() {
       'AMap.MouseTool',       // 鼠标工具
       'AMap.PolygonEditor',   // 多边形编辑
       'AMap.Geocoder',        // 地理编码
-      'AMap.InfoWindow'       // 信息窗口
+      'AMap.InfoWindow',      // 信息窗口
+      'AMap.DistrictSearch',   // 行政区边界查询
+      'AMap.HeatMap'          // 热力图
     ],
     // 添加安全密钥配置（如果有的话）
-    securityJsCode: import.meta.env.VITE_AMAP_SECURITY_CODE || ''
+    securityJsCode: amapConfig.securityJsCode || ''
   }).then(AMap => {
     AMapInstance = AMap
     console.log('高德地图 API 加载成功')

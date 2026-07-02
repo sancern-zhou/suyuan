@@ -687,10 +687,20 @@ def _review_remark_tasks_batch(
         return {}
     items = []
     text_by_code = {}
+    results: dict[str, dict[str, Any]] = {}
     for task in tasks:
         code = str(task.get("working_order_code") or "")
         text = _compose_review_text(dataset_orders.get(code, {}), details_by_code.get(code, []), rf_forms_by_code.get(code, []))
         text_by_code[code] = text
+        deterministic = _deterministic_remark_semantic_result(
+            task,
+            audit_records.get(code, {}),
+            dataset_orders.get(code, {}),
+            text,
+        )
+        if deterministic is not None:
+            results[code] = deterministic
+            continue
         items.append(
             {
                 "working_order_code": code,
@@ -699,15 +709,18 @@ def _review_remark_tasks_batch(
                 "evidence_summary": task.get("evidence_summary", {}),
             }
         )
+    if not items:
+        return results
     raw = _call_semantic_llm_json(
         REMARK_BATCH_SEMANTIC_JSON_PROMPT,
         json.dumps({"items": items}, ensure_ascii=False, default=str),
         context={"review_kind": "remark_semantics_batch"},
     )
     parsed_by_code = _batch_results_by_key(raw, "working_order_code")
-    results: dict[str, dict[str, Any]] = {}
     for task in tasks:
         code = str(task.get("working_order_code") or "")
+        if code in results:
+            continue
         parsed = _normalize_remark_result(parsed_by_code.get(code, {}), text_by_code.get(code, ""))
         judgment, conclusion, confidence = _judge_semantic_result("remark_semantics", parsed, [], task)
         results[code] = _build_semantic_task_result(
@@ -722,6 +735,86 @@ def _review_remark_tasks_batch(
             text_by_code.get(code, ""),
         )
     return results
+
+
+def _deterministic_remark_semantic_result(
+    task: dict[str, Any],
+    audit_record: dict[str, Any],
+    order: dict[str, Any],
+    evidence_text: str,
+) -> dict[str, Any] | None:
+    explanation = _field_level_range_explanation_for_abnormal_value(task)
+    if not explanation:
+        return None
+    remark_review = {
+        "is_complete": True,
+        "has_cause": True,
+        "has_action": True,
+        "has_result": True,
+        "problem_description": "",
+        "confidence": 0.9,
+        "remark": explanation,
+    }
+    return _build_semantic_task_result(
+        task,
+        audit_record,
+        order,
+        "cleared",
+        "字段级备注已说明表单范围、单位或厂家参数配置与现场设备不一致，可解释该异常值候选。",
+        0.92,
+        remark_review,
+        [],
+        evidence_text or explanation,
+    )
+
+
+def _field_level_range_explanation_for_abnormal_value(task: dict[str, Any]) -> str:
+    if "RF_ABNORMAL_VALUE_NO_REMARK" not in set(task.get("semantic_focus", [])):
+        return ""
+    for issue in _focus_issues(task, "RF_ABNORMAL_VALUE_NO_REMARK"):
+        evidence = _issue_evidence(issue)
+        if str(evidence.get("reason_rule_id") or "") != "RF_RANGE_OUT_OF_SPEC":
+            continue
+        candidates = evidence.get("remark_candidates")
+        if not isinstance(candidates, dict):
+            continue
+        for field, value in candidates.items():
+            field_name = str(field or "").strip()
+            text = str(value or "").strip()
+            if not _is_specific_field_note(field_name) or not _has_range_mismatch_explanation(text):
+                continue
+            return f"{field_name}:{text}"
+    return ""
+
+
+def _is_specific_field_note(field: str) -> bool:
+    upper = field.upper()
+    if upper in {"REMARK", "REMARKS", "SUBMITREMARK", "PROCESSREMARK"}:
+        return False
+    return upper.endswith("ROW") or upper.endswith("EXCEPTION") or upper.endswith("ABNORMAL") or upper.endswith("DESCRIPTION")
+
+
+def _has_range_mismatch_explanation(text: str) -> bool:
+    if not text or text in {"/", "-", "无"}:
+        return False
+    return _contains_any(
+        text,
+        [
+            "表格范围有误",
+            "表格参数有误",
+            "表单范围有误",
+            "厂家实际参数",
+            "实际参数范围",
+            "厂家参数",
+            "参数范围是",
+            "单位不一致",
+            "表格范围",
+            "表单范围",
+            "设备页面",
+            "仪器界面",
+            "界面参数",
+        ],
+    )
 
 
 def _compose_no_device_problem_description(items: list[dict[str, Any]]) -> str:
@@ -770,14 +863,17 @@ def _review_pm_tape_usage_tasks_batch(
             pollutant_type = str(evidence.get("pollutant_type") or index or "").strip()
             item_id = f"{code}::{pollutant_type or index}::{field}"
             if value in {"", "/"}:
+                problem_reason = str(evidence.get("problem_reason") or "").strip()
+                if not problem_reason:
+                    problem_reason = f"{evidence.get('field_label') or '耗材使用/处置字段'}为空或/，无法判断对应耗材状态。"
                 immediate_results[item_id] = _pm_tape_semantic_result(
                     task,
                     audit_records.get(code, {}),
                     dataset_orders.get(code, {}),
                     issue=issue,
                     is_valid=False,
-                    reason=f"{evidence.get('field_label') or '耗材使用/处置字段'}为空或/，无法判断对应耗材状态。",
-                    problem_description=f"{evidence.get('field_label') or '耗材使用/处置字段'}为空或/，无法判断对应耗材状态。",
+                    reason=problem_reason,
+                    problem_description=problem_reason,
                     evidence_text=value or "<空>",
                 )
                 continue
