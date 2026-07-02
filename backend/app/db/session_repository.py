@@ -207,6 +207,30 @@ class SessionRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def find_office_document_by_pdf_id(self, pdf_id: str) -> Optional[Dict[str, Any]]:
+        """Find a persisted office document preview by historical PDF id."""
+        async with AsyncSession(self.engine) as session:
+            stmt = (
+                select(SessionDB.session_id, SessionDB.office_documents)
+                .where(SessionDB.office_documents.is_not(None))
+                .where(cast(SessionDB.office_documents, Text).contains(pdf_id))
+                .order_by(SessionDB.updated_at.desc())
+                .limit(20)
+            )
+            result = await session.execute(stmt)
+
+            for session_id, office_documents in result.all():
+                for document in office_documents or []:
+                    if not isinstance(document, dict):
+                        continue
+                    pdf_preview = document.get("pdf_preview") or {}
+                    if isinstance(pdf_preview, dict) and pdf_preview.get("pdf_id") == pdf_id:
+                        return {
+                            "session_id": session_id,
+                            "document": SessionRepository._convert_decimal_to_float(document),
+                        }
+            return None
+
     async def get_session_with_messages(
         self,
         session_id: str,

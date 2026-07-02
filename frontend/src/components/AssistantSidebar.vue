@@ -128,7 +128,7 @@ const recentSessions = ref([])
 const refreshingSessions = ref(false)
 const showCaseLibrary = ref(false)
 const RECENT_SESSIONS_LIMIT = 30
-const SESSION_FETCH_LIMIT = 50
+const SESSION_FETCH_LIMIT = 200
 let recentSessionsTimer = null
 
 const isSessionCase = (session) => session?.metadata?.is_case === true
@@ -195,10 +195,26 @@ const modules = [
     isAction: true
   },
   {
+    id: 'query-dashboard',
+    name: '问数大屏',
+    abbr: '问数',
+    desc: '进入广东省数据总览与问数联动大屏',
+    badge: '问数',
+    isAction: true
+  },
+  {
     id: 'knowledge-base',
     name: '知识管理',
     abbr: '知识',
     desc: '管理文档与知识检索',
+    badge: '管理',
+    isAction: true
+  },
+  {
+    id: 'cognitive-map',
+    name: '认知地图',
+    abbr: '地图',
+    desc: '管理实体、关系、规则与证据',
     badge: '管理',
     isAction: true
   },
@@ -267,6 +283,16 @@ const moduleIcons = {
       <path d="M5 12h14" />
     </svg>
   `,
+  'query-dashboard': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="M8 16v-5" />
+      <path d="M12 16V8" />
+      <path d="M16 16v-7" />
+      <path d="M20 8.5 16 6l-4 2-4-3" />
+    </svg>
+  `,
   'session-history': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M4 5h16" />
@@ -282,6 +308,18 @@ const moduleIcons = {
       <path d="M8 8h8" />
       <path d="M8 11.5h8" />
       <path d="M8 15h5" />
+    </svg>
+  `,
+  'cognitive-map': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="6" cy="7" r="2.5" />
+      <circle cx="17" cy="6" r="2.5" />
+      <circle cx="18" cy="17" r="2.5" />
+      <circle cx="7" cy="18" r="2.5" />
+      <path d="M8.3 6.7 14.5 6.2" />
+      <path d="M15.8 8.1 8.8 16.1" />
+      <path d="M8.9 8.6 16.1 15.3" />
+      <path d="M9.5 18h6" />
     </svg>
   `,
   'file-manager': `
@@ -383,7 +421,7 @@ const moduleGroups = computed(() => {
     {
       id: 'resources',
       title: '资源',
-      ids: ['knowledge-base', 'file-manager']
+      ids: ['knowledge-base', 'cognitive-map', 'file-manager']
     },
     {
       id: 'system',

@@ -21,11 +21,19 @@ class AssistantStreamBuffer:
         self.raw_text += chunk
         if self.suppress_after_tool_use:
             return ""
-        self.visible_text += chunk
+        return self._append_visible(chunk)
+
+    def flush(self) -> str:
+        return ""
+
+    def _append_visible(self, text: str) -> str:
+        if not text:
+            return ""
+        self.visible_text += text
         if self.visible_text == self._last_visible_snapshot:
             return ""
         self._last_visible_snapshot = self.visible_text
-        return chunk
+        return text
 
     def final_text(self, fallback: str = "") -> str:
         return fallback or self.visible_text or self.raw_text

@@ -1,0 +1,109 @@
+# Python虚拟环境
+venv_windows/
+.venv1/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 环境变量文件
+.env
+.env.*
+!.env.template
+!.env.linux.template
+
+# IDE和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 日志文件
+logs/
+*.log
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 临时文件
+temp/
+tmp/
+*.tmp
+downloads/
+data/
+
+ # 测试覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
+
+ # Docker敏感文件
+ssl/*.key
+passwords.txt
+
+ # 调试文件
+*.png
+*.jpg
+*.jpeg
+debug_*.html
+*_debug.png
+department_debug.png
+pagination_debug.png
+guangzhou_page_debug.png
+guangzhou_main_page.html
+selenium_*.html
+success_result_*.html*
+
+ # 其他
+desktop.ini
+*.bak
+*.backup
+
+# 文档和指南文件（保留核心项目文档）
+*_GUIDE.md
+*_ANALYSIS*.md
+*_SUMMARY.md
+*_FIX*.md
+*_SOLUTION*.md
+*_PLAN*.md
+*_README.md
+*_CONFIG*.md
+PR_DESCRIPTION.md
+
+# 示例和测试文件
+*_demo.py
+*_test.py
+quick_*.py
+test_*.py
+!tests/test_*.py
+check_*.py
+fix_*.py
+rebuild_*.py
+
+# 临时配置和数据
+*.json
+!src/**/
+!微信小程序/**/
+!config/**/
+!migrations/**/
+!requirements*.txt
+!setup.py
+!pytest.ini
+
+# HTML调试文件
+*.html
+!src/**/*.html
+!微信小程序/**/*.html
+
+# 脚本文件
+*.bat
+*.sh
+!scripts/**/*.bat
+!scripts/**/*.sh

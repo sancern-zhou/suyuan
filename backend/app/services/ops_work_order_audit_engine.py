@@ -53,6 +53,7 @@ from app.services.ops_audit.rules.attachment_rules import (  # noqa: E402
 from app.services.ops_audit.rules.attachment_ocr_rules import build_flow_visual_tasks, run_flow_visual_task  # noqa: E402
 from app.services.ops_audit.semantic.ocr_adapter import flow_visual_provider_summary  # noqa: E402
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure as check_modular_lifecycle_closure  # noqa: E402
+from app.services.ops_audit.rules.o3_transfer_quality_rules import check_o3_transfer_quality_values  # noqa: E402
 from app.services.ops_audit.rules.o3_value_pass_xls_rules import check_o3_value_pass_xls_values  # noqa: E402
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks  # noqa: E402
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates  # noqa: E402
@@ -1718,6 +1719,7 @@ def audit_dataset(dataset: dict[str, Any], *, enable_visual: bool = True) -> dic
             wo_commonfile_by_code.get(str(code), []),
             issues,
         )
+        check_o3_transfer_quality_values(order, forms, issues)
         if enable_visual:
             order_flow_tasks = build_flow_visual_tasks(
                 order,

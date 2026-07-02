@@ -72,9 +72,175 @@ def _append_attachment_text_for_history(
     return query + "\n".join(lines)
 
 
+def merge_map_scene_metadata(
+    metadata: Optional[Dict[str, Any]],
+    map_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    next_metadata = dict(metadata or {})
+    if not isinstance(map_context, dict):
+        return next_metadata
+
+    current_program = map_context.get("current_program")
+    if not isinstance(current_program, dict) or not current_program.get("program_id"):
+        return next_metadata
+
+    existing_scene = next_metadata.get("map_scene")
+    if not isinstance(existing_scene, dict):
+        existing_scene = {}
+    existing_program = existing_scene.get("current_map_program")
+    if not isinstance(existing_program, dict):
+        existing_program = existing_scene.get("currentMapProgram")
+    if isinstance(existing_program, dict):
+        current_program = merge_map_programs(existing_program, current_program)
+
+    next_metadata["map_scene"] = {
+        **existing_scene,
+        "current_map_program": current_program,
+        "updated_at": datetime.now().isoformat(),
+    }
+    return next_metadata
+
+
+def _as_list(value: Any) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _lifecycle_group(item: Dict[str, Any]) -> str:
+    lifecycle = item.get("lifecycle") if isinstance(item.get("lifecycle"), dict) else {}
+    return lifecycle.get("group") or "current_answer"
+
+
+def _merge_items_by_id(existing_items: Any, incoming_items: Any) -> list:
+    merged: list[Dict[str, Any]] = []
+    index_by_id: dict[str, int] = {}
+    replace_groups = {
+        _lifecycle_group(item)
+        for item in _as_list(incoming_items)
+        if isinstance(item, dict)
+        and isinstance(item.get("lifecycle"), dict)
+        and item["lifecycle"].get("replace_policy") == "replace_group"
+    }
+
+    for item in _as_list(existing_items):
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        lifecycle = item.get("lifecycle") if isinstance(item.get("lifecycle"), dict) else {}
+        if _lifecycle_group(item) in replace_groups and not lifecycle.get("pinned"):
+            continue
+        index_by_id[item["id"]] = len(merged)
+        merged.append(item)
+
+    for item in _as_list(incoming_items):
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        if item["id"] in index_by_id:
+            merged[index_by_id[item["id"]]] = item
+            continue
+        index_by_id[item["id"]] = len(merged)
+        merged.append(item)
+
+    return merged
+
+
+def merge_map_programs(
+    current_program: Optional[Dict[str, Any]],
+    incoming_program: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(current_program, dict):
+        return incoming_program if isinstance(incoming_program, dict) else None
+    if not isinstance(incoming_program, dict):
+        return current_program
+
+    current_state = current_program.get("state") if isinstance(current_program.get("state"), dict) else {}
+    incoming_state = incoming_program.get("state") if isinstance(incoming_program.get("state"), dict) else {}
+    incoming_view = incoming_state.get("view") if isinstance(incoming_state.get("view"), dict) else {}
+    current_lineage = current_program.get("lineage") if isinstance(current_program.get("lineage"), dict) else {}
+    incoming_lineage = incoming_program.get("lineage") if isinstance(incoming_program.get("lineage"), dict) else {}
+
+    source_data_ids = list(dict.fromkeys([
+        *_as_list(current_lineage.get("source_data_ids")),
+        *_as_list(incoming_lineage.get("source_data_ids")),
+    ]))
+    dashboard_layer_ids = list(dict.fromkeys([
+        *_as_list(current_lineage.get("dashboard_layer_ids")),
+        *_as_list(incoming_lineage.get("dashboard_layer_ids")),
+    ]))
+
+    return {
+        **current_program,
+        **incoming_program,
+        "state": {
+            **current_state,
+            **incoming_state,
+            "view": incoming_view if incoming_view else current_state.get("view", {}),
+            "layers": _merge_items_by_id(current_state.get("layers"), incoming_state.get("layers")),
+            "dashboard_layers": _merge_items_by_id(
+                current_state.get("dashboard_layers"),
+                incoming_state.get("dashboard_layers"),
+            ),
+        },
+        "lineage": {
+            **current_lineage,
+            **incoming_lineage,
+            "source_data_ids": source_data_ids,
+            "dashboard_layer_ids": dashboard_layer_ids,
+        },
+    }
+
+
+def extract_map_program_from_tool_result_event(event_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    result = event_data.get("result")
+    if not isinstance(result, dict):
+        return None
+    for candidate in (
+        result.get("map_program"),
+        (result.get("data") or {}).get("map_program") if isinstance(result.get("data"), dict) else None,
+        (result.get("metadata") or {}).get("map_program") if isinstance(result.get("metadata"), dict) else None,
+    ):
+        if isinstance(candidate, dict) and candidate.get("program_id"):
+            return candidate
+    return None
+
+
+def merge_map_program_into_scene_metadata(
+    metadata: Optional[Dict[str, Any]],
+    map_program: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    next_metadata = dict(metadata or {})
+    if not isinstance(map_program, dict) or not map_program.get("program_id"):
+        return next_metadata
+
+    existing_scene = next_metadata.get("map_scene")
+    if not isinstance(existing_scene, dict):
+        existing_scene = {}
+    existing_program = existing_scene.get("current_map_program")
+    if not isinstance(existing_program, dict):
+        existing_program = existing_scene.get("currentMapProgram")
+
+    next_metadata["map_scene"] = {
+        **existing_scene,
+        "current_map_program": merge_map_programs(existing_program, map_program),
+        "updated_at": datetime.now().isoformat(),
+    }
+    return next_metadata
+
+
 def _event_run_id(event: Dict[str, Any]) -> Optional[str]:
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     return data.get("run_id") or event.get("run_id")
+
+
+def _build_final_message(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    final_message = {
+        "type": "final",
+        "content": event_data["answer"],
+        "data": event_data,
+        "timestamp": event_data.get("timestamp", datetime.now().isoformat()),
+    }
+
+    if "visuals" in event_data and isinstance(event_data["visuals"], list):
+        final_message["visuals"] = event_data["visuals"]
+    return final_message
 
 
 def _drawio_xml_from_result(result: Dict[str, Any]) -> str:
@@ -155,6 +321,11 @@ class AgentAnalyzeRequest(BaseModel):
         None,
         validation_alias=AliasChoices("board_context", "boardContext"),
         description="图表模式画板上下文，仅 mode=chart 时传入，例如 {current_xml, selected_cells}"
+    )
+    map_context: Optional[Dict[str, Any]] = Field(
+        None,
+        validation_alias=AliasChoices("map_context", "mapContext"),
+        description="问数模式地图交互上下文，仅 mode=query 时传入，例如 {current_program, events}"
     )
     model_tier: Optional[str] = Field(
         None,
@@ -421,6 +592,17 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 dirty=request.board_context.get("dirty"),
                 updated_at=request.board_context.get("updated_at") or request.board_context.get("updatedAt"),
             )
+        if request.mode in {"query", "graph"} and request.map_context:
+            analyze_kwargs["map_context"] = request.map_context
+            map_events = request.map_context.get("events") or []
+            current_program = request.map_context.get("current_program") or {}
+            logger.info(
+                "agent_map_context_received",
+                mode=request.mode,
+                session_id=request.session_id,
+                program_id=current_program.get("program_id") if isinstance(current_program, dict) else None,
+                event_count=len(map_events) if isinstance(map_events, list) else 0,
+            )
         drawio_board_context = request.board_context if request.mode == "chart" else None
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
@@ -516,6 +698,9 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 logger.info("session_created", session_id=actual_session_id)
                 # 更新 analyze_kwargs 中的 session_id
                 analyze_kwargs["session_id"] = actual_session_id
+
+            if request.mode == "query" and request.map_context:
+                session.metadata = merge_map_scene_metadata(session.metadata, request.map_context)
 
             cancel_event = await cancellation_registry.register(actual_session_id)
             current_task = asyncio.current_task()
@@ -660,6 +845,12 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                         # 收集数据ID
                         if event["type"] == "tool_result" and "data" in event:
                             data = event.get("data", {})
+                            map_program = extract_map_program_from_tool_result_event(data)
+                            if map_program:
+                                session.metadata = merge_map_program_into_scene_metadata(
+                                    session.metadata,
+                                    map_program,
+                                )
                             if "data_id" in data:
                                 collected_data_ids.append(data["data_id"])
                             if "data_ids" in data:
@@ -715,17 +906,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             # ✅ 添加最终答案消息
                             event_data = event.get("data") or {}
                             if event_data.get("answer"):
-                                final_message = {
-                                    "type": "final",
-                                    "content": event_data["answer"],
-                                    "data": event_data,
-                                    "timestamp": event_data.get("timestamp", datetime.now().isoformat())
-                                }
-
-                                # ✅ 将visuals提取到消息顶层，确保能被正确存储和恢复
-                                if "visuals" in event_data and isinstance(event_data["visuals"], list):
-                                    final_message["visuals"] = event_data["visuals"]
-
+                                final_message = _build_final_message(event_data)
                                 conversation_history.append(final_message)
                                 logger.debug("response_message_added", answer_preview=event["data"]["answer"][:100])
 

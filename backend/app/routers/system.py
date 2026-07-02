@@ -1,7 +1,8 @@
 """System routes extracted from app/main.py.
 
 Paths are intentionally preserved:
-- GET /
+- GET /, with frontend index.html served when frontend/dist is present
+- GET /api/info
 - GET /health
 - GET /api/system/status
 - GET /api/config
@@ -10,8 +11,10 @@ Paths are intentionally preserved:
 import os
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 import structlog
 
+from app.core.static_files import get_frontend_dist_path
 from app.models.schemas import ConfigResponse
 from app.services.lifecycle_manager import get_fetcher_scheduler, get_tool_registry
 from config.settings import settings
@@ -20,9 +23,7 @@ logger = structlog.get_logger()
 router = APIRouter(tags=["system"])
 
 
-@router.get("/")
-async def root():
-    """Root endpoint with API information."""
+def _api_info():
     return {
         "service": "atmospheric-environment-decision-support-api",
         "version": "1.0.0",
@@ -47,6 +48,36 @@ async def root():
             "knowledge_qa": "POST /api/knowledge-qa - 知识问答非流式接口",
         },
     }
+
+
+@router.get("/")
+async def root():
+    """Serve the frontend entry when built assets exist; otherwise return API information."""
+    frontend_dist = get_frontend_dist_path()
+    if frontend_dist:
+        return FileResponse(frontend_dist / "index.html")
+    return _api_info()
+
+
+@router.get("/api/info")
+async def api_info():
+    """Root API information for deployments where / serves the frontend."""
+    return _api_info()
+
+
+@router.get("/session/{session_id}", include_in_schema=False)
+@router.get("/fetchers", include_in_schema=False)
+@router.get("/knowledge-base", include_in_schema=False)
+@router.get("/tools-management", include_in_schema=False)
+@router.get("/skills-management", include_in_schema=False)
+@router.get("/social-accounts", include_in_schema=False)
+@router.get("/expert-deliberation", include_in_schema=False)
+async def frontend_route():
+    """Serve known Vue history-mode routes from the backend deployment port."""
+    frontend_dist = get_frontend_dist_path()
+    if not frontend_dist:
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+    return FileResponse(frontend_dist / "index.html")
 
 
 @router.get("/health")
@@ -124,4 +155,3 @@ async def get_config():
     except Exception as e:
         logger.error("config_fetch_failed", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch configuration")
-

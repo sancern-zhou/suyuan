@@ -22,7 +22,6 @@ from config.settings import settings
 
 logger = structlog.get_logger()
 
-
 class ReActPlanner:
     """
     ReAct规划器: 按模式过滤工具定义（V4 架构）
@@ -207,7 +206,9 @@ class ReActPlanner:
                 auto_profile=auto_profile,
             )
 
-        return self._parse_anthropic_response(llm_response)
+        return self._parse_anthropic_response(
+            llm_response,
+        )
 
     async def think_and_action_streaming(
         self,
@@ -460,7 +461,9 @@ class ReActPlanner:
                         blocks_types=[b.get("type") for b in current_blocks],
                         blocks_preview=[{"type": b.get("type"), "preview": str(b)[:100]} for b in current_blocks[:3]]
                     )
-                    result = self._parse_accumulated_blocks(current_blocks)
+                    result = self._parse_accumulated_blocks(
+                        current_blocks,
+                    )
 
                     # 提取 thought
                     text_content = ""
@@ -582,7 +585,10 @@ class ReActPlanner:
                 "data": result
             }
 
-    def _parse_anthropic_response(self, llm_response: Dict[str, Any]) -> Dict[str, Any]:
+    def _parse_anthropic_response(
+        self,
+        llm_response: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """解析 Anthropic 非流式响应
 
         通过遍历 content blocks 检测工具调用（不依赖 stop_reason）
@@ -625,13 +631,14 @@ class ReActPlanner:
         ])
 
         if not tool_use_blocks:
+            action = {
+                "type": "PLAIN_TEXT_REPLY",
+                "answer": full_text,
+            }
             # 无工具调用 - 纯文本回复
             return {
                 "thought": thinking_text or "思考回复策略",
-                "action": {
-                    "type": "PLAIN_TEXT_REPLY",
-                    "answer": full_text
-                }
+                "action": action,
             }
 
         # 有工具调用
@@ -646,7 +653,10 @@ class ReActPlanner:
             }
         }
 
-    def _parse_accumulated_blocks(self, blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _parse_accumulated_blocks(
+        self,
+        blocks: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
         """解析流式累积的 content blocks
 
         Args:
@@ -708,6 +718,10 @@ class ReActPlanner:
             full_text = thinking_blocks[-1].get("thinking", "")
 
         if not tool_use_blocks:
+            action = {
+                "type": "PLAIN_TEXT_REPLY",
+                "answer": full_text,
+            }
             # 纯文本回复
             logger.info(
                 "parse_accumulated_blocks_plain_text",
@@ -718,10 +732,7 @@ class ReActPlanner:
             )
             return {
                 "thought": thinking_text or "思考回复策略",
-                "action": {
-                    "type": "PLAIN_TEXT_REPLY",
-                    "answer": full_text
-                },
+                "action": action,
                 # ✅ 保留原始 thinking blocks
                 "raw_thinking_blocks": thinking_blocks,
             }

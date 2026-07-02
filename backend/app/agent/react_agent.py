@@ -131,6 +131,44 @@ class ReActAgent:
                 "timestamp": datetime.now().isoformat()
             }
 
+    @staticmethod
+    def _set_mode_memory_tool_context(
+        manual_mode: str,
+        memory_tool_mode: str,
+        user_identifier: str = "global",
+    ) -> None:
+        """Set memory tool context without clobbering a consolidator target mode."""
+        from app.tools.social.remember_fact.tool import RememberFactTool
+        from app.tools.social.replace_memory.tool import ReplaceMemoryTool
+        from app.tools.social.remove_memory.tool import RemoveMemoryTool
+
+        current_modes = {
+            RememberFactTool._current_mode,
+            ReplaceMemoryTool._current_mode,
+            RemoveMemoryTool._current_mode,
+        }
+        has_existing_target_mode = any(
+            mode and mode != "memory_consolidator"
+            for mode in current_modes
+        )
+        if manual_mode == "memory_consolidator" and has_existing_target_mode:
+            logger.debug(
+                "memory_consolidator_preserved_target_memory_context",
+                memory_tool_mode=memory_tool_mode,
+                existing_modes=list(current_modes),
+            )
+            return
+
+        RememberFactTool.set_memory_context(memory_tool_mode, user_identifier)
+        ReplaceMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
+        RemoveMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
+        logger.debug(
+            "mode_memory_tool_context_set",
+            mode=manual_mode,
+            memory_tool_mode=memory_tool_mode,
+            user_identifier=user_identifier,
+        )
+
     def __init__(
         self,
         max_iterations: int = 120,  # ✅ 默认120次（适应复杂分析任务）
@@ -233,6 +271,7 @@ class ReActAgent:
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
         board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
+        map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -452,6 +491,27 @@ class ReActAgent:
                     context_length=len(memory_context)
                 )
 
+            try:
+                from app.api.cognitive_map_routes import build_cognitive_map_prompt_context
+
+                cognitive_map_context = build_cognitive_map_prompt_context(
+                    task=user_query,
+                    agent_mode=manual_mode or "expert",
+                )
+                if cognitive_map_context:
+                    react_loop.context_builder.cognitive_map_context = cognitive_map_context
+                    logger.info(
+                        "cognitive_map_context_set_to_context_builder",
+                        mode=manual_mode or "expert",
+                        context_length=len(cognitive_map_context),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "cognitive_map_context_injection_failed",
+                    mode=manual_mode or "expert",
+                    error=str(exc),
+                )
+
             if manual_mode == "chart" and board_context:
                 react_loop.context_builder.board_context = board_context
                 logger.info(
@@ -462,6 +522,18 @@ class ReActAgent:
                     selected_count=len(board_context.get("selected_cells") or board_context.get("selectedCells") or []),
                     version=board_context.get("version"),
                     dirty=board_context.get("dirty"),
+                )
+
+            if manual_mode in {"query", "graph"} and map_context:
+                react_loop.context_builder.map_context = map_context
+                map_events = map_context.get("events") or []
+                current_program = map_context.get("current_program") or {}
+                logger.info(
+                    "map_context_set_to_context_builder",
+                    mode=manual_mode,
+                    session_id=map_context.get("session_id"),
+                    program_id=current_program.get("program_id") if isinstance(current_program, dict) else None,
+                    event_count=len(map_events) if isinstance(map_events, list) else 0,
                 )
 
             # ✅ 设置记忆文件路径到上下文构建器（所有模式）
@@ -515,18 +587,10 @@ class ReActAgent:
                 # 非社交模式也可能直接暴露 remember_fact/replace_memory/remove_memory。
                 # 设置模式上下文，避免工具降级写入默认 social 记忆目录。
                 try:
-                    from app.tools.social.remember_fact.tool import RememberFactTool
-                    from app.tools.social.replace_memory.tool import ReplaceMemoryTool
-                    from app.tools.social.remove_memory.tool import RemoveMemoryTool
-
-                    RememberFactTool.set_memory_context(memory_tool_mode, "global")
-                    ReplaceMemoryTool.set_memory_context(memory_tool_mode, "global")
-                    RemoveMemoryTool.set_memory_context(memory_tool_mode, "global")
-                    logger.debug(
-                        "mode_memory_tool_context_set",
-                        mode=manual_mode,
+                    self._set_mode_memory_tool_context(
+                        manual_mode=manual_mode,
                         memory_tool_mode=memory_tool_mode,
-                        user_identifier="global"
+                        user_identifier="global",
                     )
                 except Exception as e:
                     logger.warning("failed_to_set_mode_memory_tool_context", mode=manual_mode, memory_tool_mode=memory_tool_mode, error=str(e))
@@ -687,6 +751,8 @@ class ReActAgent:
             "markdown_preview": office_doc_data.get("markdown_preview"),
             "html_preview": office_doc_data.get("html_preview"),
             "svg_preview": office_doc_data.get("svg_preview"),
+            "spreadsheet_preview": office_doc_data.get("spreadsheet_preview"),
+            "file_name": office_doc_data.get("file_name"),
             "file_path": office_doc_data.get("file_path"),
             "file_type": office_doc_data.get("file_type"),
             "generator": office_doc_data.get("generator"),

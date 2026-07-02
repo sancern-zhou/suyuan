@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.services.ops_audit.models import Issue
@@ -12,17 +13,19 @@ from app.services.ops_audit.rules.base import add_issue
 from app.services.ops_audit.semantic.attachment_classifier import classify_attachment_metadata
 from app.services.ops_audit.semantic.ocr_adapter import extract_attachment_json
 from app.services.ops_audit.semantic.reviewer import check_photo_watermark, review_attachment_quality
-from app.services.ops_audit.config import load_attachment_requirements
+from app.services.ops_audit.config import load_attachment_requirements, load_semantic_review_profiles
 
 
 ATTACHMENT_PROFILE = load_attachment_requirements()
 PM_MEMBRANE_VISUAL_RULE_TABLES = {"RF_Q_PM10RUNSTATUSCHECK", "RF_Q_PM25RUNSTATUSCHECK"}
 PM_TEMP_PRESSURE_VISUAL_RULE_TABLES = {"RF_Q_PMPRESSURE"}
+FLOW_PHOTO_WATERMARK_TIME_RULE_ID = "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH"
 FLOW_VISUAL_RULE_TABLES = {
     "RF_TW_PmFlowCalibrate",
     "RF_M_GASEOUSFLOWCHECK",
     "RF_Q_GaseousFlowCheck",
     *PM_MEMBRANE_VISUAL_RULE_TABLES,
+    *PM_TEMP_PRESSURE_VISUAL_RULE_TABLES,
 }
 OCR_RULE_IDS = {
     "ATTACHMENT_CERT_INCOMPLETE",
@@ -33,8 +36,20 @@ OCR_RULE_IDS = {
     "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
     "ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH",
     "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
+    FLOW_PHOTO_WATERMARK_TIME_RULE_ID,
     "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
 }
+
+
+def _enabled_flow_visual_rule_ids() -> set[str]:
+    configured = load_semantic_review_profiles().get("flow_visual_enabled_rule_ids")
+    if not isinstance(configured, list):
+        return set(OCR_RULE_IDS)
+    return {str(rule_id) for rule_id in configured if str(rule_id).strip()}
+
+
+def _flow_visual_rule_enabled(rule_id: str) -> bool:
+    return rule_id in _enabled_flow_visual_rule_ids()
 
 
 def check_attachment_ocr_quality(
@@ -159,6 +174,8 @@ def _check_flow_visual_values(
             _check_gas_flow_display_visual(order, table, form, item, issues)
         elif table in PM_MEMBRANE_VISUAL_RULE_TABLES:
             _check_pm_membrane_visual(order, table, form, item, issues)
+        elif table in PM_TEMP_PRESSURE_VISUAL_RULE_TABLES:
+            _check_pm_temp_pressure_visual(order, table, form, item, issues)
 
 
 def _build_reference_flowmeter_certificate_tasks(
@@ -475,6 +492,9 @@ def _check_pm_flow_calibration_visual(
     item: dict[str, Any],
     issues: list[Issue],
 ) -> None:
+    if not _flow_visual_rule_enabled("ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH"):
+        return
+
     result = extract_attachment_json(
         str(item["source_path"]),
         provider="flow_visual",
@@ -483,11 +503,15 @@ def _check_pm_flow_calibration_visual(
             "请判断图片是否为颗粒物流量校准前/校准后相关照片，并只读取照片中明确属于流量读数的数值。"
             "不要读取日期水印、时间、站点编号、设备序列号、证书编号、量程、百分比误差或表格编号。"
             "如果图片同时包含校准前和校准后，请分别返回；如果只能看出一个读数，请按图片文字或上下文放到对应字段。"
+            "同时提取照片水印中的拍摄日期时间；如果没有水印或看不清，相关字段保持 null，不能猜测。"
             "只输出JSON，格式："
             "{\"is_flow_calibration_photo\": true/false, "
             "\"before_flow\": 数值或null, \"after_flow\": 数值或null, "
             "\"unit\": \"L/min或ml/min或空\", "
             "\"visible_flow_values\": [{\"label\":\"原图文字标签\", \"value\":数值, \"unit\":\"单位\"}], "
+            "\"watermark_datetime\": \"YYYY-MM-DD HH:MM:SS或null\", "
+            "\"watermark_date\": \"YYYY-MM-DD或null\", \"watermark_time\": \"HH:MM:SS或null\", "
+            "\"watermark_text\": \"原始水印文字或空\", \"watermark_confidence\": 0到1, "
             "\"confidence\": 0到1, \"reason\":\"简短依据\"}"
         ),
     )
@@ -497,6 +521,7 @@ def _check_pm_flow_calibration_visual(
     data = result.get("data") or {}
     if not data.get("is_flow_calibration_photo"):
         return
+    _check_flow_photo_watermark_time(order, table, form, item, result, issues)
 
     comparisons = []
     before_fields, after_fields = _pm_flow_calibration_fields_for_attachment(item)
@@ -525,6 +550,11 @@ def _check_gas_flow_display_visual(
     item: dict[str, Any],
     issues: list[Issue],
 ) -> None:
+    display_rule_enabled = _flow_visual_rule_enabled("ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH")
+    measured_rule_enabled = _flow_visual_rule_enabled("ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH")
+    if not display_rule_enabled and not measured_rule_enabled:
+        return
+
     result = extract_attachment_json(
         str(item["source_path"]),
         provider="flow_visual",
@@ -541,6 +571,7 @@ def _check_gas_flow_display_visual(
             "热电/THERMO 臭氧(O3)分析仪比较特殊，仪器显示值可能由图片中的流量A/Flow A 与流量B/Flow B 相加得到；"
             "如图片中明确出现这两个 O3 流量分量，请在 display_components.O3 中分别返回流量A和流量B，不要把单个分量当作合计。"
             "如果热电/THERMO O3 图片不能同时识别流量A和流量B，则 display_values.O3 保持 null，只把可见单个分量放入 visible_flow_values。"
+            "同时提取照片水印中的拍摄日期时间；如果没有水印或看不清，相关字段保持 null，不能猜测。"
             "只输出JSON，格式："
             "{\"is_gas_flow_panel_photo\": true/false, "
             "\"display_values\": {\"SO2\": 数值或null, \"NO2\": 数值或null, \"CO\": 数值或null, \"O3\": 数值或null}, "
@@ -550,6 +581,9 @@ def _check_gas_flow_display_visual(
             "\"measured_units\": {\"SO2\": \"原始单位或空\", \"NO2\": \"原始单位或空\", \"CO\": \"原始单位或空\", \"O3\": \"原始单位或空\"}, "
             "\"unit\": \"原始单位或空\", "
             "\"visible_flow_values\": [{\"label\":\"原图文字标签\", \"value\":数值, \"unit\":\"单位\"}], "
+            "\"watermark_datetime\": \"YYYY-MM-DD HH:MM:SS或null\", "
+            "\"watermark_date\": \"YYYY-MM-DD或null\", \"watermark_time\": \"HH:MM:SS或null\", "
+            "\"watermark_text\": \"原始水印文字或空\", \"watermark_confidence\": 0到1, "
             "\"confidence\": 0到1, \"reason\":\"简短依据\"}"
         ),
     )
@@ -559,6 +593,7 @@ def _check_gas_flow_display_visual(
     data = result.get("data") or {}
     if not data.get("is_gas_flow_panel_photo"):
         return
+    _check_flow_photo_watermark_time(order, table, form, item, result, issues)
 
     display_values = data.get("display_values") if isinstance(data.get("display_values"), dict) else {}
     measured_values = data.get("measured_values") if isinstance(data.get("measured_values"), dict) else {}
@@ -569,8 +604,11 @@ def _check_gas_flow_display_visual(
     display_comparisons = []
     measured_comparisons = []
     photo_value_role = _gas_flow_photo_value_role(item)
+    filename_pollutants = _gas_flow_filename_pollutants(item)
     if table == "RF_M_GASEOUSFLOWCHECK":
         for gas in ("SO2", "NO2", "CO", "O3"):
+            if filename_pollutants and gas not in filename_pollutants:
+                continue
             if photo_value_role != "measured":
                 if _should_skip_monthly_thermo_o3_display_comparison(
                     table,
@@ -632,7 +670,7 @@ def _check_gas_flow_display_visual(
             )
 
     display_violations = [item for item in display_comparisons if item.get("status") == "mismatch"]
-    if display_violations:
+    if display_rule_enabled and display_violations:
         _add_visual_value_issue(
             issues,
             "ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH",
@@ -645,7 +683,7 @@ def _check_gas_flow_display_visual(
         )
 
     measured_violations = [item for item in measured_comparisons if item.get("status") == "mismatch"]
-    if measured_violations:
+    if measured_rule_enabled and measured_violations:
         _add_visual_value_issue(
             issues,
             "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
@@ -665,6 +703,9 @@ def _check_pm_membrane_visual(
     item: dict[str, Any],
     issues: list[Issue],
 ) -> None:
+    if not _flow_visual_rule_enabled("ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH"):
+        return
+
     if not _is_pm_membrane_visual_candidate(item):
         return
 
@@ -727,6 +768,9 @@ def _check_pm_temp_pressure_visual(
     item: dict[str, Any],
     issues: list[Issue],
 ) -> None:
+    if not _flow_visual_rule_enabled("ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH"):
+        return
+
     if not _is_pm_temp_pressure_visual_candidate(item):
         return
 
@@ -798,6 +842,203 @@ def _check_pm_temp_pressure_visual(
             result,
             comparisons,
         )
+
+
+def _check_flow_photo_watermark_time(
+    order: dict[str, Any],
+    rf_table: str,
+    form: dict[str, Any],
+    item: dict[str, Any],
+    result: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    confidence = _float_or_none(data.get("watermark_confidence"))
+    if confidence is None or confidence < 0.85:
+        return
+    watermark_dt = _parse_watermark_datetime(data)
+    if watermark_dt is None:
+        return
+    windows = _flow_photo_reference_windows(form)
+    if not windows:
+        return
+    check_date = _parse_date_value(form.get("CHECKDATE"))
+    if check_date is None:
+        return
+    reference_fields = _flow_photo_reference_window_fields(form)
+    reference_dates = {item["date"] for item in reference_fields if item.get("date")}
+
+    date_matched = watermark_dt.date() == check_date
+    time_matched, nearest_delta_minutes = _watermark_datetime_matches_rf_window_clock(watermark_dt, windows)
+    if date_matched and time_matched:
+        return
+    mismatch_level = _flow_photo_watermark_mismatch_level(date_matched, time_matched)
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": rf_table,
+        "filename": item.get("filename"),
+        "source": item.get("source_path"),
+        "watermark_date": watermark_dt.date().isoformat(),
+        "parsed_watermark_datetime": watermark_dt.isoformat(sep=" "),
+        "watermark_datetime": data.get("watermark_datetime"),
+        "watermark_time": data.get("watermark_time"),
+        "watermark_text": data.get("watermark_text"),
+        "watermark_confidence": confidence,
+        "check_date": check_date.isoformat(),
+        "date_matched": date_matched,
+        "time_window_matched": time_matched,
+        "reference_dates": sorted(value.isoformat() for value in reference_dates),
+        "reference_time_fields": reference_fields,
+        "reference_windows": [
+            {"start": start_dt.isoformat(sep=" "), "end": end_dt.isoformat(sep=" ")}
+            for start_dt, end_dt in windows
+        ],
+        "reference_clock_windows": [
+            {
+                "start": start_dt.time().strftime("%H:%M:%S"),
+                "end": end_dt.time().strftime("%H:%M:%S"),
+            }
+            for start_dt, end_dt in windows
+        ],
+        "mismatch_level": mismatch_level,
+        "nearest_delta_minutes": nearest_delta_minutes,
+        "vision_confidence": data.get("confidence"),
+        "vision_reason": data.get("reason"),
+    }
+    if mismatch_level == "date":
+        message = (
+            f"流量/校准照片水印日期 {watermark_dt.date().isoformat()} "
+            f"与RF表单检查日期 {check_date.isoformat()} 不一致"
+        )
+    elif mismatch_level == "time_window":
+        message = (
+            f"流量/校准照片水印时分 {watermark_dt.time().strftime('%H:%M:%S')} "
+            f"不在RF表单运维时分窗口内，最近偏差 {nearest_delta_minutes} 分钟"
+        )
+    else:
+        message = (
+            f"流量/校准照片水印时间 {watermark_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"与RF表单检查日期及运维时分窗口均不一致，最近偏差 {nearest_delta_minutes} 分钟"
+        )
+    add_issue(
+        issues,
+        FLOW_PHOTO_WATERMARK_TIME_RULE_ID,
+        "附件时间一致性",
+        "中",
+        f"attachment.vision.{FLOW_PHOTO_WATERMARK_TIME_RULE_ID}.{rf_table}",
+        message,
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _flow_photo_reference_time_fields(form: dict[str, Any]) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    operation_fields = (
+        ("CHECKTIME", "point"),
+        ("CHECKDATETIME", "point"),
+        ("CHECKDATE", "point"),
+        ("SdtTime", "point"),
+        ("SDTTIME", "point"),
+        ("CheckSdt", "window_start"),
+        ("CHECKSDT", "window_start"),
+        ("STARTTIME", "window_start"),
+        ("STARTDATETIME", "window_start"),
+        ("CheckEdt", "window_end"),
+        ("CHECKEDT", "window_end"),
+        ("ENDTIME", "window_end"),
+        ("ENDDATETIME", "window_end"),
+    )
+    for field, kind in operation_fields:
+        _append_flow_photo_reference_time_field(fields, form, field, kind)
+    if not fields:
+        _append_flow_photo_reference_time_field(fields, form, "CREATEDATE", "rf_created_fallback")
+    return fields
+
+
+def _flow_photo_reference_window_fields(form: dict[str, Any]) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    for field in ("CheckSdt", "CHECKSDT", "STARTTIME", "STARTDATETIME"):
+        _append_flow_photo_reference_time_field(fields, form, field, "window_start")
+    for field in ("CheckEdt", "CHECKEDT", "ENDTIME", "ENDDATETIME"):
+        _append_flow_photo_reference_time_field(fields, form, field, "window_end")
+    return fields
+
+
+def _append_flow_photo_reference_time_field(
+    fields: list[dict[str, Any]],
+    form: dict[str, Any],
+    field: str,
+    kind: str,
+) -> None:
+    value = form.get(field)
+    if value not in (None, ""):
+        parsed_dt = _parse_datetime_value(value)
+        parsed_date = parsed_dt.date() if parsed_dt else _parse_date_value(value)
+        fields.append(
+            {
+                "source": "rf_form",
+                "field": field,
+                "value": value,
+                "kind": kind,
+                "parsed_datetime": parsed_dt.isoformat(sep=" ") if parsed_dt else None,
+                "date": parsed_date,
+            }
+        )
+
+
+def _watermark_datetime_matches_rf_window_clock(
+    watermark_dt: datetime,
+    windows: list[tuple[datetime, datetime]],
+) -> tuple[bool, int | None]:
+    watermark_clock = watermark_dt.time()
+    deltas: list[int] = []
+    for start_dt, end_dt in windows:
+        start_clock = start_dt.time()
+        end_clock = end_dt.time()
+        if _clock_in_window(watermark_clock, start_clock, end_clock):
+            return True, None
+        deltas.append(min(_clock_delta_minutes(watermark_clock, start_clock), _clock_delta_minutes(watermark_clock, end_clock)))
+    return False, min(deltas) if deltas else None
+
+
+def _flow_photo_watermark_mismatch_level(date_matched: bool, time_matched: bool) -> str:
+    if not date_matched and not time_matched:
+        return "date_and_time_window"
+    if not date_matched:
+        return "date"
+    return "time_window"
+
+
+def _clock_in_window(value: Any, start: Any, end: Any) -> bool:
+    if start <= end:
+        return start <= value <= end
+    return value >= start or value <= end
+
+
+def _clock_delta_minutes(left: Any, right: Any) -> int:
+    left_minutes = left.hour * 60 + left.minute + left.second / 60
+    right_minutes = right.hour * 60 + right.minute + right.second / 60
+    delta = abs(left_minutes - right_minutes)
+    return int(round(min(delta, 1440 - delta)))
+
+
+def _flow_photo_reference_windows(form: dict[str, Any]) -> list[tuple[datetime, datetime]]:
+    windows: list[tuple[datetime, datetime]] = []
+    start_fields = ("CheckSdt", "CHECKSDT", "STARTTIME", "STARTDATETIME")
+    end_fields = ("CheckEdt", "CHECKEDT", "ENDTIME", "ENDDATETIME")
+    starts = [_parse_datetime_value(form.get(field)) for field in start_fields]
+    ends = [_parse_datetime_value(form.get(field)) for field in end_fields]
+    for start_dt in [value for value in starts if value is not None]:
+        for end_dt in [value for value in ends if value is not None]:
+            if end_dt < start_dt:
+                end_dt = end_dt + timedelta(days=1)
+            windows.append((start_dt, end_dt))
+    return windows
+
+
+def _minutes_between(left: datetime, right: datetime) -> int:
+    return int(round(abs((left - right).total_seconds()) / 60))
 
 
 def _compare_visual_value(
@@ -1091,6 +1332,102 @@ def _parse_number(value: Any) -> float | None:
         return None
 
 
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_watermark_datetime(data: dict[str, Any]) -> datetime | None:
+    parsed = _parse_datetime_value(data.get("watermark_datetime"))
+    if parsed is not None:
+        return parsed
+    date_text = data.get("watermark_date")
+    time_text = data.get("watermark_time")
+    if date_text and time_text:
+        parsed = _parse_datetime_value(f"{date_text} {time_text}")
+        if parsed is not None:
+            return parsed
+    return _parse_datetime_value(data.get("watermark_text"))
+
+
+def _parse_datetime_value(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text.replace("年", "-").replace("月", "-").replace("日", "")
+    normalized = normalized.replace("/", "-").replace(".", "-")
+    normalized = re.sub(r"\s+", " ", normalized)
+    candidates = [normalized]
+    iso_match = re.search(r"20\d{2}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?", normalized)
+    if iso_match:
+        candidates.insert(0, iso_match.group(0).replace("T", " "))
+    date_match = re.search(r"20\d{2}-\d{1,2}-\d{1,2}", normalized)
+    if date_match:
+        candidates.append(date_match.group(0))
+    for candidate in candidates:
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
+            "%m %d %Y %I:%M%p",
+            "%m %d %Y %H:%M",
+        ):
+            try:
+                return datetime.strptime(candidate[:19], fmt)
+            except ValueError:
+                continue
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed.replace(tzinfo=None)
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_date_value(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed_dt = _parse_datetime_value(text)
+    if parsed_dt is not None:
+        return parsed_dt.date()
+    normalized = text.replace("年", "-").replace("月", "-").replace("日", "")
+    normalized = normalized.replace("/", "-").replace(".", "-")
+    normalized = re.sub(r"\s+", " ", normalized)
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ):
+        try:
+            return datetime.strptime(normalized[:19], fmt).date()
+        except ValueError:
+            continue
+    match = re.search(r"(20\d{2})[-](\d{1,2})[-](\d{1,2})", normalized)
+    if not match:
+        return None
+    try:
+        return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return None
+
+
 def _normalize_flow_value_for_comparison(
     visual_number: float,
     visual_unit: Any,
@@ -1144,6 +1481,8 @@ def _flow_value_candidates_for_comparison(
     candidates = [primary]
     unit = _normalize_flow_unit(visual_unit)
     form_unit = _infer_form_flow_unit(form_value, form, field, label)
+    if unit in {"L/min", "ml/min"} and form_unit in {"L/min", "ml/min"}:
+        candidates.append(visual_number)
     if form_unit is None:
         candidates.append(visual_number)
         if unit == "L/h":
@@ -1246,6 +1585,31 @@ def _gas_flow_photo_value_role(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _gas_flow_filename_pollutants(item: dict[str, Any]) -> set[str]:
+    filename = str(item.get("filename") or "").strip().upper().replace(" ", "")
+    if not filename:
+        return set()
+    stem = re.sub(r"\.[^.]+$", "", filename)
+    pollutants: set[str] = set()
+    if re.search(r"(^|[^A-Z0-9])SO2?(?=[^A-Z0-9]|实测|测量|显示|流量|$)", stem):
+        pollutants.add("SO2")
+    if re.search(r"(^|[^A-Z0-9])(NO2|NOX|NO)(?=[^A-Z0-9]|实测|测量|显示|流量|$)", stem):
+        pollutants.add("NO2")
+    if re.search(r"(^|[^A-Z0-9])CO(?=[^A-Z0-9]|实测|测量|显示|流量|$)", stem):
+        pollutants.add("CO")
+    if re.search(r"(^|[^A-Z0-9])O3(?=[^A-Z0-9]|实测|测量|显示|流量|$)", stem):
+        pollutants.add("O3")
+    if "二氧化硫" in stem:
+        pollutants.add("SO2")
+    if "氮氧" in stem or "一氧化氮" in stem:
+        pollutants.add("NO2")
+    if "一氧化碳" in stem:
+        pollutants.add("CO")
+    if "臭氧" in stem:
+        pollutants.add("O3")
+    return pollutants
+
+
 def _pm_membrane_profile(table: str) -> dict[str, str] | None:
     if table == "RF_Q_PM25RUNSTATUSCHECK":
         return {
@@ -1326,6 +1690,8 @@ def _add_visual_value_issue(
         "vision_reason": (result.get("data") or {}).get("reason"),
         "vision_data": result.get("data"),
         "comparisons": comparisons,
+        "needs_visual_review": True,
+        "promotion_policy": "视觉识别结果需满足高置信度、明确字段、明确单位后才进入最终问题清单；否则仅作为视觉复核候选。",
     }
     first = next((item for item in comparisons if item.get("status") == "mismatch"), comparisons[0])
     add_issue(

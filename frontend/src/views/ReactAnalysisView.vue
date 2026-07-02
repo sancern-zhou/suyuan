@@ -23,6 +23,7 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
+      :map-program="store.currentState.currentMapProgram"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
@@ -62,7 +63,7 @@
       @update:era5-historical-date="era5HistoricalDate = $event"
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
-      @load-session="handleLoadSession"
+      @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
       @reset-width="resetWidth"
@@ -93,9 +94,11 @@
       @delete-scheduled-task="deleteScheduledTask"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
-      @restore-session="handleSessionRestore"
+      @restore-session="handleSessionRestoreAndClosePanel"
       @toggle-session-case="handleToggleSessionCase"
+      @delete-sessions="deleteSessions"
       @toggle-viz-panel="toggleVizPanel"
+      @map-event="handleMapEvent"
     />
 
     <!-- 知识库创建对话框 -->
@@ -133,6 +136,7 @@ import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import { PANEL_SIZES } from '@/utils/constants'
+import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -195,6 +199,7 @@ const {
   handleLoadSession,
   refreshSessionHistory,
   handleSessionCleanup,
+  deleteSessions,
   handleToggleSessionCase
 } = useSessionManagement(store)
 
@@ -319,6 +324,22 @@ const handleAgentModeChange = (value) => {
   console.log('[ReactAnalysisView] Agent模式切换:', value)
 }
 
+const handleLoadSessionAndClosePanel = async (sessionId) => {
+  const restored = await handleLoadSession(sessionId)
+  if (restored) {
+    hideManagementPanel()
+  }
+  return restored
+}
+
+const handleSessionRestoreAndClosePanel = async (sessionId) => {
+  const restored = await handleSessionRestore(sessionId)
+  if (restored) {
+    hideManagementPanel()
+  }
+  return restored
+}
+
 const handleAssistantSelect = async (moduleId) => {
   if (moduleId !== 'general-agent' && store.currentState.isAnalyzing) {
     await store.pauseAnalysis()
@@ -328,6 +349,11 @@ const handleAssistantSelect = async (moduleId) => {
 const handleSidebarAction = async (actionId) => {
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
   switch (actionId) {
+    case 'query-dashboard':
+      store.switchMode('query')
+      hideManagementPanel()
+      resetPanelState()
+      break
     case 'tools-management':
       console.log('[ReactAnalysisView] Showing tools-management panel')
       showManagementPanel('tools-management')
@@ -340,6 +366,10 @@ const handleSidebarAction = async (actionId) => {
       console.log('[ReactAnalysisView] Showing knowledge-base panel')
       showManagementPanel('knowledge-base')
       await kbStore.fetchKnowledgeBases()
+      break
+    case 'cognitive-map':
+      console.log('[ReactAnalysisView] Showing cognitive-map panel')
+      showManagementPanel('cognitive-map')
       break
     case 'fetchers':
       console.log('[ReactAnalysisView] Showing fetchers panel')
@@ -449,6 +479,20 @@ const handleBoardSnapshotConfirm = async (snapshot) => {
 const handleBoardVersionRestore = (versionId) => {
   if (typeof store.restoreDrawioBoardVersion === 'function') {
     store.restoreDrawioBoardVersion(versionId)
+  }
+}
+
+const handleMapEvent = (event) => {
+  if (typeof store.recordMapEvent === 'function') {
+    store.recordMapEvent(event)
+  }
+  if (event?.receipt) {
+    postMapProgramReceipt({
+      sessionId: event.session_id || currentModeSessionId.value,
+      receipt: event.receipt
+    }).catch(error => {
+      console.warn('Failed to post map program receipt:', error)
+    })
   }
 }
 

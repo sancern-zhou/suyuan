@@ -161,6 +161,10 @@ class Settings(BaseSettings):
         default="gpt-4-turbo-preview",
         description="OpenAI model name"
     )
+    openai_api_mode: str = Field(
+        default="chat_completions",
+        description="OpenAI API protocol mode: chat_completions"
+    )
 
     deepseek_api_key: Optional[str] = Field(default=None, description="DeepSeek API key")
     deepseek_base_url: str = Field(
@@ -170,6 +174,10 @@ class Settings(BaseSettings):
     deepseek_model: str = Field(
         default="deepseek-v4-flash",
         description="DeepSeek model name"
+    )
+    deepseek_api_mode: str = Field(
+        default="anthropic_messages",
+        description="DeepSeek API protocol mode: anthropic_messages or chat_completions"
     )
 
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
@@ -193,15 +201,47 @@ class Settings(BaseSettings):
         default="MiniMax-M3",
         description="MiniMax model name"
     )
+    minimax_api_mode: str = Field(
+        default="anthropic_messages",
+        description="MiniMax API protocol mode: anthropic_messages or chat_completions"
+    )
 
     mimo_api_key: Optional[str] = Field(default=None, description="Xiaomi Mimo API key")
     mimo_base_url: str = Field(
-        default="https://api.xiaomimimo.com/v1",
-        description="Xiaomi Mimo API base URL"
+        default="https://api.xiaomimimo.com/anthropic",
+        description="Xiaomi Mimo Anthropic-compatible API base URL"
     )
     mimo_model: str = Field(
         default="mimo-v2-pro",
         description="Xiaomi Mimo model name"
+    )
+    mimo_api_mode: str = Field(
+        default="anthropic_messages",
+        description="Mimo API protocol mode: anthropic_messages or chat_completions"
+    )
+    voice_mimo_base_url: str = Field(
+        default="https://api.xiaomimimo.com/v1",
+        description="Xiaomi Mimo OpenAI-compatible base URL for ASR/TTS"
+    )
+    voice_asr_model: str = Field(
+        default="mimo-v2.5-asr",
+        description="Voice ASR model name"
+    )
+    voice_tts_model: str = Field(
+        default="mimo-v2.5-tts",
+        description="Voice TTS model name"
+    )
+    voice_tts_voice: str = Field(
+        default="冰糖",
+        description="Default TTS voice"
+    )
+    voice_asr_timeout_seconds: float = Field(
+        default=30.0,
+        description="Timeout in seconds for voice ASR requests"
+    )
+    voice_tts_timeout_seconds: float = Field(
+        default=45.0,
+        description="Timeout in seconds for voice TTS requests"
     )
 
     glm_api_key: Optional[str] = Field(default=None, description="GLM API key")
@@ -216,6 +256,10 @@ class Settings(BaseSettings):
     glm_model: str = Field(
         default="glm-4.7",
         description="GLM model name"
+    )
+    glm_api_mode: str = Field(
+        default="anthropic_messages",
+        description="GLM API protocol mode: anthropic_messages or chat_completions"
     )
 
     # 报告模式配置
@@ -274,6 +318,10 @@ class Settings(BaseSettings):
     qwen_model: str = Field(
         default="qwen3",
         description="Qwen3 model name"
+    )
+    qwen_api_mode: str = Field(
+        default="chat_completions",
+        description="Qwen API protocol mode: chat_completions"
     )
     qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
     qwen_vl_base_url: str = Field(
@@ -359,6 +407,76 @@ class Settings(BaseSettings):
     retry_interval_ms: int = Field(default=500, description="Retry interval in milliseconds")
     request_timeout_seconds: int = Field(default=30, description="HTTP request timeout")
     vocs_api_timeout_seconds: int = Field(default=120, description="VOCs API timeout (2 minutes for large data queries)")
+
+    # Tender Information Fetcher Configuration
+    tender_fetcher_enabled: bool = Field(
+        default=True,
+        description="Enable daily tender information fetcher"
+    )
+    tender_fetcher_schedule: str = Field(
+        default="30 6 * * *",
+        description="Cron schedule for tender information fetcher"
+    )
+    tender_keywords: str = Field(
+        default="生态环境局,环境监测中心,生态环境厅,环境监测站",
+        description="Comma-separated tender search keywords"
+    )
+    tender_notice_types: str = Field(
+        default="tender,winning_bid",
+        description="Comma-separated tender notice types"
+    )
+    tender_max_pages: int = Field(
+        default=0,
+        description="Qianlima pages to crawl; 0 means complete target-date crawl"
+    )
+    qianlima_base_url: str = Field(
+        default="https://www.qianlima.com",
+        description="Qianlima base URL"
+    )
+    qianlima_storage_state: str = Field(
+        default="backend_data_registry/tenders/qianlima_storage_state.json",
+        description="Qianlima Playwright storage state path"
+    )
+    qianlima_username: Optional[str] = Field(
+        default=None,
+        description="Qianlima username for optional login"
+    )
+    qianlima_password: Optional[str] = Field(
+        default=None,
+        description="Qianlima password for optional login"
+    )
+    tender_llm_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible API key for tender LLM screening and extraction"
+    )
+    tender_llm_base_url: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible base URL for tender LLM"
+    )
+    tender_llm_model: Optional[str] = Field(
+        default=None,
+        description="Model name for tender LLM"
+    )
+    tender_llm_concurrency: int = Field(
+        default=5,
+        description="Max concurrent tender LLM detail requests for the primary provider"
+    )
+    tender_secondary_llm_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible API key for secondary tender detail LLM"
+    )
+    tender_secondary_llm_base_url: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible base URL for secondary tender detail LLM"
+    )
+    tender_secondary_llm_model: str = Field(
+        default="agnes-2.0-flash",
+        description="Model name for secondary tender detail LLM"
+    )
+    tender_secondary_llm_concurrency: int = Field(
+        default=5,
+        description="Max concurrent tender LLM detail requests for the secondary provider"
+    )
 
     # SQL Server Configuration (History Database)
     sqlserver_host: str = Field(
@@ -473,6 +591,7 @@ class Settings(BaseSettings):
                 "api_key": self.openai_api_key,
                 "base_url": self.openai_base_url,
                 "model": self.openai_model,
+                "api_mode": self.openai_api_mode,
             }
         elif self.llm_provider == "deepseek":
             return {
@@ -480,6 +599,7 @@ class Settings(BaseSettings):
                 "api_key": self.deepseek_api_key,
                 "base_url": self.deepseek_base_url,
                 "model": self.deepseek_model,
+                "api_mode": self.deepseek_api_mode,
             }
         elif self.llm_provider == "anthropic":
             return {
@@ -493,6 +613,7 @@ class Settings(BaseSettings):
                 "api_key": self.minimax_api_key,
                 "base_url": self.minimax_base_url,
                 "model": self.minimax_model,
+                "api_mode": self.minimax_api_mode,
             }
         elif self.llm_provider == "mimo":
             return {
@@ -500,6 +621,7 @@ class Settings(BaseSettings):
                 "api_key": self.mimo_api_key,
                 "base_url": self.mimo_base_url,
                 "model": self.mimo_model,
+                "api_mode": self.mimo_api_mode,
             }
         elif self.llm_provider == "qwen":
             return {
@@ -507,6 +629,7 @@ class Settings(BaseSettings):
                 "api_key": self.qwen_api_key,
                 "base_url": self.qwen_base_url,
                 "model": self.qwen_model,
+                "api_mode": self.qwen_api_mode,
             }
         elif self.llm_provider == "glm":
             return {
@@ -515,6 +638,7 @@ class Settings(BaseSettings):
                 "base_url": self.glm_base_url,
                 "anthropic_base_url": self.glm_anthropic_base_url,
                 "model": self.glm_model,
+                "api_mode": self.glm_api_mode,
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")

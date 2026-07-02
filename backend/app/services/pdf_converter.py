@@ -1,14 +1,20 @@
 """
 PDF conversion service - Convert Office documents to PDF for frontend preview
 """
+from contextlib import contextmanager
 from pathlib import Path
 from app.tools.office.soffice import run_soffice
 import tempfile
 import shutil
 import uuid
 import logging
+from zipfile import ZipFile, ZIP_DEFLATED
+from xml.etree import ElementTree as ET
 
 logger = logging.getLogger(__name__)
+WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+W = f"{{{WORD_NS}}}"
+ET.register_namespace("w", WORD_NS)
 
 try:
     import pypdf
@@ -42,13 +48,14 @@ class PDFConverter:
             pdf_id = f"{uuid.uuid4()}"
             pdf_path = self.output_dir / f"{pdf_id}.pdf"
 
-            # Use LibreOffice to convert
-            result = run_soffice([
-                "--headless",
-                "--convert-to", "pdf",
-                "--outdir", str(self.output_dir),
-                office_file_path
-            ])
+            with self._office_pdf_source(Path(office_file_path)) as conversion_source:
+                # Use LibreOffice to convert
+                result = run_soffice([
+                    "--headless",
+                    "--convert-to", "pdf",
+                    "--outdir", str(self.output_dir),
+                    str(conversion_source)
+                ])
 
             if result.returncode != 0:
                 logger.error(f"LibreOffice conversion failed: {result.stderr}")
@@ -75,6 +82,52 @@ class PDFConverter:
 
         except Exception as e:
             logger.error(f"PDF conversion error: {e}", exc_info=True)
+            raise
+
+    async def rebuild_pdf(self, pdf_id: str, office_file_path: str) -> dict:
+        """
+        Rebuild a missing cached PDF while preserving its historical PDF id.
+
+        Historical sessions store pdf_url values that include pdf_id. Regenerating
+        with a new id would leave the restored iframe pointing at the old URL, so
+        recovery writes the converted PDF back to the old cache path.
+        """
+        try:
+            pdf_path = self.get_pdf_path(pdf_id)
+
+            with self._office_pdf_source(Path(office_file_path)) as conversion_source:
+                result = run_soffice([
+                    "--headless",
+                    "--convert-to", "pdf",
+                    "--outdir", str(self.output_dir),
+                    str(conversion_source)
+                ])
+
+            if result.returncode != 0:
+                logger.error(f"LibreOffice PDF rebuild failed: {result.stderr}")
+                raise Exception(f"PDF rebuild failed: {result.stderr}")
+
+            converted_files = [
+                path
+                for path in self.output_dir.glob("*.pdf")
+                if path.name != f"{pdf_id}.pdf"
+            ]
+            if not converted_files:
+                raise Exception("No PDF file generated during rebuild")
+
+            converted_pdf = max(converted_files, key=lambda p: p.stat().st_mtime)
+            shutil.move(str(converted_pdf), str(pdf_path))
+
+            return {
+                "pdf_id": pdf_id,
+                "pdf_path": str(pdf_path),
+                "pdf_url": f"/api/office/pdf/{pdf_id}",
+                "pages": self._get_pdf_page_count(pdf_path),
+                "size": pdf_path.stat().st_size
+            }
+
+        except Exception as e:
+            logger.error(f"PDF rebuild error: {e}", exc_info=True)
             raise
 
     def _get_pdf_page_count(self, pdf_path: Path) -> int:
@@ -109,6 +162,78 @@ class PDFConverter:
     def pdf_exists(self, pdf_id: str) -> bool:
         """Check if a PDF file exists"""
         return self.get_pdf_path(pdf_id).exists()
+
+    @contextmanager
+    def _office_pdf_source(self, office_file_path: Path):
+        if office_file_path.suffix.lower() != ".docx":
+            yield office_file_path
+            return
+
+        tmp_path = None
+        try:
+            with ZipFile(office_file_path) as archive:
+                document_xml = archive.read("word/document.xml")
+                patched_xml = self._patch_docx_for_pdf_preview(document_xml)
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_file:
+                tmp_path = Path(tmp_file.name)
+
+            self._write_docx_with_document_xml(office_file_path, patched_xml, tmp_path)
+            yield tmp_path
+        except Exception as e:
+            logger.warning(
+                "docx_pdf_preview_normalization_failed",
+                extra={"office_file_path": str(office_file_path), "error": str(e)},
+            )
+            yield office_file_path
+        finally:
+            if tmp_path is not None and tmp_path.exists():
+                tmp_path.unlink()
+
+    def _patch_docx_for_pdf_preview(self, document_xml: bytes) -> bytes:
+        root = ET.fromstring(document_xml)
+
+        def normalize_preview_paragraph(paragraph) -> None:
+            ppr = paragraph.find(f"{W}pPr")
+            if ppr is None:
+                return
+
+            pstyle = ppr.find(f"{W}pStyle")
+            if pstyle is not None and pstyle.get(f"{W}val") == "Compact":
+                ppr.remove(pstyle)
+
+            spacing = ppr.find(f"{W}spacing")
+            if spacing is not None and spacing.get(f"{W}lineRule") == "exact":
+                ppr.remove(spacing)
+
+        for table in root.findall(f".//{W}tbl"):
+            for paragraph in table.findall(f".//{W}p"):
+                normalize_preview_paragraph(paragraph)
+
+        for paragraph in root.findall(f".//{W}p"):
+            if (
+                paragraph.find(f".//{W}drawing") is not None
+                or paragraph.find(f".//{W}pict") is not None
+            ):
+                normalize_preview_paragraph(paragraph)
+
+        return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    def _write_docx_with_document_xml(
+        self,
+        source_path: Path,
+        document_xml: bytes,
+        output_path: Path,
+    ) -> None:
+        with ZipFile(source_path) as source_zip, ZipFile(output_path, "w", compression=ZIP_DEFLATED) as output_zip:
+            for item in source_zip.infolist():
+                if item.filename.endswith("/"):
+                    output_zip.writestr(item, b"")
+                    continue
+                if item.filename == "word/document.xml":
+                    output_zip.writestr(item, document_xml)
+                else:
+                    output_zip.writestr(item, source_zip.read(item.filename))
 
 
 # Global singleton
