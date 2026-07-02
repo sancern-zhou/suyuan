@@ -1,6 +1,7 @@
 import json
 
 from app.services.ops_audit.final_issue_list import build_final_issue_list
+from app.services.ops_audit.rules import attachment_ocr_rules
 from app.services.ops_audit.semantic import reviewer
 
 
@@ -69,7 +70,7 @@ def test_field_level_range_note_clears_abnormal_value_remark_review(monkeypatch)
     assert build_final_issue_list(audit, semantic)["issue_count"] == 0
 
 
-def test_final_issue_message_uses_semantic_problem_description_for_source_issue():
+def test_final_issue_message_preserves_source_issue_and_adds_semantic_supplement():
     audit = {
         "records": [
             {
@@ -114,7 +115,11 @@ def test_final_issue_message_uses_semantic_problem_description_for_source_issue(
     final_issues = build_final_issue_list(audit, semantic)
 
     assert final_issues["issue_count"] == 1
-    assert final_issues["items"][0]["message"] == "字段备注未解释采样压力异常原因。"
+    item = final_issues["items"][0]
+    assert item["message"] == "需语义判断备注是否解释充分: 原始规则信息"
+    assert item["semantic_message"] == "字段备注未解释采样压力异常原因。"
+    assert item["semantic_conclusion"] is None
+    assert item["source"] == "semantic_review"
 
 
 def test_final_issue_message_preserves_cutting_head_photo_reason():
@@ -169,7 +174,562 @@ def test_final_issue_message_preserves_cutting_head_photo_reason():
     final_issues = build_final_issue_list(audit, semantic)
 
     assert final_issues["issue_count"] == 1
-    assert final_issues["items"][0]["message"] == (
+    item = final_issues["items"][0]
+    assert item["message"] == "双周切割头清洗未识别到清洗照片，需语义复核备注说明是否合理"
+    assert item["semantic_message"] == (
         "双周切割头清洗未识别到清洗照片，备注仅说明已清洗，"
         "未提供照片缺失或清洗证据不足的合理说明。"
     )
+
+
+def test_default_flow_visual_allowlist_skips_pm_temp_pressure_without_calling_model(monkeypatch):
+    def fail_extract_attachment_json(*args, **kwargs):
+        raise AssertionError("disabled PM temp/pressure visual rule should not call the vision model")
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fail_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-PMPRESSURE"},
+            "forms": [
+                (
+                    "RF_Q_PMPRESSURE",
+                    {
+                        "PM25CHECKTEMP1VALUE": "20.1",
+                        "PM25CHECKPRES1VALUE": "99.8",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM2.5温湿度气压仪器示值.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_Q_PMPRESSURE/pm25.jpg",
+                "typecode": "RF_Q_PMPRESSURE",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_default_flow_visual_allowlist_suppresses_gas_display_mismatch(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"SO2": 0.9, "NO2": None, "CO": None, "O3": None},
+                "measured_values": {"SO2": None, "NO2": None, "CO": None, "O3": None},
+                "display_units": {"SO2": "L/min"},
+                "measured_units": {},
+                "unit": "L/min",
+                "confidence": 0.95,
+                "reason": "读取到SO2仪器显示流量",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-GAS"},
+            "forms": [("RF_M_GASEOUSFLOWCHECK", {"DISPLAYVALUESO2": "0.6"})],
+            "item": {
+                "filename": "SO2显示值.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/so2.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_monthly_measured_flow_lpm_decimal_matches_decimal_form_value(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"SO2": None, "NO2": None, "CO": None, "O3": None},
+                "measured_values": {"SO2": 0.61, "NO2": None, "CO": None, "O3": None},
+                "display_units": {"SO2": "", "NO2": "", "CO": "", "O3": ""},
+                "measured_units": {"SO2": "LPM", "NO2": "", "CO": "", "O3": ""},
+                "unit": "LPM",
+                "confidence": 0.95,
+                "reason": "SO2实测流量0.61 LPM",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "CH2606231782210180137"},
+            "forms": [
+                (
+                    "RF_M_GASEOUSFLOWCHECK",
+                    {
+                        "FLOWRANGSO2": "650±10%ml/min",
+                        "MEASUREDVALUESO2": "0.61",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "SO2实测流量0.61.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/so2.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_monthly_measured_flow_filename_pollutant_filters_misclassified_ocr_key(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"SO2": None, "NO2": None, "CO": None, "O3": None},
+                "measured_values": {"SO2": None, "NO2": None, "CO": None, "O3": 0.52},
+                "display_units": {"SO2": "", "NO2": "", "CO": "", "O3": ""},
+                "measured_units": {"SO2": "", "NO2": "", "CO": "", "O3": "LPM"},
+                "unit": "LPM",
+                "confidence": 0.95,
+                "reason": "模型误把NO实测照片归入O3",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "CH2606231782210180137"},
+            "forms": [
+                (
+                    "RF_M_GASEOUSFLOWCHECK",
+                    {
+                        "FLOWRANGNO2": "500±10%ml/min",
+                        "MEASUREDVALUENO2": "0.52",
+                        "FLOWRANGO3": "800±10%ml/min",
+                        "MEASUREDVALUEO3": "0.85",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "NO实测流量0.52.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/no.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_flow_visual_watermark_single_point_date_does_not_add_issue(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        assert "watermark_date" in prompt
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"SO2": None, "NO2": None, "CO": None, "O3": None},
+                "measured_values": {"SO2": 0.61, "NO2": None, "CO": None, "O3": None},
+                "display_units": {"SO2": "", "NO2": "", "CO": "", "O3": ""},
+                "measured_units": {"SO2": "LPM", "NO2": "", "CO": "", "O3": ""},
+                "unit": "LPM",
+                "watermark_datetime": "2026-06-22 09:10:00",
+                "watermark_date": "2026-06-22",
+                "watermark_time": "09:10:00",
+                "watermark_text": "2026-06-22 09:10 丰顺八乡山",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+                "reason": "SO2实测流量0.61 LPM，水印日期清晰",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {
+                "WORKINGORDERCODE": "WO-WATERMARK",
+                "CREATETIME": "2026-06-23 08:00:00",
+                "FINISHTIME": "2026-06-23 11:00:00",
+            },
+            "forms": [
+                (
+                    "RF_M_GASEOUSFLOWCHECK",
+                    {
+                        "CHECKDATE": "2026-06-23 09:00:00",
+                        "MEASUREDVALUESO2": "0.61",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "SO2实测流量0.61.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/so2.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert not any(issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH" for issue in issues)
+
+
+def test_flow_visual_watermark_ignores_order_time_when_rf_operation_time_missing(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_gas_flow_panel_photo": True,
+                "display_values": {"SO2": None, "NO2": None, "CO": None, "O3": None},
+                "measured_values": {"SO2": 0.61, "NO2": None, "CO": None, "O3": None},
+                "measured_units": {"SO2": "LPM"},
+                "unit": "LPM",
+                "watermark_datetime": "2026-06-22 09:10:00",
+                "watermark_date": "2026-06-22",
+                "watermark_time": "09:10:00",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {
+                "WORKINGORDERCODE": "WO-WATERMARK-NO-RF-TIME",
+                "CREATETIME": "2026-06-23 08:00:00",
+                "FINISHTIME": "2026-06-23 11:00:00",
+            },
+            "forms": [("RF_M_GASEOUSFLOWCHECK", {"MEASUREDVALUESO2": "0.61"})],
+            "item": {
+                "filename": "SO2实测流量0.61.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_M_GASEOUSFLOWCHECK/so2.jpg",
+                "typecode": "RF_M_GASEOUSFLOWCHECK",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert not any(issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH" for issue in issues)
+
+
+def test_flow_visual_watermark_single_point_time_does_not_add_issue(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_flow_calibration_photo": True,
+                "before_flow": 16.7,
+                "after_flow": None,
+                "unit": "L/min",
+                "watermark_datetime": "2026-06-23 14:30:00",
+                "watermark_date": "2026-06-23",
+                "watermark_time": "14:30:00",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-WATERMARK-TIME"},
+            "forms": [
+                (
+                    "RF_TW_PmFlowCalibrate",
+                    {
+                        "CHECKDATE": "2026-06-23 09:00:00",
+                        "Prev_A": "16.7",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM10流量校准前.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_TW_PmFlowCalibrate/pm10.jpg",
+                "typecode": "RF_TW_PmFlowCalibrate",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert not any(issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH" for issue in issues)
+
+
+def test_flow_visual_watermark_rf_createdate_does_not_add_issue(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_flow_calibration_photo": True,
+                "before_flow": 16.7,
+                "unit": "L/min",
+                "watermark_datetime": "2026-06-23 14:30:00",
+                "watermark_date": "2026-06-23",
+                "watermark_time": "14:30:00",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-WATERMARK-CREATEDATE"},
+            "forms": [
+                (
+                    "RF_TW_PmFlowCalibrate",
+                    {
+                        "CHECKDATE": "2026-06-23 09:00:00",
+                        "CREATEDATE": "2026-06-23 14:40:00",
+                        "Prev_A": "16.7",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM10流量校准前.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_TW_PmFlowCalibrate/pm10.jpg",
+                "typecode": "RF_TW_PmFlowCalibrate",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert not any(issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH" for issue in issues)
+
+
+def test_flow_visual_watermark_matches_checkdate_date_and_window_clock(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_flow_calibration_photo": True,
+                "before_flow": 16.67,
+                "unit": "L/min",
+                "watermark_datetime": "2026-06-23 11:14:00",
+                "watermark_date": "2026-06-23",
+                "watermark_time": "11:14:00",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "CH2606231782157230018"},
+            "forms": [
+                (
+                    "RF_TW_PmFlowCalibrate",
+                    {
+                        "CHECKDATE": "2026-06-23 11:13:00",
+                        "CheckSdt": "06 26 2026 11:13AM",
+                        "CheckEdt": "06 26 2026 11:27AM",
+                        "Prev_A": "16.68",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM10流量检查(仪器示值).jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_TW_PmFlowCalibratePM10/pm10.jpg",
+                "typecode": "RF_TW_PmFlowCalibratePM10",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert not any(issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH" for issue in issues)
+
+
+def test_flow_visual_watermark_date_mismatch_adds_issue_even_when_clock_inside_window(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_flow_calibration_photo": True,
+                "before_flow": 16.7,
+                "unit": "L/min",
+                "watermark_datetime": "2026-06-22 11:14:00",
+                "watermark_date": "2026-06-22",
+                "watermark_time": "11:14:00",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-WATERMARK-DATE"},
+            "forms": [
+                (
+                    "RF_TW_PmFlowCalibrate",
+                    {
+                        "CHECKDATE": "2026-06-23 11:13:00",
+                        "CheckSdt": "06 26 2026 11:13AM",
+                        "CheckEdt": "06 26 2026 11:27AM",
+                        "Prev_A": "16.7",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM10流量校准前.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_TW_PmFlowCalibratePM10/pm10.jpg",
+                "typecode": "RF_TW_PmFlowCalibratePM10",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    watermark_issues = [
+        issue for issue in issues if issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH"
+    ]
+    assert len(watermark_issues) == 1
+    evidence = json.loads(watermark_issues[0].evidence)
+    assert evidence["mismatch_level"] == "date"
+    assert evidence["check_date"] == "2026-06-23"
+
+
+def test_flow_visual_watermark_window_requires_time_inside_range(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_flow_calibration_photo": True,
+                "before_flow": 16.7,
+                "unit": "L/min",
+                "watermark_datetime": "2026-06-23 11:00:00",
+                "watermark_date": "2026-06-23",
+                "watermark_time": "11:00:00",
+                "watermark_confidence": 0.96,
+                "confidence": 0.95,
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {"WORKINGORDERCODE": "WO-WATERMARK-WINDOW"},
+            "forms": [
+                (
+                    "RF_TW_PmFlowCalibrate",
+                    {
+                        "CHECKDATE": "2026-06-23 10:14:00",
+                        "CheckSdt": "06 23 2026 10:00AM",
+                        "CheckEdt": "06 23 2026 10:30AM",
+                        "Prev_A": "16.7",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM10流量校准前.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_TW_PmFlowCalibrate/pm10.jpg",
+                "typecode": "RF_TW_PmFlowCalibrate",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    watermark_issues = [
+        issue for issue in issues if issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH"
+    ]
+    assert len(watermark_issues) == 1
+    evidence = json.loads(watermark_issues[0].evidence)
+    assert evidence["mismatch_level"] == "time_window"
+    assert evidence["nearest_delta_minutes"] == 30
+
+
+def test_flow_visual_watermark_low_confidence_does_not_add_issue(monkeypatch):
+    def fake_extract_attachment_json(source, *, provider, task, prompt):
+        return {
+            "status": "success",
+            "data": {
+                "is_flow_calibration_photo": True,
+                "before_flow": 16.7,
+                "after_flow": None,
+                "unit": "L/min",
+                "watermark_date": "2026-06-22",
+                "watermark_confidence": 0.5,
+                "confidence": 0.95,
+                "reason": "水印模糊",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_extract_attachment_json)
+
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "task_type": "flow_visual",
+            "order": {
+                "WORKINGORDERCODE": "WO-WATERMARK-LOW",
+                "FINISHTIME": "2026-06-23 11:00:00",
+            },
+            "forms": [
+                (
+                    "RF_TW_PmFlowCalibrate",
+                    {
+                        "CHECKDATE": "2026-06-23 09:00:00",
+                        "Prev_A": "16.7",
+                    },
+                )
+            ],
+            "item": {
+                "filename": "PM10流量校准前.jpg",
+                "source_path": "/WebFiles/NewFiles/Check/RF_TW_PmFlowCalibrate/pm10.jpg",
+                "typecode": "RF_TW_PmFlowCalibrate",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert not any(issue.rule_id == "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH" for issue in issues)

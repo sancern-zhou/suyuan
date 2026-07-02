@@ -2,6 +2,7 @@ import pytest
 
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
+    ToolCallArgumentsError,
     convert_anthropic_messages_to_chat,
     convert_anthropic_tools_to_chat,
     convert_chat_response_to_anthropic,
@@ -235,3 +236,81 @@ def test_stream_adapter_converts_reasoning_text_and_tool_call_events():
         },
     }
     assert events[-1] == {"type": "message_stop", "data": {}}
+
+
+def test_stream_adapter_does_not_treat_pseudo_tool_markup_as_tool_call():
+    adapter = ChatCompletionsStreamAdapter(model="glm-4.7")
+
+    events = []
+    events.extend(
+        adapter.feed_chunk(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "reasoning_content": (
+                                "create_report_chart</arg_value>"
+                                "<arg_key>chart_type</arg_key>"
+                            )
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    events.extend(
+        adapter.feed_chunk(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": "<tool_call>{bad}</tool_call>"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+            }
+        )
+    )
+    events.extend(adapter.finish())
+
+    block_starts = [
+        event["data"]["block"].type
+        for event in events
+        if event["type"] == "content_block_start"
+    ]
+    assert block_starts == ["thinking", "text"]
+    assert all(block_type != "tool_use" for block_type in block_starts)
+    assert events[-2]["data"]["stop_reason"] == "end_turn"
+
+
+def test_stream_adapter_raises_when_tool_call_arguments_remain_malformed_at_finish():
+    adapter = ChatCompletionsStreamAdapter(model="glm-4.7")
+
+    adapter.feed_chunk(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_bad",
+                                "type": "function",
+                                "function": {
+                                    "name": "create_report_chart",
+                                    "arguments": "{",
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(ToolCallArgumentsError) as exc_info:
+        adapter.finish()
+
+    assert exc_info.value.tool_name == "create_report_chart"
+    assert exc_info.value.tool_call_id == "call_bad"

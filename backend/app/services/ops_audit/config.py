@@ -469,6 +469,10 @@ DEFAULT_SEMANTIC_REVIEW_PROFILES = {
     ],
     "value_tolerance": 0.05,
     "min_ocr_text_length": 8,
+    "flow_visual_enabled_rule_ids": [
+        "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
+        "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+    ],
 }
 
 DEFAULT_RULE_REVIEW_STAGES = {

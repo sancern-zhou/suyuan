@@ -149,6 +149,12 @@ rules:
     default_severity: 高
     scope: RF_M_GASEOUSFLOWCHECK/气体流量检查测量值照片
     rationale: 通过多模态识别读取外接流量计或质量流量计测量值，并与表单 MEASUREDVALUE* 字段比对；支持 LPM/L/min 与 ml/min/cc/min 的单位换算。
+  - rule_id: ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH
+    name: 流量照片水印时间与工单时间不一致
+    category: 附件时间一致性
+    default_severity: 中
+    scope: RF_TW_PmFlowCalibrate/RF_M_GASEOUSFLOWCHECK/流量照片水印
+    rationale: 在已执行流量照片视觉识别时同步提取照片水印日期，并与 RF 检查日期、工单创建/完成时间比对；仅在高置信水印日期明显不一致时判定为问题。
   - rule_id: ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH
     name: 颗粒物校准膜照片读数与表单值不一致
     category: 附件读数一致性
