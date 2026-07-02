@@ -77,11 +77,25 @@ class OpenAICompatibleTenderLLMClient:
     ) -> dict[str, TenderFilterDecision]:
         prompt = self._candidate_batch_prompt(candidates, rule_decision)
         data = await self._json_chat(prompt)
-        rows = data.get("decisions", []) if isinstance(data, dict) else []
         decisions: dict[str, TenderFilterDecision] = {}
         candidate_by_index = {
             index + 1: candidate for index, candidate in enumerate(candidates)
         }
+        keep_indexes = self._keep_indexes_from_batch_response(data)
+        if keep_indexes is not None:
+            for index in keep_indexes:
+                candidate = candidate_by_index.get(index)
+                if candidate is None:
+                    continue
+                decisions[candidate.normalized_url_key()] = TenderFilterDecision(
+                    is_relevant=True,
+                    reason="LLM初筛命中环境业务公告",
+                    confidence=0.8,
+                    decision_source="llm",
+                )
+            return decisions
+
+        rows = data.get("decisions", []) if isinstance(data, dict) else []
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -100,6 +114,21 @@ class OpenAICompatibleTenderLLMClient:
                 project_category=row.get("project_category"),
             )
         return decisions
+
+    def _keep_indexes_from_batch_response(self, data: Any) -> list[int] | None:
+        raw_keep = data
+        if isinstance(data, dict):
+            raw_keep = data.get("keep")
+        if not isinstance(raw_keep, list):
+            return None
+
+        keep: list[int] = []
+        for value in raw_keep:
+            try:
+                keep.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return keep
 
     async def extract_notice(
         self,
@@ -319,7 +348,7 @@ class OpenAICompatibleTenderLLMClient:
     ) -> str:
         return json.dumps(
             {
-                "task": "批量判断招投标候选项目是否属于环境业务项目。请逐条基于标题、列表摘要和公告语境进行语义判断，不要依赖固定关键词匹配。",
+                "task": "批量判断招投标候选项目是否属于环境业务项目。只返回需要进入详情页复核的候选序号，不要输出原因、置信度、分类或未命中项目。",
                 "include_when": [
                     "项目实质内容服务于环境监测、污染治理、生态环境分区管控、排污口治理、环境咨询评估、生态环境执法支撑、环保设施设备或环境数据能力建设。",
                     "采购单位不是生态环境部门，但项目本身明确属于环境治理、环境监测、环保咨询或污染防治业务。",
@@ -331,29 +360,15 @@ class OpenAICompatibleTenderLLMClient:
                 ],
                 "candidates": [
                     {
-                        "index": index + 1,
-                        "title": candidate.title,
-                        "url": candidate.url,
-                        "notice_type": candidate.notice_type.value,
-                        "raw_list_text": candidate.raw_list_text,
+                        "i": index + 1,
+                        "t": candidate.title,
+                        "n": candidate.notice_type.value,
+                        "x": candidate.raw_list_text[:200],
                     }
                     for index, candidate in enumerate(candidates)
                 ],
-                "prior_decision": {
-                    "is_relevant": rule_decision.is_relevant,
-                    "reason": rule_decision.reason,
-                    "confidence": rule_decision.confidence,
-                },
                 "output_schema": {
-                    "decisions": [
-                        {
-                            "index": "number",
-                            "is_relevant": "boolean",
-                            "reason": "string",
-                            "confidence": "number between 0 and 1",
-                            "project_category": "environment_monitoring|pollution_control|environment_consulting|law_enforcement_support|other|null",
-                        }
-                    ]
+                    "keep": ["number"],
                 },
             },
             ensure_ascii=False,

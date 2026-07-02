@@ -1,7 +1,9 @@
+import asyncio
 from datetime import date
 
 import pytest
 
+from app.services.tenders.pipeline import TenderPipeline
 from app.services.tenders.config import (
     DEFAULT_TENDER_KEYWORDS,
     TenderFetcherConfig,
@@ -9,7 +11,7 @@ from app.services.tenders.config import (
     parse_keywords,
     parse_notice_types,
 )
-from app.services.tenders.models import NoticeType
+from app.services.tenders.models import NoticeType, PipelineRunResult, TenderCandidate
 
 
 def test_default_config_uses_approved_daily_scope():
@@ -43,3 +45,27 @@ def test_parse_notice_types_rejects_unknown_values():
 
 def test_default_target_date_uses_previous_day():
     assert default_target_date(today=date(2026, 7, 1)) == date(2026, 6, 30)
+
+
+def test_default_llm_candidate_batch_size_is_50(monkeypatch):
+    monkeypatch.delenv("TENDER_LLM_BATCH_SIZE", raising=False)
+    batch_sizes = []
+
+    class BatchRecordingLLM:
+        async def review_candidates(self, candidates, rule_decision):
+            batch_sizes.append(len(candidates))
+            return {}
+
+    pipeline = TenderPipeline(
+        client=object(),
+        repository=object(),
+        llm_client=BatchRecordingLLM(),
+    )
+    candidates = [
+        TenderCandidate(title=f"候选{i}", url=f"https://example.test/{i}")
+        for i in range(51)
+    ]
+
+    asyncio.run(pipeline._initial_decisions(candidates, PipelineRunResult()))
+
+    assert batch_sizes == [50, 1]
