@@ -151,6 +151,13 @@ OPS_SQL_TABLES = [
 ]
 
 
+TENDER_SQL_TABLES = [
+    'tender_notices',
+    'tender_candidates',
+    'tender_fetch_runs',
+]
+
+
 class BaseSQLQueryTool(LLMTool):
     """
     通用SQL执行工具
@@ -907,5 +914,36 @@ class ExecuteOpsSQLQueryTool(BaseSQLQueryTool):
             schema_description=schema_description,
             allowed_tables=OPS_SQL_TABLES,
             default_database="AirPollutionAnalysis",
+            allow_information_schema_sql=False,
+        )
+
+
+class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
+    """助手模式招投标数据专用SQL查询工具。"""
+
+    def __init__(self):
+        schema_description = (
+            "招投标数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
+            "用于助手模式查询已抓取、初筛、详情清洗并入库的招标公告和中标公告。"
+            "只能查询下方列出的招投标白名单表；禁止查询其他业务库表。"
+            "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
+            "SQL Server语法：中文字符串必须加N前缀，如 N'生态环境局'；分页/限制用TOP，不支持LIMIT。"
+            "database默认为XcAiDb。"
+            "\n\n常用表说明："
+            "\n- tender_notices：清洗后的目标公告详情表，包含title、notice_type、project_name、purchaser、agency、winning_bidder、budget_amount、winning_amount、province、city、publish_date、summary、raw_content等字段。"
+            "\n- tender_candidates：列表页候选公告表，包含title、url、notice_type、keyword、publish_date、filter_status、filter_reason、filter_confidence、decision_source等字段。"
+            "\n- tender_fetch_runs：每日抓取运行记录，包含target_date、keywords_json、notice_types_json、total_candidates、duplicate_candidates、filtered_out、detail_fetch_failures、saved_notices、status、started_at、finished_at等字段。"
+            "\n\n常见查询："
+            "\n- 昨天入库公告：SELECT TOP 50 title, notice_type, purchaser, publish_date FROM tender_notices WHERE publish_date = '2026-07-01' ORDER BY id DESC"
+            "\n- 最近运行情况：SELECT TOP 10 * FROM tender_fetch_runs ORDER BY started_at DESC"
+            "\n- 初筛统计：SELECT filter_status, COUNT(*) AS cnt FROM tender_candidates WHERE publish_date = '2026-07-01' GROUP BY filter_status"
+            "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
+        )
+        super().__init__(
+            tool_name="execute_tender_sql_query",
+            tool_description="Execute tender information SQL queries on SQL Server database or get table structure",
+            schema_description=schema_description,
+            allowed_tables=TENDER_SQL_TABLES,
+            default_database="XcAiDb",
             allow_information_schema_sql=False,
         )
