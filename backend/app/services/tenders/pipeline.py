@@ -203,7 +203,7 @@ class TenderPipeline:
         review_candidates = getattr(self.llm_client, "review_candidates", None)
         if review_candidates is None:
             return {}
-        batch_size = max(1, int(os.getenv("TENDER_LLM_BATCH_SIZE", "20")))
+        batch_size = max(1, int(os.getenv("TENDER_LLM_BATCH_SIZE", "50")))
         batch_delay_ms = int(os.getenv("TENDER_LLM_BATCH_DELAY_MS", "0"))
         decisions: dict[str, TenderFilterDecision] = {}
         for start in range(0, len(candidates), batch_size):
@@ -213,6 +213,15 @@ class TenderPipeline:
                     batch, self._pending_llm_decision()
                 )
                 decisions.update(batch_decisions)
+                for candidate in batch:
+                    key = candidate.normalized_url_key()
+                    if key not in batch_decisions:
+                        decisions[key] = TenderFilterDecision(
+                            is_relevant=False,
+                            reason="LLM初筛未命中环境业务公告",
+                            confidence=0.8,
+                            decision_source="llm",
+                        )
             except Exception as exc:
                 logger.exception("candidate batch review failed")
                 result.errors.append(
