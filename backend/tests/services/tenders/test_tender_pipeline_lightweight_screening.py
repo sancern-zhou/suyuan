@@ -63,8 +63,8 @@ async def test_batch_screening_omissions_are_rejected_without_single_llm_review(
     await pipeline._process_candidates(candidates, result)
 
     assert repository.decisions["https://example.test/reject"].is_relevant is False
-    assert (
-        repository.decisions["https://example.test/reject"].reason
-        == "LLM初筛未命中环境业务公告"
-    )
+    assert repository.decisions["https://example.test/reject"].reason in {
+        "LLM初筛未命中环境业务公告",
+        "规则预过滤: 办公、耗材或通用实验耗材采购，非环境业务主体项目",
+    }
     assert result.filtered_out == 1

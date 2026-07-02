@@ -130,7 +130,8 @@ class TenderInformationFetcher(DataFetcher):
             [
                 (primary, settings.tender_llm_concurrency),
                 (secondary, settings.tender_secondary_llm_concurrency),
-            ]
+            ],
+            screening_client_index=1,
         )
 
     def _config_from_settings(self) -> TenderFetcherConfig:

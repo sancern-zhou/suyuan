@@ -135,9 +135,84 @@ class TenderRelevanceFilter:
     )
     min_positive_hits: int = 1
 
+    def prefilter_decision(
+        self, candidate: TenderCandidate
+    ) -> TenderFilterDecision | None:
+        title = self._normalize(candidate.title)
+        raw_text = self._normalize(candidate.raw_list_text)
+        combined = title + raw_text
+
+        patterns = [
+            ("行政审批、公示或环评批准信息，不属于招投标采购项目", [
+                r"环境影响.*报告.*审批",
+                r"环境影响.*报告.*批准",
+                r"环境影响评价文件审批",
+                r"环评.*审批",
+                r"审批.*公示",
+                r"受理公示",
+                r"已批准公告",
+                r"拟批准.*公示",
+            ]),
+            ("网上超市或合同履约验收公告，非目标招投标公告", [
+                r"网上超市",
+                r"合同履约验收",
+                r"定点采购",
+                r"定点议价",
+                r"服务市场采购",
+            ]),
+            ("采购意向信息，不属于正式招标公告或中标公告", [
+                r"采购意向",
+                r"政府采购意向",
+            ]),
+            ("招标代理或采购代理服务，非环境业务主体项目", [
+                r"招标代理",
+                r"采购代理",
+                r"选取.*代理",
+                r"招募.*代理",
+            ]),
+            ("印刷、宣传或广告服务，非环境业务主体项目", [
+                r"印刷",
+                r"宣传品",
+                r"宣传服务",
+                r"广告",
+            ]),
+            ("车辆或用车保障服务，非环境业务主体项目", [
+                r"业务用车",
+                r"车辆保障",
+                r"车辆维修",
+                r"车辆保险",
+                r"租车",
+            ]),
+            ("办公、耗材或通用实验耗材采购，非环境业务主体项目", [
+                r"办公",
+                r"复印",
+                r"打印",
+                r"耗材",
+                r"试管",
+                r"试剂",
+                r"滴定剂",
+                r"指示剂",
+                r"显色剂",
+                r"标准物质",
+            ]),
+        ]
+        for reason, regexes in patterns:
+            if any(re.search(pattern, combined, re.IGNORECASE) for pattern in regexes):
+                return TenderFilterDecision(
+                    is_relevant=False,
+                    reason=f"规则预过滤: {reason}",
+                    confidence=0.95,
+                    decision_source="rules",
+                )
+        return None
+
     def decide(
         self, candidate: TenderCandidate, detail_text: str = ""
     ) -> TenderFilterDecision:
+        prefilter_decision = self.prefilter_decision(candidate)
+        if prefilter_decision is not None:
+            return prefilter_decision
+
         title_text = self._normalize(candidate.title)
         text = self._normalize(
             " ".join([candidate.title, candidate.raw_list_text, detail_text])

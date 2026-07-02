@@ -108,10 +108,13 @@ async def test_llm_pool_limits_each_client_concurrency():
 
 
 @pytest.mark.asyncio
-async def test_llm_pool_uses_primary_for_batch_screening():
+async def test_llm_pool_uses_configured_screening_client_for_batch_screening():
     primary = RecordingLLM("primary")
     secondary = RecordingLLM("secondary")
-    pool = TenderLLMClientPool([(primary, 5), (secondary, 5)])
+    pool = TenderLLMClientPool(
+        [(primary, 5), (secondary, 5)],
+        screening_client_index=1,
+    )
     candidates = [
         TenderCandidate(title="环境监测服务", url="https://example.test/1")
     ]
@@ -121,5 +124,5 @@ async def test_llm_pool_uses_primary_for_batch_screening():
         TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
     )
 
-    assert decisions["https://example.test/1"].decision_source == "primary"
-    assert secondary.reviewed == []
+    assert decisions["https://example.test/1"].decision_source == "secondary"
+    assert primary.reviewed == []
