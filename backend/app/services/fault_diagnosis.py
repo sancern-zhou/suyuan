@@ -108,6 +108,8 @@ class FaultDiagnosisService:
         event_id = str(conclusion.get("event_id") or event.get("event_id") or "")
         time_range = dict(conclusion.get("time_range") or event.get("time_range") or {})
         cause = self._ranked_cause(reason_codes, evidence_pack)
+        affected_stations = self._affected_stations(evidence_pack)
+        event_context = self._event_context(evidence_pack, affected_stations)
         created_at = datetime.now(TZ_SHANGHAI).isoformat()
         return {
             "schema_version": "fault_diagnosis/v1",
@@ -115,10 +117,12 @@ class FaultDiagnosisService:
             "event_id": event_id,
             "diagnosis_status": "completed",
             "diagnosis_window": time_range,
+            "event_context": event_context,
+            "affected_stations": affected_stations,
             "cognitive_map": cognitive_guidance,
             "most_likely_causes": [cause],
             "queried_data": self._queried_data(evidence_pack, cognitive_guidance),
-            "summary": self._diagnosis_summary(cause),
+            "summary": self._diagnosis_summary(cause, affected_stations),
             "created_at": created_at,
         }
 
@@ -145,6 +149,7 @@ class FaultDiagnosisService:
     def _ranked_cause(self, reason_codes: list[str], evidence_pack: dict[str, Any]) -> dict[str, Any]:
         codes = set(reason_codes)
         supporting: list[str] = []
+        contradicting: list[str] = []
         missing: list[str] = []
         cause = "站点数据链路异常"
         cause_type = "data_quality"
@@ -163,6 +168,11 @@ class FaultDiagnosisService:
             missing.append("分钟级原始数据、数采状态、仪器运行状态和近期质控记录")
             action = "优先核查分钟级原始数据、数采链路刷新状态、仪器运行状态和同期质控记录。"
         if "single_station_dominant" in codes:
+            if codes <= {"single_station_dominant", "weather_missing"}:
+                cause = "单站局地影响或数据链路异常待复核"
+                cause_type = "needs_review"
+                missing.append("分钟级原始数据、数采状态、仪器运行状态、站点周边局地源和近期运维记录")
+                action = "先复核同城站点时序和站点周边局地源，再核查分钟级原始数据、数采状态和仪器运行状态。"
             supporting.append("污染事件由单站或少数站点主导")
         if "peer_trend_inconsistent" in codes:
             supporting.append("同城站点未出现同步变化")
@@ -172,18 +182,27 @@ class FaultDiagnosisService:
             supporting.append("NO2 与 O3 关系不符合常见反向变化特征")
             missing.append("气态分析仪校准、零跨检查和质控记录")
             action = "核查气态分析仪状态、校准记录、零跨检查和采样系统。"
+        if "multi_station_coherent" in codes:
+            contradicting.append("同城多站点存在一致变化，削弱单站设备故障判断")
+        if "pm_cochange_supported" in codes:
+            contradicting.append("PM2.5 与 PM10 协同变化较强，支持真实颗粒物过程")
+        if "no2_o3_inverse_supported" in codes:
+            contradicting.append("NO2 与 O3 关系符合常见反向变化特征")
+        if "meteorology_supports_pollution" in codes or "regional_signal_coherent" in codes:
+            contradicting.append("气象或区域一致性支持真实污染过程")
 
         if not supporting:
             supporting.append("一级结论已标记为疑似设备或数据故障")
         if not missing:
             missing.append("近期运维工单、质控记录和设备状态")
 
+        confidence = "medium" if len(supporting) >= 2 and not contradicting else "low"
         return {
             "cause": cause,
             "cause_type": cause_type,
-            "confidence": "medium" if len(supporting) >= 2 else "low",
+            "confidence": confidence,
             "supporting_evidence": supporting,
-            "contradicting_evidence": [],
+            "contradicting_evidence": contradicting,
             "missing_evidence": missing,
             "recommended_action": action,
         }
@@ -215,8 +234,42 @@ class FaultDiagnosisService:
             hints.extend(signal.get("dominant_station_names") or [])
         return [str(hint) for hint in hints if hint]
 
-    def _diagnosis_summary(self, cause: dict[str, Any]) -> str:
-        return f"疑似故障首要原因：{cause['cause']}；建议：{cause['recommended_action']}"
+    def _affected_stations(self, evidence_pack: dict[str, Any]) -> list[dict[str, Any]]:
+        event_summary = evidence_pack.get("event_summary") if isinstance(evidence_pack.get("event_summary"), dict) else {}
+        signal = evidence_pack.get("observed_signal_summary") if isinstance(evidence_pack.get("observed_signal_summary"), dict) else {}
+        station_peaks = event_summary.get("station_peaks") or signal.get("top_station_peaks") or []
+        if not isinstance(station_peaks, list):
+            return []
+        stations: list[dict[str, Any]] = []
+        for item in station_peaks[:8]:
+            if not isinstance(item, dict):
+                continue
+            stations.append(
+                {
+                    "station_name": item.get("station_name") or item.get("name") or "",
+                    "peak_value": item.get("peak_value"),
+                    "unit": item.get("unit") or "",
+                    "peak_time": item.get("timestamp") or item.get("peak_time") or "",
+                    "station_type": item.get("station_type") or "",
+                }
+            )
+        return [station for station in stations if station["station_name"]]
+
+    def _event_context(self, evidence_pack: dict[str, Any], affected_stations: list[dict[str, Any]]) -> dict[str, Any]:
+        event = evidence_pack.get("event") if isinstance(evidence_pack.get("event"), dict) else {}
+        event_summary = evidence_pack.get("event_summary") if isinstance(evidence_pack.get("event_summary"), dict) else {}
+        return {
+            "city": evidence_pack.get("city") or event.get("city") or "",
+            "main_pollutant": event.get("main_pollutant") or event_summary.get("main_pollutant") or "",
+            "city_peak": event_summary.get("city_peak") if isinstance(event_summary.get("city_peak"), dict) else {},
+            "top_station_names": [station["station_name"] for station in affected_stations[:5]],
+            "station_count_in_evidence": len(affected_stations),
+        }
+
+    def _diagnosis_summary(self, cause: dict[str, Any], affected_stations: list[dict[str, Any]] | None = None) -> str:
+        station_names = [station.get("station_name") for station in (affected_stations or [])[:3] if station.get("station_name")]
+        station_text = f"；重点站点：{'、'.join(station_names)}" if station_names else ""
+        return f"疑似故障首要原因：{cause['cause']}{station_text}；建议：{cause['recommended_action']}"
 
     def _cognitive_guidance(self, conclusion: dict[str, Any], evidence_pack: dict[str, Any]) -> dict[str, Any]:
         hints = self._entity_hints(conclusion, evidence_pack)
@@ -329,6 +382,13 @@ class FaultDiagnosisService:
         for item in diagnosis.get("most_likely_causes", []):
             lines.append(f"- {item.get('cause')}（置信度：{item.get('confidence')}）")
             lines.append(f"  - 建议：{item.get('recommended_action')}")
+        if diagnosis.get("affected_stations"):
+            lines.extend(["", "## 重点站点", ""])
+            for station in diagnosis.get("affected_stations", [])[:8]:
+                lines.append(
+                    f"- {station.get('station_name')}：峰值 {station.get('peak_value')} {station.get('unit')}"
+                    f"，时间 {station.get('peak_time')}"
+                )
         return "\n".join(lines) + "\n"
 
     def _read_json(self, path: Path) -> dict[str, Any]:

@@ -139,7 +139,7 @@ class PollutionEventConclusionService:
 
         if quality_gate.get("status") in {"failed", "limited"} or self._as_int(quality_gate.get("high_issue_count")):
             codes.append("quality_gate_limited")
-        if self._has_main_pollutant_constant_issue(main_pollutant, quality_gate, data_quality):
+        if self._has_main_pollutant_constant_issue(main_pollutant, quality_gate, data_quality, event, pack):
             codes.append("main_pollutant_constant_streak")
         if self._has_issue_type(quality_gate, data_quality, "weather_missing"):
             codes.append("weather_missing")
@@ -156,10 +156,8 @@ class PollutionEventConclusionService:
     def _classification(self, reason_codes: list[str]) -> EventConclusionClassification:
         codes = set(reason_codes)
         fault = {
-            "single_station_dominant",
             "peer_trend_inconsistent",
             "pm_cochange_weak",
-            "no2_o3_pattern_weak",
             "main_pollutant_constant_streak",
         }
         normal = {
@@ -175,6 +173,8 @@ class PollutionEventConclusionService:
             return EventConclusionClassification.SUSPECTED_DEVICE_OR_DATA_FAULT
         if codes & normal:
             return EventConclusionClassification.NORMAL_POLLUTION
+        if "no2_o3_pattern_weak" in codes:
+            return EventConclusionClassification.INSUFFICIENT_EVIDENCE
         return EventConclusionClassification.INSUFFICIENT_EVIDENCE
 
     def _confidence(self, classification: EventConclusionClassification, reason_codes: list[str]) -> str:
@@ -258,15 +258,70 @@ class PollutionEventConclusionService:
         main_pollutant: str,
         quality_gate: dict[str, Any],
         data_quality: dict[str, Any],
+        event: dict[str, Any],
+        pack: dict[str, Any],
     ) -> bool:
         if not main_pollutant:
             return False
-        for issue in self._quality_issues(quality_gate, data_quality):
-            if (
-                issue.get("issue_type") == "long_constant_value"
-                and issue.get("pollutant") == main_pollutant
-            ):
-                return True
+        has_issue = any(
+            issue.get("issue_type") == "long_constant_value"
+            and issue.get("pollutant") == main_pollutant
+            for issue in self._quality_issues(quality_gate, data_quality)
+        )
+        if not has_issue:
+            return False
+        data_files = pack.get("data_files") if isinstance(pack.get("data_files"), dict) else {}
+        city_hour_path = data_files.get("city_hour_monitoring")
+        if not city_hour_path:
+            return True
+        return self._constant_streak_overlaps_event(main_pollutant, city_hour_path, event.get("time_range") or {})
+
+    def _constant_streak_overlaps_event(
+        self,
+        pollutant: str,
+        city_hour_path: Any,
+        time_range: dict[str, Any],
+    ) -> bool:
+        start = self._parse_time(time_range.get("start"))
+        end = self._parse_time(time_range.get("end"))
+        if start is None or end is None:
+            return True
+        try:
+            records = json.loads(Path(str(city_hour_path)).read_text(encoding="utf-8")).get("records", [])
+        except Exception:
+            return True
+        streak: list[datetime] = []
+        previous = object()
+        for record in sorted(records, key=lambda item: str(item.get("timestamp", "")) if isinstance(item, dict) else ""):
+            if not isinstance(record, dict):
+                continue
+            timestamp = self._parse_time(record.get("timestamp"))
+            measurements = record.get("measurements") if isinstance(record.get("measurements"), dict) else record
+            value = measurements.get(pollutant)
+            if timestamp is None or value is None:
+                continue
+            if value == previous:
+                streak.append(timestamp)
+            else:
+                if self._streak_overlaps(streak, start, end):
+                    return True
+                streak = [timestamp]
+                previous = value
+        return self._streak_overlaps(streak, start, end)
+
+    def _streak_overlaps(self, streak: list[datetime], start: datetime, end: datetime) -> bool:
+        if len(streak) < 3:
+            return False
+        return min(streak) <= end and max(streak) >= start
+
+    def _parse_time(self, value: Any) -> datetime | None:
+        if not value:
+            return None
+        text = str(value).replace("T", " ").split("+", 1)[0]
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
         return False
 
     def _has_issue_type(

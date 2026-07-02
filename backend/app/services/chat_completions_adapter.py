@@ -17,6 +17,19 @@ class AttrDict(dict):
             raise AttributeError(key) from exc
 
 
+class ToolCallArgumentsError(ValueError):
+    """Raised when Chat Completions returns malformed tool call arguments."""
+
+    def __init__(self, raw: Any, *, tool_name: str = "", tool_call_id: str = "") -> None:
+        self.raw = raw
+        self.tool_name = tool_name
+        self.tool_call_id = tool_call_id
+        super().__init__(
+            "Invalid tool call arguments JSON"
+            f" for tool '{tool_name or 'unknown'}': {raw}"
+        )
+
+
 def _compact_json(value: Any) -> str:
     return json.dumps(value or {}, ensure_ascii=False, separators=(",", ":"))
 
@@ -148,7 +161,12 @@ def map_finish_reason(finish_reason: Optional[str]) -> Optional[str]:
     }.get(finish_reason, "stop_sequence")
 
 
-def _parse_arguments(raw: Any) -> Dict[str, Any]:
+def _parse_arguments(
+    raw: Any,
+    *,
+    tool_name: str = "",
+    tool_call_id: str = "",
+) -> Dict[str, Any]:
     if raw in (None, ""):
         return {}
     if isinstance(raw, dict):
@@ -156,9 +174,17 @@ def _parse_arguments(raw: Any) -> Dict[str, Any]:
     try:
         parsed = json.loads(str(raw))
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid tool call arguments JSON: {raw}") from exc
+        raise ToolCallArgumentsError(
+            raw,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+        ) from exc
     if not isinstance(parsed, dict):
-        raise ValueError(f"Tool call arguments must decode to object: {raw}")
+        raise ToolCallArgumentsError(
+            raw,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+        )
     return parsed
 
 
@@ -178,12 +204,18 @@ def convert_chat_response_to_anthropic(response: Dict[str, Any]) -> Dict[str, An
 
     for tool_call in message.get("tool_calls") or []:
         function = tool_call.get("function") or {}
+        tool_name = str(function.get("name") or "")
+        tool_call_id = str(tool_call.get("id") or "")
         content_blocks.append(
             AttrDict({
                 "type": "tool_use",
-                "id": str(tool_call.get("id") or ""),
-                "name": str(function.get("name") or ""),
-                "input": _parse_arguments(function.get("arguments")),
+                "id": tool_call_id,
+                "name": tool_name,
+                "input": _parse_arguments(
+                    function.get("arguments"),
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                ),
             })
         )
 
@@ -299,8 +331,12 @@ class ChatCompletionsStreamAdapter:
             if accumulator.emitted:
                 continue
             try:
-                parsed = _parse_arguments(accumulator.arguments)
-            except ValueError:
+                parsed = _parse_arguments(
+                    accumulator.arguments,
+                    tool_name=accumulator.name,
+                    tool_call_id=accumulator.id,
+                )
+            except ToolCallArgumentsError:
                 continue
             events.extend(
                 self._open_block(
@@ -349,6 +385,14 @@ class ChatCompletionsStreamAdapter:
     def finish(self) -> List[Dict[str, Any]]:
         events = self._ensure_message_started()
         events.extend(self._emit_completed_tool_calls())
+        if self.finish_reason == "tool_calls":
+            for accumulator in self.tool_calls.values():
+                if not accumulator.emitted:
+                    _parse_arguments(
+                        accumulator.arguments,
+                        tool_name=accumulator.name,
+                        tool_call_id=accumulator.id,
+                    )
         if self.open_block_index is not None:
             events.append(
                 {"type": "content_block_stop", "data": {"index": self.open_block_index}}

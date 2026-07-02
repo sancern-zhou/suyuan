@@ -177,10 +177,29 @@ def _semantic_item_from_source_issue(
     )
     base["source"] = "semantic_review"
     base["confidence"] = result.get("confidence")
-    semantic_message = _specialized_semantic_source_message(source_issue) or _semantic_problem_description(result)
-    if semantic_message:
-        base["message"] = semantic_message
+    _attach_semantic_supplement(base, result, source_issue)
     return base
+
+
+def _attach_semantic_supplement(
+    item: dict[str, Any],
+    result: dict[str, Any],
+    source_issue: dict[str, Any] | None = None,
+) -> None:
+    semantic_message = (
+        _specialized_semantic_source_message(source_issue)
+        if source_issue is not None
+        else None
+    ) or _semantic_problem_description(result)
+    if semantic_message:
+        item["semantic_message"] = semantic_message
+    item["semantic_conclusion"] = result.get("conclusion")
+    remark_review = result.get("remark_review")
+    if isinstance(remark_review, dict):
+        item["semantic_remark_review"] = remark_review
+    order_description_review = result.get("order_description_review")
+    if isinstance(order_description_review, dict):
+        item["semantic_order_description_review"] = order_description_review
 
 
 def _should_exclude_semantic_source_issue(issue: dict[str, Any]) -> bool:

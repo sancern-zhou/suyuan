@@ -18,7 +18,7 @@ class FaultDiagnosisFetcher(DataFetcher):
         super().__init__(
             name="fault_diagnosis_fetcher",
             description="疑似设备或数据故障污染告警原因诊断",
-            schedule="*/30 * * * *",
+            schedule="10 * * * *",
             version="1.0.0",
         )
         self.output_root = output_root

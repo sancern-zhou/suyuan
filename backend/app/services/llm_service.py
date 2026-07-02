@@ -28,6 +28,7 @@ from app.services.llm_failover import (
 )
 from app.services.chat_completions_adapter import (
     ChatCompletionsStreamAdapter,
+    ToolCallArgumentsError,
     convert_anthropic_messages_to_chat,
     convert_anthropic_tools_to_chat,
     convert_chat_response_to_anthropic,
@@ -2675,23 +2676,32 @@ class LLMService:
         temperature: float,
         system: Optional[str],
         stream: bool,
+        tool_choice: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        converted_tools = convert_anthropic_tools_to_chat(tools)
         payload: Dict[str, Any] = {
             "model": self.model,
-            "messages": convert_anthropic_messages_to_chat(messages, system=system),
+            "messages": convert_anthropic_messages_to_chat(
+                messages,
+                system=system,
+            ),
             "temperature": temperature,
             "stream": stream,
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        converted_tools = convert_anthropic_tools_to_chat(tools)
         if converted_tools:
             payload["tools"] = converted_tools
+            payload["tool_choice"] = tool_choice or "auto"
         if self.provider == "deepseek":
             payload["enable_thinking"] = False
             if stream:
                 payload["stream_options"] = {"include_usage": True}
         return payload
+
+    @staticmethod
+    def _named_tool_choice(tool_name: str) -> Dict[str, Any]:
+        return {"type": "function", "function": {"name": tool_name}}
 
     async def _chat_completions_create(
         self,
@@ -2723,7 +2733,31 @@ class LLMService:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-        return convert_chat_response_to_anthropic(response.json())
+            raw_response = response.json()
+            try:
+                return convert_chat_response_to_anthropic(raw_response)
+            except ToolCallArgumentsError as exc:
+                if not tools or not exc.tool_name:
+                    raise
+                retry_payload = self._build_chat_completions_payload(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                    stream=False,
+                    tool_choice=self._named_tool_choice(exc.tool_name),
+                )
+                logger.warning(
+                    "llm_chat_completions_tool_arguments_retry",
+                    provider=self.provider,
+                    model=self.model,
+                    tool_name=exc.tool_name,
+                    tool_call_id=exc.tool_call_id,
+                )
+                retry_response = await client.post(url, headers=headers, json=retry_payload)
+                retry_response.raise_for_status()
+        return convert_chat_response_to_anthropic(retry_response.json())
 
     async def _chat_completions_stream(
         self,

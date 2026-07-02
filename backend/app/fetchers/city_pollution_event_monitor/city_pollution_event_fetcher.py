@@ -65,7 +65,7 @@ class CityPollutionEventFetcher(DataFetcher):
         super().__init__(
             name="city_pollution_event_fetcher",
             description="城市污染过程自动识别与证据收集",
-            schedule="0 */2 * * *",  # 每2小时运行（匹配数据更新频率，减少API调用）
+            schedule="0 * * * *",  # 每小时整点运行
             version="1.0.0",
         )
 

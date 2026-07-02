@@ -533,10 +533,6 @@ const deleteScheduledTask = async (task) => {
 // ========== 生命周期 ==========
 
 onMounted(() => {
-  if (store.currentMode !== 'query') {
-    store.switchMode('query')
-  }
-
   setupPanelWatchers()
   // 初始化日期
   const today = new Date()
