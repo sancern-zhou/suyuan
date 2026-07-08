@@ -12,7 +12,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.particulate_api_client import get_particulate_api_client
-from app.utils.geo_matcher import get_geo_matcher
+from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
 from app.utils.particulate_token_manager import get_particulate_token_manager
 from config.settings import settings
 
@@ -76,7 +76,7 @@ class GetParticulateComponentsTool(LLMTool):
                 "This tool is designed for PMF source apportionment analysis requiring both "
                 "ionic components (SO₄²⁻, NO₃⁻, NH₄⁺) and carbonaceous species (OC, EC). "
                 "Uses fixed DetectionitemCodes list for standardized component analysis. "
-                "Supports automatic location-to-code mapping using 'locations' parameter."
+                "Use resolve_station_geo to expand cities before calling this tool; this tool only maps station names to codes."
             ),
             "parameters": {
                 "type": "object",
@@ -84,15 +84,15 @@ class GetParticulateComponentsTool(LLMTool):
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Location names (city/station), e.g., ['东莞'], ['广州', '新兴']. Will be auto-mapped to StationCodes."
+                        "description": "Component station names, not city names. Use resolve_station_geo first for city station discovery."
                     },
                     "station": {
                         "type": "string",
-                        "description": "Station name in Chinese, e.g., '东莞', '揭阳', '新兴'. Use 'locations' for automatic mapping instead."
+                        "description": "Component station name in Chinese, e.g., '公园前', '南沙科大'."
                     },
                     "code": {
                         "type": "string",
-                        "description": "Station code, e.g., '1037b', '1042b'. Automatically mapped if 'locations' provided."
+                        "description": "Station code, e.g., '1006b', '1042b'. Automatically mapped if station name is provided."
                     },
                     "start_time": {
                         "type": "string",
@@ -139,24 +139,26 @@ class GetParticulateComponentsTool(LLMTool):
     ) -> Dict[str, Any]:
         """执行PM2.5组分分析查询"""
 
-        # 参数处理：支持 locations 自动映射
         if locations:
-            geo_matcher = get_geo_matcher()
-            station_codes = geo_matcher.stations_to_codes(locations)
-            if not station_codes:
+            station, code = self._resolve_location(locations[0])
+            if not (station and code):
                 return {
                     "success": False,
-                    "error": f"无法将 locations 映射到站点编码: {locations}",
+                    "error": f"无法将组分站点名称映射到站点编码: {locations}。城市请先用 resolve_station_geo 展开。",
                     "locations": locations
                 }
-            # 使用第一个映射的编码
-            code = station_codes[0]
-            # 尝试获取站点名称
-            station = locations[0] if locations else station
+        elif station and not code:
+            station, code = self._resolve_location(station)
+            if not (station and code):
+                return {
+                    "success": False,
+                    "error": "无法将组分站点名称映射到站点编码。城市请先用 resolve_station_geo 展开。",
+                    "station": station,
+                }
         elif not (station and code):
             return {
                 "success": False,
-                "error": "必须提供 locations 参数，或者同时提供 station 和 code 参数"
+                "error": "必须提供具体组分站点名称 station，或同时提供 station 和 code；城市请先用 resolve_station_geo 展开。"
             }
 
         logger.info(
@@ -299,6 +301,18 @@ class GetParticulateComponentsTool(LLMTool):
                 "station": station,
                 "code": code
             }
+
+    def _resolve_location(self, location: str) -> tuple[Union[str, None], Union[str, None]]:
+        """Resolve component station names to codes without city fallback."""
+        geo_matcher = get_particulate_geo_matcher()
+        station = location
+        station = geo_matcher.find_station_by_substring(station) or station
+        try:
+            codes = geo_matcher.stations_to_codes([station])
+        except ValueError:
+            logger.warning("pm25_component_location_mapping_failed", location=location, station=station)
+            return None, None
+        return station, codes[0] if codes else None
 
     def _analyze_quality(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
         """分析数据质量"""

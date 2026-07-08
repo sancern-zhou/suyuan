@@ -41,6 +41,7 @@ class CityPollutionEventFetcher(DataFetcher):
     DEFAULT_OUTPUT_ROOT = None  # 使用默认路径 backend_data_registry/pollution_process_events/
     DEFAULT_FORCE_COLLECT = False
     DEFAULT_INCLUDE_COMPONENTS = True
+    DEFAULT_AUTO_ENHANCE_EVIDENCE = True
 
     def __init__(
         self,
@@ -50,6 +51,10 @@ class CityPollutionEventFetcher(DataFetcher):
         output_root: Path | None = DEFAULT_OUTPUT_ROOT,
         force_collect: bool = DEFAULT_FORCE_COLLECT,
         include_components: bool = DEFAULT_INCLUDE_COMPONENTS,
+        auto_enhance_evidence: bool = DEFAULT_AUTO_ENHANCE_EVIDENCE,
+        include_trajectory: bool = True,
+        include_upwind_enterprises: bool = True,
+        include_component_models: bool = True,
     ):
         """
         初始化城市污染事件抓取器
@@ -61,6 +66,10 @@ class CityPollutionEventFetcher(DataFetcher):
             output_root: 输出目录，默认为 backend_data_registry/pollution_process_events/
             force_collect: 是否强制收集数据（即使没有检测到事件）
             include_components: 是否包含组分数据（PM2.5离子/碳/地壳、VOCs）
+            auto_enhance_evidence: 是否在证据包中自动运行轨迹、上风向企业和组分模型分析
+            include_trajectory: 是否运行后向轨迹分析
+            include_upwind_enterprises: 是否运行高值站点上风向企业筛选
+            include_component_models: 是否按主污染物运行组分模型分析
         """
         super().__init__(
             name="city_pollution_event_fetcher",
@@ -76,6 +85,10 @@ class CityPollutionEventFetcher(DataFetcher):
         self.output_root = output_root
         self.force_collect = force_collect
         self.include_components = include_components
+        self.auto_enhance_evidence = auto_enhance_evidence
+        self.include_trajectory = include_trajectory
+        self.include_upwind_enterprises = include_upwind_enterprises
+        self.include_component_models = include_component_models
 
         logger.info(
             "city_pollution_event_fetcher_initialized",
@@ -84,6 +97,7 @@ class CityPollutionEventFetcher(DataFetcher):
             station_type=self.station_type,
             force_collect=force_collect,
             include_components=include_components,
+            auto_enhance_evidence=auto_enhance_evidence,
         )
 
     async def fetch_and_store(self):
@@ -105,6 +119,10 @@ class CityPollutionEventFetcher(DataFetcher):
                 output_root=self.output_root,
                 force_collect=self.force_collect,
                 include_components=self.include_components,
+                auto_enhance_evidence=self.auto_enhance_evidence,
+                include_trajectory=self.include_trajectory,
+                include_upwind_enterprises=self.include_upwind_enterprises,
+                include_component_models=self.include_component_models,
                 end_time=datetime.now(),
                 session_id=f"fetcher_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             )

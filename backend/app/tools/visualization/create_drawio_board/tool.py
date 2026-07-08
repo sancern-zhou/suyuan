@@ -40,7 +40,10 @@ class CreateDrawioBoardTool(LLMTool):
                     "title": {"type": "string"},
                     "xml": {
                         "type": "string",
-                        "description": "mxCell fragment, mxGraphModel, or mxfile XML for create.",
+                        "description": (
+                            "mxCell fragment, complete mxGraphModel, or standard draw.io mxfile XML for create. "
+                            "A standard mxfile must contain diagram/mxGraphModel/root; do not wrap mxGraphModel directly under mxfile."
+                        ),
                     },
                     "operations": {
                         "type": "array",

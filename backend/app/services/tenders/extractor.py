@@ -315,15 +315,30 @@ def extract_attachment_urls(html: str, base_url: str) -> List[str]:
 def amount_to_wan_yuan(value: str | None) -> Optional[float]:
     if not value:
         return None
-    normalized = value.replace(",", "")
-    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", normalized)
-    if not match:
+    normalized = (
+        value.replace(",", "")
+        .replace("，", ",")
+        .replace("人民币", "")
+        .replace("￥", "")
+        .replace("¥", "")
+    )
+    amounts: list[float] = []
+    for match in re.finditer(
+        r"([0-9]+(?:\.[0-9]+)?)\s*(亿元|亿|万元|万|千元|元)?",
+        normalized,
+    ):
+        amount = float(match.group(1))
+        unit = match.group(2) or ""
+        if unit in {"亿元", "亿"}:
+            amounts.append(amount * 10000)
+        elif unit in {"万元", "万"}:
+            amounts.append(amount)
+        elif unit == "千元":
+            amounts.append(amount / 10)
+        elif unit == "元":
+            amounts.append(amount / 10000)
+        else:
+            amounts.append(amount / 10000 if amount >= 10000 else amount)
+    if not amounts:
         return None
-    amount = float(match.group(1))
-    if "万元" in normalized or "万" in normalized:
-        return amount
-    if "千元" in normalized:
-        return round(amount / 10, 4)
-    if "元" in normalized or "￥" in normalized or "¥" in normalized:
-        return round(amount / 10000, 4)
-    return amount
+    return round(sum(amounts), 4)

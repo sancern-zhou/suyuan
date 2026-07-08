@@ -108,6 +108,7 @@ class TenderInformationFetcher(DataFetcher):
             base_url=settings.qianlima_base_url,
             username=settings.qianlima_username,
             password=settings.qianlima_password,
+            accounts=settings.qianlima_accounts,
             storage_state_path=settings.qianlima_storage_state,
             headless=self.config.qianlima_headless,
         )

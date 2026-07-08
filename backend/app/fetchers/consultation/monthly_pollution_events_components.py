@@ -34,6 +34,7 @@ from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.services.data_registry import data_registry
 from app.fetchers.consultation.field_normalizer import CityDayFieldNormalizer
 from app.fetchers.consultation.output_paths import get_monthly_consultation_dir
+from app.utils.component_station_directory import PM25_DOMAIN, VOCS_DOMAIN, resolve_component_station_names
 
 logger = structlog.get_logger()
 
@@ -396,7 +397,20 @@ class MonthlyPollutionEventsComponents:
             return []
 
         start_time, end_time = self._event_range(event)
-        locations = [event["city"], event["station"]]
+        domain = VOCS_DOMAIN if component_type == "vocs" else PM25_DOMAIN
+        locations = resolve_component_station_names(
+            event["city"],
+            data_domain=domain,
+            station_names=[event.get("station", "")],
+        )
+        if not locations:
+            logger.warning(
+                "component_station_not_configured",
+                city=event.get("city"),
+                station=event.get("station"),
+                component_type=component_type,
+            )
+            return []
 
         async def _run() -> Dict[str, Any]:
             if component_type == "vocs":

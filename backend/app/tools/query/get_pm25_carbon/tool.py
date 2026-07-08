@@ -11,12 +11,56 @@ import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.particulate_api_client import get_particulate_api_client
 from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
-from app.utils.particulate_city_mapper import get_particulate_city_mapper
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
+
+
+def _resolve_station_and_code(
+    *,
+    locations: Union[List[str], None],
+    station: Union[str, None],
+    code: Union[str, None],
+) -> tuple[str | None, str | None, Dict[str, Any] | None]:
+    if locations:
+        station_names = [str(location).strip() for location in locations if str(location).strip()]
+    elif station:
+        station_names = [station.strip()]
+    else:
+        station_names = []
+
+    if station_names:
+        matcher = get_particulate_geo_matcher()
+        try:
+            station_codes = matcher.stations_to_codes(station_names)
+        except ValueError as e:
+            return None, None, {
+                "success": False,
+                "error": (
+                    f"{e} 请先调用 resolve_station_geo 获取城市下辖组分站点，"
+                    "再传入具体站点名称查询。"
+                ),
+                "locations": locations,
+                "station_names": station_names,
+            }
+        if not station_codes:
+            return None, None, {
+                "success": False,
+                "error": f"无法将站点名称映射到组分站点编码: {station_names}",
+                "locations": locations,
+                "station_names": station_names,
+            }
+        return station_names[0], code or station_codes[0], None
+
+    if station and code:
+        return station, code, None
+
+    return None, None, {
+        "success": False,
+        "error": "必须提供具体组分站点名称 station，或同时提供 station 和 code；城市请先用 resolve_station_geo 展开。"
+    }
 
 
 def _filter_mark_fields(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -50,7 +94,7 @@ class GetPM25CarbonTool(LLMTool):
             "name": "get_pm25_carbon",
             "description": (
                 "查询PM2.5碳组分数据（OC/EC），用于PMF源解析和二次有机气溶胶分析。"
-                "需要OC/EC或碳组分数据时优先使用；locations可自动映射站点。"
+                "需要OC/EC或碳组分数据时优先使用；城市下辖组分站点需先用 resolve_station_geo 获取，本工具只查询指定站点。"
             ),
             "parameters": {
                 "type": "object",
@@ -58,15 +102,15 @@ class GetPM25CarbonTool(LLMTool):
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市或站点名称列表，可自动映射站点编码"
+                        "description": "组分站点名称列表，不接受城市名；城市需先用 resolve_station_geo 展开"
                     },
                     "station": {
                         "type": "string",
-                        "description": "中文站点名；优先用locations"
+                        "description": "中文组分站点名，可自动映射站点编码"
                     },
                     "code": {
                         "type": "string",
-                        "description": "站点编码；locations存在时可省略"
+                        "description": "站点编码；传入 station 时可省略"
                     },
                     "start_time": {
                         "type": "string",
@@ -138,59 +182,9 @@ class GetPM25CarbonTool(LLMTool):
                 output=time_granularity
             )
 
-        # 参数处理：支持 locations 自动映射
-        if locations:
-            # 步骤1：城市名→站点名映射（如果是城市名）
-            city_mapper = get_particulate_city_mapper()
-            station_names = []
-
-            for location in locations:
-                # 尝试作为城市名映射到站点名
-                station_name = city_mapper.city_to_station_name(location)
-                if station_name:
-                    # 成功映射：城市→站点
-                    station_names.append(station_name)
-                    logger.info(
-                        "city_mapped_to_station",
-                        city=location,
-                        station=station_name
-                    )
-                else:
-                    # 映射失败，假设本身就是站点名
-                    station_names.append(location)
-                    logger.info(
-                        "location_assumed_as_station",
-                        location=location
-                    )
-
-            # 步骤2：站点名→站点编码映射（使用组分站点映射器）
-            particulate_geo_matcher = get_particulate_geo_matcher()
-            try:
-                station_codes = particulate_geo_matcher.stations_to_codes(station_names)
-            except ValueError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "locations": locations,
-                    "station_names": station_names
-                }
-
-            if not station_codes:
-                return {
-                    "success": False,
-                    "error": f"无法将站点名称映射到组分站点编码: {station_names}（原始输入: {locations}）",
-                    "locations": locations,
-                    "station_names": station_names
-                }
-
-            # 使用第一个映射的编码和站点名
-            code = station_codes[0]
-            station = station_names[0]
-        elif not (station and code):
-            return {
-                "success": False,
-                "error": "必须提供 locations 参数，或者同时提供 station 和 code 参数"
-            }
+        station, code, error = _resolve_station_and_code(locations=locations, station=station, code=code)
+        if error:
+            return error
 
         logger.info(
             "pm25_carbon_query_start",

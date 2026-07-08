@@ -31,30 +31,36 @@ DEFAULT_REFERENCE_DOCX = (
 )
 
 
-BODY_FONT = "仿宋_GB2312"
-BODY_FONT_FALLBACK = "仿宋"
+BODY_FONT = "宋体"
+BODY_FONT_FALLBACK = "宋体"
+WESTERN_FONT = "Times New Roman"
 HEADING_FONT = "黑体"
 TITLE_FONT = "黑体"
 TITLE_FONT_FALLBACK = "黑体"
-SECOND_LEVEL_FONT = "楷体_GB2312"
-SECOND_LEVEL_FONT_FALLBACK = "楷体"
+SECOND_LEVEL_FONT = "黑体"
+SECOND_LEVEL_FONT_FALLBACK = "黑体"
 
-BODY_SIZE_PT = 12
+BODY_SIZE_PT = 14
 TITLE_SIZE_PT = 22
 SUBTITLE_SIZE_PT = 16
 COVER_META_SIZE_PT = 16
-LINE_SPACING_PT = 22
+LINE_SPACING_PT = 14
 COVER_TITLE_LINE_SPACING_PT = 32
 COVER_TITLE_SPACE_BEFORE_PT = 128
 COVER_SUBTITLE_SPACE_AFTER_PT = 18
 COVER_META_SPACE_BEFORE_PT = 255
 
-# 政府公文标题字号规范
+# 正式报告字号规范
 HEADING_LEVEL_1_SIZE_PT = 22  # 二号
 HEADING_LEVEL_2_SIZE_PT = 16  # 三号
-HEADING_LEVEL_3_SIZE_PT = 16  # 三号
+HEADING_LEVEL_3_SIZE_PT = 15  # 小三号
 HEADING_LEVEL_4_SIZE_PT = 14  # 四号
-TOC_TITLE_SIZE_PT = 14  # 四号
+HEADING_LEVEL_5_SIZE_PT = 12  # 小四号
+TOC_TITLE_SIZE_PT = 12  # 小四号
+TOC_ENTRY_SIZE_PT = 12  # 小四号
+TABLE_SIZE_PT = 12  # 小四号
+CAPTION_SIZE_PT = 10.5  # 五号
+HEADING_LINE_PT = 14
 
 
 SKIP_HTML_TAGS = {"script", "style", "meta", "link", "noscript"}
@@ -131,10 +137,15 @@ def set_run_font(
     size_pt: float | None = None,
     bold: bool | None = None,
     color: str | None = None,
+    latin_font: str | None = WESTERN_FONT,
 ) -> None:
     """Set Latin and East Asian font metadata on a run."""
-    run.font.name = font_name
-    run._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), font_name)
+    latin = latin_font or font_name
+    run.font.name = latin
+    r_fonts = run._element.get_or_add_rPr().rFonts
+    r_fonts.set(qn("w:eastAsia"), font_name)
+    r_fonts.set(qn("w:ascii"), latin)
+    r_fonts.set(qn("w:hAnsi"), latin)
     if size_pt is not None:
         run.font.size = Pt(size_pt)
     if bold is not None:
@@ -157,21 +168,40 @@ def set_paragraph_format(
     *,
     alignment=WD_ALIGN_PARAGRAPH.JUSTIFY,
     first_line_indent_chars: float = 2,
-    line_spacing_pt: float = LINE_SPACING_PT,
+    line_spacing_pt: float | None = None,
     space_before_pt: float = 0,
     space_after_pt: float = 0,
+    page_break_before: bool | None = None,
+    keep_with_next: bool | None = None,
+    snap_to_grid: bool = True,
 ) -> None:
     """Apply common government-report paragraph spacing."""
     fmt = paragraph.paragraph_format
     fmt.alignment = alignment
-    fmt.line_spacing = Pt(line_spacing_pt)
+    if line_spacing_pt is None:
+        fmt.line_spacing = 1.0
+        fmt.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    else:
+        fmt.line_spacing = Pt(line_spacing_pt)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     fmt.space_before = Pt(space_before_pt)
     fmt.space_after = Pt(space_after_pt)
+    if page_break_before is not None:
+        fmt.page_break_before = page_break_before
+    if keep_with_next is not None:
+        fmt.keep_with_next = keep_with_next
     if first_line_indent_chars:
         # Approximate "2 characters" using the current body font size.
         fmt.first_line_indent = Pt(BODY_SIZE_PT * first_line_indent_chars)
     else:
         fmt.first_line_indent = Pt(0)
+    if snap_to_grid:
+        p_pr = paragraph._p.get_or_add_pPr()
+        snap = p_pr.find(qn("w:snapToGrid"))
+        if snap is None:
+            snap = OxmlElement("w:snapToGrid")
+            p_pr.append(snap)
+        snap.set(qn("w:val"), "1")
 
 
 def paragraph_has_drawing(paragraph) -> bool:
@@ -187,8 +217,9 @@ def set_image_paragraph_format(paragraph) -> None:
     fmt.first_line_indent = Pt(0)
     fmt.line_spacing = 1.0
     fmt.line_spacing_rule = WD_LINE_SPACING.SINGLE
-    fmt.space_before = Pt(6)
-    fmt.space_after = Pt(6)
+    fmt.space_before = Pt(7)
+    fmt.space_after = Pt(0)
+    fmt.keep_with_next = True
 
 
 def _next_non_empty_paragraph(paragraphs: list[Paragraph], start_index: int) -> Paragraph | None:
@@ -234,13 +265,12 @@ def _format_figure_captions(doc: DocumentObject) -> int:
             caption,
             alignment=WD_ALIGN_PARAGRAPH.CENTER,
             first_line_indent_chars=0,
-            line_spacing_pt=20,
+            line_spacing_pt=None,
             space_before_pt=0,
-            space_after_pt=6,
+            space_after_pt=7,
         )
         run = caption.add_run(f"图{caption_count} {caption_text}")
-        set_run_font(run, BODY_FONT, BODY_SIZE_PT)
-        run.italic = True
+        set_run_font(run, BODY_FONT, CAPTION_SIZE_PT, latin_font=WESTERN_FONT)
 
     return caption_count
 
@@ -334,6 +364,20 @@ def _clear_paragraph(paragraph) -> None:
         paragraph._p.remove(child)
 
 
+def _remove_style_paragraph_borders(style) -> None:
+    p_pr = style._element.get_or_add_pPr()
+    p_bdr = p_pr.find(qn("w:pBdr"))
+    if p_bdr is not None:
+        p_pr.remove(p_bdr)
+
+
+def _remove_paragraph_borders(paragraph: Paragraph) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+    p_bdr = p_pr.find(qn("w:pBdr"))
+    if p_bdr is not None:
+        p_pr.remove(p_bdr)
+
+
 def _clear_footer(footer) -> None:
     for paragraph in footer.paragraphs:
         _clear_paragraph(paragraph)
@@ -348,7 +392,7 @@ def _add_centered_page_number(section) -> None:
         paragraph,
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
         first_line_indent_chars=0,
-        line_spacing_pt=20,
+        line_spacing_pt=None,
         space_before_pt=0,
         space_after_pt=0,
     )
@@ -368,17 +412,30 @@ def _heading_prefix(level: int, counters: dict[int, int]) -> str:
         counters[1] += 1
         counters[2] = 0
         counters[3] = 0
+        counters[4] = 0
+        counters[5] = 0
         cn_nums = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
         number = cn_nums[counters[1] - 1] if counters[1] <= len(cn_nums) else str(counters[1])
         return f"{number}、"
     if level == 2:
         counters[2] += 1
         counters[3] = 0
+        counters[4] = 0
+        counters[5] = 0
         cn_nums = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
         number = cn_nums[counters[2] - 1] if counters[2] <= len(cn_nums) else str(counters[2])
         return f"（{number}）"
-    counters[3] += 1
-    return f"{counters[3]}. "
+    if level == 3:
+        counters[3] += 1
+        counters[4] = 0
+        counters[5] = 0
+        return f"{counters[3]}. "
+    if level == 4:
+        counters[4] += 1
+        counters[5] = 0
+        return f"（{counters[4]}）"
+    counters[5] += 1
+    return f"{counters[5]}）"
 
 
 def _strip_existing_heading_prefix(text: str) -> str:
@@ -386,11 +443,21 @@ def _strip_existing_heading_prefix(text: str) -> str:
     patterns = [
         r"^[一二三四五六七八九十百]+、\s*",
         r"^（[一二三四五六七八九十百]+）\s*",
+        r"^（\d+）\s*",
+        r"^\d+）\s*",
+        r"^\d{1,2}\s+",
         r"^\d+[\.、]\s*",
         r"^\d+(?:\.\d+)+\s*",
     ]
-    for pattern in patterns:
-        text = re.sub(pattern, "", text)
+    changed = True
+    while changed:
+        changed = False
+        for pattern in patterns:
+            stripped = re.sub(pattern, "", text)
+            if stripped != text:
+                text = stripped
+                changed = True
+                break
     return text
 
 
@@ -402,25 +469,56 @@ def _heading_level(paragraph) -> int | None:
     return int(match.group(1))
 
 
+def _heading_size_pt(level: int | None) -> float:
+    return {
+        1: HEADING_LEVEL_1_SIZE_PT,
+        2: HEADING_LEVEL_2_SIZE_PT,
+        3: HEADING_LEVEL_3_SIZE_PT,
+        4: HEADING_LEVEL_4_SIZE_PT,
+        5: HEADING_LEVEL_5_SIZE_PT,
+    }.get(level, BODY_SIZE_PT)
+
+
+def _heading_spacing(level: int | None) -> tuple[float, float, bool]:
+    if level == 1:
+        return HEADING_LINE_PT, HEADING_LINE_PT, True
+    if level in {2, 3, 4}:
+        return HEADING_LINE_PT * 0.5, HEADING_LINE_PT * 0.5, False
+    if level == 5:
+        return HEADING_LINE_PT * 0.25, HEADING_LINE_PT * 0.25, False
+    return 0, 0, False
+
+
+def _apply_heading_paragraph_format(paragraph, level: int | None) -> None:
+    before_pt, after_pt, page_break = _heading_spacing(level)
+    set_paragraph_format(
+        paragraph,
+        alignment=WD_ALIGN_PARAGRAPH.LEFT,
+        first_line_indent_chars=0,
+        line_spacing_pt=None,
+        space_before_pt=before_pt,
+        space_after_pt=after_pt,
+        page_break_before=page_break,
+    )
+
+
 def _apply_heading_numbering(doc: DocumentObject) -> int:
-    counters = {1: 0, 2: 0, 3: 0}
+    counters = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
     updated = 0
     for paragraph in doc.paragraphs:
         level = _heading_level(paragraph)
-        if not level or level > 3:
+        if not level or level > 5:
             continue
         raw_text = paragraph.text.strip()
         if not raw_text or _is_cover_or_toc_heading(raw_text):
             continue
         clean_text = _strip_existing_heading_prefix(raw_text)
         prefix = _heading_prefix(level, counters)
-        target = prefix + clean_text
-        if raw_text == target:
-            continue
         _clear_paragraph(paragraph)
-        run = paragraph.add_run(target)
-        font = HEADING_FONT if level == 1 else SECOND_LEVEL_FONT if level == 2 else BODY_FONT
-        set_run_font(run, font, BODY_SIZE_PT, bold=(level == 3))
+        prefix_run = paragraph.add_run(prefix)
+        set_run_font(prefix_run, WESTERN_FONT, _heading_size_pt(level), latin_font=WESTERN_FONT)
+        text_run = paragraph.add_run(clean_text)
+        set_run_font(text_run, HEADING_FONT, _heading_size_pt(level), latin_font=WESTERN_FONT)
         updated += 1
     return updated
 
@@ -453,8 +551,18 @@ def _insert_toc_page(doc: DocumentObject) -> tuple[bool, Paragraph | None]:
     toc_title = _insert_paragraph_before(body_start)
     toc_title.style = doc.styles["Title"]
     toc_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _remove_paragraph_borders(toc_title)
+    set_paragraph_format(
+        toc_title,
+        alignment=WD_ALIGN_PARAGRAPH.CENTER,
+        first_line_indent_chars=0,
+        line_spacing_pt=None,
+        space_before_pt=0,
+        space_after_pt=0,
+        snap_to_grid=False,
+    )
     toc_run = toc_title.add_run("目  录")
-    set_run_font(toc_run, HEADING_FONT, TOC_TITLE_SIZE_PT, bold=True)
+    set_run_font(toc_run, BODY_FONT, TOC_TITLE_SIZE_PT, bold=False, latin_font=WESTERN_FONT)
 
     toc_field = _insert_paragraph_before(body_start)
     toc_field.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -462,11 +570,14 @@ def _insert_toc_page(doc: DocumentObject) -> tuple[bool, Paragraph | None]:
         toc_field,
         alignment=WD_ALIGN_PARAGRAPH.LEFT,
         first_line_indent_chars=0,
-        line_spacing_pt=22,
+        line_spacing_pt=None,
         space_before_pt=0,
         space_after_pt=0,
+        snap_to_grid=False,
     )
     _add_toc_field(toc_field)
+    for run in toc_field.runs:
+        set_run_font(run, BODY_FONT, TOC_ENTRY_SIZE_PT, latin_font=WESTERN_FONT)
 
     body_break = _insert_paragraph_before(body_start)
     _insert_page_break(body_break)
@@ -544,6 +655,7 @@ def _format_cover_page(doc: DocumentObject) -> bool:
         space_before_pt=COVER_TITLE_SPACE_BEFORE_PT,
         space_after_pt=0,
     )
+    _remove_paragraph_borders(cover_paragraphs[0])
 
     meta_start_index = 1
     if len(cover_paragraphs) >= 2 and cover_paragraphs[1].style and cover_paragraphs[1].style.name == "Subtitle":
@@ -601,20 +713,14 @@ def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> 
             set_image_paragraph_format(paragraph)
             image_paragraphs += 1
         if paragraph.style and paragraph.style.name.startswith("Heading"):
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-
-            # 根据标题级别设置字体大小
             level = _heading_level(paragraph)
-            size_map = {
-                1: HEADING_LEVEL_1_SIZE_PT,
-                2: HEADING_LEVEL_2_SIZE_PT,
-                3: HEADING_LEVEL_3_SIZE_PT,
-                4: HEADING_LEVEL_4_SIZE_PT,
-            }
-            size_pt = size_map.get(level, BODY_SIZE_PT)
+            _apply_heading_paragraph_format(paragraph, level)
 
-            for run in paragraph.runs:
-                set_run_font(run, HEADING_FONT, size_pt)
+            for run_index, run in enumerate(paragraph.runs):
+                if run_index == 0:
+                    set_run_font(run, WESTERN_FONT, _heading_size_pt(level), latin_font=WESTERN_FONT)
+                else:
+                    set_run_font(run, HEADING_FONT, _heading_size_pt(level), latin_font=WESTERN_FONT)
                 _remove_run_color(run)
 
     for table in doc.tables:
@@ -646,9 +752,19 @@ def finalize_government_docx(docx_path: str | Path, *, add_toc: bool = True) -> 
     }
 
 
-def _set_style_font(style, font_name: str, size_pt: float, bold: bool = False) -> None:
-    style.font.name = font_name
-    style._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), font_name)
+def _set_style_font(
+    style,
+    font_name: str,
+    size_pt: float,
+    bold: bool = False,
+    latin_font: str | None = WESTERN_FONT,
+) -> None:
+    latin = latin_font or font_name
+    style.font.name = latin
+    r_fonts = style._element.get_or_add_rPr().rFonts
+    r_fonts.set(qn("w:eastAsia"), font_name)
+    r_fonts.set(qn("w:ascii"), latin)
+    r_fonts.set(qn("w:hAnsi"), latin)
     style.font.size = Pt(size_pt)
     style.font.bold = bold
     r_pr = style._element.get_or_add_rPr()
@@ -661,15 +777,23 @@ def _set_style_paragraph(
     *,
     alignment=WD_ALIGN_PARAGRAPH.JUSTIFY,
     first_line_indent_chars: float = 2,
-    line_spacing_pt: float = LINE_SPACING_PT,
+    line_spacing_pt: float | None = None,
     space_before_pt: float = 0,
     space_after_pt: float = 0,
+    page_break_before: bool | None = None,
 ) -> None:
     fmt = style.paragraph_format
     fmt.alignment = alignment
-    fmt.line_spacing = Pt(line_spacing_pt)
+    if line_spacing_pt is None:
+        fmt.line_spacing = 1.0
+        fmt.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    else:
+        fmt.line_spacing = Pt(line_spacing_pt)
+        fmt.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     fmt.space_before = Pt(space_before_pt)
     fmt.space_after = Pt(space_after_pt)
+    if page_break_before is not None:
+        fmt.page_break_before = page_break_before
     if first_line_indent_chars:
         fmt.first_line_indent = Pt(BODY_SIZE_PT * first_line_indent_chars)
     else:
@@ -689,8 +813,18 @@ def _set_table_cell_text(cell, text: str, *, bold: bool = False) -> None:
         space_after_pt=0,
     )
     run = paragraph.add_run(text)
-    set_run_font(run, BODY_FONT, 10.5, bold=bold)
+    set_run_font(run, BODY_FONT, TABLE_SIZE_PT, bold=bold, latin_font=WESTERN_FONT)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def _set_cell_shading(cell, fill: str = "FFFFFF") -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shading = tc_pr.find(qn("w:shd"))
+    if shading is None:
+        shading = OxmlElement("w:shd")
+        tc_pr.append(shading)
+    shading.set(qn("w:fill"), fill)
+    shading.set(qn("w:val"), "clear")
 
 
 def _set_table_borders(table) -> None:
@@ -718,10 +852,9 @@ def apply_government_report_style(doc: DocumentObject) -> DocumentObject:
     Apply a default government-report style profile to an existing document.
 
     Defaults:
-    - A4-ish government margins: top 3.7 cm, bottom 3.5 cm, left/right 2.8 cm.
-    - Cover title: centered, 22 pt 黑体, fixed 32 pt line spacing.
-    - Body: 仿宋 12 pt (小四), fixed 22 pt line spacing, first-line indent 2 chars.
-    - Heading 1/2/3: 黑体 12 pt, left aligned, automatic color, no first-line indent.
+    - Body: 宋体 14 pt / Times New Roman 14 pt, single line spacing.
+    - Heading 1-5: 黑体 Chinese text and Times New Roman numbering/Latin text.
+    - TOC/table/caption styles follow the formal Word export profile.
     """
     for section in doc.sections:
         section.start_type = WD_SECTION_START.NEW_PAGE
@@ -733,11 +866,12 @@ def apply_government_report_style(doc: DocumentObject) -> DocumentObject:
     styles = doc.styles
 
     normal = styles["Normal"]
-    _set_style_font(normal, BODY_FONT, BODY_SIZE_PT)
+    _set_style_font(normal, BODY_FONT, BODY_SIZE_PT, latin_font=WESTERN_FONT)
     _set_style_paragraph(normal)
 
     title = styles["Title"]
-    _set_style_font(title, TITLE_FONT, TITLE_SIZE_PT)
+    _set_style_font(title, TITLE_FONT, TITLE_SIZE_PT, latin_font=WESTERN_FONT)
+    _remove_style_paragraph_borders(title)
     _set_style_paragraph(
         title,
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
@@ -747,69 +881,98 @@ def apply_government_report_style(doc: DocumentObject) -> DocumentObject:
         space_after_pt=18,
     )
 
+    if "Intense Quote" in styles:
+        _remove_style_paragraph_borders(styles["Intense Quote"])
+
     heading_1 = styles["Heading 1"]
-    _set_style_font(heading_1, HEADING_FONT, BODY_SIZE_PT)
+    _set_style_font(heading_1, HEADING_FONT, HEADING_LEVEL_1_SIZE_PT, latin_font=WESTERN_FONT)
     _set_style_paragraph(
         heading_1,
         alignment=WD_ALIGN_PARAGRAPH.LEFT,
         first_line_indent_chars=0,
-        line_spacing_pt=LINE_SPACING_PT,
-        space_before_pt=12,
-        space_after_pt=6,
+        line_spacing_pt=None,
+        space_before_pt=HEADING_LINE_PT,
+        space_after_pt=HEADING_LINE_PT,
+        page_break_before=True,
     )
 
     heading_2 = styles["Heading 2"]
-    _set_style_font(heading_2, HEADING_FONT, BODY_SIZE_PT)
+    _set_style_font(heading_2, HEADING_FONT, HEADING_LEVEL_2_SIZE_PT, latin_font=WESTERN_FONT)
     _set_style_paragraph(
         heading_2,
         alignment=WD_ALIGN_PARAGRAPH.LEFT,
         first_line_indent_chars=0,
-        line_spacing_pt=LINE_SPACING_PT,
-        space_before_pt=6,
-        space_after_pt=6,
+        line_spacing_pt=None,
+        space_before_pt=HEADING_LINE_PT * 0.5,
+        space_after_pt=HEADING_LINE_PT * 0.5,
     )
 
     heading_3 = styles["Heading 3"]
-    _set_style_font(heading_3, HEADING_FONT, BODY_SIZE_PT)
+    _set_style_font(heading_3, HEADING_FONT, HEADING_LEVEL_3_SIZE_PT, latin_font=WESTERN_FONT)
     _set_style_paragraph(
         heading_3,
         alignment=WD_ALIGN_PARAGRAPH.LEFT,
         first_line_indent_chars=0,
-        line_spacing_pt=LINE_SPACING_PT,
-        space_before_pt=6,
-        space_after_pt=6,
+        line_spacing_pt=None,
+        space_before_pt=HEADING_LINE_PT * 0.5,
+        space_after_pt=HEADING_LINE_PT * 0.5,
     )
+
+    heading_4 = styles["Heading 4"]
+    _set_style_font(heading_4, HEADING_FONT, HEADING_LEVEL_4_SIZE_PT, latin_font=WESTERN_FONT)
+    _set_style_paragraph(
+        heading_4,
+        alignment=WD_ALIGN_PARAGRAPH.LEFT,
+        first_line_indent_chars=0,
+        line_spacing_pt=None,
+        space_before_pt=HEADING_LINE_PT * 0.5,
+        space_after_pt=HEADING_LINE_PT * 0.5,
+    )
+
+    heading_5 = styles["Heading 5"]
+    _set_style_font(heading_5, HEADING_FONT, HEADING_LEVEL_5_SIZE_PT, latin_font=WESTERN_FONT)
+    _set_style_paragraph(
+        heading_5,
+        alignment=WD_ALIGN_PARAGRAPH.LEFT,
+        first_line_indent_chars=0,
+        line_spacing_pt=None,
+        space_before_pt=HEADING_LINE_PT * 0.25,
+        space_after_pt=HEADING_LINE_PT * 0.25,
+    )
+
+    for toc_style_name in ("TOC 1", "TOC 2", "TOC 3"):
+        if toc_style_name in styles:
+            _set_style_font(styles[toc_style_name], BODY_FONT, TOC_ENTRY_SIZE_PT, latin_font=WESTERN_FONT)
+            _set_style_paragraph(
+                styles[toc_style_name],
+                alignment=WD_ALIGN_PARAGRAPH.LEFT,
+                first_line_indent_chars=0,
+                line_spacing_pt=None,
+                space_before_pt=0,
+                space_after_pt=0,
+            )
 
     for paragraph in doc.paragraphs:
         if paragraph_has_drawing(paragraph):
             set_image_paragraph_format(paragraph)
             continue
         if paragraph.style and paragraph.style.name.startswith("Heading"):
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            paragraph.paragraph_format.first_line_indent = Pt(0)
-
-            # 根据标题级别设置字体大小
             level = _heading_level(paragraph)
-            size_map = {
-                1: HEADING_LEVEL_1_SIZE_PT,
-                2: HEADING_LEVEL_2_SIZE_PT,
-                3: HEADING_LEVEL_3_SIZE_PT,
-                4: HEADING_LEVEL_4_SIZE_PT,
-            }
-            size_pt = size_map.get(level, BODY_SIZE_PT)
+            _apply_heading_paragraph_format(paragraph, level)
 
             for run in paragraph.runs:
-                set_run_font(run, HEADING_FONT, size_pt)
+                set_run_font(run, HEADING_FONT, _heading_size_pt(level), latin_font=WESTERN_FONT)
                 _remove_run_color(run)
             continue
         if paragraph.style and paragraph.style.name == "Title":
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _remove_paragraph_borders(paragraph)
             for run in paragraph.runs:
                 _remove_run_color(run)
             continue
         set_paragraph_format(paragraph)
         for run in paragraph.runs:
-            set_run_font(run, BODY_FONT, BODY_SIZE_PT)
+            set_run_font(run, BODY_FONT, BODY_SIZE_PT, latin_font=WESTERN_FONT)
 
     for table in doc.tables:
         format_government_table(table)
@@ -882,11 +1045,13 @@ def add_government_heading(
         2: HEADING_LEVEL_2_SIZE_PT,
         3: HEADING_LEVEL_3_SIZE_PT,
         4: HEADING_LEVEL_4_SIZE_PT,
+        5: HEADING_LEVEL_5_SIZE_PT,
     }
     size_pt = size_map.get(level, BODY_SIZE_PT)
+    _apply_heading_paragraph_format(paragraph, level)
 
     for run in paragraph.runs:
-        set_run_font(run, HEADING_FONT, size_pt)
+        set_run_font(run, HEADING_FONT, size_pt, latin_font=WESTERN_FONT)
 
     return paragraph
 
@@ -896,18 +1061,25 @@ def format_government_table(table) -> None:
     _set_table_borders(table)
     for row_idx, row in enumerate(table.rows):
         for cell in row.cells:
+            _set_cell_shading(cell)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             for paragraph in cell.paragraphs:
                 set_paragraph_format(
                     paragraph,
                     alignment=WD_ALIGN_PARAGRAPH.CENTER,
                     first_line_indent_chars=0,
-                    line_spacing_pt=20,
+                    line_spacing_pt=None,
                     space_before_pt=0,
                     space_after_pt=0,
                 )
                 for run in paragraph.runs:
-                    set_run_font(run, BODY_FONT, 10.5, bold=(row_idx == 0))
+                    set_run_font(
+                        run,
+                        BODY_FONT,
+                        TABLE_SIZE_PT,
+                        bold=(row_idx == 0),
+                        latin_font=WESTERN_FONT,
+                    )
 
 
 def add_government_table(
@@ -996,12 +1168,12 @@ def add_government_image(
             caption_paragraph,
             alignment=WD_ALIGN_PARAGRAPH.CENTER,
             first_line_indent_chars=0,
-            line_spacing_pt=20,
+            line_spacing_pt=None,
             space_before_pt=0,
-            space_after_pt=6,
+            space_after_pt=7,
         )
         caption_run = caption_paragraph.add_run(caption)
-        set_run_font(caption_run, BODY_FONT, 10.5, color="666666")
+        set_run_font(caption_run, BODY_FONT, CAPTION_SIZE_PT, color="666666", latin_font=WESTERN_FONT)
 
     return paragraph
 
@@ -1034,12 +1206,12 @@ def _add_centered_meta_paragraph(
         paragraph,
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
         first_line_indent_chars=0,
-        line_spacing_pt=20,
+        line_spacing_pt=None,
         space_before_pt=0,
         space_after_pt=4,
     )
     run = paragraph.add_run(text)
-    set_run_font(run, BODY_FONT, size_pt, color=color)
+    set_run_font(run, BODY_FONT, size_pt, color=color, latin_font=WESTERN_FONT)
     return paragraph
 
 

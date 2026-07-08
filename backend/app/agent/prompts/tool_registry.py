@@ -37,7 +37,7 @@ ASSISTANT_TOOL_NAMES = [
     "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 数据查询
-    "execute_tender_sql_query",
+    "qianlima_realtime_tender", "execute_tender_sql_query",
 
     # 任务和技能
     "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
@@ -57,7 +57,7 @@ EXPERT_TOOL_NAMES = [
     # 数据查询工具
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "get_platform_weather_image",
+    "get_weather_forecast", "get_observed_meteorology", "get_platform_weather_image",
     "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
@@ -73,7 +73,7 @@ EXPERT_TOOL_NAMES = [
     "calculate_crustal", "calculate_trace", "predict_air_quality",
 
     # 可视化
-    "revise_chart", "generate_map", "create_report_chart",
+    "revise_chart", "generate_map", "create_report_chart", "present_artifact",
 
     # 代码执行
     "execute_python",
@@ -151,7 +151,7 @@ REPORT_TOOL_NAMES = [
 CHART_TOOL_NAMES = [
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
-    "bash",
+    "bash", "present_artifact",
 
     # 代码执行和原生多模态视觉参考
     "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
@@ -160,6 +160,7 @@ CHART_TOOL_NAMES = [
     "read_data_registry",
 
     # 数据查询工具
+    "get_observed_meteorology",
     "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",
@@ -247,7 +248,7 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
 
 # ===== 会商专用模式工具 =====
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
-    "get_weather_forecast", "query_gd_suncere_city_hour",
+    "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
     "read_data_registry", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
@@ -300,6 +301,17 @@ DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_
 DELIBERATION_MONITORING_TOOLS = _build_tool_dict(DELIBERATION_MONITORING_TOOL_NAMES)
 DELIBERATION_CHEMISTRY_TOOLS = _build_tool_dict(DELIBERATION_CHEMISTRY_TOOL_NAMES)
 DELIBERATION_REVIEWER_TOOLS = _build_tool_dict(DELIBERATION_REVIEWER_TOOL_NAMES)
+
+# Backward-compatible order aliases used by tests and older callers.
+ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
+EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
+QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
+REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
+CHART_TOOL_ORDER = CHART_TOOL_NAMES
+OPS_TOOL_ORDER = OPS_TOOL_NAMES
+GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
+SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
+MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:

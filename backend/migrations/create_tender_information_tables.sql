@@ -37,7 +37,6 @@ BEGIN
         notice_type NVARCHAR(50) NOT NULL,
         project_name NVARCHAR(500) NULL,
         purchaser NVARCHAR(300) NULL,
-        agency NVARCHAR(300) NULL,
         winning_bidder NVARCHAR(300) NULL,
         budget_amount NVARCHAR(100) NULL,
         budget_amount_wan_yuan DECIMAL(18,4) NULL,
@@ -48,19 +47,28 @@ BEGIN
         publish_date DATE NULL,
         bid_open_date NVARCHAR(100) NULL,
         deadline NVARCHAR(100) NULL,
-        industry_category NVARCHAR(200) NULL,
-        environment_relevance BIT NOT NULL CONSTRAINT DF_tender_notices_relevance DEFAULT 0,
-        filter_reason NVARCHAR(MAX) NULL,
-        filter_confidence FLOAT NULL,
-        raw_content NVARCHAR(MAX) NOT NULL,
+        project_category NVARCHAR(200) NULL,
         summary NVARCHAR(MAX) NULL,
         key_requirements_json NVARCHAR(MAX) NOT NULL CONSTRAINT DF_tender_notices_requirements DEFAULT N'[]',
-        attachment_urls_json NVARCHAR(MAX) NOT NULL CONSTRAINT DF_tender_notices_attachments DEFAULT N'[]',
-        structured_json NVARCHAR(MAX) NOT NULL CONSTRAINT DF_tender_notices_structured DEFAULT N'{}',
+        extraction_meta_json NVARCHAR(MAX) NOT NULL CONSTRAINT DF_tender_notices_extraction_meta DEFAULT N'{}',
         created_at DATETIME2 NOT NULL CONSTRAINT DF_tender_notices_created_at DEFAULT SYSDATETIME(),
         updated_at DATETIME2 NOT NULL CONSTRAINT DF_tender_notices_updated_at DEFAULT SYSDATETIME()
     );
 END;
+
+IF OBJECT_ID('tender_notice_contents', 'U') IS NULL
+BEGIN
+    CREATE TABLE tender_notice_contents (
+        id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        url NVARCHAR(1000) NOT NULL,
+        raw_content NVARCHAR(MAX) NOT NULL,
+        created_at DATETIME2 NOT NULL CONSTRAINT DF_tender_notice_contents_created_at DEFAULT SYSDATETIME(),
+        updated_at DATETIME2 NOT NULL CONSTRAINT DF_tender_notice_contents_updated_at DEFAULT SYSDATETIME()
+    );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_tender_notice_contents_url')
+    CREATE UNIQUE INDEX UX_tender_notice_contents_url ON tender_notice_contents(url);
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_tender_notices_url')
     CREATE UNIQUE INDEX UX_tender_notices_url ON tender_notices(url);

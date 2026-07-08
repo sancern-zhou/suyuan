@@ -26,6 +26,7 @@ from app.tools.query.get_vocs_data.tool_api import GetVOCsDataTool
 from app.tools.query.get_particulate_components.tool import GetParticulateComponentsTool
 from app.agent.context.data_context_manager import DataContextManager
 from app.db.session_repository import SessionRepository
+from app.utils.component_station_directory import PM25_DOMAIN, VOCS_DOMAIN, resolve_component_station_names
 
 
 class MonthlyAirQualitySupplements:
@@ -659,6 +660,10 @@ class MonthlyAirQualitySupplements:
             # 转换日期格式为带时间的格式
             start_datetime = f"{start_date} 00:00:00"
             end_datetime = f"{end_date} 23:59:59"
+            stations = self._component_stations_for_cities(cities, VOCS_DOMAIN)
+            if not stations:
+                print(f"    无VOCs组分站点配置")
+                return None
 
             # 异步调用VOCs工具
             async def fetch_vocs():
@@ -666,7 +671,7 @@ class MonthlyAirQualitySupplements:
                     context=self.context,
                     start_time=start_datetime,
                     end_time=end_datetime,
-                    locations=cities,
+                    locations=stations,
                     table_type=1,  # 小时数据
                     data_type=0    # 原始数据
                 )
@@ -730,6 +735,10 @@ class MonthlyAirQualitySupplements:
             # 转换日期格式为带时间的格式
             start_datetime = f"{start_date} 00:00:00"
             end_datetime = f"{end_date} 23:59:59"
+            stations = self._component_stations_for_cities(cities, PM25_DOMAIN)
+            if not stations:
+                print(f"    无PM2.5组分站点配置")
+                return None
 
             # 异步调用PM2.5组分工具
             async def fetch_components():
@@ -737,7 +746,7 @@ class MonthlyAirQualitySupplements:
                     context=self.context,
                     start_time=start_datetime,
                     end_time=end_datetime,
-                    locations=cities,
+                    locations=stations,
                     time_granularity=1,  # 小时数据
                     data_type=0          # 原始数据
                 )
@@ -761,6 +770,14 @@ class MonthlyAirQualitySupplements:
         except Exception as e:
             print(f"    生成PM2.5组分数据失败：{e}")
             return None
+
+    def _component_stations_for_cities(self, cities: List[str], data_domain: str) -> List[str]:
+        stations: List[str] = []
+        for city in cities:
+            for station in resolve_component_station_names(city, data_domain=data_domain):
+                if station not in stations:
+                    stations.append(station)
+        return stations
 
     def _write_component_csv(self, data: List[dict], output_file: Path):
         """写入组分数据CSV"""

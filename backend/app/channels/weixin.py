@@ -578,6 +578,12 @@ class WeixinChannel(BaseChannel):
         self._qr_code_ready = asyncio.Event()  # ✅ 新增：二维码就绪事件
         self._qr_code_ready.clear()  # 确保初始状态为未就绪
 
+        # Restore disk-backed identity and peer context early. Channel
+        # registration and heartbeat recovery happen before long-polling starts,
+        # so waiting until start() would make restart-time proactive sends lose
+        # bot_account/context_token state.
+        self._load_state()
+
     # ------------------------------------------------------------------
     # State persistence
     # ------------------------------------------------------------------

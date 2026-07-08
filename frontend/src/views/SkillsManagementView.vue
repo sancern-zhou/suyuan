@@ -10,6 +10,14 @@
           </span>
         </div>
         <div class="header-actions">
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="refreshingIndex"
+            @click="refreshSkillIndex"
+          >
+            {{ refreshingIndex ? '刷新中...' : '刷新技能' }}
+          </button>
           <div class="search-box">
             <input
               v-model="searchKeyword"
@@ -115,6 +123,7 @@ import {
   getSkillDetail,
   getSkillDraftsList,
   getSkillDraftDetail,
+  refreshSkillsIndex,
   saveSkillDetail,
   saveSkillDraftDetail
 } from '@/api/skillsManagement'
@@ -142,6 +151,7 @@ const currentSkill = ref(null)
 const isEditing = ref(false)
 const editedContent = ref('')
 const saving = ref(false)
+const refreshingIndex = ref(false)
 let searchDebounceTimer = null
 
 const stats = computed(() => ({
@@ -202,6 +212,23 @@ const handleSearchDebounced = () => {
   searchDebounceTimer = setTimeout(() => {
     loadSkills()
   }, 300)
+}
+
+const refreshSkillIndex = async () => {
+  refreshingIndex.value = true
+  try {
+    const data = await refreshSkillsIndex()
+    if (data.success) {
+      await loadSkills()
+    } else {
+      throw new Error(data.message || '刷新技能索引失败')
+    }
+  } catch (error) {
+    console.error('刷新技能索引失败:', error)
+    alert('刷新技能索引失败: ' + error.message)
+  } finally {
+    refreshingIndex.value = false
+  }
 }
 
 const getFileName = (filePath) => {

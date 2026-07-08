@@ -61,12 +61,6 @@ def build_base64_user_content(
 
 
 def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    local_path = attachment.get("local_path") or attachment.get("path")
-    if local_path:
-        image_block = _build_local_base64_image_block(attachment)
-        if image_block:
-            return image_block
-
     url = attachment.get("url") or attachment.get("signed_url")
     if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):
         return {
@@ -76,6 +70,12 @@ def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "url": url,
             },
         }
+
+    local_path = attachment.get("local_path") or attachment.get("path")
+    if local_path:
+        image_block = _build_local_base64_image_block(attachment)
+        if image_block:
+            return image_block
 
     return None
 

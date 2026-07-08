@@ -287,6 +287,12 @@ def _resolve_missing_attachment_types(
     required_types: list[str],
     inventory: dict[str, Any],
 ) -> tuple[list[str], dict[str, Any] | None]:
+    any_of_types = [str(item) for item in requirement.get("any_of_types", []) if item]
+    if any_of_types:
+        if any(inventory["type_counts"].get(attachment_type) for attachment_type in any_of_types):
+            return [], None
+        return any_of_types, None
+
     return [
         attachment_type
         for attachment_type in required_types

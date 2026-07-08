@@ -14,6 +14,8 @@ from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
 from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
+from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
+from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
 from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultationFileFetcher  # 会商文件批量更新、月度完整会商文件
 from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
 from app.fetchers.consultation.monthly_supplement_fetchers import (
@@ -61,6 +63,12 @@ def initialize_fetchers():
 
         # 注册招投标信息每日抓取Fetcher
         fetcher_scheduler.register(TenderInformationFetcher())
+
+        # 注册济宁市快速溯源报告每日生成Fetcher
+        fetcher_scheduler.register(JiningQuickTraceFetcher())
+
+        # 注册运城市驻场试用场景小时数据盯守Fetcher
+        fetcher_scheduler.register(YunchengTrialFetcher())
 
         # 注册会商文件批量更新Fetcher
         fetcher_scheduler.register(ConsultationFileFetcher())

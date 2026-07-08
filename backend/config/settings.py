@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="openai",
-        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, qwen, glm"
+        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, qwen, glm"
     )
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: str = Field(
@@ -218,6 +218,19 @@ class Settings(BaseSettings):
     mimo_api_mode: str = Field(
         default="anthropic_messages",
         description="Mimo API protocol mode: anthropic_messages or chat_completions"
+    )
+    agnes_api_key: Optional[str] = Field(default=None, description="Agnes API key")
+    agnes_base_url: str = Field(
+        default="https://apihub.agnes-ai.com/v1",
+        description="Agnes OpenAI-compatible API base URL"
+    )
+    agnes_model: str = Field(
+        default="agnes-2.0-flash",
+        description="Agnes model name"
+    )
+    agnes_api_mode: str = Field(
+        default="chat_completions",
+        description="Agnes API protocol mode: chat_completions"
     )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",
@@ -290,18 +303,18 @@ class Settings(BaseSettings):
     )
     llm_fallbacks: str = Field(
         default="",
-        description="Comma-separated fallback models, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2-pro"
+        description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_flash_models: str = Field(
         default="",
-        description="Comma-separated Flash model priority chain, e.g. deepseek/deepseek-v4-flash,mimo/mimo-v2.5"
+        description="Comma-separated Flash model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
         default="",
-        description="Comma-separated Pro model priority chain, e.g. mimo/mimo-v2.5-pro,deepseek/deepseek-v4-pro"
+        description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
-        default="mimo/mimo-v2.5,minimax/MiniMax-M3",
+        default="agnes/agnes-2.0-flash,minimax/MiniMax-M3",
         description="Comma-separated Auto multimodal model priority chain"
     )
     llm_failover_cooldown_seconds: int = Field(
@@ -414,11 +427,11 @@ class Settings(BaseSettings):
         description="Enable daily tender information fetcher"
     )
     tender_fetcher_schedule: str = Field(
-        default="30 6 * * *",
+        default="30 2 * * *",
         description="Cron schedule for tender information fetcher"
     )
     tender_keywords: str = Field(
-        default="生态环境局,环境监测中心,生态环境厅,环境监测站",
+        default="生态环境局,环境监测中心,生态环境厅,环境监测站,生态环境分局,环境监控中心,污染源在线监控,空气自动站,水质自动站,VOCs走航,噪声自动监测",
         description="Comma-separated tender search keywords"
     )
     tender_notice_types: str = Field(
@@ -444,6 +457,22 @@ class Settings(BaseSettings):
     qianlima_password: Optional[str] = Field(
         default=None,
         description="Qianlima password for optional login"
+    )
+    qianlima_accounts: Optional[str] = Field(
+        default=None,
+        description="Comma-separated Qianlima account pool: username:password,..."
+    )
+    qianlima_proxy_server: Optional[str] = Field(
+        default=None,
+        description="Proxy server for Qianlima detail browser requests"
+    )
+    qianlima_proxy_username: Optional[str] = Field(
+        default=None,
+        description="Proxy username for Qianlima detail browser requests"
+    )
+    qianlima_proxy_password: Optional[str] = Field(
+        default=None,
+        description="Proxy password for Qianlima detail browser requests"
     )
     tender_llm_api_key: Optional[str] = Field(
         default=None,
@@ -622,6 +651,14 @@ class Settings(BaseSettings):
                 "base_url": self.mimo_base_url,
                 "model": self.mimo_model,
                 "api_mode": self.mimo_api_mode,
+            }
+        elif self.llm_provider == "agnes":
+            return {
+                "provider": "agnes",
+                "api_key": self.agnes_api_key or self.tender_secondary_llm_api_key,
+                "base_url": self.agnes_base_url,
+                "model": self.agnes_model,
+                "api_mode": self.agnes_api_mode,
             }
         elif self.llm_provider == "qwen":
             return {

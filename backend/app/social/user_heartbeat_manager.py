@@ -27,7 +27,8 @@ class UserHeartbeatManager:
         base_workspace: Path = None,
         max_cache_size: int = 100,
         on_execute_callback: Optional[Callable] = None,
-        on_notify_callback: Optional[Callable] = None
+        on_notify_callback: Optional[Callable] = None,
+        user_id_resolver: Optional[Callable[[str], Optional[str]]] = None,
     ):
         """
         初始化用户心跳管理器
@@ -46,6 +47,7 @@ class UserHeartbeatManager:
         self._max_cache_size = max_cache_size
         self._on_execute_callback = on_execute_callback
         self._on_notify_callback = on_notify_callback
+        self._user_id_resolver = user_id_resolver
 
         logger.info(
             "user_heartbeat_manager_initialized",
@@ -176,6 +178,27 @@ class UserHeartbeatManager:
                 user_id = self._recover_user_id_from_workspace(user_workspace)
                 if not user_id:
                     continue
+
+                resolved_user_id = user_id
+                if self._user_id_resolver:
+                    try:
+                        resolved_user_id = self._user_id_resolver(user_id) or user_id
+                    except Exception as e:
+                        logger.warning(
+                            "heartbeat_user_id_resolve_failed",
+                            user_id=user_id,
+                            error=str(e),
+                            exc_info=True,
+                        )
+
+                if resolved_user_id != user_id:
+                    logger.info(
+                        "heartbeat_user_id_resolved",
+                        old_user_id=user_id,
+                        new_user_id=resolved_user_id,
+                    )
+                    user_id = resolved_user_id
+                    self._write_user_metadata(user_workspace, user_id)
 
                 if user_id in self._heartbeat_cache:
                     continue
