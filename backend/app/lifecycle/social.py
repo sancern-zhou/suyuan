@@ -59,6 +59,13 @@ async def start_social_platform_service(app: FastAPI) -> None:
             agent_bridge=agent_bridge,
         )
 
+        # Register configured channels before AgentBridge restores heartbeat
+        # loops. Restart-time heartbeats need the channel map to translate old
+        # persisted user ids and to resolve bot_account values.
+        for name, channel in channel_manager.channels.items():
+            agent_bridge.register_channel(channel)
+            logger.info("channel_registered_to_agent_bridge_before_start", channel_name=name)
+
         async def run_agent_bridge():
             try:
                 logger.info("agent_bridge_starting")
@@ -148,4 +155,3 @@ async def stop_social_platform_service(app: FastAPI) -> None:
         logger.info("social_platform_service_stopped")
     except Exception as e:
         logger.warning("social_platform_service_stop_failed", error=str(e))
-

@@ -4,13 +4,25 @@
 
 ## 基本结构
 
-`create_drawio_board` 可以接收以下 XML：
+`create_drawio_board` 只接收以下 XML：
 
-1. 完整 `<mxfile>...</mxfile>`
+1. 标准 draw.io `<mxfile>...</mxfile>`：必须包含 `<diagram><mxGraphModel><root>...</root></mxGraphModel></diagram>`
 2. 完整 `<mxGraphModel>...</mxGraphModel>`
 3. 一个或多个 `<mxCell>...</mxCell>` 片段
 
 输出目标必须能被 diagrams.net/draw.io 渲染。
+
+不要把 `<mxGraphModel>` 直接包在 `<mxfile>` 下。以下结构不是合法输入：
+
+```xml
+<mxfile>
+  <mxGraphModel>
+    <root>...</root>
+  </mxGraphModel>
+</mxfile>
+```
+
+如果不想生成完整标准 `<mxfile>`，直接传 `<mxGraphModel>` 或 `<mxCell>` 片段。
 
 ## mxCell 规则
 

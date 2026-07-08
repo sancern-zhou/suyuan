@@ -271,6 +271,17 @@ def _drawio_xml_from_result(result: Dict[str, Any]) -> str:
     return ""
 
 
+def is_drawio_board_tool_result(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return (
+        metadata.get("generator") == "create_drawio_board"
+        or data.get("artifact_kind") == "drawio_board"
+    )
+
+
 # ========================================
 # Request/Response Models
 # ========================================
@@ -771,11 +782,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 )
                                 if (
                                     request.mode == "chart"
-                                    and isinstance(result, dict)
-                                    and (
-                                        (result.get("metadata") or {}).get("generator") == "create_drawio_board"
-                                        or (result.get("data") or {}).get("artifact_kind") == "drawio_board"
-                                    )
+                                    and is_drawio_board_tool_result(result)
                                 ):
                                     result_data = result.get("data") or {}
                                     if isinstance(result_data, dict):

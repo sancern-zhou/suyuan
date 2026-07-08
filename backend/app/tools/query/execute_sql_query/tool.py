@@ -153,6 +153,7 @@ OPS_SQL_TABLES = [
 
 TENDER_SQL_TABLES = [
     'tender_notices',
+    'tender_notice_contents',
     'tender_candidates',
     'tender_fetch_runs',
 ]
@@ -930,13 +931,19 @@ class ExecuteTenderSQLQueryTool(BaseSQLQueryTool):
             "SQL Server语法：中文字符串必须加N前缀，如 N'生态环境局'；分页/限制用TOP，不支持LIMIT。"
             "database默认为XcAiDb。"
             "\n\n常用表说明："
-            "\n- tender_notices：清洗后的目标公告详情表，包含title、notice_type、project_name、purchaser、agency、winning_bidder、budget_amount、winning_amount、province、city、publish_date、summary、raw_content等字段。"
-            "\n- tender_candidates：列表页候选公告表，包含title、url、notice_type、keyword、publish_date、filter_status、filter_reason、filter_confidence、decision_source等字段。"
-            "\n- tender_fetch_runs：每日抓取运行记录，包含target_date、keywords_json、notice_types_json、total_candidates、duplicate_candidates、filtered_out、detail_fetch_failures、saved_notices、status、started_at、finished_at等字段。"
+            "\n- tender_notices：清洗后的目标公告主表，也是回答“某天有多少条招投标公告/有哪些公告”的最终事实表。包含title、notice_type、project_name、purchaser、winning_bidder、budget_amount、winning_amount、province、city、publish_date、project_category、summary、key_requirements_json、extraction_meta_json等字段。"
+            "\n- tender_notice_contents：公告原文内容表，按url关联tender_notices，包含raw_content等大文本字段。"
+            "\n- tender_candidates：列表页候选公告表，用于判断初筛和补录闭环状态。accepted候选表示已通过初筛；accepted候选LEFT JOIN tender_notices后n.url IS NULL的数量，才表示仍缺详情/仍未入库。"
+            "\n- tender_fetch_runs：抓取执行日志表，可能保留初次失败、补录中断、重试成功等多轮历史记录。它只用于排障，不是最终业务状态；不要累加saved_notices，不要仅因旧run存在detail_fetch_failures就判断补录未完成。"
+            "\n\n判断口径："
+            "\n- 最终入库数量：只统计tender_notices，按publish_date去重后的事实表结果为准。"
+            "\n- 补录是否完成：统计accepted候选中尚未在tender_notices出现的数量；为0表示已通过详情页抓取/复核闭环，即使历史run仍有失败日志。"
+            "\n- run状态解读：tender_fetch_runs.status=partial_failed/failed/interrupted只说明该执行批次有错误或被中断，不代表该日期最终未完成；需要结合最终入库和accepted_missing_notice判断。"
             "\n\n常见查询："
-            "\n- 昨天入库公告：SELECT TOP 50 title, notice_type, purchaser, publish_date FROM tender_notices WHERE publish_date = '2026-07-01' ORDER BY id DESC"
-            "\n- 最近运行情况：SELECT TOP 10 * FROM tender_fetch_runs ORDER BY started_at DESC"
-            "\n- 初筛统计：SELECT filter_status, COUNT(*) AS cnt FROM tender_candidates WHERE publish_date = '2026-07-01' GROUP BY filter_status"
+            "\n- 某日最终入库公告：SELECT TOP 50 title, notice_type, purchaser, publish_date FROM tender_notices WHERE publish_date = '2026-07-01' ORDER BY id DESC"
+            "\n- 某日最终闭环统计：SELECT COUNT(*) AS accepted, SUM(CASE WHEN n.url IS NOT NULL THEN 1 ELSE 0 END) AS accepted_with_notice, SUM(CASE WHEN n.url IS NULL THEN 1 ELSE 0 END) AS accepted_missing_notice FROM tender_candidates c LEFT JOIN tender_notices n ON n.url = c.url WHERE c.publish_date = '2026-07-01' AND c.filter_status = 'accepted'"
+            "\n- 某日候选初筛统计：SELECT filter_status, decision_source, COUNT(*) AS cnt FROM tender_candidates WHERE publish_date = '2026-07-01' GROUP BY filter_status, decision_source"
+            "\n- 最近执行日志排障：SELECT TOP 10 id, target_date, status, total_candidates, detail_fetch_failures, saved_notices, started_at, finished_at FROM tender_fetch_runs ORDER BY started_at DESC"
             "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
         )
         super().__init__(

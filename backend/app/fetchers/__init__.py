@@ -18,6 +18,8 @@ from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityF
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher
 from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
 from app.fetchers.tenders import TenderInformationFetcher
+from app.fetchers.quick_trace import JiningQuickTraceFetcher
+from app.fetchers.yuncheng_trial import YunchengTrialFetcher
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -40,6 +42,8 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(CityPollutionEventFetcher())  # 城市污染过程告警
     scheduler.register(FaultDiagnosisFetcher())  # 疑似设备或数据故障原因诊断
     scheduler.register(TenderInformationFetcher())  # 招投标信息每日抓取
+    scheduler.register(JiningQuickTraceFetcher())  # 济宁市快速溯源报告每日生成
+    scheduler.register(YunchengTrialFetcher())  # 运城市驻场试用场景小时数据盯守
 
     return scheduler
 

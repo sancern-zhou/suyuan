@@ -6,10 +6,13 @@
 适用范围：广东省
 限制条件：需要提供有效的风向风速数据
 """
+from pathlib import Path
 from typing import Dict, Any, Optional
 import asyncio
 import structlog
 import math
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.services.external_apis import upwind_api
@@ -38,19 +41,20 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
 【调用方式 - 二选一】
 
 1. 直接指定站点（推荐）：
-   - 必填：station_name（站点名称），weather_data_id（气象数据ID）
+   - 必填：station_name（站点名称），weather_data_id（气象数据ID）或 weather_records（风场记录）
    - 可选：search_range_km, max_enterprises, top_n, map_type, mode
    - 示例：station_name="广雅中学", city_name="清远市", weather_data_id="weather:v1:xxx"
 
 2. 通过城市自动获取站点：
-   - 必填：city_name（城市名称），weather_data_id（气象数据ID）
+   - 必填：city_name（城市名称），weather_data_id（气象数据ID）或 weather_records（风场记录）
    - 可选：search_range_km, max_enterprises, top_n, map_type, mode
    - 工具自动获取该城市前2个国控站点进行分析
 
 【参数说明】
 - station_name: 站点名称（如"广雅中学"），指定具体监测站点
 - city_name: 城市名称（如"清远市"），自动获取该城市站点
-- weather_data_id: 气象数据ID（必须提供），工具从context自动提取风向风速
+- weather_data_id: 气象数据ID，工具从context自动提取风向风速
+- weather_records: 风场记录列表，可直接传入包含wind_direction_10m/wind_speed_10m或measurements嵌套字段的记录
 - search_range_km: 搜索半径（公里），默认5.0
 - max_enterprises: 最大企业数量，默认10
 - top_n: Top-N重点标注数量，默认10
@@ -75,7 +79,12 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                     },
                     "weather_data_id": {
                         "type": "string",
-                        "description": "气象数据ID（必须提供），get_weather_data返回的data_id"
+                        "description": "气象数据ID，get_weather_data返回的data_id；与weather_records至少提供一个"
+                    },
+                    "weather_records": {
+                        "type": "array",
+                        "description": "直接传入的风场记录；与weather_data_id至少提供一个",
+                        "items": {"type": "object"}
                     },
                     "search_range_km": {
                         "type": "number",
@@ -103,9 +112,13 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                         "description": "展示模式：topn_mixed（Top-N编号+其余分层合并）或 all（所有企业），默认topn_mixed",
                         "enum": ["topn_mixed", "all"],
                         "default": "topn_mixed"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "地图图片本地保存目录；未提供时保存到数据目录的 upwind_enterprises/images"
                     }
                 },
-                "required": ["weather_data_id"]
+                "required": []
             }
         }
 
@@ -129,7 +142,8 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
     async def execute(
         self,
         context,  # Context-Aware V2: ExecutionContext 对象
-        weather_data_id: str,
+        weather_data_id: str = None,
+        weather_records: list = None,
         city_name: str = None,
         station_name: str = None,
         search_range_km: float = None,
@@ -137,6 +151,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
         top_n: int = None,
         map_type: str = "normal",
         mode: str = "topn_mixed",
+        output_dir: str = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -171,8 +186,14 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
             if top_n is None or top_n > settings.default_top_n_enterprises:
                 top_n = settings.default_top_n_enterprises
 
-            # 【Context-Aware V2】从 context 获取风场数据
-            winds = None
+            # 优先使用直传风场记录；否则通过 Context-Aware V2 从 context 获取风场数据。
+            winds = []
+            if weather_records:
+                winds = self._extract_winds_from_records(weather_records)
+                logger.info(
+                    "wind_data_retrieved_from_direct_records",
+                    record_count=len(winds),
+                )
             if weather_data_id and context is not None:
                 logger.info(
                     "retrieving_wind_data_from_context",
@@ -181,41 +202,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 try:
                     weather_data = context.get_raw_data(weather_data_id)
                     if weather_data and len(weather_data) > 0:
-                        # 转换为 winds 格式（符合 UDF v2.0 规范）
-                        winds = []
-                        for record in weather_data:
-                            if isinstance(record, dict):
-                                # 提取风向风速字段
-                                # 1. 先尝试从顶层获取（兼容扁平结构）
-                                wd = record.get("wind_direction_10m") or record.get("wind_direction")
-                                ws = record.get("wind_speed_10m") or record.get("wind_speed")
-                                time_str = record.get("timestamp") or record.get("time")
-
-                                # 2. 如果顶层没有，按照 UDF v2.0 规范从 measurements 获取
-                                if wd is None or ws is None:
-                                    measurements = record.get("measurements", {})
-                                    if isinstance(measurements, dict):
-                                        if wd is None:
-                                            wd = measurements.get("wind_direction_10m") or measurements.get("wind_direction")
-                                        if ws is None:
-                                            ws = measurements.get("wind_speed_10m") or measurements.get("wind_speed")
-
-                                # 3. 验证并过滤数据（检查 NaN 和异常值）
-                                if wd is not None and ws is not None:
-                                    try:
-                                        wd_val = float(wd)
-                                        ws_val = float(ws)
-                                        # 过滤 NaN 值
-                                        if not (math.isnan(wd_val) or math.isnan(ws_val)):
-                                            # 验证数值范围
-                                            if 0 <= wd_val <= 360 and ws_val >= 0:
-                                                winds.append({
-                                                    "wd": wd_val,
-                                                    "ws": ws_val,
-                                                    "time": str(time_str) if time_str else None
-                                                })
-                                    except (ValueError, TypeError):
-                                        pass
+                        winds.extend(self._extract_winds_from_records(weather_data))
                         logger.info(
                             "wind_data_retrieved_from_context",
                             weather_data_id=weather_data_id,
@@ -240,7 +227,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                     }
 
             # 防御性检查：未能获取风场数据
-            if winds is None or len(winds) == 0:
+            if not winds:
                 return {
                     "success": False,
                     "error": "未能获取有效的风向风速数据",
@@ -503,6 +490,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
 
             timestamp = datetime.now().isoformat()
             visuals_list = []
+            map_images = []
 
             def get_station_coords(r):
                 """获取站点坐标，优先从结果的meta中获取"""
@@ -532,7 +520,37 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                     station_lat = station_lat or 23.1
                     station_lon = station_lon or 113.3
 
-                # 构建单个站点的地图数据
+                map_url = station_result["result"].get("public_url")
+                map_local_path = None
+                static_map_url = self._build_amap_static_map_url(
+                    station_lat=station_lat,
+                    station_lon=station_lon,
+                    enterprises=station_enterprises,
+                    meta=station_result["result"].get("meta", {}),
+                    top_n=top_n,
+                    map_type=map_type,
+                )
+                image_url = static_map_url or map_url
+                if image_url:
+                    map_output_path = self._map_image_output_path(
+                        output_dir=output_dir,
+                        city_name=effective_city_name,
+                        station_name=station_name,
+                        index=idx + 1,
+                        map_url=image_url,
+                    )
+                    try:
+                        downloaded_path = await self._download_url_to_file(image_url, map_output_path)
+                        map_local_path = str(downloaded_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "upwind_map_image_download_failed",
+                            city_name=effective_city_name,
+                            station_name=station_name,
+                            map_url=image_url,
+                            error=str(exc),
+                        )
+
                 map_data = {
                     "city_name": effective_city_name,
                     "map_center": {"lng": station_lon, "lat": station_lat},
@@ -542,7 +560,9 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                         "name": station_name
                     },
                     "enterprises": station_enterprises,
-                    "map_url": station_result["result"].get("public_url"),
+                    "map_url": map_url,
+                    "map_local_path": map_local_path,
+                    "local_path": map_local_path,
                     "meta": station_result["result"].get("meta", {}),
                     "search_range_km": search_range_km,
                     "top_n": top_n,
@@ -580,6 +600,13 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                     }
                 )
                 visuals_list.append(visual_block.dict())
+                if map_url or map_local_path:
+                    map_images.append({
+                        "station_name": station_name,
+                        "map_url": map_url,
+                        "local_path": map_local_path,
+                        "visual_id": analysis_id,
+                    })
 
                 logger.info(
                     "station_map_created",
@@ -603,6 +630,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 "success": True,
                 "data": None,
                 "visuals": visuals_list,  # 每个站点一个独立的地图
+                "map_images": map_images,
                 "metadata": {
                     "schema_version": "v2.0",
                     "source_data_ids": [],
@@ -635,6 +663,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 "error": str(e),
                 "data": None,
                 "visuals": [],
+                "map_images": [],
                 "metadata": {
                     "schema_version": "v2.0",
                     "source_data_ids": [],
@@ -643,3 +672,168 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 },
                 "summary": f"上风向企业分析失败: {str(e)[:50]}"
             }
+
+    def _map_image_output_path(
+        self,
+        *,
+        output_dir: str | None,
+        city_name: str,
+        station_name: str,
+        index: int,
+        map_url: str,
+    ) -> Path:
+        base_dir = Path(output_dir) if output_dir else Path(settings.data_registry_dir) / "upwind_enterprises" / "images"
+        suffix = self._image_suffix_from_url(map_url)
+        if output_dir:
+            return base_dir / f"upwind_enterprises_{index}{suffix}"
+        safe_city = self._safe_filename(city_name)
+        safe_station = self._safe_filename(station_name)
+        return base_dir / f"{safe_city}_{safe_station}_{index}{suffix}"
+
+    async def _download_url_to_file(self, url: str, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(self._download_url_to_file_sync, url, output_path)
+        return output_path
+
+    def _download_url_to_file_sync(self, url: str, output_path: Path) -> None:
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/png,image/*,*/*"})
+        with urlopen(request, timeout=20) as response:
+            content_type = response.headers.get("content-type", "")
+            data = response.read()
+        if not self._looks_like_image(data, content_type):
+            preview = data[:120].decode("utf-8", errors="replace")
+            raise ValueError(f"Downloaded map response is not an image: content_type={content_type}, preview={preview}")
+        output_path.write_bytes(data)
+
+    def _build_amap_static_map_url(
+        self,
+        *,
+        station_lat: Any,
+        station_lon: Any,
+        enterprises: list[dict[str, Any]],
+        meta: dict[str, Any],
+        top_n: int,
+        map_type: str,
+    ) -> str | None:
+        key = getattr(settings, "amap_public_key", None)
+        if not key:
+            return None
+
+        station_lat_value = self._to_float(station_lat)
+        station_lon_value = self._to_float(station_lon)
+        center = meta.get("center") if isinstance(meta.get("center"), dict) else {}
+        center_lat = self._to_float(center.get("lat")) or station_lat_value
+        center_lon = self._to_float(center.get("lng") or center.get("lon")) or station_lon_value
+        if center_lat is None or center_lon is None:
+            center_lon, center_lat = self._average_enterprise_location(enterprises)
+        if center_lat is None or center_lon is None:
+            return None
+
+        markers: list[str] = []
+        if station_lat_value is not None and station_lon_value is not None:
+            markers.append(f"large,0x0066FF,S:{station_lon_value},{station_lat_value}")
+
+        marker_limit = max(0, min(int(top_n or 0), 20))
+        for index, enterprise in enumerate(enterprises[:marker_limit], start=1):
+            lng = self._to_float(enterprise.get("lng") or enterprise.get("lon"))
+            lat = self._to_float(enterprise.get("lat"))
+            if lat is None or lng is None:
+                continue
+            label = self._marker_label(index)
+            markers.append(f"mid,0xFF4500,{label}:{lng},{lat}")
+
+        if not markers:
+            return None
+
+        params = {
+            "location": f"{center_lon},{center_lat}",
+            "zoom": str(meta.get("zoom") or 15),
+            "size": "1024*768",
+            "markers": "|".join(markers),
+            "key": key,
+        }
+        if map_type == "satellite":
+            params["scale"] = "2"
+        return "https://restapi.amap.com/v3/staticmap?" + urlencode(params, safe="|,:*")
+
+    def _average_enterprise_location(self, enterprises: list[dict[str, Any]]) -> tuple[float | None, float | None]:
+        points: list[tuple[float, float]] = []
+        for enterprise in enterprises:
+            lng = self._to_float(enterprise.get("lng") or enterprise.get("lon"))
+            lat = self._to_float(enterprise.get("lat"))
+            if lat is not None and lng is not None:
+                points.append((lng, lat))
+        if not points:
+            return None, None
+        return (
+            sum(point[0] for point in points) / len(points),
+            sum(point[1] for point in points) / len(points),
+        )
+
+    def _marker_label(self, index: int) -> str:
+        if 1 <= index <= 9:
+            return str(index)
+        return chr(ord("A") + index - 10) if index <= 35 else "E"
+
+    def _looks_like_image(self, data: bytes, content_type: str) -> bool:
+        normalized_type = (content_type or "").lower()
+        if normalized_type.startswith("image/"):
+            return True
+        return (
+            data.startswith(b"\x89PNG\r\n\x1a\n")
+            or data.startswith(b"\xff\xd8\xff")
+            or data.startswith(b"GIF87a")
+            or data.startswith(b"GIF89a")
+            or data.startswith(b"RIFF") and data[8:12] == b"WEBP"
+        )
+
+    def _to_float(self, value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(number):
+            return None
+        return number
+
+    def _image_suffix_from_url(self, url: str) -> str:
+        suffix = Path(urlparse(url).path).suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            return suffix
+        return ".png"
+
+    def _safe_filename(self, value: Any) -> str:
+        text = str(value or "unknown").strip()
+        return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in text)[:80] or "unknown"
+
+    def _extract_winds_from_records(self, records: Any) -> list[dict[str, Any]]:
+        winds: list[dict[str, Any]] = []
+        for record in records or []:
+            if not isinstance(record, dict):
+                continue
+            wd = record.get("wind_direction_10m") or record.get("wind_direction") or record.get("wd") or record.get("wd_deg")
+            ws = record.get("wind_speed_10m") or record.get("wind_speed") or record.get("ws") or record.get("ws_ms")
+            time_str = record.get("timestamp") or record.get("time")
+            if wd is None or ws is None:
+                measurements = record.get("measurements", {})
+                if isinstance(measurements, dict):
+                    if wd is None:
+                        wd = measurements.get("wind_direction_10m") or measurements.get("wind_direction")
+                    if ws is None:
+                        ws = measurements.get("wind_speed_10m") or measurements.get("wind_speed")
+            if wd is None or ws is None:
+                continue
+            try:
+                wd_val = float(wd)
+                ws_val = float(ws)
+            except (ValueError, TypeError):
+                continue
+            if math.isnan(wd_val) or math.isnan(ws_val):
+                continue
+            if 0 <= wd_val <= 360 and ws_val >= 0:
+                winds.append({
+                    "wd": wd_val,
+                    "ws": ws_val,
+                    "time": str(time_str) if time_str else None,
+                })
+        return winds

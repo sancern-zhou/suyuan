@@ -1,6 +1,7 @@
 """社交 Agent 桥接模块，负责连接消息总线与 ReActAgent。"""
 
 import asyncio
+import json
 import mimetypes
 import re
 from datetime import datetime
@@ -27,6 +28,39 @@ from app.agent.session.session_resolver import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """Parse a whole-response JSON object, including simple fenced JSON replies."""
+    stripped = text.strip()
+    fence_match = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", stripped)
+    if fence_match:
+        stripped = fence_match.group(1).strip()
+
+    try:
+        parsed = json.loads(stripped)
+    except Exception:
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _is_heartbeat_silent_response(summary: str) -> bool:
+    stripped = summary.strip()
+    if not stripped:
+        return True
+    if stripped == "HEARTBEAT_OK":
+        return True
+
+    parsed = _extract_json_object(stripped)
+    if not parsed:
+        return False
+
+    return parsed.get("heartbeat_silent") is True or parsed.get("should_notify") is False
+
+
+def _heartbeat_should_notify(summary: str, use_social_context: bool) -> bool:
+    return bool(summary.strip()) and use_social_context and not _is_heartbeat_silent_response(summary)
 
 
 class AgentBridge:
@@ -79,7 +113,8 @@ class AgentBridge:
         if enable_heartbeat and mode == "social":
             self.user_heartbeat_manager = UserHeartbeatManager(
                 on_execute_callback=self._on_heartbeat_execute,
-                on_notify_callback=self._on_heartbeat_notify
+                on_notify_callback=self._on_heartbeat_notify,
+                user_id_resolver=self._resolve_heartbeat_user_id,
             )
             
             set_user_heartbeat_manager(self.user_heartbeat_manager)
@@ -208,6 +243,49 @@ class AgentBridge:
         if channel:
             return channel.bot_account
         return "default"
+
+    def _resolve_heartbeat_user_id(self, user_id: str) -> str:
+        """Map persisted heartbeat user ids to currently registered channels."""
+        parts = user_id.rsplit(":", 2)
+        if len(parts) < 3:
+            return user_id
+
+        channel_name, bot_account, sender_id = parts
+        if channel_name in self._channel_map:
+            current_bot_account = self._channel_map[channel_name].bot_account
+            if current_bot_account != bot_account:
+                return f"{channel_name}:{current_bot_account}:{sender_id}"
+            return user_id
+
+        sender_matches: list[tuple[str, str]] = []
+        bot_matches: list[tuple[str, str]] = []
+        for name, channel in self._channel_map.items():
+            channel_bot_account = channel.bot_account
+            context_tokens = getattr(channel, "_context_tokens", None)
+            has_sender_context = isinstance(context_tokens, dict) and sender_id in context_tokens
+            if has_sender_context:
+                sender_matches.append((name, channel_bot_account))
+            if channel_bot_account == bot_account:
+                bot_matches.append((name, channel_bot_account))
+
+        if len(sender_matches) == 1:
+            new_channel, new_bot_account = sender_matches[0]
+            return f"{new_channel}:{new_bot_account}:{sender_id}"
+
+        if len(bot_matches) == 1:
+            new_channel, new_bot_account = bot_matches[0]
+            return f"{new_channel}:{new_bot_account}:{sender_id}"
+
+        logger.warning(
+            "heartbeat_user_id_channel_unresolved",
+            user_id=user_id,
+            channel=channel_name,
+            sender_id=sender_id,
+            available_channels=list(self._channel_map.keys()),
+            sender_match_count=len(sender_matches),
+            bot_match_count=len(bot_matches),
+        )
+        return user_id
 
     @staticmethod
     def _is_image_media(media_path: str) -> bool:
@@ -1596,7 +1674,7 @@ class AgentBridge:
 
         try:
             heartbeat_session_id = f"heartbeat_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            query = f"""Please execute these scheduled tasks now and summarize the result:
+            query = f"""Please execute these scheduled tasks now:
 
 {task_description}
 
@@ -1606,6 +1684,9 @@ class AgentBridge:
 - DO NOT use schedule_task tool to create new tasks
 - DO NOT reschedule these tasks
 - Just perform the actions described in each task
+- If no user-visible notification is needed, your final answer MUST be exactly: HEARTBEAT_OK
+- If a task says to be silent, return exactly HEARTBEAT_OK and do not explain why it was silent
+- Only return a normal summary when the user should receive a WeChat notification
 
 Example: If task says "Send a test message", then send the message directly, don't create a schedule."""
 
@@ -1634,10 +1715,32 @@ Example: If task says "Send a test message", then send the message directly, don
                         )
 
             summary = "\n".join(part for part in result_parts if part).strip()
-            return {
-                "should_notify": bool(summary) and use_social_context,
+            should_notify = _heartbeat_should_notify(summary, use_social_context)
+            response = {
+                "should_notify": should_notify,
                 "summary": summary or "Tasks completed",
                 "executed_at": datetime.now().isoformat()
+            }
+            if should_notify and use_social_context:
+                try:
+                    from app.social.heartbeat_context import persist_heartbeat_context_event
+
+                    await persist_heartbeat_context_event(
+                        session_mapper=self.session_mapper,
+                        user_id=user_id,
+                        response=response,
+                        heartbeat_session_id=heartbeat_session_id,
+                        tasks=tasks,
+                    )
+                except Exception as persist_error:
+                    logger.warning(
+                        "heartbeat_context_event_persist_failed",
+                        user_id=user_id,
+                        heartbeat_session_id=heartbeat_session_id,
+                        error=str(persist_error),
+                    )
+            return {
+                **response,
             }
 
         except Exception as e:

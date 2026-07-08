@@ -9,7 +9,7 @@
 3. get_weather_forecast - 未来15天预报
 4. _get_air_quality_from_db - 从数据库获取空气质量(周边8市历史+未来7天预报)
 5. meteorological_trajectory_analysis - 后向轨迹分析(可跳过)
-6. get_weather_situation_map - 中央气象台天气形势图AI解读(通义千问VL)
+6. get_platform_weather_image - 中央气象台风场实况图
 
 总耗时: 3-5分钟 (轨迹分析超时则2-3分钟)
 
@@ -54,7 +54,7 @@ class QuickTraceWorkflow(WorkflowTool):
 1. 气象条件分析：获取历史气象（前3天）、实时天气、未来预报（15天）
 2. 区域传输分析：查询周边8城市空气质量数据
 3. 后向轨迹分析：72小时后向轨迹分析（可选，超时自动跳过）
-4. 天气形势解读：中央气象台天气形势图AI解读
+4. 天气图：中央气象台风场实况图获取与报告引用
 5. 综合报告生成：自动生成Markdown格式的溯源分析报告
 
 适用场景：
@@ -87,7 +87,7 @@ class QuickTraceWorkflow(WorkflowTool):
             QuickTraceExecutor实例
         """
         if self._executor is None:
-            from app.agent.executors.quick_trace_executor import QuickTraceExecutor
+            from app.fetchers.quick_trace import QuickTraceExecutor
             self._executor = QuickTraceExecutor()
             logger.info("quick_trace_executor_loaded")
         return self._executor

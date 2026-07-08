@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, List, Sequence
 
+from .categories import normalize_project_category
 from .models import TenderCandidate, TenderFilterDecision
 
 DEFAULT_POSITIVE_KEYWORDS = [
@@ -28,6 +29,19 @@ DEFAULT_POSITIVE_KEYWORDS = [
     "排污",
     "环保管家",
     "环保系统",
+    "智慧环保",
+    "智慧监管",
+    "智慧执法",
+    "信息化",
+    "数据平台",
+    "监管平台",
+    "实验室",
+    "试剂",
+    "标准物质",
+    "应急物资",
+    "生态保护",
+    "生物多样性",
+    "生态红线",
     "超低排放",
     "排放改造",
     "环评",
@@ -91,6 +105,55 @@ DEFAULT_NEGATIVE_KEYWORDS = [
 ]
 
 CATEGORY_KEYWORDS = {
+    "digital_platform": [
+        "智慧环保",
+        "智慧监管",
+        "智慧执法",
+        "信息化",
+        "数据平台",
+        "监管平台",
+        "管理系统",
+        "AI",
+        "大数据",
+        "环保系统",
+    ],
+    "operation_maintenance": [
+        "运维",
+        "运行维护",
+        "运营维护",
+        "维护服务",
+        "自动监测站",
+        "空气站",
+        "水站",
+        "在线监测设备",
+    ],
+    "equipment_supplies": [
+        "仪器",
+        "设备",
+        "耗材",
+        "试剂",
+        "标准物质",
+        "采样设备",
+        "实验室",
+        "配件",
+    ],
+    "emergency_response": [
+        "应急",
+        "应急响应",
+        "应急物资",
+        "突发环境事件",
+        "应急预案",
+        "应急监测",
+    ],
+    "ecology_conservation": [
+        "生态保护",
+        "生物多样性",
+        "自然保护地",
+        "生态红线",
+        "生态状况",
+        "生态质量",
+        "生态修复",
+    ],
     "environment_monitoring": [
         "监测",
         "在线监测",
@@ -114,7 +177,17 @@ CATEGORY_KEYWORDS = {
         "超低排放",
         "排放改造",
     ],
-    "environment_consulting": ["环评", "环境影响评价", "环保管家", "排污许可", "咨询"],
+    "environment_consulting": [
+        "环评",
+        "环境影响评价",
+        "环保管家",
+        "排污许可",
+        "咨询",
+        "调查评估",
+        "方案编制",
+        "验收评估",
+        "绩效评估",
+    ],
     "law_enforcement_support": [
         "执法监测",
         "污染源排查",
@@ -165,8 +238,7 @@ class TenderRelevanceFilter:
                 r"政府采购意向",
             ]),
             ("招标代理或采购代理服务，非环境业务主体项目", [
-                r"招标代理",
-                r"采购代理",
+                r"(?:招标代理|采购代理)(?:服务|机构)?(?:框架|征集|招募|采购|项目)",
                 r"选取.*代理",
                 r"招募.*代理",
             ]),
@@ -187,13 +259,17 @@ class TenderRelevanceFilter:
                 r"办公",
                 r"复印",
                 r"打印",
-                r"耗材",
-                r"试管",
-                r"试剂",
-                r"滴定剂",
-                r"指示剂",
-                r"显色剂",
-                r"标准物质",
+                r"办公耗材",
+            ]),
+            ("政务信息化、档案、会议或通用管理支撑，非环境业务主体项目", [
+                r"政务信息化",
+                r"档案",
+                r"人事档案",
+                r"干部人事",
+                r"大会",
+                r"会议",
+                r"会务",
+                r"展会",
             ]),
         ]
         for reason, regexes in patterns:
@@ -260,8 +336,10 @@ class TenderRelevanceFilter:
                 project_category=self._infer_category(positive_hits),
             )
 
-        if title_negative_hits and not self._has_strong_environment_signal(
-            positive_hits
+        if (
+            title_negative_hits
+            and not self._has_strong_environment_signal(positive_hits)
+            and not self._is_environment_equipment_supply(candidate.title)
         ):
             return TenderFilterDecision(
                 is_relevant=False,
@@ -272,7 +350,11 @@ class TenderRelevanceFilter:
                 project_category=self._infer_category(positive_hits),
             )
 
-        if negative_hits and self._is_office_procurement(candidate.title):
+        if (
+            negative_hits
+            and self._is_office_procurement(candidate.title)
+            and not self._is_environment_equipment_supply(candidate.title)
+        ):
             return TenderFilterDecision(
                 is_relevant=False,
                 reason=f"生态环境部门普通办公或基础保障采购: {', '.join(negative_hits[:5])}",
@@ -380,6 +462,16 @@ class TenderRelevanceFilter:
             for pattern in office_patterns
         )
 
+    def _is_environment_equipment_supply(self, title: str) -> bool:
+        normalized_title = self._normalize(title)
+        return bool(
+            re.search(
+                r"(?:环境监测|生态环境|实验室|水质|空气|污染源|在线监测).*(?:仪器|设备|试剂|耗材|标准物质|采样|配件)",
+                normalized_title,
+                re.IGNORECASE,
+            )
+        )
+
     def _has_procurement_signal(self, title: str) -> bool:
         normalized_title = self._normalize(title)
         procurement_patterns = [
@@ -401,8 +493,8 @@ class TenderRelevanceFilter:
     def _infer_category(self, positive_hits: Sequence[str]) -> str | None:
         for category, keywords in CATEGORY_KEYWORDS.items():
             if any(keyword in positive_hits for keyword in keywords):
-                return category
-        return "environment_related" if positive_hits else None
+                return normalize_project_category(category)
+        return "other_environment_procurement" if positive_hits else None
 
     def _normalize(self, value: str) -> str:
         return re.sub(r"\s+", "", value or "").lower()

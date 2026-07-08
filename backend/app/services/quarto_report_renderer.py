@@ -34,6 +34,38 @@ MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\((?P<src>[^)]+)\)")
 REPORT_ROOT = get_reports_dir()
 
 
+def _disable_docx_quarto_auto_structure(qmd_content: str) -> tuple[str, bool]:
+    """Disable Quarto-owned TOC/numbering in the temporary DOCX render source."""
+    if not qmd_content.startswith("---"):
+        return qmd_content, False
+
+    end_match = re.search(r"(?m)^---\s*$", qmd_content[3:])
+    if not end_match:
+        return qmd_content, False
+
+    header_end = 3 + end_match.end()
+    header = qmd_content[:header_end]
+    body = qmd_content[header_end:]
+    lines = header.splitlines(keepends=True)
+    changed = False
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if re.match(r"(toc|number-sections):\s*true\s*(#.*)?$", stripped):
+            key = stripped.split(":", 1)[0]
+            indent = len(line) - len(line.lstrip(" "))
+            newline = "\n" if line.endswith("\n") else ""
+            comment = ""
+            if "#" in stripped:
+                comment = " " + stripped[stripped.index("#") :]
+            lines[index] = f"{' ' * indent}{key}: false{comment}{newline}"
+            changed = True
+
+    if not changed:
+        return qmd_content, False
+    return "".join(lines) + body, True
+
+
 class ReportRenderError(RuntimeError):
     """Raised when Quarto rendering fails."""
 
@@ -339,11 +371,10 @@ class QuartoReportRenderer:
         return any(value.lower() not in placeholders for value in values)
 
     def _prepare_docx_qmd(self, report_dir: Path, qmd_path: Path) -> Path:
-        """Create a temporary qmd without placeholder reference-doc values."""
+        """Create a temporary qmd with DOCX-only render metadata normalized."""
         values = self._qmd_reference_doc_values(qmd_path)
         placeholders = {"default", "none", "null", "~"}
-        if not any(value.lower() in placeholders for value in values):
-            return qmd_path
+        has_placeholder_reference_doc = any(value.lower() in placeholders for value in values)
 
         try:
             text = qmd_path.read_text(encoding="utf-8")
@@ -354,12 +385,18 @@ class QuartoReportRenderer:
             r"^\s*reference[-_]doc\s*:\s*['\"]?(?:default|none|null|~)['\"]?\s*(?:#.*)?$\n?",
             re.IGNORECASE | re.MULTILINE,
         )
-        sanitized = pattern.sub("", text)
-        sanitized = re.sub(
-            r"(?m)^(\s*)docx:\s*\n(?=(?:\1\S|\S|---))",
-            "",
-            sanitized,
-        )
+        sanitized = pattern.sub("", text) if has_placeholder_reference_doc else text
+        sanitized, structure_changed = _disable_docx_quarto_auto_structure(sanitized)
+        if has_placeholder_reference_doc:
+            sanitized = re.sub(
+                r"(?m)^(\s*)docx:\s*\n(?=(?:\1\S|\S|---))",
+                "",
+                sanitized,
+            )
+
+        if not has_placeholder_reference_doc and not structure_changed:
+            return qmd_path
+
         temp_qmd = report_dir / "report_docx_render.qmd"
         temp_qmd.write_text(sanitized, encoding="utf-8")
         return temp_qmd

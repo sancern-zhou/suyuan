@@ -236,6 +236,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_not_found"},
                 "summary": f"[FAIL] 未找到数据引用 {data_id}，请先调用 get_vocs_data"
             }
+        file_path = getattr(handle, "file_path", None)
 
         # Step 2: Validate schema
         accepted_schemas = ["vocs", "vocs_unified"]
@@ -445,8 +446,8 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                     }
                 }
             )
-            pmf_data_id = data_ref["data_id"]
-            pmf_file_path = data_ref["file_path"]
+            pmf_data_id = pmf_data_ref["data_id"]
+            pmf_file_path = pmf_data_ref["file_path"]
             result["registry_schema"] = "pmf_result"
             result["data_id"] = pmf_data_id
             logger.info("calculate_vocs_pmf_saved", pmf_data_id=pmf_data_id, pmf_file_path=pmf_file_path)
@@ -619,7 +620,27 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                         timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     record = {"time": timestamp, **sample["species"]}
                 else:
-                    raise ValueError(f"Dictionary sample missing 'species_data' or 'species'")
+                    timestamp = sample.get("timestamp") or sample.get("time")
+                    species = {
+                        key: value
+                        for key, value in sample.items()
+                        if key not in {
+                            "timestamp",
+                            "time",
+                            "station_code",
+                            "station_name",
+                            "data_type",
+                            "time_type",
+                            "tvoc",
+                            "unit",
+                            "qc_flag",
+                            "metadata",
+                        }
+                        and isinstance(value, (int, float))
+                    }
+                    if not species:
+                        continue
+                    record = {"time": timestamp, **species}
             elif isinstance(sample, UnifiedVOCsData):
                 record = {"time": sample.timestamp, **sample.species_data}
             elif isinstance(sample, VOCsSample):
