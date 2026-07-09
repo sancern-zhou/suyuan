@@ -451,17 +451,32 @@ class AgentBridge:
         session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
 
         if self.mode == "social" and session_id in self._active_social_sessions:
-            accepted = await steering_registry.add_input(session_id, msg.content)
+            agent_attachments = self._build_agent_attachments(msg.media)
+            agent_content = (
+                self._strip_media_source_markers(msg.content)
+                if agent_attachments
+                else msg.content
+            )
+            accepted = await steering_registry.add_input(
+                session_id,
+                agent_content,
+                attachments=agent_attachments,
+            )
             if not accepted:
                 await asyncio.sleep(0.2)
-                accepted = await steering_registry.add_input(session_id, msg.content)
+                accepted = await steering_registry.add_input(
+                    session_id,
+                    agent_content,
+                    attachments=agent_attachments,
+                )
             if accepted:
                 logger.info(
                     "social_message_steered_to_active_run",
                     channel=msg.channel,
                     sender_id=msg.sender_id,
                     session_id=session_id,
-                    content_preview=msg.content[:80],
+                    content_preview=agent_content[:80],
+                    attachment_count=len(agent_attachments),
                 )
                 return
 

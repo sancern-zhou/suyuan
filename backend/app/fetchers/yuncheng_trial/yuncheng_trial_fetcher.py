@@ -14,9 +14,8 @@ from app.scenarios.yuncheng_trial.config import YUNCHENG_TRIAL_CONFIG
 from app.scenarios.yuncheng_trial.fetch_and_alert import (
     evaluate_alert_rules,
     fetch_target_city_hourly_rows,
-    write_latest_alert,
+    write_alert_evidence,
 )
-from app.scenarios.yuncheng_trial.paths import build_alert_run_dir
 
 logger = structlog.get_logger()
 
@@ -44,12 +43,11 @@ class YunchengTrialFetcher(DataFetcher):
             hours=self.hours,
         )
         state = evaluate_alert_rules(rows)
-        alert_path = write_latest_alert(self.registry_root, state)
+        alert_path = write_alert_evidence(self.registry_root, state)
 
         manifest_path = None
         if state.get("has_alert") is True and state.get("status") == "pending_trace":
-            output_dir = build_alert_run_dir(self.registry_root, str(state["target_time"]))
-            manifest_path = await collect_from_alert_file(alert_path=alert_path, output_dir=output_dir)
+            manifest_path = await collect_from_alert_file(alert_path=alert_path, output_dir=alert_path.parent)
 
         logger.info(
             "yuncheng_trial_fetcher_completed",

@@ -48,6 +48,59 @@ def test_prefilter_rejects_real_noise_patterns_before_llm():
         assert decision.is_relevant is False
 
 
+def test_prefilter_rejects_generic_department_support_projects():
+    relevance_filter = TenderRelevanceFilter()
+    titles = [
+        "省生态环境厅政务信息化运营（2026年）项目结果公告",
+        "贵州省生态环境厅干部人事档案规范化及数字资源建设项目竞争性磋商公告",
+        "湖北省生态环境厅2026年中国碳市场大会项目公开招标公告",
+    ]
+
+    for title in titles:
+        decision = relevance_filter.prefilter_decision(
+            TenderCandidate(title=title, url=f"https://example.test/{title}")
+        )
+        assert decision is not None, title
+        assert decision.is_relevant is False
+        assert "非环境业务主体项目" in decision.reason
+
+
+def test_prefilter_sends_ambiguous_environment_projects_to_llm():
+    relevance_filter = TenderRelevanceFilter()
+    titles = [
+        "关于惠东县移动源监测系统运维服务项目采购结果的公告",
+        "佛山市生态环境局信息化系统运维(2026-2027)项目招标公告",
+        "兰州新区生态环境局2026年实验室试剂耗材采购项目（二次）竞争性磋商公告",
+        "山南市生态环境局实验室耗材及设备采购项目终止公告",
+        "关于拟确定2026年农村饮用水水源地水质监测项目招标代理机构的比选结果公示",
+    ]
+
+    for title in titles:
+        decision = relevance_filter.prefilter_decision(
+            TenderCandidate(title=title, url=f"https://example.test/{title}")
+        )
+        assert decision is None, title
+
+
+def test_rule_filter_infers_expanded_project_categories():
+    relevance_filter = TenderRelevanceFilter()
+    cases = [
+        ("生态环境智慧监管平台建设项目招标公告", "digital_platform"),
+        ("环境空气自动监测站运维服务项目招标公告", "operation_maintenance"),
+        ("生态环境局实验室试剂耗材采购项目招标公告", "equipment_supplies"),
+        ("突发环境事件应急物资采购项目成交公告", "emergency_response"),
+        ("生态保护红线生态状况调查评估项目竞争性磋商公告", "ecology_conservation"),
+    ]
+
+    for title, expected_category in cases:
+        decision = relevance_filter.decide(
+            TenderCandidate(title=title, url=f"https://example.test/{expected_category}")
+        )
+
+        assert decision.is_relevant is True
+        assert decision.project_category == expected_category
+
+
 @pytest.mark.asyncio
 async def test_pipeline_prefilters_noise_without_llm():
     repository = RecordingRepository()

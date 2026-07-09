@@ -2,7 +2,8 @@ import asyncio
 import types
 from datetime import date, datetime
 
-from app.agent.executors.quick_trace_executor import QuickTraceExecutor, SimpleExecutionContext
+import app.fetchers.quick_trace.quick_trace_fetcher as quick_trace_fetcher
+from app.fetchers.quick_trace import JiningQuickTraceFetcher, QuickTraceExecutor, SimpleExecutionContext
 
 
 def test_simple_execution_context_save_data_returns_string_id():
@@ -12,6 +13,44 @@ def test_simple_execution_context_save_data_returns_string_id():
 
     assert isinstance(data_id, str)
     assert data_id.startswith("quick_trace_weather:")
+
+
+def test_jining_quick_trace_fetcher_defaults_to_daily_schedule_and_target_date(monkeypatch):
+    calls = {}
+
+    async def fake_run_once(city, analysis_date):
+        calls["city"] = city
+        calls["analysis_date"] = analysis_date
+        return {"summary_text": "ok", "inferred_event": {"pollutant": "O3"}}
+
+    monkeypatch.setattr(quick_trace_fetcher, "run_once", fake_run_once)
+    fetcher = JiningQuickTraceFetcher(target_date_factory=lambda: "2026-05-12")
+
+    result = asyncio.run(fetcher.fetch_and_store())
+
+    assert fetcher.name == "jining_quick_trace_fetcher"
+    assert fetcher.schedule == "30 8 * * *"
+    assert calls == {"city": "济宁市", "analysis_date": "2026-05-12"}
+    assert result["summary_text"] == "ok"
+
+
+def test_run_once_does_not_save_when_event_inference_failed(monkeypatch):
+    calls = {}
+
+    class FakeExecutor:
+        async def execute_for_analysis_date(self, city, analysis_date):
+            calls["execute"] = {"city": city, "analysis_date": analysis_date}
+            return {"summary_text": "❌ 分析失败: 无监测数据"}
+
+        async def save_report(self, **kwargs):
+            calls["save"] = kwargs
+
+    monkeypatch.setattr(quick_trace_fetcher, "QuickTraceExecutor", FakeExecutor)
+
+    result = asyncio.run(quick_trace_fetcher.run_once(city="济宁市", analysis_date="2026-05-12"))
+
+    assert calls == {"execute": {"city": "济宁市", "analysis_date": "2026-05-12"}}
+    assert result["summary_text"].startswith("❌ 分析失败")
 
 
 def test_air_quality_forecast_window_uses_alert_date():
@@ -119,12 +158,19 @@ def test_execute_historical_backfill_routes_alert_time_to_date_sensitive_tasks()
     class FakeWeatherSituationMapTool:
         async def execute(self, **kwargs):
             calls["weather_situation"] = kwargs
-            return {"success": True, "data": {"analysis": "天气形势"}}
+            return {
+                "success": True,
+                "data": {
+                    "product_name": "全国逐小时风场实况图",
+                    "image_url": "/api/image/weather_platform_hourly_wind_field_20260512_00",
+                    "source_url": "http://10.10.10.112:8313/1052/20260512/--%2B--%2B--%2B--%2B--%2B00%2B--.png",
+                },
+            }
 
     executor.tools = {
         "weather_data": FakeWeatherDataTool(),
         "weather_forecast": FakeWeatherForecastTool(),
-        "weather_situation_map": FakeWeatherSituationMapTool(),
+        "platform_weather_image": FakeWeatherSituationMapTool(),
     }
 
     async def fake_air_quality(self, city, reference_time=None):
@@ -160,4 +206,7 @@ def test_execute_historical_backfill_routes_alert_time_to_date_sensitive_tasks()
     assert calls["historical_weather"]["start_time"] == "2026-05-09 14:00:00"
     assert calls["historical_weather"]["end_time"] == "2026-05-11 14:00:00"
     assert calls["trajectory"]["start_time"] == "2026-05-12 14:00:00"
+    assert calls["weather_situation"]["product"] == "hourly_wind_field"
     assert calls["weather_situation"]["date"] == "20260512"
+    assert calls["weather_situation"]["time"] == "00"
+    assert calls["weather_situation"]["download"] is True

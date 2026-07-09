@@ -17,10 +17,31 @@ from app.services.tenders.models import NoticeType, PipelineRunResult, TenderCan
 def test_default_config_uses_approved_daily_scope():
     config = TenderFetcherConfig()
 
-    assert config.schedule == "30 6 * * *"
+    assert config.schedule == "30 2 * * *"
     assert config.keywords == DEFAULT_TENDER_KEYWORDS
     assert config.notice_types == [NoticeType.TENDER, NoticeType.WINNING_BID]
     assert config.max_pages == 0
+
+
+def test_default_keywords_include_only_high_precision_project_terms():
+    assert DEFAULT_TENDER_KEYWORDS == [
+        "生态环境局",
+        "环境监测中心",
+        "生态环境厅",
+        "环境监测站",
+        "生态环境分局",
+        "环境监控中心",
+        "污染源在线监控",
+        "空气自动站",
+        "水质自动站",
+        "VOCs走航",
+        "噪声自动监测",
+    ]
+    assert "环境监测" not in DEFAULT_TENDER_KEYWORDS
+    assert "在线监测" not in DEFAULT_TENDER_KEYWORDS
+    assert "污染治理" not in DEFAULT_TENDER_KEYWORDS
+    assert "生态环境监测中心" not in DEFAULT_TENDER_KEYWORDS
+    assert "生态环境监测站" not in DEFAULT_TENDER_KEYWORDS
 
 
 def test_parse_keywords_trims_empty_items():
@@ -47,7 +68,7 @@ def test_default_target_date_uses_previous_day():
     assert default_target_date(today=date(2026, 7, 1)) == date(2026, 6, 30)
 
 
-def test_default_llm_candidate_batch_size_is_50(monkeypatch):
+def test_default_llm_candidate_batch_size_is_20(monkeypatch):
     monkeypatch.delenv("TENDER_LLM_BATCH_SIZE", raising=False)
     batch_sizes = []
 
@@ -68,4 +89,4 @@ def test_default_llm_candidate_batch_size_is_50(monkeypatch):
 
     asyncio.run(pipeline._initial_decisions(candidates, PipelineRunResult()))
 
-    assert batch_sizes == [50, 1]
+    assert sorted(batch_sizes) == [11, 20, 20]

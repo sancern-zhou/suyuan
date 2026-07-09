@@ -430,6 +430,18 @@ class QianlimaClient:
         )
 
     async def fetch_detail(self, candidate: TenderCandidate) -> str:
+        if self.use_detail_http:
+            try:
+                detail = await asyncio.to_thread(self._fetch_detail_http, candidate.url)
+            except Exception:
+                detail = ""
+            if (
+                detail
+                and not _is_access_verification_page(detail)
+                and not _is_detail_unavailable_page(detail)
+            ):
+                return detail
+
         if self._detail_access_exhausted:
             raise QianlimaDetailAccessExhaustedError(
                 "千里马详情账号池浏览上限已耗尽，停止后续详情页访问"
@@ -893,6 +905,8 @@ def _qianlima_requests_proxies() -> dict[str, str] | None:
     server = _qianlima_proxy_setting("server")
     if not server:
         return None
+    if server.lower().startswith(("socks4://", "socks5://", "socks5h://")):
+        return None
     proxy_url = _proxy_url_with_credentials(
         server,
         _qianlima_proxy_setting("username"),
@@ -993,16 +1007,6 @@ def _account_storage_state_path(
 
 def _is_detail_unavailable_page(html: str) -> bool:
     value = _clean_link_label(html or "")
-    shell_markers = [
-        "加载中",
-        "防诈骗提醒",
-        "数据来自千里马招标网",
-        "标题",
-        "标的物",
-        "项目编号",
-        "招标单位",
-    ]
-    shell_score = sum(1 for marker in shell_markers if marker in value)
     procurement_content_markers = [
         "采购内容",
         "采购需求",
@@ -1017,6 +1021,18 @@ def _is_detail_unavailable_page(html: str) -> bool:
         "合同金额",
     ]
     has_procurement_content = any(marker in value for marker in procurement_content_markers)
+    if value.strip() in {"详情", "加载中", "详情 加载中"}:
+        return True
+    shell_markers = [
+        "加载中",
+        "防诈骗提醒",
+        "数据来自千里马招标网",
+        "标题",
+        "标的物",
+        "项目编号",
+        "招标单位",
+    ]
+    shell_score = sum(1 for marker in shell_markers if marker in value)
     has_daily_limit_marker = re.search(
         r"今日浏览已达到上限|浏览已达到上限|明日再试", value, re.IGNORECASE
     )

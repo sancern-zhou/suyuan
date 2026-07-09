@@ -9,6 +9,10 @@ from app.fetchers.base.scheduler import FetcherScheduler
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
+from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
+    OpenMeteoAirQualityForecastFetcher,
+)
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
@@ -48,6 +52,8 @@ def initialize_fetchers():
         fetcher_scheduler.register(ERA5Fetcher())
         fetcher_scheduler.register(ObservedWeatherFetcher())
         fetcher_scheduler.register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
+        fetcher_scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
+        fetcher_scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
 
         # 注册Satellite Fetchers
         fetcher_scheduler.register(NASAFirmsFetcher())

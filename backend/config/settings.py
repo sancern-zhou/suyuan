@@ -314,8 +314,8 @@ class Settings(BaseSettings):
         description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
-        default="agnes/agnes-2.0-flash,minimax/MiniMax-M3",
-        description="Comma-separated Auto multimodal model priority chain"
+        default="mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+        description="Comma-separated Auto multimodal model priority chain; used by social and chart modes"
     )
     llm_failover_cooldown_seconds: int = Field(
         default=60,

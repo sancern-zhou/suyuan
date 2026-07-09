@@ -19,7 +19,8 @@ NOAA HYSPLIT READY API Client
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import asyncio
 import httpx
@@ -29,6 +30,8 @@ import os
 import base64
 
 logger = structlog.get_logger()
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class NOAAHysplitAPI:
@@ -217,7 +220,7 @@ class NOAAHysplitAPI:
                     "county": "arlmap",
                     "psfile": "No",
                     "pdffile": "No",
-                    "mplot": "YES",
+                    "mplot": "NO",
                 }
                 
                 # Step 5 提交 (带重试)
@@ -323,6 +326,8 @@ class NOAAHysplitAPI:
                         "heights": heights,
                         "hours": hours,
                         "direction": direction,
+                        "meteo_source": meteo_source,
+                        "job_id": job_id,
                     }
                     image_data = self.generate_local_trajectory_plot(endpoints_downsampled, metadata_for_plot)
                     if image_data:
@@ -646,6 +651,70 @@ class NOAAHysplitAPI:
                 **metadata
             }
         }
+
+    @staticmethod
+    def _format_local_plot_labels(
+        direction: str,
+        start_time: Any,
+        meteo_source: str,
+        job_id: Optional[str],
+        lat: float,
+        lon: float,
+        heights: List[int],
+        hours: int,
+    ) -> Dict[str, Any]:
+        """生成本地轨迹图中文标签。"""
+        direction_name = "后向" if str(direction).lower() == "backward" else "前向"
+        try:
+            if isinstance(start_time, str):
+                start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            else:
+                start_dt = start_time
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+            beijing_dt = start_dt.astimezone(BEIJING_TZ)
+            time_label = beijing_dt.strftime("%Y年%m月%d日 %H:%M 北京时间")
+            meteo_time = beijing_dt.strftime("%Y-%m-%d %H:%M 北京时间")
+        except Exception:
+            time_label = str(start_time)
+            meteo_time = str(start_time)
+
+        event_label = "终止时间" if direction_name == "后向" else "起始时间"
+        heights_str = ", ".join(map(str, heights))
+        job_start = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S 北京时间")
+        info_lines = [
+            f"任务编号: {job_id or 'N/A'}        生成时间: {job_start}",
+            f"源点1: 纬度 {lat:.6f} 经度 {lon:.6f} 高度: {heights_str} m AGL",
+            f"轨迹方向: {direction_name}        时长: {hours} 小时",
+            "垂直运动: 模式垂直速度",
+            f"气象资料: {meteo_time} - {str(meteo_source).upper()}",
+        ]
+        return {
+            "direction_name": direction_name,
+            "title_lines": [
+                "NOAA HYSPLIT 模型",
+                f"{hours}小时{direction_name}轨迹，{event_label}：{time_label}",
+                f"{str(meteo_source).upper()} 气象数据",
+            ],
+            "source_label": f"源点 ★  {lat:.2f}°N {lon:.2f}°E",
+            "height_label": "高度 (m AGL)",
+            "info_text": "\n".join(info_lines),
+        }
+
+    @staticmethod
+    def _resolve_height_axis(
+        plotted_heights: List[float],
+        configured_heights: List[int],
+    ) -> tuple[float, float, List[int]]:
+        """计算高度剖面轴范围，给上下边界留白避免线和标记贴边。"""
+        import math
+
+        max_height = max(max(plotted_heights or [0]), max(configured_heights or [0]))
+        tick_top = max(3500, int(math.ceil(max_height / 500.0) * 500))
+        lower = -tick_top * 0.08
+        upper = tick_top * 1.08
+        ticks = list(range(500, tick_top + 1, 500))
+        return lower, upper, ticks
     
     def generate_local_trajectory_plot(
         self,
@@ -678,6 +747,11 @@ class NOAAHysplitAPI:
             import matplotlib.pyplot as plt
             from matplotlib.gridspec import GridSpec
             from io import BytesIO
+            try:
+                from app.utils.font_utils import configure_chinese_font
+                configure_chinese_font()
+            except Exception as font_error:
+                logger.debug("configure_chinese_font_failed", error=str(font_error))
 
             logger.info("local_trajectory_plot_start", endpoints_count=len(endpoints))
 
@@ -730,16 +804,41 @@ class NOAAHysplitAPI:
                        lat_range=f"{lat_min_padded:.2f} to {lat_max_padded:.2f}",
                        aspect_ratio=f"{(lon_max_padded - lon_min_padded) / (lat_max_padded - lat_min_padded):.2f}")
 
-            # 固定图片尺寸（16:9长宽比）
-            fig = plt.figure(figsize=(12, 9))
-            # 使用精确的GridSpec参数确保两个面板宽度完全一致
-            gs = GridSpec(2, 1, height_ratios=[2.5, 1],
-                         hspace=0.12,  # 面板间距
-                         left=0.08, right=0.92,  # 统一左右边距
-                         top=0.94, bottom=0.12)  # 为底部元数据留出空间
+            direction = metadata.get("direction", "Backward")
+            start_time_str = metadata.get("start_time", "")
+            lat = metadata.get("lat", 0)
+            lon = metadata.get("lon", 0)
+            heights_list = metadata.get("heights", [500, 1500, 2500])
+            hours = metadata.get("hours", 72)
+            meteo_source = metadata.get("meteo_source", "gdas1")
+            job_id = metadata.get("job_id")
 
-            # 创建普通 axes（先创建，确保位置计算正确）
+            labels = self._format_local_plot_labels(
+                direction=direction,
+                start_time=start_time_str,
+                meteo_source=meteo_source,
+                job_id=job_id,
+                lat=lat,
+                lon=lon,
+                heights=heights_list,
+                hours=hours,
+            )
+
+            # NOAA官方图接近588x730，使用相同竖版比例，三段结构：地图、剖面、信息栏。
+            fig = plt.figure(figsize=(5.88, 7.30), facecolor="white")
+            gs = GridSpec(
+                3,
+                1,
+                height_ratios=[5.05, 1.2, 1.45],
+                hspace=0.08,
+                left=0.04,
+                right=0.96,
+                top=0.90,
+                bottom=0.04,
+            )
+
             ax_height = fig.add_subplot(gs[1])
+            ax_info = fig.add_subplot(gs[2])
 
             if use_cartopy:
                 # 创建 cartopy map axes
@@ -748,123 +847,169 @@ class NOAAHysplitAPI:
                 # 关键：设置aspect为auto，让地图适应GridSpec宽度（不强制地理比例）
                 ax_map.set_aspect('auto', adjustable='box')
 
-                # 添加地图要素（NOAA风格）
-                ax_map.add_feature(cfeature.LAND, facecolor='#f5f5f5', edgecolor='none')
-                ax_map.add_feature(cfeature.OCEAN, facecolor='#e6f3ff')
-                ax_map.add_feature(cfeature.COASTLINE, linewidth=0.6, edgecolor='#333333')
-                ax_map.add_feature(cfeature.BORDERS, linewidth=0.4, linestyle='--', edgecolor='#666666')
-                ax_map.add_feature(cfeature.LAKES, facecolor='#e6f3ff', edgecolor='#333333', linewidth=0.2)
+                # NOAA READY图以白底和浅蓝地理线为主，不使用填色底图。
+                ax_map.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor="#6aa6de")
+                ax_map.add_feature(cfeature.BORDERS, linewidth=0.45, edgecolor="#6aa6de")
+                ax_map.add_feature(cfeature.LAKES, facecolor="none", edgecolor="#6aa6de", linewidth=0.35)
 
                 # 添加省界（如果可用）
                 try:
-                    ax_map.add_feature(cfeature.STATES, linewidth=0.2, linestyle=':', edgecolor='#999999')
-                except:
+                    ax_map.add_feature(cfeature.STATES, linewidth=0.25, edgecolor="#8bb9e6")
+                except Exception:
                     pass
 
-                # 网格线（不显示任何标签，避免占用额外空间导致宽度不一致）
-                gl = ax_map.gridlines(draw_labels=False, linewidth=0.3, color='gray', alpha=0.5, linestyle='--')
-                # 手动设置轴标签（与下方时序图保持一致）
-                ax_map.set_xlabel('Longitude', fontsize=9)
-                ax_map.set_ylabel('Latitude', fontsize=9)
+                ax_map.gridlines(
+                    draw_labels=False,
+                    linewidth=0.55,
+                    color="#6aa6de",
+                    alpha=0.8,
+                    linestyle="--",
+                )
             else:
                 # 非cartopy模式：创建普通map axes
                 ax_map = fig.add_subplot(gs[0])
                 ax_map.set_xlim(extent[0], extent[1])
                 ax_map.set_ylim(extent[2], extent[3])
-                ax_map.grid(True, linestyle='--', alpha=0.5)
-                ax_map.set_xlabel('Longitude', fontsize=9)
-                ax_map.set_ylabel('Latitude', fontsize=9)
+                ax_map.grid(True, linestyle="--", color="#6aa6de", alpha=0.8, linewidth=0.55)
 
-            colors = ['red', 'blue', 'green']
+            import math
+
+            def _nice_ticks(min_value: float, max_value: float, step: int = 5) -> List[int]:
+                start = math.ceil(min_value / step) * step
+                end = math.floor(max_value / step) * step
+                ticks = list(range(int(start), int(end) + 1, step))
+                if not ticks:
+                    ticks = [round((min_value + max_value) / 2)]
+                return ticks
+
+            lon_ticks = _nice_ticks(extent[0], extent[1])
+            lat_ticks = _nice_ticks(extent[2], extent[3])
+            if use_cartopy:
+                ax_map.set_xticks(lon_ticks, crs=ccrs.PlateCarree())
+                ax_map.set_yticks(lat_ticks, crs=ccrs.PlateCarree())
+            else:
+                ax_map.set_xticks(lon_ticks)
+                ax_map.set_yticks(lat_ticks)
+
+            ax_map.tick_params(axis="y", labelsize=9, colors="#5b9bd5", length=0)
+            ax_map.tick_params(axis="x", labelsize=9, colors="#5b9bd5", length=0, pad=-16)
+            for tick_label in ax_map.get_xticklabels():
+                tick_label.set_verticalalignment("bottom")
+                tick_label.set_bbox(
+                    {"facecolor": "white", "edgecolor": "none", "alpha": 0.85, "pad": 0.2}
+                )
+            ax_map.set_ylabel(labels["source_label"], fontsize=11, color="black")
+            for spine in ax_map.spines.values():
+                spine.set_visible(True)
+                spine.set_color("black")
+                spine.set_linewidth(1.2)
+
+            colors = ["red", "blue", "#00cc2a"]
+            markers = ["^", "s", "o"]
             
             # 绘制轨迹
             for i, (traj_id, points) in enumerate(sorted(trajectories.items())):
+                points = sorted(points, key=lambda p: abs(p.get("age_hours", 0)))
                 lats = [p["lat"] for p in points]
                 lons = [p["lon"] for p in points]
                 heights = [p["height"] for p in points]
                 ages = [abs(p.get("age_hours", 0)) for p in points]
                 
                 color = colors[i % len(colors)]
-                height_agl = points[0].get("height", 0) if points else 0
+                marker = markers[i % len(markers)]
                 
                 # 地图轨迹
                 if use_cartopy:
-                    ax_map.plot(lons, lats, '-', color=color, linewidth=1.5,
-                               label=f'{int(height_agl)}m AGL', transform=ccrs.PlateCarree())
-                    # 添加时间标记（每6小时）+ 文字标签
-                    for j, (lon, lat, age) in enumerate(zip(lons, lats, ages)):
-                        if age % 6 == 0 and age > 0:
-                            ax_map.plot(lon, lat, 'o', color=color, markersize=4, transform=ccrs.PlateCarree())
-                            # 添加小时数标签（NOAA风格）
-                            ax_map.text(lon, lat, f'{int(age)}', fontsize=7, color=color,
-                                       ha='left', va='bottom', transform=ccrs.PlateCarree(),
-                                       bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                                                edgecolor='none', alpha=0.7))
+                    ax_map.plot(
+                        lons,
+                        lats,
+                        "-",
+                        color=color,
+                        linewidth=1.8,
+                        transform=ccrs.PlateCarree(),
+                    )
+                    for point_lon, point_lat, age in zip(lons, lats, ages):
+                        if age % 6 == 0:
+                            ax_map.plot(
+                                point_lon,
+                                point_lat,
+                                marker,
+                                color=color,
+                                markersize=4.5,
+                                markeredgewidth=0,
+                                transform=ccrs.PlateCarree(),
+                            )
                     # 起点标记
-                    ax_map.plot(lons[0], lats[0], '*', color='black', markersize=12, transform=ccrs.PlateCarree())
+                    ax_map.plot(
+                        lons[0],
+                        lats[0],
+                        "*",
+                        color="black",
+                        markersize=12,
+                        transform=ccrs.PlateCarree(),
+                    )
                 else:
-                    ax_map.plot(lons, lats, '-', color=color, linewidth=1.5,
-                               label=f'{int(height_agl)}m AGL')
-                    for j, (lon, lat, age) in enumerate(zip(lons, lats, ages)):
-                        if age % 6 == 0 and age > 0:
-                            ax_map.plot(lon, lat, 'o', color=color, markersize=4)
-                            # 添加小时数标签
-                            ax_map.text(lon, lat, f'{int(age)}', fontsize=7, color=color,
-                                       ha='left', va='bottom',
-                                       bbox=dict(boxstyle='round,pad=0.2', facecolor='white',
-                                                edgecolor='none', alpha=0.7))
-                    ax_map.plot(lons[0], lats[0], '*', color='black', markersize=12)
+                    ax_map.plot(lons, lats, "-", color=color, linewidth=1.8)
+                    for point_lon, point_lat, age in zip(lons, lats, ages):
+                        if age % 6 == 0:
+                            ax_map.plot(point_lon, point_lat, marker, color=color, markersize=4.5)
+                    ax_map.plot(lons[0], lats[0], "*", color="black", markersize=12)
                 
                 # 高度剖面
-                ax_height.plot(ages, heights, '-', color=color, linewidth=1.5)
-            
-            # 图例
-            ax_map.legend(loc='upper right', fontsize=9)
+                ax_height.plot(ages, heights, "-", color=color, linewidth=1.6)
+                ax_height.plot(ages, heights, marker, color=color, markersize=4, markeredgewidth=0)
             
             # 高度剖面设置
-            ax_height.set_xlabel('Hours', fontsize=10)
-            ax_height.set_ylabel('Meters AGL', fontsize=10)
-            ax_height.grid(True, linestyle='--', alpha=0.5)
-            ax_height.invert_xaxis()  # NOAA风格：时间从右到左
-            
-            # 标题
-            direction = metadata.get("direction", "Backward")
-            start_time_str = metadata.get("start_time", "")
-            lat = metadata.get("lat", 0)
-            lon = metadata.get("lon", 0)
-            heights_list = metadata.get("heights", [500, 1500, 2500])
-            hours = metadata.get("hours", 72)
+            max_age = max(abs(p.get("age_hours", 0)) for p in endpoints)
+            ax_height.set_xlim(max_age, 0)
+            ax_height.set_ylabel(labels["height_label"], fontsize=11)
+            ax_height.yaxis.set_label_position("left")
+            ax_height.yaxis.tick_right()
+            ax_height.tick_params(axis="x", labelsize=9, colors="black", length=0)
+            ax_height.tick_params(axis="y", labelsize=9, colors="black", length=0, pad=-38)
+            ax_height.grid(True, axis="y", linestyle=(0, (6, 6)), color="#9f9f9f", linewidth=0.9)
+            ax_height.grid(False, axis="x")
+            ax_height.set_xticks(list(range(int(max_age), -1, -6)))
+            for spine in ax_height.spines.values():
+                spine.set_visible(True)
+                spine.set_color("black")
+                spine.set_linewidth(1.2)
+
+            all_heights = [p["height"] for points in trajectories.values() for p in points]
+            y_lower, y_upper, height_ticks = self._resolve_height_axis(all_heights, heights_list)
+            ax_height.set_ylim(y_lower, y_upper)
+            ax_height.set_yticks(height_ticks)
 
             fig.suptitle(
-                f'NOAA HYSPLIT MODEL - {direction} trajectory',
-                fontsize=11, fontweight='bold', y=0.97
+                "\n".join(labels["title_lines"]),
+                fontsize=13,
+                fontweight="normal",
+                y=0.985,
+                linespacing=1.05,
             )
 
-            # 底部完整元数据（NOAA风格）
-            # 解析start_time字符串
-            try:
-                if isinstance(start_time_str, str):
-                    start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
-                    meteo_time = start_dt.strftime('%H%MZ %d %b %Y')
-                else:
-                    meteo_time = start_time_str
-            except:
-                meteo_time = start_time_str
+            ax_info.set_facecolor("white")
+            ax_info.set_xticks([])
+            ax_info.set_yticks([])
+            for spine in ax_info.spines.values():
+                spine.set_visible(True)
+                spine.set_color("black")
+                spine.set_linewidth(1.2)
 
-            heights_str = ', '.join(map(str, heights_list))
-            metadata_text = f"""Source: lat {lat:.6f}, lon {lon:.6f}, hgts: {heights_str} m AGL
-Trajectory Direction: {direction}  |  Duration: {hours} hrs
-Vertical Motion: Model Vertical Velocity  |  Meteorology: {meteo_time} GDAS1"""
-
-            fig.text(0.08, 0.02, metadata_text, fontsize=7,
-                    family='monospace', verticalalignment='bottom',
-                    bbox=dict(boxstyle='round,pad=0.5', facecolor='#f0f0f0',
-                             edgecolor='gray', alpha=0.8))
+            ax_info.text(
+                0.05,
+                0.88,
+                labels["info_text"],
+                transform=ax_info.transAxes,
+                fontsize=7.6,
+                va="top",
+                ha="left",
+                color="black",
+            )
 
             # 保存到内存（不使用bbox_inches='tight'，确保上下图宽度一致）
             buffer = BytesIO()
-            plt.savefig(buffer, format='png', dpi=120,
-                       facecolor='white', pad_inches=0.15)
+            plt.savefig(buffer, format='png', dpi=100, facecolor='white', pad_inches=0.0)
             plt.close(fig)
 
             buffer.seek(0)

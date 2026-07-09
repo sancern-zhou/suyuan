@@ -80,6 +80,9 @@ class SimplifiedContextBuilder:
         # ✅ 新增：HEARTBEAT文件路径（仅social模式使用）
         self.heartbeat_file_path = None
 
+        # ✅ 新增：HEARTBEAT文件内容快照（仅social模式使用）
+        self.heartbeat_context = None
+
         # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
         self.board_context = None
 
@@ -256,6 +259,7 @@ class SimplifiedContextBuilder:
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
             user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
+            heartbeat_context=self.heartbeat_context,  # ✅ 传递 HEARTBEAT.md 当前内容
             backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
             board_context=self.board_context if self.current_mode == "chart" else None,
         )
@@ -321,6 +325,7 @@ class SimplifiedContextBuilder:
             self.soul_file_path,
             self.user_file_path,
             self.heartbeat_file_path,
+            self.heartbeat_context,
         ]):
             logger.warning(
                 "non_social_context_stripped",
@@ -331,6 +336,7 @@ class SimplifiedContextBuilder:
                 had_soul_file_path=self.soul_file_path is not None,
                 had_user_file_path=self.user_file_path is not None,
                 had_heartbeat_file_path=self.heartbeat_file_path is not None,
+                had_heartbeat_context=self.heartbeat_context is not None,
             )
 
         self.user_preferences = None
@@ -339,6 +345,7 @@ class SimplifiedContextBuilder:
         self.soul_file_path = None
         self.user_file_path = None
         self.heartbeat_file_path = None
+        self.heartbeat_context = None
 
         if mode != "chart" and self.board_context is not None:
             logger.warning(
